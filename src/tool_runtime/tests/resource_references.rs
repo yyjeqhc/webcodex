@@ -39,6 +39,7 @@ async fn search(
             session.map(str::to_string),
             None,
             None,
+            None,
             Some(auth),
         )
         .await
@@ -114,6 +115,7 @@ async fn goal_reference_reads_latest_owned_goal_and_hides_foreign_content() {
         .search_webcodex_resources(
             WebcodexResourceKind::Goal,
             Some("安全 %_".into()),
+            None,
             None,
             None,
             None,

@@ -1418,3 +1418,20 @@ pub enum GitReviewScopeInput {
         head_commit: String,
     },
 }
+
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectUnregisterInput {
+    /// Exact canonical Project id, not a fuzzy name or alias.
+    #[schemars(length(min = 1, max = 512))]
+    pub project: String,
+    /// Exact sha256 registration revision from list_projects full output.
+    #[schemars(length(min = 71, max = 71))]
+    #[schemars(regex(pattern = "^sha256:[0-9A-Fa-f]{64}$"))]
+    pub expected_revision: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerStatusFilter { Any, Online, Offline, Stale }

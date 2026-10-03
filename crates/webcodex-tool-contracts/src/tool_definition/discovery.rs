@@ -11,6 +11,24 @@ use crate::metadata::{
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
+        def("resolve_workspace", super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
+            super::ToolAuditSessionInputPolicy::OmitTopLevel(&["path", "query", "client_id"])),
+            ModelVisible, TOOL_CATEGORY_PROJECT, None, TOOL_PROVIDER_CONTROL,
+            super::ToolSemanticContract { effect: super::ToolEffect::Observe, risk: Read,
+                approval: super::ToolApprovalPolicy::None, idempotency: super::ToolIdempotency::PureRead },
+            Some(PROJECT_READ), false, NoPath, false, false, super::ToolSessionEvidencePolicy::NONE),
+        "Locate a registered workspace by exact Runner plus path or literal query; no Session or registration is created. Returns one resolved workspace or bounded ambiguous candidates, never the first fuzzy match. Git fields are cached Runner inventory, not current filesystem proof; incomplete inventory stays explicit. Starting or resuming work is a separate action. Gateway via call_runtime_tool.",
+    ),
+    model_spec(
+        def("unregister_projects", super::ToolAuditPolicy::TYPED_CANONICAL,
+            ModelVisible, TOOL_CATEGORY_PROJECT, None, TOOL_PROVIDER_CONTROL,
+            super::ToolSemanticContract { effect: super::ToolEffect::Mutate, risk: ProjectWrite,
+                approval: super::ToolApprovalPolicy::Standard, idempotency: super::ToolIdempotency::NonIdempotent },
+            Some(PROJECT_WRITE), false, NoPath, true, false, super::ToolSessionEvidencePolicy::NONE),
+        "Preview or batch-remove (unregister) up to 16 explicit Project registrations with exact revisions; never delete files, directories, branches or Session history. Default dry_run=true inspects current registrations, not a lease. Execution requires dry_run=false and confirm=true; each item uses canonical owner/CAS/active-Job checks. Sequential, non-atomic, per-item outcomes; uncertainty stops remaining items. Never replay the batch blindly; reconcile exact failed or unknown items.",
+    ),
+
+    model_spec(
         def(
             "list_projects",
             super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
@@ -41,7 +59,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolActivityPresentation::Support,
             super::ToolActivityInteraction::NonMeaningful,
         ),
-        "List caller-visible Projects. Results keep canonical Runtime Project ids and, when stable root identity is available, also issue a short principal-scoped project_ref for later model calls. project_ref is convenience only and grants no authority. When Runner/Project identity is known, pass exact client_id/project filters; use bounded query and summary_only instead of reading the full registry.",
+        "List registered Projects on an exact Runner; use resolve_workspace for unique path/name selection, or include_git_summary for cached maintenance facts. Results keep canonical Runtime Project ids and, when stable root identity is available, also issue a short principal-scoped project_ref for later model calls. project_ref is convenience only and grants no authority. When Runner/Project identity is known, pass exact client_id/project filters; use bounded query and summary_only instead of reading the full registry.",
     ),
     model_spec(
         def(
@@ -139,7 +157,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolActivityPresentation::Support,
             super::ToolActivityInteraction::NonMeaningful,
         ),
-        "List caller-visible Runners; use exact client_id/client_ids if known, summary_only + include_projects=false for health. Full mode includes shared Job concurrency and host_context advisory metadata; never authority.",
+        "Find Runners by client_id/client_ids, query, status or limit; summary_only returns compact health/build/Job counts without full inventories. Full mode includes shared Job concurrency and host_context advisory metadata; never authority.",
     ),
     adaptive_runtime_direct(
         model_spec(
@@ -230,7 +248,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolActivityPresentation::Support,
                 super::ToolActivityInteraction::NonMeaningful,
             ),
-            "Global runtime discovery; do not pass project. Categories are non-overlapping: execution launches/reuses processes, job observes/controls Jobs, validation checks code, and skill/plugin/memory cover extensions. Filter by category/intent for sparse selection entries, or pass exact tool_name for one compact contract with description, preferred route, input schema, and safety/authority hints but no output schema. availability=direct means the direct callable is the preferred model route; if that callable is unavailable or not loaded, call_runtime_tool may be used as a fallback for an otherwise admitted target. availability never changes behavior, authority, permissions, execution, or verdicts. Unfiltered discovery retains the global category inventory.",
+            "Find tools by query/category/intent and limit. Exact tool_name returns one contract and route. Discovery never executes work, registers Host tools or grants authority.",
         ),
         30,
         super::ToolDirectReason::CoreWorkflow,

@@ -60,10 +60,12 @@ pub fn model_visible_recommended_flows() -> impl Iterator<Item = &'static ToolRe
 pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "discovery",
-        summary: "Discovery: if the user gives an exact Runner client_id, use get_runtime_status/list_projects for that Runner before treating it as absent. Otherwise use bounded runtime/project discovery, then batch-capable structured search/read.",
+        summary: "Discovery: if the user gives an exact Runner client_id, resolve its registered path/query before treating it as absent. Use resolve_workspace without Session creation, get_runtime_status/list_projects for that Runner, Workbench for explicit context, and list_runners only for an unknown machine.",
         manifest_purpose:
-            "Exact Runner targeting: with client_id use get_runtime_status(client_id=...) or list_projects(client_id=...); use list_runners only for broad fleet discovery, then inspect/search the resolved project.",
+            "Exact Runner targeting: resolve_workspace locates registered paths without Session creation; get_runtime_status(client_id=...) inspects health and list_projects(client_id=...) lists candidates. Use list_runners for an unknown machine. Ambiguity needs explicit choice, never automatic first-match selection.",
         tools: &[
+            "resolve_workspace",
+            "open_webcodex_workbench",
             "get_runtime_status",
             "list_runners",
             "list_projects",
@@ -332,15 +334,29 @@ pub const CODING_INTENT_TOOL_NAMES: &[&str] = &[
 /// behavior, policy, permissions, execution, or finish verdict semantics.
 pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
     ToolManifestIntent {
+        name: "maintenance",
+        purpose: "Locate exact Runners/Projects, inspect health and cached Git, then explicitly preview or mutate registration/configuration. No automatic cleanup or Session creation.",
+        tools: &["resolve_workspace", "list_runners", "list_projects", "get_runtime_status",
+            "open_webcodex_workbench", "get_git_status", "check_runner_config",
+            "unregister_projects", "unregister_project", "reload_runner_config"],
+    },
+    ToolManifestIntent {
+        name: "resources",
+        purpose: "Explicit Project/Session context and bounded file, Goal and artifact references; not execution or implicit authority.",
+        tools: &["open_webcodex_workbench", "resolve_workspace", "search_webcodex_resources",
+            "read_webcodex_resource", "list_sessions", "read_project_overview", "inspect_project_artifact"],
+    },
+
+    ToolManifestIntent {
         name: "coding",
         purpose: "Default coding loop: start, inspect, make reliable scoped changes, validate, review, report.",
         tools: CODING_INTENT_TOOL_NAMES,
     },
     ToolManifestIntent {
         name: "audit",
-        purpose: "Review/audit without Project mutation or command execution: establish bounded Workflow context, inspect, read git history/diff, check hygiene, finish or handoff.",
+        purpose: "Read-only audit: locate existing work, inspect code/Git and hygiene without creating a Workflow Session. Native observations may run read-only commands.",
         tools: &[
-            "work_on_project",
+            "resolve_workspace",
             "read_project_overview",
             "list_project_tracked_files",
             "read_files",
@@ -352,7 +368,6 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "read_git_log",
             "review_changes",
             "check_workspace_hygiene",
-            "finish_coding_task",
             "read_session_handoff",
             "read_validation_summary",
             "read_tool_manifest",
@@ -414,6 +429,9 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
         tools: &[
             "read_tool_manifest",
             "list_tools",
+            "resolve_workspace",
+            "open_webcodex_workbench",
+            "search_webcodex_resources",
             "get_runtime_status",
             "list_runners",
             "list_projects",

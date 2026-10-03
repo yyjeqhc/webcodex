@@ -306,7 +306,7 @@ impl ToolCall {
         if name == "read_tool_manifest" {
             if let Some(object) = arguments.as_object_mut() {
                 if !object.contains_key("include_recommended_flows") {
-                    let exact_lookup = object.contains_key("tool_name");
+                    let exact_lookup = object.contains_key("tool_name") || object.contains_key("query");
                     object.insert(
                         "include_recommended_flows".to_string(),
                         Value::Bool(!exact_lookup),
@@ -601,6 +601,8 @@ impl ToolCall {
             Self::ComputerObserve(..) => "observe_computer",
             Self::ComputerControl(..) => "control_computer",
             Self::ComputerSaveSnapshot { .. } => "save_computer_snapshot",
+            Self::ResolveWorkspace { .. } => "resolve_workspace",
+            Self::UnregisterProjects { .. } => "unregister_projects",
             Self::ListProjects { .. } => "list_projects",
             Self::RegisterProject { .. } => "register_project",
             Self::UnregisterProject { .. } => "unregister_project",

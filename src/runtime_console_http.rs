@@ -1778,6 +1778,9 @@ async fn list_runners_value(
     let result = runtime
         .dispatch_with_auth(
             ToolCall::ListRunners {
+                query: None,
+                status: None,
+                limit: None,
                 client_id,
                 client_ids: None,
                 include_projects: Some(false),

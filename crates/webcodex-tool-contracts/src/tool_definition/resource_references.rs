@@ -1,7 +1,12 @@
 use super::*;
 use crate::metadata::{ToolPathHint::None as NoPath, ToolRisk::Read};
 
-const fn resource_tool(name: &'static str, description: &'static str, rank: u16) -> ToolDefinition {
+const fn resource_tool(
+    name: &'static str,
+    description: &'static str,
+    rank: u16,
+    reason: ToolDirectReason,
+) -> ToolDefinition {
     adaptive_runtime_direct(
         model_spec(
             require_any_scopes(
@@ -39,14 +44,14 @@ const fn resource_tool(name: &'static str, description: &'static str, rank: u16)
             description,
         ),
         rank,
-        ToolDirectReason::CoreWorkflow,
+        reason,
     )
 }
 
 // Authorization is selected by resource kind inside the canonical service. A common
 // project/communication/session scope here would incorrectly disable other domains.
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
-    resource_tool("open_webcodex_workbench", "Open the readonly Projects & Resources workbench. Empty arguments show authorized Projects for explicit selection; optional project and session_id select exact context. Supports normal tool fallback when MCP Apps are unavailable; never sends a message or starts work.", 152),
-    resource_tool("search_webcodex_resources", "Discover authorized project, file, Goal or artifact resource links. File search requires project; artifact search requires project and an explicitly selected session_id. Literal queries are filtered before paging. Reports incomplete sources; references grant no authority.", 154),
-    resource_tool("read_webcodex_resource", "Read the latest bounded content or metadata of one exact webcodex-resource:// reference. Re-authorizes the original domain; pinned project roots, deleted paths and inaccessible Goals fail closed. Artifacts reuse file identity; historical observations are not current facts.", 153),
+    resource_tool("open_webcodex_workbench", "Choose Runner, Project and optional Session. Explicit UI action attaches reauthorized context after Host acknowledgement, or offers copyable text. No Session creation, messages or execution.", 152, ToolDirectReason::Presentation),
+    resource_tool("search_webcodex_resources", "Find authorized links: client_id filters Projects; files need project, artifacts need project+session_id. Literal query precedes paging; incomplete sources stay explicit. Links grant no authority.", 154, ToolDirectReason::CoreWorkflow),
+    resource_tool("read_webcodex_resource", "Read the latest bounded content or metadata of one exact webcodex-resource:// reference. Re-authorizes the original domain; pinned project roots, deleted paths and inaccessible Goals fail closed. Artifacts reuse file identity; historical observations are not current facts.", 153, ToolDirectReason::CoreWorkflow),
 ];

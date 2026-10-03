@@ -2160,12 +2160,25 @@ impl ToolCallAuditProjection for ToolCall {
                 "snapshot_id": snapshot_id,
                 "path": path,
             }),
+            Self::ResolveWorkspace {
+                path, query, limit, ..
+            } => serde_json::json!({
+                "path_present":path.is_some(),"query_present":query.is_some(),"limit":limit,
+            }),
+            Self::UnregisterProjects {
+                items,
+                dry_run,
+                confirm,
+            } => serde_json::json!({
+                "item_count":items.len(),"dry_run":dry_run,"confirm":confirm,
+            }),
             Self::ListProjects {
                 client_id,
                 project,
                 query,
                 limit,
                 summary_only,
+                include_git_summary,
             } => serde_json::json!({
                 "client_id_present": client_id.is_some(),
                 "project_present": project.is_some(),
@@ -2173,17 +2186,22 @@ impl ToolCallAuditProjection for ToolCall {
                 "query_length": query.as_deref().map(|value| value.chars().count()).unwrap_or_default(),
                 "limit": limit,
                 "summary_only": summary_only,
+                "include_git_summary": include_git_summary,
             }),
             Self::ListRunners {
                 client_id,
                 client_ids,
                 include_projects,
                 summary_only,
+                query,
+                status,
+                limit,
             } => serde_json::json!({
                 "client_id_present": client_id.is_some(),
                 "client_ids_count": client_ids.as_ref().map(Vec::len).unwrap_or_default(),
                 "include_projects": include_projects,
                 "summary_only": summary_only,
+                "query_present": query.is_some(), "status": status, "limit": limit,
             }),
             Self::ListJobs {
                 limit,
@@ -2198,12 +2216,15 @@ impl ToolCallAuditProjection for ToolCall {
             }),
             Self::ToolManifest {
                 tool_name,
+                query,
+                limit,
                 category,
                 intent,
                 include_recommended_flows,
                 include_risk_summary,
             } => serde_json::json!({
                 "tool_name": tool_name,
+                "query_present": query.is_some(), "limit":limit,
                 "category": category,
                 "intent": intent,
                 "include_recommended_flows": include_recommended_flows,

@@ -11,6 +11,35 @@ use crate::metadata::{
 use webcodex_core::authority::{COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES};
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
+    model_spec(
+        def(
+            "post_peer_message",
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("success"),
+                super::ToolAuditResultField::value("message_id"),
+                super::ToolAuditResultField::value("sender_peer_id"),
+                super::ToolAuditResultField::value("recipient_peer_id"),
+                super::ToolAuditResultField::value("requires_ack"),
+            ]),
+            ModelVisible,
+            super::TOOL_CATEGORY_COMMUNICATION,
+            None,
+            TOOL_PROVIDER_CONTROL,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Mutate,
+                risk: super::ToolRisk::SessionCollaborate,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::NonIdempotent,
+            },
+            Some(crate::metadata::SESSION_COLLABORATE),
+            false,
+            NoPath,
+            false,
+            false,
+            super::ToolSessionEvidencePolicy::NONE,
+        ),
+        "Send a bounded message to a principal-scoped peer window discovered through peer_awareness. Optional delivery_key provides bounded restart-safe principal-and-sender-Window replay while the keyed peer message remains retained; exact retries return the original message and conflicting retained key reuse fails closed. Routing does not require Project equality, so a Project/worktree change alone does not invalidate the retained route; it grants no access to the recipient's Project, Workflow Session, files, or assignment authority. Ordinary messages are projected once; requires_ack messages repeat while retained whenever the recipient omits the request-scoped ACK.",
+    ),
     require_all_scopes(
         model_spec(
             def(

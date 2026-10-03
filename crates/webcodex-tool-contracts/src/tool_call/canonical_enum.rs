@@ -1915,6 +1915,10 @@ pub enum ToolCall {
     /// Open the readonly workbench. Empty arguments show a chooser; a Project is selected only
     /// when explicitly supplied. Session selection never creates a recorder or execution context.
     OpenWebcodexWorkbench {
+        /// Runner for explicit Project choices.
+        #[serde(default)]
+        #[schemars(length(min = 1, max = 128))]
+        client_id: Option<String>,
         #[serde(default)]
         project: Option<String>,
         #[serde(default)]
@@ -1924,6 +1928,10 @@ pub enum ToolCall {
     /// Search bounded authorized resources. File and artifact searches require an explicit project;
     /// artifact search additionally requires an exact retained Workflow Session.
     SearchWebcodexResources {
+        /// Project discovery only: Runner filter before paging.
+        #[serde(default)]
+        #[schemars(length(min = 1, max = 128))]
+        client_id: Option<String>,
         kind: WebcodexResourceKind,
         #[serde(default)]
         #[schemars(length(max = 200))]
@@ -3886,6 +3894,36 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Locate an already registered workspace without creating a Session or registration.
+    ResolveWorkspace {
+        /// Exact caller-visible Runner; never fall through to another machine.
+        #[schemars(length(min = 1, max = 128))]
+        client_id: String,
+        /// Exact registered absolute path; no filesystem or symlink guessing. Exclusive with query.
+        #[serde(default)]
+        #[schemars(length(min = 1, max = 4096))]
+        path: Option<String>,
+        /// Literal case-insensitive substring over id, name, path and description.
+        #[serde(default)]
+        #[schemars(length(max = 200))]
+        query: Option<String>,
+        /// Candidate bound, default 20, clamped to 1..100. Never resolves ambiguous matches by rank.
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Preview or unregister explicit Project registrations; files are never deleted.
+    UnregisterProjects {
+        #[schemars(length(min = 1, max = 16))]
+        items: Vec<ProjectUnregisterInput>,
+        /// Default true: inspect exact revisions without dispatch. Not a lease or success guarantee.
+        #[serde(default = "default_true")]
+        dry_run: bool,
+        /// Required true for execution; every item rechecks ownership, CAS and active Jobs.
+        #[serde(default)]
+        confirm: bool,
+    },
+
     ListProjects {
         /// Exact Runner client_id. Filters only caller-visible Projects on that Runner.
         #[schemars(length(min = 1, max = 128))]
@@ -3903,6 +3941,9 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         #[serde(default)]
         limit: Option<usize>,
+        /// Include cached Runner-inventory Git branch/HEAD/dirty, not a fresh filesystem read.
+        #[serde(default)]
+        include_git_summary: bool,
         /// Compact workspace selection including exact paths, without revisions or detailed policy.
         #[serde(default)]
         summary_only: bool,
@@ -4008,6 +4049,16 @@ pub enum ToolCall {
         /// compatibility.
         #[serde(default)]
         include_projects: Option<bool>,
+        /// Literal case-insensitive substring over Runner id, display name and hostname.
+        #[serde(default)]
+        #[schemars(length(max = 200))]
+        query: Option<String>,
+        /// Online=connected; offline=not connected (includes stale); stale=heartbeat-expired inventory.
+        #[serde(default)]
+        status: Option<RunnerStatusFilter>,
+        /// Matching Runner limit, clamped to 1..100; omission preserves full operator inventory.
+        #[serde(default)]
+        limit: Option<usize>,
         /// Return compact Runner identity, health, build, project-count, and shared Job-concurrency facts.
         #[serde(default)]
         summary_only: bool,
@@ -4085,38 +4136,31 @@ pub enum ToolCall {
         payload_index: Option<usize>,
     },
 
-    /// Return a compact, bounded tool manifest with categories, risk summary,
-    /// recommended flows, and optional intent-shaped tool views. Intent views
-    /// only filter and rank discovery output; they do not change tool behavior,
-    /// policy, permissions, execution, or finish verdict semantics. Intended as
-    /// a lightweight alternative to `list_tools` for long-running tasks where
-    /// full catalog schemas cause ResponseTooLargeError. Read-only runtime
-    /// introspection; list/filter mode stays schema-free, while exact tool_name
-    /// mode exposes only that tool's input schema. Never exposes tokens, secrets,
-    /// internal paths, or output schemas.
+    /// Schema-free discovery by query/category/intent; exact tool_name returns one input contract.
+    /// Discovery does not register Host tools or change invocation authority.
     #[serde(rename = "read_tool_manifest")]
     ToolManifest {
         #[schemars(length(min = 1, max = 128))]
         /// Optional exact model-visible runtime tool name for one-tool contract discovery.
         #[serde(default)]
         tool_name: Option<String>,
-        /// Optional category filter (e.g. session, edit, git, checkpoint, runtime, job, validation).
-        /// Distinct from intent.
+        /// Literal tool-name/category/description keywords.
+        #[serde(default)]
+        #[schemars(length(max = 200))]
+        query: Option<String>,
+        /// 1..100 results; query default 20.
+        #[serde(default)]
+        limit: Option<usize>,
+        /// Canonical category; distinct from cross-category task intent.
         #[serde(default)]
         category: Option<String>,
-        /// Optional task intent view such as coding, audit, exploration,
-        /// release, or discovery. Distinct from `category`. Discovery filtering
-        /// only; does not change tool behavior or finish verdict semantics.
+        /// Task view: maintenance, resources, coding, audit, exploration, file_transfer, release or discovery.
         #[serde(default)]
         intent: Option<String>,
-        /// Include recommended_flows in the output. Omission defaults to false for exact tool_name lookup
-        /// and true for category, intent, or broad discovery.
+        /// Omitted: false for exact tool_name/query, true for category/intent/broad discovery.
         #[serde(default = "default_true")]
         include_recommended_flows: bool,
-        /// Request aggregate risk_summary where the selected projection exposes it (default true).
-        /// Unfiltered/full discovery can return the aggregate; sparse filtered discovery omits it and
-        /// carries per-tool risk only when needed for selection. This flag does not change authority,
-        /// permission, or tool behavior.
+        /// Include aggregate risks in broad output (default true); focused output keeps per-tool risks. No authority change.
         #[serde(default = "default_true")]
         include_risk_summary: bool,
     },

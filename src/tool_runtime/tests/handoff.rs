@@ -87,6 +87,8 @@ async fn session_handoff_summary_is_known_and_in_specs() {
     let runtime = test_runtime();
     let manifest = runtime
         .dispatch(ToolCall::ToolManifest {
+            query: None,
+            limit: None,
             tool_name: None,
             category: Some("session".to_string()),
             intent: None,

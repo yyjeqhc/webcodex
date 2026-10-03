@@ -158,6 +158,22 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("reason", schema_type("string", "Bounded reason when a payload is not model-readable.")),
             ("payload", json!({"description": "Selected raw JSON trace payload of any JSON type. May contain sensitive tool data; operator-only."})),
         ])),
+        "resolve_workspace" => Some(wrapped_output_schema(vec![
+            ("resolution", json!({"type":"string","enum":["resolved","ambiguous","not_found","incomplete"]})),
+            ("source", schema_type("string", "Registered Project inventory, not filesystem discovery.")),
+            ("client_id", schema_type("string", "Exact selected Runner.")),
+            ("connected", schema_type("boolean", "Last observed Runner connection state.")),
+            ("matched_count", schema_type("integer", "Observed matching registrations before limit; not a complete count while resolution=incomplete.")),
+            ("truncated", schema_type("boolean", "More candidates require a narrower query.")),
+            ("workspace", open_object_schema("Unique exact registration; Git fields remain unverified inventory.")),
+            ("candidates", array_schema(open_object_schema("Authorized candidate."), "Observed candidates when ambiguous, incomplete or not found; never auto-selected.")),
+        ])),
+        "unregister_projects" => Some(wrapped_output_schema(vec![
+            ("dry_run", schema_type("boolean", "True for observational preflight; never a future lease.")),
+            ("changed", schema_type("boolean", "At least one registration is known changed.")),
+            ("outcome_unknown", schema_type("boolean", "An item requires reconciliation; later items were not attempted.")),
+            ("items", array_schema(open_object_schema("Input-indexed Project result with success/output/error; partial outcomes are not atomic."), "Per-item results.")),
+        ])),
         "list_projects" => Some(wrapped_output_schema(vec![
             (
                 "projects",
@@ -181,6 +197,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
         ])),
         "list_runners" => Some(wrapped_output_schema(vec![
+            ("matched_count", schema_type("integer", "Visible matching Runners before limit.")),
+            ("truncated", schema_type("boolean", "Narrow filters when more Runners matched than were returned.")),
             (
                 "runners",
                 array_schema(open_object_schema("Runner summary including bounded Runner-configured host_context advisory data, never authority or proof of current state, plus job_concurrency limit/running/queued facts."), "Canonical Runner collection; per-Runner identity uses runner_instance_id and runner_protocol_generation."),
@@ -263,6 +281,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         ])),
         "read_tool_manifest" => {
             let fields = vec![
+            ("query", nullable_schema("string", "Literal discovery filter; never invocation authority.")),
             (
                 "name",
                 schema_type(

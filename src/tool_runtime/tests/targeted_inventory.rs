@@ -2,6 +2,7 @@ use super::super::projects::{ListProjectsOptions, ProjectCandidate};
 use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{RunnerBuildInfo, RunnerCapabilities, RunnerRegisterRequest};
+use serde_json::json;
 
 fn list_projects_call(
     client_id: Option<&str>,
@@ -11,6 +12,7 @@ fn list_projects_call(
     summary_only: bool,
 ) -> ToolCall {
     ToolCall::ListProjects {
+        include_git_summary: false,
         client_id: client_id.map(str::to_string),
         project: project.map(str::to_string),
         query: query.map(str::to_string),
@@ -26,6 +28,9 @@ fn list_runners_call(
     summary_only: bool,
 ) -> ToolCall {
     ToolCall::ListRunners {
+        query: None,
+        status: None,
+        limit: None,
         client_id: client_id.map(str::to_string),
         client_ids: client_ids.map(|ids| ids.iter().map(|id| (*id).to_string()).collect()),
         include_projects,
@@ -752,6 +757,9 @@ async fn list_runners_supports_exact_batch_and_compact_projection() {
         .collect::<Vec<_>>();
     let too_many = runtime
         .dispatch(ToolCall::ListRunners {
+            query: None,
+            status: None,
+            limit: None,
             client_id: None,
             client_ids: Some(too_many_ids),
             include_projects: None,
@@ -983,6 +991,7 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
     assert!(matches!(
         projects,
         ToolCall::ListProjects {
+            include_git_summary: false,
             client_id: Some(_),
             project: Some(_),
             query: Some(_),
@@ -1003,6 +1012,9 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
     assert!(matches!(
         agents,
         ToolCall::ListRunners {
+            query: None,
+            status: None,
+            limit: None,
             client_id: None,
             client_ids: Some(_),
             include_projects: Some(false),
@@ -1176,4 +1188,507 @@ async fn exact_project_selection_preserves_current_principal_visibility() {
         )
         .await;
     assert!(denied.is_empty());
+}
+
+async fn maintenance_call(
+    runtime: &ToolRuntime,
+    name: &str,
+    args: serde_json::Value,
+) -> ToolResult {
+    runtime
+        .dispatch(ToolCall::from_tool_name(name, args).unwrap())
+        .await
+}
+fn maintenance_project(id: &str) -> crate::runner_protocol::RunnerProjectSummary {
+    let mut project = registered_project(id, &format!("/srv/{id}"));
+    project.revision = Some(format!("sha256:{}", "a".repeat(64)));
+    project.root_fingerprint = Some(format!("wc_projroot_{}", "b".repeat(64)));
+    project.git_branch = Some("main".into());
+    project.git_head = Some("c".repeat(40));
+    project.git_dirty = Some(false);
+    project
+}
+
+#[tokio::test]
+async fn workspace_resolution_never_creates_sessions_or_dispatches_and_does_not_guess_ambiguity() {
+    let runtime = test_runtime();
+    register_target_agent(
+        &runtime,
+        "special",
+        vec![
+            maintenance_project("release"),
+            maintenance_project("release-old"),
+        ],
+        None,
+    )
+    .await;
+    let before = runtime.sessions.active_session_count_for_test(None);
+    let exact = maintenance_call(
+        &runtime,
+        "resolve_workspace",
+        json!({"client_id":"special","path":"/srv/release"}),
+    )
+    .await;
+    assert!(exact.success, "{exact:?}");
+    assert_eq!(exact.output["resolution"], "resolved");
+    assert_eq!(
+        exact.output["workspace"]["project"],
+        "agent:special:release"
+    );
+    assert_eq!(exact.output["workspace"]["git"]["freshness"], "unverified");
+    let ambiguous = maintenance_call(
+        &runtime,
+        "resolve_workspace",
+        json!({"client_id":"special","query":"RELEASE","limit":1}),
+    )
+    .await;
+    assert_eq!(ambiguous.output["resolution"], "ambiguous");
+    assert_eq!(ambiguous.output["matched_count"], 2);
+    assert_eq!(ambiguous.output["truncated"], true);
+    assert!(ambiguous.output.get("workspace").is_none());
+    let absent = maintenance_call(
+        &runtime,
+        "resolve_workspace",
+        json!({"client_id":"special","path":"/srv/./release"}),
+    )
+    .await;
+    assert_eq!(
+        absent.output["resolution"], "not_found",
+        "path matching must not guess filesystem aliases"
+    );
+    let wrong = maintenance_call(
+        &runtime,
+        "resolve_workspace",
+        json!({"client_id":"missing","query":"release"}),
+    )
+    .await;
+    assert!(!wrong.success);
+    assert_eq!(before, runtime.sessions.active_session_count_for_test(None));
+    assert!(runtime
+        .runner_registry
+        .poll(crate::runner_protocol::RunnerPollRequest {
+            client_id: "special".into(),
+            runner_instance_id: "inst-special".into()
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn workspace_resolution_does_not_claim_uniqueness_or_absence_during_inventory_sync() {
+    use crate::runner_protocol::ShellProjectInventoryPage;
+    let runtime = test_runtime();
+    let one = maintenance_project("release");
+    let two = maintenance_project("release-next");
+    register_target_agent(&runtime, "special", vec![one.clone()], None).await;
+    // The shared fixture allocates snapshot sequences globally across tests.
+    // Continue this Runner's observed fixture sequence rather than assuming 1.
+    let generation = runtime
+        .runner_registry
+        .get_runner_view("special")
+        .await
+        .unwrap()
+        .project_inventory
+        .unwrap()
+        .generation
+        .unwrap();
+    let next_sequence = generation
+        .strip_prefix("test-inventory-")
+        .unwrap()
+        .parse::<u64>()
+        .unwrap()
+        + 1;
+    let page = ShellProjectInventoryPage {
+        generation: "resolver-next-snapshot".into(),
+        snapshot_sequence: next_sequence,
+        page_index: 0,
+        total_reported: 2,
+        complete: false,
+        projects: vec![one],
+    };
+    let status = runtime
+        .runner_registry
+        .apply_project_inventory_page("special", "inst-special", page.clone())
+        .await
+        .unwrap();
+    assert_eq!(status.sync_state, "in_progress");
+    for query in ["release", "absent"] {
+        let result = maintenance_call(
+            &runtime,
+            "resolve_workspace",
+            json!({"client_id":"special","query":query,"limit":1}),
+        )
+        .await;
+        assert!(result.success, "{result:?}");
+        assert_eq!(result.output["resolution"], "incomplete", "{result:?}");
+        assert!(result.output.get("workspace").is_none());
+        assert!(result.output["candidates"].is_array());
+    }
+    let status = runtime
+        .runner_registry
+        .apply_project_inventory_page(
+            "special",
+            "inst-special",
+            ShellProjectInventoryPage {
+                page_index: 1,
+                complete: true,
+                projects: vec![two],
+                ..page
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.sync_state, "complete");
+    let result = maintenance_call(
+        &runtime,
+        "resolve_workspace",
+        json!({"client_id":"special","query":"release","limit":1}),
+    )
+    .await;
+    assert_eq!(result.output["resolution"], "ambiguous");
+    assert_eq!(result.output["matched_count"], 2);
+}
+
+#[tokio::test]
+async fn workspace_resolution_hides_foreign_runner_and_cached_git_is_opt_in() {
+    let runtime = test_runtime();
+    let alice = managed_discovery_auth("alice");
+    let bob = managed_discovery_auth("bob");
+    register_target_agent_for_auth(&runtime, "alice-runner", "main", &alice).await;
+    let denied = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name("resolve_workspace", json!({"client_id":"alice-runner"}))
+                .unwrap(),
+            Some(&bob),
+        )
+        .await;
+    assert!(!denied.success);
+    assert!(denied.output.get("candidates").is_none());
+    let empty = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name("resolve_workspace", json!({"client_id":"missing"})).unwrap(),
+            Some(&bob),
+        )
+        .await;
+    assert_eq!(denied.error, empty.error);
+    register_target_agent(&runtime, "special", vec![maintenance_project("main")], None).await;
+    let regular = maintenance_call(
+        &runtime,
+        "list_projects",
+        json!({"client_id":"special","summary_only":true}),
+    )
+    .await;
+    assert!(regular.output["projects"][0].get("git").is_none());
+    let maintenance = maintenance_call(
+        &runtime,
+        "list_projects",
+        json!({"client_id":"special","summary_only":true,"include_git_summary":true}),
+    )
+    .await;
+    assert_eq!(
+        maintenance.output["projects"][0]["git"]["source"],
+        "runner_inventory"
+    );
+    assert_eq!(maintenance.output["projects"][0]["git"]["branch"], "main");
+}
+
+#[tokio::test]
+async fn runner_maintenance_filters_then_limits_without_project_bodies() {
+    let runtime = test_runtime();
+    for runner in ["special", "sf", "mini"] {
+        register_target_agent(&runtime, runner, vec![maintenance_project("main")], None).await;
+    }
+    let result=maintenance_call(&runtime,"list_runners",json!({"query":"Runner s","status":"online","limit":1,"summary_only":true,"include_projects":false})).await;
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["matched_count"], 2);
+    assert_eq!(result.output["count"], 1);
+    assert_eq!(result.output["truncated"], true);
+    let row = &result.output["runners"][0];
+    assert_eq!(row["projects_count"], 1);
+    assert!(row.get("projects").is_none());
+    assert!(row.get("project_inventory").is_none());
+    assert_eq!(row["job_concurrency"]["limit"], 4);
+    let offline = maintenance_call(
+        &runtime,
+        "list_runners",
+        json!({"status":"offline","summary_only":true}),
+    )
+    .await;
+    assert_eq!(offline.output["count"], 0);
+}
+
+#[tokio::test]
+async fn runner_listing_uses_active_aggregates_in_full_and_compact_modes() {
+    let runtime = test_runtime();
+    register_target_agent(&runtime, "special", vec![maintenance_project("main")], None).await;
+    let before = runtime
+        .runner_registry
+        .full_job_history_scan_count_for_test();
+    for summary_only in [false, true] {
+        let result = maintenance_call(
+            &runtime,
+            "list_runners",
+            json!({"client_id":"special","summary_only":summary_only}),
+        )
+        .await;
+        assert!(result.success, "{result:?}");
+        assert_eq!(result.output["runners"][0]["active_jobs"], 0);
+        assert_eq!(result.output["runners"][0]["job_concurrency"]["limit"], 4);
+    }
+    assert_eq!(
+        runtime
+            .runner_registry
+            .full_job_history_scan_count_for_test(),
+        before,
+        "list_runners never needs terminal Job history, even in full mode"
+    );
+}
+
+#[tokio::test]
+async fn unregister_batch_preview_and_invalid_inputs_never_dispatch() {
+    let runtime = test_runtime();
+    let oversized = runtime
+        .unregister_projects(
+            vec![webcodex_tool_contracts::tool_call::ProjectUnregisterInput {
+                project: format!("agent:special:{}", "x".repeat(513)),
+                expected_revision: format!("sha256:{}", "a".repeat(64)),
+            }],
+            true,
+            false,
+            None,
+        )
+        .await;
+    assert_eq!(
+        oversized.error.as_deref(),
+        Some("invalid_or_duplicate_project")
+    );
+    register_target_agent(&runtime, "special", vec![maintenance_project("main")], None).await;
+    let item = json!({"project":"agent:special:main","expected_revision":format!("sha256:{}","a".repeat(64))});
+    let preview = maintenance_call(
+        &runtime,
+        "unregister_projects",
+        json!({"items":[item.clone()]}),
+    )
+    .await;
+    assert!(preview.success, "{preview:?}");
+    assert_eq!(preview.output["dry_run"], true);
+    assert_eq!(preview.output["changed"], false);
+    assert_eq!(
+        preview.output["items"][0]["output"]["execution_checks_pending"],
+        true
+    );
+    let denied = maintenance_call(
+        &runtime,
+        "unregister_projects",
+        json!({"items":[item.clone()],"dry_run":false}),
+    )
+    .await;
+    assert!(!denied.success);
+    assert_eq!(denied.error.as_deref(), Some("confirmation_required"));
+    let duplicate = maintenance_call(
+        &runtime,
+        "unregister_projects",
+        json!({"items":[item.clone(),item],"dry_run":false,"confirm":true}),
+    )
+    .await;
+    assert!(!duplicate.success);
+    assert!(runtime
+        .runner_registry
+        .poll(crate::runner_protocol::RunnerPollRequest {
+            client_id: "special".into(),
+            runner_instance_id: "inst-special".into()
+        })
+        .await
+        .unwrap()
+        .is_none());
+    let present = maintenance_call(&runtime, "list_projects", json!({"client_id":"special"})).await;
+    assert_eq!(present.output["count"], 1);
+}
+
+#[tokio::test]
+async fn unregister_batch_uses_exact_per_item_cas_and_retains_partial_results() {
+    let runtime = test_runtime();
+    register_target_agent(
+        &runtime,
+        "special",
+        vec![
+            maintenance_project("one"),
+            maintenance_project("two"),
+            maintenance_project("three"),
+        ],
+        None,
+    )
+    .await;
+    let revision = format!("sha256:{}", "a".repeat(64));
+    let items = ["one", "two", "three"]
+        .map(|id| json!({"project":format!("agent:special:{id}"),"expected_revision":revision}));
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            maintenance_call(
+                &runtime,
+                "unregister_projects",
+                json!({"items":items,"dry_run":false,"confirm":true}),
+            )
+            .await
+        }
+    });
+    for (index, id) in ["one", "two", "three"].iter().enumerate() {
+        let request =
+            wait_for_runner_request_for_instance(&runtime, "special", "inst-special").await;
+        assert_eq!(request.kind, "project_lifecycle_unregister");
+        let webcodex_core::runner_operation::RunnerOperation::Project(operation) =
+            request.decode_operation().unwrap()
+        else {
+            panic!("expected typed Project operation")
+        };
+        let body: serde_json::Value = serde_json::from_str(&operation.payload).unwrap();
+        assert_eq!(body["project_id"], *id);
+        assert_eq!(body["expected_revision"], revision);
+        let response = if index == 1 {
+            json!({"error_code":"revision_conflict"})
+        } else {
+            json!({"outcome":"unregistered","changed":true,"revision":revision})
+        };
+        complete_patch_agent_request_for_instance(
+            &runtime,
+            "special",
+            "inst-special",
+            &request.request_id,
+            0,
+            &response.to_string(),
+            "",
+        )
+        .await;
+    }
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["changed"], true);
+    assert_eq!(result.output["items"][0]["success"], true);
+    assert_eq!(result.output["items"][1]["success"], false);
+    assert_eq!(result.output["items"][2]["success"], true);
+    let remaining =
+        maintenance_call(&runtime, "list_projects", json!({"client_id":"special"})).await;
+    assert_eq!(remaining.output["count"], 1);
+    assert_eq!(remaining.output["projects"][0]["id"], "agent:special:two");
+}
+
+#[tokio::test]
+async fn unregister_batch_uncertain_native_response_stops_without_replaying() {
+    let runtime = test_runtime();
+    register_target_agent(
+        &runtime,
+        "special",
+        vec![maintenance_project("one"), maintenance_project("two")],
+        None,
+    )
+    .await;
+    let items=["one","two"].map(|id|json!({"project":format!("agent:special:{id}"),"expected_revision":format!("sha256:{}","a".repeat(64))}));
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            maintenance_call(
+                &runtime,
+                "unregister_projects",
+                json!({"items":items,"dry_run":false,"confirm":true}),
+            )
+            .await
+        }
+    });
+    let request = wait_for_runner_request_for_instance(&runtime, "special", "inst-special").await;
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        "special",
+        "inst-special",
+        &request.request_id,
+        0,
+        "not a trustworthy native receipt",
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["outcome_unknown"], true);
+    assert_eq!(
+        result.output["items"][1]["error"],
+        "not_attempted_after_uncertain_outcome"
+    );
+    assert!(runtime
+        .runner_registry
+        .poll(crate::runner_protocol::RunnerPollRequest {
+            client_id: "special".into(),
+            runner_instance_id: "inst-special".into()
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn workbench_scopes_projects_by_runner_before_paging_and_never_selects_a_session() {
+    use webcodex_tool_contracts::tool_call::WebcodexResourceKind;
+    let runtime = test_runtime();
+    register_target_agent(
+        &runtime,
+        "special",
+        (0..160)
+            .map(|n| maintenance_project(&format!("main-{n}")))
+            .collect(),
+        None,
+    )
+    .await;
+    register_target_agent(&runtime, "sf", vec![maintenance_project("release")], None).await;
+    let empty = runtime
+        .open_webcodex_workbench(None, None, None, None)
+        .await;
+    assert!(empty.success, "{empty:?}");
+    assert_eq!(empty.output["runners"]["count"], 2);
+    assert_eq!(
+        empty.output["projects"]["items"].as_array().unwrap().len(),
+        0
+    );
+    assert!(empty.output["session_id"].is_null());
+    let scoped = runtime
+        .search_webcodex_resources(
+            WebcodexResourceKind::Project,
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+            Some("sf".into()),
+            None,
+        )
+        .await;
+    assert!(scoped.success, "{scoped:?}");
+    assert_eq!(scoped.output["total"], 1);
+    assert_eq!(scoped.output["items"][0]["_meta"]["client_id"], "sf");
+    assert_eq!(
+        scoped.output["items"][0]["_meta"]["git"]["freshness"],
+        "unverified"
+    );
+    let mismatch = runtime
+        .open_webcodex_workbench(
+            Some("agent:sf:release".into()),
+            None,
+            Some("special".into()),
+            None,
+        )
+        .await;
+    assert!(!mismatch.success);
+    assert_eq!(runtime.sessions.active_session_count_for_test(None), 0);
+    let session = runtime
+        .sessions
+        .start_session(Some("agent:special:main-0".into()), Some("existing".into()));
+    let wrong_session = runtime
+        .open_webcodex_workbench(
+            Some("agent:sf:release".into()),
+            Some(session.session_id),
+            Some("sf".into()),
+            None,
+        )
+        .await;
+    assert!(!wrong_session.success);
+    assert_eq!(runtime.sessions.active_session_count_for_test(None), 1);
 }

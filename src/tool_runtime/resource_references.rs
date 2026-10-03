@@ -123,8 +123,15 @@ impl ToolRuntime {
         &self,
         project: Option<String>,
         session: Option<String>,
+        client_id: Option<String>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        if client_id
+            .as_deref()
+            .is_some_and(|id| id.is_empty() || id.len() > 128 || id.chars().any(char::is_control))
+        {
+            return error("invalid_runner_selector");
+        }
         if session.is_some() && project.is_none() {
             return error("resource_project_required");
         }
@@ -140,6 +147,18 @@ impl ToolRuntime {
             }
             None => None,
         };
+        let project_runner = project
+            .as_deref()
+            .and_then(|id| crate::admin_project_lifecycle::parse_runtime_project(id).ok())
+            .map(|(runner, _)| runner);
+        if client_id
+            .as_ref()
+            .zip(project_runner.as_ref())
+            .is_some_and(|(given, actual)| given != actual)
+        {
+            return error("workspace_selection_mismatch");
+        }
+        let client_id = client_id.or(project_runner);
         let session = match session {
             Some(raw) => {
                 if super::kernel::check_runtime_tool_scope(auth, "read_session_summary").is_err() {
@@ -169,17 +188,37 @@ impl ToolRuntime {
             }
             None => None,
         };
-        let found = self
-            .search_webcodex_resources(
+        let runners = if super::kernel::check_runtime_tool_scope(auth, "list_runners").is_ok() {
+            self.list_runners_with_options(
+                auth,
+                super::runtime_info::ListRunnersOptions {
+                    summary_only: true,
+                    include_projects: Some(false),
+                    limit: Some(100),
+                    ..Default::default()
+                },
+            )
+            .await
+        } else {
+            error("runner_discovery_unavailable")
+        };
+        let found = if client_id.is_some() || project.is_some() {
+            self.search_webcodex_resources(
                 WebcodexResourceKind::Project,
                 None,
                 project.clone(),
                 None,
                 None,
                 None,
+                client_id.clone(),
                 auth,
             )
-            .await;
+            .await
+        } else if super::kernel::check_runtime_tool_scope(auth, "list_projects").is_ok() {
+            page(Vec::new(), 0, 0, 50, false)
+        } else {
+            error("project_discovery_unavailable")
+        };
         if project.is_some() && !found.success {
             return found;
         }
@@ -188,8 +227,14 @@ impl ToolRuntime {
         } else {
             json!({"items":[],"total":0,"offset":0,"limit":50,"next_offset":null,"list_truncated":true,"incomplete":"project_discovery_unavailable"})
         };
+        let runners = if runners.success {
+            runners.output
+        } else {
+            json!({"runners":[],"count":0,"truncated":true,"incomplete":"runner_discovery_unavailable"})
+        };
         ToolResult::ok(
-            json!({"project":project,"session_id":session,"projects":projects,"selection":"caller_must_choose_project_and_session"}),
+            json!({"client_id":client_id,"project":project,"session_id":session,
+            "runners":runners,"projects":projects,"selection":"caller_must_choose_runner_project_and_session"}),
         )
     }
 
@@ -250,8 +295,18 @@ impl ToolRuntime {
         session_id: Option<String>,
         offset: Option<usize>,
         limit: Option<usize>,
+        client_id: Option<String>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        if client_id
+            .as_deref()
+            .is_some_and(|id| id.is_empty() || id.len() > 128 || id.chars().any(char::is_control))
+        {
+            return error("invalid_runner_selector");
+        }
+        if client_id.is_some() && !matches!(kind, WebcodexResourceKind::Project) {
+            return error("runner_filter_requires_project_discovery");
+        }
         if query
             .as_ref()
             .is_some_and(|q| q.chars().count() > 200 || q.contains('\0'))
@@ -269,11 +324,12 @@ impl ToolRuntime {
                     .list_projects_with_options_cap(
                         auth,
                         super::projects::ListProjectsOptions {
-                            client_id: None,
+                            client_id,
                             project,
                             query: query.filter(|q| !q.trim().is_empty()),
                             limit: Some(SOURCE_LIMIT),
                             summary_only: true,
+                            include_git_summary: true,
                         },
                         SOURCE_LIMIT,
                     )
@@ -303,7 +359,7 @@ impl ToolRuntime {
                         incomplete = true;
                         continue;
                     };
-                    let meta = json!({"kind":"project","project":id,"project_ref":row["project_ref"],"connected":row["connected"],"enabled":row["enabled"],"active_jobs":row["active_jobs"]});
+                    let meta = json!({"kind":"project","project":id,"project_ref":row["project_ref"],"client_id":row["client_id"],"path":row["path"],"git":row["git"],"connected":row["connected"],"enabled":row["enabled"],"active_jobs":row["active_jobs"]});
                     items.push(link(
                         project_uri(id, root),
                         row["name"].as_str().unwrap_or(id),

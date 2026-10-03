@@ -23,6 +23,7 @@ async fn resource_reads_match_canonical_tool_and_work_without_apps_in_both_eras(
             None,
             None,
             None,
+            None,
         )
         .await;
     assert!(found.success);

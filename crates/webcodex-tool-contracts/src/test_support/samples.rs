@@ -237,6 +237,13 @@ fn generate_field(
             "run_id" => Some(json!("wc_agent_run_sample_1234")),
             "skill_id" => Some(json!("wc_skill_EREREREREREREREREREREQ")),
             "expected_definition_revision" => Some(json!("a".repeat(64))),
+            "expected_revision"
+                if schema.get("type").and_then(Value::as_str) == Some("string")
+                    && schema.get("pattern").and_then(Value::as_str)
+                        == Some("^sha256:[0-9A-Fa-f]{64}$") =>
+            {
+                Some(json!(format!("sha256:{}", "a".repeat(64))))
+            }
             "base_commit" | "head_commit" | "expected_head" => Some(json!("a".repeat(40))),
             _ => None,
         };

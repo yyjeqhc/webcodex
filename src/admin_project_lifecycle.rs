@@ -738,7 +738,7 @@ fn validate_common(
     Ok(())
 }
 
-fn validate_revision(value: &str) -> Result<(), ServiceResponse> {
+pub(crate) fn validate_revision(value: &str) -> Result<(), ServiceResponse> {
     if value.len() != 71
         || !value.starts_with("sha256:")
         || !value[7..].chars().all(|c| c.is_ascii_hexdigit())
@@ -748,7 +748,7 @@ fn validate_revision(value: &str) -> Result<(), ServiceResponse> {
     Ok(())
 }
 
-fn parse_runtime_project(value: &str) -> Result<(String, String), ServiceResponse> {
+pub(crate) fn parse_runtime_project(value: &str) -> Result<(String, String), ServiceResponse> {
     let rest = value
         .strip_prefix("agent:")
         .ok_or_else(|| api_error(400, "invalid_request"))?;

@@ -293,6 +293,7 @@ async fn server_issued_project_ref_crosses_real_project_scoped_dispatch_paths() 
     let listed = runtime
         .dispatch_with_auth(
             ToolCall::ListProjects {
+                include_git_summary: false,
                 client_id: None,
                 project: None,
                 query: None,

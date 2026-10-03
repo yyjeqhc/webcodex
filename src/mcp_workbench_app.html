@@ -12,11 +12,12 @@
 <body>
 <div class="card">
 <header><div><h1>WebCodex Workbench</h1><p class="muted">Browse work and choose references for your next message.</p></div><button id="refresh" type="button">Refresh</button></header>
-<div class="selection"><label for="projectSelect">Project<select id="projectSelect"><option value="">Choose a Project</option></select></label><label for="sessionSelect">Workflow Session<select id="sessionSelect"><option value="">Project overview · no Session selected</option></select></label><button id="sessionsMore" type="button" hidden>More Sessions</button></div>
+<div class="selection"><label for="runnerSelect">Runner<select id="runnerSelect"><option value="">Choose a Runner</option></select></label><label for="projectSelect">Project<select id="projectSelect"><option value="">Choose a Project</option></select></label><label for="sessionSelect">Workflow Session<select id="sessionSelect"><option value="">Project overview · no Session selected</option></select></label><button id="sessionsMore" type="button" hidden>More Sessions</button></div>
+<form id="runnerSearchForm" class="toolbar" style="padding:0 16px"><input id="runnerQuery" aria-label="Find Runners" placeholder="Find a Runner" maxlength="200"/><button id="runnerSearch" type="submit">Find Runners</button></form>
 <form id="projectSearchForm" class="toolbar" style="padding:0 16px"><input id="projectQuery" aria-label="Find Projects" placeholder="Find a Project" maxlength="200"/><button id="projectSearch" type="submit">Find Projects</button><button id="projectsMore" type="button" hidden>More Projects</button></form>
 <nav role="tablist" aria-label="Workbench areas"><button id="tabOverview" role="tab" aria-controls="panelOverview">Overview</button><button id="tabFiles" role="tab" aria-controls="panelFiles">Files</button><button id="tabGoals" role="tab" aria-controls="panelGoals">Goals</button><button id="tabArtifacts" role="tab" aria-controls="panelArtifacts">Artifacts</button></nav>
 <div class="body"><main class="main">
-<p id="selectionState" class="muted">Choose a Project to begin.</p>
+<p id="selectionState" class="muted">Choose a Runner to begin.</p><p id="targetSummary" class="muted"></p><button id="useContext" type="button" hidden>Use selected context</button>
 <section id="panelOverview" role="tabpanel" aria-labelledby="tabOverview"><h2>Project overview</h2><div id="overview" class="summary"></div><button id="projectReference" type="button" hidden>Add Project reference</button></section>
 <section id="panelFiles" role="tabpanel" aria-labelledby="tabFiles" hidden><h2>Project files</h2><p class="muted">Read a file to see a bounded preview.</p></section>
 <section id="panelGoals" role="tabpanel" aria-labelledby="tabGoals" hidden><h2>Your Goals</h2><p class="muted">Your Goals are shared across Projects.</p></section>
@@ -34,7 +35,38 @@
   const KINDS = { Files: "file", Goals: "goal", Artifacts: "artifact" };
   const MAX_JSON = 262144, MAX_PREVIEW = 24576, MAX_REFERENCE = 4096, MAX_REFERENCES = 12;
   let ready = false, disposed = false, rpcId = 0, scope = 0, listGeneration = 0, previewGeneration = 0;
-  let selectedProjectLink = null;
+  let selectedProjectLink = null, selectionCopy = "";
+  let runner = "", runners = [], runnerGeneration = 0, runnersLoaded = false;
+  const projectRunner = id => typeof id === "string" && /^agent:[^:]+:[^:]+$/.test(id) ? id.split(":")[1] : "";
+  const linkRunner = item => item?._meta?.client_id || projectRunner(item?._meta?.project);
+  function renderRunners() {
+    el("runnerSelect").replaceChildren(option("", "Choose a Runner"));
+    for (const item of runners) el("runnerSelect").append(option(item.client_id, item.client_id + " · " + (item.connected ? "online" : "offline")));
+    if (runner && !runners.some(item=>item.client_id===runner)) el("runnerSelect").append(option(runner,runner));
+    el("runnerSelect").value=runner;
+  }
+  function acceptRunners(output) {
+    if (!Array.isArray(output?.runners) || output.runners.length>100 || !output.runners.every(item=>object(item)&&bounded(item.client_id,128))) throw new Error("Invalid Runner inventory");
+    runners=output.runners;runnersLoaded=true;renderRunners();
+    if(output.truncated) el("status").textContent="Runner list is partial. Use Find Runners to narrow it.";
+  }
+  async function loadRunners() {
+    if (!ready || disposed) return;
+    const local=++runnerGeneration;
+    const query=Array.from(String(el("runnerQuery").value||"").trim()).slice(0,200).join("");
+    try {
+      const output=await tool("list_runners",{summary_only:true,include_projects:false,limit:100,...(query?{query}:{})},null);
+      if(disposed||local!==runnerGeneration)return;
+      acceptRunners(output);updateControls();
+    } catch(error){if(!disposed&&local===runnerGeneration)el("status").textContent=errorMessage(error);}
+  }
+  async function chooseRunner(value) {
+    clearScope();runner=value;project="";session="";selectedProjectLink=null;
+    projects=[];sessions=[];sessionNext=null;projectNext=null;projectGeneration++;projectSearchStarted=false;projectDiscoveryMessage="";
+    el("projectQuery").value="";el("query").value="";el("projectsMore").hidden=true;
+    renderRunners();renderProjects();updateControls();
+    if(ready&&runner)void loadProjects(false,true);
+  }
   let project = "", session = "", area = "Overview", projects = [], sessions = [], sessionNext = null;
   let launchInput = null, launchOutput = null, userSelected = false, projectSearchStarted = false;
   let projectNext = null, projectGeneration = 0, projectDiscoveryMessage = "";
@@ -81,7 +113,7 @@
   function renderProjects() {
     el("projectSelect").replaceChildren(option("", "Choose a Project"));
     const value = item => item._meta?.project || item._meta?.project_ref || item.uri;
-    for (const item of projects) el("projectSelect").append(option(value(item), item.title || item.name));
+    for (const item of projects.filter(item=>!runner||linkRunner(item)===runner)) el("projectSelect").append(option(value(item), (item.title || item.name)+(item._meta?.path ? " · "+item._meta.path : "")));
     const selected = projects.find(item => [item._meta?.project_ref,item._meta?.project,item.uri].includes(project));
     if (project && !selected) el("projectSelect").append(option(project, project));
     el("projectSelect").value = selected ? value(selected) : project;
@@ -95,6 +127,7 @@
     el("sessionsMore").hidden = sessionNext === null;
   }
   function clearScope() {
+    selectionCopy="";
     scope++; listGeneration++; previewGeneration++; overviewGeneration++;
     for (const [id, entry] of pending) if (entry.generation !== null) {
       clearTimeout(entry.timer); pending.delete(id); entry.reject(new Error("Selection changed"));
@@ -106,22 +139,28 @@
     el("more").hidden = true; stopRefresh();
   }
   function updateControls() {
-    el("projectSelect").disabled = !ready || disposed;
+    el("runnerSelect").disabled = !ready || disposed;
+    el("runnerSearch").disabled = !ready || disposed;
+    el("projectSelect").disabled = !ready || !runner || disposed;
     el("refresh").disabled = !ready || disposed;
-    el("projectSearch").disabled = !ready || disposed;
+    el("projectSearch").disabled = !ready || !runner || disposed;
     el("projectsMore").disabled = !ready || disposed;
     renderSessions();
     const validSelection = area === "Goals" || !!project && (area !== "Artifacts" || !!session);
     el("browser").hidden = area === "Overview" || !validSelection;
-    el("selectionState").textContent = area === "Goals" ? "Your Goals · across Projects" : !project ? projectDiscoveryMessage || "Choose a Project to begin." : area === "Artifacts" && !session ? "Choose a Workflow Session to browse its artifacts." : "Project · " + project + (session ? " · Session · " + session : " · No Session selected");
-    el("projectReference").hidden = !projectLink();
+    el("selectionState").textContent = area === "Goals" ? "Your Goals · across Projects" : !runner ? projectDiscoveryMessage || "Choose a Runner to begin." : !project ? projectDiscoveryMessage || "Choose a Project to begin." : area === "Artifacts" && !session ? "Choose a Workflow Session to browse its artifacts." : "Project · " + project + (session ? " · Session · " + session : " · No Session selected");
+    const selected=projectLink(), git=selected?._meta?.git;
+    el("targetSummary").textContent=project ? [runner,selected?._meta?.path,git?.branch,git?.head?.slice(0,8),git?.dirty===true?"changed":git?.dirty===false?"clean":"Git unknown",git?"Runner inventory · not freshly checked":""].filter(Boolean).join(" · ") : "";
+    el("useContext").hidden=!project;
+    el("useContext").disabled=!ready||disposed||contextBusy||queuedReferences>0;
+    el("projectReference").hidden = !selected;
     el("projectReference").textContent = acceptsReferences() ? "Add Project reference" : "Prepare Project reference text";
     el("projectReference").disabled = !ready || disposed;
   }
   function projectLink() { return projects.find(item => [item._meta?.project_ref,item._meta?.project,item.uri].includes(project)) || selectedProjectLink; }
   async function chooseProject(value, selectedSession = "") {
     if (disposed) return;
-    clearScope(); selectedProjectLink = projects.find(item => [item._meta?.project_ref,item._meta?.project,item.uri].includes(value)) || null; project = value; session = selectedSession; sessions = []; sessionNext = null;
+    clearScope(); selectedProjectLink = projects.find(item => [item._meta?.project_ref,item._meta?.project,item.uri].includes(value)) || null; project = value; runner = linkRunner(selectedProjectLink) || projectRunner(value) || runner; session = selectedSession; sessions = []; sessionNext = null; renderRunners();
     el("query").value = ""; renderProjects(); updateControls();
     if (!ready || !project && area !== "Goals") return;
     if (project) void loadSessions(false);
@@ -146,13 +185,14 @@
     return output;
   }
   async function loadProjects(append = false, force = false) {
-    if (!ready || projectSearchStarted && !force && !append || disposed || append && projectNext === null) return;
-    const local = ++projectGeneration, offset = append ? projectNext : 0;
+    if (!ready || !runner || projectSearchStarted && !force && !append || disposed || append && projectNext === null) return;
+    const local = ++projectGeneration, selectedRunner=runner, offset = append ? projectNext : 0;
     const query = Array.from(String(el("projectQuery").value || "").trim()).slice(0,200).join("");
     projectSearchStarted = true;
     try {
-      const output = validatePage(await tool("search_webcodex_resources", {kind:"project",offset,limit:100,...(query ? {query} : {})}, null), "project");
-      if (disposed || local !== projectGeneration) return;
+      const output = validatePage(await tool("search_webcodex_resources", {kind:"project",client_id:selectedRunner,offset,limit:100,...(query ? {query} : {})}, null), "project");
+      if (disposed || local !== projectGeneration || selectedRunner !== runner) return;
+      if(output.items.some(item=>linkRunner(item)!==selectedRunner))throw new Error("Project Runner selection mismatch");
       projects = append ? [...projects,...output.items].slice(0,500) : output.items;
       projectNext = projects.length < 500 && Number.isSafeInteger(output.next_offset) && output.next_offset > offset ? output.next_offset : null;
       el("projectsMore").hidden = projectNext === null;
@@ -182,11 +222,11 @@
     const latest = events.reduce((last,item) => !last || item.ended_at_ms > last.ended_at_ms ? item : last,null);
     return latest?.label || "No activity observed";
   }
-  async function loadOverview() {
+  async function loadOverview(automatic = false) {
     if (busyOverview || !project || document.hidden) return;
     const generation = scope, local = ++overviewGeneration; busyOverview = true;
     try {
-      const output = await tool("get_work_result_state", {project,...(session ? {session_id:session} : {})});
+      const output = await tool("get_work_result_state", {project,...(session ? {session_id:session} : {}),...(automatic?{automatic:true}:{})});
       if (disposed || generation !== scope || local !== overviewGeneration || area !== "Overview") return;
       const state = output.work_result;
       if (!object(state) || ![project,projectLink()?._meta?.project].filter(Boolean).includes(state.project) || session && state.session_id !== session) throw new Error("Work Result selection mismatch");
@@ -262,9 +302,10 @@
       el("previewMeta").textContent=item.uri+(output.version ? " · Version " + output.version : "")+(output.truncated ? " · Partial content" : "");
     } catch(error) { if (!disposed && generation===scope && local===previewGeneration) el("previewContent").textContent=errorMessage(error); }
   }
-  const blockUri = block => block?.type === "resource_link" ? block.uri : block?.type === "resource" ? block.resource?.uri : block?.type === "text" ? /^WebCodex reference\nURI: ([^\n]+)\n/.exec(block.text || "")?.[1] : null;
+  const blockUri = block => block?.type === "resource_link" ? block.uri : block?.type === "resource" ? block.resource?.uri : block?.type === "text" && /^WebCodex (?:reference|selected context)\n/.test(block.text || "") ? /^URI: ([^\n]+)$/m.exec(block.text)?.[1] : null;
   function acceptsReferences() { return ["resourceLink","resource","text"].some(key=>object(modalities[key])); }
   function renderReferences() {
+    el("useContext").disabled=!ready||!project||disposed||contextBusy||queuedReferences>0;
     el("references").replaceChildren();
     for (const block of content) {
       const node=document.createElement("div"); node.className="row";
@@ -272,9 +313,9 @@
       const remove=document.createElement("button"); remove.type="button"; remove.textContent="Remove"; remove.disabled=contextBusy || queuedReferences > 0 || disposed; remove.onclick=()=>void queueContextAction(()=>updateContext(content.filter(item=>item!==block)));
       node.append(name,remove);el("references").append(node);
     }
-    el("copyLabel").hidden=acceptsReferences();
-    el("referenceHint").textContent=el("copyLabel").hidden ? "Add references to the model context for your next message." : "This Host does not accept references. Choose resources, then copy the bounded text below.";
-    if (!el("copyLabel").hidden) el("referenceText").value=content.map(block=>block.text || blockUri(block)).join("\n\n");
+    el("copyLabel").hidden=acceptsReferences() && !selectionCopy;
+    el("referenceHint").textContent=selectionCopy ? "This Host cannot attach the selected Session context. Copy the exact selection below." : el("copyLabel").hidden ? "Add references to the model context for your next message." : "This Host does not accept references. Choose resources, then copy the bounded text below.";
+    if (!el("copyLabel").hidden) el("referenceText").value=selectionCopy || content.map(block=>block.text || blockUri(block)).join("\n\n");
     updateControls();
   }
   async function updateContext(next) {
@@ -328,6 +369,30 @@
     }
     if (!contextBusy && !content.some(existing=>blockUri(existing)===item.uri)) await updateContext([...content,block]);
   }
+  async function useSelectedContext() {
+    if(!ready||!project||disposed)return;
+    const generation=scope, selected=projectLink(), selectedUri=selected?.uri;
+    const requested={client_id:runner,project:selected?._meta?.project_ref || project,...(session?{session_id:session}:{})};
+    await queueContextAction(async()=>{
+      const verified=await tool("open_webcodex_workbench",requested,generation);
+      if(disposed||generation!==scope)return;
+      if(verified.client_id!==runner||verified.project!==project||String(verified.session_id||"")!==session)throw new Error("Context selection mismatch");
+      const links=validatePage(verified.projects,"project").items;
+      const link=links.find(item=>item._meta?.project===project);
+      if(!link)throw new Error("Selected Project is no longer available");
+      if(selectedUri && selectedUri!==link.uri)throw new Error("Selected Project root changed; select it again before attaching context");
+      const text="WebCodex selected context\nRunner: "+runner+"\nProject: "+project+"\nProject selector: "+(link._meta?.project_ref||project)+"\nPath: "+(link._meta?.path||"")+"\nWorkflow Session: "+(session||"none selected; do not infer one")+"\nURI: "+link.uri+"\nSelection is context only; re-authorize each action. It does not start or resume work.";
+      if(!object(modalities.text)&&!object(modalities.resource)) {
+        selectionCopy=text;el("copyLabel").hidden=false;el("referenceText").value=text;
+        el("referenceStatus").textContent="Copy this exact context into your next message; Host context was not changed.";
+        return;
+      }
+      selectionCopy="";
+      const block=object(modalities.text)?{type:"text",text}:{type:"resource",resource:{uri:link.uri,mimeType:"text/plain",text}};
+      const previous=content.filter(item=>!(item.text||item.resource?.text||"").startsWith("WebCodex selected context\n"));
+      await updateContext([...previous,block]);
+    },generation);
+  }
   function syncContext(hostContext) {
     if (!contextAdapter || !object(hostContext) || !("openai/modelContext" in hostContext)) return;
     const state=hostContext["openai/modelContext"];
@@ -341,23 +406,28 @@
   function stopRefresh() { if (refreshTimer !== null) clearTimeout(refreshTimer); refreshTimer=null; }
   function scheduleRefresh() {
     stopRefresh();
-    if (ready && !disposed && !document.hidden && project && area === "Overview") refreshTimer=setTimeout(()=>{refreshTimer=null;void loadOverview();},10000);
+    if (ready && !disposed && !document.hidden && project && area === "Overview") refreshTimer=setTimeout(()=>{refreshTimer=null;void loadOverview(true);},10000);
   }
   function applyLaunch() {
     if (!ready || userSelected || !launchInput && !launchOutput) return;
+    const launchRunner=launchOutput?.client_id || launchInput?.client_id || "";
+    if(bounded(launchRunner,128)) {runner=launchRunner;renderRunners();}
     const selected=launchOutput?.project || launchInput?.project || "";
     const selectedSession=launchOutput?.session_id || launchInput?.session_id || "";
     if (bounded(selected,4096)) {
       if (project !== selected || session !== selectedSession) void chooseProject(selected,bounded(selectedSession,256) ? selectedSession : "");
     }
-    else {updateControls();if(projectDiscoveryMessage)el("status").textContent=projectDiscoveryMessage;if (!projects.length) void loadProjects();}
+    else {updateControls();if(projectDiscoveryMessage)el("status").textContent=projectDiscoveryMessage;if (!runnersLoaded) void loadRunners();if (runner && !projects.length) void loadProjects();}
   }
   function acceptResult(result) {
     try {
       const output=envelope(result);
       if (!output.success) throw new Error(typeof output.error === "string" ? output.error : "Launcher failed");
       if (!object(output.output)) throw new Error("Invalid launcher output");
+      if(userSelected)return;
       launchOutput=output.output;
+      if(output.output.runners)acceptRunners(output.output.runners);
+      if(output.output.client_id){runner=output.output.client_id;renderRunners();}
       if (output.output.projects) {const page=validatePage(output.output.projects,"project");projects=page.items;projectDiscoveryMessage=page.incomplete === "project_discovery_unavailable" ? "Project discovery unavailable. Your Goals can still be browsed." : page.list_truncated || page.incomplete ? "Project list is partial. Use Find Projects to narrow the list." : "";projectGeneration++;projectSearchStarted=true;projectNext=Number.isSafeInteger(page.next_offset) && page.next_offset > 0 ? page.next_offset : null;el("projectsMore").hidden=projectNext===null;renderProjects();}
       updateControls();applyLaunch();
     } catch(error) {if (!disposed) {el("status").textContent=errorMessage(error); if (ready && !project) void loadProjects();} }
@@ -374,18 +444,21 @@
     if (pending.has(msg.id)) {const entry=pending.get(msg.id);pending.delete(msg.id);clearTimeout(entry.timer);msg.error ? entry.reject(new Error(String(msg.error.message || "Host error"))) : entry.resolve(msg.result);return;}
     if (msg.method === "ui/notifications/tool-input") {
       const args=msg.params?.arguments;
-      if (!object(args) || args.project !== undefined && !bounded(args.project,4096) || args.session_id !== undefined && !bounded(args.session_id,256) || args.session_id && !args.project) {el("status").textContent="Invalid launcher selection.";return;}
+      if (!object(args) || args.client_id !== undefined && !bounded(args.client_id,128) || args.project !== undefined && !bounded(args.project,4096) || args.session_id !== undefined && !bounded(args.session_id,256) || args.session_id && !args.project) {el("status").textContent="Invalid launcher selection.";return;}
       launchInput=args;applyLaunch();
     } else if (msg.method === "ui/notifications/tool-result") acceptResult(msg.params);
     else if (msg.method === "ui/notifications/host-context-changed") syncContext(msg.params);
     else if (msg.method === "ui/resource-teardown") {teardown();if ("id" in msg) parent.postMessage({jsonrpc:"2.0",id:msg.id,result:{}},"*");}
   });
+  el("runnerSelect").onchange=()=>{userSelected=true;void chooseRunner(el("runnerSelect").value);};
+  el("runnerSearchForm").onsubmit=event=>{event.preventDefault();void loadRunners();};
+  el("useContext").onclick=()=>void useSelectedContext();
   el("projectSelect").onchange=()=>{userSelected=true;void chooseProject(el("projectSelect").value);};
   el("sessionSelect").onchange=()=>{userSelected=true;chooseSession(el("sessionSelect").value);};
   el("sessionsMore").onclick=()=>void loadSessions(true);
   el("projectSearchForm").onsubmit=event=>{event.preventDefault();void loadProjects(false,true);};
   el("projectsMore").onclick=()=>void loadProjects(true);
-  el("refresh").onclick=()=>{if(area === "Goals"){void loadArea(false);}else if(project) {void loadSessions(false);void loadArea(false);}else{projectSearchStarted=false;void loadProjects();}};
+  el("refresh").onclick=()=>{if(area === "Goals"){void loadArea(false);}else if(project) {void loadSessions(false);void loadArea(false);}else{projectSearchStarted=false;if(runner)void loadProjects();else void loadRunners();}};
   el("more").onclick=()=>void loadList(true);
   el("searchForm").onsubmit=event=>{event.preventDefault();void loadList(false);};
   el("projectReference").onclick=()=>{const item=projectLink();if(item)void addReference(item);};
@@ -397,7 +470,8 @@
   addEventListener("visibilitychange",()=>{stopRefresh();if(!disposed && ready && !document.hidden && (project || area === "Goals"))void loadArea(false);});
   addEventListener("pagehide",teardown,{once:true});addEventListener("beforeunload",teardown,{once:true});
   el("projectQuery").value="";
-  selectArea("Overview");renderProjects();renderReferences();
+  el("runnerQuery").value="";
+  selectArea("Overview");renderRunners();renderProjects();renderReferences();
   rpc("ui/initialize",{protocolVersion:"2026-01-26",appInfo:{name:"webcodex-workbench",title:"WebCodex Workbench",version:"1.0.0"},appCapabilities:{}}).then(result=>{
     if (disposed) return;
     if (!object(result) || result.protocolVersion !== "2026-01-26") throw new Error("Unsupported Host protocol");

@@ -6,7 +6,9 @@ import { project, session_id, baseState } from "./work_result_app_fixture.mjs";
 const projectUri = "webcodex-resource://project/YWdlbnQ6ZGVtbw/cm9vdA";
 const fileUri = "webcodex-resource://file/YWdlbnQ6ZGVtbw/cm9vdA/c3JjL2EucnM";
 const secondProject = "agent:other:project";
-const projectItem = { type:"resource_link", uri:projectUri, name:project, title:"Demo Project", _meta:{kind:"project",project} };
+const runnerId = project.split(":")[1];
+const runnerPage = {runners:[{client_id:runnerId,connected:true},{client_id:"other",connected:false}],count:2,truncated:false};
+const projectItem = { type:"resource_link", uri:projectUri, name:project, title:"Demo Project", _meta:{kind:"project",project,client_id:runnerId,path:"/repo/demo"} };
 const fileItem = { type:"resource_link", uri:fileUri, name:"src/a.rs", description:"Rust source", _meta:{kind:"file",project,path:"src/a.rs"} };
 const page = (items = [], next_offset = null) => ({items,offset:0,limit:50,next_offset});
 const contentOnly = output => ({ content:[{type:"text",text:JSON.stringify({success:true,output})}] });
@@ -19,7 +21,7 @@ async function initialize(view, modalities = {}, context = undefined, extension 
 async function launch(modalities = {}) {
   const view = app("mcp_workbench_app.html");
   view.toolInput({});
-  view.toolResult({projects:page([projectItem])});
+  view.toolResult({runners:runnerPage,client_id:runnerId,projects:page([projectItem])});
   await initialize(view,modalities);
   return view;
 }
@@ -39,12 +41,14 @@ const rowActions = view => view.nodes.rows.children[0].children[1].children;
 for (const order of ["input-result-init","result-init-input","init-input-result"]) test(`empty launcher needs an explicit Project even for one result: ${order}`,async()=>{
   const view=app("mcp_workbench_app.html");
   const input=()=>view.toolInput({});
-  const result=()=>view.toolResult({projects:page([projectItem])});
+  const result=()=>view.toolResult({runners:runnerPage,projects:page([])});
   for (const step of order.split("-")) { if(step==="input") input(); else if(step==="result") result(); else await initialize(view); }
   await flush();
   assert.equal(view.nodes.projectSelect.value,"");
-  assert.equal(view.nodes.projectSelect.children.length,2);
-  assert.equal(view.nodes.selectionState.textContent,"Choose a Project to begin.");
+  assert.equal(view.nodes.projectSelect.children.length,1);
+  assert.equal(view.nodes.runnerSelect.value,"");
+  assert.equal(view.nodes.projectSelect.disabled,true);
+  assert.equal(view.nodes.selectionState.textContent,"Choose a Runner to begin.");
   assert.equal(view.calls("get_work_result_state").length,0);
   assert.equal(view.calls("list_sessions").length,0);
   assert.equal(readRequests(view).length,0);
@@ -54,9 +58,12 @@ for (const order of ["input-result-init","result-init-input","init-input-result"
 test("empty launch recovers missing structuredContent with bounded JSON text",async()=>{
   const view=app("mcp_workbench_app.html");
   view.toolInput({});await initialize(view);
+  await view.reply(view.calls("list_runners")[0],contentOnly(runnerPage));
+  view.nodes.runnerSelect.value=runnerId;view.nodes.runnerSelect.onchange();await flush();
   const request=search(view,"project")[0];
+  assert.equal(request.params.arguments.client_id,runnerId);
   await view.reply(request,contentOnly(page([projectItem])));
-  assert.equal(view.nodes.projectSelect.children[1].textContent,"Demo Project");
+  assert.equal(view.nodes.projectSelect.children[1].textContent,"Demo Project · /repo/demo");
   assert.equal(view.nodes.projectSelect.value,"");
   await selectProject(view);
   await view.reply(view.calls("get_work_result_state")[0],contentOnly({work_result:baseState}));
@@ -331,11 +338,11 @@ test("malformed, oversized and unsuccessful tool results surface protocol errors
 
 test("Project chooser supports narrowed search and paging without selecting a result",async()=>{
   const view=app("mcp_workbench_app.html");view.toolInput({});
-  view.toolResult({projects:page([projectItem],100)});await initialize(view);
+  view.toolResult({client_id:runnerId,runners:runnerPage,projects:page([projectItem],100)});await initialize(view);
   assert.equal(view.nodes.projectsMore.hidden,false);
   view.nodes.projectsMore.onclick();await flush();
   assert.equal(search(view,"project")[0].params.arguments.offset,100);
-  await view.reply(search(view,"project")[0],toolResult(page([{...projectItem,uri:"webcodex-resource://project/b3RoZXI/cm9vdA",name:secondProject,_meta:{kind:"project",project:secondProject}}])));
+  await view.reply(search(view,"project")[0],toolResult(page([{...projectItem,uri:"webcodex-resource://project/b3RoZXI/cm9vdA",name:"Second Project",_meta:{kind:"project",project:`agent:${runnerId}:second`,client_id:runnerId}}])));
   assert.equal(view.nodes.projectSelect.children.length,3);
   assert.equal(view.nodes.projectSelect.value,"");
   view.nodes.projectQuery.value="汉".repeat(250);
@@ -469,4 +476,91 @@ test("text reference added after an earlier preview re-reads current resource co
   assert.match(refs(view)[0].params.content[0].text,/Latest reference content/);
   assert.doesNotMatch(refs(view)[0].params.content[0].text,/Previous content/);
   await view.reply(refs(view)[0],{});
+});
+
+
+test("Runner switch clears Project, Session and old results before scoped discovery",async()=>{
+  const view=await launch();await selectProject(view);
+  view.nodes.sessionSelect.value=session_id;view.nodes.sessionSelect.onchange();await flush();
+  const oldOverview=view.calls("get_work_result_state").at(-1);
+  view.nodes.runnerSelect.value="other";view.nodes.runnerSelect.onchange();await flush();
+  assert.equal(view.nodes.projectSelect.value,"");assert.equal(view.nodes.sessionSelect.value,"");
+  assert.equal(view.nodes.overview.children.length,0);
+  const request=search(view,"project").at(-1);
+  assert.equal(request.params.arguments.client_id,"other");
+  await view.reply(oldOverview,toolResult({work_result:baseState}));
+  assert.equal(view.nodes.overview.children.length,0);
+  await view.reply(request,toolResult(page([projectItem])));
+  assert.match(view.nodes.status.textContent,/mismatch/);
+  assert.equal(view.nodes.projectSelect.children.length,1);
+  view.toolResult({client_id:runnerId,project,session_id,runners:runnerPage,projects:page([projectItem])});
+  assert.equal(view.nodes.runnerSelect.value,"other");assert.equal(view.nodes.projectSelect.value,"");
+});
+
+test("background overview reuses bounded observations but explicit refresh remains fresh",async()=>{
+  const view=await launch();await selectProject(view);
+  await view.reply(view.calls("list_sessions")[0],toolResult({sessions:[]}));
+  await view.reply(view.calls("get_work_result_state")[0],toolResult({work_result:baseState}));
+  await view.fireTimers(10000);
+  const poll=view.calls("get_work_result_state").at(-1);
+  assert.equal(poll.params.arguments.automatic,true);
+  await view.reply(poll,toolResult({work_result:baseState}));
+  view.nodes.refresh.onclick();await flush();
+  assert.equal(view.calls("get_work_result_state").at(-1).params.arguments.automatic,undefined);
+});
+
+test("selected context is reauthorized and attached only after explicit click and Host acknowledgement",async()=>{
+  const view=await launch({text:{}});await selectProject(view);
+  view.nodes.sessionSelect.value=session_id;view.nodes.sessionSelect.onchange();await flush();
+  assert.equal(refs(view).length,0);
+  view.nodes.useContext.onclick();await flush();
+  const check=view.calls("open_webcodex_workbench").at(-1);
+  assert.deepEqual({...check.params.arguments},{client_id:runnerId,project,session_id});
+  await view.reply(check,toolResult({client_id:runnerId,project,session_id,projects:page([projectItem])}));
+  assert.equal(refs(view).length,1);
+  assert.equal(view.nodes.references.children.length,0);
+  assert.match(refs(view)[0].params.content[0].text,new RegExp(session_id));
+  await view.reply(refs(view)[0],{});
+  assert.equal(view.nodes.references.children.length,1);
+  assert.equal(view.calls("work_on_project").length,0);
+  assert.equal(view.sent.filter(request=>request.method==="ui/message").length,0);
+});
+
+test("resourceLink-only Host receives copyable exact Session context, not a false attachment claim",async()=>{
+  const view=await launch({resourceLink:{}});await selectProject(view);
+  view.nodes.useContext.onclick();await flush();
+  await view.reply(view.calls("open_webcodex_workbench").at(-1),toolResult({client_id:runnerId,project,session_id:null,projects:page([projectItem])}));
+  assert.equal(refs(view).length,0);
+  assert.equal(view.nodes.copyLabel.hidden,false);
+  assert.match(view.nodes.referenceText.value,/none selected; do not infer one/);
+  assert.match(view.nodes.referenceStatus.textContent,/Host context was not changed/);
+});
+
+test("revoked selection and late context validation cannot inject stale model context",async()=>{
+  const view=await launch({text:{}});await selectProject(view);
+  view.nodes.useContext.onclick();await flush();
+  const check=view.calls("open_webcodex_workbench").at(-1);
+  view.nodes.runnerSelect.value="other";view.nodes.runnerSelect.onchange();await flush();
+  await view.reply(check,toolResult({client_id:runnerId,project,session_id:null,projects:page([projectItem])}));
+  assert.equal(refs(view).length,0);
+});
+
+
+test("selected context text survives Host remount and canonical removal",async()=>{
+  const declaration={type:"text",text:"WebCodex selected context\nRunner: "+runnerId+"\nProject: "+project+"\nWorkflow Session: "+session_id+"\nURI: "+projectUri+"\nSelection is context only."};
+  const view=app("mcp_workbench_app.html");view.toolInput({});view.toolResult({runners:runnerPage,projects:page([])});
+  await initialize(view,{text:{}},{updateId:"restored-selection",content:[declaration]},true);
+  assert.equal(view.nodes.references.children.length,1);
+  assert.equal(refs(view).length,0);
+  view.notification("ui/notifications/host-context-changed",{"openai/modelContext":{updateId:"removed-selection",content:[]}});await flush();
+  assert.equal(view.nodes.references.children.length,0);
+});
+
+test("selected context rejects a replaced Project root instead of retargeting the old choice",async()=>{
+  const view=await launch({text:{}});await selectProject(view);
+  view.nodes.useContext.onclick();await flush();
+  const replaced={...projectItem,uri:projectUri+"changed"};
+  await view.reply(view.calls("open_webcodex_workbench").at(-1),toolResult({client_id:runnerId,project,session_id:null,projects:page([replaced])}));
+  assert.equal(refs(view).length,0);
+  assert.match(view.nodes.referenceStatus.textContent,/root changed/);
 });

@@ -20,6 +20,9 @@ pub(crate) struct ListRunnersOptions {
     pub(crate) client_ids: Option<Vec<String>>,
     pub(crate) include_projects: Option<bool>,
     pub(crate) summary_only: bool,
+    pub(crate) query: Option<String>,
+    pub(crate) status: Option<webcodex_tool_contracts::tool_call::RunnerStatusFilter>,
+    pub(crate) limit: Option<usize>,
 }
 
 /// Lightweight runtime metadata injected into `ToolRuntime` so observability
@@ -184,11 +187,34 @@ impl ToolRuntime {
             }
         }
 
+        if options
+            .query
+            .as_ref()
+            .is_some_and(|q| q.chars().count() > 200 || q.chars().any(char::is_control))
+        {
+            return ToolResult::err("invalid_runner_query");
+        }
+        let query = options
+            .query
+            .as_deref()
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(str::to_lowercase);
         let access = crate::runner_http::runner_access_from_auth(auth);
-        let mut clients = self
-            .runner_registry
-            .list_runners_for_auth(access.as_ref())
-            .await;
+        let (mut clients, project_counts) = if options.summary_only {
+            let snapshot = self
+                .runner_registry
+                .console_registry_snapshot_for_auth(access.as_ref(), true)
+                .await;
+            (snapshot.runners, Some(snapshot.projects_by_runner))
+        } else {
+            (
+                self.runner_registry
+                    .list_runners_for_auth(access.as_ref())
+                    .await,
+                None,
+            )
+        };
         clients.sort_by(|a, b| a.client_id.cmp(&b.client_id));
         clients.retain(|client| {
             if let Some(expected) = options.client_id.as_deref() {
@@ -201,23 +227,39 @@ impl ToolRuntime {
             }
             true
         });
-        let mut runner_jobs = self
-            .runner_registry
-            .list_all_jobs_for_auth(access.as_ref())
-            .await;
-        if options.client_id.is_some() || options.client_ids.is_some() {
-            runner_jobs.retain(|job| {
-                clients
-                    .iter()
-                    .any(|client| client.client_id == job.client_id)
-            });
+        clients.retain(|client| {
+            use webcodex_tool_contracts::tool_call::RunnerStatusFilter;
+            let status_matches = match options.status {
+                None | Some(RunnerStatusFilter::Any) => true,
+                Some(RunnerStatusFilter::Online) => client.connected,
+                Some(RunnerStatusFilter::Offline) => !client.connected,
+                Some(RunnerStatusFilter::Stale) => client.status == "stale",
+            };
+            status_matches
+                && query.as_deref().is_none_or(|q| {
+                    std::iter::once(client.client_id.as_str())
+                        .chain(client.display_name.as_deref())
+                        .chain(client.hostname.as_deref())
+                        .any(|text| text.to_lowercase().contains(q))
+                })
+        });
+        let matched_count = clients.len();
+        if let Some(limit) = options.limit {
+            clients.truncate(limit.clamp(1, 100));
         }
+        let truncated = clients.len() < matched_count;
+        // Both projections need active aggregates, not historical Job bodies.
+        let active_counts = self
+            .runner_registry
+            .active_job_summary_by_runner_for_auth(access.as_ref())
+            .await;
         let now = chrono::Utc::now().timestamp();
         let include_projects = options.include_projects.unwrap_or(true);
         let runners: Vec<Value> = if options.summary_only {
             clients
                 .iter()
                 .map(|client| {
+                    let counts = active_counts.get(&client.client_id);
                     let mut value = json!({
                         "client_id": client.client_id,
                         "runner_instance_id": client.runner_instance_id,
@@ -228,12 +270,11 @@ impl ToolRuntime {
                         "transport": client.transport,
                         "last_seen_age_secs": last_seen_age_secs(client, now),
                         "pending_requests": client.pending_requests,
-                        "projects_count": enabled_projects_count(client),
-                        "project_inventory": client.project_inventory,
-                        "active_jobs": active_jobs_for_client(&runner_jobs, &client.client_id),
-                        "job_concurrency": job_concurrency_for_client(client, &runner_jobs),
-                        "build": client.build,
+                        "projects_count": project_counts.as_ref().and_then(|counts|counts.get(&client.client_id)).copied().unwrap_or(0),
+                        "active_jobs": counts.map_or(0, |counts|counts.active),
+                        "job_concurrency": {"limit":client.job_concurrency_limit,"running":counts.map_or(0,|counts|counts.running),"queued":counts.map_or(0,|counts|counts.queued)},
                         "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
+                        "build": client.build,
                     });
                     if let Some(availability) = client.computer_session_availability {
                         value["computer_session_availability"] = json!(availability);
@@ -245,6 +286,7 @@ impl ToolRuntime {
             clients
                 .iter()
                 .map(|client| {
+                    let counts = active_counts.get(&client.client_id);
                     let mut value = json!({
                         "client_id": client.client_id,
                         "runner_instance_id": client.runner_instance_id,
@@ -261,8 +303,10 @@ impl ToolRuntime {
                         "pending_requests": client.pending_requests,
                         "projects_count": enabled_projects_count(client),
                         "project_inventory": client.project_inventory,
-                        "active_jobs": active_jobs_for_client(&runner_jobs, &client.client_id),
-                        "job_concurrency": job_concurrency_for_client(client, &runner_jobs),
+                        "active_jobs": counts.map_or(0, |counts| counts.active),
+                        "job_concurrency": {"limit":client.job_concurrency_limit,
+                            "running":counts.map_or(0,|counts|counts.running),
+                            "queued":counts.map_or(0,|counts|counts.queued)},
                         "build": client.build,
                         "capabilities": client.capabilities,
                         "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
@@ -298,6 +342,8 @@ impl ToolRuntime {
                     "stale": stale,
                 },
                 "count": clients.len(),
+                "matched_count": matched_count,
+                "truncated": truncated,
             }));
         }
         ToolResult::ok(json!({
@@ -305,6 +351,8 @@ impl ToolRuntime {
             "runners": runners,
             "summary": runner_health_summary(&clients),
             "count": clients.len(),
+            "matched_count": matched_count,
+            "truncated": truncated,
         }))
     }
 

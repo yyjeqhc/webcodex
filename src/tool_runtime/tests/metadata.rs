@@ -184,6 +184,7 @@ fn runtime_status_call() -> ToolCall {
 
 fn list_projects_call() -> ToolCall {
     ToolCall::ListProjects {
+        include_git_summary: false,
         client_id: None,
         project: None,
         query: None,
@@ -194,6 +195,9 @@ fn list_projects_call() -> ToolCall {
 
 fn list_runners_call() -> ToolCall {
     ToolCall::ListRunners {
+        query: None,
+        status: None,
+        limit: None,
         client_id: None,
         client_ids: None,
         include_projects: None,
@@ -2172,6 +2176,8 @@ async fn tool_manifest_keeps_list_compact_and_exact_contract_bounded() {
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
+            query: None,
+            limit: None,
             tool_name: None,
             category: None,
             intent: None,
@@ -2199,6 +2205,8 @@ async fn tool_manifest_keeps_list_compact_and_exact_contract_bounded() {
 
     let exact = runtime
         .dispatch(ToolCall::ToolManifest {
+            query: None,
+            limit: None,
             tool_name: Some("run_script".to_string()),
             category: None,
             intent: None,
@@ -2218,6 +2226,8 @@ async fn tool_manifest_exact_route_is_parser_ready_for_direct_and_gateway_tools(
 
     let direct = runtime
         .dispatch(ToolCall::ToolManifest {
+            query: None,
+            limit: None,
             tool_name: Some("run_shell".to_string()),
             category: None,
             intent: None,
@@ -2250,6 +2260,8 @@ async fn tool_manifest_exact_route_is_parser_ready_for_direct_and_gateway_tools(
 
     let gateway = runtime
         .dispatch(ToolCall::ToolManifest {
+            query: None,
+            limit: None,
             tool_name: Some("apply_patch".to_string()),
             category: None,
             intent: None,
@@ -2343,6 +2355,8 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
     let runtime = test_runtime();
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
+            query: None,
+            limit: None,
             tool_name: None,
             category: None,
             intent: None,

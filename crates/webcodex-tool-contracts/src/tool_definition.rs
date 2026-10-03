@@ -1360,5 +1360,5 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[model_spec(
         ToolActivityPresentation::Support,
         ToolActivityInteraction::NonMeaningful,
     ),
-    "List runtime tools. Full output includes schemas and may be large; use summary_only with category, features, or limit for bounded runtime discovery.",
+    "List tool summaries by category/features; keyword or exact contract lookup uses read_tool_manifest. Use summary_only=true to avoid full schema expansion; limit bounds the returned tools.",
 )];

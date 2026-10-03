@@ -2274,6 +2274,7 @@ pub(super) async fn handle_call(
                     None,
                     None,
                     Some(10),
+                    None,
                     auth,
                 )
                 .await;

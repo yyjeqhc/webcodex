@@ -11,12 +11,30 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         match call {
+            ToolCall::ResolveWorkspace {
+                client_id,
+                path,
+                query,
+                limit,
+            } => {
+                self.resolve_workspace(client_id, path, query, limit, auth)
+                    .await
+            }
+            ToolCall::UnregisterProjects {
+                items,
+                dry_run,
+                confirm,
+            } => {
+                self.unregister_projects(items, dry_run, confirm, auth)
+                    .await
+            }
             ToolCall::ListProjects {
                 client_id,
                 project,
                 query,
                 limit,
                 summary_only,
+                include_git_summary,
             } => {
                 self.list_projects_with_options(
                     auth,
@@ -26,6 +44,7 @@ impl ToolRuntime {
                         query,
                         limit,
                         summary_only,
+                        include_git_summary,
                     },
                 )
                 .await

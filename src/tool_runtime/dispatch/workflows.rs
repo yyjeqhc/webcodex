@@ -120,7 +120,9 @@ impl ToolRuntime {
             call @ (ToolCall::SessionHandoffSummary { .. }
             | ToolCall::SessionHandoffState { .. }) => self.dispatch_handoff_tool(call, auth).await,
 
-            call @ (ToolCall::ListProjects { .. }
+            call @ (ToolCall::ResolveWorkspace { .. }
+            | ToolCall::UnregisterProjects { .. }
+            | ToolCall::ListProjects { .. }
             | ToolCall::RegisterProject { .. }
             | ToolCall::UnregisterProject { .. }
             | ToolCall::CreateProject { .. }) => self.dispatch_project_tool(call, auth).await,

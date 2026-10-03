@@ -30,6 +30,9 @@ impl ToolRuntime {
                 client_ids,
                 include_projects,
                 summary_only,
+                query,
+                status,
+                limit,
             } => {
                 self.list_runners_with_options(
                     auth,
@@ -38,6 +41,9 @@ impl ToolRuntime {
                         client_ids,
                         include_projects,
                         summary_only,
+                        query,
+                        status,
+                        limit,
                     },
                 )
                 .await
@@ -54,6 +60,8 @@ impl ToolRuntime {
                 self.read_tool_trace_diagnostic(call, auth).await
             }
             ToolCall::ToolManifest {
+                query,
+                limit,
                 tool_name,
                 category,
                 intent,
@@ -66,6 +74,8 @@ impl ToolRuntime {
                     intent,
                     include_recommended_flows,
                     include_risk_summary,
+                    query,
+                    limit,
                     protocol_capabilities,
                 )
                 .await

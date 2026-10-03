@@ -134,7 +134,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolActivityPresentation::Support,
                 super::ToolActivityInteraction::Meaningful,
             ),
-            "Canonical bootstrap for ordinary coding/review. Fresh: project or client_id+path; prefer principal-scoped project_ref. Exact checkout resume: session_id alone (~sN allowed) reauthorizes the bound Project. An explicit Project must match. mode=worktree requires an explicit source, exact Git base and Project authority; creates isolated worktree, managed Project/ref + fresh Session, never retargets. Omit session_id for fresh Session, not fresh model context. Resume only an active accessible Session; never guess. Missing id: workflow.resume or list_sessions(project), choose and read handoff. Re-observes instruction files. Read AGENTS.md/CLAUDE.md with _wc.context=[\"project.instructions\"]; reuse complete bodies, do not immediately reread. Request webcodex.workflow for fresh/uncertain model context. Reuse workspace state, available semantic navigation and sufficient Skills/Plugins. goal_context: no authority. guidance_profile guides; include_extension_catalog controls Skills/Plugins. checkout does not require Git.",
+            "Canonical bootstrap for ordinary coding/review: start/resume a Session. Fresh: project or client_id+path; prefer principal-scoped project_ref. Exact checkout resume: session_id alone (~sN) reauthorizes the bound Project. An explicit Project must match. mode=worktree requires an explicit source, exact Git base and Project authority; creates isolated worktree, managed Project/ref + fresh Session, never retargets. Omit session_id for fresh Session, not fresh model context. Resume an active accessible Session; never guess. Missing id: workflow.resume/list_sessions(project); choose and read handoff. Re-observes instruction files. Read AGENTS.md/CLAUDE.md via _wc.context=[\"project.instructions\"]; do not immediately reread complete bodies. Request webcodex.workflow for fresh/uncertain model context. Reuse workspace state, available semantic navigation and sufficient Skills/Plugins. goal_context: no authority. guidance_profile guides; include_extension_catalog controls Skills/Plugins. checkout does not require Git.",
         ),
         10,
         super::ToolDirectReason::CoreWorkflow,
@@ -454,35 +454,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ),
         "Post a bounded collaboration message (todo, question, progress, guidance, risk, or decision). Optional delivery_key provides bounded restart-safe sender-scoped replay while the keyed message metadata remains retained; exact retries return the original message and conflicting retained key reuse fails closed. Any message may request request-scoped ACK; ACK proves only current model-context retention and neither resolves nor gates work. Use complete_session_message to atomically answer and resolve a finished todo.",
     )),
-    model_spec(
-        def(
-            "post_peer_message",
-            super::ToolAuditPolicy::typed_fields(&[
-                super::ToolAuditResultField::value("success"),
-                super::ToolAuditResultField::value("message_id"),
-                super::ToolAuditResultField::value("sender_peer_id"),
-                super::ToolAuditResultField::value("recipient_peer_id"),
-                super::ToolAuditResultField::value("requires_ack"),
-            ]),
-            ModelVisible,
-            TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Mutate,
-                risk: super::ToolRisk::SessionCollaborate,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::NonIdempotent,
-            },
-            Some(SESSION_COLLABORATE),
-            false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
-        "Send a bounded message to a principal-scoped peer window discovered through peer_awareness. Optional delivery_key provides bounded restart-safe principal-and-sender-Window replay while the keyed peer message remains retained; exact retries return the original message and conflicting retained key reuse fails closed. Routing does not require Project equality, so a Project/worktree change alone does not invalidate the retained route; it grants no access to the recipient's Project, Workflow Session, files, or assignment authority. Ordinary messages are projected once; requires_ack messages repeat while retained whenever the recipient omits the request-scoped ACK.",
-    ),
+
     requires_explicit_business_session(model_spec(
         def(
             "list_session_messages",

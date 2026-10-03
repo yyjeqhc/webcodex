@@ -4,12 +4,14 @@ use serde_json::{json, Value};
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "open_webcodex_workbench" => Some(wrapped_output_schema(vec![
+            ("client_id", json!({"type":["string","null"]})),
+            ("runners", json!({"type":"object"})),
             ("project", json!({"type":["string","null"]})),
             ("session_id", json!({"type":["string","null"]})),
             ("projects", json!({"type":"object"})),
             (
                 "selection",
-                json!({"const":"caller_must_choose_project_and_session"}),
+                json!({"const":"caller_must_choose_runner_project_and_session"}),
             ),
         ])),
         "search_webcodex_resources" => Some(wrapped_output_schema(vec![

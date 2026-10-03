@@ -23,13 +23,15 @@ impl ToolRuntime {
     ) -> ToolResult {
         match call {
             ToolCall::OpenWebcodexWorkbench {
+                client_id,
                 project,
                 session_id,
             } => {
-                self.open_webcodex_workbench(project, session_id, auth)
+                self.open_webcodex_workbench(project, session_id, client_id, auth)
                     .await
             }
             ToolCall::SearchWebcodexResources {
+                client_id,
                 kind,
                 query,
                 project,
@@ -38,7 +40,7 @@ impl ToolRuntime {
                 limit,
             } => {
                 self.search_webcodex_resources(
-                    kind, query, project, session_id, offset, limit, auth,
+                    kind, query, project, session_id, offset, limit, client_id, auth,
                 )
                 .await
             }
@@ -122,6 +124,8 @@ impl ToolRuntime {
             | ToolCall::ChangesFileDiff { .. }
             | ToolCall::SessionHandoffSummary { .. }
             | ToolCall::SessionHandoffState { .. }
+            | ToolCall::ResolveWorkspace { .. }
+            | ToolCall::UnregisterProjects { .. }
             | ToolCall::ListProjects { .. }
             | ToolCall::RegisterProject { .. }
             | ToolCall::UnregisterProject { .. }

@@ -51,6 +51,7 @@ const TOOL_MANIFEST_CANONICAL_KEYS: &[&str] = &[
     "contract",
     "category",
     "intent",
+    "query",
     "available_intents",
     "filtered",
     "categories_requested",
@@ -598,10 +599,12 @@ impl ToolRuntime {
         intent: Option<String>,
         include_recommended_flows: bool,
         include_risk_summary: bool,
+        query: Option<String>,
+        limit: Option<usize>,
         protocol_capabilities: ToolProtocolCapabilities,
     ) -> ToolResult {
         if let Some(tool_name) = tool_name {
-            if category.is_some() || intent.is_some() {
+            if category.is_some() || intent.is_some() || query.is_some() {
                 return tool_manifest_exact_filter_conflict_result();
             }
             return match self.tool_manifest_exact_payload(
@@ -614,12 +617,14 @@ impl ToolRuntime {
                 Err(result) => result,
             };
         }
-        match self.tool_manifest_payload(
-            category,
+        match self.tool_manifest_payload_for_categories(
+            category.map(|category| vec![category]),
             intent,
+            limit,
             include_recommended_flows,
             include_risk_summary,
             protocol_capabilities,
+            query,
         ) {
             Ok(payload) => ToolResult::ok(payload),
             Err(result) => result,
@@ -735,6 +740,7 @@ impl ToolRuntime {
             true,
             true,
             ToolProtocolCapabilities::default(),
+            None,
         )
     }
 
@@ -753,6 +759,7 @@ impl ToolRuntime {
             include_recommended_flows,
             include_risk_summary,
             protocol_capabilities,
+            None,
         )
     }
 
@@ -764,6 +771,7 @@ impl ToolRuntime {
         include_recommended_flows: bool,
         include_risk_summary: bool,
         protocol_capabilities: ToolProtocolCapabilities,
+        query: Option<String>,
     ) -> Result<Value, ToolResult> {
         let resolved_intent = match intent {
             None => None,
@@ -788,15 +796,49 @@ impl ToolRuntime {
         let available_intents = available_tool_manifest_intent_names();
 
         // Apply optional intent ranking, then optional category filter, then limit.
-        let filtered_specs: Vec<&ToolDescriptor> =
+        let mut filtered_specs: Vec<&ToolDescriptor> =
             filter_manifest_specs(&specs, resolved_intent, categories_requested.as_ref());
+        if query
+            .as_deref()
+            .is_some_and(|q| q.chars().count() > 200 || q.chars().any(char::is_control))
+        {
+            return Err(ToolResult::err("invalid_discovery_query"));
+        }
+        let query = query
+            .map(|q| q.trim().to_lowercase())
+            .filter(|q| !q.is_empty());
+        if let Some(query) = query.as_deref() {
+            let terms = query.split_whitespace().collect::<Vec<_>>();
+            filtered_specs.retain(|spec| {
+                let haystack = format!(
+                    "{} {} {}",
+                    spec.name,
+                    runtime_tool_category(&spec.name),
+                    spec.description
+                )
+                .to_lowercase();
+                terms.iter().all(|term| haystack.contains(term))
+            });
+            // Exact names and name matches beat incidental words in safety prose.
+            let name_query = terms.join("_");
+            filtered_specs.sort_by_key(|spec| {
+                (
+                    spec.name != name_query,
+                    !terms.iter().all(|term| spec.name.contains(term)),
+                    spec.name.as_str(),
+                )
+            });
+        }
+        let limit = limit.or_else(|| query.as_ref().map(|_| 20));
         let filtered_count = filtered_specs.len();
         let requested_limit = limit;
         let limit = limit.map(|limit| limit.clamp(1, 100));
         let truncated = limit.is_some_and(|limit| filtered_count > limit);
         let limit_applied = requested_limit.is_some();
-        let filtered =
-            categories_requested.is_some() || resolved_intent.is_some() || limit.is_some();
+        let filtered = categories_requested.is_some()
+            || resolved_intent.is_some()
+            || limit.is_some()
+            || query.is_some();
         let intent_name = resolved_intent.map(|intent| intent.name);
         let returned_specs: Vec<&ToolDescriptor> = match limit {
             Some(limit) => filtered_specs.into_iter().take(limit).collect(),
@@ -819,6 +861,7 @@ impl ToolRuntime {
             "contract": Value::Null,
             "category": category,
             "intent": intent_name,
+            "query": query,
             "available_intents": available_intents,
             "filtered": filtered,
             "categories_requested": categories_requested,
@@ -914,10 +957,10 @@ fn unknown_tool_manifest_tool_result(tool_name: &str) -> ToolResult {
 
 fn tool_manifest_exact_filter_conflict_result() -> ToolResult {
     ToolResult::err_with_output(
-        "read_tool_manifest tool_name cannot be combined with category or intent",
+        "read_tool_manifest tool_name cannot be combined with category, intent or query",
         json!({
             "code": "tool_manifest_exact_filter_conflict",
-            "message": "tool_name selects one exact contract; omit category and intent",
+            "message": "tool_name selects one exact contract; omit category, intent and query",
         }),
     )
 }

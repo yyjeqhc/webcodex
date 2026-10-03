@@ -41,7 +41,7 @@ impl DerefMut for OptionalConnection<'_> {
 }
 impl Drop for OptionalConnection<'_> {
     fn drop(&mut self) {
-        self.connection.progress_handler(0, None::<fn() -> bool>);
+        let _ = self.connection.progress_handler(0, None::<fn() -> bool>);
         let _ = self.connection.busy_timeout(self.busy_timeout);
     }
 }
@@ -66,7 +66,8 @@ impl Database {
             tracing::debug!(target:"webcodex_store::projection",domain=domain.as_str(),outcome="skipped_due_to_contention", "optional projection omitted without cursor mutation");
             return Ok(None);
         };
-        let busy_ms: u64 = connection.query_row("PRAGMA busy_timeout", [], |row| row.get(0))?;
+        let busy_ms: i64 = connection.query_row("PRAGMA busy_timeout", [], |row| row.get(0))?;
+        let busy_ms = u64::try_from(busy_ms)?;
         let mut connection = OptionalConnection {
             connection,
             busy_timeout: Duration::from_millis(busy_ms),
@@ -85,7 +86,7 @@ impl Database {
                     false
                 }
             }),
-        );
+        )?;
         let result = work(&mut connection);
         // Restore connection policy on errors and panic as well as success.
         drop(connection);

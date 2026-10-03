@@ -12,7 +12,7 @@ webcodex-core = { path = "../webcodex-core" }
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 fs2 = "0.4"
-rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "hooks"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"

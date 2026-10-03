@@ -91,20 +91,20 @@ impl Database {
                 false,
             ));
         }
-        let session_count: usize = tx
+        let session_count: i64 = tx
             .query_row(
                 "SELECT count(*) FROM wc_external_observations WHERE session_id=?1",
                 [session],
                 |r| r.get(0),
             )
             .map_err(db_error)?;
-        let total: usize = tx
+        let total: i64 = tx
             .query_row("SELECT count(*) FROM wc_external_observations", [], |r| {
                 r.get(0)
             })
             .map_err(db_error)?;
-        if session_count >= MAX_EXTERNAL_OBSERVATIONS_PER_SESSION
-            || total >= MAX_EXTERNAL_OBSERVATIONS
+        if session_count >= MAX_EXTERNAL_OBSERVATIONS_PER_SESSION as i64
+            || total >= MAX_EXTERNAL_OBSERVATIONS as i64
         {
             // No silent eviction of deduplication identities. Do not acknowledge
             // an event that cannot be retained or turn a replay into a new event.

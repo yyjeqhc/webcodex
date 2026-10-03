@@ -1957,19 +1957,29 @@ pub fn resolve_service_scope(
 ) -> SetupResultValue<service::ServiceScope> {
     let environment = store.load_environment()?;
     let journal = store.load_journal()?;
-    if let (Some(record), Some(journal)) = (&environment, &journal) {
-        if record.request.service_scope != journal.environment.request.service_scope {
-            return Err(diagnostic("service_scope_conflict","Saved environment and setup journal have different service managers; reconcile the original operation first"));
-        }
+    // A legacy handoff records intent before creating setup.json. Reading only
+    // the environment/setup records would silently change a pending SCM handoff
+    // into user tasks on retry after the Desktop default changes.
+    let migration = crate::migration_journal(store)?;
+    let scopes = [
+        environment
+            .as_ref()
+            .map(|record| record.request.service_scope),
+        journal
+            .as_ref()
+            .map(|journal| journal.environment.request.service_scope),
+        migration
+            .as_ref()
+            .map(|journal| journal.request.service_scope),
+    ];
+    let saved = scopes.into_iter().flatten().next();
+    if scopes
+        .into_iter()
+        .flatten()
+        .any(|scope| Some(scope) != saved)
+    {
+        return Err(diagnostic("service_scope_conflict", "Saved environment, setup and migration journals have different service managers; reconcile the original operation first"));
     }
-    let saved = environment
-        .as_ref()
-        .map(|record| record.request.service_scope)
-        .or_else(|| {
-            journal
-                .as_ref()
-                .map(|journal| journal.environment.request.service_scope)
-        });
     if saved.is_some() && requested.is_some() && saved != requested {
         return Err(diagnostic("service_scope_conflict", "This environment already belongs to another service manager; resume its saved scope instead of adopting or replacing services"));
     }

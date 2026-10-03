@@ -16,6 +16,9 @@ enum RunnerCliAction {
         stop_on_stdin_eof: bool,
         computer_session_dir: Option<PathBuf>,
     },
+    CheckConfig {
+        config_path: PathBuf,
+    },
     ComputerSessionHelper {
         session_state_dir: PathBuf,
     },
@@ -32,6 +35,7 @@ fn usage() -> &'static str {
        -h, --help                 Print help and exit\n\
        -V, --version              Print version and exit\n\
        -c, --config PATH          Runner config path for normal runtime\n\
+       --check-config            Validate configuration without starting a Runner\n\
        --profile NAME             Client config profile for default config path\n\
        --once                     Complete one successful poll, then exit (polling transport)\n\
        --stop-on-stdin-eof        Stop when the invoking parent closes stdin\n\n\
@@ -127,6 +131,7 @@ where
     let runner_config_env = std::env::var("WEBCODEX_RUNNER_CONFIG").ok();
     let mut config_path: Option<PathBuf> = None;
     let mut profile: Option<String> = None;
+    let mut check_config = false;
     let mut once = false;
     let mut stop_on_stdin_eof = false;
     let mut computer_session_dir = None;
@@ -147,6 +152,7 @@ where
                     stderr: String::new(),
                 });
             }
+            "--check-config" => check_config = true,
             "--once" => once = true,
             "--stop-on-stdin-eof" => stop_on_stdin_eof = true,
             "--computer-session-dir" => {
@@ -184,6 +190,12 @@ where
             .map(Ok)
             .unwrap_or_else(default_config_path)?
     };
+    if check_config {
+        if once || stop_on_stdin_eof || computer_session_dir.is_some() {
+            return Err("--check-config cannot be combined with runtime-only options".into());
+        }
+        return Ok(RunnerCliAction::CheckConfig { config_path });
+    }
     Ok(RunnerCliAction::Run {
         config_path,
         once,
@@ -280,6 +292,16 @@ fn main() {
             stop_on_stdin_eof,
             computer_session_dir,
         } => (config_path, once, stop_on_stdin_eof, computer_session_dir),
+        RunnerCliAction::CheckConfig { config_path } => {
+            // Use exactly the native loader, before logs, providers or network
+            // startup. Parse errors can quote secret TOML values: do not echo them.
+            if load_config(&config_path).is_err() {
+                eprintln!("Runner configuration invalid or unreadable. Check the current configuration contract; use project_registry_dir, not projects_dir. No Runner was started.");
+                std::process::exit(2);
+            }
+            println!("WebCodex Runner configuration valid");
+            return;
+        }
         RunnerCliAction::ComputerSessionHelper { session_state_dir } => {
             if let Err(error) = webcodex_runner::computer_session::run_helper(&session_state_dir) {
                 eprintln!("{error}");

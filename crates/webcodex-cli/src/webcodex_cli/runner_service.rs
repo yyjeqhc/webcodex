@@ -66,6 +66,7 @@ pub(crate) fn render_runner_systemd_unit(
     unit.push_str("ExecReload=/bin/kill -HUP $MAINPID\n");
     unit.push_str("Restart=always\n");
     unit.push_str("RestartSec=5s\n");
+    unit.push_str("RestartPreventExitStatus=2\n");
     unit.push_str("StandardOutput=journal\n");
     unit.push_str("StandardError=journal\n");
     unit.push_str("Environment=RUST_LOG=info\n");
@@ -107,6 +108,11 @@ pub(crate) fn run_runner_install_service(
             .map_err(|e| e.to_string());
         }
         return Ok(rendered);
+    }
+    // A user installation runs in the same account as its service. Do not run
+    // another account's executable as root just to validate its configuration.
+    if opts.scope == ServiceScope::User {
+        webcodex_environment::preflight_runner_configuration(&opts.bin, &opts.config)?;
     }
     if opts.scope == ServiceScope::User {
         ensure_service_file_parent(&opts.service_file)?;

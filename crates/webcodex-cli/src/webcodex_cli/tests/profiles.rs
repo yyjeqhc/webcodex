@@ -311,6 +311,8 @@ fn runner_install_service_profile_derives_config_and_service_file() {
         runner_service_file_for_scope(ServiceScope::System, Some("special")).unwrap()
     );
     let unit = render_runner_systemd_unit(&opts).unwrap();
+    assert!(unit.contains("RestartPreventExitStatus=2\n"));
+    assert!(unit.contains("Restart=always\nRestartSec=5s\n"));
     assert!(unit.contains(
         "ExecStart=\"/opt/webcodex/bin/webcodex-runner\" \"--config\" \"/etc/webcodex/clients/special/runner.toml\""
     ));

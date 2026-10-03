@@ -28,6 +28,8 @@ mod migration;
 mod native;
 mod privilege;
 mod process;
+mod runner_preflight;
+pub use runner_preflight::preflight_runner_configuration;
 pub mod runtime_entry;
 pub mod service;
 pub mod session_service;

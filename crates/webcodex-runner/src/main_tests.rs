@@ -1,3 +1,15 @@
+#[test]
+fn check_config_is_a_separate_non_runtime_action() {
+    assert_eq!(
+        super::parse_runner_args(["--check-config", "--config", "/tmp/runner.toml"]).unwrap(),
+        super::RunnerCliAction::CheckConfig {
+            config_path: std::path::PathBuf::from("/tmp/runner.toml")
+        }
+    );
+    assert!(super::parse_runner_args(["--check-config", "--once"]).is_err());
+    assert!(super::parse_runner_args(["--check-config", "--stop-on-stdin-eof"]).is_err());
+}
+
 use super::{parse_runner_args, RunnerCliAction};
 use reqwest::blocking::Client;
 #[cfg(test)]

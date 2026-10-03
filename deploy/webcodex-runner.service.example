@@ -26,6 +26,9 @@ ExecStart=/opt/webcodex/webcodex-runner --config /etc/webcodex/clients/workstati
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5s
+# Native Runner config/argument errors exit 2. Fix the config and start explicitly;
+# runtime/transport failures (exit 1) retain automatic recovery.
+RestartPreventExitStatus=2
 StandardOutput=journal
 StandardError=journal
 

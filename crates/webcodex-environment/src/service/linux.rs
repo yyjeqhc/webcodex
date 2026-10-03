@@ -7,6 +7,49 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::process::Command;
 
 const UNIT_DIR: &str = "/etc/systemd/system";
+mod runner_policy;
+
+fn check_runner_configuration(spec: &ServiceSpec) -> Result<(), ServiceError> {
+    if spec.component != Component::Runner {
+        return Ok(());
+    }
+    let ServiceAccount::SystemUser {
+        expected_identity,
+        home,
+        ..
+    } = &spec.account
+    else {
+        return Ok(());
+    };
+    // Do not execute a user-owned candidate as root. Cross-account installations
+    // retain their normal account checks and native startup validation instead.
+    if *expected_identity != unsafe { libc::geteuid() }.to_string() {
+        return Ok(());
+    }
+    let configs: Vec<_> = spec
+        .args
+        .windows(2)
+        .filter(|args| args[0] == "--config")
+        .collect();
+    if configs.len() != 1 {
+        return Err(ServiceError::new(
+            ServiceErrorCode::InvalidSpec,
+            "Runner preflight requires one exact --config path",
+        ));
+    }
+    let mut command = Command::new(&spec.program);
+    command
+        .arg("--check-config")
+        .arg("--config")
+        .arg(&configs[0][1])
+        .current_dir(&spec.working_directory);
+    if let Some(home) = home {
+        command.env("HOME", home);
+    }
+    command.envs(&spec.environment);
+    crate::runner_preflight::check_command(&mut command)
+        .map_err(|message| ServiceError::new(ServiceErrorCode::InvalidSpec, message))
+}
 
 pub(super) fn current_account() -> Result<CurrentAccount, ServiceError> {
     current_unix_account()
@@ -172,7 +215,9 @@ fn unit_status(
     if absent {
         return Ok(ServiceStatus::absent(name));
     }
-    let ownership = if disk.as_deref() == Some(expected)
+    let ownership = if disk
+        .as_deref()
+        .is_some_and(|current| runner_policy::matches(current, expected))
         && (fragment == path.to_string_lossy() || (load == "not-found" && fragment.is_empty()))
     {
         Ownership::Owned
@@ -360,6 +405,17 @@ pub(super) fn install(
         ));
     }
     let current = preflight(spec)?;
+    check_runner_configuration(spec)?;
+    if current.ownership == Ownership::Owned && spec.component == Component::Runner {
+        let owner = if spec.scope == ServiceScope::User {
+            unsafe { libc::geteuid() }
+        } else {
+            0
+        };
+        if runner_policy::upgrade(&unit_path(spec)?, &render_unit(spec)?, owner)? {
+            systemctl(spec, &["daemon-reload"])?;
+        }
+    }
     if current.ownership == Ownership::Owned {
         if current.enabled != Some(true) {
             check_install_files(spec)?;
@@ -427,6 +483,7 @@ pub(super) fn start(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
     if status.running == Some(true) && spec.linux_socket.is_none() {
         return Ok(status);
     }
+    check_runner_configuration(spec)?;
     let result = if spec.linux_socket.is_some() {
         systemctl(spec, &["start", &socket_name(spec)])
             .and_then(|_| systemctl(spec, &["start", &unit_name(spec)]))
@@ -466,6 +523,7 @@ pub(super) fn stop(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
 pub(super) fn restart(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
     let status = inspect(spec)?;
     check_owned(&status)?;
+    check_runner_configuration(spec)?;
     if spec.linux_socket.is_some() {
         stop(spec)?;
         return start(spec);
@@ -669,6 +727,9 @@ pub(super) fn render_unit(spec: &ServiceSpec) -> Result<String, ServiceError> {
     out.push_str(
         "\nRestart=on-failure\nRestartSec=5s\nStandardOutput=journal\nStandardError=journal\n",
     );
+    if spec.component == Component::Runner {
+        out.push_str(runner_policy::GUARD);
+    }
     out.push_str(&format!(
         "WorkingDirectory={}\n",
         encode_path(&spec.working_directory)?
@@ -742,6 +803,12 @@ mod tests {
         assert!(body.contains("User=alice\n"));
         assert!(body.contains("\"a%%b c\""));
         assert!(body.contains("WebCodex managed v1 component=runner"));
+        assert!(body.contains("RestartPreventExitStatus=2\n"));
+        assert!(body.contains("Restart=on-failure\nRestartSec=5s\n"));
+        spec.component = Component::Server;
+        assert!(!render_unit(&spec)
+            .unwrap()
+            .contains("RestartPreventExitStatus"));
     }
     #[test]
     fn server_socket_matches_existing_unit_name() {

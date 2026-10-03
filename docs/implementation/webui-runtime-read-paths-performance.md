@@ -6,6 +6,9 @@ This is the WebUI inventory work, not model payload-size optimization. The older
 #791 history-query work is recorded in [window-activity-query-performance.md](window-activity-query-performance.md).
 No production database/service/Runner was deployed or restarted; all commits are local.
 The requested Store/post-result work is a subsequent, independently committed phase.
+Its completed implementation, review corrections and remaining limits are recorded in
+[Store and post-result latency — phase two](store-post-result-performance.md).
+The measurements and remaining-work section below describe the phase-one boundary.
 
 ## Authoritative paths
 

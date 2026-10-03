@@ -724,6 +724,53 @@ fn service_diagnostic_reports_manager_state_without_runtime_output() {
     assert!(diagnostic.recovery.contains("journalctl"));
 }
 
+#[test]
+fn loopback_server_urls_use_the_direct_client() {
+    let native = NativeEnvironment::new().unwrap();
+    for url in [
+        "http://127.0.0.1:8080",
+        "http://127.42.0.7:8080",
+        "http://[::1]:8080",
+        "http://LOCALHOST:8080",
+        "http://localhost.:8080",
+    ] {
+        assert!(server_url_is_loopback(url), "expected loopback: {url}");
+        assert!(std::ptr::eq(
+            native.client_for_server(url),
+            &native.direct_client
+        ));
+    }
+    for url in [
+        "https://example.com",
+        "http://192.168.1.10:8080",
+        "not a server url",
+    ] {
+        assert!(!server_url_is_loopback(url), "expected non-loopback: {url}");
+        assert!(std::ptr::eq(native.client_for_server(url), &native.client));
+    }
+}
+
+#[tokio::test]
+async fn loopback_server_reachability_uses_the_direct_client() {
+    let (url, requests, server) = fixture(1, |request| {
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.path, "/runtime");
+        (
+            200,
+            vec![("x-webcodex-console-assets", "embedded")],
+            json!({"service":"webcodex"}),
+        )
+    });
+    let environment = record(url, None, EnvironmentMode::Join);
+    NativeEnvironment::new()
+        .unwrap()
+        .reachable(&environment)
+        .await
+        .unwrap();
+    server.join().unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+
 #[tokio::test]
 async fn a_generic_http_200_does_not_satisfy_server_reachability() {
     let (url, _, server) = fixture(1, |_| (200, vec![], json!({"service":"other"})));

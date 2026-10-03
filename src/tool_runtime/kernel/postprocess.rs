@@ -86,12 +86,23 @@ impl PostRecordResponse<'_> {
                 output.remove("workflow_recording_attention");
             }
         }
+        let enrichment_deadline = crate::tool_runtime::optional_enrichment::deadline();
         if crate::tool_runtime::tool_definition::is_model_visible_tool_name(self.tool_name) {
+            let reply_started = std::time::Instant::now();
             runtime.add_window_model_reply_sidecar(
                 &mut result,
                 self.context.auth,
                 self.context.window,
                 self.window_reply,
+            );
+            crate::tool_request_trace::record_phase_latency(
+                "explicit_window_reply",
+                reply_started,
+                if self.window_reply.is_some() {
+                    "required"
+                } else {
+                    "not_requested"
+                },
             );
             let peer_project = self
                 .correlation
@@ -99,32 +110,35 @@ impl PostRecordResponse<'_> {
                 .as_deref()
                 .or(self.recorder.recording_session_project.as_deref());
             if self.tool_name != "present_work_result" {
-                runtime.add_window_operator_projection(
+                runtime.add_window_operator_projection_until(
                     &mut result,
                     self.context.auth,
                     self.context.window,
                     &self.recorder.ack_session_message_ids,
+                    enrichment_deadline,
                 );
             }
-            runtime.add_peer_collaboration_projection(
+            runtime.add_peer_collaboration_projection_until(
                 &mut result,
                 self.context.auth,
                 self.context.window,
                 peer_project,
                 &self.recorder.ack_session_message_ids,
+                enrichment_deadline,
             );
         }
         if self.tool_name == "observe_jobs" {
             crate::tool_runtime::observe_jobs::sparsify_observe_jobs_model_result(&mut result);
         }
         runtime
-            .add_passive_job_attention(
+            .add_passive_job_attention_until(
                 &mut result,
                 self.tool_name,
                 self.correlation.resolved_project.as_deref(),
                 self.correlation.business_session_id.as_deref(),
                 self.context.window,
                 self.context.auth,
+                enrichment_deadline,
             )
             .await;
         PostRecordResult {

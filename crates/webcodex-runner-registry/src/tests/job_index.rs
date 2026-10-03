@@ -86,6 +86,30 @@ async fn console_aggregates_omit_project_bodies_and_batched_authority_matches_ex
     eprintln!("CONSOLE_AGGREGATE registered_projects=4096 enabled=4095 families=1024 project_bodies=0 full_job_scans=0");
 }
 
+#[tokio::test]
+async fn optional_job_snapshot_skips_contention_and_expired_budget() {
+    let (registry, _) = fixture().await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let guard = registry.inner.lock().await;
+    assert!(registry
+        .try_snapshot_jobs_for_auth_filtered(None, "agent:oe:target", "session", 8, 8, deadline)
+        .is_none());
+    drop(guard);
+    assert!(registry
+        .try_snapshot_jobs_for_auth_filtered(
+            None,
+            "agent:oe:target",
+            "session",
+            8,
+            8,
+            std::time::Instant::now()
+        )
+        .is_none());
+    assert!(registry
+        .try_snapshot_jobs_for_auth_filtered(None, "agent:oe:target", "session", 8, 8, deadline)
+        .is_some());
+}
+
 async fn assert_index(registry: &RunnerRegistry) {
     let mut inner = registry.inner.lock().await;
     let canonical: HashSet<_> = inner

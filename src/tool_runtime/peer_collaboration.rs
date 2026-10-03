@@ -191,142 +191,107 @@ impl ToolRuntime {
         project: Option<&str>,
         ack_message_ids: &[String],
     ) {
+        self.add_peer_collaboration_projection_until(
+            result,
+            auth,
+            window,
+            project,
+            ack_message_ids,
+            super::optional_enrichment::deadline(),
+        );
+    }
+
+    pub(crate) fn add_peer_collaboration_projection_until(
+        &self,
+        result: &mut ToolResult,
+        auth: Option<&AuthContext>,
+        window: Option<&ClientWindow>,
+        project: Option<&str>,
+        ack_message_ids: &[String],
+        deadline: std::time::Instant,
+    ) {
         let Some(window) = window else {
             return;
         };
         if !result.output.is_object() {
             return;
         }
-        let Ok((principal_kind, principal_id)) = super::runtime_observation_principal(auth) else {
+        let Ok((kind, principal)) = super::runtime_observation_principal(auth) else {
             return;
         };
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        let mut peer_messages = None;
-        let mut message_rollbacks = Vec::new();
+        let now = chrono::Utc::now().timestamp_millis();
         if let Some(db) = self.communication_db.as_ref() {
-            if let Ok(batch) = db.take_peer_attention(
-                &principal_kind,
-                &principal_id,
+            let started = std::time::Instant::now();
+            let value = |batch: &webcodex_store::PeerAttentionBatch| {
+                json!({
+                    "messages": batch.messages.iter().map(|message| json!({
+                        "message_id": message.message_id, "from_peer_id": message.sender_peer_id,
+                        "kind": message.kind, "priority": message.priority, "message": message.message,
+                        "tags": message.tags, "requires_ack": message.requires_ack,
+                        "created_at_ms": message.created_at_ms, "projection_count": message.projection_count,
+                    })).collect::<Vec<_>>(),
+                    "ack": {"accepted_count": batch.accepted_ack_ids.len(), "accepted_ids": batch.accepted_ack_ids}
+                })
+            };
+            let outcome = match db.project_peer_attention(
+                &kind,
+                &principal,
                 window.key(),
                 ack_message_ids,
-                now_ms,
+                now,
                 PEER_MESSAGE_PROJECTION_LIMIT,
+                Some(deadline),
+                |batch| super::optional_enrichment::fits(result, "peer_messages", value(batch)),
             ) {
-                message_rollbacks = batch.projection_rollbacks;
-                if !batch.messages.is_empty() || !batch.accepted_ack_ids.is_empty() {
-                    let messages = batch
-                        .messages
-                        .into_iter()
-                        .map(|message| {
-                            json!({
-                                "message_id": message.message_id,
-                                "from_peer_id": message.sender_peer_id,
-                                "kind": message.kind,
-                                "priority": message.priority,
-                                "message": message.message,
-                                "tags": message.tags,
-                                "requires_ack": message.requires_ack,
-                                "created_at_ms": message.created_at_ms,
-                                "projection_count": message.projection_count,
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    peer_messages = Some(json!({
-                        "messages": messages,
-                        "ack": {
-                            "accepted_count": batch.accepted_ack_ids.len(),
-                            "accepted_ids": batch.accepted_ack_ids,
+                Ok(Some(batch)) => {
+                    if !batch.messages.is_empty() || !batch.accepted_ack_ids.is_empty() {
+                        let value = value(&batch);
+                        if super::optional_enrichment::fits(result, "peer_messages", value.clone())
+                        {
+                            result.output["peer_messages"] = value;
                         }
-                    }));
+                    }
+                    "completed"
                 }
-            }
+                Ok(None) => super::optional_enrichment::omitted(deadline),
+                Err(_) => "store_error",
+            };
+            crate::tool_request_trace::record_phase_latency("peer_messages", started, outcome);
         }
-
-        let mut peer_awareness = None;
-        let mut discovery_rowids = Vec::new();
         if let (Some(project), Some(db)) = (project, self.window_activity_db.as_ref()) {
-            if let Ok(peers) = db.take_new_recent_project_peers(
-                &principal_kind,
-                &principal_id,
+            let started = std::time::Instant::now();
+            let value = |peers: &[webcodex_store::RecentProjectPeerRecord]| {
+                json!({
+                    "self_peer_id": window.peer_id(), "project": project,
+                    "recent_window_secs": PEER_RECENT_WINDOW_MS / 1_000,
+                    "new_peers": peers.iter().filter_map(|peer| peer_id_from_window_key(&peer.client_window_key).map(|peer_id| json!({
+                        "peer_id": peer_id, "source": peer.client_window_source,
+                        "last_meaningful_activity_at_ms": peer.last_meaningful_activity_at_ms,
+                    }))).collect::<Vec<_>>(),
+                    "semantics": "recent_same_project_activity_not_liveness",
+                })
+            };
+            let outcome = match db.project_recent_peers(
+                &kind,
+                &principal,
                 window.key(),
                 project,
-                now_ms.saturating_sub(PEER_RECENT_WINDOW_MS),
-                now_ms,
+                now.saturating_sub(PEER_RECENT_WINDOW_MS),
+                now,
                 PEER_AWARENESS_LIMIT,
+                Some(deadline),
+                |peers| super::optional_enrichment::fits(result, "peer_awareness", value(peers)),
             ) {
-                let mut projected_peers = Vec::new();
-                for peer in peers {
-                    if let Some(rowid) = peer.discovery_rowid {
-                        discovery_rowids.push(rowid);
+                Ok(Some(peers)) => {
+                    if !peers.is_empty() {
+                        result.output["peer_awareness"] = value(&peers);
                     }
-                    if let Some(peer_id) = peer_id_from_window_key(&peer.client_window_key) {
-                        projected_peers.push(json!({
-                            "peer_id": peer_id,
-                            "source": peer.client_window_source,
-                            "last_meaningful_activity_at_ms": peer.last_meaningful_activity_at_ms,
-                        }));
-                    }
+                    "completed"
                 }
-                if !projected_peers.is_empty() {
-                    peer_awareness = Some(json!({
-                        "self_peer_id": window.peer_id(),
-                        "project": project,
-                        "recent_window_secs": PEER_RECENT_WINDOW_MS / 1_000,
-                        "new_peers": projected_peers,
-                        "semantics": "recent_same_project_activity_not_liveness",
-                    }));
-                }
-            }
-        }
-
-        let output = result
-            .output
-            .as_object_mut()
-            .expect("peer collaboration requires object ToolResult output");
-        if let Some(peer_messages) = peer_messages {
-            output.insert("peer_messages".to_string(), peer_messages);
-        }
-        if let Some(peer_awareness) = peer_awareness {
-            output.insert("peer_awareness".to_string(), peer_awareness);
-        }
-
-        let oversized = crate::json_measurement::serialized_json_len(result).is_ok_and(|bytes| {
-            bytes > webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES
-        });
-        if !oversized {
-            return;
-        }
-        if let Some(output) = result.output.as_object_mut() {
-            output.remove("peer_awareness");
-            output.remove("peer_messages");
-        }
-        if let Some(db) = self.communication_db.as_ref() {
-            if let Err(error) = db.rollback_peer_attention(
-                &principal_kind,
-                &principal_id,
-                window.key(),
-                now_ms,
-                &message_rollbacks,
-            ) {
-                tracing::warn!(
-                    ?error,
-                    "failed to roll back oversized Peer message projection"
-                );
-            }
-        }
-        if let (Some(project), Some(db)) = (project, self.window_activity_db.as_ref()) {
-            if let Err(error) = db.rollback_peer_discoveries(
-                &principal_kind,
-                &principal_id,
-                window.key(),
-                project,
-                &discovery_rowids,
-            ) {
-                tracing::warn!(
-                    ?error,
-                    "failed to roll back oversized Peer awareness projection"
-                );
-            }
+                Ok(None) => super::optional_enrichment::omitted(deadline),
+                Err(_) => "store_error",
+            };
+            crate::tool_request_trace::record_phase_latency("peer_awareness", started, outcome);
         }
     }
 
@@ -349,6 +314,7 @@ impl ToolRuntime {
             return;
         };
 
+        let deadline = super::optional_enrichment::deadline();
         let standard_tool_result = structured.get("success").is_some_and(Value::is_boolean)
             && structured.get("output").is_some_and(Value::is_object);
         if standard_tool_result {
@@ -369,13 +335,20 @@ impl ToolRuntime {
                 output,
                 error,
             };
-            self.add_window_operator_projection(&mut result, auth, window, ack_message_ids);
-            self.add_peer_collaboration_projection(
+            self.add_window_operator_projection_until(
+                &mut result,
+                auth,
+                window,
+                ack_message_ids,
+                deadline,
+            );
+            self.add_peer_collaboration_projection_until(
                 &mut result,
                 auth,
                 window,
                 project,
                 ack_message_ids,
+                deadline,
             );
 
             structured.insert("output".to_string(), result.output);
@@ -384,8 +357,21 @@ impl ToolRuntime {
 
         let output = Value::Object(std::mem::take(structured));
         let mut result = ToolResult::ok(output);
-        self.add_window_operator_projection(&mut result, auth, window, ack_message_ids);
-        self.add_peer_collaboration_projection(&mut result, auth, window, project, ack_message_ids);
+        self.add_window_operator_projection_until(
+            &mut result,
+            auth,
+            window,
+            ack_message_ids,
+            deadline,
+        );
+        self.add_peer_collaboration_projection_until(
+            &mut result,
+            auth,
+            window,
+            project,
+            ack_message_ids,
+            deadline,
+        );
 
         if let Value::Object(output) = result.output {
             *structured = output;

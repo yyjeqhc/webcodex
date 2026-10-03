@@ -178,7 +178,12 @@ impl JobAttentionCursor {
     ) where
         F: Fn(&JobAttentionSnapshot) -> Value,
     {
-        let Ok(mut inner) = self.0.lock() else {
+        let Ok(mut inner) = self.0.try_lock() else {
+            tracing::debug!(
+                outcome = "skipped_due_to_contention",
+                phase = "passive_cursor",
+                "optional attention omitted"
+            );
             return;
         };
         let prior = inner.entries.get(&key);
@@ -373,6 +378,29 @@ impl ToolRuntime {
         window: Option<&ClientWindow>,
         auth: Option<&AuthContext>,
     ) {
+        self.add_passive_job_attention_until(
+            result,
+            tool_name,
+            project,
+            business_session_id,
+            window,
+            auth,
+            super::optional_enrichment::deadline(),
+        )
+        .await;
+    }
+
+    pub(crate) async fn add_passive_job_attention_until(
+        &self,
+        result: &mut ToolResult,
+        tool_name: &str,
+        project: Option<&str>,
+        business_session_id: Option<&str>,
+        window: Option<&ClientWindow>,
+        auth: Option<&AuthContext>,
+        deadline: std::time::Instant,
+    ) {
+        let started = std::time::Instant::now();
         if !webcodex_tool_contracts::runtime_tool_supports_passive_job_attention(tool_name)
             || !result.success
         {
@@ -383,9 +411,22 @@ impl ToolRuntime {
         else {
             return;
         };
+        let visible = tokio::time::timeout_at(
+            tokio::time::Instant::from_std(deadline),
+            self.exact_project_visible_to_auth(auth, project),
+        )
+        .await;
+        if visible.is_err() || std::time::Instant::now() >= deadline {
+            crate::tool_request_trace::record_phase_latency(
+                "passive_attention",
+                started,
+                "budget_exhausted",
+            );
+            return;
+        }
         if auth.is_open_anonymous()
             || !auth.has_scope(SCOPE_RUNTIME_READ)
-            || !self.exact_project_visible_to_auth(auth, project).await
+            || !visible.unwrap_or(false)
             || self
                 .sessions
                 .session_project(session_id)
@@ -408,16 +449,22 @@ impl ToolRuntime {
             session_id: session_id.to_string(),
         };
         let initiating_handoff_job_id = pending_continuation_job_id(result).map(str::to_string);
-        let jobs = self
-            .runner_registry
-            .snapshot_jobs_for_auth_filtered(
-                crate::runner_http::runner_access_from_auth(Some(auth)).as_ref(),
-                project,
-                session_id,
-                MAX_ACTIVE_JOBS_PER_KEY,
-                MAX_TERMINAL_JOBS_PER_KEY,
-            )
-            .await;
+        let jobs = self.runner_registry.try_snapshot_jobs_for_auth_filtered(
+            crate::runner_http::runner_access_from_auth(Some(auth)).as_ref(),
+            project,
+            session_id,
+            MAX_ACTIVE_JOBS_PER_KEY,
+            MAX_TERMINAL_JOBS_PER_KEY,
+            deadline,
+        );
+        let Some(jobs) = jobs else {
+            crate::tool_request_trace::record_phase_latency(
+                "passive_attention",
+                started,
+                super::optional_enrichment::omitted(deadline),
+            );
+            return;
+        };
         self.job_attention_cursor.project_result(
             result,
             key,
@@ -425,6 +472,7 @@ impl ToolRuntime {
             initiating_handoff_job_id.as_deref(),
             |job| self.passive_job_attention_item(job),
         );
+        crate::tool_request_trace::record_phase_latency("passive_attention", started, "completed");
     }
 }
 

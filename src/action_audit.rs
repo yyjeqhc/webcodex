@@ -129,7 +129,8 @@ impl ActionAudit {
         let Some(db) = self.db.as_ref() else {
             return false;
         };
-        record_action_event(
+        let started = Instant::now();
+        let recorded = record_action_event(
             db,
             ActionAuditEventInput {
                 explicit_session_id: self.explicit_session_id.clone(),
@@ -180,7 +181,13 @@ impl ActionAudit {
                 recorder_gap_session_id: event.recorder_gap_session_id,
                 workflow_links: event.workflow_links,
             },
-        )
+        );
+        crate::tool_request_trace::record_phase_latency(
+            "audit_finalize",
+            started,
+            if recorded { "completed" } else { "failed" },
+        );
+        recorded
     }
 }
 

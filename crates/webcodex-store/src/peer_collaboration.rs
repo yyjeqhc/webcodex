@@ -284,48 +284,77 @@ impl Database {
         now_ms: i64,
         limit: usize,
     ) -> anyhow::Result<PeerAttentionBatch> {
-        let mut conn = self.lock_connection(crate::StoreDomain::Communication);
-        let tx = conn.transaction()?;
-        let mut accepted_ack_ids = Vec::new();
-        for message_id in ack_message_ids.iter().take(8) {
-            let exists = tx
-                .query_row(
-                    "SELECT 1
+        self.project_peer_attention(
+            principal_kind,
+            principal_id,
+            recipient_window_key,
+            ack_message_ids,
+            now_ms,
+            limit,
+            None,
+            |_| true,
+        )?
+        .ok_or_else(|| anyhow::anyhow!("required projection unavailable"))
+    }
+
+    pub fn project_peer_attention(
+        &self,
+        principal_kind: &str,
+        principal_id: &str,
+        recipient_window_key: &str,
+        ack_message_ids: &[String],
+        now_ms: i64,
+        limit: usize,
+        deadline: Option<std::time::Instant>,
+        accept: impl FnOnce(&PeerAttentionBatch) -> bool,
+    ) -> anyhow::Result<Option<PeerAttentionBatch>> {
+        let deadline = if ack_message_ids.is_empty() {
+            deadline
+        } else {
+            None
+        };
+        self.with_projection_connection(crate::StoreDomain::Communication, deadline, |conn| {
+            let tx = conn.transaction()?;
+            let mut accepted_ack_ids = Vec::new();
+            for message_id in ack_message_ids.iter().take(8) {
+                let exists = tx
+                    .query_row(
+                        "SELECT 1
                      FROM window_peer_messages
                      WHERE message_id = ?1
                        AND principal_kind = ?2
                        AND principal_id = ?3
                        AND recipient_window_key = ?4
                        AND requires_ack = 1",
-                    params![
-                        message_id,
-                        principal_kind,
-                        principal_id,
-                        recipient_window_key
-                    ],
-                    |_| Ok(()),
-                )
-                .optional()?
-                .is_some();
-            if !exists {
-                continue;
-            }
-            accepted_ack_ids.push(message_id.clone());
-            tx.execute(
-                "UPDATE window_peer_messages
+                        params![
+                            message_id,
+                            principal_kind,
+                            principal_id,
+                            recipient_window_key
+                        ],
+                        |_| Ok(()),
+                    )
+                    .optional()?
+                    .is_some();
+                if !exists {
+                    continue;
+                }
+                accepted_ack_ids.push(message_id.clone());
+                tx.execute(
+                    "UPDATE window_peer_messages
                  SET first_ack_observed_at_ms = COALESCE(first_ack_observed_at_ms, ?2)
                  WHERE message_id = ?1",
-                params![message_id, now_ms],
-            )?;
-        }
+                    params![message_id, now_ms],
+                )?;
+            }
 
-        let scan_limit = limit
-            .clamp(1, MAX_PEER_MESSAGE_LIMIT)
-            .saturating_add(accepted_ack_ids.len())
-            .min(MAX_PEER_MESSAGE_LIMIT + 8) as i64;
-        let mut candidates = {
-            let mut stmt = tx.prepare(
-                "SELECT message_id, sender_peer_id, recipient_peer_id,
+            let scan_limit = limit
+                .clamp(1, MAX_PEER_MESSAGE_LIMIT)
+                .saturating_add(accepted_ack_ids.len())
+                .min(MAX_PEER_MESSAGE_LIMIT + 8) as i64;
+            let mut candidates = {
+                let mut stmt = tx.prepare(
+                    "SELECT message_id, sender_peer_id, recipient_peer_id,
                         kind, priority, message, tags_json, requires_ack,
                         created_at_ms, first_projected_at_ms, last_projected_at_ms,
                         projection_count, first_ack_observed_at_ms
@@ -337,52 +366,67 @@ impl Database {
                  ORDER BY (first_projected_at_ms IS NULL) DESC,
                            created_at_ms ASC, message_id ASC
                  LIMIT ?4",
-            )?;
-            let mut rows = stmt.query(params![
-                principal_kind,
-                principal_id,
-                recipient_window_key,
-                scan_limit
-            ])?;
-            let mut records = Vec::new();
-            while let Some(row) = rows.next()? {
-                records.push(peer_message_from_row(row)?);
+                )?;
+                let mut rows = stmt.query(params![
+                    principal_kind,
+                    principal_id,
+                    recipient_window_key,
+                    scan_limit
+                ])?;
+                let mut records = Vec::new();
+                while let Some(row) = rows.next()? {
+                    records.push(peer_message_from_row(row)?);
+                }
+                records
+            };
+            candidates.retain(|message| {
+                !message.requires_ack || !accepted_ack_ids.contains(&message.message_id)
+            });
+            candidates.truncate(limit.clamp(1, MAX_PEER_MESSAGE_LIMIT));
+
+            let mut preview = candidates.clone();
+            for message in &mut preview {
+                message.first_projected_at_ms.get_or_insert(now_ms);
+                message.last_projected_at_ms = Some(now_ms);
+                message.projection_count = message.projection_count.saturating_add(1);
             }
-            records
-        };
-        candidates.retain(|message| {
-            !message.requires_ack || !accepted_ack_ids.contains(&message.message_id)
-        });
-        candidates.truncate(limit.clamp(1, MAX_PEER_MESSAGE_LIMIT));
+            if !accept(&PeerAttentionBatch {
+                messages: preview,
+                accepted_ack_ids: accepted_ack_ids.clone(),
+                projection_rollbacks: Vec::new(),
+            }) {
+                candidates.clear();
+            }
+            let projection_rollbacks = candidates
+                .iter()
+                .map(|message| PeerProjectionRollback {
+                    message_id: message.message_id.clone(),
+                    first_projected_at_ms: message.first_projected_at_ms,
+                    last_projected_at_ms: message.last_projected_at_ms,
+                    projection_count: message.projection_count,
+                })
+                .collect::<Vec<_>>();
 
-        let projection_rollbacks = candidates
-            .iter()
-            .map(|message| PeerProjectionRollback {
-                message_id: message.message_id.clone(),
-                first_projected_at_ms: message.first_projected_at_ms,
-                last_projected_at_ms: message.last_projected_at_ms,
-                projection_count: message.projection_count,
-            })
-            .collect::<Vec<_>>();
-
-        for message in &mut candidates {
-            tx.execute(
-                "UPDATE window_peer_messages
+            for message in &mut candidates {
+                tx.execute(
+                    "UPDATE window_peer_messages
                  SET first_projected_at_ms = COALESCE(first_projected_at_ms, ?2),
                      last_projected_at_ms = ?2,
                      projection_count = projection_count + 1
                  WHERE message_id = ?1",
-                params![message.message_id, now_ms],
-            )?;
-            message.first_projected_at_ms.get_or_insert(now_ms);
-            message.last_projected_at_ms = Some(now_ms);
-            message.projection_count = message.projection_count.saturating_add(1);
-        }
-        tx.commit()?;
-        Ok(PeerAttentionBatch {
-            messages: candidates,
-            accepted_ack_ids,
-            projection_rollbacks,
+                    params![message.message_id, now_ms],
+                )?;
+                message.first_projected_at_ms.get_or_insert(now_ms);
+                message.last_projected_at_ms = Some(now_ms);
+                message.projection_count = message.projection_count.saturating_add(1);
+            }
+            crate::optional_projection::check_deadline(deadline)?;
+            tx.commit()?;
+            Ok(PeerAttentionBatch {
+                messages: candidates,
+                accepted_ack_ids,
+                projection_rollbacks,
+            })
         })
     }
 
@@ -396,58 +440,87 @@ impl Database {
         now_ms: i64,
         limit: usize,
     ) -> anyhow::Result<Vec<RecentProjectPeerRecord>> {
-        let mut conn = self.lock_connection(crate::StoreDomain::WindowActivity);
-        let tx = conn.transaction()?;
-        let limit = limit.clamp(1, MAX_PEER_DISCOVERY_LIMIT) as i64;
-        let peers = {
-            let mut stmt = tx.prepare_cached(RECENT_PEERS_SQL)?;
-            let mut rows = stmt.query(params![
-                observer_window_key,
-                principal_kind,
-                principal_id,
-                project,
-                since_ms,
-                limit,
-            ])?;
-            let mut peers = Vec::new();
-            while let Some(row) = rows.next()? {
-                peers.push(RecentProjectPeerRecord {
-                    client_window_key: row.get(0)?,
-                    client_window_source: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                    last_meaningful_activity_at_ms: row.get(2)?,
-                    discovery_rowid: None,
-                });
+        self.project_recent_peers(
+            principal_kind,
+            principal_id,
+            observer_window_key,
+            project,
+            since_ms,
+            now_ms,
+            limit,
+            None,
+            |_| true,
+        )?
+        .ok_or_else(|| anyhow::anyhow!("required projection unavailable"))
+    }
+
+    pub fn project_recent_peers(
+        &self,
+        principal_kind: &str,
+        principal_id: &str,
+        observer_window_key: &str,
+        project: &str,
+        since_ms: i64,
+        now_ms: i64,
+        limit: usize,
+        deadline: Option<std::time::Instant>,
+        accept: impl FnOnce(&[RecentProjectPeerRecord]) -> bool,
+    ) -> anyhow::Result<Option<Vec<RecentProjectPeerRecord>>> {
+        self.with_projection_connection(crate::StoreDomain::WindowActivity, deadline, |conn| {
+            let tx = conn.transaction()?;
+            let limit = limit.clamp(1, MAX_PEER_DISCOVERY_LIMIT) as i64;
+            let peers = {
+                let mut stmt = tx.prepare_cached(RECENT_PEERS_SQL)?;
+                let mut rows = stmt.query(params![
+                    observer_window_key,
+                    principal_kind,
+                    principal_id,
+                    project,
+                    since_ms,
+                    limit,
+                ])?;
+                let mut peers = Vec::new();
+                while let Some(row) = rows.next()? {
+                    peers.push(RecentProjectPeerRecord {
+                        client_window_key: row.get(0)?,
+                        client_window_source: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        last_meaningful_activity_at_ms: row.get(2)?,
+                        discovery_rowid: None,
+                    });
+                }
+                peers
+            };
+            // No discovery/cursor/prune write on the common empty observation.
+            if peers.is_empty() {
+                tx.commit()?;
+                return Ok(Vec::new());
             }
-            peers
-        };
-        // No discovery/cursor/prune write on the common empty observation.
-        if peers.is_empty() {
-            tx.commit()?;
-            return Ok(Vec::new());
-        }
-        let mut inserted_peers = Vec::new();
-        for mut peer in peers {
-            let inserted = tx.execute(
-                "INSERT OR IGNORE INTO window_peer_discoveries (
+            if !accept(&peers) {
+                return Ok(Vec::new());
+            } // Drop rolls back; no discovery consumed.
+            let mut inserted_peers = Vec::new();
+            for mut peer in peers {
+                let inserted = tx.execute(
+                    "INSERT OR IGNORE INTO window_peer_discoveries (
                     principal_kind, principal_id, observer_window_key,
                     peer_window_key, project, first_projected_at_ms
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    principal_kind,
-                    principal_id,
-                    observer_window_key,
-                    peer.client_window_key,
-                    project,
-                    now_ms,
-                ],
-            )?;
-            if inserted == 1 {
-                peer.discovery_rowid = Some(tx.last_insert_rowid());
-                inserted_peers.push(peer);
+                    params![
+                        principal_kind,
+                        principal_id,
+                        observer_window_key,
+                        peer.client_window_key,
+                        project,
+                        now_ms,
+                    ],
+                )?;
+                if inserted == 1 {
+                    peer.discovery_rowid = Some(tx.last_insert_rowid());
+                    inserted_peers.push(peer);
+                }
             }
-        }
-        tx.execute(
-            "DELETE FROM window_peer_discoveries
+            tx.execute(
+                "DELETE FROM window_peer_discoveries
              WHERE rowid IN (
                  SELECT rowid
                  FROM window_peer_discoveries
@@ -455,14 +528,16 @@ impl Database {
                  ORDER BY first_projected_at_ms DESC, rowid DESC
                  LIMIT -1 OFFSET ?3
              )",
-            params![
-                principal_kind,
-                principal_id,
-                MAX_RETAINED_PEER_DISCOVERIES_PER_PRINCIPAL as i64,
-            ],
-        )?;
-        tx.commit()?;
-        Ok(inserted_peers)
+                params![
+                    principal_kind,
+                    principal_id,
+                    MAX_RETAINED_PEER_DISCOVERIES_PER_PRINCIPAL as i64,
+                ],
+            )?;
+            crate::optional_projection::check_deadline(deadline)?;
+            tx.commit()?;
+            Ok(inserted_peers)
+        })
     }
     pub fn rollback_peer_attention(
         &self,

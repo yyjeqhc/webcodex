@@ -25,6 +25,7 @@ mod connection_observation;
 mod external_observations;
 #[cfg(test)]
 mod external_observations_tests;
+mod optional_projection;
 pub use external_observations::{
     ExternalObservation, ExternalObservationError, MAX_EXTERNAL_OBSERVATIONS_PER_SESSION,
 };

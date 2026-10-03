@@ -1555,6 +1555,25 @@ pub(crate) fn capture_execution_evidence(tool: &str, output: &Value) {
     enqueue_metadata_event(&trace_id, "execution_evidence", event);
 }
 
+/// Closed call-site phase/outcome labels only; no arguments or payloads.
+/// The existing bounded trace writer never backpressures requests.
+pub(crate) fn record_phase_latency(phase: &'static str, started: Instant, outcome: &'static str) {
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    tracing::debug!(target: "webcodex::phase", phase, outcome, elapsed_ms, "runtime phase completed");
+    if !tool_request_trace_enabled() {
+        return;
+    }
+    let Some(trace_id) = current_active_trace_id() else {
+        return;
+    };
+    let mut event = base_event(&trace_id, "tool_phase_latency");
+    merge_event_fields(
+        &mut event,
+        json!({"phase": phase, "outcome": outcome, "elapsed_ms": elapsed_ms}),
+    );
+    enqueue_metadata_event(&trace_id, phase, event);
+}
+
 /// Capture only after the shell client accepted exact Runner/request ownership.
 /// Finalizing the correlation remains separate from observational capture.
 pub(crate) fn capture_runner_result<T: Serialize>(request_id: &str, payload: &T) {

@@ -164,5 +164,4 @@ pub(super) static BUILTIN_CONTEXT_MATERIALS: ContextMaterialRegistry = ContextMa
 };
 
 #[cfg(test)]
-#[path = "../tests/context_projection/registry.rs"]
 mod tests;

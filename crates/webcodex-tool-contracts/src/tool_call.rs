@@ -1639,8 +1639,10 @@ pub enum ToolCall {
     /// selects authorized Server Job state and is deliberately excluded from generic recording.
     WorkResultState {
         project: String,
-        /// App timer polls may reuse a recent workspace observation. Missing/false
-        /// forces a fresh observation; never affects authorization or sealed Changes.
+        // App timer polls may reuse a recent workspace observation. Missing/false
+        // forces a fresh observation; never affects authorization or sealed Changes.
+        // The bundled App owns this option; keep its implementation note out of
+        // the outer tools/list schema description budget.
         #[serde(default)]
         automatic: bool,
         #[serde(default)]

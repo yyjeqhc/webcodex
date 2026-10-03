@@ -369,6 +369,7 @@ impl ToolRuntime {
     /// Add a small post-result sidecar only after the exact business relation is
     /// proven by canonical dispatch. Absence or failure is silent and never
     /// changes the main ToolResult or advances the cursor.
+    #[cfg(test)]
     pub(crate) async fn add_passive_job_attention(
         &self,
         result: &mut ToolResult,

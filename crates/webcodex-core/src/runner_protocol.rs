@@ -292,6 +292,12 @@ runner_capabilities! {
         #[serde(default)]
         pub file_read: bool = false;
     }
+    /// Native directory pagination; missing on older Runners means legacy full listing.
+    FileListPage => RUNNER_CAPABILITY_FILE_LIST_PAGE("file_list_page"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub file_list_page: bool = false;
+    }
     FileWrite => RUNNER_CAPABILITY_FILE_WRITE("file_write"),
     v2_baseline = true {
         #[serde(default)]
@@ -2745,6 +2751,7 @@ mod envelope_tests {
                 bash_login_shell: false,
                 file_read: true,
                 file_write: false,
+                file_list_page: false,
                 artifact_export_chunk_read: false,
                 artifact_export_streaming_metadata: false,
                 structured_file_delete: false,

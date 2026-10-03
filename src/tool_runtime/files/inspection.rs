@@ -530,11 +530,34 @@ pub(crate) fn relative_entry_path(rel_path: &str, name: &str) -> String {
     }
 }
 
-/// Parse a complete Runner `file_list` source (one entry per line, directories
-/// suffixed with `/`) into deterministically sorted project-relative entries.
-/// Paging is deliberately applied only after the complete source has reached
-/// the Server so `total_entries` and `next_offset` never describe a retained
-/// tail as if it were the full directory.
+/// Native pages encode leaf names as JSON, not newline-delimited pseudo paths.
+fn parse_directory_page(
+    stdout: &str,
+    rel_path: &str,
+    request: &webcodex_core::directory_page::DirectoryPageRequest,
+) -> Result<(Vec<Value>, usize, Option<usize>), String> {
+    use webcodex_core::directory_page::{DirectoryPage, MAX_PAGE_BYTES};
+    if stdout.len() > MAX_PAGE_BYTES {
+        return Err("directory page exceeds byte bound".into());
+    }
+    let page: DirectoryPage =
+        serde_json::from_str(stdout).map_err(|_| "malformed directory page")?;
+    page.validate(request)?;
+    let entries = page
+        .entries
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "path": relative_entry_path(rel_path, &entry.name),
+                "kind": if entry.directory { "dir" } else { "file" },
+            })
+        })
+        .collect();
+    Ok((entries, page.total_entries, page.next_offset))
+}
+
+/// Compatibility for deployed Runners without native directory pages. Only a
+/// complete, non-truncated source may be sliced; never page a retained tail.
 pub(crate) fn parse_file_list_entries(stdout: &str, rel_path: &str) -> Vec<Value> {
     let mut all: Vec<Value> = Vec::new();
     for line in stdout.lines() {
@@ -1084,15 +1107,29 @@ impl ToolRuntime {
         let offset = offset.unwrap_or(0);
         let client_id = proj.client_id.clone();
         let wait_timeout = 30;
+        let native_page = self
+            .runner_registry
+            .get_runner_feature_set(&client_id)
+            .await
+            .is_ok_and(|features| {
+                features.supports(crate::runner_http::RunnerFeature::FileListPage)
+            });
+        let page_request = webcodex_core::directory_page::DirectoryPageRequest {
+            offset,
+            limit: max_entries,
+        };
         let (request_id, rx) = match self
             .runner_registry
             .enqueue_file_op(
                 ShellFileOpRequest {
-                    op: "list".to_string(),
+                    op: if native_page { "list_page" } else { "list" }.to_string(),
                     client_id,
                     path: rel_path.clone(),
                     cwd: Some(proj.path.clone()),
-                    content: None,
+                    content: native_page.then(|| {
+                        serde_json::to_string(&page_request)
+                            .expect("bounded page request serializes")
+                    }),
                     max_bytes: None,
                     old_text: None,
                     pattern: None,
@@ -1111,7 +1148,18 @@ impl ToolRuntime {
             Ok(r) => r,
             Err(e) => return ToolResult::err(e),
         };
-        match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
+        let mut pending = PendingReadGuard {
+            registry: self.runner_registry.clone(),
+            request_id: Some(request_id.clone()),
+        };
+        let received = tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await;
+        if !matches!(&received, Ok(Ok(_))) {
+            self.runner_registry.cancel_request(&request_id).await;
+        }
+        // A cancellation during the await above still leaves the guard armed.
+        // Normal completion owns the cleanup once, not again from Drop.
+        pending.request_id = None;
+        match received {
             Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
                 let stdout = resp.stdout.unwrap_or_default();
                 if has_leading_runner_result_retention_truncation_marker(&stdout) {
@@ -1124,11 +1172,23 @@ impl ToolRuntime {
                         }),
                     );
                 }
-                let all = parse_file_list_entries(&stdout, &rel_path);
-                let total_entries = all.len();
-                let (entries, next_offset) = page_file_list_entries(&all, offset, max_entries);
+                let (entries, total_entries, next_offset) = if native_page {
+                    match parse_directory_page(&stdout, &rel_path, &page_request) {
+                        Ok(page) => page,
+                        Err(error) => {
+                            return ToolResult::err_with_output(
+                                error,
+                                json!({"error_kind":"source_incomplete", "reason_code":"invalid_directory_page", "state_changed":false}),
+                            )
+                        }
+                    }
+                } else {
+                    let all = parse_file_list_entries(&stdout, &rel_path);
+                    let (entries, next) = page_file_list_entries(&all, offset, max_entries);
+                    (entries, all.len(), next)
+                };
                 let returned = entries.len();
-                ToolResult::ok(json!({
+                let mut result = ToolResult::ok(json!({
                     "project": project,
                     "path": rel_path,
                     "entries": entries,
@@ -1137,21 +1197,20 @@ impl ToolRuntime {
                     "offset": offset,
                     "next_offset": next_offset,
                     "truncated": next_offset.is_some(),
-                }))
+                }));
+                if let Some(next) = next_offset {
+                    result.output["next_call"] = super::super::SuggestedToolCall::mechanically_followable(
+                        "list_project_files", json!({"project":project, "path":rel_path, "limit":max_entries, "offset":next})).to_value();
+                }
+                result
             }
             Ok(Ok(resp)) => ToolResult::err(
                 resp.error
                     .or(resp.stderr)
                     .unwrap_or_else(|| "Runner list_project_files failed".to_string()),
             ),
-            Ok(Err(_)) => {
-                self.runner_registry.cancel_request(&request_id).await;
-                ToolResult::err("Runner list_project_files waiter was dropped")
-            }
-            Err(_) => {
-                self.runner_registry.cancel_request(&request_id).await;
-                ToolResult::err("timed out waiting for Runner list_project_files")
-            }
+            Ok(Err(_)) => ToolResult::err("Runner list_project_files waiter was dropped"),
+            Err(_) => ToolResult::err("timed out waiting for Runner list_project_files"),
         }
     }
 

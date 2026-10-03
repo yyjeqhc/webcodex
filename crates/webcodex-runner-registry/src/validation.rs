@@ -288,6 +288,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         "read"
         | "write"
         | "list"
+        | "list_page"
         | "project_overview"
         | "delete_project_files"
         | "write_project_file"
@@ -307,7 +308,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         | "skill_read_file" => {}
         _ => {
             return Err(
-                "op must be one of read, write, list, project_overview, write_project_file, apply_text_edits, apply_patch, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_project_artifact_export_chunk, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, checkpoint_create, checkpoint_restore, skill_list_packages, skill_read_file"
+                "op must be one of read, write, list, list_page, project_overview, write_project_file, apply_text_edits, apply_patch, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_project_artifact_export_chunk, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, checkpoint_create, checkpoint_restore, skill_list_packages, skill_read_file"
                     .to_string(),
             )
         }
@@ -367,7 +368,9 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
     }
 
     if let Some(content) = &body.content {
-        let max_content_bytes = if artifact_payload {
+        let max_content_bytes = if body.op == "list_page" {
+            256
+        } else if artifact_payload {
             MAX_ARTIFACT_PAYLOAD_BYTES
         } else if checkpoint_payload {
             MAX_CHECKPOINT_PAYLOAD_BYTES
@@ -384,6 +387,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         }
         if body.op != "write"
             && body.op != "project_overview"
+            && body.op != "list_page"
             && body.op != "apply_text_edits"
             && !structured_edit_payload
             && !structured_delete_payload

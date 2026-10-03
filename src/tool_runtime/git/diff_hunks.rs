@@ -2658,5 +2658,4 @@ mod continuation_token_tests {
 }
 
 #[cfg(all(test, unix))]
-#[path = "../tests/git/page_producer.rs"]
 mod page_producer_tests;

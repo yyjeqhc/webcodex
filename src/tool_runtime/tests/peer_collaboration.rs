@@ -929,15 +929,38 @@ async fn newly_unprojected_message_is_not_starved_by_old_ack_reminders() {
         .await;
         assert!(posted.success, "{:?}", posted.error);
     }
-    let first = call_in_window(
+    // A scheduling pause may legitimately omit optional attention. Establish
+    // that boundary explicitly, then test ordering with the existing semantic
+    // fixture rather than requiring a production 40ms decoration to arrive.
+    let mut first = ToolResult::ok(json!({"business": "unchanged"}));
+    runtime.add_peer_collaboration_projection_until(
+        &mut first,
+        Some(&auth),
+        Some(&recipient),
+        None,
+        &[],
+        std::time::Instant::now() - std::time::Duration::from_millis(1),
+    );
+    assert_eq!(first.output, json!({"business": "unchanged"}));
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row(
+                "SELECT COALESCE(SUM(projection_count), 0) FROM window_peer_messages",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0,
+        "an omitted optional projection must not consume pending messages"
+    );
+    project_peer_semantics(
         &runtime,
-        &auth,
-        &recipient,
-        "get_runtime_status",
-        json!({"compact": true}),
-        ToolInvocationMetadata::default(),
-    )
-    .await;
+        &mut first,
+        Some(&auth),
+        Some(&recipient),
+        None,
+        &[],
+    );
     assert_eq!(
         first.output["peer_messages"]["messages"]
             .as_array()
@@ -961,15 +984,15 @@ async fn newly_unprojected_message_is_not_starved_by_old_ack_reminders() {
     .await;
     assert!(fresh.success, "{:?}", fresh.error);
 
-    let second = call_in_window(
+    let mut second = ToolResult::ok(json!({"business": "unchanged"}));
+    project_peer_semantics(
         &runtime,
-        &auth,
-        &recipient,
-        "get_runtime_status",
-        json!({"compact": true}),
-        ToolInvocationMetadata::default(),
-    )
-    .await;
+        &mut second,
+        Some(&auth),
+        Some(&recipient),
+        None,
+        &[],
+    );
     let messages = second.output["peer_messages"]["messages"]
         .as_array()
         .unwrap();

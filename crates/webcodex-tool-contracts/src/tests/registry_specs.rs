@@ -229,10 +229,11 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     }
     let list_files_desc = desc("list_project_files");
     for phrase in [
-        "deterministic page",
-        "next_offset",
-        "complete directory source",
-        "retained-tail truncation fails closed",
+        "live project directory",
+        "next_call",
+        "offsets are not snapshots",
+        "older runners",
+        "fail closed",
     ] {
         assert!(
             list_files_desc.contains(phrase),

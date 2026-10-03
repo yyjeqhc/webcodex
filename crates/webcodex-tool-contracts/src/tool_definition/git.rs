@@ -85,7 +85,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                     .diff_review(super::ToolDiffReviewEvidence::Always),
             )
             .with_composition_policy(super::ToolCompositionPolicy::Parallel),
-            "Primary bounded Git review workflow. First call returns an exact snapshot, summary/signals, and first read_git_diff_hunks page. Continue with the returned opaque token and identical closed scope/paging inputs. Workspace mutation fails closed; committed review stays pinned to exact commits and merge-base.",
+            "Review a fenced Git snapshot with three-line context. Workspace is the net HEAD-to-worktree patch, including staged/untracked contents, not an index-only plan. Committed scope pins commits/merge-base. Follow only next_call with unchanged inputs; workspace changes fail closed. Use get_git_status for cleanliness.",
         ))),
         120,
         super::ToolDirectReason::CoreWorkflow,

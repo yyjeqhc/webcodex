@@ -393,6 +393,7 @@ mod tests {
                         bash_login_shell: false,
                         file_read: true,
                         file_write: true,
+                        file_list_page: false,
                         artifact_export_chunk_read: false,
                         artifact_export_streaming_metadata: false,
                         structured_file_delete: true,

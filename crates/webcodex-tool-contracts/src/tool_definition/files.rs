@@ -53,7 +53,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::ReadOnlyInspection),
         ),
-        "List one deterministic page of files in an explicit Runner-registered project directory (bounded, read-only), including non-Git workspaces and ignored/generated directories when the caller names them. Entries are sorted before offset/limit slicing; use next_offset until null. Successful paging is exposed only when the complete directory source reached the Server—retained-tail truncation fails closed instead of inventing total_entries or a safe continuation. Returns project-relative paths plus a file/dir kind. Use list_project_tracked_files for default Git repository discovery and read_files for an exact file. Routed to the owning registered Runner; the server never reads the Runner project path directly.",
+        "List one live Project directory, including named generated/non-Git directories. Returns sorted project-relative paths and file/dir kinds. Follow next_call for another page; offsets are not snapshots, so concurrent directory changes can shift entries. Current Runners bound pages before transport; older Runners require a complete source or fail closed. Use list_project_tracked_files with query/globs/depth for repository discovery, search_project_texts for content, and read_files for a known file. Do not enumerate directories merely to confirm a known path.",
     ),
     model_spec(
         def(

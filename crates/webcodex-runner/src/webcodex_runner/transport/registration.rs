@@ -148,6 +148,7 @@ pub(crate) fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabili
     capabilities.set(RunnerCapabilityId::FileWrite, true);
     // This binary implements the narrow internal seek/read export-chunk path.
     // Older binaries omit the field so Control uses the existing slow fallback.
+    capabilities.set(RunnerCapabilityId::FileListPage, true);
     capabilities.set(RunnerCapabilityId::ArtifactExportChunkRead, true);
     // Large export metadata (size/SHA/MIME) is verified with bounded streaming
     // I/O. Keep this separate from chunk-read support for rolling upgrades.

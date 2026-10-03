@@ -58,6 +58,7 @@ pub(crate) fn is_basic_file_request_kind(kind: &str) -> bool {
         "file_read"
             | "file_write"
             | "file_list"
+            | "file_list_page"
             | "file_project_overview"
             | "file_delete_project_files"
             | "file_skill_list_packages"
@@ -78,6 +79,7 @@ pub(crate) fn handle_basic_file_request(
             handle_file_write_request(policy, request, resolved, start)
         }
         RunnerFileOperation::List(_) => handle_file_list_request(resolved, start),
+        RunnerFileOperation::ListPage(_) => directory_page::handle(request, resolved, start),
         RunnerFileOperation::SkillListPackages(_) => {
             handle_skill_list_packages_request(request, resolved, start)
         }
@@ -892,3 +894,5 @@ fn handle_file_list_request(resolved: &Path, start: Instant) -> CommandResult {
         },
     }
 }
+
+mod directory_page;

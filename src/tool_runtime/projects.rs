@@ -266,7 +266,11 @@ impl ToolRuntime {
         let access = crate::runner_http::runner_access_from_auth(auth);
         let clients = self
             .runner_registry
-            .list_runner_semantic_views_for_auth(access.as_ref())
+            .list_project_semantic_views_for_auth(
+                access.as_ref(),
+                options.client_id.as_deref(),
+                options.project.as_deref(),
+            )
             .await;
         self.list_projects_from_semantic_clients(auth, &options, query.as_deref(), limit, &clients)
             .await
@@ -395,6 +399,7 @@ impl ToolRuntime {
                     "id": runtime_id,
                     "agent_project_id": project.id,
                     "name": project.name,
+                    "path": project.path,
                     "description": project.description,
                     "executor": "agent",
                     "client_id": client_id,

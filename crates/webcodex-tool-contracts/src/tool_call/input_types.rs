@@ -1406,7 +1406,7 @@ fn nullable_stdin_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GitReviewScopeInput {
-    /// Review the complete current workspace (tracked, staged, unstaged, and untracked state).
+    /// Net HEAD-to-worktree changes, including staged/untracked contents; not an index-only patch.
     Workspace,
     /// Review one exact committed range, resolved once to a single merge-base.
     Committed {

@@ -357,6 +357,7 @@ runner_file_operations!(
     (Read, "file_read", "read"),
     (Write, "file_write", "write"),
     (List, "file_list", "list"),
+    (ListPage, "file_list_page", "list_page"),
     (ProjectOverview, "file_project_overview", "project_overview"),
     (
         DeleteProjectFiles,
@@ -2007,6 +2008,19 @@ fn validate_file_payload(kind: &str, payload: &RunnerFilePayload) -> Result<(), 
     if payload.cwd.as_deref().is_some_and(|cwd| cwd.contains('\0')) {
         return Err("file operation cwd cannot contain NUL".to_string());
     }
+    if kind == "file_list_page" {
+        let raw = payload
+            .content
+            .as_deref()
+            .filter(|raw| raw.len() <= 256)
+            .ok_or("directory page request missing or oversized")?;
+        serde_json::from_str::<crate::directory_page::DirectoryPageRequest>(raw)
+            .map_err(|_| "invalid directory page request")?
+            .validate()?;
+        if payload.max_bytes.is_some() {
+            return Err("directory page does not accept max_bytes".into());
+        }
+    }
     let write = kind == "file_write";
     if !write
         && (payload.expected_sha256.is_some()
@@ -3065,6 +3079,7 @@ mod tests {
             }),
             RunnerFileOperation::Write(file_payload(Some("body"))),
             RunnerFileOperation::List(file_payload(None)),
+            RunnerFileOperation::ListPage(file_payload(Some(r#"{"offset":0,"limit":20}"#))),
             RunnerFileOperation::ProjectOverview(file_payload(None)),
             RunnerFileOperation::DeleteProjectFiles(file_payload(None)),
             RunnerFileOperation::WriteProjectFile(file_payload(None)),
@@ -3145,6 +3160,7 @@ mod tests {
             "file_read",
             "file_write",
             "file_list",
+            "file_list_page",
             "file_project_overview",
             "file_delete_project_files",
             "file_write_project_file",

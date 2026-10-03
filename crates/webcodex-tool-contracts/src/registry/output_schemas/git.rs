@@ -213,7 +213,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("summary", nullable_schema("object", "Initial-page bounded review summary; continuation pages may omit it.")),
             ("files", array_schema(open_object_schema("Bounded changed-file metadata."), "Initial-page changed files; continuation pages may return an empty array.")),
             ("signals", array_schema(open_object_schema("Bounded deterministic or Session review signal."), "Initial-page review signals; continuation pages may return an empty array.")),
-            ("diff", nullable_schema("object", "One bounded page from the existing read_git_diff_hunks engine, preserving its source fences and recovery semantics.")),
+            ("diff", nullable_schema("object", "Bounded review patch. has_more includes fragments; only outer next_call continues this snapshot. Workspace basis is head_to_frozen_workspace.")),
             ("continuation", nullable_schema("string", "Opaque same-snapshot review continuation, or null when no bounded page continuation is available.")),
             (
                 "next_call",

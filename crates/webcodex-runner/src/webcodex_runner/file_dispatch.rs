@@ -118,6 +118,7 @@ pub(crate) fn handle_file_operation_with_artifact_store(
         RunnerFileOperation::Read(_)
         | RunnerFileOperation::Write(_)
         | RunnerFileOperation::List(_)
+        | RunnerFileOperation::ListPage(_)
         | RunnerFileOperation::ProjectOverview(_)
         | RunnerFileOperation::DeleteProjectFiles(_)
         | RunnerFileOperation::SkillListPackages(_)

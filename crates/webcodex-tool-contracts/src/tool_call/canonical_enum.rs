@@ -1308,21 +1308,20 @@ pub enum ToolCall {
         /// Optional explicit wc_sess_* Workflow Session id. Snapshot reuse is fenced to this identity.
         #[serde(default)]
         session_id: Option<String>,
-        /// Optional project-relative paths to narrow diff paging.
+        /// Patch paths only; workspace identity/metadata remain repository-wide.
         #[serde(default)]
         paths: Option<Vec<String>>,
         /// Maximum hunks on each bounded diff page.
         #[serde(default)]
         max_hunks: Option<usize>,
-        /// Maximum complete lines per returned hunk.
+        /// Maximum lines per returned hunk.
         #[serde(default)]
         max_hunk_lines: Option<usize>,
         /// Raw producer page budget, clamped by the same read_git_diff_hunks engine.
         #[schemars(range(min = 0))]
         #[serde(default)]
         max_page_bytes: Option<usize>,
-        /// Opaque review_changes continuation. When present, metadata comes only from the exact retained
-        /// snapshot and the underlying diff page continues from the same fenced source.
+        /// Opaque token from next_call; repeat its scope and page inputs.
         #[schemars(length(max = 384))]
         #[serde(default)]
         continuation: Option<String>,
@@ -3900,13 +3899,11 @@ pub enum ToolCall {
         #[schemars(length(min = 1, max = 200))]
         #[serde(default)]
         query: Option<String>,
-        /// Maximum Projects returned after all filters. Values above 100 are accepted and clamped to 100.
-        /// Omit to preserve the legacy full visible registry result.
+        /// Maximum results, clamped to 100. Filtered queries default to 100; unfiltered omission returns all visible Projects.
         #[schemars(range(min = 1))]
         #[serde(default)]
         limit: Option<usize>,
-        /// Return a compact workspace-selection projection without paths, revisions, or broad smoke
-        /// metadata.
+        /// Compact workspace selection including exact paths, without revisions or detailed policy.
         #[serde(default)]
         summary_only: bool,
     },

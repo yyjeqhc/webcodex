@@ -288,6 +288,110 @@ changes_git() {
 }
 "#;
 
+/// Build the same bounded workspace observation for direct and compound reviews.
+pub(in crate::tool_runtime) fn workspace_freeze_command(capture_review_status: bool) -> String {
+    // A private temporary index snapshots HEAD plus the complete current
+    // workspace without touching the real index/ref/worktree. Custom Git
+    // clean/process filters and fsmonitor are neutralized because this is a
+    // read-authority observation path, not repository-configured execution.
+    // `git add` may still write immutable blobs/trees to the object database;
+    // the resulting tree is intentionally unreachable observation state.
+    // Scope GIT_INDEX_FILE to a subshell: macOS sh (Bash 3.2) retains inline
+    // assignments before function calls, which would make the subsequent
+    // review status read this temporary index instead of the real index.
+    format!(
+        r#"set -eu
+LC_ALL=C; export LC_ALL
+GIT_TERMINAL_PROMPT=0; export GIT_TERMINAL_PROMPT
+umask 077
+{safe_config_setup}
+changes_git_tmp_index=$(mktemp "${{TMPDIR:-/tmp}}/webcodex-changes-index.XXXXXX")
+rm -f "$changes_git_tmp_index"
+head=""
+if changes_git rev-parse --verify HEAD >/dev/null 2>&1; then
+  head=$(changes_git rev-parse --verify HEAD)
+fi
+tree=$(
+  set -e
+  GIT_INDEX_FILE="$changes_git_tmp_index"; export GIT_INDEX_FILE
+  if [ -n "$head" ]; then
+    changes_git read-tree "$head"
+  else
+    changes_git read-tree --empty
+  fi
+  changes_git add -A -- .
+  changes_git write-tree
+)
+printf 'WEBCODEX_WORKSPACE_HEAD=%s\nWEBCODEX_WORKSPACE_TREE=%s\n' "$head" "$tree"
+{review_status}
+"#,
+        safe_config_setup = CHANGES_GIT_SAFE_CONFIG_SETUP,
+        // Porcelain v2 includes branch identity, staged object ids, modes,
+        // conflicts and untracked classification. The frozen worktree alone
+        // cannot fence metadata/diffs after staging or a same-HEAD switch.
+        // Keep this in the same Runner request and do not refresh the real index.
+        review_status = if capture_review_status {
+            r#"changes_git_review_status_tmp=$(mktemp "${TMPDIR:-/tmp}/webcodex-review-status.XXXXXX")
+changes_git --no-optional-locks status --porcelain=v2 --branch --untracked-files=all --ignore-submodules=none >"$changes_git_review_status_tmp"
+status_fingerprint=$(changes_git hash-object --no-filters -- "$changes_git_review_status_tmp")
+printf 'WEBCODEX_WORKSPACE_STATUS=%s\n' "$status_fingerprint""#
+        } else {
+            ""
+        },
+    )
+}
+
+pub(in crate::tool_runtime) fn parse_workspace_freeze(
+    stdout: &str,
+    capture_review_status: bool,
+) -> Result<(Option<String>, String, Option<String>), ToolResult> {
+    let mut head = None;
+    let mut tree = None;
+    let mut status_fingerprint = None;
+    for line in stdout.lines() {
+        if let Some(value) = line.strip_prefix("WEBCODEX_WORKSPACE_HEAD=") {
+            if !value.is_empty() {
+                if !valid_git_object_id(value) {
+                    return Err(changes_runtime_error(
+                        "changes_snapshot_failed",
+                        "Git returned an invalid workspace HEAD id",
+                    ));
+                }
+                head = Some(value.to_string());
+            }
+        } else if let Some(value) = line.strip_prefix("WEBCODEX_WORKSPACE_TREE=") {
+            tree = Some(value.to_string());
+        } else if let Some(value) = line.strip_prefix("WEBCODEX_WORKSPACE_STATUS=") {
+            if !valid_git_object_id(value) {
+                return Err(changes_runtime_error(
+                    "changes_snapshot_failed",
+                    "Git returned an invalid review status fingerprint",
+                ));
+            }
+            status_fingerprint = Some(value.to_string());
+        }
+    }
+    let Some(tree) = tree else {
+        return Err(changes_runtime_error(
+            "changes_snapshot_failed",
+            "Git did not return a frozen workspace tree id",
+        ));
+    };
+    if !valid_git_object_id(&tree) {
+        return Err(changes_runtime_error(
+            "changes_snapshot_failed",
+            "Git returned an invalid frozen workspace tree id",
+        ));
+    }
+    if capture_review_status && status_fingerprint.is_none() {
+        return Err(changes_runtime_error(
+            "changes_snapshot_failed",
+            "Git did not return workspace review status",
+        ));
+    }
+    Ok((head, tree, status_fingerprint))
+}
+
 impl ToolRuntime {
     /// Cheap closeout eligibility probe. It intentionally does not freeze a
     /// snapshot or generate diff bodies: only the explicit presentation call
@@ -730,57 +834,13 @@ exit 0
         project: &str,
         capture_review_status: bool,
     ) -> Result<(Option<String>, String, Option<String>), ToolResult> {
-        // A private temporary index snapshots HEAD plus the complete current
-        // workspace without touching the real index/ref/worktree. Custom Git
-        // clean/process filters and fsmonitor are neutralized because this is a
-        // read-authority observation path, not repository-configured execution.
-        // `git add` may still write immutable blobs/trees to the object database;
-        // the resulting tree is intentionally unreachable observation state.
-        // Scope GIT_INDEX_FILE to a subshell: macOS sh (Bash 3.2) retains inline
-        // assignments before function calls, which would make the subsequent
-        // review status read this temporary index instead of the real index.
-        let script = format!(
-            r#"set -eu
-LC_ALL=C; export LC_ALL
-GIT_TERMINAL_PROMPT=0; export GIT_TERMINAL_PROMPT
-umask 077
-{safe_config_setup}
-changes_git_tmp_index=$(mktemp "${{TMPDIR:-/tmp}}/webcodex-changes-index.XXXXXX")
-rm -f "$changes_git_tmp_index"
-head=""
-if changes_git rev-parse --verify HEAD >/dev/null 2>&1; then
-  head=$(changes_git rev-parse --verify HEAD)
-fi
-tree=$(
-  set -e
-  GIT_INDEX_FILE="$changes_git_tmp_index"; export GIT_INDEX_FILE
-  if [ -n "$head" ]; then
-    changes_git read-tree "$head"
-  else
-    changes_git read-tree --empty
-  fi
-  changes_git add -A -- .
-  changes_git write-tree
-)
-printf 'WEBCODEX_WORKSPACE_HEAD=%s\nWEBCODEX_WORKSPACE_TREE=%s\n' "$head" "$tree"
-{review_status}
-"#,
-            safe_config_setup = CHANGES_GIT_SAFE_CONFIG_SETUP,
-            // Porcelain v2 includes branch identity, staged object ids, modes,
-            // conflicts and untracked classification. The frozen worktree alone
-            // cannot fence metadata/diffs after staging or a same-HEAD switch.
-            // Keep this in the same Runner request and do not refresh the real index.
-            review_status = if capture_review_status {
-                r#"changes_git_review_status_tmp=$(mktemp "${TMPDIR:-/tmp}/webcodex-review-status.XXXXXX")
-changes_git --no-optional-locks status --porcelain=v2 --branch --untracked-files=all --ignore-submodules=none >"$changes_git_review_status_tmp"
-status_fingerprint=$(changes_git hash-object --no-filters -- "$changes_git_review_status_tmp")
-printf 'WEBCODEX_WORKSPACE_STATUS=%s\n' "$status_fingerprint""#
-            } else {
-                ""
-            },
-        );
         let output = self
-            .run_project_internal_posix_script_capture(project, script.to_string(), 60, None)
+            .run_project_internal_posix_script_capture(
+                project,
+                workspace_freeze_command(capture_review_status),
+                60,
+                None,
+            )
             .await
             .map_err(|error| changes_runtime_error("changes_snapshot_failed", error))?;
         if output.exit_code != Some(0) || output.stdout_truncated {
@@ -789,51 +849,7 @@ printf 'WEBCODEX_WORKSPACE_STATUS=%s\n' "$status_fingerprint""#
                 "Git could not freeze the workspace tree",
             ));
         }
-        let mut head = None;
-        let mut tree = None;
-        let mut status_fingerprint = None;
-        for line in output.stdout.lines() {
-            if let Some(value) = line.strip_prefix("WEBCODEX_WORKSPACE_HEAD=") {
-                if !value.is_empty() {
-                    if !valid_git_object_id(value) {
-                        return Err(changes_runtime_error(
-                            "changes_snapshot_failed",
-                            "Git returned an invalid workspace HEAD id",
-                        ));
-                    }
-                    head = Some(value.to_string());
-                }
-            } else if let Some(value) = line.strip_prefix("WEBCODEX_WORKSPACE_TREE=") {
-                tree = Some(value.to_string());
-            } else if let Some(value) = line.strip_prefix("WEBCODEX_WORKSPACE_STATUS=") {
-                if !valid_git_object_id(value) {
-                    return Err(changes_runtime_error(
-                        "changes_snapshot_failed",
-                        "Git returned an invalid review status fingerprint",
-                    ));
-                }
-                status_fingerprint = Some(value.to_string());
-            }
-        }
-        let Some(tree) = tree else {
-            return Err(changes_runtime_error(
-                "changes_snapshot_failed",
-                "Git did not return a frozen workspace tree id",
-            ));
-        };
-        if !valid_git_object_id(&tree) {
-            return Err(changes_runtime_error(
-                "changes_snapshot_failed",
-                "Git returned an invalid frozen workspace tree id",
-            ));
-        }
-        if capture_review_status && status_fingerprint.is_none() {
-            return Err(changes_runtime_error(
-                "changes_snapshot_failed",
-                "Git did not return workspace review status",
-            ));
-        }
-        Ok((head, tree, status_fingerprint))
+        parse_workspace_freeze(&output.stdout, capture_review_status)
     }
 
     pub(crate) async fn freeze_final_workspace_tree(

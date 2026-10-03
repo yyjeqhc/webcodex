@@ -887,7 +887,16 @@ fn git_log_and_directory_listing_expose_parser_ready_next_pages() {
     assert!(files["total_entries"]["description"]
         .as_str()
         .unwrap()
-        .contains("fully acquired"));
+        .contains("live directory observation"));
+    let next = &files["next_call"];
+    assert_eq!(next["properties"]["tool"]["const"], "list_project_files");
+    assert!(next["properties"]["arguments"]["properties"]
+        .get("offset")
+        .is_some());
+    assert_eq!(
+        next["properties"]["arguments"]["additionalProperties"],
+        false
+    );
 }
 
 #[test]

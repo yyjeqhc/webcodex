@@ -86,6 +86,14 @@ fn config_setup_cumulatively_consumes_total_run_deadline() {
     );
     let log = wire_log(&temp);
     let methods = received_methods(&log);
+    assert!(
+        methods
+            .iter()
+            .filter(|method| method.as_str() == "session/set_config_option")
+            .count()
+            < 4,
+        "the cumulative budget must prevent a fourth configuration admission: {methods:?}"
+    );
     let completed_configs = log
         .iter()
         .filter(|entry| entry.get("config_applied").is_some())

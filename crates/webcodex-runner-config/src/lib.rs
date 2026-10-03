@@ -220,6 +220,7 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             file_write: true,
             // The running binary advertises the internal optimized export read
             // only after installing that request handler.
+            file_list_page: false,
             artifact_export_chunk_read: false,
             // Large export metadata is likewise a running-binary capability;
             // generated config is not authoritative for registration semantics.

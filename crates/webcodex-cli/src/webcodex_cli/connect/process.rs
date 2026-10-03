@@ -1473,7 +1473,7 @@ mod tests {
         std::fs::write(local_runner_profile_marker(&state), "profile='preflight'\n").unwrap();
         ensure_runner_unlocked(&runner, &config, &state).unwrap();
         let first = load_runner_state(&state).unwrap().unwrap();
-        let outcome = (|| {
+        let outcome = || {
             std::fs::write(&config, "invalid=true\n").unwrap();
             let replacement = ensure_runner_unlocked(&runner, &config, &state).unwrap_err();
             assert!(!replacement.contains("SECRET_CONFIG"));
@@ -1490,7 +1490,7 @@ mod tests {
             assert!(process_matches(&first));
             assert_eq!(load_runner_state(&state).unwrap().unwrap().pid, first.pid);
             eprintln!("RUNNER_PREFLIGHT invalid_replacement=blocked invalid_restart=blocked original_pid_preserved=true");
-        });
+        };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(outcome));
         stop_runner_unlocked(&state).unwrap();
         if let Err(panic) = result {

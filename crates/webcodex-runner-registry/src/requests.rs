@@ -560,6 +560,19 @@ impl RunnerRegistry {
         let (tx, rx) = oneshot::channel();
         let request = encode_file_operation(&request_id, &body, requested_by)?;
         let mut inner = self.inner.lock().await;
+        if body.op == "list_page" {
+            let runner = inner
+                .runners
+                .get(&body.client_id)
+                .ok_or("unknown directory Runner")?;
+            if !runner.runner_features.supports(RunnerFeature::FileRead)
+                || !runner.runner_features.supports(RunnerFeature::FileListPage)
+            {
+                return Err(
+                    "capability_unavailable: Runner does not support file_list_page".into(),
+                );
+            }
+        }
         enqueue_pending_request_locked(
             self.telemetry.as_ref(),
             &mut inner,

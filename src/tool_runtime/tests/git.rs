@@ -84,3 +84,5 @@ include!("git/review_and_mutations.rs");
 include!("git/diff_hunks.rs");
 include!("git/show_changes.rs");
 include!("git/read_and_review.rs");
+
+include!("git/review_performance.rs");

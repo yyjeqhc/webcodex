@@ -479,6 +479,7 @@ async fn register_agent_projects_for_auth(
                         bash_login_shell: false,
                         file_read: true,
                         file_write: true,
+                        file_list_page: false,
                         artifact_export_chunk_read: false,
                         artifact_export_streaming_metadata: false,
                         structured_file_delete: false,

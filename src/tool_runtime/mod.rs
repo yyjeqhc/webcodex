@@ -49,6 +49,7 @@ mod git_review;
 mod git_review_snapshot;
 mod git_tools;
 mod goal;
+mod guidance;
 mod handoff;
 mod handoff_brief;
 mod handoff_tools;

@@ -418,13 +418,8 @@ async fn list_projects_targets_visible_inventory_before_limit_and_compacts() {
     assert_eq!(focused.output["truncated"], false);
     let project = &focused.output["projects"][0];
     assert_eq!(project["id"], "agent:special:webcodex-target");
-    for omitted in [
-        "path",
-        "revision",
-        "last_seen",
-        "allow_patch",
-        "shell_profile",
-    ] {
+    assert_eq!(project["path"], "/root/git/webcodex-target");
+    for omitted in ["revision", "last_seen", "allow_patch", "shell_profile"] {
         assert!(
             project.get(omitted).is_none(),
             "summary_only leaked {omitted}: {project}"
@@ -1106,4 +1101,79 @@ fn targeted_inventory_audit_summaries_do_not_persist_raw_query_or_id_filters() {
     let defensive_text = defensive.to_string();
     assert!(!defensive_text.contains(query));
     assert!(!defensive_text.contains("secret-project"));
+}
+
+#[tokio::test]
+async fn exact_project_selection_clones_only_matching_rows_and_keeps_compact_paths() {
+    let runtime = test_runtime();
+    register_target_agent(
+        &runtime,
+        "selected",
+        (0..1200)
+            .map(|n| registered_project(&format!("p{n:04}"), &format!("/repo/p{n:04}")))
+            .collect(),
+        None,
+    )
+    .await;
+    register_target_agent(
+        &runtime,
+        "unrelated",
+        vec![registered_project("other", "/unrelated")],
+        None,
+    )
+    .await;
+    let selected = runtime
+        .runner_registry
+        .list_project_semantic_views_for_auth(None, Some("selected"), Some("agent:selected:p0700"))
+        .await;
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].view.projects.len(), 1);
+    assert_eq!(selected[0].view.projects[0].id, "p0700");
+    let none = runtime
+        .runner_registry
+        .list_project_semantic_views_for_auth(None, Some("unrelated"), Some("agent:selected:p0700"))
+        .await;
+    assert!(none.is_empty());
+    let result = runtime
+        .list_projects_with_options(
+            None,
+            ListProjectsOptions {
+                client_id: Some("selected".into()),
+                project: Some("agent:selected:p0700".into()),
+                summary_only: true,
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["count"], 1);
+    assert_eq!(result.output["projects"][0]["path"], "/repo/p0700");
+    assert!(result.output["projects"][0].get("revision").is_none());
+    eprintln!("PROJECT_SELECTION available=1201 cloned_project_rows=1 compact_path=true");
+}
+
+#[tokio::test]
+async fn exact_project_selection_preserves_current_principal_visibility() {
+    let runtime = test_runtime();
+    let owner = shared_key_auth_context("discovery-owner");
+    let other = shared_key_auth_context("discovery-other");
+    register_target_agent_for_auth(&runtime, "private-discovery", "p", &owner).await;
+    let authorized = runtime
+        .runner_registry
+        .list_project_semantic_views_for_auth(
+            Some(&crate::test_support::runner_access(&owner)),
+            Some("private-discovery"),
+            Some("agent:private-discovery:p"),
+        )
+        .await;
+    assert_eq!(authorized.len(), 1);
+    let denied = runtime
+        .runner_registry
+        .list_project_semantic_views_for_auth(
+            Some(&crate::test_support::runner_access(&other)),
+            Some("private-discovery"),
+            Some("agent:private-discovery:p"),
+        )
+        .await;
+    assert!(denied.is_empty());
 }

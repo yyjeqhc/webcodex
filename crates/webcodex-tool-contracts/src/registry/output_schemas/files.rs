@@ -42,7 +42,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "total_entries",
                 schema_type(
                     "integer",
-                    "Exact entry count in the fully acquired, deterministically sorted directory source.",
+                    "Exact entry count for this live directory observation; later pages may observe changes.",
                 ),
             ),
             (
@@ -53,7 +53,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "next_offset",
                 nullable_schema(
                     "integer",
-                    "Exact offset for the next page, or null when this page reaches the end of the complete source.",
+                    "Next live-directory offset, or null at the observed end.",
                 ),
             ),
             (
@@ -63,6 +63,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "Whether another deterministic page remains after this page.",
                 ),
             ),
+            ("next_call", suggested_tool_call_schema(
+                webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
+                "list_project_files", crate::input_schema_for_tool("list_project_files"),
+                "Next page of the same live directory selection; not a snapshot or new authority.",
+            )),
         ])),
         "list_project_tracked_files" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved project id.")),

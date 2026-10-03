@@ -56,3 +56,5 @@ mod project_build_tests;
 
 #[cfg(test)]
 mod project_operation_tests;
+
+pub mod directory_page;

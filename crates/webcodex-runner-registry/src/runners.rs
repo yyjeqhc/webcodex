@@ -1258,24 +1258,60 @@ impl RunnerRegistry {
         &self,
         auth: Option<&crate::RunnerAccess>,
     ) -> Vec<RunnerSemanticView> {
+        self.list_project_semantic_views_for_auth(auth, None, None)
+            .await
+    }
+
+    /// Filter exact selection before cloning Project inventories. Selection is
+    /// applied under the same canonical authorization snapshot, never cached.
+    pub async fn list_project_semantic_views_for_auth(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        client_id: Option<&str>,
+        project: Option<&str>,
+    ) -> Vec<RunnerSemanticView> {
         let now = now_ts();
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_runners_locked(&mut inner, now);
-        for runner in inner.runners.values_mut() {
-            expire_staging(runner, now);
-        }
-        let mut ids = inner.runners.keys().cloned().collect::<Vec<_>>();
+        let mut ids = inner
+            .runners
+            .keys()
+            .filter(|id| client_id.is_none_or(|expected| id.as_str() == expected))
+            .cloned()
+            .collect::<Vec<_>>();
         ids.sort();
-        ids.into_iter()
-            .filter(|id| {
-                inner
-                    .runners
-                    .get(id)
-                    .map(|runner| runner_visible_to_access(auth, runner))
-                    .unwrap_or(false)
-            })
-            .filter_map(|id| Self::runner_semantic_view_locked(&inner, &id))
-            .collect()
+        let mut selected = Vec::new();
+        for id in ids {
+            let runner = inner
+                .runners
+                .get_mut(&id)
+                .expect("selected registered Runner");
+            if !runner_visible_to_access(auth, runner) {
+                continue;
+            }
+            expire_staging(runner, now);
+            let projects = runner
+                .projects
+                .iter()
+                .filter(|entry| {
+                    project.is_none_or(|expected| expected == format!("agent:{id}:{}", entry.id))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if project.is_some() && projects.is_empty() {
+                continue;
+            }
+            let runner_features = runner.runner_features.clone();
+            let mut view = Self::runner_view_with_projects_locked(&inner, &id, false)
+                .expect("selected registered Runner");
+            view.projects = projects;
+            selected.push(RunnerSemanticView {
+                view,
+                observed_at: std::time::Instant::now(),
+                runner_features,
+            });
+        }
+        selected
     }
 
     /// Exact Project visibility from the registered Runner snapshot. This is

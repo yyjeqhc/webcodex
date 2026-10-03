@@ -1,11 +1,16 @@
+//! Explicit, independently bounded context sidecars. Material registration owns
+//! discovery and providers; this layer owns request order and the shared budget.
+
+mod providers;
+mod registry;
+
 use super::project_resolution::ResolvedProject;
-use super::startup_brief::{
-    builtin_coding_workflow_projection_with_policy, project_instructions_context_projection,
-};
+use super::startup_brief::builtin_coding_workflow_projection_with_policy;
 use super::tool_inputs::CodingGuidanceProfile;
 use super::{SuggestedToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::json_measurement::serialized_json_len;
+use registry::{ContextMaterialContext, ContextProjectionBudget, BUILTIN_CONTEXT_MATERIALS};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -14,135 +19,17 @@ pub(crate) const TOOL_CALL_CONTEXT_REQUEST_FIELD: &str = "context_request";
 pub(crate) const MAX_CONTEXT_REQUEST_ITEMS: usize = 8;
 pub(crate) const MAX_CONTEXT_REQUEST_KEY_CHARS: usize = 64;
 pub(crate) const MAX_CONTEXT_PROJECTION_BYTES: usize = 20 * 1024;
-const PLUGIN_CATALOG_SCOPES: &[&str] = &[
-    crate::auth::SCOPE_PROJECT_READ,
-    crate::auth::SCOPE_PLUGIN_INSPECT,
-];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContextMaterialScopePolicy {
-    Public,
-    Require(&'static str),
-    RequireAll(&'static [&'static str]),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContextMaterialSurface {
-    AnySidecar,
-    SkillRuntime,
-    MemorySurface,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ContextMaterialSpec {
-    pub(crate) key: &'static str,
-    pub(crate) project_required: bool,
-    pub(crate) scope_policy: ContextMaterialScopePolicy,
-    pub(crate) surface: ContextMaterialSurface,
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ContextMaterialCapabilities {
     pub(crate) skill_runtime: bool,
     pub(crate) memory_surface: bool,
 }
 
-pub(crate) const CONTEXT_MATERIAL_SPECS: &[ContextMaterialSpec] = &[
-    ContextMaterialSpec {
-        key: "project.instructions",
-        project_required: true,
-        scope_policy: ContextMaterialScopePolicy::Require(crate::auth::SCOPE_PROJECT_READ),
-        surface: ContextMaterialSurface::AnySidecar,
-    },
-    ContextMaterialSpec {
-        key: "webcodex.workflow",
-        project_required: false,
-        scope_policy: ContextMaterialScopePolicy::Public,
-        surface: ContextMaterialSurface::AnySidecar,
-    },
-    ContextMaterialSpec {
-        key: "workflow.resume",
-        project_required: false,
-        scope_policy: ContextMaterialScopePolicy::Public,
-        surface: ContextMaterialSurface::AnySidecar,
-    },
-    ContextMaterialSpec {
-        key: "jobs.attention",
-        project_required: true,
-        scope_policy: ContextMaterialScopePolicy::Require(crate::auth::SCOPE_RUNTIME_READ),
-        surface: ContextMaterialSurface::AnySidecar,
-    },
-    ContextMaterialSpec {
-        key: "skills.catalog",
-        project_required: true,
-        scope_policy: ContextMaterialScopePolicy::Require(crate::auth::SCOPE_PROJECT_READ),
-        surface: ContextMaterialSurface::SkillRuntime,
-    },
-    ContextMaterialSpec {
-        key: "plugins.catalog",
-        project_required: true,
-        scope_policy: ContextMaterialScopePolicy::RequireAll(PLUGIN_CATALOG_SCOPES),
-        surface: ContextMaterialSurface::AnySidecar,
-    },
-    ContextMaterialSpec {
-        key: "memory.bootstrap",
-        project_required: true,
-        scope_policy: ContextMaterialScopePolicy::RequireAll(
-            webcodex_core::authority::MEMORY_READ_SCOPES,
-        ),
-        surface: ContextMaterialSurface::MemorySurface,
-    },
-];
-
-// Optional workflow chapters are discovered through the stable webcodex.workflow
-// entrypoint, not repeated in every cached tool descriptor's example key list.
-// Adding a chapter therefore needs neither new tool registration nor schema refresh.
-const GOAL_WORKFLOW_MATERIAL: ContextMaterialSpec = ContextMaterialSpec {
-    key: crate::model_workflow::GOAL_WORKFLOW_CONTEXT_KEY,
-    project_required: false,
-    scope_policy: ContextMaterialScopePolicy::Public,
-    surface: ContextMaterialSurface::AnySidecar,
-};
-
 pub(crate) fn context_material_keys_csv() -> String {
-    CONTEXT_MATERIAL_SPECS
-        .iter()
-        .map(|spec| spec.key)
+    BUILTIN_CONTEXT_MATERIALS
+        .advertised_keys()
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn context_material_spec(key: &str) -> Option<&'static ContextMaterialSpec> {
-    CONTEXT_MATERIAL_SPECS
-        .iter()
-        .chain(std::iter::once(&GOAL_WORKFLOW_MATERIAL))
-        .find(|spec| spec.key == key)
-}
-
-fn context_material_surface_available(
-    surface: ContextMaterialSurface,
-    capabilities: ContextMaterialCapabilities,
-) -> bool {
-    match surface {
-        ContextMaterialSurface::AnySidecar => true,
-        ContextMaterialSurface::SkillRuntime => capabilities.skill_runtime,
-        ContextMaterialSurface::MemorySurface => capabilities.memory_surface,
-    }
-}
-
-fn context_material_scope_available(
-    policy: ContextMaterialScopePolicy,
-    auth: Option<&AuthContext>,
-) -> bool {
-    match policy {
-        ContextMaterialScopePolicy::Public => true,
-        ContextMaterialScopePolicy::Require(scope) => {
-            auth.is_some_and(|auth| auth.has_scope(scope))
-        }
-        ContextMaterialScopePolicy::RequireAll(scopes) => {
-            auth.is_some_and(|auth| scopes.iter().all(|scope| auth.has_scope(scope)))
-        }
-    }
 }
 
 fn projection_envelope(materials: Vec<Value>, truncated: bool) -> Value {
@@ -173,14 +60,6 @@ fn unavailable(key: &str, reason_code: &str) -> Value {
         "status": "unavailable",
         "reason_code": reason_code,
     })
-}
-
-fn scope_unavailable_reason(key: &str) -> &'static str {
-    if key == "plugins.catalog" {
-        "plugin_inspect_scope_unavailable"
-    } else {
-        "context_material_scope_unavailable"
-    }
 }
 
 impl ToolRuntime {
@@ -233,147 +112,31 @@ impl ToolRuntime {
             .collect();
         // Reserve the canonical public workflow before shortening an earlier
         // instruction body; never reorder, reload, or silently discard rules.
-        let workflow = requested.contains(&"webcodex.workflow").then(|| json!({
-            "key":"webcodex.workflow", "status":"available",
+        let workflow = requested.contains(&providers::WORKFLOW.key).then(|| json!({
+            "key":providers::WORKFLOW.key, "status":"available",
             "projection":builtin_coding_workflow_projection_with_policy(guidance_profile, self.model_workflow_policy),
         }));
         for (index, key) in requested.iter().copied().enumerate() {
-            let material = if let Some(spec) = context_material_spec(key) {
-                if !context_material_surface_available(spec.surface, capabilities) {
-                    unavailable(key, "context_material_surface_unavailable")
-                } else if spec.project_required && resolved_project.is_none() {
-                    unavailable(key, "project_target_unavailable")
-                } else if !context_material_scope_available(spec.scope_policy, auth) {
-                    unavailable(key, scope_unavailable_reason(key))
-                } else {
-                    match key {
-                        "project.instructions" => {
-                            let project =
-                                resolved_project.expect("registry requires project target");
-                            let loaded;
-                            let snapshot = match instructions {
-                                Some(snapshot) => snapshot,
-                                None => {
-                                    loaded = self
-                                        .load_effective_coding_instructions(project, auth)
-                                        .await;
-                                    &loaded
-                                }
-                            };
-                            let mut material = if snapshot.scan_complete {
-                                json!({"key": key, "status": "available", "projection": null})
-                            } else {
-                                json!({
-                                    "key": key,
-                                    "status": "unavailable",
-                                    "reason_code": "project_instructions_observation_incomplete",
-                                    "projection": null,
-                                })
-                            };
-                            // Measure the complete prospective envelope, including
-                            // earlier materials and the unavailable-reason overhead.
-                            let previous_len = materials.len();
-                            materials.push(material.clone());
-                            for later in &requested[index + 1..] {
-                                // Exact public workflow bytes; only an omission
-                                // receipt for other providers. No speculative I/O.
-                                materials.push(if *later == "webcodex.workflow" {
-                                    workflow.as_ref().expect("requested workflow").clone()
-                                } else {
-                                    unavailable(later, "context_projection_budget_exceeded")
-                                });
-                            }
-                            let reserved = serialized_json_len(&ContextProjectionMeasure {
-                                materials: &materials,
+            let material = if let Some(provider) = BUILTIN_CONTEXT_MATERIALS.get(key) {
+                provider
+                    .project(
+                        ContextMaterialContext {
+                            runtime: self,
+                            key: provider.key,
+                            project: resolved_project,
+                            auth,
+                            window,
+                            instructions,
+                            budget: ContextProjectionBudget {
+                                preceding: &materials,
+                                remaining: &requested[index + 1..],
+                                workflow: workflow.as_ref(),
                                 truncated,
-                            })
-                            .unwrap_or(usize::MAX)
-                            .saturating_sub(4); // Replace the literal JSON null.
-                            materials.truncate(previous_len);
-                            material["projection"] = project_instructions_context_projection(
-                                snapshot,
-                                MAX_CONTEXT_PROJECTION_BYTES.saturating_sub(reserved),
-                            );
-                            material
-                        }
-                        "jobs.attention" => {
-                            let project =
-                                resolved_project.expect("registry requires project target");
-                            // Project-level attention only. Recorder/ambient Sessions never
-                            // select a business Session or grant Job inventory authority.
-                            let projection = Box::pin(self.active_jobs_summary(
-                                Some(&project.resolved_id),
-                                None,
-                                auth,
-                                8,
-                            ))
-                            .await;
-                            json!({
-                                "key": key,
-                                "status": "available",
-                                "projection": projection,
-                            })
-                        }
-                        "workflow.resume" => {
-                            match self.workflow_resume_context_projection(window, auth).await {
-                                Ok(projection) => json!({
-                                    "key": key,
-                                    "status": "available",
-                                    "projection": projection,
-                                }),
-                                Err(reason_code) => unavailable(key, reason_code),
-                            }
-                        }
-                        "skills.catalog" => {
-                            let project =
-                                resolved_project.expect("registry requires project target");
-                            match self.skills_catalog_context_projection(project, auth).await {
-                                Ok(projection) => json!({
-                                    "key": key,
-                                    "status": "available",
-                                    "projection": projection,
-                                }),
-                                Err(reason_code) => unavailable(key, reason_code),
-                            }
-                        }
-                        "plugins.catalog" => {
-                            let project =
-                                resolved_project.expect("registry requires project target");
-                            match self
-                                .plugin_project_catalog_context_projection(project, auth)
-                                .await
-                            {
-                                Ok(projection) => json!({
-                                    "key": key,
-                                    "status": "available",
-                                    "projection": projection,
-                                }),
-                                Err(reason_code) => unavailable(key, reason_code),
-                            }
-                        }
-                        "memory.bootstrap" => {
-                            let project =
-                                resolved_project.expect("registry requires project target");
-                            match self.memory_bootstrap_context_projection(project) {
-                                Ok(projection) => json!({
-                                    "key": key,
-                                    "status": "available",
-                                    "projection": projection,
-                                }),
-                                Err(reason_code) => unavailable(key, reason_code),
-                            }
-                        }
-                        "webcodex.workflow" => {
-                            workflow.as_ref().expect("requested workflow").clone()
-                        }
-                        crate::model_workflow::GOAL_WORKFLOW_CONTEXT_KEY => json!({
-                            "key": key,
-                            "status": "available",
-                            "projection": self.model_workflow_policy.goal_workflow_projection(),
-                        }),
-                        _ => unreachable!("context material registry/provider match drifted"),
-                    }
-                }
+                            },
+                        },
+                        capabilities,
+                    )
+                    .await
             } else {
                 json!({
                     "key": key,

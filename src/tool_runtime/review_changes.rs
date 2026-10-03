@@ -4,14 +4,15 @@ use std::time::Instant;
 use crate::auth::AuthContext;
 use webcodex_tool_contracts::tool_call::GitReviewScopeInput;
 
-use super::git_review_snapshot::{
-    caller_fingerprint, GitReviewScope, GitReviewSnapshot, GitReviewSourceIdentity,
-};
+use super::git_review_snapshot::{caller_fingerprint, GitReviewSnapshot};
 use super::{ToolResult, ToolRuntime};
 
 const REVIEW_CHANGES_CONTINUATION_PREFIX: &str = "wcrc1.";
 
-fn review_changes_failure(project: &str, reason_code: &'static str) -> ToolResult {
+pub(in crate::tool_runtime) fn review_changes_failure(
+    project: &str,
+    reason_code: &'static str,
+) -> ToolResult {
     tracing::debug!(
         target: "webcodex::git_review",
         operation = "review_changes",
@@ -47,8 +48,8 @@ fn trace_review_changes_success(
     diff_page_duration_ms: u64,
     git_internal_observation_count: u64,
 ) {
-    let response_bytes = serde_json::to_vec(output)
-        .map(|bytes| u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+    let response_bytes = crate::json_measurement::serialized_json_len(output)
+        .map(|bytes| u64::try_from(bytes).unwrap_or(u64::MAX))
         .unwrap_or(0);
     let files_count = output
         .get("files")
@@ -144,58 +145,15 @@ fn preferred_diff_continuation(diff: &Value) -> Option<&str> {
         })
 }
 
-fn internal_scope_matches_input(scope: &GitReviewScope, input: &GitReviewScopeInput) -> bool {
-    match (scope, input) {
-        (GitReviewScope::Workspace, GitReviewScopeInput::Workspace) => true,
-        (
-            GitReviewScope::Committed {
-                requested_base,
-                requested_head,
-                ..
-            },
-            GitReviewScopeInput::Committed {
-                base_commit,
-                head_commit,
-            },
-        ) => {
-            requested_base.eq_ignore_ascii_case(base_commit)
-                && requested_head.eq_ignore_ascii_case(head_commit)
+fn project_review_diff(mut diff: Value, has_continuation: bool, workspace: bool) -> Value {
+    if let Some(page) = diff.as_object_mut() {
+        page.remove("recovery");
+        page.insert("has_more".into(), json!(has_continuation));
+        if workspace {
+            page.insert("basis".into(), json!("head_to_frozen_workspace"));
         }
-        _ => false,
     }
-}
-
-fn source_from_review_summary(summary: &Value) -> Option<GitReviewSourceIdentity> {
-    Some(GitReviewSourceIdentity::Committed {
-        requested_base: summary
-            .pointer("/scope/requested_base")?
-            .as_str()?
-            .to_string(),
-        requested_head: summary
-            .pointer("/scope/requested_head")?
-            .as_str()?
-            .to_string(),
-        merge_base: summary.pointer("/scope/merge_base")?.as_str()?.to_string(),
-    })
-}
-
-fn committed_diff_matches_source(diff: &Value, source: &GitReviewSourceIdentity) -> bool {
-    let GitReviewSourceIdentity::Committed {
-        requested_base,
-        requested_head,
-        merge_base,
-    } = source
-    else {
-        return false;
-    };
-    diff.pointer("/scope/requested_base")
-        .and_then(Value::as_str)
-        == Some(requested_base.as_str())
-        && diff
-            .pointer("/scope/requested_head")
-            .and_then(Value::as_str)
-            == Some(requested_head.as_str())
-        && diff.pointer("/scope/merge_base").and_then(Value::as_str) == Some(merge_base.as_str())
+    diff
 }
 
 impl ToolRuntime {
@@ -251,75 +209,24 @@ impl ToolRuntime {
             ) else {
                 return review_changes_failure(&project, "snapshot_unavailable");
             };
-            if snapshot.projection_identity != projection
-                || !internal_scope_matches_input(&snapshot.scope, &scope_input)
-            {
+            if snapshot.projection_identity != projection {
                 return review_changes_failure(&project, "continuation_scope_mismatch");
             }
-            if matches!(snapshot.scope, GitReviewScope::Workspace) {
-                let current = match self
-                    .workspace_review_source_identity(&resolved_project)
-                    .await
-                {
-                    Ok(value) => value,
-                    Err(_) => {
-                        return review_changes_failure(
-                            &project,
-                            "workspace_source_identity_unavailable",
-                        )
-                    }
-                };
-                if current != snapshot.source {
-                    return review_changes_failure(&project, "snapshot_stale");
-                }
-            }
-
-            let (base_commit, head_commit) = match &scope_input {
-                GitReviewScopeInput::Workspace => (None, None),
-                GitReviewScopeInput::Committed {
-                    base_commit,
-                    head_commit,
-                } => (Some(base_commit.clone()), Some(head_commit.clone())),
-            };
             let diff_started = Instant::now();
             let diff = self
-                .git_diff_hunks_continued_with_range_and_page_bytes(
+                .git_review_diff_page(
                     resolved_project.clone(),
                     paths,
                     max_hunks,
                     max_hunk_lines,
                     max_page_bytes,
-                    Some(false),
-                    base_commit,
-                    head_commit,
                     Some(inner.to_string()),
+                    &snapshot.source,
                 )
                 .await;
             let diff_page_duration_ms = elapsed_ms(diff_started);
             if !diff.success {
                 return diff;
-            }
-            // Fence the returned page as well as admission: the workspace may
-            // change while the Runner is producing the continuation diff.
-            if matches!(snapshot.scope, GitReviewScope::Workspace) {
-                match self
-                    .workspace_review_source_identity(&resolved_project)
-                    .await
-                {
-                    Ok(current) if current == snapshot.source => {}
-                    Ok(_) => return review_changes_failure(&project, "snapshot_stale"),
-                    Err(_) => {
-                        return review_changes_failure(
-                            &project,
-                            "workspace_source_identity_unavailable",
-                        )
-                    }
-                }
-            }
-            if matches!(snapshot.scope, GitReviewScope::Committed { .. })
-                && !committed_diff_matches_source(&diff.output, &snapshot.source)
-            {
-                return review_changes_failure(&project, "snapshot_stale");
             }
             let next = preferred_diff_continuation(&diff.output)
                 .and_then(|inner| encode_review_continuation(&snapshot.snapshot_id, inner));
@@ -327,21 +234,13 @@ impl ToolRuntime {
                 "project": project,
                 "snapshot": {
                     "snapshot_id": snapshot.snapshot_id,
-                    "scope": match snapshot.scope {
-                        GitReviewScope::Workspace => json!({"kind": "workspace"}),
-                        GitReviewScope::Committed { ref requested_base, ref requested_head, ref merge_base } => json!({
-                            "kind": "committed",
-                            "requested_base": requested_base,
-                            "requested_head": requested_head,
-                            "merge_base": merge_base,
-                        }),
-                    },
+                    "scope": snapshot.source.scope_value(),
                     "source": snapshot.source.presentation_value(),
                     "metadata_complete": snapshot.metadata_complete,
                     "coverage_partial": snapshot.coverage_partial,
                     "reused": true,
                 },
-                "diff": diff.output,
+                "diff": project_review_diff(diff.output, next.is_some(), snapshot.source.is_workspace()),
                 "continuation": next,
                 "reason_code": Value::Null,
             });
@@ -357,17 +256,12 @@ impl ToolRuntime {
                 true,
                 0,
                 diff_page_duration_ms,
-                if matches!(snapshot.scope, GitReviewScope::Workspace) {
-                    3
-                } else {
-                    2
-                },
+                1,
             );
             return ToolResult::ok(output);
         }
 
         let (
-            internal_scope,
             source,
             summary,
             files,
@@ -381,45 +275,25 @@ impl ToolRuntime {
         ) = match scope_input.clone() {
             GitReviewScopeInput::Workspace => {
                 let metadata_started = Instant::now();
-                let before = match self
-                    .workspace_review_source_identity(&resolved_project)
+                let (before, summary_result) = match self
+                    .workspace_review_metadata(&resolved_project, session_id.as_deref())
                     .await
                 {
                     Ok(value) => value,
-                    Err(_) => {
-                        return review_changes_failure(
-                            &project,
-                            "workspace_source_identity_unavailable",
-                        )
-                    }
+                    Err(error) => return error,
                 };
-                let summary_result = self
-                    .show_changes(
-                        resolved_project.clone(),
-                        session_id.clone(),
-                        Some(false),
-                        None,
-                        None,
-                        Some(0),
-                    )
-                    .await;
-                if !summary_result.success {
-                    return summary_result;
-                }
                 let metadata_duration_ms = elapsed_ms(metadata_started);
 
                 let diff_started = Instant::now();
                 let diff = self
-                    .git_diff_hunks_continued_with_range_and_page_bytes(
+                    .git_review_diff_page(
                         resolved_project.clone(),
                         paths.clone(),
                         max_hunks,
                         max_hunk_lines,
                         max_page_bytes,
-                        Some(false),
                         None,
-                        None,
-                        None,
+                        &before,
                     )
                     .await;
                 let diff_page_duration_ms = elapsed_ms(diff_started);
@@ -427,21 +301,6 @@ impl ToolRuntime {
                     return diff;
                 }
 
-                let after = match self
-                    .workspace_review_source_identity(&resolved_project)
-                    .await
-                {
-                    Ok(value) => value,
-                    Err(_) => {
-                        return review_changes_failure(
-                            &project,
-                            "workspace_source_identity_unavailable",
-                        )
-                    }
-                };
-                if before != after {
-                    return review_changes_failure(&project, "snapshot_stale");
-                }
                 let summary = json!({
                     "branch": summary_result.output.get("branch").cloned().unwrap_or(Value::Null),
                     "head": summary_result.output.get("head").cloned().unwrap_or(Value::Null),
@@ -468,8 +327,7 @@ impl ToolRuntime {
                     .and_then(Value::as_bool)
                     .unwrap_or(true);
                 (
-                    GitReviewScope::Workspace,
-                    after,
+                    before,
                     summary,
                     files,
                     signals,
@@ -478,7 +336,7 @@ impl ToolRuntime {
                     diff.output,
                     metadata_duration_ms,
                     diff_page_duration_ms,
-                    4,
+                    2,
                 )
             }
             GitReviewScopeInput::Committed {
@@ -486,11 +344,18 @@ impl ToolRuntime {
                 head_commit,
             } => {
                 let metadata_started = Instant::now();
+                let scope = match self
+                    .resolve_committed_git_scope(&resolved_project, &base_commit, &head_commit)
+                    .await
+                {
+                    Ok(scope) => scope,
+                    Err(reason) => return review_changes_failure(&project, reason),
+                };
                 let summary_result = self
-                    .git_review_summary(
+                    .git_review_summary_for_scope(
                         resolved_project.clone(),
-                        base_commit.clone(),
-                        head_commit.clone(),
+                        resolved_project.clone(),
+                        &scope,
                     )
                     .await;
                 if !summary_result.success {
@@ -509,44 +374,22 @@ impl ToolRuntime {
                             )
                         })
                     });
-                let Some(source) = source_from_review_summary(&summary_result.output) else {
-                    return review_changes_failure(&project, "review_metadata_malformed");
-                };
-                let internal_scope = match &source {
-                    GitReviewSourceIdentity::Committed {
-                        requested_base,
-                        requested_head,
-                        merge_base,
-                    } => GitReviewScope::Committed {
-                        requested_base: requested_base.clone(),
-                        requested_head: requested_head.clone(),
-                        merge_base: merge_base.clone(),
-                    },
-                    GitReviewSourceIdentity::Workspace { .. } => {
-                        return review_changes_failure(&project, "review_metadata_malformed");
-                    }
-                };
-
+                let source = super::git_review_snapshot::committed_source_identity(&scope);
                 let diff_started = Instant::now();
                 let diff = self
-                    .git_diff_hunks_continued_with_range_and_page_bytes(
+                    .git_review_diff_page(
                         resolved_project.clone(),
                         paths.clone(),
                         max_hunks,
                         max_hunk_lines,
                         max_page_bytes,
-                        Some(false),
-                        Some(base_commit),
-                        Some(head_commit),
                         None,
+                        &source,
                     )
                     .await;
                 let diff_page_duration_ms = elapsed_ms(diff_started);
                 if !diff.success {
                     return diff;
-                }
-                if !committed_diff_matches_source(&diff.output, &source) {
-                    return review_changes_failure(&project, "snapshot_stale");
                 }
                 let partial = summary_result
                     .output
@@ -554,7 +397,6 @@ impl ToolRuntime {
                     .and_then(Value::as_bool)
                     .unwrap_or(true);
                 (
-                    internal_scope,
                     source,
                     summary_result
                         .output
@@ -580,7 +422,7 @@ impl ToolRuntime {
                     diff.output,
                     metadata_duration_ms,
                     diff_page_duration_ms,
-                    4 + u64::from(symbol_observation_attempted),
+                    3 + u64::from(symbol_observation_attempted),
                 )
             }
         };
@@ -588,7 +430,6 @@ impl ToolRuntime {
             caller,
             resolved_project,
             session_id.clone(),
-            internal_scope,
             source,
             projection.clone(),
             summary.clone(),
@@ -603,15 +444,7 @@ impl ToolRuntime {
             "project": project,
             "snapshot": {
                 "snapshot_id": snapshot.snapshot_id,
-                "scope": match snapshot.scope {
-                    GitReviewScope::Workspace => json!({"kind": "workspace"}),
-                    GitReviewScope::Committed { ref requested_base, ref requested_head, ref merge_base } => json!({
-                        "kind": "committed",
-                        "requested_base": requested_base,
-                        "requested_head": requested_head,
-                        "merge_base": merge_base,
-                    }),
-                },
+                "scope": snapshot.source.scope_value(),
                 "source": snapshot.source.presentation_value(),
                 "metadata_complete": snapshot.metadata_complete,
                 "coverage_partial": snapshot.coverage_partial,
@@ -620,7 +453,7 @@ impl ToolRuntime {
             "summary": summary,
             "files": files,
             "signals": snapshot.signals.clone(),
-            "diff": diff,
+            "diff": project_review_diff(diff, next.is_some(), snapshot.source.is_workspace()),
             "continuation": next,
             "reason_code": Value::Null,
         });
@@ -680,23 +513,20 @@ mod tests {
     }
 
     #[test]
-    fn committed_scope_input_matches_only_exact_requested_range() {
-        let scope = GitReviewScope::Committed {
-            requested_base: "a".repeat(40),
-            requested_head: "b".repeat(40),
-            merge_base: "c".repeat(40),
+    fn review_projection_identity_keeps_exact_scope_and_inputs() {
+        let scope = GitReviewScopeInput::Committed {
+            base_commit: "a".repeat(40),
+            head_commit: "b".repeat(40),
         };
-        assert!(internal_scope_matches_input(
-            &scope,
-            &GitReviewScopeInput::Committed {
-                base_commit: "A".repeat(40),
-                head_commit: "B".repeat(40),
-            }
-        ));
-        assert!(!internal_scope_matches_input(
-            &scope,
-            &GitReviewScopeInput::Workspace
-        ));
+        let expected = projection_identity(&scope, &None, None, None, None);
+        assert_ne!(
+            expected,
+            projection_identity(&GitReviewScopeInput::Workspace, &None, None, None, None)
+        );
+        assert_ne!(
+            expected,
+            projection_identity(&scope, &Some(vec!["other.rs".into()]), None, None, None)
+        );
     }
 
     #[test]

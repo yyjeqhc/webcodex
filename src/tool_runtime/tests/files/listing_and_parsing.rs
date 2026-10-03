@@ -221,3 +221,71 @@ fn parse_search_matches_drops_claude_worktree_records() {
     assert_eq!(matches[0]["path"], "src/lib.rs");
     assert_eq!(matches[0]["preview"], "needle active");
 }
+
+
+async fn native_directory_listing_result(stdout: &str, offset: usize, limit: usize) -> ToolResult {
+    let client = "native-directory-page";
+    let runtime = runtime_with_agent_project(client);
+    register_agent(&runtime, client, None, RunnerCapabilities {
+        file_read: true, file_list_page: true, ..Default::default()
+    }).await;
+    let project = agent_test_project_id(client);
+    let task = tokio::spawn({ let runtime = runtime.clone(); async move {
+        runtime.list_project_files(project, Some("src".into()), Some(limit), Some(offset)).await
+    }});
+    let request = wait_for_patch_agent_request(&runtime, client).await;
+    assert_eq!(request.kind, "file_list_page");
+    assert_eq!(request.path.as_deref(), Some("src"));
+    assert_eq!(serde_json::from_str::<Value>(request.content.as_deref().unwrap()).unwrap(),
+        json!({"offset":offset, "limit":limit}));
+    complete_patch_agent_request(&runtime, client, &request.request_id, 0, stdout, "").await;
+    task.await.unwrap()
+}
+
+#[tokio::test]
+async fn list_project_files_native_page_is_not_sliced_twice_and_next_call_is_exact() {
+    let page = json!({"offset":200, "total_entries":3000,
+        "entries":[{"name":"a\nb.rs", "directory":false},{"name":"nested", "directory":true}],
+        "next_offset":202});
+    let result = native_directory_listing_result(&page.to_string(), 200, 2).await;
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["entries"], json!([
+        {"path":"src/a\nb.rs","kind":"file"},{"path":"src/nested","kind":"dir"}]));
+    assert_eq!(result.output["total_entries"], 3000);
+    assert_eq!(result.output["returned"], 2);
+    let next = &result.output["next_call"];
+    assert_eq!(next["arguments"]["offset"], 202);
+    assert_eq!(next["arguments"]["path"], "src");
+    assert_eq!(next["arguments"]["limit"], 2);
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(next).unwrap();
+}
+
+#[tokio::test]
+async fn list_project_files_rejects_malformed_native_page_without_legacy_replay() {
+    for page in [
+        json!({"offset":0,"total_entries":20,"entries":[{"name":"../escape","directory":false}],"next_offset":1}),
+        json!({"offset":1,"total_entries":20,"entries":[{"name":"a","directory":false}],"next_offset":2}),
+        json!({"offset":0,"total_entries":20,"entries":[],"next_offset":0}),
+        json!({"offset":0,"total_entries":20,"entries":[{"name":"a","directory":false}],"next_offset":null}),
+    ] {
+        let result = native_directory_listing_result(&page.to_string(),0,2).await;
+        assert!(!result.success, "{result:?}");
+        assert_eq!(result.output["reason_code"], "invalid_directory_page");
+        assert!(result.output.get("entries").is_none());
+        assert!(result.output.get("next_call").is_none());
+    }
+}
+
+
+#[tokio::test]
+async fn list_project_files_native_operation_requires_current_runner_capability() {
+    let client = "directory-old-runner"; let runtime = runtime_with_agent_project(client);
+    register_agent(&runtime, client, None, RunnerCapabilities { file_read:true, ..Default::default() }).await;
+    let body: crate::runner_protocol::ShellFileOpRequest = serde_json::from_value(json!({
+        "op":"list_page","client_id":client,"path":".","content":"{\"offset\":0,\"limit\":2}",
+        "create_dirs":false,"wait_timeout_secs":30
+    })).unwrap();
+    let error = runtime.runner_registry.enqueue_file_op(body,"fixture".into()).await.unwrap_err();
+    assert!(error.contains("capability_unavailable"),"{error}");
+    assert!(probe_patch_agent_request(&runtime, client).await.is_none(),"unsupported native operation must not be queued");
+}

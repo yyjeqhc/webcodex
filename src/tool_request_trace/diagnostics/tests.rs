@@ -89,3 +89,34 @@ fn final_context_receipt_distinguishes_loaded_body_truncation_and_budget_omissio
     );
     assert!(!data.to_string().contains("body-not-to-persist"));
 }
+
+#[test]
+fn discovery_diagnostics_keep_selectors_counts_but_not_inventory_bodies() {
+    let requested = request(
+        "call_runtime_tool",
+        &json!({"tool":"list_project_files", "arguments": {
+        "project":"~p3","path":"src","offset":200,"limit":40,"password":"never-retain"}}),
+    )
+    .unwrap();
+    assert_eq!(requested["value"]["arguments"]["offset"], 200);
+    assert_eq!(requested["value"]["arguments"]["path"], "src");
+    assert!(!requested.to_string().contains("never-retain"));
+    let output = result(
+        "list_projects",
+        &json!({"success":true,"output":{
+        "count":20,"matched_count":81,"truncated":true,
+        "projects":[{"path":"inventory-body-sentinel"}]}}),
+    )
+    .unwrap();
+    assert_eq!(output["value"]["output"]["matched_count"], 81);
+    assert!(!output.to_string().contains("inventory-body-sentinel"));
+    let output = result(
+        "list_project_files",
+        &json!({"success":true,"output":{
+        "returned":40,"total_entries":4000,"offset":200,"next_offset":240,
+        "entries":[{"path":"filename-body-sentinel"}]}}),
+    )
+    .unwrap();
+    assert_eq!(output["value"]["output"]["next_offset"], 240);
+    assert!(!output.to_string().contains("filename-body-sentinel"));
+}

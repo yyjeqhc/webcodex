@@ -34,6 +34,9 @@ pub(super) fn selected(tool: &str) -> bool {
             | "commit_git_paths"
             | "restore_git_paths"
             | "review_changes"
+            | "list_projects"
+            | "list_project_files"
+            | "list_project_tracked_files"
     )
 }
 
@@ -289,6 +292,12 @@ pub(super) fn result(tool: &str, response: &Value) -> Option<Value> {
         "passed",
         "tests_run_count",
         "source_state",
+        "count",
+        "matched_count",
+        "returned",
+        "total_entries",
+        "offset",
+        "next_offset",
         "requested_count",
         "returned_count",
         "failed_count",

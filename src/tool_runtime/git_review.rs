@@ -899,11 +899,25 @@ impl ToolRuntime {
             Err(reason) => return git_review_failure(&project, &base, &head, reason),
         };
 
+        self.git_review_summary_for_scope(project, resolved.resolved_id, &scope)
+            .await
+    }
+
+    /// The review owner can reuse its exact typed resolution; no second scope
+    /// authority or JSON-to-identity round trip is introduced.
+    pub(crate) async fn git_review_summary_for_scope(
+        &self,
+        project: String,
+        resolved_project: String,
+        scope: &super::git_committed::CommittedGitScope,
+    ) -> ToolResult {
+        let base = scope.requested_base.as_str();
+        let head = scope.requested_head.as_str();
         let max_lines = GIT_REVIEW_MAX_FILES;
         let metadata_started = Instant::now();
         let output = match self
             .run_project_internal_posix_script_capture(
-                &resolved.resolved_id,
+                &resolved_project,
                 bounded_review_metadata_command(
                     &scope.merge_base,
                     &scope.requested_head,
@@ -1027,7 +1041,7 @@ impl ToolRuntime {
             symbol_observation_count = 1;
             let output = self
                 .run_project_internal_posix_script_capture(
-                    &resolved.resolved_id,
+                    &resolved_project,
                     git_review_symbol_command(
                         &scope.merge_base,
                         &scope.requested_head,

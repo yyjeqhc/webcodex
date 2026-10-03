@@ -991,6 +991,7 @@ fn git_diff_hunks_committed_command(
     scope: &CommittedGitScope,
     paths: &[String],
     fingerprint: bool,
+    context_lines: usize,
 ) -> String {
     let head_q = shell_escape_simple(&scope.requested_head);
     let mut parts = vec![
@@ -1007,7 +1008,7 @@ fn git_diff_hunks_committed_command(
         parts.push("--binary".to_string());
         parts.push("--full-index".to_string());
     }
-    parts.push("--unified=80".to_string());
+    parts.push(format!("--unified={context_lines}"));
     parts.push(shell_escape_simple(&scope.merge_base));
     parts.push(head_q);
     if !paths.is_empty() {
@@ -1017,7 +1018,7 @@ fn git_diff_hunks_committed_command(
     parts.join(" ")
 }
 
-fn git_diff_hunks_page_command(
+fn git_diff_hunks_page_command_for_source(
     paths: &[String],
     cached: bool,
     start_position: usize,
@@ -1027,27 +1028,109 @@ fn git_diff_hunks_page_command(
     max_page_bytes: usize,
     expected_fence: Option<&str>,
     committed_scope: Option<&CommittedGitScope>,
+    review_source: Option<&super::super::git_review_snapshot::GitReviewSourceIdentity>,
 ) -> Result<String, String> {
-    let (diff_command, fingerprint_command, prelude) = match committed_scope {
-        Some(scope) => (
-            git_diff_hunks_committed_command(scope, paths, false),
-            git_diff_hunks_committed_command(scope, paths, true),
+    let context_lines = if review_source.is_some() { 3 } else { 80 };
+    let workspace_review = review_source.filter(|source| {
+        matches!(
+            source,
+            super::super::git_review_snapshot::GitReviewSourceIdentity::Workspace { .. }
+        )
+    });
+    let (diff_command, fingerprint_command, prelude) = if let Some(source) = workspace_review {
+        let super::super::git_review_snapshot::GitReviewSourceIdentity::Workspace {
+            head_commit,
+            frozen_tree,
+            ..
+        } = source
+        else {
+            return Err("workspace source required".into());
+        };
+        let base = head_commit
+            .clone()
+            .unwrap_or_else(|| "$(git hash-object -w -t tree --stdin </dev/null)".into());
+        let base = if head_commit.is_some() {
+            shell_escape_simple(&base)
+        } else {
+            base
+        };
+        let suffix = if paths.is_empty() {
+            String::new()
+        } else {
             format!(
-                "{}{}",
-                committed_git_discovery_prefix(),
-                committed_git_isolated_view_setup(&scope.requested_head, "exit 91")
+                " -- {}",
+                paths
+                    .iter()
+                    .map(|p| shell_escape_simple(p))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
+        let common = format!("git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --unified=3 {base} {}{suffix}", shell_escape_simple(frozen_tree));
+        let fingerprint = common.replacen(" diff ", " diff --binary --full-index ", 1);
+        let prelude = format!(
+            "{}{}",
+            committed_git_discovery_prefix(),
+            committed_git_isolated_view_setup(frozen_tree, "exit 91")
+        );
+        (common, fingerprint, prelude)
+    } else {
+        match committed_scope {
+            Some(scope) => (
+                git_diff_hunks_committed_command(scope, paths, false, context_lines),
+                git_diff_hunks_committed_command(scope, paths, true, context_lines),
+                format!(
+                    "{}{}",
+                    committed_git_discovery_prefix(),
+                    committed_git_isolated_view_setup(&scope.requested_head, "exit 91")
+                ),
             ),
-        ),
-        None => (
-            git_diff_hunks_command(paths, cached)?,
-            git_diff_hunks_fingerprint_command(paths, cached),
-            String::new(),
-        ),
+            None => (
+                git_diff_hunks_command(paths, cached)?,
+                git_diff_hunks_fingerprint_command(paths, cached),
+                String::new(),
+            ),
+        }
     };
     let expected_fence = shell_escape_simple(expected_fence.unwrap_or(""));
     let fragment_mode = usize::from(fragment_line_position.is_some());
     let fragment_line_position = fragment_line_position.unwrap_or(0);
+    // A review page reads only immutable Git objects in an isolated attribute
+    // view. Its exact object range plus projection already identifies the source;
+    // hashing the complete patch twice adds no new observation. Live-workspace
+    // identity is still rechecked by the owning compound request after this page.
+    let immutable_fence = review_source.map(|source| {
+        let mut hash = Sha256::new();
+        hash.update(source.presentation_value().to_string().as_bytes());
+        hash.update(b"review-immutable-object-page-v1");
+        format!("{:x}", hash.finalize())
+    });
+    let pre_check = if let Some(fence) = &immutable_fence {
+        format!("pre_fence={fence}\npre_hash_exit=0\npre_diff_exit=0")
+    } else {
+        r#"# A private status file proves the producer exit in this SAME pipeline. Re-running
+# git diff would both double work and observe a different failure/source.
+wc_fingerprint_status=$(mktemp "${TMPDIR:-/tmp}/webcodex-diff-status.XXXXXX") || exit 91
+trap 'rm -f -- "$wc_fingerprint_status"' 0
+trap 'exit 130' HUP INT TERM
+wc_fingerprint() {
+  { __FINGERPRINT_COMMAND__; wc_rc=$?; printf '%s\n' "$wc_rc" >"$wc_fingerprint_status"; } | git hash-object --stdin
+}
+pre_fence=$(wc_fingerprint)
+pre_hash_exit=$?
+pre_diff_exit=$(cat "$wc_fingerprint_status")"#.to_owned()
+    };
+    let post_check = if let Some(fence) = &immutable_fence {
+        format!("post_fence={fence}\npost_hash_exit=0\npost_diff_exit=0")
+    } else {
+        r#"post_fence=$(wc_fingerprint)
+post_hash_exit=$?
+post_diff_exit=$(cat "$wc_fingerprint_status")
+rm -f "$wc_fingerprint_status""#
+            .to_owned()
+    };
     let script = r#"__PRELUDE__
+(
 LC_ALL=C; export LC_ALL
 page_budget=__PAGE_BUDGET__
 max_hunks=__MAX_HUNKS__
@@ -1057,10 +1140,7 @@ start_position=__START_POSITION__
 fragment_mode=__FRAGMENT_MODE__
 fragment_line_position=__FRAGMENT_LINE_POSITION__
 expected_fence=__EXPECTED_FENCE__
-pre_fence=$(__FINGERPRINT_COMMAND__ | git hash-object --stdin)
-pre_hash_exit=$?
-__FINGERPRINT_COMMAND__ >/dev/null
-pre_diff_exit=$?
+__PRE_FINGERPRINT_CHECK__
 stale=0
 if [ -n "$expected_fence" ] && [ "$pre_fence" != "$expected_fence" ]; then stale=1; fi
 if [ "$pre_hash_exit" -eq 0 ] && [ "$pre_diff_exit" -eq 0 ] && [ "$stale" -eq 0 ]; then
@@ -1248,10 +1328,7 @@ else
   printf 'WCDH1:P:%010d:%010d\n' 0 "$((page_meta_bytes+1))"
   page_filter_exit=0
 fi
-post_fence=$(__FINGERPRINT_COMMAND__ | git hash-object --stdin)
-post_hash_exit=$?
-__FINGERPRINT_COMMAND__ >/dev/null
-post_diff_exit=$?
+__POST_FINGERPRINT_CHECK__
 obs_meta=$(printf 'pre_fence=%s\npost_fence=%s\npre_hash_exit=%s\npost_hash_exit=%s\npre_diff_exit=%s\npost_diff_exit=%s\nstale=%s\npage_filter_exit=%s' "$pre_fence" "$post_fence" "$pre_hash_exit" "$post_hash_exit" "$pre_diff_exit" "$post_diff_exit" "$stale" "$page_filter_exit")
 obs_meta_bytes=${#obs_meta}
 printf '%s\n' "$obs_meta"
@@ -1260,9 +1337,12 @@ if [ "$pre_hash_exit" -eq 0 ] && [ "$post_hash_exit" -eq 0 ] && [ "$pre_diff_exi
   exit 0
 fi
 exit 1
+)
 "#;
     Ok(script
         .replace("__PRELUDE__", &prelude)
+        .replace("__PRE_FINGERPRINT_CHECK__", &pre_check)
+        .replace("__POST_FINGERPRINT_CHECK__", &post_check)
         .replace("__PAGE_BUDGET__", &max_page_bytes.to_string())
         .replace("__MAX_HUNKS__", &max_hunks.to_string())
         .replace("__MAX_HUNK_LINES__", &max_hunk_lines.to_string())
@@ -1758,6 +1838,75 @@ impl ToolRuntime {
         head_commit: Option<String>,
         continuation: Option<String>,
     ) -> ToolResult {
+        self.git_diff_page_for_source(
+            project,
+            paths,
+            max_hunks,
+            max_hunk_lines,
+            max_page_bytes,
+            cached,
+            base_commit,
+            head_commit,
+            continuation,
+            None,
+        )
+        .await
+    }
+
+    /// Review-specific context and source; standalone diff paging remains unchanged.
+    pub(crate) async fn git_review_diff_page(
+        &self,
+        project: String,
+        paths: Option<Vec<String>>,
+        max_hunks: Option<usize>,
+        max_hunk_lines: Option<usize>,
+        max_page_bytes: Option<usize>,
+        continuation: Option<String>,
+        source: &super::super::git_review_snapshot::GitReviewSourceIdentity,
+    ) -> ToolResult {
+        let (base, head) = match source {
+            super::super::git_review_snapshot::GitReviewSourceIdentity::Workspace { .. } => {
+                (None, None)
+            }
+            super::super::git_review_snapshot::GitReviewSourceIdentity::Committed(scope) => (
+                Some(scope.requested_base.clone()),
+                Some(scope.requested_head.clone()),
+            ),
+        };
+        self.git_diff_page_for_source(
+            project,
+            paths,
+            max_hunks,
+            max_hunk_lines,
+            max_page_bytes,
+            Some(false),
+            base,
+            head,
+            continuation,
+            Some(source),
+        )
+        .await
+    }
+
+    async fn git_diff_page_for_source(
+        &self,
+        project: String,
+        paths: Option<Vec<String>>,
+        max_hunks: Option<usize>,
+        max_hunk_lines: Option<usize>,
+        max_page_bytes: Option<usize>,
+        cached: Option<bool>,
+        base_commit: Option<String>,
+        head_commit: Option<String>,
+        continuation: Option<String>,
+        review_source: Option<&super::super::git_review_snapshot::GitReviewSourceIdentity>,
+    ) -> ToolResult {
+        let workspace_review = review_source.filter(|source| {
+            matches!(
+                source,
+                super::super::git_review_snapshot::GitReviewSourceIdentity::Workspace { .. }
+            )
+        });
         let paths = match clean_optional_paths(paths) {
             Ok(paths) => paths,
             Err(e) => return ToolResult::err(e),
@@ -1810,25 +1959,32 @@ impl ToolRuntime {
             Ok(resolved) => resolved,
             Err(error) => return error.into_tool_result(),
         };
-        let committed_scope = match committed_range.as_ref() {
-            Some((base, head)) => match self
-                .resolve_committed_git_scope(&resolved.resolved_id, base, head)
-                .await
-            {
-                Ok(scope) => Some(scope),
-                Err(reason) => {
-                    return git_diff_hunks_committed_failure(
-                        &project,
-                        &paths,
-                        Some(base),
-                        Some(head),
-                        reason,
-                        None,
-                        "",
-                    )
-                }
-            },
-            None => None,
+        let committed_scope = if let Some(
+            super::super::git_review_snapshot::GitReviewSourceIdentity::Committed(scope),
+        ) = review_source
+        {
+            Some(scope.clone())
+        } else {
+            match committed_range.as_ref() {
+                Some((base, head)) => match self
+                    .resolve_committed_git_scope(&resolved.resolved_id, base, head)
+                    .await
+                {
+                    Ok(scope) => Some(scope),
+                    Err(reason) => {
+                        return git_diff_hunks_committed_failure(
+                            &project,
+                            &paths,
+                            Some(base),
+                            Some(head),
+                            reason,
+                            None,
+                            "",
+                        )
+                    }
+                },
+                None => None,
+            }
         };
         let scope = match committed_scope.as_ref() {
             Some(committed_scope) => git_diff_hunks_committed_scope_digest(
@@ -1847,6 +2003,15 @@ impl ToolRuntime {
                 max_hunk_lines,
                 max_page_bytes,
             ),
+        };
+        let scope = if let Some(source) = review_source {
+            let mut hash = Sha256::new();
+            hash.update(scope.as_bytes());
+            hash.update(b"review-context-3");
+            hash.update(source.presentation_value().to_string().as_bytes());
+            format!("{:x}", hash.finalize())
+        } else {
+            scope
         };
         let mut command_paths = paths.clone();
         command_paths.sort();
@@ -1894,7 +2059,7 @@ impl ToolRuntime {
             None => (0, None),
         };
         let expected_fence = decoded.as_ref().map(GitDiffHunksContinuation::fence);
-        let command = match git_diff_hunks_page_command(
+        let mut command = match git_diff_hunks_page_command_for_source(
             &command_paths,
             cached,
             start_position,
@@ -1904,6 +2069,7 @@ impl ToolRuntime {
             max_page_bytes,
             expected_fence,
             committed_scope.as_ref(),
+            review_source,
         ) {
             Ok(command) => command,
             Err(_) => {
@@ -1917,8 +2083,18 @@ impl ToolRuntime {
                 )
             }
         };
-        let output = match self
-            .run_project_internal_posix_script_capture(&resolved.resolved_id, command, 30, None)
+        const REVIEW_FENCE_FRAME: &str = "WEBCODEX_REVIEW_FINAL_FENCE";
+        if workspace_review.is_some() {
+            command = format!("(\n{command}\n)\nwc_diff_exit=$?\nprintf '{REVIEW_FENCE_FRAME}\\n'\n(\n{}\n)\nwc_freeze_exit=$?\nif [ \"$wc_freeze_exit\" -ne 0 ]; then exit \"$wc_freeze_exit\"; fi\nexit \"$wc_diff_exit\"",
+                super::super::changes::workspace_freeze_command(true));
+        }
+        let mut output = match self
+            .run_project_internal_posix_script_capture(
+                &resolved.resolved_id,
+                command,
+                if workspace_review.is_some() { 60 } else { 30 },
+                None,
+            )
             .await
         {
             Ok(output) => output,
@@ -1933,6 +2109,29 @@ impl ToolRuntime {
                 )
             }
         };
+        if let Some(source) = workspace_review {
+            let parsed = output.stdout.rsplit_once(&format!("{REVIEW_FENCE_FRAME}\n"))
+                .and_then(|(page, fence)| super::super::changes::parse_workspace_freeze(fence, true).ok()
+                    .map(|(head_commit, frozen_tree, status)| (page.to_owned(),
+                        super::super::git_review_snapshot::GitReviewSourceIdentity::Workspace {
+                            head_commit, frozen_tree, status_fingerprint: status.expect("validated status"),
+                        })));
+            match parsed {
+                Some((page, current)) if &current == source => output.stdout = page,
+                Some(_) => {
+                    return super::super::review_changes::review_changes_failure(
+                        &project,
+                        "snapshot_stale",
+                    )
+                }
+                None => {
+                    return super::super::review_changes::review_changes_failure(
+                        &project,
+                        "workspace_source_identity_unavailable",
+                    )
+                }
+            }
+        }
         if output.stdout_truncated {
             return git_diff_hunks_source_failure(
                 &project,
@@ -2457,3 +2656,7 @@ mod continuation_token_tests {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "../tests/git/page_producer.rs"]
+mod page_producer_tests;

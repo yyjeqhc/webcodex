@@ -2472,6 +2472,63 @@ impl ToolRuntime {
         }
     }
 
+    /// Initial workspace review observes identity and metadata in one Runner hop.
+    /// The later frozen diff observation rechecks this identity before publication.
+    pub(crate) async fn workspace_review_metadata(
+        &self,
+        project: &str,
+        session_id: Option<&str>,
+    ) -> Result<
+        (
+            super::super::git_review_snapshot::GitReviewSourceIdentity,
+            ToolResult,
+        ),
+        ToolResult,
+    > {
+        const FRAME: &str = "WEBCODEX_REVIEW_METADATA_BEGIN";
+        let command = format!("(\n{}\n)\nwc_freeze_exit=$?\nif [ \"$wc_freeze_exit\" -ne 0 ]; then exit \"$wc_freeze_exit\"; fi\nprintf '{}\\n'\n{}",
+            super::super::changes::workspace_freeze_command(true), FRAME,
+            show_changes_command(false, SHOW_CHANGES_DEFAULT_MAX_HUNKS, SHOW_CHANGES_DEFAULT_MAX_HUNK_LINES));
+        let mut output = self
+            .run_project_internal_posix_script_capture(project, command, 60, None)
+            .await
+            .map_err(ToolResult::err)?;
+        if output.stdout_truncated || output.error.is_some() || output.exit_code != Some(0) {
+            return Err(ToolResult::err(
+                "workspace review metadata observation failed",
+            ));
+        }
+        let (identity, metadata) = output
+            .stdout
+            .split_once(&format!("{FRAME}\n"))
+            .ok_or_else(|| ToolResult::err("workspace review metadata frame missing"))?;
+        let (head_commit, frozen_tree, status) =
+            super::super::changes::parse_workspace_freeze(identity, true)?;
+        let source = super::super::git_review_snapshot::GitReviewSourceIdentity::Workspace {
+            head_commit,
+            frozen_tree,
+            status_fingerprint: status.expect("validated review status"),
+        };
+        output.stdout = metadata.to_owned();
+        let result = self
+            .show_changes_from_capture(
+                project,
+                session_id,
+                false,
+                SHOW_CHANGES_DEFAULT_MAX_HUNKS,
+                SHOW_CHANGES_DEFAULT_MAX_HUNK_LINES,
+                0,
+                SHOW_CHANGES_SESSION_SIGNAL_EVENT_LIMIT,
+                output,
+            )
+            .await;
+        if result.success {
+            Ok((source, result))
+        } else {
+            Err(result)
+        }
+    }
+
     pub(crate) async fn show_changes(
         &self,
         project: String,
@@ -2559,6 +2616,30 @@ set +e
             Ok(output) => output,
             Err(e) => return ToolResult::err(e),
         };
+        self.show_changes_from_capture(
+            &project,
+            session_id.as_deref(),
+            include_diff,
+            max_hunks,
+            max_hunk_lines,
+            recent_events_limit,
+            session_summary_limit,
+            output,
+        )
+        .await
+    }
+
+    async fn show_changes_from_capture(
+        &self,
+        project: &str,
+        session_id: Option<&str>,
+        include_diff: bool,
+        max_hunks: usize,
+        max_hunk_lines: usize,
+        recent_events_limit: usize,
+        session_summary_limit: usize,
+        output: super::super::shell::ProjectCommandOutput,
+    ) -> ToolResult {
         let frames = split_show_changes_stdout(&output.stdout, include_diff);
         let status_observation = parse_show_changes_status_observation(
             &frames.status,
@@ -2579,12 +2660,11 @@ set +e
                 include_diff,
                 status_observation,
             );
-            let session_summary = session_id
-                .as_deref()
-                .and_then(|id| self.sessions.summary(id, Some(session_summary_limit)));
+            let session_summary =
+                session_id.and_then(|id| self.sessions.summary(id, Some(session_summary_limit)));
             apply_show_changes_session(
                 &mut payload,
-                session_id.as_deref(),
+                session_id,
                 session_summary,
                 (recent_events_limit > 0).then_some(recent_events_limit),
             );
@@ -2612,12 +2692,11 @@ set +e
             payload["untracked_previews"] = json!(previews);
             payload["untracked_previews_truncated"] = json!(truncated);
         }
-        let session_summary = session_id
-            .as_deref()
-            .and_then(|id| self.sessions.summary(id, Some(session_summary_limit)));
+        let session_summary =
+            session_id.and_then(|id| self.sessions.summary(id, Some(session_summary_limit)));
         apply_show_changes_session(
             &mut payload,
-            session_id.as_deref(),
+            session_id,
             session_summary,
             (recent_events_limit > 0).then_some(recent_events_limit),
         );

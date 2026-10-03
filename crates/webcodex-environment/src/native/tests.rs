@@ -1,3 +1,6 @@
+#[path = "tests/project_addition.rs"]
+mod project_addition;
+
 use super::*;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -47,6 +50,8 @@ fn fixture(
                 }
                 Err(error) => panic!("HTTP fixture accept failed: {error}"),
             };
+            // Accepted sockets can inherit the nonblocking listener mode.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();

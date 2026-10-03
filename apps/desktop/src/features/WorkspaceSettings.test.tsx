@@ -269,3 +269,49 @@ it("preserves capability-first tabs and Coding-only authorization after the shar
   fireEvent.click(screen.getByRole("tab", { name: "Instructions" }));
   await screen.findByRole("button", { name: /^Projects:/ });
 });
+
+it("retains path and managed-instruction drafts while registered panels change", async () => {
+  render(wrap(<ExtensionsPanel state={state} onState={onState} />));
+  expect(api.managedInstructionsRead).not.toHaveBeenCalled();
+  expect(api.sshResources).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
+  const skills = await screen.findByLabelText("Configured Skill roots");
+  fireEvent.change(skills, { target: { value: "/fixture/unsaved-skills" } });
+  fireEvent.click(screen.getByRole("tab", { name: "Instructions" }));
+  const instructions = await screen.findByLabelText("Global instruction files");
+  fireEvent.change(instructions, { target: { value: "/fixture/unsaved-rules.md" } });
+  await waitFor(() => expect(document.getElementById("managed-global-instructions")).not.toBeNull());
+  const managed = document.getElementById("managed-global-instructions")!;
+  fireEvent.change(managed, { target: { value: "Unsaved managed instructions" } });
+  const reads = api.runnerSettings.mock.calls.length;
+  fireEvent.click(screen.getByRole("tab", { name: "Native Plugins" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
+  expect(screen.getByLabelText("Configured Skill roots")).toBe(skills);
+  expect(skills).toHaveValue("/fixture/unsaved-skills");
+  fireEvent.click(screen.getByRole("tab", { name: "Instructions" }));
+  expect(screen.getByLabelText("Global instruction files")).toHaveValue("/fixture/unsaved-rules.md");
+  expect(document.getElementById("managed-global-instructions")).toBe(managed);
+  expect(managed).toHaveValue("Unsaved managed instructions");
+  expect(api.managedInstructionsRead).toHaveBeenCalledTimes(1);
+  expect(api.runnerSettings).toHaveBeenCalledTimes(reads);
+  expect(api.updateRunnerSettings).not.toHaveBeenCalled();
+  expect(api.addRunnerPlugin).not.toHaveBeenCalled();
+  expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+});
+
+it("uses the same registered order for keyboard focus, panel identity and deep links", async () => {
+  render(wrap(<ExtensionsPanel state={state} onState={onState} initialTab="mcpProviders" />));
+  const mcp = screen.getByRole("tab", { name: "MCP servers" });
+  expect(mcp).toHaveAttribute("aria-selected", "true");
+  fireEvent.keyDown(mcp, { key: "End" });
+  const instructions = screen.getByRole("tab", { name: "Instructions" });
+  expect(instructions).toHaveFocus();
+  expect(instructions).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tabpanel")).toHaveAttribute("id", instructions.getAttribute("aria-controls"));
+  fireEvent.keyDown(instructions, { key: "ArrowDown" });
+  const coding = screen.getByRole("tab", { name: "Coding Agents" });
+  expect(coding).toHaveFocus();
+  expect(coding).toHaveAttribute("aria-selected", "true");
+  expect(api.sshResources).not.toHaveBeenCalled();
+  await waitFor(() => expect(api.runnerSettings).toHaveBeenCalledTimes(1));
+});

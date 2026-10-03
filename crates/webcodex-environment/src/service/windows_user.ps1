@@ -20,15 +20,25 @@ try {
             return $null
         }
     }
+    # Task Scheduler may return an account name even when registration used a SID.
+    function Account-Sid($identity) {
+        if ([string]::IsNullOrWhiteSpace($identity)) { return $null }
+        try {
+            if ($identity -match '^S-1-') {
+                return ([Security.Principal.SecurityIdentifier]::new($identity)).Value
+            }
+            return ([Security.Principal.NTAccount]::new($identity)).Translate([Security.Principal.SecurityIdentifier]).Value
+        } catch { return $null }
+    }
     function Owned-Task($task) {
         if ($null -eq $task) { return $false }
         $d = $task.Definition
         return $d.RegistrationInfo.Description -ceq $inputData.description -and
-            $d.Principal.UserId -eq $inputData.sid -and $d.Principal.LogonType -eq 3 -and $d.Principal.RunLevel -eq 0 -and
+            (Account-Sid $d.Principal.UserId) -eq $inputData.sid -and $d.Principal.LogonType -eq 3 -and $d.Principal.RunLevel -eq 0 -and
             $d.Actions.Count -eq 1 -and $d.Actions.Item(1).Type -eq 0 -and
             $d.Actions.Item(1).Path -ceq $inputData.program -and
             $d.Actions.Item(1).Arguments -ceq $inputData.arguments -and $d.Actions.Item(1).WorkingDirectory -ceq $inputData.directory -and
-            $d.Triggers.Count -eq 1 -and $d.Triggers.Item(1).Type -eq 9 -and $d.Triggers.Item(1).UserId -eq $inputData.sid -and
+            $d.Triggers.Count -eq 1 -and $d.Triggers.Item(1).Type -eq 9 -and (Account-Sid $d.Triggers.Item(1).UserId) -eq $inputData.sid -and
             $d.Triggers.Item(1).Enabled -eq $true -and
             $d.Settings.MultipleInstances -eq 2 -and $d.Settings.ExecutionTimeLimit -eq 'PT0S' -and
             $d.Settings.AllowHardTerminate -eq $true -and $d.Settings.RestartCount -eq 3 -and $d.Settings.RestartInterval -eq 'PT1M' -and

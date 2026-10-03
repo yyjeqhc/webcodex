@@ -665,6 +665,10 @@ jobs:
         run: cargo check --locked --workspace
       - name: Run Windows library and CLI tests
         run: cargo test --locked -p webcodex-runner-config -p webcodex-process -p webcodex-cli
+      - name: Test user-session task ownership after Windows account normalization
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -File scripts/tests/test_windows_user_service_identity.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Windows user-session task ownership regression failed" }
       - name: Run Windows unified upgrade transactions including native v0.4.3 fixture
         run: |
           cargo test --locked -p webcodex-environment --lib upgrade::

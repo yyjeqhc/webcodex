@@ -150,7 +150,7 @@ incremental = true
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
 webcodex-runner-registry = { path = "crates/webcodex-runner-registry", features = ["root-test-support"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 webcodex-store = { path = "crates/webcodex-store", features = ["root-test-support"] }
 webcodex-tool-contracts = { path = "crates/webcodex-tool-contracts", features = ["root-test-support"] }
 webcodex-workflow-session = { path = "crates/webcodex-workflow-session", features = ["root-test-support"] }

@@ -20,6 +20,44 @@ fn persistent_fixture(window: Duration) -> (tempfile::TempDir, SessionStore) {
 }
 
 #[test]
+fn large_ledger_cost_is_bounded_and_never_extends_an_existing_dirty_deadline() {
+    assert_eq!(
+        cost_coalesce(1024, Duration::from_secs(10)),
+        ORDINARY_COALESCE
+    );
+    assert_eq!(
+        cost_coalesce(73 * 1024 * 1024, Duration::from_millis(100)),
+        Duration::from_millis(400)
+    );
+    assert_eq!(
+        cost_coalesce(73 * 1024 * 1024, Duration::from_secs(10)),
+        MAX_COST_COALESCE
+    );
+    let now = Instant::now();
+    let mut state = LedgerWriterState {
+        next_cost: Duration::from_millis(400),
+        ..Default::default()
+    };
+    state.mark_dirty(now);
+    state.next_cost = MAX_COST_COALESCE;
+    state.mark_dirty(now + Duration::from_millis(100));
+    assert_eq!(
+        state.coalescing_wait(now + Duration::from_millis(100), ORDINARY_COALESCE),
+        Some(Duration::from_millis(300))
+    );
+    assert_eq!(
+        state.coalescing_wait(now + Duration::from_millis(400), ORDINARY_COALESCE),
+        None
+    );
+    state.flush_generation = state.dirty_generation;
+    assert_eq!(state.coalescing_wait(now, ORDINARY_COALESCE), None);
+    state.flush_generation = 0;
+    state.shutdown = true;
+    assert_eq!(state.coalescing_wait(now, ORDINARY_COALESCE), None);
+    eprintln!("SESSION_WRITE_COALESCE small_ms=20 large_min_ms=250 large_max_ms=1000 durable_flush_bypasses=true fixed_first_mark=true");
+}
+
+#[test]
 fn dirty_progress_never_extends_first_mark_deadline() {
     let now = Instant::now();
     let mut state = LedgerWriterState::default();
@@ -75,7 +113,7 @@ fn flush_urgency_and_inflight_dirty_marks_keep_exact_generation_fences() {
 #[test]
 fn explicit_flush_coalesces_burst_and_preserves_all_retained_identities() {
     // A long injected window eliminates reliance on scheduler speed. The flush
-    // must interrupt it, not sleep until it expires. The production policy is 20ms.
+    // must interrupt it, not sleep until it expires. Small ledgers use 20ms; large ledgers use a bounded cost-aware window.
     let (temporary, store) = persistent_fixture(Duration::from_secs(60));
     let ids: Vec<_> = (0..64)
         .map(|_| store.start_session(None, None).session_id)
@@ -199,8 +237,8 @@ fn append_read_fixture(store: &SessionStore, id: &str, ordinal: usize) {
     store.record_tool_call_finished(started, true, &serde_json::json!({"requested_count": 1, "returned_count": 1, "failed_count": 0, "items": []}), None, None);
 }
 
-/// Same implementation and populated source data, only the ordinary coalescing
-/// window differs. Counts are completed full-file write cycles, not disk sectors.
+/// Same implementation and populated source data, only the ordinary scheduling
+/// policy differs. Counts are completed full-file write cycles, not disk sectors.
 #[test]
 #[ignore = "manual populated-ledger write scheduling comparison; temporary files, serial"]
 fn populated_ledger_write_coalescing_experiment() {
@@ -234,9 +272,10 @@ fn populated_ledger_write_coalescing_experiment() {
     let ledger = seed.inner.lock().unwrap().to_persisted_ledger();
     let seed_bytes = serde_json::to_vec(&ledger).unwrap();
     drop(seed);
-    for (label, window) in [
-        ("immediate", Duration::ZERO),
-        ("coalesced", ORDINARY_COALESCE),
+    for (label, window, cost_aware) in [
+        ("immediate_reference", Duration::ZERO, false),
+        ("fixed_20ms_reference", ORDINARY_COALESCE, false),
+        ("cost_aware", ORDINARY_COALESCE, true),
     ] {
         let temporary = tempfile::tempdir().unwrap();
         let path = temporary.path().join("sessions.json");
@@ -245,14 +284,16 @@ fn populated_ledger_write_coalescing_experiment() {
         // Replace only the idle fixture writer before any mutation. This is not
         // a production configuration or additional persistence implementation.
         store.writer = None;
-        store.writer = LedgerWriterGuard::spawn_with_window(
+        store.writer = LedgerWriterGuard::spawn_with_policy(
             store.inner.clone(),
             store.persistence_write_mutex.clone(),
             window,
+            cost_aware,
         );
         let begin = Instant::now();
         for ordinal in 0..128 {
             append_read_fixture(&store, &ids[ordinal % ids.len()], 1000 + ordinal);
+            std::thread::sleep(Duration::from_millis(5));
         }
         store.flush_persistence();
         let flush_ms = begin.elapsed().as_secs_f64() * 1000.0;

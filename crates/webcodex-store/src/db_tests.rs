@@ -1,5 +1,8 @@
 #![allow(clippy::all)]
 
+#[path = "sqlite_runtime_tests.rs"]
+mod sqlite_runtime_tests;
+
 #[test]
 fn pairing_capability_migration_preserves_old_codes_without_granting_scopes() {
     let dir = tempfile::tempdir().unwrap();

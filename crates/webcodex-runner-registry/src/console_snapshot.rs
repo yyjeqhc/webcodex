@@ -38,7 +38,7 @@ impl RunnerRegistry {
         auth: Option<&RunnerAccess>,
         project_id: &str,
     ) -> Option<WorkspaceObservationIdentity> {
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         let now = crate::now_ts();
         for runner in inner.runners.values() {
             if !self.runner_visible_for_snapshot(auth, &inner, runner, now)
@@ -78,7 +78,7 @@ impl RunnerRegistry {
             return HashSet::new();
         }
         let now = crate::now_ts();
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         let mut visible = HashSet::new();
         for runner in inner.runners.values() {
             if !self.runner_visible_for_snapshot(auth, &inner, runner, now) {
@@ -130,7 +130,7 @@ impl RunnerRegistry {
         auth: Option<&RunnerAccess>,
         include_project_counts: bool,
     ) -> ConsoleRegistrySnapshot {
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         let now = crate::now_ts();
         let mut runners = Vec::new();
         let mut projects_by_runner = HashMap::new();

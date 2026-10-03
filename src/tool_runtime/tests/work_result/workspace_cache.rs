@@ -262,6 +262,128 @@ async fn work_result_workspace_reconnect_revision_loss_and_authority_change_neve
 }
 
 #[tokio::test]
+async fn work_result_pending_job_completion_recovers_presentation_but_not_validation_proof() {
+    let (_tmp, runtime, project, session, auth) = fixture().await;
+    let runtime = runtime.with_structured_execution_sync_wait(Duration::from_millis(20));
+    let task = tokio::spawn({
+        let (runtime, project, session, auth) = (
+            runtime.clone(),
+            project.clone(),
+            session.clone(),
+            auth.clone(),
+        );
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::RunShell {
+                        project,
+                        command: "echo pending-writer".into(),
+                        timeout_secs: Some(120),
+                        sync_wait_secs: None,
+                        cwd: None,
+                        purpose: None,
+                        shell: None,
+                        session_id: Some(session),
+                        login: false,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, CLIENT).await;
+    let job_id = request.job_id.clone().expect("canonical Job");
+    let update = |seq, status: &str, finished, exit_code| {
+        serde_json::from_value(json!({
+            "client_id": CLIENT, "agent_instance_id": "inst", "job_id": job_id,
+            "request_id": request.request_id, "update_seq": seq, "status": status,
+            "finished": finished, "exit_code": exit_code,
+        }))
+        .unwrap()
+    };
+    runtime
+        .runner_registry
+        .update_job(update(1, "running", false, None::<i32>))
+        .await
+        .unwrap();
+    assert!(task.await.unwrap().success);
+    assert!(
+        !runtime
+            .validation_sources
+            .capture(&project)
+            .unwrap()
+            .quiescent
+    );
+    assert!(
+        poll(&runtime, &project, &session, &auth, true, 1)
+            .await
+            .success
+    );
+    runtime
+        .runner_registry
+        .update_job(update(2, "completed", true, Some(0)))
+        .await
+        .unwrap();
+    assert!(
+        poll(&runtime, &project, &session, &auth, true, 1)
+            .await
+            .success
+    );
+    let reused = poll(&runtime, &project, &session, &auth, true, 0).await;
+    assert!(reused.success);
+    assert_eq!(
+        reused.output["work_result"]["workspace_observation"]["reused"],
+        true
+    );
+    assert!(
+        !runtime
+            .validation_sources
+            .capture(&project)
+            .unwrap()
+            .quiescent,
+        "presentation observation must never turn uncertain validation into proof"
+    );
+    assert!(!runtime.runner_registry.observation_jobs_ended_for_project(
+        None,
+        "wrong-project",
+        &[job_id.clone()]
+    ));
+    assert!(!runtime.runner_registry.observation_jobs_ended_for_project(
+        None,
+        &project,
+        &["wc_job_missing0123456".into()]
+    ));
+    assert!(!runtime.runner_registry.observation_jobs_ended_for_project(
+        None,
+        &project,
+        &vec![job_id; 129]
+    ));
+    eprintln!("WORK_RESULT_HANDOFF active_job_git=1 first_terminal_git=1 unchanged_terminal_git=0 validation_quiescent=false");
+}
+
+#[tokio::test]
+async fn work_result_unknown_non_job_writer_never_reuses_presentation() {
+    let (_tmp, runtime, project, session, auth) = fixture().await;
+    runtime
+        .validation_sources
+        .begin(&project)
+        .unwrap()
+        .finish(&ToolResult::ok(
+            json!({"execution_state":"outcome_unknown"}),
+        ));
+    assert!(
+        poll(&runtime, &project, &session, &auth, true, 1)
+            .await
+            .success
+    );
+    assert!(
+        poll(&runtime, &project, &session, &auth, true, 1)
+            .await
+            .success
+    );
+}
+
+#[tokio::test]
 async fn work_result_workspace_mutation_during_probe_is_not_cached() {
     let (tmp, runtime, project, session, auth) = fixture().await;
     let task = tokio::spawn({

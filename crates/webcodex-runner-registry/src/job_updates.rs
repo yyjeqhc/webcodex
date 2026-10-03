@@ -1568,7 +1568,7 @@ impl RunnerRegistry {
 
     #[cfg(any(test, feature = "root-test-support"))]
     pub async fn hidden_job_ids_for_test(&self) -> Vec<String> {
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         let mut ids = inner
             .jobs_by_id
             .values()
@@ -1928,7 +1928,7 @@ impl RunnerRegistry {
         if job_ids.is_empty() {
             return None;
         }
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         let mut common: Option<String> = None;
         for job_id in job_ids {
             let job = inner.jobs_by_id.get(*job_id)?;
@@ -2049,7 +2049,7 @@ impl RunnerRegistry {
         active_limit: usize,
         terminal_limit: usize,
     ) -> Vec<JobAttentionSnapshot> {
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         Self::job_attention_snapshot_locked(
             &inner,
             auth,
@@ -2170,6 +2170,36 @@ impl RunnerRegistry {
             Some(snapshots)
         }
     }
+    /// Presentation-only re-observation of exact previously admitted Job handles.
+    /// Never scans history, refreshes lifecycle, or performs post-unlock writes.
+    /// Missing, inaccessible, recovering, lost and outcome-unknown Jobs do not
+    /// prove a writer ended, even when their outer lifecycle is terminal.
+    pub fn observation_jobs_ended_for_project(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        project: &str,
+        job_ids: &[String],
+    ) -> bool {
+        if job_ids.len() > 128 {
+            return false;
+        }
+        self.inner
+            .try_read(|inner| {
+                job_ids.iter().all(|id| {
+                    inner.jobs_by_id.get(id).is_some_and(|job| {
+                        job.project_id.as_deref() == Some(project)
+                            && shell_job_visible_to_auth(auth, inner, job)
+                            && job.lifecycle.is_terminal()
+                            && job.lifecycle != JobLifecycleState::Lost
+                            && job.command_execution_state
+                                != Some(ShellCommandExecutionState::OutcomeUnknown)
+                            && !job.recovery_active()
+                    })
+                })
+            })
+            .unwrap_or(false)
+    }
+
     /// Exact ids are selected only from successful canonical result projections.
     pub fn try_job_telemetry_snapshots_for_auth(
         &self,

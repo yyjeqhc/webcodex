@@ -110,11 +110,25 @@ impl ReceiptRegistryState {
         Some(read(&guard))
     }
 
+    /// Immutable snapshots must not inherit unrelated receipt retries at Drop.
+    /// Mutation/lazy-lifecycle paths still use lock() and persist before returning.
+    pub(crate) async fn read(&self) -> RegistryReadGuard<'_> {
+        RegistryReadGuard(self.state.lock().await)
+    }
+
     pub(crate) async fn lock(&self) -> ReceiptRegistryGuard<'_> {
         ReceiptRegistryGuard {
             guard: Some(self.state.lock().await),
             state: self,
         }
+    }
+}
+
+pub(crate) struct RegistryReadGuard<'a>(MutexGuard<'a, RunnerRegistryInner>);
+impl Deref for RegistryReadGuard<'_> {
+    type Target = RunnerRegistryInner;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -151,6 +165,10 @@ impl Drop for ReceiptRegistryGuard<'_> {
             .collect();
         // Release authority before any storage calls, even if an adapter fails.
         drop(self.guard.take());
+        let persist_started = std::time::Instant::now();
+        let receipt_count = receipts.len();
+        let terminal_count = terminal_events.len();
+
         if let Some(store) = &self.state.store {
             let mut failed = 0;
             let mut retry_ids = Vec::new();
@@ -198,6 +216,11 @@ impl Drop for ReceiptRegistryGuard<'_> {
                     "terminal Job attention persistence degraded"
                 );
             }
+        }
+        if receipt_count != 0 || terminal_count != 0 {
+            tracing::debug!(target: "webcodex::phase", phase="registry_durable_finalize",
+                receipt_count, terminal_count, elapsed_ms=persist_started.elapsed().as_secs_f64()*1000.0,
+                "registry post-unlock persistence completed");
         }
     }
 }

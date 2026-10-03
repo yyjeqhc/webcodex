@@ -12,7 +12,9 @@ fn history_read_snapshot_does_not_block_receipt_reference_or_audit_writes() {
     let (release_tx, release_rx) = mpsc::channel();
     let reader_db = db.clone();
     let reader = std::thread::spawn(move || {
-        let mut reader = reader_db.lock_history_connection(crate::StoreDomain::WindowActivity);
+        let mut reader = reader_db
+            .lock_history_connection(crate::StoreDomain::WindowActivity)
+            .unwrap();
         let snapshot = reader.transaction().unwrap();
         let count = || {
             snapshot
@@ -99,6 +101,7 @@ fn window_event_pages_keep_links_in_one_snapshot_during_retention() {
             // through a DIFFERENT WAL connection. No sleeps or production hooks:
             // the original event page has already been consumed at this point.
             db.lock_history_connection(crate::StoreDomain::WindowActivity)
+                .unwrap()
                 .authorizer(Some(move |context: AuthContext<'_>| {
                     if matches!(
                         context.action,
@@ -116,7 +119,8 @@ fn window_event_pages_keep_links_in_one_snapshot_during_retention() {
                         );
                     }
                     Authorization::Allow
-                }));
+                }))
+                .unwrap();
             let principal = scoped.then_some(("username", "alice"));
             let page = match kind {
                 "ordinary" => db.list_window_activity_events("w", principal, 20),
@@ -138,8 +142,12 @@ fn window_event_pages_keep_links_in_one_snapshot_during_retention() {
                 "{kind}/{scoped}: event and links must share the same WAL snapshot"
             );
             assert_eq!(page[0].workflow_links[0].workflow_session_id, "session");
-            let reader = db.lock_history_connection(crate::StoreDomain::WindowActivity);
-            reader.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+            let reader = db
+                .lock_history_connection(crate::StoreDomain::WindowActivity)
+                .unwrap();
+            reader
+                .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+                .unwrap();
             assert!(
                 reader.is_autocommit(),
                 "the page must release its read snapshot"
@@ -172,7 +180,9 @@ fn history_connection_is_fixed_read_only_and_reopens_after_migration() {
     let path = tmp.path().join("readonly.db");
     for _ in 0..3 {
         let db = Database::open(&path).unwrap();
-        let reader = db.lock_history_connection(crate::StoreDomain::WindowActivity);
+        let reader = db
+            .lock_history_connection(crate::StoreDomain::WindowActivity)
+            .unwrap();
         assert_eq!(
             reader
                 .query_row("PRAGMA query_only", [], |r| r.get::<_, i64>(0))

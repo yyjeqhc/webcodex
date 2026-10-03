@@ -133,6 +133,58 @@ fn access(owner: Option<&str>, group: Option<RunnerAccessGroup>) -> RunnerAccess
 }
 
 #[tokio::test]
+async fn immutable_snapshots_never_flush_unrelated_failed_receipts() {
+    let store=Arc::new(MemoryReceipts { failures_remaining: std::sync::atomic::AtomicUsize::new(1), ..Default::default() });
+    let registry=durable(&store).await;
+    register(&registry,INSTANCE_A,empty_inventory()).await;
+    let (job,_)=start_and_take_over(&registry,INSTANCE_A).await;
+    registry.update_job(update(INSTANCE_A,&job.job_id,1,"completed",None,true)).await.unwrap();
+    assert!(store.rows.lock().unwrap().is_empty());
+    assert!(registry.inner.candidates.lock().unwrap().contains(&job.job_id));
+    for _ in 0..8 {
+        registry.exact_project_visible_for_auth_snapshot(None,"agent:r:p").await;
+        registry.workspace_observation_identity_for_auth(None,"agent:r:p").await;
+        registry.common_job_project_for_auth(None,&[&job.job_id]).await;
+    }
+    assert!(store.rows.lock().unwrap().is_empty(), "immutable observations must not perform receipt I/O");
+    assert!(registry.inner.candidates.lock().unwrap().contains(&job.job_id));
+    // The next explicit/lazy mutation boundary still retries the retained fact.
+    drop(registry.inner.lock().await);
+    assert_eq!(store.rows.lock().unwrap().len(),1);
+    assert!(registry.inner.candidates.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn presentation_probe_rejects_terminal_outcome_uncertainty_and_lost_lifecycle() {
+    let store = Arc::new(MemoryReceipts::default());
+    let registry = durable(&store).await;
+    register(&registry, INSTANCE_A, empty_inventory()).await;
+    let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
+    registry.update_job(update(INSTANCE_A, &job.job_id, 1, "completed", None, true)).await.unwrap();
+    let project = "agent:probe:project";
+    {
+        let mut inner = registry.inner.lock().await;
+        let record = inner.jobs_by_id.get_mut(&job.job_id).unwrap();
+        record.project_id = Some(project.into());
+        record.command_execution_state = None;
+    }
+    assert!(registry.observation_jobs_ended_for_project(None, project, &[job.job_id.clone()]));
+    {
+        let mut inner = registry.inner.lock().await;
+        inner.jobs_by_id.get_mut(&job.job_id).unwrap().command_execution_state =
+            Some(webcodex_core::runner_protocol::ShellCommandExecutionState::OutcomeUnknown);
+    }
+    assert!(!registry.observation_jobs_ended_for_project(None, project, &[job.job_id.clone()]));
+    {
+        let mut inner = registry.inner.lock().await;
+        let record = inner.jobs_by_id.get_mut(&job.job_id).unwrap();
+        record.command_execution_state = None;
+        record.lifecycle = crate::state::JobLifecycleState::Lost;
+    }
+    assert!(!registry.observation_jobs_ended_for_project(None, project, &[job.job_id]));
+}
+
+#[tokio::test]
 async fn terminal_events_emit_once_only_after_accepted_sequenced_terminal_truth() {
     let store = Arc::new(MemoryReceipts::default());
     let events = Arc::new(MemoryTerminalEvents::default());

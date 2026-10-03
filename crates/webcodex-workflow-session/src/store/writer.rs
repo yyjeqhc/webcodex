@@ -1,11 +1,24 @@
 //! Background full-ledger persistence. Ordinary dirty notifications coalesce
-//! behind one fixed short deadline; explicit flush and shutdown bypass it.
+//! behind one cost-aware fixed deadline; explicit flush and shutdown bypass it.
 //! This changes write scheduling only, not ledger format or durable identity.
-use super::{bound_summary_string, write_ledger_atomic, SessionStoreInner};
+use super::{bound_summary_string, SessionStoreInner};
+use crate::persistence::write_ledger_atomic_measured;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 const ORDINARY_COALESCE: Duration = Duration::from_millis(20);
+const LARGE_LEDGER_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_COST_COALESCE: Duration = Duration::from_secs(1);
+
+fn cost_coalesce(bytes: u64, duration: Duration) -> Duration {
+    if bytes < LARGE_LEDGER_BYTES {
+        return ORDINARY_COALESCE;
+    }
+    duration
+        .saturating_mul(4)
+        .max(Duration::from_millis(250))
+        .min(MAX_COST_COALESCE)
+}
 
 pub(super) struct LedgerWriterGuard {
     shared: Arc<LedgerWriterShared>,
@@ -21,6 +34,10 @@ struct LedgerWriterShared {
 struct LedgerWriterState {
     // First pending mark owns the deadline; later progress never extends it.
     dirty_since: Option<Instant>,
+    // Captured by the first mark; later work and cost updates cannot extend it.
+    dirty_cost: Duration,
+    next_cost: Duration,
+
     dirty_generation: u64,
     // A completed cycle is an attempted write, not necessarily a successful one.
     // SessionPersistence.last_persist_error remains the success/error authority.
@@ -33,7 +50,10 @@ struct LedgerWriterState {
 
 impl LedgerWriterState {
     fn mark_dirty(&mut self, now: Instant) -> u64 {
-        self.dirty_since.get_or_insert(now);
+        if self.dirty_since.is_none() {
+            self.dirty_since = Some(now);
+            self.dirty_cost = self.next_cost;
+        }
         self.dirty_generation = self.dirty_generation.saturating_add(1);
         self.dirty_generation
     }
@@ -44,6 +64,7 @@ impl LedgerWriterState {
         }
         self.dirty_since.and_then(|since| {
             window
+                .max(self.dirty_cost)
                 .checked_sub(now.saturating_duration_since(since))
                 .filter(|remaining| !remaining.is_zero())
         })
@@ -71,14 +92,40 @@ impl LedgerWriterGuard {
         write_mutex: Arc<Mutex<()>>,
         window: Duration,
     ) -> Option<Arc<Self>> {
+        Self::spawn_with_policy(store_inner, write_mutex, window, true)
+    }
+
+    // Private comparison seam: production always enables cost-aware scheduling.
+    fn spawn_with_policy(
+        store_inner: Arc<Mutex<SessionStoreInner>>,
+        write_mutex: Arc<Mutex<()>>,
+        window: Duration,
+        cost_aware: bool,
+    ) -> Option<Arc<Self>> {
+        let path = store_inner
+            .lock()
+            .ok()
+            .and_then(|inner| inner.persistence.as_ref().map(|p| p.path.clone()));
+        let bytes = path
+            .and_then(|path| std::fs::metadata(path).ok())
+            .map_or(0, |meta| meta.len());
         let shared = Arc::new(LedgerWriterShared {
-            state: Mutex::new(LedgerWriterState::default()),
+            state: Mutex::new(LedgerWriterState {
+                next_cost: if cost_aware {
+                    cost_coalesce(bytes, Duration::ZERO)
+                } else {
+                    Duration::ZERO
+                },
+                ..Default::default()
+            }),
             cvar: Condvar::new(),
         });
         let shared_thread = Arc::clone(&shared);
         let join = std::thread::Builder::new()
             .name("session-ledger-writer".to_string())
-            .spawn(move || ledger_writer_loop(shared_thread, store_inner, write_mutex, window))
+            .spawn(move || {
+                ledger_writer_loop(shared_thread, store_inner, write_mutex, window, cost_aware)
+            })
             .ok()?;
         Some(Arc::new(Self {
             shared,
@@ -162,6 +209,7 @@ fn ledger_writer_loop(
     store_inner: Arc<Mutex<SessionStoreInner>>,
     write_mutex: Arc<Mutex<()>>,
     window: Duration,
+    cost_aware: bool,
 ) {
     loop {
         let generation = {
@@ -194,24 +242,37 @@ fn ledger_writer_loop(
         let _write_guard = write_mutex
             .lock()
             .expect("session persistence mutex poisoned");
-        let snapshot = {
+        let waiting = Instant::now();
+        let (snapshot, lock_wait, lock_hold) = {
             let inner = store_inner.lock().expect("session store mutex poisoned");
-            inner
+            let acquired = Instant::now();
+            let snapshot = inner
                 .persistence
                 .as_ref()
-                .map(|persistence| (persistence.path.clone(), inner.to_persisted_ledger()))
+                .map(|persistence| (persistence.path.clone(), inner.to_persisted_ledger()));
+            (
+                snapshot,
+                acquired.duration_since(waiting),
+                acquired.elapsed(),
+            )
         };
+        tracing::debug!(target: "webcodex::session_cost", phase="snapshot",
+            wait_ms=lock_wait.as_secs_f64()*1000.0, hold_ms=lock_hold.as_secs_f64()*1000.0,
+            rows=snapshot.as_ref().map_or(0, |(_, ledger)| ledger.sessions.len()),
+            "session snapshot lock cost");
+        let write_started = Instant::now();
         let result = match snapshot {
-            Some((path, ledger)) => write_ledger_atomic(&path, &ledger).map_err(|err| {
+            Some((path, ledger)) => write_ledger_atomic_measured(&path, &ledger).map_err(|err| {
                 bound_summary_string(&format!("persist_failed: {}: {err}", path.display()))
             }),
-            None => Ok(()),
+            None => Ok(0),
         };
+        let write_duration = write_started.elapsed();
         {
             let mut inner = store_inner.lock().expect("session store mutex poisoned");
             if let Some(persistence) = inner.persistence.as_mut() {
                 match &result {
-                    Ok(()) => persistence.last_persist_error = None,
+                    Ok(_) => persistence.last_persist_error = None,
                     Err(error) => {
                         tracing::warn!("session ledger persistence failed: {}", error);
                         persistence.last_persist_error = Some(error.clone());
@@ -225,6 +286,12 @@ fn ledger_writer_loop(
                 .lock()
                 .expect("session ledger writer state poisoned");
             state.writes_completed = generation;
+            if cost_aware {
+                if let Ok(bytes) = &result {
+                    state.next_cost = cost_coalesce(*bytes, write_duration);
+                }
+            }
+
             #[cfg(test)]
             {
                 state.write_cycles += 1;

@@ -1287,7 +1287,7 @@ impl RunnerRegistry {
         project: &str,
     ) -> bool {
         let now = now_ts();
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         inner.runners.values().any(|runner| {
             if !self.runner_visible_for_snapshot(auth, &inner, runner, now) {
                 return false;

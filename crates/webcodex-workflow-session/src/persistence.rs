@@ -5,7 +5,6 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde::Deserialize;
 use serde_json::Value;
 
 use super::assignment::is_valid_assignment_fence_fingerprint;
@@ -29,17 +28,7 @@ use super::util::{
 use webcodex_core::project_instructions::ProjectInstructionsSummarySnapshot;
 use webcodex_core::workflow_session_contract::is_safe_job_id;
 
-#[derive(Deserialize)]
-struct SessionLedgerVersionProbe {
-    version: u32,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LoadedSessionLedgerV2 {
-    version: u32,
-    sessions: Vec<Value>,
-}
+mod stream;
 
 fn v2_record_has_canonical_logical_invocation_shape(value: &Value) -> bool {
     value
@@ -517,11 +506,6 @@ impl RestoredSessionLedger {
     }
 }
 
-enum LoadedV2Row {
-    Session(SessionRecord),
-    Tombstone(SessionRetentionTombstone),
-}
-
 fn parse_retention_tombstone_row(value: &Value) -> Option<SessionRetentionTombstone> {
     let row = serde_json::from_value::<PersistedRetentionTombstoneRow>(value.clone()).ok()?;
     let tombstone = row.retention_tombstone;
@@ -593,118 +577,57 @@ pub fn load_persisted_ledger(
     path: &PathBuf,
     max_events_per_session: usize,
 ) -> RestoredSessionLedger {
-    let content = match fs::read_to_string(path) {
-        Ok(content) => content,
+    let started = std::time::Instant::now();
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            return RestoredSessionLedger::empty(None);
+            return RestoredSessionLedger::empty(None)
         }
         Err(err) => {
-            let error = bound_summary_string(&format!("restore_failed: {}: {err}", path.display()));
-            tracing::warn!("session ledger restore failed: {}", error);
-            return RestoredSessionLedger::empty(Some(error));
+            return RestoredSessionLedger::empty(Some(bound_summary_string(&format!(
+                "restore_failed: {}: {err}",
+                path.display()
+            ))))
         }
     };
-    let version = match serde_json::from_str::<SessionLedgerVersionProbe>(&content) {
-        Ok(probe) => probe.version,
-        Err(err) => {
-            let error = bound_summary_string(&format!(
-                "restore_failed: invalid session ledger JSON: {err}"
-            ));
-            tracing::warn!("session ledger restore failed: {}", error);
-            return RestoredSessionLedger::empty(Some(error));
-        }
-    };
-    let restored_rows: Result<Vec<LoadedV2Row>, String> = match version {
-        SESSION_LEDGER_VERSION => serde_json::from_str::<LoadedSessionLedgerV2>(&content)
-            .map_err(|err| format!("invalid v2 session ledger: {err}"))
-            .map(|ledger| {
-                debug_assert_eq!(ledger.version, SESSION_LEDGER_VERSION);
-                ledger
-                    .sessions
-                    .into_iter()
-                    .filter_map(|value| {
-                        // Classify tombstone rows before the Session event-shape
-                        // check. A tombstone has no `events` field, and that check
-                        // would otherwise drop it as a malformed Session row.
-                        if value.get("retention_tombstone").is_some() {
-                            return match parse_retention_tombstone_row(&value) {
-                                Some(tombstone) => Some(LoadedV2Row::Tombstone(tombstone)),
-                                None => {
-                                    tracing::warn!(
-                                        "discarding malformed v2 retention tombstone row"
-                                    );
-                                    None
-                                }
-                            };
-                        }
-                        if !v2_record_has_canonical_logical_invocation_shape(&value) {
-                            tracing::warn!(
-                                "discarding malformed v2 Session row: event correlation shape is partial"
-                            );
-                            return None;
-                        }
-                        let record = match serde_json::from_value::<PersistedSessionRecord>(value) {
-                            Ok(record) => record,
-                            Err(err) => {
-                                tracing::warn!("discarding malformed v2 Session row: {err}");
-                                return None;
-                            }
-                        };
-                        record
-                            .into_record(max_events_per_session)
-                            .map(LoadedV2Row::Session)
-                    })
-                    .collect()
-            }),
-        other => Err(format!("unsupported session ledger version {other}")),
-    };
-    let restored_rows = match restored_rows {
+    let bytes = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    let stream::Rows {
+        mut records,
+        tombstones: tombstone_rows,
+    } = match stream::load(io::BufReader::new(file), max_events_per_session) {
         Ok(rows) => rows,
         Err(err) => {
-            let error = bound_summary_string(&format!("restore_failed: {err}"));
+            let error =
+                bound_summary_string(&format!("restore_failed: invalid v2 session ledger: {err}"));
             tracing::warn!("session ledger restore failed: {}", error);
             return RestoredSessionLedger::empty(Some(error));
         }
     };
-    let mut tombstone_rows = Vec::new();
-    let mut restored_records = Vec::new();
-    for row in restored_rows {
-        match row {
-            LoadedV2Row::Session(record) => restored_records.push(record),
-            LoadedV2Row::Tombstone(tombstone) => tombstone_rows.push(tombstone),
-        }
-    }
-    let live_ids = restored_records
+    let live_ids = records
         .iter()
-        .map(|record| record.session_id.clone())
+        .map(|record| record.session_id().to_string())
         .collect::<HashSet<_>>();
     let (tombstones, tombstone_ids, next_expiry_ordinal, expiry_ordinal_exhausted) =
         accept_restored_tombstones(tombstone_rows, &live_ids);
-    let mut records: Vec<StoredSession> = restored_records
-        .into_iter()
-        .map(|record| {
-            if record.lifecycle.allows_mutation() {
-                StoredSession::Hot(record)
-            } else {
-                match cold_session_from_record(&record, max_events_per_session) {
-                    Ok(cold) => StoredSession::Cold(cold),
-                    Err(err) => {
-                        tracing::warn!("session cold restore serialization failed: {err}");
-                        StoredSession::Hot(record)
-                    }
-                }
-            }
-        })
-        .collect();
     records.sort_by_key(StoredSession::updated_at);
-
     let mut sessions = HashMap::new();
     let mut lru = VecDeque::new();
+    let (mut hot, mut cold, mut cold_bytes) = (0usize, 0usize, 0usize);
     for record in records {
+        match &record {
+            StoredSession::Hot(_) => hot += 1,
+            StoredSession::Cold(record) => {
+                cold += 1;
+                cold_bytes += record.raw.get().len();
+            }
+        }
         let session_id = record.session_id().to_string();
         lru.push_back(session_id.clone());
         sessions.insert(session_id, record);
     }
+    tracing::debug!(target: "webcodex::session_cost", phase="restore", ledger_bytes=bytes,
+        hot_sessions=hot, cold_sessions=cold, cold_raw_bytes=cold_bytes,
+        elapsed_ms=started.elapsed().as_secs_f64()*1000.0, "session ledger streamed restore");
     RestoredSessionLedger {
         sessions,
         lru,
@@ -725,6 +648,14 @@ pub(super) fn is_lower_hex_sha256(value: &str) -> bool {
 }
 
 pub fn write_ledger_atomic(path: &PathBuf, ledger: &PersistedSessionLedger) -> io::Result<()> {
+    write_ledger_atomic_measured(path, ledger).map(|_| ())
+}
+
+pub(super) fn write_ledger_atomic_measured(
+    path: &PathBuf,
+    ledger: &PersistedSessionLedger,
+) -> io::Result<u64> {
+    let started = std::time::Instant::now();
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -744,14 +675,17 @@ pub fn write_ledger_atomic(path: &PathBuf, ledger: &PersistedSessionLedger) -> i
         let mut writer = io::BufWriter::new(file);
         serde_json::to_writer(&mut writer, ledger).map_err(io::Error::other)?;
         writer.flush()?;
+        let bytes = writer.get_ref().metadata()?.len();
         drop(writer);
-        fs::rename(&tmp_path, path)
+        fs::rename(&tmp_path, path)?;
+        Ok(bytes)
     })();
-    if let Err(err) = result {
+    if result.is_err() {
         let _ = fs::remove_file(&tmp_path);
-        return Err(err);
     }
-    Ok(())
+    tracing::debug!(target: "webcodex::session_cost", phase="persist", bytes=result.as_ref().copied().unwrap_or(0),
+        success=result.is_ok(), elapsed_ms=started.elapsed().as_secs_f64()*1000.0, "session ledger atomic write");
+    result
 }
 
 pub fn sanitize_persisted_event(mut event: SessionEvent, session_id: &str) -> Option<SessionEvent> {

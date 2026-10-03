@@ -521,7 +521,6 @@ impl DesktopCore {
         self.get_state().await
     }
 
-    #[cfg(test)]
     pub async fn configure_local_setup(
         &mut self,
         project_path: Option<&str>,

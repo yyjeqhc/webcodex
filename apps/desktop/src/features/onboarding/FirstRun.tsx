@@ -57,6 +57,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
   const mutationBusy = busy || Boolean(state.current_operation);
+  const canChooseServiceScope = !state.persistent_environment && (chooseModeFirst || !savedMode);
   const origin = serverOrigin(serverUrl);
   const sameServer = mode === "join" && origin !== null && state.topology?.experience === "full"
     && state.topology.server.kind === "remote" && origin === serverOrigin(state.topology.server.url);
@@ -82,7 +83,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
     setPairingCode(""); setUserToken("");
     try {
       const next = await desktopApi.configureEnvironment({
-        ...(!savedMode && !state.persistent_environment ? { serviceScope } : {}),
+        ...(canChooseServiceScope ? { serviceScope } : {}),
         mode, serverUrl: mode === "join" ? origin : null,
         // Preserve a legacy migration's recorded display project, but never
         // require or register a new default project during normal setup.
@@ -163,7 +164,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
         </div> : <div className="field-help"><strong>{t(runner ? "setup.reuseEnrollment" : "setup.reuseViewerCredential")}</strong>
           <p>{t(runner ? "setup.reuseRunnerRegistrationHelp" : "setup.reuseViewerCredentialHelp")}</p></div>}
       </div>}
-      {(runner || mode === "create") && (!savedMode && !state.persistent_environment
+      {(runner || mode === "create") && (canChooseServiceScope
         ? <div className="form-card">
             <strong>{scopeText(serviceScope)}</strong>
             <p className="field-help">{scopeText(serviceScope === "user" ? "userHelp" : "systemHelp")}</p>

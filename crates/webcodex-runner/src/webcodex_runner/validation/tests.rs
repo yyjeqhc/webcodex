@@ -79,11 +79,31 @@ fn write_fake_pyright(bin_dir: &std::path::Path, spec: &FakePyrightSpec) -> Path
         }
         script.push_str(&format!("exit {}\n", spec.exit_code));
         let path = bin_dir.join("pyright");
-        fs::write(&path, script).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&path, perms).unwrap();
+        // Do not open an executable for writing in the multi-threaded test
+        // process: an unrelated concurrent fork can inherit that descriptor
+        // until exec, causing ETXTBSY after our own descriptor has closed.
+        // A dedicated writer owns the descriptor, closes it, then publishes a
+        // new inode. Completion also leaves no writer child behind.
+        use std::process::{Command, Stdio};
+        let unpublished = bin_dir.join(".pyright-unpublished");
+        let result = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(
+                "umask 077; printf '%s' \"$3\" > \"$1\" && chmod 755 \"$1\" && mv -f \"$1\" \"$2\"",
+            )
+            .arg("pyright-fixture-writer")
+            .arg(&unpublished)
+            .arg(&path)
+            .arg(&script)
+            .stdin(Stdio::null())
+            .output()
+            .expect("start isolated pyright fixture writer");
+        assert!(
+            result.status.success(),
+            "fixture writer failed: {:?}",
+            result.status
+        );
+        assert!(!unpublished.exists());
         path
     }
     #[cfg(windows)]
@@ -105,6 +125,31 @@ fn write_fake_pyright(bin_dir: &std::path::Path, spec: &FakePyrightSpec) -> Path
         fs::write(&path, script).unwrap();
         path
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn pyright_fixture_publication_does_not_reuse_a_writer_held_inode() {
+    use std::os::unix::fs::MetadataExt;
+    use std::process::{Command, Stdio};
+    let bin = crate::tests::executable_tempdir();
+    let path = write_fake_pyright(bin.path(), &FakePyrightSpec::new("old", 1));
+    // Model an open-file description inherited by an unrelated concurrent
+    // child. Keeping it open must not make the newly published fixture ETXTBSY.
+    let writer = fs::OpenOptions::new().write(true).open(&path).unwrap();
+    let published = write_fake_pyright(bin.path(), &FakePyrightSpec::new("new", 0));
+    assert_ne!(
+        writer.metadata().unwrap().ino(),
+        fs::metadata(&published).unwrap().ino(),
+        "publication must not reuse a writable/inherited executable inode"
+    );
+    let output = Command::new(&published)
+        .stdin(Stdio::null())
+        .output()
+        .expect("published fixture must be executable while the old writer is alive");
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"new");
+    drop(writer);
 }
 
 fn with_path<T>(bin_dir: &std::path::Path, f: impl FnOnce(Option<std::path::PathBuf>) -> T) -> T {

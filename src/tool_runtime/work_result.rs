@@ -48,8 +48,15 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         window: Option<&ClientWindow>,
     ) -> ToolResult {
-        self.exact_work_result(project, session_id, "present_work_result", auth, window)
-            .await
+        self.exact_work_result(
+            project,
+            session_id,
+            "present_work_result",
+            auth,
+            window,
+            false,
+        )
+        .await
     }
 
     #[cfg(test)]
@@ -63,6 +70,7 @@ impl ToolRuntime {
             .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn work_result_state_for_window(
         &self,
         project: String,
@@ -70,8 +78,27 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         window: Option<&ClientWindow>,
     ) -> ToolResult {
-        self.exact_work_result(project, session_id, "get_work_result_state", auth, window)
+        self.work_result_state_for_window_with_refresh(project, session_id, auth, window, false)
             .await
+    }
+
+    pub(crate) async fn work_result_state_for_window_with_refresh(
+        &self,
+        project: String,
+        session_id: Option<String>,
+        auth: Option<&AuthContext>,
+        window: Option<&ClientWindow>,
+        automatic: bool,
+    ) -> ToolResult {
+        self.exact_work_result(
+            project,
+            session_id,
+            "get_work_result_state",
+            auth,
+            window,
+            automatic,
+        )
+        .await
     }
 
     pub(crate) async fn work_result_activity_detail(
@@ -264,6 +291,7 @@ impl ToolRuntime {
         tool_name: &'static str,
         auth: Option<&AuthContext>,
         window: Option<&ClientWindow>,
+        automatic: bool,
     ) -> ToolResult {
         let resolved_project = match self.authorize_work_result_project(&project, auth).await {
             Ok(project) => project,
@@ -306,8 +334,12 @@ impl ToolRuntime {
 
         // The Results pane uses current Project changes and, when linked, Session
         // check/review evidence separately from sealed final task changes.
-        let workspace_result = self
-            .workspace_metadata_for_presentation(resolved_project.clone())
+        let automatic = automatic
+            && summary.as_ref().is_none_or(|summary| {
+                summary.lifecycle == super::sessions::SessionLifecycle::Active
+            });
+        let (workspace_result, workspace_reused) = self
+            .work_result_workspace_observation(&resolved_project, auth, automatic)
             .await;
         let mut projection = if let Some(summary) = summary.as_ref() {
             let projection_summary = self.refresh_validation_source_summary(summary);
@@ -411,6 +443,13 @@ impl ToolRuntime {
             .work_result_jobs(&resolved_project, session_id.as_deref(), auth)
             .await;
         projection["state_version"] = json!(work_result_state_version(&projection));
+        // Observation provenance is not content revision: it must not restart the
+        // App's idle clock or turn a reused snapshot into fresh execution evidence.
+        projection["workspace_observation"] = json!({
+            "reused": workspace_reused,
+            "max_reuse_ms": super::work_result_workspace::REUSE_LEASE.as_millis() as u64,
+            "semantics": "bounded_snapshot_not_filesystem_freshness",
+        });
 
         if let Some(summary) = summary.as_ref() {
             match self.sealed_work_result_changes(&resolved_project, summary, auth) {

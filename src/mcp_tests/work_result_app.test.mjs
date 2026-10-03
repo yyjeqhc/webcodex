@@ -291,7 +291,7 @@ test("Window card renders and refreshes before any Workflow Session exists", asy
   assert.equal(view.timers.size, 1);
   await view.fireTimers(10000);
   assert.equal(view.calls("get_work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project });
+  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, automatic: true });
 });
 
 test("missing initial machine result recovers once through app-only content fallback", async () => {
@@ -603,6 +603,22 @@ test("matching Work input/result identity is idempotent and unchanged initial st
   assert.equal(view.nodes.activityDetail.textContent, "sentinel");
 });
 
+test("automatic workspace reuse is explicit and manual Refresh always requests a new observation", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input); view.toolResult({ work_result: baseState }); await view.initialize();
+  await view.fireTimers(10000);
+  const automatic = view.calls("get_work_result_state").at(-1);
+  assert.equal(automatic.params.arguments.automatic, true);
+  await view.reply(automatic, toolResult({work_result: {...baseState,
+    workspace_observation: {reused: true, max_reuse_ms: 30000, semantics: "bounded_snapshot_not_filesystem_freshness"}}}));
+  assert.match(view.nodes.status.title, /at most 30 seconds/);
+  view.nodes.refresh.onclick(); await flush();
+  const manual = view.calls("get_work_result_state").at(-1);
+  assert.equal(manual.params.arguments.automatic, undefined);
+  await view.reply(manual, toolResult({work_result: {...baseState, workspace_observation: {reused: false}}}));
+  assert.equal(view.nodes.status.title, "");
+});
+
 test("live progress performs bounded app-only polling and adapts to visibility", async () => {
   const view = app("mcp_work_result_app.html");
   view.toolInput(input);
@@ -611,7 +627,7 @@ test("live progress performs bounded app-only polling and adapts to visibility",
   assert.equal(view.calls("get_work_result_state").length, 0);
   await view.fireTimers(10000);
   assert.equal(view.calls("get_work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id });
+  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id, automatic: true });
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.activityStatus.textContent, "Running checks");
   assert.equal(view.nodes.activityAge.textContent, "Active now");
@@ -641,7 +657,7 @@ test("closed linked Session does not stop Window-level automatic polling", async
   assert.equal(view.timers.size, 1);
   await view.fireTimers(10000);
   assert.equal(view.calls("get_work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id });
+  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id, automatic: true });
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: closedState }));
   assert.equal(view.nodes.refresh.disabled, false);
   assert.equal(view.nodes.status.textContent, "Live");
@@ -1535,7 +1551,7 @@ test("exact Session Job transitions through normal refresh without a model tool 
   } };
   await view.fireTimers(10000);
   const call = view.calls("get_work_result_state").at(-1);
-  assert.deepEqual({ ...call.params.arguments }, { project, session_id });
+  assert.deepEqual({ ...call.params.arguments }, { project, session_id, automatic: true });
   await view.reply(call, toolResult({ work_result: terminal }));
   await flush();
   assert.equal(view.nodes.jobResultsList.children[0].children[0].children[1].textContent, "Passed");
@@ -1618,7 +1634,7 @@ test("Window-linked Session does not become Job authority on refresh", async () 
   await view.initialize();
   assert.equal(view.nodes.jobsSection.hidden, true);
   await view.fireTimers(10000);
-  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project });
+  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, automatic: true });
 });
 
 test("Job failures and recovery remain bounded labels and conflicting Session fails closed", async () => {

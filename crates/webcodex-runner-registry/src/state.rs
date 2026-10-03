@@ -53,6 +53,9 @@ pub(super) struct RunnerRecord {
     /// hand-off: once changed, the previous instance can no longer poll or
     /// submit results/job_updates.
     pub(super) runner_instance_id: String,
+    /// Renewed on every accepted registration, including same-instance reconnects.
+    /// This private presentation fence is not Runner execution authority.
+    pub(super) registration_observation_epoch: String,
     pub(super) display_name: Option<String>,
     pub(super) owner: Option<String>,
     pub(super) hostname: Option<String>,

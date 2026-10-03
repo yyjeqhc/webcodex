@@ -212,7 +212,7 @@ describe("product workspace task flows", () => {
     expect(screen.getByRole("row", { name: "alpha" })).toHaveTextContent("Runs on · B");
     expect(screen.getByRole("row", { name: "beta" })).toHaveTextContent("Runs on · C");
     expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Unregister project/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove project/ })).not.toBeInTheDocument();
   });
 
   it("never merges a remote path into a local saved project just because the strings match", () => {
@@ -228,11 +228,34 @@ describe("product workspace task flows", () => {
     for (const row of screen.getAllByRole("row")) expect(within(row).queryByRole("button", { name: /Use project|Select project/ })).not.toBeInTheDocument();
     expect(screen.queryByText("Current")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Unregister project/ })).not.toBeInTheDocument();
-    expect(screen.getByText("Projects appear when AI opens a folder. Manage allowed folders in Settings → Files & permissions.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove project/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Projects are registered working folders/)).toBeInTheDocument();
+    expect(screen.getByText(/removing access does not remove a registered project/)).toBeInTheDocument();
     fireEvent.change(screen.getByRole("searchbox", { name: "Search projects" }), { target: { value: "ALPHA" } });
     expect(screen.getAllByRole("row")).toHaveLength(2);
   });
+  it("removes only a confirmed local project registration and keeps permission semantics explicit", async () => {
+    const observation = {
+      target: { config_path: "fixture.toml", client_id: "mini", server_url: "http://localhost" },
+      project: beta.id,
+      expected_revision: "sha256:" + "a".repeat(64),
+      path: beta.path,
+    };
+    const onState = vi.fn();
+    api.prepareProjectUnregister.mockResolvedValue(observation);
+    api.unregisterProject.mockResolvedValue({ ...state, project: state.project, saved_projects: [state.saved_projects![0]] });
+    render(wrap(<ProjectsPanel onState={onState} />));
+    await screen.findByLabelText("2 open sessions");
+    fireEvent.click(screen.getByRole("button", { name: "Remove project beta" }));
+    const dialog = await screen.findByRole("dialog", { name: "Remove project" });
+    expect(dialog).toHaveTextContent("file access permissions are unchanged");
+    expect(dialog).toHaveTextContent("Your folder and Git files stay on disk");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove project" }));
+    await waitFor(() => expect(api.unregisterProject).toHaveBeenCalledExactlyOnceWith(observation));
+    expect(onState).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("row", { name: "beta" })).not.toBeInTheDocument());
+  });
+
   it.each([
     ["agent:msi:foo", "\\\\?\\D:\\repo", "D:\\repo"],
     [undefined, "\\\\?\\D:\\repo", "D:\\repo"],

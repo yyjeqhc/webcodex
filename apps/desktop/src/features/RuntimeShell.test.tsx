@@ -377,7 +377,7 @@ it("opens requested recovery categories and supports keyboard category navigatio
   expect(screen.getByRole("tab", { name: "General" })).toHaveFocus();
   fireEvent.keyDown(screen.getByRole("tab", { name: "General" }), { key: "ArrowDown" });
   expect(screen.getByRole("tab", { name: "Files & permissions" })).toHaveFocus();
-  expect(screen.getByRole("button", { name: "Add folder" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Authorize folder" })).toBeInTheDocument();
   fireEvent.keyDown(screen.getByRole("tab", { name: "Files & permissions" }), { key: "End" });
   expect(screen.getByRole("tab", { name: "About & updates" })).toHaveFocus();
 });

@@ -8,6 +8,23 @@ import type { RuntimeV2Client } from "../src/runtime-v2/api/client.js";
 import { runtimeOverview, windowDetail } from "./fixtures.js";
 
 describe("Runtime usability", () => {
+  it("defaults to newest first without reversing Session continuation membership", () => {
+    const base = { ended_at_ms: 10, duration_ms: 1, method: "tools/call", status: "ok", meaningful: true };
+    const detail = windowDetail({ activity: [
+      { ...base, started_at_ms: 1, server_trace_id: "a", tool_name: "session-a", workflow_sessions: [{ workflow_session_id: "session-a", relation: "recording" }] },
+      { ...base, started_at_ms: 2, server_trace_id: "b", tool_name: "continuation-a", workflow_sessions: [] },
+      { ...base, started_at_ms: 3, server_trace_id: "c", tool_name: "session-b", workflow_sessions: [{ workflow_session_id: "session-b", relation: "recording" }] },
+      { ...base, started_at_ms: 4, server_trace_id: "d", tool_name: "continuation-b", workflow_sessions: [] },
+    ], active_requests: [] });
+    const original = JSON.stringify(detail);
+    render(<WindowActivityFeed detail={detail} projects={[]} language="en" selectedSessionId="session-a" />);
+    const tools = () => screen.getAllByTestId("window-workflow-step").map(row => row.querySelector("header strong")?.textContent);
+    expect(tools()).toEqual(["continuation-a", "session-a"]);
+    fireEvent.change(screen.getByLabelText("Activity order"), { target: { value: "oldest" } });
+    expect(tools()).toEqual(["session-a", "continuation-a"]);
+    expect(JSON.stringify(detail)).toBe(original);
+  });
+
   it("copies the full identity and explains clipboard failures", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });

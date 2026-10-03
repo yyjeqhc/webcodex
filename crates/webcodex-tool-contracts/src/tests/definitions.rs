@@ -1008,7 +1008,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         .expect("read_git_review_summary ToolSpec");
     assert!(git_review
         .description
-        .contains("Specialist exact committed-range review map"));
+        .contains("Summarize an exact committed Git range"));
     assert!(git_review
         .description
         .contains("Ordinary review uses review_changes"));

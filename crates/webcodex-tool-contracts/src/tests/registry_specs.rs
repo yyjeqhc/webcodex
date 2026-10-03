@@ -257,11 +257,10 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let show_changes_desc = desc("read_workspace_changes");
     for phrase in [
-        "specialist workspace projection",
-        "explicit discovery",
-        "presentation",
-        "session signals",
-        "closeout internals",
+        "workspace summary",
+        "staged/unstaged/untracked",
+        "without a patch by default",
+        "not a complete staged patch",
         "ordinary code review uses review_changes",
     ] {
         assert!(
@@ -274,8 +273,9 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let git_review_summary_desc = desc("read_git_review_summary");
     for phrase in [
-        "specialist exact committed-range review map",
-        "explicit discovery",
+        "exact committed git range",
+        "without returning patch bodies",
+        "incomplete coverage",
         "ordinary review uses review_changes",
         "read-only",
     ] {
@@ -286,12 +286,13 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     }
     let git_diff_hunks_desc = git_diff_hunks.description.to_lowercase();
     for phrase in [
-        "specialist exact diff paging core",
-        "explicit discovery",
-        "review_changes internals",
+        "bounded git diff hunks",
+        "cached=true selects staged changes",
+        "omission selects unstaged changes",
+        "base_commit+head_commit",
+        "use review_changes",
         "source fences",
         "bounded page/hunk continuation",
-        "path/range projection",
         "safe recovery",
     ] {
         assert!(

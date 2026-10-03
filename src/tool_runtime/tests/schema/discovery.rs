@@ -2770,6 +2770,38 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
 }
 
 #[tokio::test]
+async fn keyword_discovery_finds_git_specialists_by_user_task_not_internal_taxonomy() {
+    let runtime = test_runtime();
+    for (query, expected) in [
+        ("staged diff", "read_git_diff_hunks"),
+        ("workspace summary", "read_workspace_changes"),
+        ("committed statistics", "read_git_review_summary"),
+        ("symbol documentation", "read_symbol_hover"),
+        ("remove registrations", "unregister_projects"),
+    ] {
+        let result = runtime
+            .dispatch(
+                ToolCall::from_tool_name("read_tool_manifest", json!({"query":query,"limit":10}))
+                    .unwrap(),
+            )
+            .await;
+        assert!(result.success, "{result:?}");
+        assert!(
+            result.output["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == expected),
+            "{query}: {result:?}"
+        );
+        assert!(
+            result.output["contract"].is_null(),
+            "keyword search is not schema expansion"
+        );
+    }
+}
+
+#[tokio::test]
 async fn exact_manifest_ignores_irrelevant_presentation_limit() {
     let runtime = test_runtime();
     for limit in [0, 1, 10_000] {

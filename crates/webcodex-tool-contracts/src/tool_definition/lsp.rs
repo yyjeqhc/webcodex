@@ -99,7 +99,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE.exploration(super::ToolExplorationEvidence::Navigation(super::ToolNavigationEvidenceKind::Hover)),
         ),
-        "Read-only read_symbol_hover for a Project-relative supported source file at a 1-based Unicode scalar position via its configured Runner-side language server. MarkupContent and MarkedString forms are normalized to bounded markdown/plaintext; invalid optional ranges are omitted.",
+        "Read a symbol's type and documentation at a 1-based Unicode scalar position through the Project's language server; no source edit. MarkupContent and MarkedString forms are normalized to bounded markdown/plaintext; invalid optional ranges are omitted.",
     ),
     model_spec(
         def(

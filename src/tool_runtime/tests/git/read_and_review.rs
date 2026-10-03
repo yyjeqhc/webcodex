@@ -1013,7 +1013,7 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
         .expect("read_git_review_summary public spec");
     assert!(spec
         .description
-        .contains("Specialist exact committed-range review map"));
+        .contains("Summarize an exact committed Git range"));
     assert!(spec
         .description
         .contains("Ordinary review uses review_changes"));

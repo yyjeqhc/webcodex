@@ -21,10 +21,11 @@ use crate::deadline::Deadline;
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::{
     aggregate_readiness, ChatGptActivitySnapshot, DesktopOperationKind, DesktopStateSnapshot,
-    Enrollment, Experience, Exposure, ExposureReadiness, ProjectInspection, ProjectReadiness, ProjectSelection,
-    QuickShareState, ReadinessNextActionKind, ReadinessSummaryKind, RegularConnectionPreference,
-    RunnerReadiness, RunnerTopology, RuntimeTopology, ServerReadiness, ServerTopology,
-    StoredDesktopConfig, StoredRuntime, TunnelProxyConfig, TunnelProxyMode, TunnelProxySnapshot,
+    Enrollment, Experience, Exposure, ExposureReadiness, ProjectInspection, ProjectReadiness,
+    ProjectSelection, QuickShareState, ReadinessNextActionKind, ReadinessSummaryKind,
+    RegularConnectionPreference, RunnerReadiness, RunnerTopology, RuntimeTopology, ServerReadiness,
+    ServerTopology, StoredDesktopConfig, StoredRuntime, TunnelProxyConfig, TunnelProxyMode,
+    TunnelProxySnapshot,
 };
 use crate::operation::{
     cancelled_error, CancellationContext, CancellationSignal, OperationAdmission,

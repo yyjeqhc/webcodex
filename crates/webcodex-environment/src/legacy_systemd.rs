@@ -320,7 +320,12 @@ impl UserRunnerOwner {
             .to_owned();
         let content = private_unit(&unit_path, &account.identity)?;
         let program = program_from_unit(&content, &config)?;
-        if content != expected_unit(&program, &config, &account.home)? {
+        let expected = expected_unit(&program, &config, &account.home)?;
+        let guarded = expected.replace(
+            "RestartSec=5s\n",
+            "RestartSec=5s\nRestartPreventExitStatus=2\n",
+        );
+        if content != expected && content != guarded {
             return Err(conflict(
                 "legacy_unit_format",
                 "The old unit differs from the CLI user-service template",
@@ -526,6 +531,19 @@ mod tests {
             UserRunnerOwner::new(unit.clone(), config.clone(), account.clone(), vec![]).is_ok(),
             "{:?}",
             UserRunnerOwner::new(unit.clone(), config.clone(), account.clone(), vec![]).err()
+        );
+        fs::write(
+            &unit,
+            expected_unit(&program, &config, &account.home)
+                .unwrap()
+                .replace(
+                    "RestartSec=5s\n",
+                    "RestartSec=5s\nRestartPreventExitStatus=2\n",
+                ),
+        )
+        .unwrap();
+        assert!(
+            UserRunnerOwner::new(unit.clone(), config.clone(), account.clone(), vec![]).is_ok()
         );
         fs::write(
             &unit,

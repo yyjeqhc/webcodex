@@ -883,6 +883,22 @@ pub(super) fn stop_runner_unlocked(state_dir: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+fn preflight_runner_replacement(
+    runner: &Path,
+    config: &Path,
+    expected: &str,
+) -> Result<(), String> {
+    webcodex_environment::preflight_runner_configuration(runner, config)?;
+    let actual = std::fs::read(config)
+        .map_err(|_| "Runner configuration disappeared during preflight".to_string())?;
+    if sha256_hex(&actual) != expected {
+        return Err(
+            "Runner configuration changed during preflight; current Runner was not stopped".into(),
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn ensure_runner_unlocked(
     runner_bin: &Path,
     config: &Path,
@@ -899,6 +915,7 @@ pub(super) fn ensure_runner_unlocked(
             return Ok(RunnerStart::Reused);
         }
         if process_matches(&state) {
+            preflight_runner_replacement(runner_bin, config, &config_sha256)?;
             stop_runner_unlocked(state_dir)?;
         } else {
             stop_log_writer(&state);
@@ -927,9 +944,6 @@ pub(crate) fn run_local_runner_service(
             })
         }
         LocalRunnerServiceAction::Start | LocalRunnerServiceAction::Restart => {
-            if action == LocalRunnerServiceAction::Restart {
-                stop_runner_unlocked(&state_dir)?;
-            }
             let runner = runner_bin
                 .map(Path::to_path_buf)
                 .or_else(|| discover_internal_binary("webcodex-runner"))
@@ -937,6 +951,12 @@ pub(crate) fn run_local_runner_service(
                     "webcodex-runner was not found beside webcodex or in an absolute PATH entry"
                         .to_string()
                 })?;
+            if action == LocalRunnerServiceAction::Restart {
+                let bytes = std::fs::read(config)
+                    .map_err(|_| "Runner configuration is unavailable".to_string())?;
+                preflight_runner_replacement(&runner, config, &sha256_hex(&bytes))?;
+                stop_runner_unlocked(&state_dir)?;
+            }
             let started = ensure_runner_unlocked(&runner, config, &state_dir)?;
             Ok(format!(
                 "Hosted Runner {}.\n  config: {}\n  logs:   {}\n",
@@ -1229,7 +1249,7 @@ mod tests {
         let runner = tmp.path().join("webcodex-runner");
         std::fs::write(
             &runner,
-            "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
+            "#!/bin/sh\nif [ \"$1\" = --check-config ]; then echo 'WebCodex Runner configuration valid'; exit 0; fi\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
         )
         .unwrap();
         std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1311,7 +1331,7 @@ mod tests {
         let runner = tmp.path().join("webcodex-runner.cmd");
         std::fs::write(
             &runner,
-            "@echo off\r\n:loop\r\nping -n 2 127.0.0.1 >nul\r\ngoto loop\r\n",
+            "@echo off\r\nif \"%~1\"==\"--check-config\" (echo WebCodex Runner configuration valid & exit /b 0)\r\n:loop\r\nping -n 2 127.0.0.1 >nul\r\ngoto loop\r\n",
         )
         .unwrap();
         let config = tmp.path().join("runner.toml");
@@ -1436,6 +1456,46 @@ mod tests {
             .lock()
             .unwrap()
             .contains_key(&runner_state.pid));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_replacement_and_restart_preserve_the_running_process() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = executable_test_tempdir();
+        let runner = temp.path().join("webcodex-runner");
+        std::fs::write(&runner,"#!/bin/sh\nif [ \"$1\" = --check-config ]; then\n if grep -q invalid \"$3\"; then echo SECRET_CONFIG >&2; exit 2; fi\n echo 'WebCodex Runner configuration valid'; exit 0\nfi\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let config = temp.path().join("runner.toml");
+        std::fs::write(&config, "server_url='http://example.test'\n").unwrap();
+        let state = temp.path().join("state");
+        std::fs::create_dir(&state).unwrap();
+        std::fs::write(local_runner_profile_marker(&state), "profile='preflight'\n").unwrap();
+        ensure_runner_unlocked(&runner, &config, &state).unwrap();
+        let first = load_runner_state(&state).unwrap().unwrap();
+        let outcome = (|| {
+            std::fs::write(&config, "invalid=true\n").unwrap();
+            let replacement = ensure_runner_unlocked(&runner, &config, &state).unwrap_err();
+            assert!(!replacement.contains("SECRET_CONFIG"));
+            assert!(process_matches(&first));
+            assert_eq!(load_runner_state(&state).unwrap().unwrap().pid, first.pid);
+            let restart = run_local_runner_service(
+                LocalRunnerServiceAction::Restart,
+                &config,
+                &state,
+                Some(&runner),
+            )
+            .unwrap_err();
+            assert!(!restart.contains("SECRET_CONFIG"));
+            assert!(process_matches(&first));
+            assert_eq!(load_runner_state(&state).unwrap().unwrap().pid, first.pid);
+            eprintln!("RUNNER_PREFLIGHT invalid_replacement=blocked invalid_restart=blocked original_pid_preserved=true");
+        });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(outcome));
+        stop_runner_unlocked(&state).unwrap();
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[cfg(unix)]

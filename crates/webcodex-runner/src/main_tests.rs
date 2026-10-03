@@ -1,4 +1,17 @@
 use super::*;
+
+#[test]
+fn check_config_is_a_separate_non_runtime_action() {
+    assert_eq!(
+        super::parse_runner_args(["--check-config", "--config", "/tmp/runner.toml"]).unwrap(),
+        super::RunnerCliAction::CheckConfig {
+            config_path: std::path::PathBuf::from("/tmp/runner.toml")
+        }
+    );
+    assert!(super::parse_runner_args(["--check-config", "--once"]).is_err());
+    assert!(super::parse_runner_args(["--check-config", "--stop-on-stdin-eof"]).is_err());
+}
+
 use crate::webcodex_runner::config::validate_shell_config;
 use crate::webcodex_runner::job_manager::job_manager_tests::{shell_job_request, ws_sink};
 use crate::webcodex_runner::projects::{project_root_fingerprint, RunnerProjectFile};

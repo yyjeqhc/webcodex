@@ -342,13 +342,20 @@ fn heartbeat_worker_keeps_fixed_cadence_across_signals_and_exits_on_shutdown() {
         interval,
     );
 
+    assert!(
+        wait_until(Duration::from_secs(1), || lock_unpoison(&jobs)[job_id]
+            .snapshot
+            .update_seq
+            >= 2),
+        "heartbeat worker must establish its first cadence before the signal check"
+    );
     std::thread::sleep(Duration::from_millis(180));
     signal.notify();
     assert!(
         wait_until(Duration::from_millis(220), || lock_unpoison(&jobs)[job_id]
             .snapshot
             .update_seq
-            >= 2),
+            >= 3),
         "ordinary delivery signals must not postpone the fixed heartbeat cadence"
     );
 

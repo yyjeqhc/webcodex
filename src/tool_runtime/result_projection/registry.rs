@@ -66,5 +66,4 @@ impl ModelFacingProjectionPlan {
 }
 
 #[cfg(test)]
-#[path = "../tests/result_projection_registry.rs"]
 mod tests;

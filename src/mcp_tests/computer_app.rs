@@ -32,7 +32,7 @@ async fn mcp_2026_computer_app_is_minimal_handshake_and_snapshot_only() {
     // changes so a previously failed/blank iframe cannot pin the old resource.
     assert_eq!(MCP_COMPUTER_UI_RESOURCE_URI, "ui://webcodex/computer/v12");
     assert_eq!(MCP_COMPUTER_UI_RESOURCE_TTL_MS, 0);
-    assert!(mcp_computer_app_resource_meta(None)["ui"]
+    assert!(super::super::app_registry::resource_meta(None)["ui"]
         .get("domain")
         .is_none());
     let expected_resource_meta = json!({

@@ -18,7 +18,6 @@ fn presentation<'a>(call_result: &'a Value) -> &'a Value {
     &call_result["_meta"][super::super::presentation::MCP_PRESENTATION_META_KEY]
 }
 
-const RESULT_APP_TOOLS: [&str; 0] = [];
 const UNBOUND_RESULT_APP_TOOLS: [&str; 17] = [
     "read_workspace_changes",
     "list_jobs",
@@ -71,18 +70,11 @@ fn projected_result(tool_name: &str, success: bool, output: Value) -> Value {
 fn result_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
     for compact in [false, true] {
         let enabled = mcp_tools_list_payload_with_compact_and_app(compact, true);
-        for name in RESULT_APP_TOOLS {
-            assert!(super::super::presentation::tool_supports_result_app(name));
-            assert_eq!(
-                tool(&enabled, name)["_meta"]["ui"]["resourceUri"],
-                MCP_RESULT_UI_RESOURCE_URI
-            );
-            assert!(tool(&enabled, name)["_meta"]
-                .get("ui/resourceUri")
-                .is_none());
-        }
         for name in UNBOUND_RESULT_APP_TOOLS {
-            assert!(!super::super::presentation::tool_supports_result_app(name));
+            assert_ne!(
+                super::super::app_registry::for_tool(name).map(|app| app.uri),
+                Some(MCP_RESULT_UI_RESOURCE_URI)
+            );
             if let Some(descriptor) = enabled["tools"]
                 .as_array()
                 .unwrap()
@@ -119,11 +111,6 @@ fn result_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
             .unwrap()
             .iter()
             .any(|tool| tool["name"] == "work_result_thread_panel"));
-
-        let disabled = mcp_tools_list_payload_with_compact_and_app(compact, false);
-        for name in RESULT_APP_TOOLS {
-            assert!(tool(&disabled, name).get("_meta").is_none());
-        }
     }
 
     let mut existing = json!({
@@ -151,7 +138,7 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
         MCP_WORK_RESULT_UI_RESOURCE_URI,
         "ui://webcodex/work-result/v22"
     );
-    assert!(mcp_result_app_resource_meta(None)["ui"]
+    assert!(super::super::app_registry::resource_meta(None)["ui"]
         .get("domain")
         .is_none());
     let ui_tools = handle_mcp_request(
@@ -208,8 +195,8 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
     let McpOutcome::Ok(plain_tools) = plain_tools else {
         panic!("expected ordinary tools/list");
     };
-    for name in RESULT_APP_TOOLS {
-        assert!(tool(&plain_tools["result"], name).get("_meta").is_none());
+    for descriptor in plain_tools["result"]["tools"].as_array().unwrap() {
+        assert!(descriptor.pointer("/_meta/ui/resourceUri").is_none());
     }
 
     let resources = handle_mcp_request(
@@ -382,10 +369,8 @@ async fn server_mcp_apps_setting_disables_only_app_presentation() {
     let McpOutcome::Ok(tools) = tools else {
         panic!("tools/list with Apps disabled failed");
     };
-    for name in RESULT_APP_TOOLS {
-        assert!(tool(&tools["result"], name)
-            .pointer("/_meta/ui/resourceUri")
-            .is_none());
+    for descriptor in tools["result"]["tools"].as_array().unwrap() {
+        assert!(descriptor.pointer("/_meta/ui/resourceUri").is_none());
     }
 
     let resources = handle_with_app_policy(

@@ -179,7 +179,7 @@ async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptiv
         "ui://webcodex/goal-plan/v3",
         "ui://webcodex/goal-plan/v4",
     ] {
-        assert!(super::super::resources::mcp_goal_plan_app_resource_read(old_uri, None).is_none());
+        assert!(super::super::app_registry::for_uri(old_uri).is_none());
     }
     for uri in [MCP_GOAL_PLAN_UI_RESOURCE_URI] {
         let read = handle_with_app_policy(

@@ -1,3 +1,4 @@
+mod app_registry;
 mod discovery;
 mod http_metadata;
 mod presentation;
@@ -60,6 +61,8 @@ use std::time::{Duration, Instant};
 #[cfg(test)]
 use tokio::sync::Semaphore;
 
+#[cfg(test)]
+use app_registry::*;
 #[cfg(test)]
 use resources::*;
 #[cfg(test)]
@@ -595,7 +598,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             .params
             .get("uri")
             .and_then(Value::as_str)
-            .filter(|uri| resources::is_mcp_computer_app_resource_uri(uri))
+            .filter(|uri| *uri == app_registry::MCP_COMPUTER_UI_RESOURCE_URI)
             .map(str::to_string)
     } else {
         None

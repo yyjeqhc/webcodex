@@ -143,7 +143,7 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
             assert_eq!(
                 descriptor.pointer("/_meta/ui/resourceUri"),
                 Some(&json!(
-                    super::super::resources::MCP_WORKBENCH_UI_RESOURCE_URI
+                    super::super::app_registry::MCP_WORKBENCH_UI_RESOURCE_URI
                 ))
             );
             assert_eq!(

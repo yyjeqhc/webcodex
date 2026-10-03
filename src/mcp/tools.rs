@@ -1,3 +1,4 @@
+use super::app_registry;
 use super::presentation;
 use super::resources;
 use super::response::{
@@ -359,7 +360,7 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
             // ChatGPT rejects private/App-only tools with rendering resources.
             attach_app_metadata(
                 &mut thread_entrypoint,
-                resources::MCP_WORK_RESULT_UI_RESOURCE_URI,
+                app_registry::MCP_WORK_RESULT_UI_RESOURCE_URI,
             );
             attach_openai_thread_entrypoint(&mut thread_entrypoint);
             tools.push(thread_entrypoint);
@@ -1344,36 +1345,11 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> V
             meta.insert("openai/fileParams".to_string(), json!(["openaiFileIdRefs"]));
         }
     }
-    if app_enabled && tool_name == "open_webcodex_workbench" {
-        attach_app_metadata(&mut value, resources::MCP_WORKBENCH_UI_RESOURCE_URI);
-        value["title"] = json!("Projects & Resources");
-        if let Some(meta) = tool_meta_object(&mut value) {
-            meta.insert(
-                "openai/ui".into(),
-                json!({"entrypoints":[{"type":"global"},{"type":"thread"}]}),
-            );
+    if app_enabled {
+        if let Some(app) = app_registry::for_tool(&tool_name) {
+            attach_app_metadata(&mut value, app.uri);
+            app.add_tool_metadata(&mut value);
         }
-    }
-    if app_enabled && presentation::tool_supports_result_app(&tool_name) {
-        attach_app_metadata(&mut value, resources::MCP_RESULT_UI_RESOURCE_URI);
-    }
-    if app_enabled && presentation::tool_supports_work_result_app(&tool_name) {
-        attach_app_metadata(&mut value, resources::MCP_WORK_RESULT_UI_RESOURCE_URI);
-    }
-    if app_enabled && presentation::tool_supports_goal_plan_app(&tool_name) {
-        attach_app_metadata(&mut value, resources::MCP_GOAL_PLAN_UI_RESOURCE_URI);
-    }
-    if app_enabled && presentation::tool_supports_agent_continuation_app(&tool_name) {
-        attach_app_metadata(
-            &mut value,
-            resources::MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        );
-    }
-    if app_enabled && presentation::tool_supports_job_terminal_continuation_app(&tool_name) {
-        attach_app_metadata(
-            &mut value,
-            resources::MCP_JOB_TERMINAL_CONTINUATION_UI_RESOURCE_URI,
-        );
     }
     attach_job_terminal_resume_suggested_call_schema(&tool_name, app_enabled, &mut value);
     if compact {

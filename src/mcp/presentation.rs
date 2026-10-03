@@ -10,43 +10,6 @@ pub(super) const MAX_MCP_PRESENTATION_DIFF_HUNKS: usize = MAX_MCP_PRESENTATION_I
 pub(super) const MAX_MCP_PRESENTATION_DIFF_LINES: usize = 80;
 pub(super) const MAX_MCP_PRESENTATION_DIFF_CHARS: usize = 12 * 1024;
 
-/// Legacy Result/Changes presentation projections remain readable for cached
-/// descriptors, but ordinary result tools no longer receive new descriptor-level
-/// App admission. ToolResult metadata alone cannot create a Host App post-hoc.
-pub(super) fn tool_supports_result_app(_tool_name: &str) -> bool {
-    false
-}
-
-/// Explicit persistent Work Result presentation entry. Ordinary coding,
-/// validation, review, observation, and closeout tools never create this App.
-pub(super) fn tool_supports_work_result_app(tool_name: &str) -> bool {
-    tool_name == "present_work_result"
-}
-
-/// Dedicated sparse Goal Plan App binding. Only the explicit presentation entry
-/// gets a resource; Goal mutations, execution tools, and app-only polling never
-/// create additional Host cards.
-pub(super) fn tool_supports_goal_plan_app(tool_name: &str) -> bool {
-    tool_name == "present_goal_plan"
-}
-
-/// Retained Durable Agent continuation App binding for existing protocol paths.
-/// Resource support does not advertise a model descriptor: current static
-/// policy hides continuation presentation. App-only coordination tools retain
-/// their resource association without exposing them to the model or granting authority.
-pub(super) fn tool_supports_agent_continuation_app(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "present_agent_continuation" | "wait_for_agent_events"
-    )
-}
-
-/// Dedicated Job terminal continuation App. Only explicit presentation creates
-/// the card; wait_for_job_terminal remains Host-neutral terminal attention.
-pub(super) fn tool_supports_job_terminal_continuation_app(tool_name: &str) -> bool {
-    tool_name == "present_job_terminal_continuation"
-}
-
 /// Explicit presentation entries rely on their own MCP tool descriptor carrying
 /// Host App resource metadata. Routing one through the generic Adaptive Runtime
 /// gateway preserves ToolRuntime semantics, but the Host sees only the gateway

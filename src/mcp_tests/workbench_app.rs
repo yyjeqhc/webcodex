@@ -31,7 +31,7 @@ async fn workbench_app_descriptor_accepts_empty_input_and_preserves_existing_car
         assert_eq!(
             launcher.pointer("/_meta/ui/resourceUri"),
             enabled.then_some(&json!(
-                super::super::resources::MCP_WORKBENCH_UI_RESOURCE_URI
+                super::super::app_registry::MCP_WORKBENCH_UI_RESOURCE_URI
             ))
         );
         let card = tools
@@ -46,7 +46,7 @@ async fn workbench_app_descriptor_accepts_empty_input_and_preserves_existing_car
             .iter()
             .any(|tool| tool["name"] == "read_webcodex_resource"));
     }
-    let outcome=handle_with_app_policy(&runtime,serde_json::from_value(json!({"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":super::super::resources::MCP_WORKBENCH_UI_RESOURCE_URI,"_meta":stateless_ui_meta()}})).unwrap(),None,true).await;
+    let outcome=handle_with_app_policy(&runtime,serde_json::from_value(json!({"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":super::super::app_registry::MCP_WORKBENCH_UI_RESOURCE_URI,"_meta":stateless_ui_meta()}})).unwrap(),None,true).await;
     let McpOutcome::Ok(value) = outcome else {
         panic!("workbench resource failed")
     };

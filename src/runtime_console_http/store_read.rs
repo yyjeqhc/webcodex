@@ -2,7 +2,9 @@
 //! worker and cancellation cannot create an unbounded queue of detached reads.
 //! The permit travels with the blocking closure until it actually finishes.
 use super::RuntimeConsoleError;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
+use webcodex_store::HistoryReadBudget;
 use webcodex_store::{
     models::{
         WindowActivityEventRecord, WindowActivitySummaryRecord, WindowSessionLinkSummaryRecord,
@@ -11,26 +13,66 @@ use webcodex_store::{
     Database,
 };
 
-static HISTORY_READ: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+static HISTORY_READ: LazyLock<Arc<tokio::sync::Semaphore>> =
+    LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(1)));
+const HISTORY_BUDGET: Duration = Duration::from_secs(5);
+
+struct CancelOnDrop(HistoryReadBudget);
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+fn exhausted() -> RuntimeConsoleError {
+    RuntimeConsoleError::Request {
+        status: 503,
+        message: "Historical read budget exhausted; retry the read",
+    }
+}
 
 pub(super) async fn run<T: Send + 'static>(
     db: &Arc<Database>,
     read: impl FnOnce(&Database) -> anyhow::Result<T> + Send + 'static,
 ) -> Result<T, RuntimeConsoleError> {
-    let permit = HISTORY_READ
-        .acquire()
-        .await
-        .map_err(|_| RuntimeConsoleError::Internal)?;
-    let db = Arc::clone(db);
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        read(&db)
-    })
-    .await
-    .map_err(|_| RuntimeConsoleError::Internal)?
-    .map_err(|_| RuntimeConsoleError::Internal)
+    run_bounded(db, HISTORY_READ.clone(), HISTORY_BUDGET, read).await
 }
 
+async fn run_bounded<T: Send + 'static>(
+    db: &Arc<Database>,
+    lane: Arc<tokio::sync::Semaphore>,
+    timeout: Duration,
+    read: impl FnOnce(&Database) -> anyhow::Result<T> + Send + 'static,
+) -> Result<T, RuntimeConsoleError> {
+    let started = Instant::now();
+    let deadline = started + timeout;
+    let budget = HistoryReadBudget::until(deadline);
+    let _cancel = CancelOnDrop(budget.clone());
+    let until = tokio::time::Instant::from_std(deadline);
+    let permit = tokio::time::timeout_at(until, lane.acquire_owned())
+        .await
+        .map_err(|_| exhausted())?
+        .map_err(|_| RuntimeConsoleError::Internal)?;
+    let db = Arc::clone(db);
+    let worker_budget = budget.clone();
+    let result = tokio::time::timeout_at(
+        until,
+        tokio::task::spawn_blocking(move || {
+            // The permit is released only when the actual worker has unwound. An
+            // aborted HTTP future cancels only this budget, never the next reader.
+            let _permit = permit;
+            db.with_history_read_budget(worker_budget, read)
+        }),
+    )
+    .await;
+    tracing::debug!(target: "webcodex::phase", phase="console_history", elapsed_ms=started.elapsed().as_secs_f64()*1000.0,
+        cancelled=budget.exhausted(), "historical read completed");
+    match result {
+        Err(_) => Err(exhausted()),
+        Ok(Err(_)) => Err(RuntimeConsoleError::Internal),
+        Ok(Ok(Err(_))) if budget.exhausted() => Err(exhausted()),
+        Ok(Ok(result)) => result.map_err(|_| RuntimeConsoleError::Internal),
+    }
+}
 fn owned(principal: Option<(&str, &str)>) -> Option<(String, String)> {
     principal.map(|(kind, id)| (kind.to_owned(), id.to_owned()))
 }
@@ -102,40 +144,4 @@ pub(super) async fn linked_windows(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test(flavor = "current_thread")]
-    async fn blocking_history_does_not_block_the_runtime_or_spawn_unbounded_reads() {
-        let tmp = tempfile::tempdir().unwrap();
-        let db = Arc::new(Database::open(&tmp.path().join("lane.db")).unwrap());
-        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-        let first_db = db.clone();
-        let first = tokio::spawn(async move {
-            run(&first_db, move |_| {
-                let _ = started_tx.send(());
-                release_rx.recv_timeout(std::time::Duration::from_secs(5))?;
-                Ok(())
-            })
-            .await
-        });
-        started_rx.await.unwrap();
-        // If history were executed synchronously the current-thread runtime
-        // could not reach this point before the deliberate blocking read ends.
-        let second_db = db.clone();
-        let second = tokio::spawn(async move { run(&second_db, move |_| Ok(())).await });
-        tokio::task::yield_now().await;
-        assert!(!second.is_finished());
-        second.abort();
-        db.get_or_create_project_reference(
-            "principal",
-            "agent:r:p",
-            &format!("wc_projroot_{}", "a".repeat(64)),
-            1,
-        )
-        .unwrap();
-        release_tx.send(()).unwrap();
-        first.await.unwrap().unwrap();
-        run(&db, |_| Ok(())).await.unwrap();
-    }
-}
+mod tests;

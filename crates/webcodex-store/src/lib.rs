@@ -22,6 +22,9 @@ mod trace_query;
 pub use trace_query::{ToolTraceCallRecord, ToolTraceQueryFilter};
 mod communication;
 mod connection_observation;
+mod history_budget;
+pub use history_budget::HistoryReadBudget;
+
 mod external_observations;
 #[cfg(test)]
 mod external_observations_tests;
@@ -191,12 +194,14 @@ impl Database {
             .map_err(|_| anyhow::anyhow!("history reader already initialized"))
     }
 
-    pub(crate) fn lock_history_connection(&self, domain: StoreDomain) -> StoreConnectionGuard<'_> {
-        observed_lock_connection(
+    pub(crate) fn lock_history_connection(
+        &self,
+        domain: StoreDomain,
+    ) -> anyhow::Result<history_budget::HistoryConnectionGuard<'_>> {
+        self.history_connection(
             self.history_reader
                 .get()
                 .expect("history reader initialized before Database::open returns"),
-            self.connection_observer.as_ref(),
             domain,
         )
     }

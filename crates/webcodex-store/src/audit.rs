@@ -59,7 +59,7 @@ impl Database {
         status: Option<&str>,
         limit: usize,
     ) -> anyhow::Result<Vec<ActionSessionRecord>> {
-        let conn = self.lock_history_connection(crate::StoreDomain::Audit);
+        let conn = self.lock_history_connection(crate::StoreDomain::Audit)?;
         let limit = limit.clamp(1, 200) as i64;
         let sql = match status {
             Some(_) => {
@@ -167,7 +167,7 @@ impl Database {
         session_id: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<ActionEventRecord>> {
-        let conn = self.lock_history_connection(crate::StoreDomain::Audit);
+        let conn = self.lock_history_connection(crate::StoreDomain::Audit)?;
         list_action_events_on_conn(&conn, session_id, limit)
     }
 
@@ -178,7 +178,7 @@ impl Database {
         session_id: &str,
         limit: usize,
     ) -> anyhow::Result<(usize, Vec<ActionEventRecord>)> {
-        let mut conn = self.lock_history_connection(crate::StoreDomain::Audit);
+        let mut conn = self.lock_history_connection(crate::StoreDomain::Audit)?;
         let tx = conn.transaction()?;
         let count = count_action_events_on_conn(&tx, session_id)?;
         let events = list_action_events_on_conn(&tx, session_id, limit)?;

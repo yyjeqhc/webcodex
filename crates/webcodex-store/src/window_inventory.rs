@@ -131,7 +131,8 @@ impl Database {
     ) -> anyhow::Result<T> {
         for _ in 0..3 {
             {
-                let mut reader = self.lock_history_connection(crate::StoreDomain::WindowActivity);
+                let mut reader =
+                    self.lock_history_connection(crate::StoreDomain::WindowActivity)?;
                 let snapshot = reader.transaction()?;
                 let dirty: bool = snapshot.query_row(
                     "SELECT EXISTS(SELECT 1 FROM window_inventory_dirty)",
@@ -144,7 +145,8 @@ impl Database {
                     return Ok(result);
                 }
             }
-            let mut writer = self.lock_connection(crate::StoreDomain::WindowActivity);
+            let mut writer =
+                self.lock_history_repair_connection(crate::StoreDomain::WindowActivity)?;
             let transaction = writer.transaction()?;
             repair_dirty(&transaction)?;
             transaction.commit()?;

@@ -14,7 +14,7 @@ use super::{
 use std::collections::HashMap;
 use webcodex_store::{WindowInventoryQuery, WindowInventoryRow};
 
-async fn authorize_selection(
+pub(super) async fn authorize_selection(
     runtime: &ToolRuntime,
     auth: &AuthContext,
     ids: &[String],
@@ -79,7 +79,7 @@ pub(super) async fn query_for_auth(
         authorize_selection(runtime, auth, ids).await?;
     }
     // This path performs NO SQLite access, even with a large historical database.
-    let mut live = live_for_auth(
+    let (mut live, _) = live_for_auth(
         runtime,
         auth,
         selected.as_deref(),
@@ -161,7 +161,7 @@ pub(super) async fn live_for_auth(
     auth: &AuthContext,
     projects: Option<&[String]>,
     key: Option<&str>,
-) -> Result<Vec<WindowInventoryRow>, RuntimeConsoleError> {
+) -> Result<(Vec<WindowInventoryRow>, Vec<String>), RuntimeConsoleError> {
     require_runtime_read(auth)?;
     let principal = window_principal_filter(auth)?;
     let principal_ref = window_principal_ref(&principal);
@@ -228,7 +228,13 @@ pub(super) async fn live_for_auth(
             rows.push(row);
         }
     }
-    Ok(rows)
+    // Retain every Project that contributed to the live snapshot, not only
+    // each row's last_project. An older concurrent request still affects counts.
+    let projects = cache
+        .into_iter()
+        .filter_map(|(project, visible)| visible.then_some(project))
+        .collect();
+    Ok((rows, projects))
 }
 
 pub(super) async fn inventory_for_auth(
@@ -273,7 +279,11 @@ pub(super) async fn inventory_for_auth(
     } else {
         Vec::new()
     };
-    let live = live_for_auth(runtime, auth, projects, key).await?;
+    let (live, live_projects) = live_for_auth(runtime, auth, projects, key).await?;
+    let mut recheck_projects = allowed.clone();
+    recheck_projects.extend(live_projects);
+    recheck_projects.sort();
+    recheck_projects.dedup();
     let owned_principal = principal.clone();
     let owned_projects = projects.map(<[String]>::to_vec);
     let owned_key = key.map(str::to_string);
@@ -299,13 +309,8 @@ pub(super) async fn inventory_for_auth(
     .await?;
     // A queued/offloaded read cannot publish a snapshot whose Project access
     // was revoked while it waited. This recheck is never a cached authority.
-    let access = crate::runner_http::runner_access_from_auth(Some(auth));
-    let still_visible = runtime
-        .runner_registry
-        .visible_project_ids_for_auth_snapshot(access.as_ref(), &allowed)
-        .await;
-    if allowed.iter().any(|id| !still_visible.contains(id)) {
-        return Err(RuntimeConsoleError::NotFound);
+    if !recheck_projects.is_empty() {
+        authorize_selection(runtime, auth, &recheck_projects).await?;
     }
     let returned = page.rows.len();
     Ok(RuntimeConsoleWindows {

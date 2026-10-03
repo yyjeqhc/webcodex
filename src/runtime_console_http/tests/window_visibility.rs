@@ -221,6 +221,65 @@ async fn window_liveness_is_history_free_and_project_scope_precedes_pagination()
 }
 
 #[tokio::test]
+async fn live_inventory_rechecks_every_contributing_project_without_history() {
+    use super::super::window_inventory::{authorize_selection, live_for_auth};
+
+    let (_tmp, db, runtime) = test_runtime_with_window_db();
+    let auth = test_bootstrap_auth();
+    let project_ids = ["agent:live-first:repo", "agent:live-last:repo"];
+    for client in ["live-first", "live-last"] {
+        register_project(&runtime, client, "repo", "/tmp/live-recheck", Some(&auth)).await;
+    }
+    let target_window = crate::client_window::ClientWindow::for_test("live-recheck");
+    let principal = crate::tool_runtime::runtime_observation_principal(Some(&auth)).unwrap();
+    let mut guards = Vec::new();
+    for (index, project) in project_ids.iter().enumerate() {
+        let trace = format!("live-recheck-{index}");
+        guards.push(runtime.window_activity.start(
+            &target_window,
+            &trace,
+            "tools/call",
+            Some((&principal.0, &principal.1)),
+        ));
+        runtime
+            .window_activity
+            .update(&trace, Some("read_files"), Some(project));
+    }
+    assert!(db
+        .window_inventory_project_anchors(None)
+        .unwrap()
+        .is_empty());
+    let (rows, mut recheck) = live_for_auth(&runtime, &auth, None, None).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].active_count, 2);
+    recheck.sort();
+    assert_eq!(recheck, project_ids);
+    authorize_selection(&runtime, &auth, &recheck)
+        .await
+        .unwrap();
+
+    // Revoke the non-displayed Project after capturing the live snapshot. A
+    // last_project-only fence would still expose its contribution to the count.
+    let removed = project_ids
+        .iter()
+        .find(|project| Some(**project) != rows[0].last_project.as_deref())
+        .unwrap();
+    let client = removed.split(':').nth(1).unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.runner_registry,
+        client,
+        &format!("inst-{client}"),
+        Vec::new(),
+    )
+    .await;
+    assert!(matches!(
+        authorize_selection(&runtime, &auth, &recheck).await,
+        Err(RuntimeConsoleError::NotFound)
+    ));
+    drop(guards);
+}
+
+#[tokio::test]
 async fn window_inventory_reads_two_projections_and_zero_per_window_histories() {
     let (_tmp, db, runtime) = test_runtime_with_window_db();
     let auth = test_bootstrap_auth();

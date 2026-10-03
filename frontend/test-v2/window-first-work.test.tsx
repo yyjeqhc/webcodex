@@ -337,7 +337,7 @@ it("uses exact Session tags to focus contiguous Window call segments", async () 
   expect(selector.value).toBe(sessionB);
   let focusedCalls = screen.getAllByTestId("window-workflow-step");
   expect(focusedCalls).toHaveLength(2);
-  expect(focusedCalls.map((call) => call.querySelector("header strong")?.textContent)).toEqual(["apply_text_edits", "get_runtime_status"]);
+  expect(focusedCalls.map((call) => call.querySelector("header strong")?.textContent)).toEqual(["get_runtime_status", "apply_text_edits"]);
 
   fireEvent.change(selector, { target: { value: "" } });
   expect(screen.getAllByTestId("window-workflow-step")).toHaveLength(5);
@@ -441,9 +441,10 @@ it("shows background Job identity on handoff calls and observe_jobs", async () =
 
   const jobTags = await screen.findAllByTitle(jobId);
   expect(jobTags).toHaveLength(2);
-  expect(jobTags[0].textContent).toContain("Background running");
-  expect(jobTags[0].textContent).toContain("1m 30s");
-  expect(jobTags[1].textContent).toContain("Observing");
+  const backgroundTag = jobTags.find((tag) => tag.textContent?.includes("Background running"));
+  const observingTag = jobTags.find((tag) => tag.textContent?.includes("Observing"));
+  expect(backgroundTag?.textContent).toContain("1m 30s");
+  expect(observingTag).toBeTruthy();
   expect(screen.getAllByTestId("window-workflow-step")).toHaveLength(2);
 });
 

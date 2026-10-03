@@ -291,17 +291,14 @@ impl AppState {
         &self,
         project_path: Option<&str>,
     ) -> DesktopResult<DesktopStateSnapshot> {
-        self.configure_environment(crate::models::EnvironmentInput {
-            service_scope: None,
-            mode: "create".into(),
-            server_url: None,
-            project_path: project_path.map(str::to_owned),
-            runner: Some(true),
-            pairing_code: None,
-            user_token: None,
-            replace_pairing_code: false,
-        })
-        .await
+        let (operation, cancellation, mut core, baseline) = self
+            .begin_operation(DesktopOperationKind::LocalSetup, true)
+            .await?;
+        let result = core
+            .configure_local_setup(project_path, &cancellation)
+            .await;
+        self.finish_operation(operation, cancellation, core, baseline, result)
+            .await
     }
 
     pub async fn configure_environment(
@@ -1348,7 +1345,6 @@ impl DesktopCore {
         self.get_state().await
     }
 
-    #[cfg(test)]
     pub async fn configure_local_setup(
         &mut self,
         project_path: Option<&str>,

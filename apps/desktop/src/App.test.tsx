@@ -276,9 +276,11 @@ beforeEach(() => {
     api.saveTunnelProfile.mockResolvedValue(readyState);
   });
 
-  it("offers explicit local and remote setup without requiring a project", async () => {
-    api.getState.mockResolvedValue(firstRunState);
+  it("offers explicit persistent local and remote setup from Runtime settings", async () => {
+    api.getState.mockResolvedValue(projectlessReadyState);
     renderApp();
+    await screen.findByRole("heading", { level: 1, name: "工作概览" });
+    await changeServerConnection();
     fireEvent.click(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ }));
     expect(screen.getByRole("checkbox", { name: "允许 AI 在此电脑上工作" })).toBeChecked();
     expect(screen.queryByRole("button", { name: "选择文件夹" })).not.toBeInTheDocument();
@@ -290,7 +292,9 @@ beforeEach(() => {
   });
 
   it("joins as a viewer with an existing user credential and no pairing", async () => {
-    api.getState.mockResolvedValue(firstRunState); renderApp();
+    api.getState.mockResolvedValue(projectlessReadyState); renderApp();
+    await screen.findByRole("heading", { level: 1, name: "工作概览" });
+    await changeServerConnection();
     fireEvent.click(await screen.findByRole("button", { name: /连接现有 Server/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: "允许 AI 在此电脑上工作" }));
     fireEvent.change(screen.getByLabelText("Server URL"), { target: { value: "https://server.example" } });
@@ -304,9 +308,11 @@ beforeEach(() => {
   });
 
   it("clears a submitted one-time code after a failed projectless Runner join", async () => {
-    api.getState.mockResolvedValue(firstRunState);
+    api.getState.mockResolvedValue(projectlessReadyState);
     api.configureEnvironment.mockRejectedValueOnce({ code: "pairing_code_invalid", message: "Pairing failed", next_action: "Use a new code." });
     renderApp();
+    await screen.findByRole("heading", { level: 1, name: "工作概览" });
+    await changeServerConnection();
     fireEvent.click(await screen.findByRole("button", { name: /连接现有 Server/ }));
     fireEvent.change(screen.getByLabelText("Server URL"), { target: { value: "https://server.example" } });
     const code = screen.getByLabelText("一次性登录码");
@@ -415,6 +421,22 @@ beforeEach(() => {
       view.unmount();
       vi.useRealTimers();
     }
+  });
+
+  it("treats a Refresh collision with an already running Desktop operation as state observation", async () => {
+    api.getState
+      .mockResolvedValueOnce(readyState)
+      .mockResolvedValueOnce(localSetupOperationState());
+    api.refresh.mockRejectedValueOnce({
+      code: "desktop_operation_busy",
+      message: "Another Desktop operation is still running",
+      next_action: "Wait for the current operation to finish.",
+    });
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "刷新" }));
+    await waitFor(() => expect(api.getState).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status", { name: "当前 Desktop 操作" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("keeps a user stop consistent after refresh and offers Start", async () => {
@@ -796,14 +818,14 @@ beforeEach(() => {
     await waitFor(() => expect(launchAtLogin).toBeChecked());
   });
 
-  it("does not install persistent services before a fresh Desktop chooses local or remote setup", async () => {
+  it("bootstraps a fresh Desktop with the transient local Runtime and no persistent services", async () => {
     api.getState.mockResolvedValue(firstRunState); renderApp();
-    expect(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /连接现有 Server/ })).toBeInTheDocument();
-    expect(api.configureLocal).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { level: 1, name: "工作概览" })).toBeInTheDocument();
+    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledTimes(1));
     expect(api.configureEnvironment).not.toHaveBeenCalled();
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "选择文件夹" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /在此电脑使用 WebCodex/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /连接现有 Server/ })).not.toBeInTheDocument();
   });
 
   it("keeps PowerShell 7 guidance available in manual local recovery without requiring a project", async () => {
@@ -832,10 +854,12 @@ beforeEach(() => {
     expect(api.configureLocal).not.toHaveBeenCalled();
   });
 
-  it("surfaces a failed explicit local setup without inventing a default project", async () => {
-    api.getState.mockResolvedValue(firstRunState);
+  it("surfaces a failed explicit persistent local setup without inventing a default project", async () => {
+    api.getState.mockResolvedValue(projectlessReadyState);
     api.configureEnvironment.mockRejectedValue({ code: "runner_offline", message: "Runner did not become connected", next_action: "Retry setup." });
     renderApp();
+    await screen.findByRole("heading", { level: 1, name: "工作概览" });
+    await changeServerConnection();
     fireEvent.click(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ }));
     fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("runner_offline");
@@ -867,9 +891,9 @@ beforeEach(() => {
     await waitFor(() => expect(api.getState).toHaveBeenCalledTimes(2));
 
     await act(async () => { retryState.resolve(firstRunState); });
-    expect(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "工作概览" })).toBeInTheDocument();
+    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledTimes(1));
     expect(api.configureEnvironment).not.toHaveBeenCalled();
-    expect(api.configureLocal).not.toHaveBeenCalled();
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });

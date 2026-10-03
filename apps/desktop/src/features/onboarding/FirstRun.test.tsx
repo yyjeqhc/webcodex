@@ -57,6 +57,31 @@ describe("explicit environment setup", () => {
     await waitFor(()=>expect(api.configureEnvironment).toHaveBeenCalledTimes(1));
     expect(api.configureEnvironment.mock.calls[0][0]).not.toHaveProperty("serviceScope");
   });
+
+  it("keeps persistent service scope as an explicit Runtime-settings choice after transient bootstrap", async () => {
+    const local = {
+      ...state,
+      topology: {
+        experience: "full",
+        server: { kind: "local" },
+        runner: { kind: "local" },
+      },
+      persistent_environment: null,
+    } as DesktopState;
+    const { container } = mount(local, true);
+    action(container, "choose-local-setup");
+    const advanced = screen.getByText("Advanced deployment options").closest("details")!;
+    expect(advanced).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Advanced deployment options"));
+    fireEvent.change(screen.getByLabelText("Background startup"), { target: { value: "system" } });
+    action(container, "configure-local");
+    await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "create",
+      projectPath: null,
+      runner: true,
+      serviceScope: "system",
+    })));
+  });
   it("offers persistent local/join and temporary sharing without registering a default project", async () => {
     const { container, onState } = mount();
     expect(container.querySelectorAll(".entry-card")).toHaveLength(3);

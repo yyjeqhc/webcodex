@@ -124,11 +124,26 @@ export function useDesktopWorkspace() {
           return;
         }
 
-        // Installing persistent services is an explicit first-run choice. Do not
-        // bind a fresh machine to a local Server before it can choose Join, or
-        // trigger administrator/service-password prompts from a status read.
+        // Fresh local Desktop is a zero-configuration runtime bootstrap, not a
+        // persistent-service setup flow. Start the Desktop-owned Server/Runner
+        // immediately; persistent user/system services remain an explicit
+        // advanced choice in Runtime settings.
         if (!initial.topology) {
-          commitState(initial);
+          setRefreshing(true);
+          try {
+            const next = await desktopApi.configureLocal();
+            if (!cancelled) {
+              commitState(next);
+              setShowSetup(false);
+            }
+          } catch (value) {
+            if (!cancelled) {
+              commitState(initial);
+              setError(normalizeDesktopError(value));
+            }
+          } finally {
+            if (!cancelled) setRefreshing(false);
+          }
           return;
         }
 
@@ -269,8 +284,21 @@ export function useDesktopWorkspace() {
 
   const refresh = async () => {
     setRefreshing(true);
+    setError(null);
     try {
-      await runStateOperation(desktopApi.refresh);
+      commitState(await desktopApi.refresh());
+    } catch (value) {
+      const failure = normalizeDesktopError(value);
+      if (failure.code === "desktop_operation_busy") {
+        try {
+          commitState(await desktopApi.getState());
+        } catch {
+          // The competing operation remains authoritative; a failed observation
+          // must not turn an ordinary Refresh race into a second error.
+        }
+      } else {
+        await observeFailedOperation(value);
+      }
     } finally {
       setRefreshing(false);
     }

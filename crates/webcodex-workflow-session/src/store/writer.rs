@@ -3,6 +3,7 @@
 //! This changes write scheduling only, not ledger format or durable identity.
 use super::{bound_summary_string, SessionStoreInner};
 use crate::persistence::write_ledger_atomic_measured;
+use serde::Serialize;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -44,6 +45,9 @@ struct LedgerWriterState {
     writes_completed: u64,
     flush_generation: u64,
     shutdown: bool,
+    write_attempts: u64,
+    failed_attempts: u64,
+    last_attempt: Option<WriteAttemptObservation>,
     #[cfg(test)]
     write_cycles: usize,
 }
@@ -285,6 +289,18 @@ fn ledger_writer_loop(
                 .state
                 .lock()
                 .expect("session ledger writer state poisoned");
+            state.write_attempts = state.write_attempts.saturating_add(1);
+            if result.is_err() {
+                state.failed_attempts = state.failed_attempts.saturating_add(1);
+            }
+            state.last_attempt = Some(WriteAttemptObservation {
+                success: result.is_ok(),
+                written_bytes: result.as_ref().ok().copied(),
+                write_ms: write_duration.as_secs_f64() * 1000.0,
+                snapshot_lock_wait_ms: lock_wait.as_secs_f64() * 1000.0,
+                snapshot_lock_hold_ms: lock_hold.as_secs_f64() * 1000.0,
+                dirty_notifications: generation.saturating_sub(state.writes_completed),
+            });
             state.writes_completed = generation;
             if cost_aware {
                 if let Ok(bytes) = &result {
@@ -305,5 +321,94 @@ fn ledger_writer_loop(
     }
 }
 
+/// Bounded diagnostics only; never consulted by write admission, flush or retry.
+#[derive(Debug, Clone, Serialize)]
+pub struct WriteAttemptObservation {
+    pub success: bool,
+    /// None on failure: an unsuccessful attempt cannot claim committed bytes.
+    pub written_bytes: Option<u64>,
+    pub write_ms: f64,
+    pub snapshot_lock_wait_ms: f64,
+    pub snapshot_lock_hold_ms: f64,
+    /// Coalesced dirty marks, not distinct Sessions or a business-mutation count.
+    pub dirty_notifications: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WriterObservation {
+    pub write_attempts: u64,
+    pub failed_attempts: u64,
+    /// Dirty marks not yet attempted. Zero does not imply successful durability.
+    pub pending_notifications: u64,
+    pub last_attempt: Option<WriteAttemptObservation>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PersistenceObservation {
+    pub mode: &'static str,
+    pub ledger_observation: &'static str,
+    pub ledger_bytes: Option<u64>,
+    pub writer: Option<WriterObservation>,
+}
+
+impl super::SessionStore {
+    /// Explicit detailed-status observation. Clone only the configured path under
+    /// the store lock, then stat outside it. No payload read, flush or dirty mark.
+    /// Counters/path metadata are sequential observations, not a commit receipt.
+    pub fn persistence_observation(&self) -> PersistenceObservation {
+        let path = match self.inner.lock() {
+            Ok(inner) => inner.persistence.as_ref().map(|state| state.path.clone()),
+            Err(_) => {
+                return PersistenceObservation {
+                    mode: "unavailable",
+                    ledger_observation: "unavailable",
+                    ledger_bytes: None,
+                    writer: None,
+                }
+            }
+        };
+        let mode = match (&path, &self.writer) {
+            (None, _) => "memory",
+            (Some(_), Some(_)) => "background",
+            (Some(_), None) => "synchronous_fallback",
+        };
+        let ledger_bytes = path
+            .as_ref()
+            .and_then(|path| std::fs::metadata(path).ok())
+            .filter(|metadata| metadata.is_file())
+            .map(|metadata| metadata.len());
+        let writer = self.writer.as_ref().and_then(|writer| {
+            writer
+                .shared
+                .state
+                .lock()
+                .ok()
+                .map(|state| WriterObservation {
+                    write_attempts: state.write_attempts,
+                    failed_attempts: state.failed_attempts,
+                    pending_notifications: state
+                        .dirty_generation
+                        .saturating_sub(state.writes_completed),
+                    last_attempt: state.last_attempt.clone(),
+                })
+        });
+        PersistenceObservation {
+            mode,
+            ledger_observation: if path.is_none() {
+                "disabled"
+            } else if ledger_bytes.is_some() {
+                "available"
+            } else {
+                "unavailable"
+            },
+            ledger_bytes,
+            writer,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod observation_tests;

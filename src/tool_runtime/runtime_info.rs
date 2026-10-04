@@ -1,5 +1,7 @@
 //! Runtime observability metadata injected into `ToolRuntime`.
 
+mod resources;
+
 use super::tool_definition::model_visible_tool_definitions;
 use super::{permissions, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
@@ -555,13 +557,42 @@ impl ToolRuntime {
         client_id: Option<String>,
     ) -> ToolResult {
         let sparse = compact || summary_only;
-        match client_id {
+        let mut result = match client_id {
             Some(client_id) => {
                 self.runtime_status_for_client(auth, client_id, sparse)
                     .await
             }
             None => Box::pin(self.runtime_status_inner(auth, sparse)).await,
+        };
+        // Only explicitly requested full diagnostics pay for OS/file observation.
+        // The bootstrap runtime_status path and all sparse/error paths stay cheap.
+        if result.success && !sparse {
+            let sessions = self.sessions.clone();
+            let observed = tokio::task::spawn_blocking(move || {
+                (
+                    resources::observe(),
+                    serde_json::to_value(sessions.persistence_observation()),
+                )
+            })
+            .await;
+            if let Some(output) = result.output.as_object_mut() {
+                match observed {
+                    Ok((resources, persistence)) => {
+                        output.insert("resources".into(), resources);
+                        if let Ok(persistence) = persistence {
+                            output.insert("session_persistence".into(), persistence);
+                        }
+                    }
+                    Err(_) => {
+                        output.insert(
+                            "resources".into(),
+                            json!({"scope":"server_process", "status":"unavailable"}),
+                        );
+                    }
+                }
+            }
         }
+        result
     }
 
     fn sparse_runtime_status(

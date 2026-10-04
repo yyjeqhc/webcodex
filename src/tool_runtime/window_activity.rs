@@ -51,6 +51,8 @@ pub(crate) struct WorkflowSessionCorrelation {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ToolCallCorrelation {
+    /// Display only; never overrides raw success or execution authority.
+    pub(crate) failure_expectation_result: Option<String>,
     pub(crate) resolved_project: Option<String>,
     /// Exact business Workflow Session selected by the typed ToolCall after
     /// canonical dispatch succeeds. Audit evidence only; never recorder or execution authority.

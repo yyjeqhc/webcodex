@@ -1170,7 +1170,16 @@ fn retained_in_interactive_snapshot(node: &BackendNode) -> bool {
     if node.select_choice {
         return true;
     }
-    node.capability.admits_any() && node.backend_node_id.is_some()
+    if node.backend_node_id.is_none() {
+        return false;
+    }
+    // A known disabled or fully read-only control stays visible without an effect.
+    if node.disabled == Some(true)
+        || (node.read_only == Some(true) && !node.capability.admits_any())
+    {
+        return true;
+    }
+    node.capability.admits_any()
 }
 
 fn should_auto_compact_snapshot(
@@ -1371,6 +1380,8 @@ mod tests {
         page_created: bool,
         structured_controls: bool,
         compact_select_page: bool,
+        control_state_page: bool,
+        iframe_control_state: bool,
     }
 
     impl FakeBackend {
@@ -1399,12 +1410,27 @@ mod tests {
                 page_created: false,
                 structured_controls: false,
                 compact_select_page: false,
+                control_state_page: false,
+                iframe_control_state: false,
             }
+        }
+
+        fn with_iframe_control_state(frame_state: Arc<Mutex<String>>) -> Self {
+            let mut backend = Self::new();
+            backend.frame_state = Some(frame_state);
+            backend.iframe_control_state = true;
+            backend
         }
 
         fn with_compact_select_page() -> Self {
             let mut backend = Self::new();
             backend.compact_select_page = true;
+            backend
+        }
+
+        fn with_control_state_page() -> Self {
+            let mut backend = Self::new();
+            backend.control_state_page = true;
             backend
         }
 
@@ -1488,6 +1514,28 @@ mod tests {
             _target_id: &str,
             _max_depth: u32,
         ) -> BrowserResult<BackendSnapshot> {
+            if self.iframe_control_state {
+                let (mut nodes, truncated) = crate::cdp::project_ax_nodes(
+                    &control_state_ax_nodes(),
+                    Some(&control_state_dom()),
+                );
+                let fence = self
+                    .frame_state
+                    .as_ref()
+                    .expect("iframe control fixture has a frame fence")
+                    .lock()
+                    .unwrap()
+                    .clone();
+                for node in &mut nodes {
+                    node.frame_fence = Some(fence.clone());
+                }
+                return Ok(BackendSnapshot {
+                    source_incomplete: false,
+                    document_id: format!("doc-{}", self.document_generation),
+                    nodes,
+                    truncated,
+                });
+            }
             if let Some(frame_state) = &self.frame_state {
                 let mut nodes = batch::form_nodes();
                 if self.snapshot_node_count > 1 {
@@ -1522,6 +1570,18 @@ mod tests {
                 let (nodes, truncated) = crate::cdp::project_ax_nodes(
                     &compact_select_ax_nodes(),
                     Some(&compact_select_dom()),
+                );
+                return Ok(BackendSnapshot {
+                    source_incomplete: false,
+                    document_id: format!("doc-{}", self.document_generation),
+                    nodes,
+                    truncated,
+                });
+            }
+            if self.control_state_page {
+                let (nodes, truncated) = crate::cdp::project_ax_nodes(
+                    &control_state_ax_nodes(),
+                    Some(&control_state_dom()),
                 );
                 return Ok(BackendSnapshot {
                     source_incomplete: false,
@@ -1921,6 +1981,82 @@ mod tests {
         nodes
     }
 
+    fn control_state_dom() -> serde_json::Value {
+        serde_json::json!({
+            "nodeType": 9,
+            "children": [{
+                "nodeType": 1,
+                "localName": "body",
+                "backendNodeId": 100,
+                "children": [
+                    {"nodeType": 1, "localName": "input", "backendNodeId": 1, "attributes": ["type", "number", "disabled", ""]},
+                    {"nodeType": 1, "localName": "select", "backendNodeId": 2, "attributes": ["disabled", ""], "children": [
+                        {"nodeType": 1, "localName": "option", "backendNodeId": 3, "attributes": ["value", "alpha"]}
+                    ]},
+                    {"nodeType": 1, "localName": "input", "backendNodeId": 4, "attributes": ["type", "text", "readonly", "readonly"]},
+                    {"nodeType": 1, "localName": "input", "backendNodeId": 5, "attributes": ["type", "text"]},
+                    {"nodeType": 1, "localName": "input", "backendNodeId": 6, "attributes": ["type", "number"]},
+                    {"nodeType": 1, "localName": "input", "backendNodeId": 7, "attributes": ["type", "text"]},
+                    {"nodeType": 1, "localName": "input", "backendNodeId": 8, "attributes": ["type", "number", "readonly", ""]},
+                    {"nodeType": 1, "localName": "select", "backendNodeId": 9, "children": [
+                        {"nodeType": 1, "localName": "option", "backendNodeId": 10, "attributes": ["value", "beta"]}
+                    ]},
+                    {"nodeType": 1, "localName": "p", "backendNodeId": 11},
+                    {"nodeType": 1, "localName": "input", "backendNodeId": 12, "attributes": ["type", "number"]}
+                ]
+            }]
+        })
+    }
+
+    fn control_state_ax(
+        name: &str,
+        role: &str,
+        backend_node_id: i64,
+        disabled: Option<bool>,
+        read_only: Option<bool>,
+    ) -> serde_json::Value {
+        let mut node = serde_json::json!({
+            "nodeId": format!("ax-{name}"),
+            "role": {"value": role},
+            "name": {"value": name},
+            "backendDOMNodeId": backend_node_id
+        });
+        let mut properties = Vec::new();
+        if let Some(disabled) = disabled {
+            properties.push(serde_json::json!({
+                "name": "disabled",
+                "value": {"value": disabled}
+            }));
+        }
+        if let Some(read_only) = read_only {
+            properties.push(serde_json::json!({
+                "name": "readonly",
+                "value": {"value": read_only}
+            }));
+        }
+        if !properties.is_empty() {
+            node["properties"] = serde_json::json!(properties);
+        }
+        node
+    }
+
+    fn control_state_ax_nodes() -> Vec<serde_json::Value> {
+        vec![
+            control_state_ax("Qty", "spinbutton", 1, Some(true), None),
+            control_state_ax("Pick", "combobox", 2, Some(true), None),
+            control_state_ax("Alpha", "option", 3, None, None),
+            control_state_ax("Notes", "textbox", 4, None, Some(true)),
+            control_state_ax("Name", "textbox", 5, None, None),
+            control_state_ax("Amount", "spinbutton", 6, Some(false), None),
+            control_state_ax("Title", "textbox", 7, Some(false), Some(false)),
+            control_state_ax("Locked", "spinbutton", 8, None, Some(true)),
+            control_state_ax("Kind", "combobox", 9, None, None),
+            control_state_ax("Beta", "option", 10, None, None),
+            control_state_ax("Static", "paragraph", 11, None, None),
+            control_state_ax("Count", "spinbutton", 12, None, None),
+        ]
+    }
+
     struct CompactSelectFactory;
     impl BackendFactory for CompactSelectFactory {
         fn available(&self) -> bool {
@@ -1928,6 +2064,16 @@ mod tests {
         }
         fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
             Ok(Box::new(FakeBackend::with_compact_select_page()))
+        }
+    }
+
+    struct ControlStateFactory;
+    impl BackendFactory for ControlStateFactory {
+        fn available(&self) -> bool {
+            true
+        }
+        fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
+            Ok(Box::new(FakeBackend::with_control_state_page()))
         }
     }
 
@@ -2324,6 +2470,140 @@ mod tests {
                 .any(|node| node.name.as_deref() == Some("Fruit")
                     && node.actions == ["select_option"])
         );
+    }
+
+    #[test]
+    fn disabled_and_read_only_controls_publish_no_unsupported_effect() {
+        let supervisor = BrowserSupervisor::with_factory(Arc::new(ControlStateFactory));
+        let browser = supervisor.launch().unwrap();
+        let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+        let snapshot = supervisor
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
+            .unwrap();
+        let find = |name: &str| {
+            snapshot
+                .nodes
+                .iter()
+                .find(|node| node.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("missing {name}"))
+        };
+        let qty = find("Qty");
+        assert_eq!(qty.disabled, Some(true));
+        assert!(qty.actions.is_empty());
+        assert!(qty.element_id.is_none());
+        assert!(!qty.actionable);
+        let pick = find("Pick");
+        assert_eq!(pick.disabled, Some(true));
+        assert!(pick.actions.is_empty());
+        assert!(pick.element_id.is_none());
+        let alpha = find("Alpha");
+        assert!(alpha.actions.is_empty());
+        assert!(alpha.element_id.is_none());
+        let locked = find("Locked");
+        assert_eq!(locked.read_only, Some(true));
+        assert!(locked.actions.is_empty());
+        assert!(locked.element_id.is_none());
+        let notes = find("Notes");
+        assert_eq!(notes.read_only, Some(true));
+        assert_eq!(notes.actions, ["click"]);
+        assert!(notes.element_id.is_some());
+        let name = find("Name");
+        assert_eq!(name.disabled, None);
+        assert_eq!(name.read_only, None);
+        assert_eq!(name.actions, ["click", "input_text"]);
+        let title = find("Title");
+        assert_eq!(title.disabled, Some(false));
+        assert_eq!(title.read_only, Some(false));
+        assert_eq!(title.actions, ["click", "input_text"]);
+        assert_eq!(find("Amount").disabled, Some(false));
+        assert_eq!(find("Amount").actions, ["set_value"]);
+        assert_eq!(find("Count").disabled, None);
+        assert_eq!(find("Count").read_only, None);
+        assert_eq!(find("Count").actions, ["set_value"]);
+        assert_eq!(find("Kind").actions, ["select_option"]);
+        assert!(find("Beta").actions.is_empty());
+        assert!(find("Beta").element_id.is_none());
+
+        let notes_id = notes.element_id.clone().unwrap();
+        supervisor
+            .click(&browser.browser_id, &page.page_id, &notes_id)
+            .unwrap();
+        let rejected_text = supervisor
+            .input_text(&browser.browser_id, &page.page_id, &notes_id, "later")
+            .unwrap_err();
+        assert_eq!(rejected_text.kind, "element_action_unsupported");
+        assert_eq!(rejected_text.execution_state, ExecutionState::NotStarted);
+        assert_eq!(rejected_text.recovery_action, None);
+        let rejected_value = supervisor
+            .set_value(&browser.browser_id, &page.page_id, &notes_id, "later")
+            .unwrap_err();
+        assert_eq!(rejected_value.kind, "element_action_unsupported");
+        assert_eq!(rejected_value.execution_state, ExecutionState::NotStarted);
+        let name_id = name.element_id.clone().unwrap();
+        supervisor
+            .click(&browser.browser_id, &page.page_id, &name_id)
+            .unwrap();
+        supervisor
+            .input_text(&browser.browser_id, &page.page_id, &name_id, "Ada")
+            .unwrap();
+        let amount_id = find("Amount").element_id.clone().unwrap();
+        supervisor
+            .set_value(&browser.browser_id, &page.page_id, &amount_id, "4")
+            .unwrap();
+        let count_id = find("Count").element_id.clone().unwrap();
+        supervisor
+            .set_value(&browser.browser_id, &page.page_id, &count_id, "5")
+            .unwrap();
+        let kind_id = find("Kind").element_id.clone().unwrap();
+        supervisor
+            .select_option(&browser.browser_id, &page.page_id, &kind_id, "beta")
+            .unwrap();
+        let absent = supervisor
+            .set_value(&browser.browser_id, &page.page_id, "element_absent", "9")
+            .unwrap_err();
+        assert_eq!(absent.kind, "stale_element");
+        assert_eq!(absent.execution_state, ExecutionState::NotStarted);
+
+        let interactive = supervisor
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Interactive,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
+            .unwrap();
+        let kept = |name: &str| {
+            interactive
+                .nodes
+                .iter()
+                .any(|node| node.name.as_deref() == Some(name))
+        };
+        assert!(kept("Qty"));
+        assert!(kept("Pick"));
+        assert!(kept("Locked"));
+        assert!(kept("Notes"));
+        assert!(kept("Beta"));
+        assert!(!kept("Alpha"));
+        assert!(!kept("Static"));
+        assert!(interactive.nodes.iter().any(|node| {
+            node.name.as_deref() == Some("Qty") && node.actions.is_empty() && !node.actionable
+        }));
+        assert!(interactive.nodes.iter().any(|node| {
+            node.name.as_deref() == Some("Kind") && node.actions == ["select_option"]
+        }));
+        let stale = supervisor
+            .click(&browser.browser_id, &page.page_id, &notes_id)
+            .unwrap_err();
+        assert_eq!(stale.kind, "stale_element");
+        assert_eq!(stale.execution_state, ExecutionState::NotStarted);
+        assert_eq!(stale.recovery_action, Some("snapshot"));
     }
 
     #[test]

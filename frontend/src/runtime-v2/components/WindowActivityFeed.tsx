@@ -50,6 +50,7 @@ export function WindowActivityFeed({
       startedAt: row.started_at_ms,
       duration: row.duration_ms,
       status: row.status,
+      expectation: row.failure_expectation_result,
       sessions: row.workflow_sessions
         .map((link) => link.workflow_session_id)
         .filter((sessionId, index, values) => values.indexOf(sessionId) === index)
@@ -66,6 +67,7 @@ export function WindowActivityFeed({
       startedAt: row.started_at_ms,
       duration: row.elapsed_ms,
       status: "running",
+      expectation: undefined,
       sessions: [] as string[],
       running: true,
       asyncJobId: undefined as string | undefined,
@@ -132,6 +134,9 @@ export function WindowActivityFeed({
             const path = project?.path ? displayProjectPath(project.path) : undefined;
             const success = ["ok", "success", "succeeded"].includes(call.status);
             const failed = ["error", "failed", "failure"].includes(call.status);
+            const expected = ["matched_expected_failure", "matched_expected_result"].includes(call.expectation || "");
+            const mismatch = ["expectation_mismatch", "unexpected_success", "unexpected_failure"].includes(call.expectation || "");
+            const expectationLabel = expected ? "Expected result" : mismatch ? "Expectation not met" : "";
             const status = call.running ? "Running" : success ? "Succeeded" : failed ? "Failed" : call.status;
             const primarySession = call.sessions.find((sessionId) => sessionMeta.has(sessionId));
             const selectable = Boolean(primarySession && onSelectSession);
@@ -157,7 +162,7 @@ export function WindowActivityFeed({
               >
                 <header>
                   <strong>{call.tool}</strong>
-                  <span className={"status-pill " + (call.running ? "" : success ? "good" : "warn")}>{t(status)}</span>
+                  <span className={"status-pill " + (call.running ? "" : expected || (success && !mismatch) ? "good" : "warn")}>{t(status)}{!call.running && expectationLabel ? " · " + t(expectationLabel) : ""}</span>
                 </header>
                 {(path || call.sessions.length > 0 || call.asyncJobId || call.observedJobIds.length > 0) && (
                   <div className="window-call-context">

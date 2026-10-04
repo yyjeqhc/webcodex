@@ -104,11 +104,11 @@ pub enum ToolCall {
         #[schemars(with = "CodingGuidanceProfile")]
         guidance_profile: Option<CodingGuidanceProfile>,
         #[schemars(extend("default" = true))]
-        /// Whether startup should include a small bounded Skills/Plugins selection catalog. Defaults to
-        /// true. Set false only when the caller's current model context already retains the relevant
-        /// extension metadata. False skips the startup Skill/Plugin discovery observations. The catalog
-        /// grants no authority, never loads Skill bodies, never creates Plugin bindings, and never
-        /// substitutes for plugin_tool describe before invocation.
+        /// Include the bounded Skills/Plugins catalog. keep true/default in fresh model/ClientWindow context
+        /// and on First entry to another Project; the catalog is Project-scoped. Set false only while that
+        /// Project's complete/sufficient catalog is retained; Workflow Session/ClientWindow alone is insufficient.
+        /// Refresh after compaction/context loss, changed catalog revision/runtime, truncated/missing metadata,
+        /// or explicit user request. This is request-local advice and grants no authority.
         #[serde(default = "default_true")]
         include_extension_catalog: bool,
         /// Optional explicit Workflow Session to continue exactly: canonical wc_sess_* or server-issued

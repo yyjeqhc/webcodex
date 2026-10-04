@@ -242,6 +242,14 @@ impl ToolRuntime {
             )
             .await;
         super::mcp_timing::normalize_result_timing(&mut result, transport, self.mcp_host_policy);
+        correlation.failure_expectation_result =
+            webcodex_workflow_session::tool_result_expectation_classification(
+                result.success,
+                &immediate_expectation,
+                &result.output,
+                result.error.as_deref(),
+            )
+            .map(str::to_string);
         // Early project/session/auth failures can return before the normal
         add_run_process_expectation_projection(
             immediate_tool_name,

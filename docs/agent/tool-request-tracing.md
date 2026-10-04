@@ -62,6 +62,26 @@ payload-index entries when full data exists. A full payload is fetched only by
 an explicit `payload_index` read; its existing size/digest/private-file checks
 remain enforced. Unknown or malformed selectors never authorize another read.
 
+## Execution outcome and declared expectations
+
+Window activity in WebUI and the MCP Work Result card keeps the raw action
+`status` separate from the optional `failure_expectation_result`. Dispatch uses
+the Workflow Session ledger's canonical matcher and retains its classification
+in the ActionAudit summary, even without a recording Session. Single-result
+MCP App presentation metadata carries the same classification.
+
+- `matched_expected_failure` and `matched_expected_result` display **Expected result**
+  alongside the raw outcome, for example **Failed · Expected result**.
+- `expectation_mismatch`, `unexpected_success`, and `unexpected_failure` display
+  **Expectation not met**. Unexpected success does not get a green success badge.
+- Calls without declared expectations, pending Job handoffs, and old records
+  without classification retain their ordinary status. Missing evidence is never
+  reconstructed from error text or a later call's expectation.
+
+This display projection does not change `ToolResult.success`, MCP Host
+compatibility behavior, retry authority, validation evidence, or Job lifecycle.
+A Job's eventual result remains separate from its initiating call's handoff.
+
 ## Server trace layout
 
 Each captured request has a Server-generated `server_trace_id`. Both enabled

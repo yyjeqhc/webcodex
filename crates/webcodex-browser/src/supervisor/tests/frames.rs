@@ -78,6 +78,100 @@ fn iframe_actions_and_snapshot_generation_use_the_same_authority_path() {
 }
 
 #[test]
+fn iframe_disabled_and_read_only_controls_publish_no_effect_authority() {
+    let state = Arc::new(Mutex::new("frame-loader-document-1".into()));
+    let supervisor =
+        BrowserSupervisor::with_factory(Arc::new(IframeControlStateFactory(state.clone())));
+    let browser = supervisor.launch().unwrap().browser_id;
+    let page = supervisor.pages(&browser, 8).unwrap().remove(0).page_id;
+    let snapshot = supervisor
+        .snapshot(&browser, &page, SnapshotMode::Full, 32, 32)
+        .unwrap();
+    let find = |name: &str| {
+        snapshot
+            .nodes
+            .iter()
+            .find(|node| node.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("missing {name}"))
+    };
+    assert_eq!(find("Qty").disabled, Some(true));
+    assert!(find("Qty").actions.is_empty());
+    assert!(find("Qty").element_id.is_none());
+    assert!(!find("Qty").actionable);
+    assert!(find("Pick").actions.is_empty());
+    assert!(find("Pick").element_id.is_none());
+    assert!(find("Alpha").actions.is_empty());
+    assert!(find("Alpha").element_id.is_none());
+    let notes = find("Notes");
+    assert_eq!(notes.read_only, Some(true));
+    assert_eq!(notes.actions, ["click"]);
+    let notes_id = notes.element_id.clone().unwrap();
+    supervisor.click(&browser, &page, &notes_id).unwrap();
+    let rejected = supervisor
+        .input_text(&browser, &page, &notes_id, "later")
+        .unwrap_err();
+    assert_eq!(rejected.kind, "element_action_unsupported");
+    assert_eq!(rejected.execution_state, ExecutionState::NotStarted);
+    assert_eq!(rejected.recovery_action, None);
+    let name_id = find("Name").element_id.clone().unwrap();
+    assert_eq!(find("Name").actions, ["click", "input_text"]);
+    supervisor
+        .input_text(&browser, &page, &name_id, "Ada")
+        .unwrap();
+    assert_eq!(find("Amount").disabled, Some(false));
+    assert_eq!(find("Amount").actions, ["set_value"]);
+    supervisor
+        .set_value(
+            &browser,
+            &page,
+            find("Amount").element_id.as_ref().unwrap(),
+            "4",
+        )
+        .unwrap();
+    assert_eq!(find("Count").disabled, None);
+    assert_eq!(find("Count").actions, ["set_value"]);
+    assert_eq!(find("Kind").actions, ["select_option"]);
+    *state.lock().unwrap() = "frame-loader-document-2".into();
+    let stale = supervisor.click(&browser, &page, &notes_id).unwrap_err();
+    assert_eq!(stale.kind, "stale_element");
+    assert_eq!(stale.execution_state, ExecutionState::NotStarted);
+    assert_eq!(stale.recovery_action, Some("snapshot"));
+
+    let interactive = supervisor
+        .snapshot(
+            &browser,
+            &page,
+            SnapshotMode::Interactive,
+            MAX_SNAPSHOT_NODES,
+            DEFAULT_SNAPSHOT_DEPTH,
+        )
+        .unwrap();
+    let kept = |name: &str| {
+        interactive
+            .nodes
+            .iter()
+            .any(|node| node.name.as_deref() == Some(name))
+    };
+    assert!(kept("Qty") && kept("Pick") && kept("Notes") && kept("Beta"));
+    assert!(!kept("Alpha") && !kept("Static"));
+    assert!(interactive.nodes.iter().any(|node| {
+        node.name.as_deref() == Some("Qty") && node.element_id.is_none() && node.actions.is_empty()
+    }));
+}
+
+struct IframeControlStateFactory(Arc<Mutex<String>>);
+impl BackendFactory for IframeControlStateFactory {
+    fn available(&self) -> bool {
+        true
+    }
+    fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
+        Ok(Box::new(FakeBackend::with_iframe_control_state(
+            self.0.clone(),
+        )))
+    }
+}
+
+#[test]
 fn iframe_nodes_share_page_projection_limits() {
     let state = Arc::new(Mutex::new("frame-loader-document-1".into()));
     let supervisor = BrowserSupervisor::with_factory(Arc::new(FrameFactory(state, 256)));

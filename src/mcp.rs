@@ -764,6 +764,9 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             if let Some(composition) = correlation.code_mode_composition_audit_summary() {
                 summary["code_mode_composition"] = composition;
             }
+            if let Some(expectation) = &correlation.failure_expectation_result {
+                summary["failure_expectation_result"] = json!(expectation);
+            }
             if let Some(job_trace) = correlation.job_audit_summary() {
                 summary["job_trace"] = job_trace;
             }

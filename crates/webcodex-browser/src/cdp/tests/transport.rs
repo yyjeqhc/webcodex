@@ -135,7 +135,11 @@ fn snapshot_session(failed_method: Option<&'static str>, iframe: bool) {
                 json!({"depth": 32}),
                 json!({"nodes":[
                     {"nodeId":"date", "role":{"value":"Date"}, "backendDOMNodeId":10},
-                    {"nodeId":"picker", "parentId":"date", "role":{"value":"button"}, "backendDOMNodeId":11}
+                    {"nodeId":"picker", "parentId":"date", "role":{"value":"button"}, "backendDOMNodeId":11},
+                    {"nodeId":"continue", "role":{"value":"button"}, "name":{"value":"Continue"}, "backendDOMNodeId":102},
+                    {"nodeId":"name", "role":{"value":"textbox"}, "name":{"value":"Name"}, "backendDOMNodeId":103},
+                    {"nodeId":"choose", "role":{"value":"combobox"}, "name":{"value":"Choose"}, "backendDOMNodeId":104},
+                    {"nodeId":"month", "role":{"value":"DateTime"}, "name":{"value":"Month"}, "backendDOMNodeId":130}
                 ]}),
             ),
             (
@@ -242,6 +246,21 @@ fn snapshot_session(failed_method: Option<&'static str>, iframe: bool) {
                 .find(|node| node.backend_node_id == Some(11))
                 .unwrap();
             assert!(picker.capability.action_names().is_empty());
+            if failed_method == Some("DOM.getDocument") {
+                let actions = |backend_node_id: i64| {
+                    snapshot
+                        .nodes
+                        .iter()
+                        .find(|node| node.backend_node_id == Some(backend_node_id))
+                        .unwrap()
+                        .capability
+                        .action_names()
+                };
+                assert_eq!(actions(102), ["click"]);
+                assert_eq!(actions(103), ["click", "input_text"]);
+                assert_eq!(actions(104), ["click"]);
+                assert!(actions(130).is_empty());
+            }
         }
     }
 }

@@ -716,3 +716,21 @@ Job counting and compatibility rules; sparse status branches before full
 inventory/configuration JSON construction.
 
 Measured costs and direct-surface decisions: [model-call economy audit](model-call-economy-audit.md).
+
+### Guidance prose budgets
+
+Canonical ToolSpec descriptions have a 1536-character hard ceiling, not a target.
+The two builtin bootstrap protocol fields use the shared
+`BUILTIN_BOOTSTRAP_GUIDANCE_MAX_CHARS` ceiling of 1536 characters. This headroom
+preserves first-use, per-Project reuse, refresh, and authority distinctions;
+do not fill it with duplicated facts or enlarge ordinary descriptions by default.
+Startup/context envelope byte budgets and Skill/Plugin catalog/body limits remain
+independent resource contracts. Their truncation and continuation behavior must
+remain honest even when individual guidance fields fit their character ceilings.
+
+A retained startup catalog is selection metadata. It does not prove that a Skill
+body or a Plugin input schema/binding is retained. Reuse a complete applicable
+Skill body; reuse a described Plugin schema/binding for its exact target, without
+ritual reload/describe on every task. A projectBound binding cannot follow a
+Project switch. Refreshing observations never authorizes replay of an uncertain
+effect, and Window/Session continuity never proves model-context retention.

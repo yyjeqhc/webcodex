@@ -474,3 +474,23 @@ fn sparse_pending_receipts_rely_on_complete_static_scheduling_guidance() {
         }
     }
 }
+
+#[test]
+fn bootstrap_guidance_schema_allows_semantic_headroom_but_keeps_a_ceiling() {
+    use webcodex_core::runtime_contract::BUILTIN_BOOTSTRAP_GUIDANCE_MAX_CHARS;
+    let schema = workflow_schema();
+    let workflow = builtin_coding_workflow_projection(Default::default());
+    for field in ["bootstrap_reuse", "bootstrap_observations"] {
+        assert_eq!(
+            schema["properties"]["model_protocol"]["properties"][field]["maxLength"],
+            BUILTIN_BOOTSTRAP_GUIDANCE_MAX_CHARS
+        );
+        let mut at_bound = workflow.clone();
+        at_bound["model_protocol"][field] = json!("x".repeat(BUILTIN_BOOTSTRAP_GUIDANCE_MAX_CHARS));
+        validate_schema_instance_for_test(&at_bound, &schema).unwrap();
+        at_bound["model_protocol"][field] =
+            json!("x".repeat(BUILTIN_BOOTSTRAP_GUIDANCE_MAX_CHARS + 1));
+        assert!(validate_schema_instance_for_test(&at_bound, &schema).is_err());
+    }
+    validate_schema_instance_for_test(&workflow, &schema).unwrap();
+}

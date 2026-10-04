@@ -177,7 +177,16 @@ impl Database {
                     e.principal_correlation_kind, e.principal_correlation_id,
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible, e.http_status, e.ids_json
+                    e.window_continuity_eligible, e.http_status, e.ids_json,
+                    CASE WHEN json_valid(e.summary_json) THEN
+                      CASE json_extract(e.summary_json, '$.failure_expectation_result')
+                        WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
+                        WHEN 'matched_expected_result' THEN 'matched_expected_result'
+                        WHEN 'unexpected_failure' THEN 'unexpected_failure'
+                        WHEN 'expectation_mismatch' THEN 'expectation_mismatch'
+                        WHEN 'unexpected_success' THEN 'unexpected_success'
+                      END
+                    END
              FROM action_events e
              WHERE e.client_window_key = ?1
                AND e.window_started_at_ms IS NOT NULL
@@ -220,7 +229,16 @@ impl Database {
                     e.principal_correlation_kind, e.principal_correlation_id,
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible, e.http_status, e.ids_json
+                    e.window_continuity_eligible, e.http_status, e.ids_json,
+                    CASE WHEN json_valid(e.summary_json) THEN
+                      CASE json_extract(e.summary_json, '$.failure_expectation_result')
+                        WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
+                        WHEN 'matched_expected_result' THEN 'matched_expected_result'
+                        WHEN 'unexpected_failure' THEN 'unexpected_failure'
+                        WHEN 'expectation_mismatch' THEN 'expectation_mismatch'
+                        WHEN 'unexpected_success' THEN 'unexpected_success'
+                      END
+                    END
              FROM action_events e
              WHERE e.client_window_key = ?1
                AND e.principal_correlation_kind = ?2
@@ -257,7 +275,16 @@ impl Database {
                     e.principal_correlation_kind, e.principal_correlation_id,
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible, e.http_status, e.ids_json
+                    e.window_continuity_eligible, e.http_status, e.ids_json,
+                    CASE WHEN json_valid(e.summary_json) THEN
+                      CASE json_extract(e.summary_json, '$.failure_expectation_result')
+                        WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
+                        WHEN 'matched_expected_result' THEN 'matched_expected_result'
+                        WHEN 'unexpected_failure' THEN 'unexpected_failure'
+                        WHEN 'expectation_mismatch' THEN 'expectation_mismatch'
+                        WHEN 'unexpected_success' THEN 'unexpected_success'
+                      END
+                    END
              FROM action_events e";
         let mut records = match principal {
             Some((kind, id)) => {
@@ -338,7 +365,16 @@ impl Database {
                     e.principal_correlation_kind, e.principal_correlation_id,
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming, e.window_continuity_eligible, e.http_status,
-                    e.ids_json
+                    e.ids_json,
+                    CASE WHEN json_valid(e.summary_json) THEN
+                      CASE json_extract(e.summary_json, '$.failure_expectation_result')
+                        WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
+                        WHEN 'matched_expected_result' THEN 'matched_expected_result'
+                        WHEN 'unexpected_failure' THEN 'unexpected_failure'
+                        WHEN 'expectation_mismatch' THEN 'expectation_mismatch'
+                        WHEN 'unexpected_success' THEN 'unexpected_success'
+                      END
+                    END
              FROM action_events e JOIN selected s ON s.event_id = e.event_id
              ORDER BY e.window_ended_at_ms DESC, e.event_id DESC",
         )?;
@@ -356,8 +392,7 @@ impl Database {
     }
 
     /// Variant used only by feature-gated Code Mode Runtime Console dogfood.
-    /// The ordinary Window query above intentionally keeps its historical SQL
-    /// and does not read ActionAudit summary JSON.
+    /// The ordinary Window query extracts only the bounded expectation classification.
     pub fn list_window_activity_events_with_code_mode_composition(
         &self,
         window_key: &str,
@@ -378,7 +413,16 @@ impl Database {
                     e.principal_correlation_kind, e.principal_correlation_id,
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible, e.http_status, e.ids_json, e.summary_json
+                    e.window_continuity_eligible, e.http_status, e.ids_json,
+                    CASE WHEN json_valid(e.summary_json) THEN
+                      CASE json_extract(e.summary_json, '$.failure_expectation_result')
+                        WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
+                        WHEN 'matched_expected_result' THEN 'matched_expected_result'
+                        WHEN 'unexpected_failure' THEN 'unexpected_failure'
+                        WHEN 'expectation_mismatch' THEN 'expectation_mismatch'
+                        WHEN 'unexpected_success' THEN 'unexpected_success'
+                      END
+                    END, e.summary_json
              FROM action_events e
              WHERE e.client_window_key = ?1
                AND e.window_started_at_ms IS NOT NULL
@@ -396,11 +440,11 @@ impl Database {
                 drop(stmt);
                 let mut stmt = conn.prepare(&sql)?;
                 let records =
-                    collect_window_events(&conn, &mut stmt, params![window_key, limit], Some(22))?;
+                    collect_window_events(&conn, &mut stmt, params![window_key, limit], Some(23))?;
                 return Ok(records);
             }
         };
-        collect_window_event_rows(&conn, &mut rows, Some(22))
+        collect_window_event_rows(&conn, &mut rows, Some(23))
     }
 
     /// Latest authoritative Window/Session relation for diagnostic continuity.
@@ -668,6 +712,7 @@ fn collect_window_event_rows(
             operation: row.get(8)?,
             project: row.get(9)?,
             status: row.get(10)?,
+            failure_expectation_result: row.get(22)?,
             meaningful: row.get(11)?,
             async_job_id,
             observed_job_ids,
@@ -902,6 +947,43 @@ mod tests {
         );
         let projected = serde_json::to_value(&rows[0]).unwrap();
         assert!(projected.get("business_session_id").is_none());
+    }
+
+    #[test]
+    fn window_activity_expectation_projection_is_bounded_and_legacy_safe() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("expectations.db")).unwrap();
+        seed_session(&db);
+        for (index, (summary, expected)) in [
+            (
+                r#"{"failure_expectation_result":"matched_expected_failure"}"#,
+                Some("matched_expected_failure"),
+            ),
+            (
+                r#"{"failure_expectation_result":"unexpected_success"}"#,
+                Some("unexpected_success"),
+            ),
+            (r#"{"failure_expectation_result":"secret free text"}"#, None),
+            ("{}", None),
+            ("malformed", None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let window = format!("expectation-{index}");
+            let mut item = event(&window, &window, "alice", "agent:r:p", 1000);
+            item.summary_json = summary.to_string();
+            append(&db, item, &[]);
+            let rows = db
+                .list_window_activity_events(&window, Some(("username", "alice")), 10)
+                .unwrap();
+            assert_eq!(rows[0].failure_expectation_result.as_deref(), expected);
+            assert_eq!(rows[0].status, "success");
+            let rows = db
+                .list_window_activity_events_with_code_mode_composition(&window, None, 10)
+                .unwrap();
+            assert_eq!(rows[0].failure_expectation_result.as_deref(), expected);
+        }
     }
 
     #[test]

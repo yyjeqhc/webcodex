@@ -45,6 +45,92 @@ fn same_origin_document_uses_existing_control_admission() {
 }
 
 #[test]
+fn same_origin_iframe_withholds_disabled_and_read_only_effects() {
+    let tree = json!({"frameTree": {"frame": {"id":"top", "loaderId":"top-loader", "securityOrigin":"https://example.test"},
+        "childFrames":[{"frame":{"id":"child", "parentId":"top", "loaderId":"child-loader", "securityOrigin":"https://example.test"}}]}});
+    let root = json!({"nodeType":9,"backendNodeId":1,"children":[{"nodeType":1,"localName":"iframe","backendNodeId":2,"frameId":"child",
+    "contentDocument":{"nodeType":9,"backendNodeId":3,"children":[
+        {"nodeType":1,"localName":"input","backendNodeId":21,"attributes":["type","number","disabled",""]},
+        {"nodeType":1,"localName":"select","backendNodeId":22,"attributes":["disabled",""],"children":[
+            {"nodeType":1,"localName":"option","backendNodeId":23,"attributes":["value","alpha"]}
+        ]},
+        {"nodeType":1,"localName":"input","backendNodeId":24,"attributes":["type","text","readonly","readonly"]},
+        {"nodeType":1,"localName":"input","backendNodeId":25,"attributes":["type","text"]},
+        {"nodeType":1,"localName":"input","backendNodeId":26,"attributes":["type","number"]},
+        {"nodeType":1,"localName":"select","backendNodeId":27,"children":[
+            {"nodeType":1,"localName":"option","backendNodeId":28,"attributes":["value","beta"]}
+        ]}
+    ]}}]});
+    let ax = vec![
+        frame_state_ax("Qty", "spinbutton", 21, Some(true), None),
+        frame_state_ax("Pick", "combobox", 22, Some(true), None),
+        frame_state_ax("Alpha", "option", 23, None, None),
+        frame_state_ax("Notes", "textbox", 24, None, Some(true)),
+        frame_state_ax("Name", "textbox", 25, None, None),
+        frame_state_ax("Amount", "spinbutton", 26, Some(false), None),
+        frame_state_ax("Kind", "combobox", 27, None, None),
+        frame_state_ax("Beta", "option", 28, None, None),
+    ];
+    let docs = frame_documents(&tree, &root);
+    assert_eq!(docs.len(), 1);
+    let (nodes, _) = project_ax_nodes(&ax, Some(docs[0].1));
+    let node = |name: &str| {
+        nodes
+            .iter()
+            .find(|node| node.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("missing {name}"))
+    };
+    let actions = |name: &str| node(name).capability.action_names();
+    assert_eq!(node("Qty").disabled, Some(true));
+    assert!(actions("Qty").is_empty());
+    assert!(!node("Qty").capability.admits_any());
+    assert!(actions("Pick").is_empty());
+    assert!(!node("Pick").capability.admits_any());
+    assert!(actions("Alpha").is_empty());
+    assert!(!node("Alpha").select_choice);
+    assert_eq!(node("Notes").read_only, Some(true));
+    assert_eq!(actions("Notes"), ["click"]);
+    assert_eq!(node("Name").disabled, None);
+    assert_eq!(node("Name").read_only, None);
+    assert_eq!(actions("Name"), ["click", "input_text"]);
+    assert_eq!(node("Amount").disabled, Some(false));
+    assert_eq!(actions("Amount"), ["set_value"]);
+    assert_eq!(actions("Kind"), ["select_option"]);
+    assert!(node("Beta").select_choice);
+    assert!(actions("Beta").is_empty());
+    assert!(project_ax_nodes(&ax, Some(&root))
+        .0
+        .iter()
+        .all(|node| !node.capability.admits_any()));
+}
+
+fn frame_state_ax(
+    name: &str,
+    role: &str,
+    backend_node_id: i64,
+    disabled: Option<bool>,
+    read_only: Option<bool>,
+) -> Value {
+    let mut node = json!({
+        "nodeId": format!("ax-{name}"),
+        "role": {"value": role},
+        "name": {"value": name},
+        "backendDOMNodeId": backend_node_id
+    });
+    let mut properties = Vec::new();
+    if let Some(disabled) = disabled {
+        properties.push(json!({"name": "disabled", "value": {"value": disabled}}));
+    }
+    if let Some(read_only) = read_only {
+        properties.push(json!({"name": "readonly", "value": {"value": read_only}}));
+    }
+    if !properties.is_empty() {
+        node["properties"] = json!(properties);
+    }
+    node
+}
+
+#[test]
 fn cross_origin_opaque_missing_and_sandboxed_frames_fail_closed() {
     let (tree, root, _) = fixture();
     for origin in [

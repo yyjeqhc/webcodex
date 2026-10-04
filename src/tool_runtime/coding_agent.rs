@@ -847,13 +847,15 @@ impl ToolRuntime {
                     Ok(sequence) => (Some(sequence), false),
                     Err(TokenError::StaleEpoch) => (None, true),
                     Err(TokenError::Invalid) => {
+                        // Rejected locally after the binding was authorized.
+                        // The token failure says nothing about prompt dispatch.
                         return coding_agent_error(
                             "invalid_observation_token",
                             "observation token is invalid or belongs to another Run",
-                            "not_started",
+                            self.current_retained_execution_state(&binding).await,
                             RecoveryKind::FixInput,
                             Some(&run_id),
-                        )
+                        );
                     }
                 }
             }
@@ -916,7 +918,7 @@ impl ToolRuntime {
                 return coding_agent_error(
                     "coding_agent_runner_unavailable",
                     error,
-                    "outcome_unknown",
+                    self.current_retained_execution_state(&binding).await,
                     RecoveryKind::Reobserve,
                     Some(&run_id),
                 );
@@ -935,7 +937,7 @@ impl ToolRuntime {
                     return coding_agent_error(
                         "coding_agent_observe_timeout",
                         "timed out waiting for bounded CodingAgentRun observation",
-                        "outcome_unknown",
+                        self.current_retained_execution_state(&binding).await,
                         RecoveryKind::Reobserve,
                         Some(&run_id),
                     );
@@ -947,7 +949,7 @@ impl ToolRuntime {
                     return coding_agent_error(
                         "invalid_runner_response",
                         "Runner returned mismatched CodingAgentRun identity",
-                        "outcome_unknown",
+                        self.current_retained_execution_state(&binding).await,
                         RecoveryKind::Reconcile,
                         Some(&run_id),
                     );
@@ -970,7 +972,7 @@ impl ToolRuntime {
                         return coding_agent_error(
                             "invalid_runner_response",
                             "owning Runner instance changed while observation was in flight",
-                            "outcome_unknown",
+                            self.current_retained_execution_state(&binding).await,
                             RecoveryKind::Reconcile,
                             Some(&run_id),
                         )
@@ -979,7 +981,7 @@ impl ToolRuntime {
                         return coding_agent_error(
                             "coding_agent_runner_unavailable",
                             "exact Runner became unavailable",
-                            "outcome_unknown",
+                            self.current_retained_execution_state(&binding).await,
                             RecoveryKind::Reobserve,
                             Some(&run_id),
                         )
@@ -995,7 +997,7 @@ impl ToolRuntime {
                         return coding_agent_error(
                             "coding_agent_observation_conflict",
                             error,
-                            "outcome_unknown",
+                            self.current_retained_execution_state(&binding).await,
                             RecoveryKind::Reconcile,
                             Some(&run_id),
                         )
@@ -1009,7 +1011,24 @@ impl ToolRuntime {
                     token_reset,
                 ))
             }
-            _ => response_to_tool_error(response, Some(&run_id)),
+            _ => {
+                let retained = self.current_retained_binding(&binding).await;
+                if runner_reports_unretained_run(&response) && retained.snapshot.state.terminal() {
+                    return ToolResult::ok(observe_projection(
+                        CodingAgentObserveResult {
+                            run: retained.snapshot.clone(),
+                            events: Vec::new(),
+                            first_retained_sequence: 1,
+                            next_sequence: after_sequence.unwrap_or(0),
+                            has_more: false,
+                            history_lost: true,
+                        },
+                        self.coding_agent_runs.as_ref(),
+                        token_reset,
+                    ));
+                }
+                response_to_tool_error(response, Some(&run_id), &retained.snapshot)
+            }
         }
     }
 
@@ -1076,7 +1095,7 @@ impl ToolRuntime {
                 return coding_agent_error(
                     "coding_agent_cancel_unavailable",
                     error,
-                    "outcome_unknown",
+                    self.current_retained_execution_state(&binding).await,
                     RecoveryKind::Reobserve,
                     Some(&run_id),
                 )
@@ -1095,7 +1114,7 @@ impl ToolRuntime {
                     return coding_agent_error(
                         "coding_agent_cancel_timeout",
                         "cancel outcome is not yet authoritative; observe the same Run",
-                        "outcome_unknown",
+                        self.current_retained_execution_state(&binding).await,
                         RecoveryKind::Reobserve,
                         Some(&run_id),
                     );
@@ -1107,7 +1126,7 @@ impl ToolRuntime {
                     return coding_agent_error(
                         "invalid_runner_response",
                         "Runner returned mismatched CodingAgentRun identity",
-                        "outcome_unknown",
+                        self.current_retained_execution_state(&binding).await,
                         RecoveryKind::Reconcile,
                         Some(&run_id),
                     );
@@ -1124,7 +1143,7 @@ impl ToolRuntime {
                         return coding_agent_error(
                             "invalid_runner_response",
                             "owning Runner instance changed while cancellation was in flight",
-                            "outcome_unknown",
+                            self.current_retained_execution_state(&binding).await,
                             RecoveryKind::Reconcile,
                             Some(&run_id),
                         );
@@ -1140,7 +1159,7 @@ impl ToolRuntime {
                         return coding_agent_error(
                             "coding_agent_observation_conflict",
                             error,
-                            "outcome_unknown",
+                            self.current_retained_execution_state(&binding).await,
                             RecoveryKind::Reconcile,
                             Some(&run_id),
                         )
@@ -1149,7 +1168,10 @@ impl ToolRuntime {
                 self.record_coding_agent_lifecycle_if_needed(&run_id).await;
                 ToolResult::ok(cancel_projection(&merged.snapshot))
             }
-            _ => response_to_tool_error(response, Some(&run_id)),
+            _ => {
+                let retained = self.current_retained_binding(&binding).await;
+                response_to_tool_error(response, Some(&run_id), &retained.snapshot)
+            }
         }
     }
 
@@ -1331,6 +1353,19 @@ impl ToolRuntime {
             .bind(&client, run, None)
             .await
             .map(Some)
+    }
+
+    async fn current_retained_binding(&self, fallback: &ServerRunBinding) -> ServerRunBinding {
+        self.coding_agent_runs
+            .get(&fallback.snapshot.run_id)
+            .await
+            .filter(|current| run_matches_binding_identity(fallback, &current.snapshot))
+            .unwrap_or_else(|| fallback.clone())
+    }
+
+    async fn current_retained_execution_state(&self, fallback: &ServerRunBinding) -> &'static str {
+        let retained = self.current_retained_binding(fallback).await;
+        retained_run_execution_state(&retained.snapshot)
     }
 
     async fn current_agent_instance(
@@ -1862,17 +1897,30 @@ fn coding_agent_start_failure_from_response(
     }
 }
 
-fn response_to_tool_error(response: CodingAgentResponse, run_id: Option<&str>) -> ToolResult {
-    let dispatch = response.dispatch_state;
+fn runner_reports_unretained_run(response: &CodingAgentResponse) -> bool {
+    response
+        .error
+        .as_ref()
+        .is_some_and(|error| error.code == "unknown_coding_agent_run")
+}
+
+/// Observe and cancel do not admit a prompt. Until a newer snapshot is
+/// merged, the authorized Server binding is the Run execution fact.
+fn retained_run_execution_state(retained: &CodingAgentRunSnapshot) -> &'static str {
+    retained.execution_state.as_str()
+}
+
+fn response_to_tool_error(
+    response: CodingAgentResponse,
+    run_id: Option<&str>,
+    retained: &CodingAgentRunSnapshot,
+) -> ToolResult {
+    let execution_state = retained_run_execution_state(retained);
     let Some(error) = response.error else {
         return coding_agent_error(
             "invalid_runner_response",
             "Runner CodingAgentRun response contained no result",
-            if dispatch == CodingAgentDispatchState::NotStarted {
-                "not_started"
-            } else {
-                "outcome_unknown"
-            },
+            execution_state,
             RecoveryKind::Reobserve,
             run_id,
         );
@@ -1889,11 +1937,7 @@ fn response_to_tool_error(response: CodingAgentResponse, run_id: Option<&str>) -
     coding_agent_error(
         &error.code,
         error.message,
-        if dispatch == CodingAgentDispatchState::NotStarted {
-            "not_started"
-        } else {
-            "outcome_unknown"
-        },
+        execution_state,
         recovery,
         run_id,
     )
@@ -2301,5 +2345,822 @@ mod tests {
         buffered.update(b"webcodex-coding-agent-intent-v1\0");
         buffered.update(serde_json::to_vec(&canonical).unwrap());
         assert_eq!(a, format!("{:x}", buffered.finalize()));
+    }
+
+    use crate::runner_protocol::{
+        RunnerCapabilities, RunnerPollRequest, RunnerRegisterRequest, RunnerResultPayload,
+        RunnerResultRequest,
+    };
+    use crate::test_support::current_runner_capabilities;
+    use webcodex_core::coding_agent::{CodingAgentProvider, CodingAgentRunInventory};
+
+    fn owner_auth() -> AuthContext {
+        AuthContext {
+            user_id: Some("user-retained".to_string()),
+            username: Some("owner-retained".to_string()),
+            ..AuthContext::new(AuthKind::ApiToken)
+        }
+    }
+
+    fn owned_snapshot(
+        run_id: &str,
+        state: CodingAgentRunState,
+        auth: Option<&AuthContext>,
+    ) -> CodingAgentRunSnapshot {
+        let authority = authority_fingerprint(&stable_principal(auth).unwrap());
+        let mut binding =
+            test_server_binding(run_id.to_string(), state.clone(), Utc::now().timestamp());
+        binding.snapshot.authority_fingerprint = authority;
+        binding.snapshot.observation_revision = 1;
+        match state {
+            CodingAgentRunState::Lost => {
+                binding.snapshot.execution_state = CodingAgentExecutionState::OutcomeUnknown;
+                binding.snapshot.terminal = Some(CodingAgentTerminal {
+                    stop_reason: None,
+                    error_code: Some("runner_restart_uncertain".to_string()),
+                    message: Some("outcome is uncertain".to_string()),
+                    completed_at: binding.snapshot.updated_at,
+                });
+            }
+            CodingAgentRunState::Failed => {
+                binding.snapshot.execution_state = CodingAgentExecutionState::NotStarted;
+                binding.snapshot.terminal = Some(CodingAgentTerminal {
+                    stop_reason: None,
+                    error_code: Some("coding_agent_setup_failed".to_string()),
+                    message: Some("prompt was not dispatched".to_string()),
+                    completed_at: binding.snapshot.updated_at,
+                });
+            }
+            CodingAgentRunState::Starting => {
+                binding.snapshot.execution_state = CodingAgentExecutionState::NotStarted;
+                binding.snapshot.terminal = None;
+            }
+            _ => {}
+        }
+        binding.snapshot
+    }
+
+    async fn bind_snapshot(runtime: &ToolRuntime, snapshot: CodingAgentRunSnapshot) {
+        runtime
+            .coding_agent_runs
+            .bind(&test_shell_client(), snapshot, None)
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn retained_execution_state_ignores_control_call_dispatch() {
+        let started = test_server_binding(
+            "wc_agent_run_dispatch_started".to_string(),
+            CodingAgentRunState::Running,
+            1,
+        );
+        assert_eq!(retained_run_execution_state(&started.snapshot), "started");
+
+        let mut pre_prompt = started.snapshot.clone();
+        pre_prompt.execution_state = CodingAgentExecutionState::NotStarted;
+        assert_eq!(retained_run_execution_state(&pre_prompt), "not_started");
+
+        let mut uncertain = started.snapshot.clone();
+        uncertain.execution_state = CodingAgentExecutionState::OutcomeUnknown;
+        assert_eq!(retained_run_execution_state(&uncertain), "outcome_unknown");
+
+        let completed = test_server_binding(
+            "wc_agent_run_dispatch_completed".to_string(),
+            CodingAgentRunState::Completed,
+            1,
+        );
+        assert_eq!(
+            retained_run_execution_state(&completed.snapshot),
+            "completed"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_observation_token_preserves_retained_execution_state() {
+        let runtime = ToolRuntime::new_for_tests();
+        let cases = [
+            (
+                "wc_agent_run_token_started",
+                CodingAgentRunState::Running,
+                "started",
+            ),
+            (
+                "wc_agent_run_token_completed",
+                CodingAgentRunState::Completed,
+                "completed",
+            ),
+            (
+                "wc_agent_run_token_lost",
+                CodingAgentRunState::Lost,
+                "outcome_unknown",
+            ),
+            (
+                "wc_agent_run_token_pre_prompt",
+                CodingAgentRunState::Failed,
+                "not_started",
+            ),
+        ];
+        for (run_id, state, execution_state) in cases {
+            bind_snapshot(&runtime, owned_snapshot(run_id, state.clone(), None)).await;
+            let result = runtime
+                .coding_agent_observe(
+                    run_id.to_string(),
+                    Some("not-a-token".to_string()),
+                    None,
+                    None,
+                )
+                .await;
+            assert!(!result.success, "{run_id}: {:?}", result.output);
+            assert_eq!(result.output["error_kind"], "invalid_observation_token");
+            assert_eq!(result.output["recovery_kind"], "fix_input");
+            assert_eq!(
+                result.output["execution_state"], execution_state,
+                "{run_id} must keep the retained execution state"
+            );
+            assert_eq!(
+                runtime
+                    .coding_agent_runs
+                    .get(run_id)
+                    .await
+                    .unwrap()
+                    .snapshot
+                    .state,
+                state
+            );
+        }
+
+        let missing = runtime
+            .coding_agent_observe(
+                "wc_agent_run_token_missing".to_string(),
+                Some("not-a-token".to_string()),
+                None,
+                None,
+            )
+            .await;
+        assert!(!missing.success);
+        assert_eq!(missing.output["error_kind"], "unknown_coding_agent_run");
+        assert_eq!(missing.output["execution_state"], "not_started");
+        assert_eq!(missing.output["recovery_kind"], "reobserve");
+
+        let foreign_auth = owner_auth();
+        let foreign = runtime
+            .coding_agent_observe(
+                "wc_agent_run_token_started".to_string(),
+                Some("not-a-token".to_string()),
+                None,
+                Some(&foreign_auth),
+            )
+            .await;
+        assert!(!foreign.success);
+        assert_eq!(foreign.output["error_kind"], "unknown_coding_agent_run");
+        assert_eq!(foreign.output["execution_state"], "not_started");
+        assert_eq!(foreign.output["recovery_kind"], "reobserve");
+    }
+
+    async fn register_owned_runner(runtime: &ToolRuntime, owner: &str) {
+        runtime
+            .runner_registry
+            .register(RunnerRegisterRequest {
+                computer_session_availability: None,
+                process_started_at: Some(1_700_000_000),
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: Some(vec![CodingAgentProvider {
+                    provider_id: "codex".to_string(),
+                    provider_instance_id: "provider".to_string(),
+                    name: "Codex".to_string(),
+                }]),
+                coding_agent_inventory: Some(CodingAgentRunInventory { runs: Vec::new() }),
+                client_id: "client".to_string(),
+                runner_instance_id: "instance".to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                display_name: Some("retained-run runner".to_string()),
+                owner: Some(owner.to_string()),
+                hostname: None,
+                host_context: None,
+                capabilities: current_runner_capabilities(RunnerCapabilities {
+                    coding_agent_runs: true,
+                    ..Default::default()
+                }),
+                policy: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    async fn answer_next_runner_request(runtime: &ToolRuntime, response: CodingAgentResponse) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let request = loop {
+            if let Some(request) = runtime
+                .runner_registry
+                .poll(RunnerPollRequest {
+                    client_id: "client".to_string(),
+                    runner_instance_id: "instance".to_string(),
+                })
+                .await
+                .unwrap()
+            {
+                break request;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("CodingAgentRun request was not queued");
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        };
+        runtime
+            .runner_registry
+            .complete(RunnerResultPayload {
+                result: RunnerResultRequest {
+                    client_id: "client".to_string(),
+                    runner_instance_id: "instance".to_string(),
+                    request_id: request.request_id,
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    stdout_truncated: false,
+                    stderr_truncated: false,
+                    duration_ms: None,
+                    error: None,
+                },
+                command_execution_state: None,
+                mcp_gateway: None,
+                plugin_gateway: None,
+                coding_agent: Some(response),
+            })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn runner_not_retained_answer_keeps_retained_run_truth() {
+        let runtime = ToolRuntime::new_for_tests();
+        let auth = owner_auth();
+        register_owned_runner(&runtime, "owner-retained").await;
+
+        let started_id = "wc_agent_run_live_missing";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(started_id, CodingAgentRunState::Running, Some(&auth)),
+        )
+        .await;
+        let mut observe = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            async move {
+                runtime
+                    .coding_agent_observe(started_id.to_string(), None, Some(0), Some(&auth))
+                    .await
+            }
+        });
+        tokio::select! {
+            result = &mut observe => panic!("observe returned before the runner answered: {result:?}"),
+            _ = answer_next_runner_request(
+                &runtime,
+                CodingAgentResponse::error(
+                    CodingAgentDispatchState::NotStarted,
+                    "unknown_coding_agent_run",
+                    "CodingAgentRun is not retained by this Runner",
+                    Some("not_found"),
+                    Some("reobserve"),
+                ),
+            ) => {}
+        }
+        let live = observe.await.unwrap();
+        assert!(!live.success, "{:?}", live.output);
+        assert_eq!(live.output["error_kind"], "unknown_coding_agent_run");
+        assert_eq!(live.output["execution_state"], "started");
+        assert_eq!(live.output["recovery_kind"], "reobserve");
+        assert_eq!(
+            runtime
+                .coding_agent_runs
+                .get(started_id)
+                .await
+                .unwrap()
+                .snapshot
+                .state,
+            CodingAgentRunState::Running
+        );
+
+        let completed_id = "wc_agent_run_terminal_missing";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(completed_id, CodingAgentRunState::Completed, Some(&auth)),
+        )
+        .await;
+        let mut observe = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            async move {
+                runtime
+                    .coding_agent_observe(completed_id.to_string(), None, Some(0), Some(&auth))
+                    .await
+            }
+        });
+        tokio::select! {
+            result = &mut observe => panic!("terminal observe returned before the runner answered: {result:?}"),
+            _ = answer_next_runner_request(
+                &runtime,
+                CodingAgentResponse::error(
+                    CodingAgentDispatchState::NotStarted,
+                    "unknown_coding_agent_run",
+                    "CodingAgentRun is not retained by this Runner",
+                    Some("not_found"),
+                    Some("reobserve"),
+                ),
+            ) => {}
+        }
+        let terminal = observe.await.unwrap();
+        assert!(terminal.success, "{:?}", terminal.output);
+        assert_eq!(terminal.output["state"], "completed");
+        assert_eq!(terminal.output["execution_state"], "completed");
+        assert_eq!(terminal.output["history_lost"], true);
+        assert_eq!(terminal.output["recovery_kind"], "none");
+        assert_eq!(
+            runtime
+                .coding_agent_runs
+                .get(completed_id)
+                .await
+                .unwrap()
+                .snapshot
+                .state,
+            CodingAgentRunState::Completed
+        );
+
+        let cursor_id = "wc_agent_run_bad_cursor";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(cursor_id, CodingAgentRunState::Running, Some(&auth)),
+        )
+        .await;
+        let mut observe = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            async move {
+                runtime
+                    .coding_agent_observe(cursor_id.to_string(), None, Some(0), Some(&auth))
+                    .await
+            }
+        });
+        tokio::select! {
+            result = &mut observe => panic!("cursor observe returned before the runner answered: {result:?}"),
+            _ = answer_next_runner_request(
+                &runtime,
+                CodingAgentResponse::error(
+                    CodingAgentDispatchState::NotStarted,
+                    "invalid_coding_agent_observation_cursor",
+                    "observation cursor is ahead of the retained Run",
+                    Some("invalid_input"),
+                    Some("fix_input"),
+                ),
+            ) => {}
+        }
+        let cursor = observe.await.unwrap();
+        assert!(!cursor.success, "{:?}", cursor.output);
+        assert_eq!(
+            cursor.output["error_kind"],
+            "invalid_coding_agent_observation_cursor"
+        );
+        assert_eq!(cursor.output["execution_state"], "started");
+        assert_eq!(cursor.output["recovery_kind"], "fix_input");
+
+        let uncertain_id = "wc_agent_run_pre_prompt_uncertain";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(uncertain_id, CodingAgentRunState::Starting, Some(&auth)),
+        )
+        .await;
+        let mut observe = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            async move {
+                runtime
+                    .coding_agent_observe(uncertain_id.to_string(), None, Some(0), Some(&auth))
+                    .await
+            }
+        });
+        tokio::select! {
+            result = &mut observe => panic!("uncertain observe returned before the runner answered: {result:?}"),
+            _ = answer_next_runner_request(
+                &runtime,
+                CodingAgentResponse::error(
+                    CodingAgentDispatchState::OutcomeUnknown,
+                    "coding_agent_durable_state_unavailable",
+                    "durable CodingAgentRun state could not be read",
+                    Some("durable_state_unavailable"),
+                    Some("reconcile"),
+                ),
+            ) => {}
+        }
+        let uncertain = observe.await.unwrap();
+        assert!(!uncertain.success, "{:?}", uncertain.output);
+        assert_eq!(
+            uncertain.output["error_kind"],
+            "coding_agent_durable_state_unavailable"
+        );
+        assert_eq!(uncertain.output["execution_state"], "not_started");
+        assert_eq!(uncertain.output["recovery_kind"], "reconcile");
+        assert_eq!(
+            runtime
+                .coding_agent_runs
+                .get(uncertain_id)
+                .await
+                .unwrap()
+                .snapshot
+                .execution_state,
+            CodingAgentExecutionState::NotStarted
+        );
+
+        let lost_id = "wc_agent_run_lost_missing";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(lost_id, CodingAgentRunState::Lost, Some(&auth)),
+        )
+        .await;
+        let mut observe = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            async move {
+                runtime
+                    .coding_agent_observe(lost_id.to_string(), None, Some(0), Some(&auth))
+                    .await
+            }
+        });
+        tokio::select! {
+            result = &mut observe => panic!("lost observe returned before the runner answered: {result:?}"),
+            _ = answer_next_runner_request(
+                &runtime,
+                CodingAgentResponse::error(
+                    CodingAgentDispatchState::NotStarted,
+                    "unknown_coding_agent_run",
+                    "CodingAgentRun is not retained by this Runner",
+                    Some("not_found"),
+                    Some("reobserve"),
+                ),
+            ) => {}
+        }
+        let lost = observe.await.unwrap();
+        assert!(lost.success, "{:?}", lost.output);
+        assert_eq!(lost.output["state"], "lost");
+        assert_eq!(lost.output["execution_state"], "outcome_unknown");
+        assert_eq!(lost.output["history_lost"], true);
+        assert_eq!(lost.output["recovery_kind"], "reconcile");
+        assert_eq!(
+            runtime
+                .coding_agent_runs
+                .get(lost_id)
+                .await
+                .unwrap()
+                .snapshot
+                .state,
+            CodingAgentRunState::Lost
+        );
+
+        let pre_prompt_terminal_id = "wc_agent_run_pre_prompt_terminal_missing";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(
+                pre_prompt_terminal_id,
+                CodingAgentRunState::Failed,
+                Some(&auth),
+            ),
+        )
+        .await;
+        let mut observe = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            async move {
+                runtime
+                    .coding_agent_observe(
+                        pre_prompt_terminal_id.to_string(),
+                        None,
+                        Some(0),
+                        Some(&auth),
+                    )
+                    .await
+            }
+        });
+        tokio::select! {
+            result = &mut observe => panic!("pre-prompt terminal observe returned before the runner answered: {result:?}"),
+            _ = answer_next_runner_request(
+                &runtime,
+                CodingAgentResponse::error(
+                    CodingAgentDispatchState::NotStarted,
+                    "unknown_coding_agent_run",
+                    "CodingAgentRun is not retained by this Runner",
+                    Some("not_found"),
+                    Some("reobserve"),
+                ),
+            ) => {}
+        }
+        let pre_prompt_terminal = observe.await.unwrap();
+        assert!(
+            pre_prompt_terminal.success,
+            "{:?}",
+            pre_prompt_terminal.output
+        );
+        assert_eq!(pre_prompt_terminal.output["state"], "failed");
+        assert_eq!(pre_prompt_terminal.output["execution_state"], "not_started");
+        assert_eq!(pre_prompt_terminal.output["history_lost"], true);
+        assert_eq!(pre_prompt_terminal.output["recovery_kind"], "none");
+
+        let mut live_unknown = owned_snapshot(
+            "wc_agent_run_live_outcome_unknown",
+            CodingAgentRunState::Running,
+            Some(&auth),
+        );
+        live_unknown.execution_state = CodingAgentExecutionState::OutcomeUnknown;
+        let live_unknown_id = live_unknown.run_id.clone();
+        bind_snapshot(&runtime, live_unknown).await;
+        let mut observe = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            async move {
+                runtime
+                    .coding_agent_observe(live_unknown_id.clone(), None, Some(0), Some(&auth))
+                    .await
+            }
+        });
+        tokio::select! {
+            result = &mut observe => panic!("nonterminal outcome_unknown observe returned before the runner answered: {result:?}"),
+            _ = answer_next_runner_request(
+                &runtime,
+                CodingAgentResponse::error(
+                    CodingAgentDispatchState::NotStarted,
+                    "unknown_coding_agent_run",
+                    "CodingAgentRun is not retained by this Runner",
+                    Some("not_found"),
+                    Some("reobserve"),
+                ),
+            ) => {}
+        }
+        let live_unknown_result = observe.await.unwrap();
+        assert!(
+            !live_unknown_result.success,
+            "{:?}",
+            live_unknown_result.output
+        );
+        assert_eq!(
+            live_unknown_result.output["error_kind"],
+            "unknown_coding_agent_run"
+        );
+        assert_eq!(
+            live_unknown_result.output["execution_state"],
+            "outcome_unknown"
+        );
+        assert_eq!(live_unknown_result.output["recovery_kind"], "reobserve");
+        assert!(live_unknown_result.output.get("history_lost").is_none());
+
+        let cancel_pre_prompt_id = "wc_agent_run_cancel_pre_prompt";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(
+                cancel_pre_prompt_id,
+                CodingAgentRunState::Starting,
+                Some(&auth),
+            ),
+        )
+        .await;
+        let mut cancel = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            async move {
+                runtime
+                    .coding_agent_cancel(cancel_pre_prompt_id.to_string(), Some(&auth))
+                    .await
+            }
+        });
+        tokio::select! {
+            result = &mut cancel => panic!("pre-prompt cancel returned before the runner answered: {result:?}"),
+            _ = answer_next_runner_request(
+                &runtime,
+                CodingAgentResponse::error(
+                    CodingAgentDispatchState::OutcomeUnknown,
+                    "coding_agent_cancel_outcome_unknown",
+                    "cancel response was not correlated",
+                    Some("transport"),
+                    Some("reconcile"),
+                ),
+            ) => {}
+        }
+        let cancel_pre_prompt = cancel.await.unwrap();
+        assert!(!cancel_pre_prompt.success, "{:?}", cancel_pre_prompt.output);
+        assert_eq!(
+            cancel_pre_prompt.output["error_kind"],
+            "coding_agent_cancel_outcome_unknown"
+        );
+        assert_eq!(cancel_pre_prompt.output["execution_state"], "not_started");
+        assert_eq!(cancel_pre_prompt.output["recovery_kind"], "reconcile");
+        assert_eq!(
+            runtime
+                .coding_agent_runs
+                .get(cancel_pre_prompt_id)
+                .await
+                .unwrap()
+                .snapshot
+                .execution_state,
+            CodingAgentExecutionState::NotStarted
+        );
+
+        let cancel_id = "wc_agent_run_cancel_live";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(cancel_id, CodingAgentRunState::Running, Some(&auth)),
+        )
+        .await;
+        let mut cancel = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            async move {
+                runtime
+                    .coding_agent_cancel(cancel_id.to_string(), Some(&auth))
+                    .await
+            }
+        });
+        tokio::select! {
+            result = &mut cancel => panic!("cancel returned before the runner answered: {result:?}"),
+            _ = answer_next_runner_request(
+                &runtime,
+                CodingAgentResponse::error(
+                    CodingAgentDispatchState::NotStarted,
+                    "unknown_coding_agent_run",
+                    "CodingAgentRun is not retained by this Runner",
+                    Some("not_found"),
+                    Some("reobserve"),
+                ),
+            ) => {}
+        }
+        let cancelled = cancel.await.unwrap();
+        assert!(!cancelled.success, "{:?}", cancelled.output);
+        assert_eq!(cancelled.output["error_kind"], "unknown_coding_agent_run");
+        assert_eq!(cancelled.output["execution_state"], "started");
+        assert_eq!(cancelled.output["recovery_kind"], "reobserve");
+        assert_eq!(
+            runtime
+                .coding_agent_runs
+                .get(cancel_id)
+                .await
+                .unwrap()
+                .snapshot
+                .state,
+            CodingAgentRunState::Running
+        );
+    }
+
+    #[tokio::test]
+    async fn control_error_uses_newer_server_retained_execution_state() {
+        let runtime = ToolRuntime::new_for_tests();
+        let auth = owner_auth();
+        register_owned_runner(&runtime, "owner-retained").await;
+        let run_id = "wc_agent_run_concurrent_retained_advance";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(run_id, CodingAgentRunState::Starting, Some(&auth)),
+        )
+        .await;
+
+        let observe = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            async move {
+                runtime
+                    .coding_agent_observe(run_id.to_string(), None, Some(0), Some(&auth))
+                    .await
+            }
+        });
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let request = loop {
+            if let Some(request) = runtime
+                .runner_registry
+                .poll(RunnerPollRequest {
+                    client_id: "client".to_string(),
+                    runner_instance_id: "instance".to_string(),
+                })
+                .await
+                .unwrap()
+            {
+                break request;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("CodingAgentRun request was not queued");
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        };
+
+        let binding = runtime.coding_agent_runs.get(run_id).await.unwrap();
+        let mut advanced = binding.snapshot.clone();
+        advanced.state = CodingAgentRunState::Running;
+        advanced.execution_state = CodingAgentExecutionState::Started;
+        advanced.observation_revision += 1;
+        advanced.updated_at += 1;
+        runtime
+            .coding_agent_runs
+            .merge_bound_snapshot(&binding, advanced)
+            .await
+            .unwrap();
+
+        runtime
+            .runner_registry
+            .complete(RunnerResultPayload {
+                result: RunnerResultRequest {
+                    client_id: "client".to_string(),
+                    runner_instance_id: "instance".to_string(),
+                    request_id: request.request_id,
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    stdout_truncated: false,
+                    stderr_truncated: false,
+                    duration_ms: None,
+                    error: None,
+                },
+                command_execution_state: None,
+                mcp_gateway: None,
+                plugin_gateway: None,
+                coding_agent: Some(CodingAgentResponse::error(
+                    CodingAgentDispatchState::NotStarted,
+                    "unknown_coding_agent_run",
+                    "CodingAgentRun is not retained by this Runner",
+                    Some("not_found"),
+                    Some("reobserve"),
+                )),
+            })
+            .await
+            .unwrap();
+
+        let result = observe.await.unwrap();
+        assert!(!result.success, "{:?}", result.output);
+        assert_eq!(result.output["error_kind"], "unknown_coding_agent_run");
+        assert_eq!(
+            result.output["execution_state"], "started",
+            "control errors must report newer Server-retained Run truth when it advanced in flight"
+        );
+    }
+
+    #[tokio::test]
+    async fn control_call_transport_failure_keeps_retained_execution_state() {
+        let runtime = ToolRuntime::new_for_tests();
+        let started_id = "wc_agent_run_observe_unavailable_started";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(started_id, CodingAgentRunState::Running, None),
+        )
+        .await;
+        let started = runtime
+            .coding_agent_observe(started_id.to_string(), None, Some(0), None)
+            .await;
+        assert!(!started.success, "{:?}", started.output);
+        assert_eq!(
+            started.output["error_kind"],
+            "coding_agent_runner_unavailable"
+        );
+        assert_eq!(started.output["execution_state"], "started");
+        assert_eq!(started.output["recovery_kind"], "reobserve");
+
+        let pre_prompt_id = "wc_agent_run_observe_unavailable_pre_prompt";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(pre_prompt_id, CodingAgentRunState::Starting, None),
+        )
+        .await;
+        let pre_prompt = runtime
+            .coding_agent_observe(pre_prompt_id.to_string(), None, Some(0), None)
+            .await;
+        assert!(!pre_prompt.success, "{:?}", pre_prompt.output);
+        assert_eq!(
+            pre_prompt.output["error_kind"],
+            "coding_agent_runner_unavailable"
+        );
+        assert_eq!(pre_prompt.output["execution_state"], "not_started");
+        assert_eq!(pre_prompt.output["recovery_kind"], "reobserve");
+        assert_eq!(
+            runtime
+                .coding_agent_runs
+                .get(pre_prompt_id)
+                .await
+                .unwrap()
+                .snapshot
+                .execution_state,
+            CodingAgentExecutionState::NotStarted
+        );
+
+        let cancel_id = "wc_agent_run_cancel_unavailable_pre_prompt";
+        bind_snapshot(
+            &runtime,
+            owned_snapshot(cancel_id, CodingAgentRunState::Starting, None),
+        )
+        .await;
+        let cancel = runtime
+            .coding_agent_cancel(cancel_id.to_string(), None)
+            .await;
+        assert!(!cancel.success, "{:?}", cancel.output);
+        assert_eq!(
+            cancel.output["error_kind"],
+            "coding_agent_cancel_unavailable"
+        );
+        assert_eq!(cancel.output["execution_state"], "not_started");
+        assert_eq!(cancel.output["recovery_kind"], "reobserve");
     }
 }

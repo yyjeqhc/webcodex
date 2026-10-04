@@ -81,3 +81,26 @@ describe("Runtime usability", () => {
     expect(screen.getByText("Disabled")).toBeTruthy();
   });
 });
+
+it("keeps execution facts separate from expectation matches", () => {
+  const cases = [
+    ["failed", "matched_expected_failure", "Failed · Expected result", "good"],
+    ["failed", "matched_expected_result", "Failed · Expected result", "good"],
+    ["success", "unexpected_success", "Succeeded · Expectation not met", "warn"],
+    ["failed", "expectation_mismatch", "Failed · Expectation not met", "warn"],
+    ["failed", undefined, "Failed", "warn"],
+    ["success", undefined, "Succeeded", "good"],
+  ];
+  const detail = windowDetail({ active_requests: [], activity: cases.map(([status, expectation], index) => ({
+    status: status!, failure_expectation_result: expectation, started_at_ms: index + 1,
+    ended_at_ms: index + 2, duration_ms: 1, method: "tools/call", meaningful: true,
+    workflow_sessions: [],
+  })) });
+  const { container } = render(<WindowActivityFeed detail={detail} projects={[]} language="en" />);
+  const pills = [...container.querySelectorAll(".window-call-card .status-pill")].reverse();
+  expect(pills).toHaveLength(cases.length);
+  cases.forEach(([, , label, tone], index) => {
+    expect(pills[index].textContent).toBe(label);
+    expect(pills[index].classList.contains(tone!)).toBe(true);
+  });
+});

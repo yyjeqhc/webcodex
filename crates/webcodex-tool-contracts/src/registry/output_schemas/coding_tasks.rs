@@ -17,7 +17,8 @@ use super::files::{
 };
 #[cfg(any(test, feature = "root-test-support"))]
 use webcodex_core::runtime_contract::{
-    BUILTIN_CODING_WORKFLOW_CONTRACT, BUILTIN_CODING_WORKFLOW_VERSION,
+    BUILTIN_BOOTSTRAP_GUIDANCE_MAX_CHARS, BUILTIN_CODING_WORKFLOW_CONTRACT,
+    BUILTIN_CODING_WORKFLOW_VERSION,
 };
 
 fn finish_changes_schema() -> Value {
@@ -603,8 +604,8 @@ fn startup_workflow_schema() -> Value {
                         "window_reply": {"type": "string", "maxLength": 720},
                         "session_message_resolution": {"type": "string", "maxLength": 480},
                         "context_sidecar": {"type": "string", "maxLength": 320},
-                        "bootstrap_reuse": {"type": "string", "maxLength": 1024},
-                        "bootstrap_observations": {"type": "string", "maxLength": 1024},
+                        "bootstrap_reuse": {"type": "string", "maxLength": BUILTIN_BOOTSTRAP_GUIDANCE_MAX_CHARS},
+                        "bootstrap_observations": {"type": "string", "maxLength": BUILTIN_BOOTSTRAP_GUIDANCE_MAX_CHARS},
                         "control_sidecars": {"type": "string", "maxLength": 640},
                         "runner_targeting": {"type": "string", "maxLength": 320},
                         "persistent_shell": {"type": "string", "maxLength": 320},

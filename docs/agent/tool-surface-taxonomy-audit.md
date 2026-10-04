@@ -128,6 +128,11 @@ The no-Apps byte ceilings are tightened from 77/79/88 kB to 68/70/79 kB;
 existing independently admitted App and experimental-Code-Mode allowances remain.
 App-only descriptors contribute to the Apps-enabled inventory; not every
 advertised descriptor is an ordinary model-callable tool.
+The current regression test makes that distinction explicit: its model-visible
+projection excludes App-only `ui.visibility=["app"]` descriptors and Host-only
+`_meta`/title presentation metadata, while a separate coarse transport-overhead guard
+still bounds the complete serialized MCP response. Raw App transport bytes are not a
+model-context budget.
 
 The regression suite checks complete/unique/sorted category membership, category
 filter parity, admitted-only extension projection, exact gateway contracts,

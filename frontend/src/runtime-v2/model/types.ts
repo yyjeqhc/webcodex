@@ -276,6 +276,7 @@ export type WindowActivitySession = {
 };
 
 export type WindowActivity = {
+  failure_expectation_result?: string;
   started_at_ms: number;
   ended_at_ms: number;
   duration_ms: number;

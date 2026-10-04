@@ -3144,6 +3144,14 @@ pub(super) async fn handle_call(
     }
     if app_enabled {
         presentation::attach_result_app_presentation(&params.name, &mut result);
+        if let (Some(expectation), Some(presentation)) = (
+            outcome.correlation.failure_expectation_result.as_ref(),
+            result
+                .pointer_mut("/_meta/webcodex~1presentation")
+                .and_then(Value::as_object_mut),
+        ) {
+            presentation.insert("failure_expectation_result".to_string(), json!(expectation));
+        }
     }
     let model_ergonomics = model_ergonomics_completion.as_ref().and_then(|completion| {
         result

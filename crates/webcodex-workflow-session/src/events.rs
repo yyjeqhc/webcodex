@@ -82,9 +82,17 @@ pub(super) fn is_valid_logical_invocation_role(value: &str) -> bool {
 /// recorder/business duplicates are collapsed only inside the supplied Session
 /// slice; legacy events without complete correlation remain independent facts.
 pub fn canonical_tool_call_finished_events(events: &[SessionEvent]) -> Vec<&SessionEvent> {
+    canonical_tool_call_finished_event_refs(events.iter())
+}
+
+// The store owns Arc-backed deques. Borrow their events instead of cloning the
+// entire retained ledger solely to satisfy the slice-shaped public API.
+pub(super) fn canonical_tool_call_finished_event_refs<'a>(
+    events: impl IntoIterator<Item = &'a SessionEvent>,
+) -> Vec<&'a SessionEvent> {
     let mut selected = Vec::<(usize, &SessionEvent)>::new();
     let mut correlated = HashMap::<&str, Vec<(usize, &SessionEvent)>>::new();
-    for (event_index, event) in events.iter().enumerate() {
+    for (event_index, event) in events.into_iter().enumerate() {
         if event.kind != "tool_call_finished" {
             continue;
         }

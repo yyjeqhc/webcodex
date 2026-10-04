@@ -83,6 +83,8 @@ mod writer;
 use writer::LedgerWriterGuard;
 
 #[cfg(test)]
+mod borrowed_projection_tests;
+#[cfg(test)]
 mod scale_tests;
 
 #[derive(Debug, Clone)]
@@ -751,18 +753,15 @@ impl SessionStore {
     /// ledger and each event's changed-path projection are known complete.
     pub fn retained_changed_path_evidence(&self, session_id: &str) -> Option<(Vec<String>, bool)> {
         self.with_record_for_query(session_id, |record, _cold| {
-            let retained_events = record
-                .events
-                .iter()
-                .map(|event| event.as_ref().clone())
-                .collect::<Vec<_>>();
             let mut paths = BTreeSet::new();
-            let mut complete = record.events_observed <= retained_events.len() as u64;
+            let mut complete = record.events_observed <= record.events.len() as u64;
             // Every persisted event sanitizes changed_paths to MAX_INPUT_ARRAY_ITEMS,
             // and runtime audit arguments can already be bounded before the Store
             // observes them. Equality to that durable bound therefore cannot prove
             // the original path set was complete, even while the Session is hot.
-            for event in super::events::canonical_tool_call_finished_events(&retained_events) {
+            for event in super::events::canonical_tool_call_finished_event_refs(
+                record.events.iter().map(Arc::as_ref),
+            ) {
                 // Path attribution is consequence evidence, not an attempted-write
                 // list. A failed/no-op edit can name the same path without proving
                 // that this Session caused the current dirty state.
@@ -2626,12 +2625,9 @@ fn summarize_record(
     let limit = limit
         .unwrap_or(DEFAULT_SUMMARY_LIMIT)
         .clamp(0, MAX_SUMMARY_LIMIT);
-    let retained_events = record
-        .events
-        .iter()
-        .map(|event| event.as_ref().clone())
-        .collect::<Vec<_>>();
-    let finished_events = super::events::canonical_tool_call_finished_events(&retained_events);
+    let finished_events = super::events::canonical_tool_call_finished_event_refs(
+        record.events.iter().map(Arc::as_ref),
+    );
     let counts = SessionCounts {
         tool_calls: finished_events.len(),
         succeeded: finished_events

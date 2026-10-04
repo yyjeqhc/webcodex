@@ -1536,11 +1536,26 @@ pub(super) enum McpResourceToolResultAdaptation {
 pub(super) fn adapt_tool_result(
     tool_name: &str,
     artifact_presentation: ProjectArtifactPresentationMode,
-    result: ToolResult,
+    mut result: ToolResult,
     context: McpResourceToolCallContext,
     text_json_compat: bool,
     result_presentation: McpToolResultPresentation,
 ) -> McpResourceToolResultAdaptation {
+    if tool_name == "get_work_result_state" {
+        // Binary previews belong only to the admitted App. Move bytes before
+        // producing structured/text compatibility copies; neither contains PDF.
+        let encoded = result
+            .output
+            .get_mut("work_result_files")
+            .and_then(Value::as_object_mut)
+            .and_then(|file| file.remove("content_base64"));
+        if let Some(encoded) = encoded {
+            let mut framed =
+                mcp_runtime_tool_result_fallback(result, text_json_compat, result_presentation);
+            framed["_meta"] = json!({"webcodex/pdfChunk": {"content_base64": encoded}});
+            return McpResourceToolResultAdaptation::Framed(framed);
+        }
+    }
     if artifact_presentation == ProjectArtifactPresentationMode::Export {
         return McpResourceToolResultAdaptation::Framed(mcp_artifact_export_tool_result(
             result,

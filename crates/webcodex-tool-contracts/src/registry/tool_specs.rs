@@ -108,7 +108,7 @@ pub fn work_result_app_tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "get_work_result_state",
-            "App-only exact Work Result refresh: reauthorizes Project and optional Session; never consumes attention or records a Session. Returns Window activity/collaboration, Session evidence and an existing final-changes snapshot sealed by finish_coding_task; never creates/replaces it. files reads advertised immutable paths as diff or UTF-8 content (view=content, byte_offset), at most 32 KiB/page and 256 KiB/file.",
+            "App-only exact Work Result refresh: reauthorizes Project and optional Session; never consumes attention or records a Session. Returns Window activity/collaboration, Session evidence and an existing final-changes snapshot sealed by finish_coding_task; never creates/replaces it. files reads advertised immutable paths as diff, UTF-8 content (view=content, 32 KiB/page, 256 KiB/file), or PDF (view=pdf, 128 KiB/page, 20 MiB/file). byte_offset selects a bounded segment of the pinned blob; PDF bytes use private MCP App metadata webcodex/pdfChunk. Missing/stale snapshots require explicit file refresh; retry preserves the exact snapshot/path/offset.",
         ),
         tool_spec(
             "read_work_result_activity_detail",

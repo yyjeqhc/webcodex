@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import { NodeStreamableHTTPServerTransport, localhostHostValidation } from "@modelcontextprotocol/node";
 import { createPdfServer } from "./mcp-server.mjs";
+import { createWorkResultServer } from "./work-result-fixtures.mjs";
 
 export async function startChatgptServer(port = 0) {
   const validateHost = localhostHostValidation();
@@ -22,7 +23,7 @@ export async function startChatgptServer(port = 0) {
         chunks.push(chunk);
       }
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      mcp = await createPdfServer();
+      mcp = await (process.env.PDF_POC_WORK_RESULT === "1" ? createWorkResultServer() : createPdfServer());
       const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       await mcp.connect(transport);
       res.on("close", () => { mcp.close().catch(() => {}); });

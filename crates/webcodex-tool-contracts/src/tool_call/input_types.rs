@@ -77,7 +77,9 @@ impl PluginToolCall {
                 || project.len() > 512
                 || project.chars().any(char::is_control)
             {
-                return Err("project must be an exact bounded Project on action=describe".to_string());
+                return Err(
+                    "project must be an exact bounded Project on action=describe".to_string(),
+                );
             }
         }
         let valid_runner = |runner: &str| {
@@ -261,10 +263,10 @@ pub struct WorkResultFilesRequest {
     pub offset: usize,
     #[serde(default)]
     pub path: Option<String>,
-    /// Omit for file inventory or diff; content reads require an advertised path and snapshot.
+    /// Omit for inventory or diff; content/PDF reads require an advertised path and snapshot.
     #[serde(default)]
     pub view: Option<WorkResultFileView>,
-    /// UTF-8 byte position in the immutable final blob, independent of inventory offset.
+    /// Byte position in the immutable final blob, independent of inventory offset.
     #[serde(default)]
     pub byte_offset: usize,
 }
@@ -273,6 +275,8 @@ pub struct WorkResultFilesRequest {
 #[serde(rename_all = "snake_case")]
 pub enum WorkResultFileView {
     Content,
+    /// PDF bytes: at most 128 KiB per page and 20 MiB per file.
+    Pdf,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -1419,7 +1423,6 @@ pub enum GitReviewScopeInput {
     },
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectUnregisterInput {
@@ -1434,4 +1437,9 @@ pub struct ProjectUnregisterInput {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum RunnerStatusFilter { Any, Online, Offline, Stale }
+pub enum RunnerStatusFilter {
+    Any,
+    Online,
+    Offline,
+    Stale,
+}

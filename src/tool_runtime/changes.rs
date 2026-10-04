@@ -33,6 +33,8 @@ const CHANGES_DIFF_MAX_BYTES: usize = 48 * 1024;
 const CHANGES_DIFF_MAX_LINES: usize = 1200;
 const CHANGES_CONTENT_PAGE_BYTES: usize = 32 * 1024;
 const CHANGES_CONTENT_MAX_BYTES: usize = 256 * 1024;
+const CHANGES_PDF_PAGE_BYTES: usize = 128 * 1024;
+const CHANGES_PDF_MAX_BYTES: usize = 20 * 1024 * 1024;
 const CHANGES_SESSION_SUMMARY_LIMIT: usize = 0;
 const SOURCE_BYTES_MARKER: &str = "WEBCODEX_CHANGES_SOURCE_BYTES=";
 const DIFF_BYTES_MARKER: &str = "WEBCODEX_CHANGES_DIFF_BYTES=";
@@ -581,7 +583,11 @@ exit 0
         if request.offset > MAX_STORED_CHANGES_FILES
             || (request.view.is_some() && request.path.is_none())
             || (request.view.is_none() && request.byte_offset != 0)
-            || request.byte_offset >= CHANGES_CONTENT_MAX_BYTES
+            || request.byte_offset
+                >= match request.view {
+                    Some(webcodex_tool_contracts::WorkResultFileView::Pdf) => CHANGES_PDF_MAX_BYTES,
+                    _ => CHANGES_CONTENT_MAX_BYTES,
+                }
             || request
                 .path
                 .as_deref()
@@ -687,11 +693,18 @@ exit 0
             let Some(file) = snapshot.files.iter().find(|file| file.path == path) else {
                 return changes_identity_error("changes_snapshot_path_not_allowed");
             };
-            if request.view.is_some() {
-                return match self
-                    .frozen_changes_file_content(&snapshot, file, request.byte_offset)
-                    .await
-                {
+            if let Some(view) = request.view {
+                let page = match view {
+                    webcodex_tool_contracts::WorkResultFileView::Content => {
+                        self.frozen_changes_file_content(&snapshot, file, request.byte_offset)
+                            .await
+                    }
+                    webcodex_tool_contracts::WorkResultFileView::Pdf => {
+                        self.frozen_changes_file_pdf(&snapshot, file, request.byte_offset)
+                            .await
+                    }
+                };
+                return match page {
                     Ok(content) => ToolResult::ok(json!({"work_result_files": content})),
                     Err(result) => result,
                 };
@@ -974,36 +987,10 @@ dd if="$tmp" bs=1 count={CHANGES_METADATA_SOURCE_BYTES} 2>/dev/null
         if file.binary == Some(true) {
             return Ok(unavailable("binary"));
         }
-        // Resolve exactly one immutable entry; never read a live filesystem path
-        // or execute filters. Check the exact path before using its object id.
-        let script = format!(
-            "git --no-pager ls-tree -z {} -- {}",
-            snapshot.final_tree,
-            shell_single_quote(&format!(":(literal){}", file.path))
-        );
-        let entry = self
-            .run_project_internal_posix_script_capture(&snapshot.project, script, 30, None)
-            .await
-            .map_err(|error| changes_runtime_error("changes_file_content_failed", error))?;
-        if entry.exit_code != Some(0) || entry.stdout_truncated || entry.stderr_truncated {
-            return Err(changes_identity_error("changes_file_content_failed"));
-        }
-        let Some((header, path)) = entry.stdout.split_once('\t') else {
-            return Err(changes_identity_error("changes_file_content_failed"));
+        let object = match self.frozen_changes_file_blob(snapshot, file).await? {
+            FrozenFileBlob::Object(object) => object,
+            FrozenFileBlob::Unavailable(reason) => return Ok(unavailable(reason)),
         };
-        if path.strip_suffix('\0') != Some(file.path.as_str()) {
-            return Err(changes_identity_error("changes_file_content_failed"));
-        }
-        let fields = header.split_whitespace().collect::<Vec<_>>();
-        if fields.len() != 3 || !valid_git_object_id(fields[2]) {
-            return Err(changes_identity_error("changes_file_content_failed"));
-        }
-        match fields[0] {
-            "120000" => return Ok(unavailable("symlink")),
-            "160000" => return Ok(unavailable("submodule")),
-            "100644" | "100755" if fields[1] == "blob" => {}
-            _ => return Ok(unavailable("unsupported_file_type")),
-        }
         // Base64 is internal Runner transport only, preserving bytes across
         // shell charset normalization. Three lookahead bytes cover a UTF-8
         // scalar at a page boundary; no whole-file temporary is created.
@@ -1014,7 +1001,6 @@ bytes=$(git cat-file -s {object})
 printf '%s\n' "$bytes"
 git cat-file blob {object} | dd bs=1 skip={byte_offset} count={count} 2>/dev/null | base64
 "#,
-            object = fields[2]
         );
         let output = self
             .run_project_internal_posix_script_capture(&snapshot.project, script, 30, None)
@@ -1072,6 +1058,132 @@ git cat-file blob {object} | dd bs=1 skip={byte_offset} count={count} 2>/dev/nul
             "byte_offset": byte_offset, "bytes_total": bytes_total, "content": content,
             "next_byte_offset": (!complete && !limited).then_some(next),
             "complete": complete, "limited": limited,
+        }))
+    }
+
+    async fn frozen_changes_file_blob(
+        &self,
+        snapshot: &ChangesSnapshot,
+        file: &ChangesFileMetadata,
+    ) -> Result<FrozenFileBlob, ToolResult> {
+        // Resolve exactly one immutable entry; never read a live filesystem path
+        // or execute filters. Check the exact path before using its object id.
+        let script = format!(
+            "git --no-pager ls-tree -z {} -- {}",
+            snapshot.final_tree,
+            shell_single_quote(&format!(":(literal){}", file.path))
+        );
+        let entry = self
+            .run_project_internal_posix_script_capture(&snapshot.project, script, 30, None)
+            .await
+            .map_err(|error| changes_runtime_error("changes_file_content_failed", error))?;
+        if entry.exit_code != Some(0) || entry.stdout_truncated || entry.stderr_truncated {
+            return Err(changes_identity_error("changes_file_content_failed"));
+        }
+        let Some((header, path)) = entry.stdout.split_once('\t') else {
+            return Err(changes_identity_error("changes_file_content_failed"));
+        };
+        if path.strip_suffix('\0') != Some(file.path.as_str()) {
+            return Err(changes_identity_error("changes_file_content_failed"));
+        }
+        let fields = header.split_whitespace().collect::<Vec<_>>();
+        if fields.len() != 3 || !valid_git_object_id(fields[2]) {
+            return Err(changes_identity_error("changes_file_content_failed"));
+        }
+        match fields[0] {
+            "120000" => return Ok(FrozenFileBlob::Unavailable("symlink")),
+            "160000" => return Ok(FrozenFileBlob::Unavailable("submodule")),
+            "100644" | "100755" if fields[1] == "blob" => {}
+            _ => return Ok(FrozenFileBlob::Unavailable("unsupported_file_type")),
+        }
+        Ok(FrozenFileBlob::Object(fields[2].to_string()))
+    }
+
+    async fn frozen_changes_file_pdf(
+        &self,
+        snapshot: &ChangesSnapshot,
+        file: &ChangesFileMetadata,
+        byte_offset: usize,
+    ) -> Result<Value, ToolResult> {
+        let unavailable = |reason: &str| {
+            json!({
+                "project": snapshot.project, "session_id": snapshot.session_id,
+                "snapshot_id": snapshot.snapshot_id, "path": file.path,
+                "view": "pdf", "unavailable_reason": reason,
+            })
+        };
+        if file.kind == "deleted" {
+            return Ok(unavailable("deleted"));
+        }
+        let object = match self.frozen_changes_file_blob(snapshot, file).await? {
+            FrozenFileBlob::Object(object) => object,
+            FrozenFileBlob::Unavailable(reason) => return Ok(unavailable(reason)),
+        };
+        // Validate size and signature before streaming a bounded segment. Read
+        // only the immutable Git blob, including for a renamed/untracked PDF.
+        // 128 KiB of bytes fits Runner's bounded text capture after Base64.
+        let script = format!(
+            r#"set -eu
+bytes=$(git cat-file -s {object})
+printf '%s\n' "$bytes"
+if [ "$bytes" -eq 0 ] || [ "$bytes" -gt {CHANGES_PDF_MAX_BYTES} ]; then exit 0; fi
+magic=$(git cat-file blob {object} | dd bs=1 count=5 2>/dev/null | base64)
+if [ "$magic" != 'JVBERi0=' ]; then printf 'not_pdf\n'; exit 0; fi
+printf 'pdf\n'
+git cat-file blob {object} | dd bs=4096 skip={block} 2>/dev/null | dd bs=1 skip={remainder} count={CHANGES_PDF_PAGE_BYTES} 2>/dev/null | base64
+"#,
+            block = byte_offset / 4096,
+            remainder = byte_offset % 4096,
+        );
+        let output = self
+            .run_project_internal_posix_script_capture(&snapshot.project, script, 30, None)
+            .await
+            .map_err(|error| changes_runtime_error("changes_file_content_failed", error))?;
+        if output.exit_code != Some(0) || output.stdout_truncated || output.stderr_truncated {
+            return Err(changes_identity_error("changes_file_content_failed"));
+        }
+        let Some((size, encoded)) = output.stdout.split_once('\n') else {
+            return Err(changes_identity_error("changes_file_content_failed"));
+        };
+        let bytes_total = size
+            .parse::<usize>()
+            .map_err(|_| changes_identity_error("changes_file_content_failed"))?;
+        if bytes_total > CHANGES_PDF_MAX_BYTES {
+            return Ok(unavailable("too_large"));
+        }
+        if bytes_total == 0 {
+            return Ok(unavailable("not_pdf"));
+        }
+        if byte_offset >= bytes_total {
+            return Err(changes_identity_error("changes_page_invalid"));
+        }
+        let Some((kind, encoded)) = encoded.split_once('\n') else {
+            return Err(changes_identity_error("changes_file_content_failed"));
+        };
+        if kind == "not_pdf" {
+            return Ok(unavailable("not_pdf"));
+        }
+        if kind != "pdf" {
+            return Err(changes_identity_error("changes_file_content_failed"));
+        }
+        let encoded = encoded
+            .chars()
+            .filter(|ch| !ch.is_ascii_whitespace())
+            .collect::<String>();
+        let raw = STANDARD
+            .decode(encoded)
+            .map_err(|_| changes_identity_error("changes_file_content_failed"))?;
+        if raw.len() != (bytes_total - byte_offset).min(CHANGES_PDF_PAGE_BYTES) {
+            return Err(changes_identity_error("changes_file_content_failed"));
+        }
+        let next = byte_offset + raw.len();
+        let complete = next == bytes_total;
+        Ok(json!({
+            "project": snapshot.project, "session_id": snapshot.session_id,
+            "snapshot_id": snapshot.snapshot_id, "path": file.path, "view": "pdf",
+            "byte_offset": byte_offset, "bytes_total": bytes_total,
+            "content_base64": STANDARD.encode(raw),
+            "next_byte_offset": (!complete).then_some(next), "complete": complete,
         }))
     }
 
@@ -1170,6 +1282,12 @@ fn bound_frozen_diff_text(text: &mut String) -> bool {
     }
     text.truncate(end);
     true
+}
+
+#[derive(Debug)]
+enum FrozenFileBlob {
+    Object(String),
+    Unavailable(&'static str),
 }
 
 #[derive(Debug)]

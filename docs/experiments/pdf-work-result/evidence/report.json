@@ -1,0 +1,64 @@
+{
+  "browser": "154.0.4258.53",
+  "actualChatGPT": false,
+  "shippedWorkResult": true,
+  "cases": [
+    {
+      "sample": "text",
+      "viewportWidth": 360,
+      "viewportHeight": 900,
+      "theme": "light",
+      "ink": 19790,
+      "width": 265,
+      "height": 353.328125,
+      "backing": 93545,
+      "titleVisible": true,
+      "overflow": false,
+      "text": "PDF.js sidebar experimentSelectable text, no external resources.Page 1 of 3. Search token: offline-p",
+      "workersAfterClose": 0
+    },
+    {
+      "sample": "cjk",
+      "viewportWidth": 420,
+      "viewportHeight": 900,
+      "theme": "light",
+      "ink": 3074,
+      "width": 325,
+      "height": 433.328125,
+      "backing": 140725,
+      "titleVisible": true,
+      "overflow": false,
+      "text": "中文 PDF 侧边栏预览实验汉字可见，文字可以选择和提取。简体与繁體：离线资源、字体、分页。Unembedded CID font: exercises bundled CMaps.",
+      "workersAfterClose": 0
+    },
+    {
+      "sample": "scan",
+      "viewportWidth": 420,
+      "viewportHeight": 900,
+      "theme": "dark",
+      "ink": 35686,
+      "width": 325,
+      "height": 433.328125,
+      "backing": 140725,
+      "titleVisible": true,
+      "overflow": false,
+      "text": "",
+      "workersAfterClose": 0
+    },
+    {
+      "sample": "ratio",
+      "viewportWidth": 860,
+      "viewportHeight": 1100,
+      "theme": "light",
+      "ink": 108472,
+      "width": 765,
+      "height": 602.28125,
+      "backing": 459928,
+      "titleVisible": true,
+      "overflow": false,
+      "text": "PDF.js geometry check630 x 496 pt | ratio 1.270161中文、圆形及四角标记应完整显示CIRCLEEqual width and heightTL TRBL",
+      "workersAfterClose": 0
+    }
+  ],
+  "workerDenied": "visible error and retry"
+}

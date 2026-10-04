@@ -2181,6 +2181,58 @@ async function workspacePreview() {
   return { view, nodes, request: view.calls("get_work_result_state").find(call => call.params.arguments.files?.view === "content") };
 }
 
+async function pdfReadingView() {
+  const state = structuredClone(baseState);
+  state.workspace.files[0].path = "report.pdf";
+  state.workspace.files[0].binary = true;
+  const view = await readingView(state);
+  assert.equal(view.calls("get_work_result_state").length, 0, "inventory alone never reads PDF bytes");
+  const file = readingFile(view); await flush();
+  const inventory = view.calls("get_work_result_state")[0];
+  await view.reply(inventory, toolResult({ work_result_files: {
+    project, session_id: null, snapshot_id, offset: 0, next_offset: null, files_total: 1, source_truncated: false,
+    files: [{ path: "report.pdf", kind: "modified", additions: null, deletions: null, binary: true }],
+  } }));
+  return { view, file, request: view.calls("get_work_result_state").find(call => call.params.arguments.files?.view === "pdf") };
+}
+
+test("PDF rows read the pinned working-tree source and fence late replies on close, mode change and teardown", async () => {
+  for (const close of ["collapse", "mode", "teardown", "refresh"]) {
+    const { view, file, request } = await pdfReadingView();
+    assert.ok(request, "expanded PDF defaults to the PDF view");
+    assert.deepEqual(JSON.parse(JSON.stringify(request.params.arguments)), { project,
+      files: { snapshot_id, path: "report.pdf", view: "pdf", byte_offset: 0 } });
+    assert.equal(file.button("PDF").getAttribute("aria-pressed"), "true");
+    if (close === "collapse") file.row.collapse();
+    if (close === "mode") file.button("Full text").onclick();
+    if (close === "teardown") await view.teardown();
+    if (close === "refresh") view.nodes.workspaceReload.onclick();
+    const before = view.calls("get_work_result_state").length;
+    const reply = toolResult({ work_result_files: {
+      project, session_id: null, snapshot_id, path: "report.pdf", view: "pdf",
+      byte_offset: 0, bytes_total: 200_000, complete: false, next_byte_offset: 131_072,
+    } });
+    reply._meta = { "webcodex/pdfChunk": { content_base64: Buffer.alloc(131_072).toString("base64") } };
+    await view.reply(request, reply);
+    assert.equal(view.calls("get_work_result_state").length, before, "closed preview cannot fetch the next PDF segment");
+    await view.teardown();
+  }
+});
+
+test("PDF error retry keeps the same exact snapshot and never requests text for a binary PDF", async () => {
+  const { view, file, request } = await pdfReadingView();
+  await view.reply(request, toolResult({ work_result_files: {
+    project, session_id: null, snapshot_id, path: "report.pdf", view: "pdf", unavailable_reason: "too_large",
+  } }));
+  const retry = file.button("Retry preview"); assert.equal(retry.hidden, false);
+  retry.onclick(); await flush();
+  assert.deepEqual(JSON.parse(JSON.stringify(view.calls("get_work_result_state").at(-1).params.arguments)),
+    JSON.parse(JSON.stringify(request.params.arguments)));
+  file.button("Full text").onclick();
+  assert.equal(view.calls("get_work_result_state").filter(call => call.params.arguments.files?.view === "content").length, 0);
+  await view.teardown();
+});
+
 test("workspace full text uses exact pinned snapshot, explicit pages and complete-only safe Markdown", async () => {
   const { view, nodes, request } = await workspacePreview();
   assert.deepEqual(JSON.parse(JSON.stringify(request.params.arguments)), { project,

@@ -7,11 +7,40 @@ fn tool<'a>(payload: &'a Value, name: &str) -> Option<&'a Value> {
         .find(|tool| tool["name"] == name)
 }
 
+#[test]
+fn work_result_pdf_bytes_are_private_and_do_not_enter_structured_or_text_content() {
+    let encoded = "JVBERi0xLjcKUFJJVkFURV9GSUxF";
+    let value = mcp_runtime_tool_result(
+        "get_work_result_state",
+        false,
+        ToolResult::ok(json!({
+            "work_result_files": {
+                "project": "agent:pdf:demo", "session_id": null, "snapshot_id": "pinned",
+                "path": "report.pdf", "view": "pdf", "byte_offset": 0, "bytes_total": 21,
+                "next_byte_offset": null, "complete": true, "content_base64": encoded,
+            }
+        })),
+    );
+    assert_eq!(
+        value["_meta"]["webcodex/pdfChunk"]["content_base64"],
+        encoded
+    );
+    assert_eq!(
+        value["structuredContent"]["output"]["work_result_files"]["path"],
+        "report.pdf"
+    );
+    for channel in ["content", "structuredContent"] {
+        let text = value[channel].to_string();
+        assert!(!text.contains(encoded), "PDF leaked through {channel}");
+        assert!(!text.contains("content_base64"));
+    }
+}
+
 #[tokio::test]
 async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v24"
+        "ui://webcodex/work-result/v25"
     );
     let runtime = test_runtime();
 
@@ -692,6 +721,15 @@ fn work_result_html_is_bounded_live_progress_ui() {
     // refresh and mounting still never send an automatic chat message.
     assert!(MCP_WORK_RESULT_APP_HTML.contains("Get file in chat"));
     assert!(MCP_WORK_RESULT_APP_HTML.contains("First check that its current SHA-256"));
+    // PDF.js includes dormant URL-loading code. Keep the first-party App's
+    // network prohibition; the browser smoke checks the offline renderer too.
+    let (before_pdf, pdf_tail) = MCP_WORK_RESULT_APP_HTML
+        .split_once("/* BEGIN GENERATED WORK RESULT PDF */")
+        .expect("generated PDF bundle start");
+    let (_, after_pdf) = pdf_tail
+        .split_once("/* END GENERATED WORK RESULT PDF */")
+        .expect("generated PDF bundle end");
+    let authored_html = format!("{before_pdf}{after_pdf}");
     for forbidden in [
         "Linked work conversation",
         "No linked work conversation",
@@ -711,8 +749,13 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "baseline_tree",
         "final_tree",
     ] {
+        let checked_html = if forbidden == "fetch(" {
+            authored_html.as_str()
+        } else {
+            MCP_WORK_RESULT_APP_HTML
+        };
         assert!(
-            !MCP_WORK_RESULT_APP_HTML.contains(forbidden),
+            !checked_html.contains(forbidden),
             "Work Result App contains forbidden marker {forbidden}"
         );
     }

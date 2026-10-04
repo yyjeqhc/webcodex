@@ -145,7 +145,8 @@ pub enum ToolCall {
         #[schemars(length(max = 16))]
         #[schemars(inner(length(min = 1, max = 512)))]
         #[serde(default)]
-        outputs: Vec<String>,        /// When true, return the minimal decision-complete closeout only: workspace cleanliness/conflicts,
+        outputs: Vec<String>,
+        /// When true, return the minimal decision-complete closeout only: workspace cleanliness/conflicts,
         /// hygiene state, bounded Job counts, final validation state/counts, tool-failure actionability
         /// counts, canonical task_outcome, evidence_integrity, warnings, and suggested_next_actions. Omits
         /// project/session identity, permissions, review/work/change/handoff provenance, facts/evidence
@@ -207,7 +208,7 @@ pub enum ToolCall {
             pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
         ))]
         session_id: Option<String>,
-        /// Explicit file inventory, lazy diff, or bounded UTF-8 content page; omission keeps lightweight card state.
+        /// Explicit inventory, lazy diff, UTF-8 content or PDF page; omission keeps lightweight card state.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         files: Option<WorkResultFilesRequest>,
     },
@@ -1496,7 +1497,8 @@ pub enum ToolCall {
         /// Optional portable dependency-resolution policy. locked forbids adapters from
         /// repairing dependency selection state; it does not imply offline execution.
         #[serde(default)]
-        dependency_policy: Option<webcodex_core::project_build::ProjectDependencyPolicy>,        /// Total build execution budget, default 1800 seconds, clamped to 7 days.
+        dependency_policy: Option<webcodex_core::project_build::ProjectDependencyPolicy>,
+        /// Total build execution budget, default 1800 seconds, clamped to 7 days.
         /// Host handoff timing never extends this budget or starts a second build.
         #[serde(default)]
         #[schemars(range(min = 1))]

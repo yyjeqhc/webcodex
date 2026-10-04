@@ -7,29 +7,15 @@ pub(super) struct PresentationRenderer {
     pub project: fn(&str, &Value) -> Option<Value>,
 }
 
-// Validation owns its registrations and complete formatters. The other existing
-// formatters remain in their current owner until their own coherent extraction.
+// Registrations and complete formatting policy live together in their families.
 static RENDERERS: &[PresentationRenderer] = &[
-    PresentationRenderer {
-        tools: &["list_jobs"],
-        project: |_, output| super::list_jobs_presentation(output),
-    },
-    PresentationRenderer {
-        tools: &["observe_jobs"],
-        project: |_, output| super::observe_jobs_presentation(output),
-    },
+    super::jobs::LIST,
+    super::jobs::OBSERVE,
     super::validation::RUN,
     super::validation::SUMMARY,
-    PresentationRenderer {
-        tools: &["read_workspace_changes"],
-        project: |_, output| super::show_changes_presentation(output),
-    },
-    PresentationRenderer {
-        tools: &["read_git_review_summary"],
-        project: |_, output| super::git_review_presentation(output),
-    },
+    super::git::CHANGES,
+    super::git::REVIEW,
 ];
-
 pub(super) fn for_tool(tool: &str) -> Option<&'static PresentationRenderer> {
     RENDERERS
         .iter()

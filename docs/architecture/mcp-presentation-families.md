@@ -14,12 +14,11 @@ which binds self-contained HTML resources to already-admitted descriptors. This
 layer only derives bounded optional MCP display metadata from structured output.
 Registration does not expose tools or create new cards.
 
-The validation family now owns its run/summary registrations and all diagnostic,
-failed-test, historical/current-evidence and recent-event formatting in
-`presentation/validation.rs`. The existing Job and Git formatters remain in the
-parent during this stage; their static registry entries invoke those same helpers.
-They can be extracted independently without blocking deployment of this change.
-
+Each family owns both its registrations and complete formatting policy:
+`presentation/jobs.rs` owns list/observe, `presentation/git.rs` owns changes/review,
+and `presentation/validation.rs` owns run/summary. The parent retains only common
+text/scalar bounds and attachment to optional metadata. The registry composes
+those definitions without naming family-private formatter functions.
 ## Preserved behavior
 
 The previous eight names and six projector families are unchanged. Unsupported
@@ -43,7 +42,12 @@ URIs, remove cached Changes support, or alter Native Tool Plugin semantics.
 
 Registry tests check exact/unique ownership, unsupported/malformed no-op behavior,
 canonical result and unrelated metadata preservation, diagnostic/text bounds,
-and current evidence plus chronological summary truncation. Existing MCP Result
-App integration tests remain the source for real framing, App policy, Jobs,
-validation and Git display contracts. The independent Work Result section PR
-can land before or after this one; their changed paths do not overlap.
+and current evidence plus chronological summary truncation. Family-local tests
+cover filtering before Job limits, exact recovery-call allowlists, path validation,
+and full-path diff matching before shortening display paths. Existing MCP Result
+App integration tests remain unchanged and own real framing, App policy, Jobs,
+validation and Git contracts. All 31 pre-existing functions from the parent were
+compared after extraction and retain their bodies (ignoring whitespace).
+
+This completion is independent of Work Result asynchronous controllers and startup
+projection ownership. No HTML, URI, schema, authority or data migration is involved.

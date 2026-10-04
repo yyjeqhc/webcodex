@@ -493,10 +493,11 @@ async fn oauth2_mcp_computer_app_resources_require_runtime_read() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
-    assert_eq!(
-        body["result"]["resources"][0]["uri"],
-        MCP_COMPUTER_UI_RESOURCE_URI
-    );
+    assert!(body["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|resource| resource["uri"] == MCP_COMPUTER_UI_RESOURCE_URI));
 
     let (_tmp, service, token) = oauth_mcp_service("project:read");
     let (status, body, challenge) = oauth_mcp_request(

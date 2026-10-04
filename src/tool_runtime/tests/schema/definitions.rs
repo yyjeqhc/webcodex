@@ -94,6 +94,7 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
         "apply_unified_diff",
         "write_project_file",
         "read_changed_file_diff",
+        "read_pdf_chunk",
         "record_external_observation",
         "get_session_handoff_state",
         "present_agent_continuation",

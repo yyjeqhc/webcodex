@@ -4,10 +4,10 @@ use std::collections::HashSet;
 #[test]
 fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
     let expected = [
-        "ui://webcodex/pdf/v1",
+        "ui://webcodex/pdf/v2",
         "ui://webcodex/computer/v12",
         "ui://webcodex/workbench/v2",
-        "ui://webcodex/work-result/v27",
+        "ui://webcodex/work-result/v28",
         "ui://webcodex/goal-plan/v7",
         "ui://webcodex/agent-continuation/v18",
         "ui://webcodex/job-terminal-continuation/v2",
@@ -37,9 +37,11 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
     }
     assert_eq!(tools.len(), 7);
     for retired in [
+        "ui://webcodex/pdf/v1",
         "ui://webcodex/computer/v11",
         "ui://webcodex/changes/v3",
         "ui://webcodex/workbench/v1",
+        "ui://webcodex/work-result/v27",
         "ui://webcodex/work-result/v26",
         "ui://webcodex/work-result/v25",
         "ui://webcodex/work-result/v24",

@@ -1,7 +1,7 @@
 # Dedicated PDF document viewer
 
 `present_pdf(project, path)` binds a direct model tool to the self-contained
-`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v1`. It selects one authorized
+`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v2`. It selects one authorized
 project-relative `.pdf`, independent of Git changes, a Work Result card, or a
 Workflow Session. The MCP App registry supplies the resource binding and prefers
 the Host's fullscreen/sidebar mode. The App's UI contains only the filename,
@@ -49,14 +49,19 @@ including that limit, fail the preview visibly instead of silently removing
 content; the canvas is cleared and retry retains the selected version.
 Worker stream failures are also checked before reporting render success because
 PDF.js can resolve its render promise after an operator-list stream fails.
-The common asset builder creates both closed HTML bundles. Work Result's URI is
-advanced to v27 because its embedded renderer changes, preserving the pre-existing
-v26 layout fix.
+The common asset builder creates both closed HTML bundles and normalizes gzip's
+OS header to the unspecified value so native platform metadata cannot change the
+checked-in bytes. Git attributes retain LF line endings for the generated HTML
+and frontend assets used by the byte-for-byte freshness checks. The regenerated
+resources use Work Result v28 and PDF v2 so Hosts receive the updated bundles
+under fresh cache identities.
 
 Run `npm --prefix frontend run build:work-result` to generate both resources.
 `build-pdf-document.mjs --check` is included in `check:dist`. Focused reader tests
-are in `frontend/test/pdf-document-reader.test.mjs`; runtime and MCP tests are
-in the existing `pdf_document` domain modules.
+are in `frontend/test/pdf-document-reader.test.mjs`. The cross-platform build
+regression in `frontend/test/pdf-bundle.test.mjs` simulates Unix and Windows gzip
+headers and checks identical bundles and successful decompression. Runtime and
+MCP tests are in the existing `pdf_document` domain modules.
 
 Run the maintained reader and authority/framing tests from the repository root:
 

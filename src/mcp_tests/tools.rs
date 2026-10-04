@@ -3922,9 +3922,9 @@ fn compact_bootstrap_description_teaches_explicit_context_and_reuse() {
     let description = tool["description"].as_str().unwrap();
     for phrase in [
         "_wc.context=[\"project.instructions\",\"webcodex.workflow\"]",
-        "project.instructions contains applicable AGENTS.md/CLAUDE.md",
-        "Reuse complete instruction bodies",
-        "workspace branch/HEAD/status",
+        "project.instructions includes AGENTS.md/CLAUDE.md",
+        "Reuse complete instructions",
+        "branch/HEAD/status",
         "semantic navigation",
         "sufficient catalogs",
         "stale/incomplete",
@@ -3963,7 +3963,11 @@ async fn compact_bootstrap_guidance_matches_advertised_context_capability() {
             modern
         );
         let description = tool["description"].as_str().unwrap();
-        assert!(description.contains("file, data, diagnostic or coding work"));
+        assert!(description.contains(if modern {
+            "File/data/diagnostic/coding work"
+        } else {
+            "file, data, diagnostic or coding work"
+        }));
         assert!(description.contains("Git optional"));
         assert!(description.contains("session_id"));
         assert!(description.contains("stale/incomplete"));
@@ -3972,8 +3976,8 @@ async fn compact_bootstrap_guidance_matches_advertised_context_capability() {
             ["description"]
             .as_str()
             .expect("compact extension catalog guidance");
-        assert!(extension_description.contains("default true on fresh/first Project"));
-        assert!(extension_description.contains("complete/sufficient catalog for that Project"));
+        assert!(extension_description.contains("Catalog true fresh/first Project"));
+        assert!(extension_description.contains("complete/sufficient retained catalog"));
         if !modern {
             assert!(description.contains("read_files"));
         }

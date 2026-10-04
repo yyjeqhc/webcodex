@@ -30,7 +30,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "first entry to another project: request its instructions",
         "omit those context keys",
         "reuse current workflow across projects",
-        "include_extension_catalog=false only with its retained skills/plugins",
+        "include_extension_catalog=false only with its complete/sufficient retained skills/plugins",
         "refresh changed/incomplete/lost context or on user request",
         "clientwindow does not prove retention",
         "project.instructions",
@@ -1124,5 +1124,35 @@ fn observe_jobs_wake_policy_schema_is_closed_and_compatible() {
             &spec.input_schema,
         )
         .unwrap();
+    }
+}
+
+#[test]
+fn extension_descriptions_distinguish_catalog_body_and_binding_reuse() {
+    let specs = registered_tool_specs();
+    let skill = &spec_named(&specs, "load_skill").description;
+    for phrase in [
+        "same Project",
+        "new task/Session alone",
+        "changed revisions",
+        "missing/truncated body",
+        "context loss/uncertainty",
+        "Catalog metadata is not the Skill body",
+        "Guidance grants no authority",
+    ] {
+        assert!(skill.contains(phrase), "load_skill missing {phrase}");
+    }
+    let plugin = &spec_named(&specs, "plugin_tool").description;
+    for phrase in [
+        "selection metadata",
+        "not an input schema or binding",
+        "reuse both while retained",
+        "exact Runner/provider/tool and bound Project",
+        "another call/task/Session",
+        "Never reuse a projectBound binding for another Project",
+        "not permission to replay an effect",
+        "Unknown outcomes still require reconciliation",
+    ] {
+        assert!(plugin.contains(phrase), "plugin_tool missing {phrase}");
     }
 }

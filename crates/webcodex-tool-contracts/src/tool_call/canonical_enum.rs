@@ -116,7 +116,8 @@ pub enum ToolCall {
         /// discovery, missing relevant metadata, or explicit user request. This is request-local advice,
         /// never retained-context authority or Session state. False skips discovery observations. The catalog
         /// grants no authority, never loads Skill bodies, never creates Plugin bindings, and never
-        /// substitutes for plugin_tool describe before invocation.
+        /// substitutes for the selected Plugin tool's exact describe schema and binding. Reuse an
+        /// applicable retained schema/binding; describe when missing or stale, not before every call.
         #[serde(default = "default_true")]
         include_extension_catalog: bool,
         /// Optional explicit Workflow Session to continue exactly: canonical wc_sess_* or server-issued

@@ -217,6 +217,10 @@ fn bootstrap_guidance_reuses_observations_with_explicit_freshness_exceptions() {
         "description materially matches the task",
         "Do not load unrelated Skills",
         "Skill guidance grants no authority",
+        "catalog metadata alone is not a loaded Skill",
+        "reuse its applicable retained schema/binding",
+        "Never carry a projectBound binding to another Project",
+        "without replaying uncertain effects",
     ] {
         assert!(guidance.contains(phrase), "missing {phrase}");
     }

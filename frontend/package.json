@@ -8,7 +8,7 @@
     "dev:admin": "node scripts/build.mjs --out-dir .dev-dist --watch",
     "check:dist": "node scripts/build.mjs --out-dir dist --check && node scripts/build-runtime-v2.mjs --out-dir dist --check && node scripts/build-work-result-markdown.mjs --check && node scripts/build-work-result-sections.mjs --check",
     "typecheck": "tsc --noEmit",
-    "test:admin": "node --test test/build.test.mjs test/app-regions.test.mjs test/work-result-sections.test.mjs",
+    "test:admin": "node --test test/build.test.mjs test/app-regions.test.mjs test/work-result-sections.test.mjs test/work-result-read-cache.test.mjs",
     "test:runtime": "vitest run --config vitest.config.ts",
     "test": "npm run test:admin && npm run test:runtime",
     "build:work-result": "node scripts/build-work-result-markdown.mjs && node scripts/build-work-result-sections.mjs"

@@ -1,6 +1,10 @@
 import { renderValidation, renderReview } from "./checks.mjs";
 import { renderJobs } from "./jobs.mjs";
 import { renderWindowCurrentActivity, renderActivityDetail } from "./activity.mjs";
+// Async owners are separate exports; synchronous renderers below still get no RPC.
+export { createReadCache } from "./read-cache.mjs";
+export { createActivityDetails } from "./activity-details.mjs";
+
 
 // Static bundled composition, not a third-party UI sandbox. The mounted App
 // validates snapshots and owns async loading; renderers receive only display

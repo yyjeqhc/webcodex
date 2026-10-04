@@ -179,7 +179,10 @@ $("fullscreen").onclick = () => enqueue(async () => {
 function hostChanged(context) {
   if (context.theme) applyDocumentTheme(context.theme);
   if (context.styles?.variables) applyHostStyleVariables(context.styles.variables);
-  if (context.displayMode !== undefined) $("fullscreen").textContent = context.displayMode === "fullscreen" ? "收起" : "展开";
+  if (context.displayMode !== undefined) {
+    $("fullscreen").textContent = context.displayMode === "fullscreen" ? "收起" : "展开";
+    document.documentElement.dataset.displayMode = context.displayMode;
+  }
   clearTimeout(resizeTimer); resizeTimer = setTimeout(() => enqueue(renderPage, false), 120);
 }
 app.onhostcontextchanged = hostChanged;

@@ -13,6 +13,11 @@ button,select,input{font:inherit;color:inherit;background:var(--card);border:1px
 button{cursor:pointer} button:disabled{opacity:.45;cursor:default} input[type=file]{width:100%;font-size:12px}
 #status{font-size:12px;margin:9px 0 0;line-height:1.5;overflow-wrap:anywhere} #page-info{min-width:65px;text-align:center}
 #stage{height:560px;max-height:calc(100vh - 174px);min-height:220px;overflow:auto;padding:16px;position:relative}
+#stage{scrollbar-gutter:stable}
+:root[data-display-mode=fullscreen] body{height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+:root[data-display-mode=fullscreen] header{flex:none}
+:root[data-display-mode=fullscreen] #stage{flex:1;min-height:0;height:auto;max-height:none}
+:root[data-display-mode=fullscreen] details{flex:none;max-height:40vh;overflow:auto}
 #page{position:relative;margin:0 auto;background:white;box-shadow:0 3px 18px #0002}
 canvas{display:block} .textLayer{position:absolute;inset:0;overflow:clip;opacity:1;line-height:1;text-align:initial;z-index:2}
 #empty{padding:48px 16px;text-align:center;color:var(--fg)} details{padding:10px 16px;border-top:1px solid var(--line);font-size:12px}

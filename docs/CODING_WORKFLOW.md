@@ -177,9 +177,9 @@ The exact matching metadata and transactional protocol are maintainer details; s
 
 Formatting is finalization, not per-edit validation. The normal loop is edit → focused validation → further edits if needed → source stabilizes → format once → final review/validation. For Rust, run formatting after relevant source stabilizes and before final diff/closeout; rerun only after later Rust edits that can change formatting. Use `cargo_fmt(check=false)` for intentional final formatting and `check=true` when read-only final formatting proof is needed. CI and release formatting gates remain unchanged.
 
-Prefer structured validation such as `cargo_test`, `cargo_check`, or `go_test` when available. Use the smallest check that can detect the regression, and broaden only when the affected boundary requires it.
+Prefer `project_validate` for ordinary portable structured validation. Keep `cargo_check`, `cargo_test`, and `go_test` for advanced ecosystem-specific options that need their specialist contracts. Use the smallest check that can detect the regression, and broaden only when the affected boundary requires it.
 
-For one Cargo workspace package, `cargo_check` accepts `package`. For several packages, pass `packages`; WebCodex sorts and deduplicates that set, then runs one Cargo process with repeated `-p` selectors. The two selectors are mutually exclusive, and an explicit empty list is invalid.
+For ordinary package-scoped validation, use `project_validate.scope.packages`; WebCodex validates a bounded set and lets the selected adapter translate that portable scope. Rust maps it to one Cargo invocation with repeated `-p` selectors after deterministic sort/dedup. Use the `cargo_check` `package` / `packages` specialist selectors only when its advanced Cargo-specific contract is actually needed.
 
 When a required validation outlasts its Server-managed synchronous grace, it hands off automatically as the **same execution** Job. The model should not tune handoff timing. Continue only independent reads, search, diff/architecture inspection, or review, then observe that Job. Do not start extra CPU-heavy validations merely for parallelism. If source covered by the running validation changes afterward, its result is stale/cache-warmup evidence rather than proof of the final workspace; run task-appropriate validation again on the final source.
 

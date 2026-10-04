@@ -77,7 +77,7 @@ Use them only when:
 - The resulting output will not expose secrets.
 - A human can review the command, output summary, and workspace state.
 
-Prefer structured tools first: `read_file`, `search_project_text`, structured edits, `apply_unified_diff`, `cargo_fmt`, `cargo_check`, `cargo_test`, `read_workspace_changes`, and `check_workspace_hygiene`.
+Prefer structured tools first: `read_file`, `search_project_text`, structured edits, `apply_unified_diff`, `cargo_fmt`, `project_validate`, `read_workspace_changes`, and `check_workspace_hygiene`. Use ecosystem validators such as `cargo_check`, `cargo_test`, or `go_test` only when their advanced specialist contract is needed.
 
 ## Token Handling
 

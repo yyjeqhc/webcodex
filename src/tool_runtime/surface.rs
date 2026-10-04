@@ -333,7 +333,7 @@ text({status:status.output?.stdout,file:detail.output.items?.[0]?.output?.text})
         ],
         CodeModeCallableStage::Validation => vec![json!({
             "name": "validation_job_handoff",
-            "source": r#"const check = await tools.cargo_check({});
+            "source": r#"const check = await tools.project_validate({action:"check"});
 if (check.output?.execution_state === "pending") {
   text({execution_state:"pending",continuation:check.output.continuation});
 } else {
@@ -346,7 +346,7 @@ if (check.output?.execution_state === "pending") {
 const read=await tools.read_files({items:[{path}]});
 const edit=await tools.edit_project_files({changes:[{kind:"edit",path,expected_read_revision:read.output.items[0].output.read_revision,edits:[{kind:"replace_exact",old_text:"old",new_text:"new"}]}]});
 if (!edit.success || typeof edit.output?.changed!=="boolean") throw Error("Inspect recovery");
-const check=await tools.cargo_check({});
+const check=await tools.project_validate({action:"check"});
 text({changed:edit.output.changed,success:check.success,source_state:check.output?.source_state,continuation:check.output?.continuation});"#,
         })],
     }

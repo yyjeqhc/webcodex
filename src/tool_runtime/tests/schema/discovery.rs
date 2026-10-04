@@ -250,7 +250,7 @@ impl CodeModeHost for CallableExampleHost {
                     }]
                 }),
                 "get_git_status" => json!({"stdout": "## clean"}),
-                "cargo_check" => json!({
+                "project_validate" => json!({
                     "execution_state": "pending",
                     "continuation": {"follow_up_kind": "fallback_recovery", "tool": "observe_jobs",
                         "arguments": {"items":[{"job_id":"wc_job_example"}]}}
@@ -1128,8 +1128,8 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
         );
     }
     for gateway_specialist in [
+        "project_validate",
         "cargo_fmt",
-        "go_test",
         "check_workspace_hygiene",
         "finish_coding_task",
     ] {
@@ -1156,8 +1156,6 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
         "run_script",
         "run_shell",
         "observe_jobs",
-        "cargo_check",
-        "cargo_test",
         "review_changes",
     ] {
         let tool = result.output["tools"]
@@ -1168,6 +1166,44 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
             .unwrap_or_else(|| panic!("missing canonical coding tool {direct}"));
         assert_eq!(tool["availability"], "direct", "{direct}");
         assert!(tool["gateway_tool"].is_null(), "{direct}");
+    }
+    for (advanced, expected_availability) in [
+        ("cargo_check", "direct"),
+        ("cargo_test", "direct"),
+        ("go_test", "gateway"),
+    ] {
+        assert!(
+            !names.contains(&advanced),
+            "ordinary coding intent must not recommend advanced validator {advanced}"
+        );
+        let exact = runtime
+            .dispatch(ToolCall::ToolManifest {
+                query: None,
+                limit: None,
+                tool_name: Some(advanced.to_string()),
+                category: None,
+                intent: None,
+                include_recommended_flows: false,
+                include_risk_summary: false,
+            })
+            .await;
+        assert!(exact.success, "{advanced}: {:?}", exact.error);
+        assert_eq!(
+            exact.output["contract"]["availability"],
+            expected_availability
+        );
+        if expected_availability == "direct" {
+            assert!(
+                exact.output["contract"]["gateway_tool"].is_null(),
+                "{advanced}"
+            );
+        } else {
+            assert_eq!(
+                exact.output["contract"]["gateway_tool"],
+                crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "{advanced}"
+            );
+        }
     }
 }
 
@@ -1264,18 +1300,9 @@ async fn tool_manifest_intent_can_combine_with_category_filter() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    // Coding intent keeps executable validation choices, while the read-only
-    // validation_summary remains available through exact/category discovery.
-    assert_eq!(
-        names,
-        vec![
-            "project_validate",
-            "cargo_fmt",
-            "cargo_check",
-            "cargo_test",
-            "go_test"
-        ]
-    );
+    // Coding intent keeps the portable project gateway plus explicit formatting;
+    // advanced ecosystem validators remain available through exact/category discovery.
+    assert_eq!(names, vec!["project_validate", "cargo_fmt"]);
 }
 
 #[tokio::test]

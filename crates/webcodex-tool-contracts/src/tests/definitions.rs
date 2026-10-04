@@ -1338,7 +1338,7 @@ fn code_mode_discovery_ranks_inspection_before_specialized_effects_without_chang
     assert!(position("execute_code_mode") < position("execute_mutating_code_mode"));
     assert!(position("edit_project_files") < position("execute_mutating_code_mode"));
     assert!(position("execute_code_mode") < position("execute_effectful_code_mode"));
-    assert!(position("cargo_test") < position("execute_effectful_code_mode"));
+    assert!(position("project_validate") < position("execute_effectful_code_mode"));
     for name in [
         "execute_code_mode",
         "execute_effectful_code_mode",

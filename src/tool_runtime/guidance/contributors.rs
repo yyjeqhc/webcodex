@@ -40,11 +40,11 @@ pub(super) static CORE_JOBS: GuidanceContributor = GuidanceContributor {
 pub(super) static DIRECT: GuidanceContributor = GuidanceContributor {
     target: GuidanceTarget::Strategy(CodingGuidanceProfile::Direct),
     items: &[
-        "General loop: inspect → act/produce → review → task-fit validation → deliver. Non-Git work can use list_project_files/read_files; Git, Cargo checks, and commits are task-dependent.",
+        "General loop: inspect → act/produce → review → task-fit validation → deliver. Non-Git work can use list_project_files/read_files; Git, structured project validation, and commits are task-dependent.",
         "Text source edits: read_files → edit_project_files with its read_revision fence; use exact edits for unique text and replace_range for deterministic whole-line rewrites. Review with review_changes when Git review is useful.",
         "Use artifact import/export or transfer_project_artifact for binary files; do not rename or transform binary payloads through text edits. Use run_script/Python for computation or non-source transforms, then independently verify generated/report outputs.",
         "Never use scripts to bypass edit_project_files revision fences, rollback, or sensitive-path policy.",
-        "Coalesce known work: read_files(items), search_project_texts(queries), search_file_context for search→source inspection, cargo_check(packages), and one edit_project_files batch. Keep result-dependent operations sequential; avoid ritual model turns.",
+        "Coalesce known work: read_files(items), search_project_texts(queries), search_file_context for search→source inspection, project_validate with scope.packages for common multi-package validation, and one edit_project_files batch. Keep result-dependent operations sequential; avoid ritual model turns.",
         "Simple observation: direct primitive. Batch predetermined independent observations; adaptive follow-ups stay sequential across model calls.",
         "Known target: bounded targeted reads. Broad discovery: small files/count search then targeted reads. Avoid ritual turns.",
     ],
@@ -54,7 +54,7 @@ pub(super) static HOST_BATCHING: GuidanceContributor = GuidanceContributor {
     target: GuidanceTarget::Strategy(CodingGuidanceProfile::HostCodeMode),
     items: &[
         "Host-native Code Mode is model guidance only. It grants no WebCodex capability/authority, changes no effects/retry/idempotency, and does not require WebCodex nested Code Mode. Host support is not verified by WebCodex; emit compact evidence.",
-        "Known same-kind inputs: prefer native batches such as read_files(items), search_project_texts(queries), cargo_check(packages), or one edit_project_files batch; do not Promise.all same-kind micro-calls. Never per-Job waits, Promise.race, or automatic redispatch.",
+        "Known same-kind inputs: prefer native batches such as read_files(items), search_project_texts(queries), project_validate with scope.packages for common multi-package validation, or one edit_project_files batch; do not Promise.all same-kind micro-calls. Never per-Job waits, Promise.race, or automatic redispatch.",
         "Independent cross-tool read-only observations: native batches first; then Promise.allSettled for partial evidence or Promise.all for all-or-nothing. Prefer search_file_context for search→read; keep mechanically determined dependent chains in one Host cell. Never use observe_jobs heartbeat polling.",
     ],
 };

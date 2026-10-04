@@ -53,6 +53,7 @@ struct ElementIdentity {
     document_id: String,
     snapshot_generation: u64,
     backend_node_id: i64,
+    frame_fence: Option<String>,
     capability: ControlCapability,
 }
 
@@ -285,11 +286,12 @@ impl BrowserSupervisor {
             .collect::<Vec<_>>();
         let mut nodes = Vec::new();
         let mut aggregate_bytes = 0usize;
-        let mut truncated = if effective_mode == SnapshotMode::Interactive {
-            source_nodes.len() > max_nodes
-        } else {
-            snapshot.truncated || source_nodes.len() > max_nodes
-        };
+        let mut truncated = snapshot.source_incomplete
+            || if effective_mode == SnapshotMode::Interactive {
+                source_nodes.len() > max_nodes
+            } else {
+                snapshot.truncated || source_nodes.len() > max_nodes
+            };
         let mut group_ids = HashMap::<String, String>::new();
         let mut next_group_id = 1usize;
         for node in source_nodes.into_iter().take(max_nodes) {
@@ -1087,6 +1089,7 @@ impl BrowserRuntime {
                         document_id: document_id.to_string(),
                         snapshot_generation,
                         backend_node_id,
+                        frame_fence: node.frame_fence,
                         capability: node.capability,
                     },
                 );
@@ -1147,6 +1150,17 @@ impl BrowserRuntime {
             stored.snapshot_generation = 0;
             self.invalidate_elements_for_page(page_id);
             return Err(stale_element());
+        }
+        let frame_fence = self
+            .elements
+            .values()
+            .find(|element| element.page_id == page_id && element.frame_fence.is_some())
+            .and_then(|element| element.frame_fence.clone());
+        if let Some(fence) = frame_fence {
+            if let Err(error) = self.backend.validate_frame_fence(target_id, &fence) {
+                self.invalidate_elements_for_page(page_id);
+                return Err(pre_effect_revalidation_error(error));
+            }
         }
         Ok(())
     }
@@ -1291,6 +1305,7 @@ fn opaque_id(prefix: &str) -> String {
 #[cfg(test)]
 mod tests {
     mod batch;
+    mod frames;
     use super::*;
     use crate::cdp::{
         BackendConsoleEntry, BackendDiagnosticsSnapshot, BackendEventSnapshot, BackendFactory,
@@ -1306,6 +1321,7 @@ mod tests {
         capability: ControlCapability,
     ) -> crate::cdp::BackendNode {
         crate::cdp::BackendNode {
+            frame_fence: None,
             role: role.to_string(),
             name: Some(name.to_string()),
             description: None,
@@ -1341,6 +1357,7 @@ mod tests {
     }
 
     struct FakeBackend {
+        frame_state: Option<Arc<Mutex<String>>>,
         batch_probe: Option<Arc<Mutex<batch::BatchProbe>>>,
         pages: Vec<BackendPage>,
         document_generation: u64,
@@ -1363,6 +1380,7 @@ mod tests {
 
         fn with_snapshot_nodes(snapshot_node_count: usize) -> Self {
             Self {
+                frame_state: None,
                 batch_probe: None,
                 pages: vec![BackendPage {
                     target_id: "private-target".to_string(),
@@ -1422,6 +1440,17 @@ mod tests {
     }
 
     impl BrowserBackend for FakeBackend {
+        fn validate_frame_fence(&mut self, _target_id: &str, fence: &str) -> BrowserResult<()> {
+            if self
+                .frame_state
+                .as_ref()
+                .is_some_and(|state| *state.lock().unwrap() == fence)
+            {
+                Ok(())
+            } else {
+                Err(stale_element())
+            }
+        }
         fn pages(&mut self) -> BrowserResult<Vec<BackendPage>> {
             if self
                 .batch_probe
@@ -1459,8 +1488,31 @@ mod tests {
             _target_id: &str,
             _max_depth: u32,
         ) -> BrowserResult<BackendSnapshot> {
+            if let Some(frame_state) = &self.frame_state {
+                let mut nodes = batch::form_nodes();
+                if self.snapshot_node_count > 1 {
+                    nodes = nodes
+                        .into_iter()
+                        .cycle()
+                        .take(self.snapshot_node_count)
+                        .collect();
+                    for node in &mut nodes {
+                        node.name = Some("x".repeat(MAX_NODE_TEXT_BYTES));
+                    }
+                }
+                for node in &mut nodes {
+                    node.frame_fence = Some(frame_state.lock().unwrap().clone());
+                }
+                return Ok(BackendSnapshot {
+                    source_incomplete: false,
+                    document_id: self.pages[0].document_id.clone(),
+                    nodes,
+                    truncated: false,
+                });
+            }
             if self.batch_probe.is_some() {
                 return Ok(BackendSnapshot {
+                    source_incomplete: false,
                     document_id: self.pages[0].document_id.clone(),
                     nodes: batch::form_nodes(),
                     truncated: false,
@@ -1472,6 +1524,7 @@ mod tests {
                     Some(&compact_select_dom()),
                 );
                 return Ok(BackendSnapshot {
+                    source_incomplete: false,
                     document_id: format!("doc-{}", self.document_generation),
                     nodes,
                     truncated,
@@ -1479,6 +1532,7 @@ mod tests {
             }
             if self.structured_controls {
                 return Ok(BackendSnapshot {
+                    source_incomplete: false,
                     document_id: format!("doc-{}", self.document_generation),
                     nodes: vec![
                         fixture_node("button", "Go", Some(7), ControlCapability::click()),
@@ -1498,6 +1552,7 @@ mod tests {
                 .map(|index| {
                     let actionable = !self.mixed_snapshot || index % 2 == 0;
                     BackendNode {
+                        frame_fence: None,
                         role: if actionable { "button" } else { "paragraph" }.to_string(),
                         name: Some(if actionable {
                             format!("Go {index}")
@@ -1525,6 +1580,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             Ok(BackendSnapshot {
+                source_incomplete: false,
                 document_id: format!("doc-{}", self.document_generation),
                 nodes,
                 truncated: self.snapshot_node_count > MAX_SNAPSHOT_NODES,

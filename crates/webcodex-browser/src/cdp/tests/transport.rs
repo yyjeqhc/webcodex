@@ -91,7 +91,7 @@ fn effect_socket_timeout_is_unknown_without_redispatch() {
     receive_timeout(true);
 }
 
-fn snapshot_session(failed_method: Option<&'static str>) {
+fn snapshot_session(failed_method: Option<&'static str>, iframe: bool) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -124,7 +124,7 @@ fn snapshot_session(failed_method: Option<&'static str>) {
             },
         )
         .unwrap();
-        let replies = [
+        let mut replies = vec![
             (
                 "Page.getFrameTree",
                 json!({}),
@@ -144,6 +144,31 @@ fn snapshot_session(failed_method: Option<&'static str>) {
                 json!({"root":{"nodeType":9}}),
             ),
         ];
+        if iframe {
+            let tree = json!({"frameTree":{"frame":{"id":"top","loaderId":"document-1","securityOrigin":"https://example.test"},
+                "childFrames":[{"frame":{"id":"child","parentId":"top","loaderId":"child-loader","securityOrigin":"https://example.test"}},
+                    {"frame":{"id":"foreign","parentId":"top","loaderId":"foreign-loader","securityOrigin":"https://other.test"}}]}});
+            let dom = json!({"root":{"nodeType":9,"backendNodeId":1,"children":[
+                {"nodeType":1,"localName":"iframe","frameId":"child","backendNodeId":2,
+                    "contentDocument":{"nodeType":9,"backendNodeId":3,"children":[
+                        {"nodeType":1,"localName":"input","backendNodeId":20,"attributes":["type","text"]}]}},
+                {"nodeType":1,"localName":"iframe","frameId":"foreign","backendNodeId":4,
+                    "contentDocument":{"nodeType":9,"backendNodeId":5}}
+            ]}});
+            replies[0].2 = tree.clone();
+            replies[2].2 = dom.clone();
+            let mut final_tree = tree.clone();
+            if failed_method == Some("frame_changed") {
+                final_tree["frameTree"]["childFrames"][0]["frame"]["loaderId"] =
+                    json!("new-loader");
+            }
+            replies.extend([
+                ("Accessibility.getFullAXTree", json!({"frameId":"child","depth":32}),
+                    json!({"nodes":[{"nodeId":"field","backendDOMNodeId":20,"role":{"value":"textbox"},"name":{"value":"Inside iframe"}}]})),
+                ("Page.getFrameTree", json!({}), final_tree),
+                ("DOM.getDocument", json!({"depth":DOM_CONTROL_INDEX_DEPTH,"pierce":true}), dom),
+            ]);
+        }
         let mut count = 0;
         for (method, params, result) in replies {
             let request = websocket.read().unwrap().into_text().unwrap();
@@ -191,13 +216,26 @@ fn snapshot_session(failed_method: Option<&'static str>) {
     let count = server.join().unwrap();
     assert_eq!(backend.next_id, 41 + count);
     match failed_method {
+        Some("frame_changed") => assert_eq!(result.unwrap_err().kind, "stale_element"),
+        Some("DOM.getDocument") if iframe => {
+            assert_eq!(result.unwrap_err().kind, "frame_document_unavailable")
+        }
         Some("Page.getFrameTree" | "Accessibility.getFullAXTree") => {
             assert_eq!(result.unwrap_err().kind, "cdp_error");
         }
         _ => {
-            assert_eq!(count, 3);
+            assert_eq!(count, if iframe { 6 } else { 3 });
             let snapshot = result.unwrap();
             assert_eq!(snapshot.document_id, "document-1");
+            if iframe {
+                let field = snapshot
+                    .nodes
+                    .iter()
+                    .find(|n| n.backend_node_id == Some(20))
+                    .unwrap();
+                assert_eq!(field.capability.action_names(), vec!["click", "input_text"]);
+                assert!(field.frame_fence.is_some());
+            }
             let picker = snapshot
                 .nodes
                 .iter()
@@ -210,16 +248,27 @@ fn snapshot_session(failed_method: Option<&'static str>) {
 
 #[test]
 fn snapshot_discovers_once_and_reuses_exact_page_session() {
-    snapshot_session(None);
+    snapshot_session(None, false);
 }
 
 #[test]
 fn snapshot_dom_failure_remains_best_effort_without_picker_authority() {
-    snapshot_session(Some("DOM.getDocument"));
+    snapshot_session(Some("DOM.getDocument"), false);
 }
 
 #[test]
 fn snapshot_frame_and_ax_remain_required() {
-    snapshot_session(Some("Page.getFrameTree"));
-    snapshot_session(Some("Accessibility.getFullAXTree"));
+    snapshot_session(Some("Page.getFrameTree"), false);
+    snapshot_session(Some("Accessibility.getFullAXTree"), false);
+}
+
+#[test]
+fn iframe_snapshot_reads_only_same_origin_frames_and_rechecks_documents() {
+    snapshot_session(None, true);
+}
+
+#[test]
+fn iframe_snapshot_rejects_mid_collection_navigation_and_missing_dom() {
+    snapshot_session(Some("frame_changed"), true);
+    snapshot_session(Some("DOM.getDocument"), true);
 }

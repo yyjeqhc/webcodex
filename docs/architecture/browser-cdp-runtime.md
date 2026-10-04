@@ -165,11 +165,32 @@ nodes that are not accessibility descendants of `Date`, `DateTime`,
 `InputTime`, `ColorWell`, `spinbutton`, `slider`, or `combobox`. Those
 descendants admit nothing, so a shadow picker does not regain `click`. A
 top-level `DateTime` host may still admit `click` in that failure mode because
-its input type is unknown. Iframe documents are not classified; controls inside
-them do not receive element authority. `click`, `input_text`, `select_option`,
-`set_value`, and `upload_file` reject an element that does not list that
-action. Document loader identity, snapshot generation, and stale-element
-rejection are unchanged.
+its input type is unknown. Pages containing frames require successful DOM
+classification; they do not fall back to role-only authority when that read fails.
+`click`, `input_text`, `select_option`, `set_value`, and `upload_file` reject an
+element that does not list that action.
+
+Same-origin iframe documents are classified separately using the same DOM and AX
+rules. Admission requires a matching HTTP(S) security origin throughout the frame
+ancestry, a known frame/loader identity, and an available DOM content document.
+Cross-origin, opaque-origin, sandboxed-without-allow-same-origin, missing and
+out-of-process documents receive no iframe element authority. There is no remote
+frame attachment, arbitrary evaluation, or new model-facing frame tool.
+
+Snapshot collection reads at most 32 eligible child frames under one request
+deadline. The existing node and byte budgets apply to the combined page projection;
+frame collection stops when the aggregate node budget is reached. Frame-local AX
+groups remain distinct. Before returning iframe authority, the runtime checks that
+the frame topology, loaders, security origins and DOM document backend identities
+still match the collection start. These identities and their fingerprint stay
+Runner-private.
+
+Before element effects and during batch reconciliation, a snapshot containing
+iframe authority also revalidates that fingerprint. Frame navigation, detachment,
+replacement (including a document identity change without a loader change), or
+origin changes conservatively invalidate all element IDs for that page. Ordinary
+form-value changes preserve sibling IDs. New snapshots retain the same generation
+invalidation behavior as top-document snapshots.
 
 Element authority is fenced to Browser identity, page identity, current document
 (loader) identity, and snapshot generation. Navigation, document replacement, page

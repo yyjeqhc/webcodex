@@ -19,6 +19,9 @@ const MAX_CDP_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CDP_LIST_BYTES: usize = 256 * 1024;
 const DOM_CONTROL_INDEX_DEPTH: i32 = 32;
 
+mod frames;
+use frames::{frame_documents, frame_fence};
+
 pub(crate) trait BackendFactory: Send + Sync {
     fn available(&self) -> bool;
     fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>>;
@@ -28,6 +31,12 @@ pub(crate) trait BrowserBackend: Send {
     fn pages(&mut self) -> BrowserResult<Vec<BackendPage>>;
     fn new_page(&mut self) -> BrowserResult<String>;
     fn snapshot(&mut self, target_id: &str, max_depth: u32) -> BrowserResult<BackendSnapshot>;
+    fn validate_frame_fence(&mut self, _target_id: &str, _fence: &str) -> BrowserResult<()> {
+        Err(BrowserError::not_started(
+            "stale_element",
+            "Frame document is unavailable",
+        ))
+    }
     fn screenshot(&mut self, target_id: &str) -> BrowserResult<BackendScreenshot>;
     fn console(
         &mut self,
@@ -100,6 +109,7 @@ pub(crate) struct BackendNode {
     pub(crate) read_only: Option<bool>,
     pub(crate) backend_node_id: Option<i64>,
     pub(crate) capability: ControlCapability,
+    pub(crate) frame_fence: Option<String>,
     /// Light-DOM `<option>` of a `<select>` that admits `select_option`.
     /// Compact snapshots keep the label and value, and still issue no element id.
     pub(crate) select_choice: bool,
@@ -109,6 +119,8 @@ pub(crate) struct BackendNode {
 pub(crate) struct BackendSnapshot {
     pub(crate) document_id: String,
     pub(crate) nodes: Vec<BackendNode>,
+    /// Frame collection omitted source nodes; compaction cannot recover them.
+    pub(crate) source_incomplete: bool,
     pub(crate) truncated: bool,
 }
 
@@ -842,12 +854,83 @@ impl BrowserBackend for CdpBackend {
         )
         .ok()
         .and_then(|document| document.get("root").cloned());
-        let (nodes, truncated) = project_ax_nodes(&raw_nodes, dom_root.as_ref());
+        if dom_root.is_none()
+            && frame_tree
+                .pointer("/frameTree/childFrames")
+                .and_then(Value::as_array)
+                .is_some_and(|frames| !frames.is_empty())
+        {
+            return Err(BrowserError::not_started(
+                "frame_document_unavailable",
+                "Frame classification unavailable; observe again",
+            ));
+        }
+        let (mut nodes, mut truncated) = project_ax_nodes(&raw_nodes, dom_root.as_ref());
+        let mut source_incomplete = false;
+        if let Some(root) = dom_root.as_ref() {
+            let documents = frame_documents(&frame_tree, root);
+            let fence = frame_fence(&frame_tree, root);
+            for (index, (frame_id, document)) in documents.iter().take(32).enumerate() {
+                let accessibility = cdp_call_on_websocket_until(
+                    &mut websocket,
+                    &mut self.next_id,
+                    "Accessibility.getFullAXTree",
+                    json!({"frameId": frame_id, "depth": max_depth.clamp(1, 32)}),
+                    false,
+                    deadline,
+                )?;
+                let raw = accessibility
+                    .get("nodes")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let (mut children, child_truncated) = project_ax_nodes(&raw, Some(document));
+                for node in &mut children {
+                    node.frame_fence = Some(fence.clone());
+                    if let Some(key) = &mut node.group_key {
+                        *key = format!("{frame_id}:{key}");
+                    }
+                }
+                nodes.extend(children);
+                truncated |= child_truncated;
+                // Bound aggregation across frames, including non-actionable content.
+                if nodes.len() >= MAX_SNAPSHOT_NODES {
+                    source_incomplete = index + 1 < documents.len();
+                    break;
+                }
+            }
+            source_incomplete |= documents.len() > 32;
+            if !documents.is_empty() {
+                let current = read_frame_fence(&mut websocket, &mut self.next_id, deadline)?;
+                if current != fence {
+                    return Err(BrowserError::not_started(
+                        "stale_element",
+                        "Frame changed during snapshot; observe again",
+                    ));
+                }
+            }
+        }
         Ok(BackendSnapshot {
             document_id,
             nodes,
+            source_incomplete,
             truncated,
         })
+    }
+
+    fn validate_frame_fence(&mut self, target_id: &str, fence: &str) -> BrowserResult<()> {
+        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        let endpoint = self.page_endpoint_until(target_id, deadline)?;
+        let mut websocket = open_loopback_websocket(&endpoint, deadline)?;
+        if read_frame_fence(&mut websocket, &mut self.next_id, deadline)? != fence {
+            let mut error = BrowserError::not_started(
+                "stale_element",
+                "Frame changed; observe a fresh snapshot",
+            );
+            error.recovery_action = Some("snapshot");
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn screenshot(&mut self, target_id: &str) -> BrowserResult<BackendScreenshot> {
@@ -1447,6 +1530,33 @@ fn viewport_dimension(metrics: &Value, pointer: &str) -> u32 {
         .clamp(1.0, 4096.0) as u32
 }
 
+fn read_frame_fence(
+    websocket: &mut WebSocket<TcpStream>,
+    next_id: &mut u64,
+    deadline: Instant,
+) -> BrowserResult<String> {
+    let tree = cdp_call_on_websocket_until(
+        websocket,
+        next_id,
+        "Page.getFrameTree",
+        json!({}),
+        false,
+        deadline,
+    )?;
+    let dom = cdp_call_on_websocket_until(
+        websocket,
+        next_id,
+        "DOM.getDocument",
+        json!({"depth": DOM_CONTROL_INDEX_DEPTH, "pierce": true}),
+        false,
+        deadline,
+    )?;
+    let root = dom
+        .get("root")
+        .ok_or_else(|| BrowserError::not_started("stale_element", "Frame document unavailable"))?;
+    Ok(frame_fence(&tree, root))
+}
+
 fn parse_ax_snapshot_nodes(raw_nodes: &[Value]) -> (Vec<BackendNode>, bool) {
     let raw_by_id = raw_nodes
         .iter()
@@ -1499,6 +1609,7 @@ fn parse_ax_snapshot_nodes(raw_nodes: &[Value]) -> (Vec<BackendNode>, bool) {
             disabled,
             read_only,
             backend_node_id,
+            frame_fence: None,
             capability: ControlCapability::default(),
             select_choice: false,
         });
@@ -1691,6 +1802,7 @@ fn host_projection(facts: &DomControlFacts, capability: ControlCapability) -> Op
         facts.host_input_type.as_deref(),
     )?;
     Some(BackendNode {
+        frame_fence: None,
         role: role.to_string(),
         name: facts.host_label.clone(),
         description: None,

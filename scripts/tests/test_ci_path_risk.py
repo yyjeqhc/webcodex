@@ -84,6 +84,17 @@ class PathRiskFixtureTests(unittest.TestCase):
         self.assertEqual(result["needs_macos"], "true")
         self.assertEqual(result["needs_desktop_package"], "false")
 
+    def test_production_warning_gate_script_requires_native_core_lanes(self) -> None:
+        result = classify("scripts/check_production_warnings.py")
+        self.assertEqual(result["needs_windows_core"], "true")
+        self.assertEqual(result["needs_windows_runner"], "false")
+        self.assertEqual(result["needs_windows_package"], "false")
+        self.assertEqual(result["needs_windows_desktop"], "false")
+        self.assertEqual(result["needs_macos"], "true")
+        self.assertEqual(result["needs_macos_desktop"], "false")
+        self.assertEqual(result["needs_full_native"], "false")
+        self.assertIn("production-warning-gate", result["categories"])
+
     def test_runner_plugin_requires_windows_runner_and_macos(self) -> None:
         result = classify("crates/webcodex-runner/src/webcodex_runner/plugin.rs")
         self.assertEqual(result["needs_windows_runner"], "true")

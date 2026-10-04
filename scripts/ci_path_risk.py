@@ -236,6 +236,13 @@ def _classify_path(risk: Risk, path: str) -> None:
     if path.startswith("integrations/codex/") and path.endswith(".py"):
         _mark_windows_core(risk, "codex-adapter")
         return
+    if path == "scripts/check_production_warnings.py":
+        # This gate executes directly in Linux tooling, Windows core and macOS
+        # core. Linux tooling is unconditional, but an owner PR that changes the
+        # gate itself must also exercise both native Python/Cargo environments.
+        _mark_windows_core(risk, "production-warning-gate")
+        _mark_macos(risk, "production-warning-gate")
+        return
     if _is_docs_or_text(path):
         risk.categories.add("docs")
         return

@@ -251,17 +251,13 @@ impl CodeModeHost for CallableExampleHost {
                 }),
                 "get_git_status" => json!({"stdout": "## clean"}),
                 "cargo_check" => json!({
-                    "execution_state": "running",
-                    "terminal": false,
-                    "job_id": "wc_job_example",
-                    "continuation": {"follow_up_kind": "fallback_recovery", "tool": "observe_jobs", "arguments": {}}
+                    "execution_state": "pending",
+                    "continuation": {"follow_up_kind": "fallback_recovery", "tool": "observe_jobs",
+                        "arguments": {"items":[{"job_id":"wc_job_example"}]}}
                 }),
-                "edit_project_files" => json!({
-                    "state_changed": true,
-                    "execution_state": "completed",
-                    "error_kind": null,
-                    "recovery": null
-                }),
+                // Current sparse success retains changed, not the duplicate
+                // state_changed/execution_state presentation fields.
+                "edit_project_files" => json!({"changed":true}),
                 other => {
                     return Err(CodeModeHostError::new(format!(
                         "example unexpectedly invoked {other}"
@@ -1755,6 +1751,12 @@ async fn code_mode_exact_manifest_projects_canonical_stage_callable_contracts() 
             .await;
         assert!(result.success, "{entry_tool}: {:?}", result.error);
         let projection = &result.output["code_mode_callable_contract"];
+        assert_eq!(projection["version"], 2);
+        assert_eq!(
+            projection["result_envelope"],
+            json!(["success", "output", "error"])
+        );
+        assert_eq!(projection["output_fields_scope"], "output");
         assert_eq!(projection["stage"], expected_stage, "{entry_tool}");
         assert_eq!(projection["entry_tool"], entry_tool, "{entry_tool}");
         assert_eq!(projection["authority"], "presentation_only", "{entry_tool}");
@@ -1876,6 +1878,19 @@ async fn code_mode_exact_manifest_projects_canonical_stage_callable_contracts() 
 #[cfg(feature = "experimental-code-mode")]
 #[tokio::test]
 async fn code_mode_callable_projection_preserves_key_input_constraints_and_output_handoffs() {
+    fn qualified_output_fields(tool: &Value) -> Vec<Value> {
+        // Reconstruct the same path assertions from the shared envelope and
+        // relative paths; compact presentation must not lose these semantics.
+        let mut fields = vec![json!("success"), json!("error")];
+        fields.extend(
+            tool["output_fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|field| json!(format!("output.{}", field.as_str().unwrap()))),
+        );
+        fields
+    }
     let runtime = test_runtime();
 
     let read_only = runtime
@@ -1907,7 +1922,7 @@ async fn code_mode_callable_projection_preserves_key_input_constraints_and_outpu
     assert!(read_files["input"]["properties"]
         .get("session_id")
         .is_none());
-    let read_outputs = read_files["output_fields"].as_array().unwrap();
+    let read_outputs = qualified_output_fields(read_files);
     for field in [
         "output.items[].path",
         "output.items[].output.text",
@@ -1921,7 +1936,7 @@ async fn code_mode_callable_projection_preserves_key_input_constraints_and_outpu
         .iter()
         .find(|tool| tool["tool"] == "search_project_texts")
         .expect("search_project_texts projection");
-    let search_outputs = search["output_fields"].as_array().unwrap();
+    let search_outputs = qualified_output_fields(search);
     for field in [
         "output.items[].output.matches",
         "output.items[].output.matches[].path",
@@ -1955,7 +1970,7 @@ async fn code_mode_callable_projection_preserves_key_input_constraints_and_outpu
     assert!(cargo_test["input"]["properties"]
         .get("result_expectation")
         .is_none());
-    let cargo_test_outputs = cargo_test["output_fields"].as_array().unwrap();
+    let cargo_test_outputs = qualified_output_fields(cargo_test);
     for field in [
         "success",
         "output.execution_state",
@@ -2005,7 +2020,7 @@ async fn code_mode_callable_projection_preserves_key_input_constraints_and_outpu
         .expect("apply_text_edits projection");
     assert_eq!(edit["input"]["properties"]["changes"]["maxItems"], 16);
     assert!(edit["input"]["properties"].get("project").is_none());
-    let edit_outputs = edit["output_fields"].as_array().unwrap();
+    let edit_outputs = qualified_output_fields(edit);
     for field in [
         "success",
         "output.state_changed",

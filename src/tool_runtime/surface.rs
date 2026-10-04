@@ -144,7 +144,15 @@ fn strip_code_mode_schema_noise(value: &mut Value) {
             for key in ["description", "title", "examples", "$comment"] {
                 object.remove(key);
             }
+            if object.get("default").is_some_and(Value::is_null) {
+                object.remove("default");
+            }
             for (key, nested) in object.iter_mut() {
+                // These contain instance data, not schemas. A literal object
+                // can legitimately have a business key named "description".
+                if matches!(key.as_str(), "const" | "enum" | "default") {
+                    continue;
+                }
                 if matches!(
                     key.as_str(),
                     "properties"
@@ -255,12 +263,20 @@ fn collect_code_mode_output_fields(
         if CODE_MODE_USEFUL_OUTPUT_FIELD_NAMES.contains(&name.as_str()) {
             fields.insert(path.clone());
         }
-        let nested_prefix = if schema_can_be_array(child) {
-            format!("{path}[]")
-        } else {
-            path
-        };
-        collect_code_mode_output_fields(child, &nested_prefix, depth + 1, fields);
+        // Describe decision-bearing values, not every implementation detail of
+        // diagnostics or generated follow-up arguments. Keep collection item
+        // paths and validation freshness; other structured values stay whole.
+        if matches!(
+            name.as_str(),
+            "output" | "items" | "matches" | "files" | "source_state"
+        ) {
+            let nested_prefix = if schema_can_be_array(child) {
+                format!("{path}[]")
+            } else {
+                path
+            };
+            collect_code_mode_output_fields(child, &nested_prefix, depth + 1, fields);
+        }
     }
 }
 
@@ -284,31 +300,38 @@ fn code_mode_output_fields(schema: &Value) -> Vec<String> {
         rank(left).cmp(&rank(right)).then_with(|| left.cmp(right))
     });
     fields.truncate(CODE_MODE_OUTPUT_FIELDS_PER_TOOL_MAX);
+    // The common ToolResult envelope is declared once, not repeated per tool.
     fields
+        .into_iter()
+        .filter_map(|path| path.strip_prefix("output.").map(str::to_owned))
+        .collect()
 }
 
 #[cfg(feature = "experimental-code-mode")]
 fn code_mode_usage_examples(stage: CodeModeCallableStage) -> Vec<Value> {
-    let mut examples = vec![
-        json!({
-            "name": "adaptive_search_then_read",
-            "source": r#"const search = await tools.search_project_texts({queries:[{pattern:"CanonicalOrchestrationHost",pattern_mode:"literal",limit:8}]});
+    // Each stage has its own complete example. Repeating read-only examples
+    // in every wider stage spends the bounded manifest on duplicate guidance.
+    match stage {
+        CodeModeCallableStage::ReadOnly => vec![
+            json!({
+                "name": "adaptive_search_then_read",
+                "source": r#"const search = await tools.search_project_texts({queries:[{pattern:"CanonicalOrchestrationHost",pattern_mode:"literal",limit:8}]});
 const matches = search.output.items?.[0]?.output?.matches ?? [];
-const detail = await tools.read_files({items:matches.slice(0,3).map(m=>({path:m.path,start_line:m.read_hint.start_line,limit:m.read_hint.limit}))});
-text({matches:matches.map(m=>({path:m.path,line:m.line,preview:m.preview})),files:detail.output.items?.map(i=>({path:i.path,text:i.output?.text,read_revision:i.output?.read_revision}))});"#,
-        }),
-        json!({
-            "name": "independent_observations",
-            "source": r#"const [status, detail] = await Promise.all([
-  tools.git_status({}),
+if (matches.length) {
+  const detail = await tools.read_files({items:matches.slice(0,3).map(m=>({path:m.path,start_line:m.read_hint.start_line,limit:m.read_hint.limit}))});
+  text({matches,files:detail.output.items});
+} else text({matches:[]});"#,
+            }),
+            json!({
+                "name": "independent_observations",
+                "source": r#"const [status, detail] = await Promise.all([
+  tools.get_git_status({}),
   tools.read_files({items:[{path:"src/tool_runtime/code_mode.rs",start_line:1,limit:80}]})
 ]);
 text({status:status.output?.stdout,file:detail.output.items?.[0]?.output?.text});"#,
-        }),
-    ];
-    match stage {
-        CodeModeCallableStage::ReadOnly => {}
-        CodeModeCallableStage::Validation => examples.push(json!({
+            }),
+        ],
+        CodeModeCallableStage::Validation => vec![json!({
             "name": "validation_job_handoff",
             "source": r#"const check = await tools.cargo_check({});
 if (check.output?.execution_state === "pending") {
@@ -316,19 +339,17 @@ if (check.output?.execution_state === "pending") {
 } else {
   text({passed:check.output?.passed,failure_kind:check.output?.failure_kind,diagnostics:check.output?.diagnostics});
 }"#,
-        })),
-        CodeModeCallableStage::GuardedEdit => examples.push(json!({
+        })],
+        CodeModeCallableStage::GuardedEdit => vec![json!({
             "name": "guarded_edit_then_validation",
-            "source": r#"const path = "src/example.rs";
-const read = await tools.read_files({items:[{path,start_line:1,limit:120}]});
-const revision = read.output.items?.[0]?.output?.read_revision;
-const edit = await tools.edit_project_files({changes:[{kind:"edit",path,expected_read_revision:revision,edits:[{kind:"replace_exact",old_text:"old",new_text:"new"}]}]});
-if (!edit.success || typeof edit.output?.state_changed !== "boolean") throw new Error("inspect edit recovery before validating");
-const check = await tools.cargo_check({});
-text({state_changed:edit.output.state_changed,call_success:check.success,source_state:check.output?.source_state,pending:check.output?.execution_state==="pending"});"#,
-        })),
+            "source": r#"const path="src/example.rs";
+const read=await tools.read_files({items:[{path}]});
+const edit=await tools.edit_project_files({changes:[{kind:"edit",path,expected_read_revision:read.output.items[0].output.read_revision,edits:[{kind:"replace_exact",old_text:"old",new_text:"new"}]}]});
+if (!edit.success || typeof edit.output?.changed!=="boolean") throw Error("Inspect recovery");
+const check=await tools.cargo_check({});
+text({changed:edit.output.changed,success:check.success,source_state:check.output?.source_state,continuation:check.output?.continuation});"#,
+        })],
     }
-    examples
 }
 
 #[cfg(feature = "experimental-code-mode")]
@@ -365,7 +386,9 @@ fn code_mode_callable_contract(
     }
     let projection = json!({
         "kind": "code_mode_callable_contract",
-        "version": 1,
+        "version": 2,
+        "result_envelope": ["success", "output", "error"],
+        "output_fields_scope": "output",
         "stage": stage.as_str(),
         "entry_tool": stage.entry_tool(),
         "authority": "presentation_only",
@@ -378,12 +401,28 @@ fn code_mode_callable_contract(
         "examples": code_mode_usage_examples(stage),
         "bounds": {
             "hard_max_bytes": CODE_MODE_CALLABLE_CONTRACT_HARD_MAX_BYTES,
-            "description_max_chars": TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS,
             "output_fields_per_tool_max": CODE_MODE_OUTPUT_FIELDS_PER_TOOL_MAX,
         },
     });
     let bytes = serialized_json_len(&projection).expect("Value serialization is infallible");
     if bytes > CODE_MODE_CALLABLE_CONTRACT_HARD_MAX_BYTES {
+        #[cfg(test)]
+        eprintln!(
+            "CODE_MODE_PROJECTION_OVERFLOW stage={} bytes={} per_tool={:?}",
+            stage.as_str(),
+            bytes,
+            projection["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tool| (
+                    tool["tool"].as_str().unwrap(),
+                    serialized_json_len(tool).unwrap(),
+                    serialized_json_len(&tool["input"]).unwrap(),
+                    serialized_json_len(&tool["output_fields"]).unwrap(),
+                ))
+                .collect::<Vec<_>>()
+        );
         return Err(ToolResult::err_with_output(
             "code mode callable projection exceeded its hard model-surface bound",
             json!({
@@ -1472,6 +1511,31 @@ where
 #[cfg(all(test, feature = "experimental-code-mode"))]
 mod code_mode_projection_tests {
     use super::*;
+
+    #[test]
+    fn schema_noise_compaction_preserves_literal_data_and_validation_constraints() {
+        let literal = json!({"description":"business data","title":"literal","default":null});
+        let mut schema = json!({
+            "type":"object", "description":"schema prose", "default":null,
+            "additionalProperties":false, "required":["value"],
+            "properties":{
+                "value":{"type":"object","const":literal,"enum":[literal],"default":literal},
+                "count":{"type":"integer","minimum":1,"maximum":16,"default":8}
+            }
+        });
+        strip_code_mode_schema_noise(&mut schema);
+        assert!(schema.get("description").is_none());
+        assert!(schema.get("default").is_none());
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(schema["required"], json!(["value"]));
+        assert_eq!(schema["properties"]["value"]["const"], literal);
+        assert_eq!(schema["properties"]["value"]["enum"], json!([literal]));
+        assert_eq!(schema["properties"]["value"]["default"], literal);
+        assert_eq!(
+            schema["properties"]["count"],
+            json!({"type":"integer","minimum":1,"maximum":16,"default":8})
+        );
+    }
 
     #[test]
     fn schema_noise_compaction_preserves_business_property_names() {

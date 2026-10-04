@@ -60,5 +60,8 @@ cargo build -p webcodex --profile dogfood --bin webcodex-server
 浏览器测试需先安装 `scripts/pdf-sidebar-poc` 的依赖。其历史独立 POC 所用
 PDF.js 5.6.205 不进入正式 HTML；正式版本从 `frontend` 依赖构建。
 
-真实 ChatGPT 复测使用 `PDF_POC_WORK_RESULT=1` 的只读合成文件入口与临时测试
-隧道，不替代上述后端权限测试，也不部署或重启现有 WebCodex 服务。
+真实 ChatGPT 复测改为复用原有 **Codex Local - Workstation** 插件和现有 Secure
+Tunnel。用户已授权将 `127.0.0.1:18080` 更新到 `45641ab3`；旧程序、配置和数据
+已备份。旧 Desktop 的 Runtime 切换错误目前阻止部署，详见
+[Runtime 切换诊断](desktop-runtime-switch.md)。尚未取得正式文件预览的真实
+ChatGPT 截图。此前准备的独立测试插件未创建，临时 CF / Node 服务已停止。

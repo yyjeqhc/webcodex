@@ -57,6 +57,9 @@ pub(crate) struct ToolCallCorrelation {
     pub(crate) business_session_id: Option<String>,
     pub(crate) workflow_sessions: Vec<WorkflowSessionCorrelation>,
     pub(crate) recorder_gap_session_id: Option<String>,
+    /// Bounded content-free Job trace captured from Server-held canonical state.
+    /// ActionAudit-only; never projected to the model or used as execution authority.
+    pub(crate) job_audit: Option<super::job_audit::JobAuditTrace>,
     #[cfg(feature = "experimental-code-mode")]
     pub(crate) code_mode_composition: Option<super::code_mode::CodeModeCompositionSummary>,
 }
@@ -71,6 +74,12 @@ impl ToolCallCorrelation {
             return;
         }
         self.workflow_sessions.push(link);
+    }
+
+    pub(crate) fn job_audit_summary(&self) -> Option<serde_json::Value> {
+        self.job_audit
+            .as_ref()
+            .and_then(|trace| serde_json::to_value(trace).ok())
     }
 
     /// Bounded diagnostic-only composition projection for outer ActionAudit.

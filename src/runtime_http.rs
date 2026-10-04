@@ -163,9 +163,19 @@ fn prepare_action_tools_call_response(
     if let Some(composition) = correlation.code_mode_composition_audit_summary() {
         summary["code_mode_composition"] = composition;
     }
+    if let Some(job_trace) = correlation.job_audit_summary() {
+        summary["job_trace"] = job_trace;
+    }
     let mut event = ActionAuditRecord::new(tool.to_string(), response.success, status)
         .error(response.error.clone())
         .summary(summary);
+    if response.success {
+        if let Some(ids) =
+            crate::tool_runtime::job_audit::action_audit_job_ids(Some(tool), &response.output)
+        {
+            event = event.ids(ids);
+        }
+    }
     event.project = project;
     audit.record(event);
     (status, response)

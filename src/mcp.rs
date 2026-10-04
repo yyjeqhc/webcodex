@@ -452,15 +452,8 @@ fn mcp_tool_job_audit_correlation(
         };
     }
 
-    let promoted = output
-        .get("promoted_to_job")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if !promoted && tool_name != Some("run_job") {
-        return McpToolJobAuditCorrelation::default();
-    }
     McpToolJobAuditCorrelation {
-        async_job_id: safe_audit_job_id(output.get("job_id")),
+        async_job_id: crate::tool_runtime::job_audit::execution_job_id_for_audit(tool_name, output),
         observed_job_ids: Vec::new(),
         resolved_project: None,
     }
@@ -770,6 +763,9 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             }
             if let Some(composition) = correlation.code_mode_composition_audit_summary() {
                 summary["code_mode_composition"] = composition;
+            }
+            if let Some(job_trace) = correlation.job_audit_summary() {
+                summary["job_trace"] = job_trace;
             }
             let mut event = ActionAuditRecord::new(tool.clone(), success, status)
                 .error(error)

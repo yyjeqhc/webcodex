@@ -58,6 +58,7 @@ mod hygiene;
 mod hygiene_tools;
 mod instruction_projection;
 mod job_attention;
+pub(crate) mod job_audit;
 mod job_input;
 mod job_query;
 mod job_terminal_wait;

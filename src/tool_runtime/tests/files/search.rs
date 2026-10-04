@@ -3500,6 +3500,20 @@ async fn search_project_text_rejects_empty_pattern() {
 
 #[tokio::test]
 async fn search_project_texts_max_context_runtime_result_matches_public_schema() {
+    assert_max_context_runtime_schema(None).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn search_project_texts_max_context_grep_fallback_matches_public_schema() {
+    let bin = tempfile::tempdir().unwrap();
+    for command in ["grep", "head"] {
+        symlink_host_command(command, bin.path());
+    }
+    assert_max_context_runtime_schema(Some(bin.path())).await;
+}
+
+async fn assert_max_context_runtime_schema(grep_only_path: Option<&std::path::Path>) {
     let runtime = test_runtime();
     let root = tempfile::tempdir().unwrap();
     let body = format!("{}needle\n{}", "before\n".repeat(80), "after\n".repeat(80));
@@ -3524,7 +3538,12 @@ async fn search_project_texts_max_context_runtime_result_matches_public_schema()
                     .await
             }
         });
-        let req = wait_for_patch_agent_request(&runtime, "search-bound").await;
+        let mut req = wait_for_patch_agent_request(&runtime, "search-bound").await;
+        if let Some(path) = grep_only_path {
+            // Preserve the Runner request marker; scope PATH to this child script only.
+            let (marker, script) = req.command.split_once('\n').expect("search request script");
+            req.command = format!("{marker}\nPATH={}; export PATH\n{script}", shell_escape_simple(&path.to_string_lossy()));
+        }
         complete_agent_request_by_running_locally(&runtime, "search-bound", req).await;
         let batch = task.await.unwrap();
         assert!(batch.success, "{:?}", batch.error);
@@ -3542,12 +3561,16 @@ async fn search_project_texts_max_context_runtime_result_matches_public_schema()
             );
         }
         let result = extract_single_search_batch_result(batch);
+        if grep_only_path.is_some() {
+            assert_eq!(result.output["backend"], "grep", "controlled PATH must exercise fallback");
+        }
         for (field, count) in [("context_before", before), ("context_after", after)] {
-            // Sparse model projection omits zero-valued context knobs.
-            if count == 0 {
-                assert!(result.output.get(field).is_none());
+            // Only complete rg results use the sparse projection. The grep
+            // fallback deliberately retains its context and diagnostic metadata.
+            if count == 0 && result.output.get("backend").is_none() {
+                assert!(result.output.get(field).is_none(), "{field}: {}", result.output);
             } else {
-                assert_eq!(result.output[field], count);
+                assert_eq!(result.output[field], count, "{field}: {}", result.output);
             }
         }
         let matched = &result.output["matches"][0];

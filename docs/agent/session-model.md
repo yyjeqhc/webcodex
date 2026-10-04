@@ -965,6 +965,11 @@ summary shape is:
 of the final MCP result object, after stateless result metadata has been added
 when applicable but excluding the JSON-RPC envelope. `gateway_tool_included`
 reflects the actual final response rather than theoretical authorization. The
+serialized fields are transport telemetry, not a model-token/context measurement: an
+Apps-enabled response may include `ui.visibility=["app"]` descriptors and Host-only
+`_meta` presentation data that ordinary model tool selection does not consume. Size
+regression tests therefore track model-visible compact discovery separately from raw
+MCP transport overhead.
 durable summary never stores the tool-schema body, tool-name array,
 descriptions, arguments, or scopes. ActionAudit persistence failure remains
 non-blocking and cannot change the MCP protocol result.

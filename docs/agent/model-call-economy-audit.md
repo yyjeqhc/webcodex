@@ -70,8 +70,13 @@ The four gateway-only descriptors save another 8,660 bytes per surface, includin
 array separators. The canonical registry, parser, and exact manifest remain
 complete. Full discovery preserves complete schemas for its admitted direct
 inventory; removed direct tools remain available by exact manifest/gateway.
-New compact ceilings are 84,000 / 87,000 / 97,000 bytes without Apps and another
-19,000 bytes with Apps; experimental Code Mode retains its feature allowance.
+At the time of this audit the raw MCP transport guard used compact ceilings of
+84,000 / 87,000 / 97,000 bytes without Apps plus a separate App allowance. Those
+numbers are historical serialized-transport guards, not model-context/token budgets.
+The current regression test separately measures model-visible compact descriptors
+(excluding App-only `ui.visibility=["app"]` tools and Host-only `_meta`/title data)
+and complete raw MCP transport overhead; experimental Code Mode retains its feature
+allowance.
 
 ## Direct candidate decisions
 

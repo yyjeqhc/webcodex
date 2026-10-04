@@ -6,12 +6,12 @@
     "build": "node scripts/build.mjs --out-dir dist --admin-only && node scripts/build-runtime-v2.mjs --out-dir dist",
     "dev": "vite --config vite.runtime.config.ts",
     "dev:admin": "node scripts/build.mjs --out-dir .dev-dist --watch",
-    "check:dist": "node scripts/build.mjs --out-dir dist --check && node scripts/build-runtime-v2.mjs --out-dir dist --check && node scripts/build-work-result-markdown.mjs --check && node scripts/build-work-result-sections.mjs --check && node scripts/build-work-result-pdf.mjs --check",
+    "check:dist": "node scripts/build.mjs --out-dir dist --check && node scripts/build-runtime-v2.mjs --out-dir dist --check && node scripts/build-work-result-markdown.mjs --check && node scripts/build-work-result-sections.mjs --check && node scripts/build-work-result-pdf.mjs --check && node scripts/build-pdf-document.mjs --check",
     "typecheck": "tsc --noEmit",
-    "test:admin": "node --test test/build.test.mjs test/app-regions.test.mjs test/work-result-sections.test.mjs test/work-result-read-cache.test.mjs test/work-result-pdf.test.mjs",
+    "test:admin": "node --test test/build.test.mjs test/app-regions.test.mjs test/work-result-sections.test.mjs test/work-result-read-cache.test.mjs test/work-result-pdf.test.mjs test/pdf-document-reader.test.mjs",
     "test:runtime": "vitest run --config vitest.config.ts",
     "test": "npm run test:admin && npm run test:runtime",
-    "build:work-result": "node scripts/build-work-result-markdown.mjs && node scripts/build-work-result-sections.mjs && node scripts/build-work-result-pdf.mjs"
+    "build:work-result": "node scripts/build-work-result-markdown.mjs && node scripts/build-work-result-sections.mjs && node scripts/build-work-result-pdf.mjs && node scripts/build-pdf-document.mjs"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",

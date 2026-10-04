@@ -8,15 +8,16 @@ const preview = await startWorkResultPreview();
 const browser = await chromium.launch({ channel: "msedge", headless: true });
 const report = { browser: await browser.version(), actualChatGPT: false, shippedWorkResult: true, cases: [] };
 try {
-  for (const [sample, width, theme] of [["text", 360, "light"], ["cjk", 420, "light"], ["scan", 420, "dark"], ["ratio", 860, "light"]]) {
+  for (const [sample, width, theme, layout = "thread"] of [["text", 360, "light"], ["cjk", 420, "light"], ["scan", 420, "dark"], ["ratio", 860, "light"], ["text", 581, "light", "card"]]) {
     const height = sample === "ratio" ? 1100 : 900;
     const context = await browser.newContext({ viewport: { width, height } });
     const page = await context.newPage(), workers = new Set(), errors = [], outbound = [];
     page.on("worker", worker => { workers.add(worker); worker.on("close", () => workers.delete(worker)); });
     page.on("pageerror", error => errors.push(error.message));
     page.on("request", request => { if (/^https?:/.test(request.url()) && !request.url().startsWith(preview.url)) outbound.push(request.url()); });
-    await page.goto(`${preview.url}/?sample=${sample}&theme=${theme}`);
+    await page.goto(`${preview.url}/?sample=${sample}&theme=${theme}&layout=${layout}`);
     const frame = page.frameLocator("iframe");
+    if (layout === "card") await frame.getByRole("tab", { name: "Results", exact: true }).click();
     await frame.getByRole("button", { name: `${sample}.pdf`, exact: false }).click();
     await frame.locator(".pdf-status").filter({ hasText: "Working-tree snapshot PDF" }).waitFor({ timeout: 25000 });
     const app = page.frames().find(frame => frame.url().includes("/viewer"));
@@ -26,11 +27,15 @@ try {
       const rect = canvas.getBoundingClientRect();
       const row = canvas.closest(".frozen-file"), navigator = document.querySelector("#workspaceNavigator");
       return { ink, width: rect.width, height: rect.height, backing: canvas.width * canvas.height,
+        rowClipped: row.scrollHeight > row.clientHeight + 1,
+        listMaxHeight: getComputedStyle(row.parentElement).maxHeight,
         titleVisible: row.querySelector(".file-toggle").getBoundingClientRect().top >= navigator.getBoundingClientRect().bottom,
         overflow: document.documentElement.scrollWidth > innerWidth, text: document.querySelector(".textLayer").textContent };
     });
     assert.ok(metrics.ink > 1000); assert.ok(metrics.backing <= 8_000_000); assert.equal(metrics.overflow, false);
     assert.equal(metrics.titleVisible, true, "sticky navigation must not cover the PDF filename");
+    assert.equal(metrics.rowClipped, false, "file list must not compress the expanded PDF row");
+    if (layout === "card") assert.equal(metrics.listMaxHeight, "none", "PDF preview must escape the compact file-list height limit");
     assert.equal(workers.size, 1); assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
     if (sample === "cjk") assert.ok(metrics.text.includes("中文 PDF"));
     if (sample === "scan") assert.equal(metrics.text.trim(), "");
@@ -46,13 +51,13 @@ try {
       await frame.getByLabel("Zoom in").click();
       await frame.getByRole("button", { name: "Fit page width", exact: true }).click();
     }
-    await page.screenshot({ path: new URL(`${sample}-${width}-${theme}.png`, artifacts).pathname.replace(/^\/(\w:)/, "$1") });
+    await page.screenshot({ path: new URL(`${sample}-${width}-${theme}-${layout}.png`, artifacts).pathname.replace(/^\/(\w:)/, "$1") });
     await frame.getByRole("button", { name: `${sample}.pdf`, exact: false }).click();
     await page.waitForFunction(() => !document.querySelector("iframe").contentDocument.querySelector(".pdf-page canvas"));
     const deadline = Date.now() + 3000;
     while (workers.size && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
     assert.equal(workers.size, 0, "collapse releases the PDF Worker");
-    report.cases.push({ sample, viewportWidth: width, viewportHeight: height, theme, ...metrics, text: metrics.text.slice(0, 100), workersAfterClose: workers.size });
+    report.cases.push({ sample, viewportWidth: width, viewportHeight: height, theme, layout, ...metrics, text: metrics.text.slice(0, 100), workersAfterClose: workers.size });
     await context.close();
   }
   // Worker denial is actionable, preserves the snapshot and offers Retry.

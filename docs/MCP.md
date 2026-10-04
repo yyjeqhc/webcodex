@@ -544,6 +544,21 @@ including Session wrappers, gateway tools, and optional App metadata/tools.
 
 ### ChatGPT file bridge
 
+For viewing a project PDF, call `present_pdf(project, path)` directly. It opens
+the dedicated PDF App (`ui://webcodex/pdf/v1`) with a filename, page/zoom/search
+toolbar and a full-height reading area. It does not include Work Result activity,
+change lists or collaboration. Unchanged and untracked PDFs are supported;
+Git and Workflow Sessions are not prerequisites. The Host controls its outer
+sidebar and display mode. Rendering requires an MCP Apps-capable Host.
+
+The App privately calls model-hidden `read_pdf_chunk`, reauthorizing Project and
+Runner ownership on every read and pinning the selected file's size/SHA-256.
+Version changes fail closed; explicitly call `present_pdf` again to select the
+new version. PDF bytes stay in private MCP metadata. The 20 MiB file limit,
+128 KiB chunks, offline PDF.js renderer and Worker teardown remain bounded.
+Use `present_work_result` for substantial coding progress, and `present_pdf`
+when the user asks to view a PDF. See [PDF document viewer](architecture/pdf-document-viewer.md).
+
 When the connected MCP protocol/host admits the artifact capabilities, WebCodex supports
 host-native file transfer in both directions without routing complete binary
 payloads through model text:

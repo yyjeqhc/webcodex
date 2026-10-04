@@ -421,6 +421,8 @@ impl ToolCall {
             Self::StartSession { .. } => "start_session",
             Self::WorkOnProject { .. } => "work_on_project",
             Self::FinishCodingTask { .. } => "finish_coding_task",
+            Self::PresentPdf { .. } => "present_pdf",
+            Self::ReadPdfChunk { .. } => "read_pdf_chunk",
             Self::PresentWorkResult { .. } => "present_work_result",
             Self::WorkResultState { .. } => "get_work_result_state",
             Self::WorkResultActivityDetail { .. } => "read_work_result_activity_detail",
@@ -860,6 +862,8 @@ impl ToolCall {
                 Some(project.as_str())
             }
             Self::FinishCodingTask { project, .. }
+            | Self::PresentPdf { project, .. }
+            | Self::ReadPdfChunk { project, .. }
             | Self::PresentWorkResult { project, .. }
             | Self::WorkResultState { project, .. }
             | Self::WorkResultActivityDetail { project, .. }

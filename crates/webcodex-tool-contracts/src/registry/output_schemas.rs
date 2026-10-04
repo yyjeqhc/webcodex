@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 
 mod agent_tasks;
 mod agent_waits;
@@ -36,6 +36,43 @@ pub use common::{
 };
 
 fn base_output_schema_for_tool(name: &str) -> Value {
+    if matches!(name, "present_pdf" | "read_pdf_chunk") {
+        let identity = json!({
+            "type": "object", "additionalProperties": false,
+            "properties": {
+                "project": {"type":"string", "maxLength":512},
+                "path": {"type":"string", "maxLength":512},
+                "sha256": {"type":"string", "pattern":"^[0-9a-f]{64}$"},
+            }, "required": ["project", "path", "sha256"]
+        });
+        let mut payload = identity;
+        if name == "present_pdf" {
+            payload["properties"]["name"] = json!({"type":"string", "maxLength":255});
+            payload["properties"]["bytes"] =
+                json!({"type":"integer", "minimum":5, "maximum":20971520});
+            payload["required"]
+                .as_array_mut()
+                .unwrap()
+                .extend([json!("name"), json!("bytes")]);
+            return common::wrapped_output_schema(vec![("pdf_document", payload)]);
+        }
+        payload["properties"]["bytes_total"] =
+            json!({"type":"integer", "minimum":5, "maximum":20971520});
+        payload["properties"]["byte_offset"] =
+            json!({"type":"integer", "minimum":0, "maximum":20971519});
+        payload["properties"]["next_byte_offset"] =
+            json!({"type":["integer","null"], "minimum":1, "maximum":20971519});
+        payload["properties"]["complete"] = json!({"type":"boolean"});
+        payload["properties"]["content_base64"] = json!({"type":"string", "maxLength":174764, "description":"Runtime-only bytes; MCP moves them to private App metadata before structured/text framing."});
+        // Transport moves content_base64 to private _meta before framing.
+        payload["required"].as_array_mut().unwrap().extend([
+            json!("bytes_total"),
+            json!("byte_offset"),
+            json!("next_byte_offset"),
+            json!("complete"),
+        ]);
+        return common::wrapped_output_schema(vec![("pdf_chunk", payload)]);
+    }
     if let Some(schema) = resource_references::output_schema_for_tool(name) {
         return schema;
     }

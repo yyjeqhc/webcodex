@@ -19,7 +19,7 @@ class InlineBinaryDataFactory {
 export function createPreview(host, options) {
   let disposed = false, loading = null, pdf = null, worker = null, port = null, workerUrl = null;
   let renderTask = null, textLayer = null, pageNumber = 1, scale = 1, fit = true, resizeTimer;
-  let queue = Promise.resolve(), busy = false, readyCancel = null;
+  let queue = Promise.resolve(), busy = false, readyCancel = null, workerFailure = null;
   const current = () => !disposed && options.current();
   const element = (tag, className = "") => {
     const node = host.ownerDocument.createElement(tag); node.className = className; return node;
@@ -67,17 +67,31 @@ export function createPreview(host, options) {
       if (!current()) return;
       busy = true; controls();
       try { await action(); } catch (error) {
-        release(); if (current()) { options.failed?.(); status.textContent = `PDF unavailable: ${error.message}`; }
+        release(); if (current()) {
+          options.failed?.();
+          const reason = error.message.includes("Image exceeded maximum allowed size")
+            ? "An embedded image exceeds the 16 million pixel limit; a complete preview is unavailable."
+            : error.message;
+          status.textContent = `PDF unavailable: ${reason}`;
+        }
       }
       finally { busy = false; controls(); }
     });
     return queue;
+  }
+  function workerMessage(event) {
+    // PDF.js can complete a streamed render after its operator-list stream errored.
+    // Keep the actual Worker failure instead of accepting that partial page.
+    const reason = event.data?.reason;
+    if (current() && event.data?.stream && typeof reason?.message === "string")
+      workerFailure = new Error(reason.message);
   }
   async function createWorker() {
     const source = await unzip(WEBCODEX_PDF_WORKER);
     if (!current()) throw new Error("PDF preview closed");
     workerUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
     port = new Worker(workerUrl, { type: "module", name: "webcodex-pdf" });
+    port.addEventListener("message", workerMessage);
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => finish(new Error("PDF Worker unavailable")), 3000);
       const message = event => { if (event.data?.webcodexPdfReady) finish(); };
@@ -107,9 +121,11 @@ export function createPreview(host, options) {
     page.hidden = false;
     renderTask = pageProxy.render({ canvas, canvasContext: canvas.getContext("2d"), viewport, transform: [dpr, 0, 0, dpr, 0, 0] });
     await renderTask.promise; renderTask = null; if (!current()) return;
+    if (workerFailure) throw workerFailure;
     const text = await pageProxy.getTextContent(); if (!current()) return;
     textLayer = new TextLayer({ textContentSource: text, container: layer, viewport }); await textLayer.render();
     if (!current()) return;
+    if (workerFailure) throw workerFailure;
     fitButton.textContent = fit ? "Fit width" : `${Math.round(scale * 100)}%`;
     status.textContent = `${options.sourceLabel || "PDF"} · ${pdf.numPages} ${pdf.numPages === 1 ? "page" : "pages"} · ${Math.round(scale * 100)}%`;
     controls();
@@ -131,6 +147,7 @@ export function createPreview(host, options) {
     const task = loading; loading = null; pdf = null;
     const oldWorker = worker, oldPort = port, oldUrl = workerUrl;
     worker = port = workerUrl = null;
+    oldPort?.removeEventListener("message", workerMessage); workerFailure = null;
     let finished = false, timer;
     const finish = () => {
       if (finished) return; finished = true; clearTimeout(timer);
@@ -146,11 +163,12 @@ export function createPreview(host, options) {
   return {
     load: () => enqueue(async () => {
       try {
-        const bytes = await readPdf({ ...options, current, progress: (loaded, total) => {
+        const bytes = await (options.readDocument || readPdf)({ ...options, current, progress: (loaded, total) => {
           if (current()) status.textContent = `Loading PDF · ${loaded} / ${total} bytes`;
         } });
         await createWorker(); if (!current()) return;
-        loading = getDocument({ data: bytes, worker, isEvalSupported: false, enableXfa: false,
+        // Fail instead of presenting a successful page with oversized images removed.
+        loading = getDocument({ data: bytes, worker, stopAtErrors: true, isEvalSupported: false, enableXfa: false,
           useWasm: false, useWorkerFetch: false, BinaryDataFactory: InlineBinaryDataFactory,
           cMapPacked: true, cMapUrl: "inline/cmaps/", standardFontDataUrl: "inline/fonts/",
           useSystemFonts: false, maxImageSize: 16_000_000, canvasMaxAreaInBytes: 32_000_000 });

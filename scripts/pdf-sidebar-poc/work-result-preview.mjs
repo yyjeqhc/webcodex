@@ -20,7 +20,11 @@ export async function startWorkResultPreview(port = 0) {
         res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(store.read(call.arguments))); return;
       }
       if (req.method !== "GET") { res.writeHead(405).end(); return; }
-      if (url.pathname === "/present") { res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(store.present(url.searchParams.get("sample") || "text"))); return; }
+      if (url.pathname === "/present") {
+        const result = store.present(url.searchParams.get("sample") || "text");
+        if (url.searchParams.get("layout") === "card") delete result._meta["webcodex/workResultThread"];
+        res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(result)); return;
+      }
       if (url.pathname === "/host.js") { res.writeHead(200, { "Content-Type": "text/javascript" }).end(host.outputFiles[0].text); return; }
       if (url.pathname === "/viewer") {
         res.setHeader("Content-Security-Policy", `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data: blob:; img-src data: blob:; connect-src 'none'; worker-src ${url.searchParams.get("policy") === "deny" ? "'none'" : "blob:"}; object-src 'none'; base-uri 'none'`);

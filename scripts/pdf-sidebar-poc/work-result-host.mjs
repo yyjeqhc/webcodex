@@ -7,7 +7,7 @@ bridge.oncalltool = async request => {
   return response.json();
 };
 bridge.oninitialized = async () => {
-  const response = await fetch(`/present?sample=${params.get("sample") || "text"}`);
+  const response = await fetch(`/present?sample=${params.get("sample") || "text"}&layout=${params.get("layout") || "thread"}`);
   await bridge.sendToolResult(await response.json());
 };
 await bridge.connect(new PostMessageTransport(frame.contentWindow, frame.contentWindow));

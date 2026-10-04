@@ -1,5 +1,10 @@
 # Desktop Runtime 切换诊断与准备状态
 
+> 历史诊断记录：此处的切换阻塞随后已解决。新 Runtime 已通过 Desktop 标准流程
+> 启用，独立 PDF 阅读器已在真实 ChatGPT 侧栏完成验证。后续结果见
+> [PDF document viewer](../../architecture/pdf-document-viewer.md#real-chatgpt-host-verification)。
+> 下文保留当时的诊断、候选程序和待执行步骤。
+
 记录日期：2026-10-05。PDF 实现和候选 Server 来自干净提交
 `45641ab3b87d1c3b519172035009c678b3fca169`。
 

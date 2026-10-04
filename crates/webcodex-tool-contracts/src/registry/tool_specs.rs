@@ -101,6 +101,16 @@ pub fn goal_plan_app_tool_specs() -> Vec<ToolSpec> {
     )]
 }
 
+/// Dedicated PDF App read; canonical definition stays ModelHidden.
+pub fn pdf_app_tool_specs() -> Vec<ToolSpec> {
+    vec![
+        tool_spec(
+            "read_pdf_chunk",
+            "PDF App-only read of one 128 KiB segment from the exact authorized Project/path/size/SHA-256 selected by present_pdf. Rechecks current Project ownership, path policy and Runner capability on every read; no Git or Session required. Binary bytes use private MCP metadata only. A changed version fails closed; retry keeps the exact identity and offset, reopening explicitly selects a new version.",
+        ),
+    ]
+}
+
 /// Work Result App primitives. Canonical definitions stay ModelHidden; only the
 /// MCP Apps adapter projects live refresh, bounded Window collaboration, closeout
 /// sealing, and frozen lazy diff reads.

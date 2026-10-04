@@ -2119,6 +2119,12 @@ impl ToolCallAuditProjection for ToolCall {
                 "include_handoff": include_handoff,
                 "include_validation_summary": include_validation_summary,
             }),
+            Self::PresentPdf { project, path } | Self::ReadPdfChunk { project, path, .. } => {
+                serde_json::json!({
+                    "project": project,
+                    "path": path,
+                })
+            }
             Self::PresentWorkResult {
                 project,
                 session_id,

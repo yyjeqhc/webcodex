@@ -2219,6 +2219,45 @@ test("PDF rows read the pinned working-tree source and fence late replies on clo
   }
 });
 
+test("PDF reads continue through temporary path filtering without changing the pinned source", async () => {
+  const { view, file, request } = await pdfReadingView();
+  const filter = view.nodes.workspaceNavigator.children[4].children[0];
+  filter.value = "no-match"; filter.oninput();
+  assert.equal(file.row.hidden, true);
+  const reply = toolResult({ work_result_files: {
+    project, session_id: null, snapshot_id, path: "report.pdf", view: "pdf",
+    byte_offset: 0, bytes_total: 200_000, complete: false, next_byte_offset: 131_072,
+  } });
+  reply._meta = { "webcodex/pdfChunk": { content_base64: Buffer.alloc(131_072).toString("base64") } };
+  await view.reply(request, reply);
+  const reads = view.calls("get_work_result_state").filter(call => call.params.arguments.files?.view === "pdf");
+  assert.equal(reads.length, 2, "hidden rows retain the live PDF transfer");
+  assert.deepEqual(JSON.parse(JSON.stringify(reads[1].params.arguments)), { project,
+    files: { snapshot_id, path: "report.pdf", view: "pdf", byte_offset: 131_072 } });
+  filter.value = ""; filter.oninput();
+  assert.equal(file.row.hidden, false);
+  file.button("PDF").onclick(); await flush();
+  assert.equal(view.calls("get_work_result_state").filter(call => call.params.arguments.files?.view === "pdf").length, 2,
+    "restoring visibility and selecting the same tab reuse the pending transfer");
+  await view.teardown();
+});
+
+test("PDF failures while path-filtered remain actionable after the row returns", async () => {
+  const { view, file, request } = await pdfReadingView();
+  const filter = view.nodes.workspaceNavigator.children[4].children[0];
+  filter.value = "no-match"; filter.oninput();
+  await view.reply(request, toolResult({ work_result_files: {
+    project, session_id: null, snapshot_id, path: "report.pdf", view: "pdf", unavailable_reason: "too_large",
+  } }));
+  filter.value = ""; filter.oninput();
+  const retry = file.button("Retry preview");
+  assert.equal(file.row.hidden, false); assert.equal(retry.hidden, false);
+  retry.onclick(); await flush();
+  assert.deepEqual(JSON.parse(JSON.stringify(view.calls("get_work_result_state").at(-1).params.arguments)),
+    JSON.parse(JSON.stringify(request.params.arguments)));
+  await view.teardown();
+});
+
 test("PDF error retry keeps the same exact snapshot and never requests text for a binary PDF", async () => {
   const { view, file, request } = await pdfReadingView();
   await view.reply(request, toolResult({ work_result_files: {

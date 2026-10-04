@@ -541,7 +541,7 @@ async fn call_runtime_tool_cannot_target_itself() {
 #[tokio::test]
 async fn call_runtime_tool_rejects_direct_app_presentation_targets_when_apps_are_enabled() {
     let runtime = test_runtime();
-    for (index, target) in ["present_work_result", "present_goal_plan"]
+    for (index, target) in ["present_work_result", "present_pdf", "present_goal_plan"]
         .into_iter()
         .enumerate()
     {

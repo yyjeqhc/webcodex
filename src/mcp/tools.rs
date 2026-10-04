@@ -369,6 +369,7 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
             crate::tool_runtime::goal_plan_app_tool_specs()
                 .into_iter()
                 .chain(crate::tool_runtime::work_result_app_tool_specs())
+                .chain(crate::tool_runtime::pdf_app_tool_specs())
                 .chain(crate::tool_runtime::agent_continuation_app_tool_specs())
                 .chain(crate::tool_runtime::job_terminal_continuation_app_tool_specs())
                 .collect(),
@@ -758,6 +759,7 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
             tool_name,
             Some(
                 "sync_goal_plan"
+                    | "read_pdf_chunk"
                     | "get_work_result_state"
                     | "read_changed_file_diff"
                     | "search_mentions"
@@ -2025,7 +2027,11 @@ pub(super) struct McpInvocationEnvelope {
 fn mcp_invocation_envelope_supported_fields(tool: &str) -> Vec<&'static str> {
     if matches!(
         tool,
-        "sync_goal_plan" | "get_work_result_state" | "read_changed_file_diff" | "search_mentions"
+        "sync_goal_plan"
+            | "get_work_result_state"
+            | "read_pdf_chunk"
+            | "read_changed_file_diff"
+            | "search_mentions"
     ) || tool == WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME
         || is_host_continuation_app_tool_name(tool)
     {
@@ -2823,6 +2829,8 @@ pub(super) async fn handle_call(
             None => json!({"project": binding.project}),
         };
     }
+    let app_only_pdf_chunk =
+        server_mcp_apps_enabled && stateless_2026 && params.name == "read_pdf_chunk";
     let app_only_work_result_state =
         work_result_app_admitted && params.name == "get_work_result_state";
     let app_only_work_result_activity_detail =
@@ -2851,6 +2859,7 @@ pub(super) async fn handle_call(
     let direct_denied = !workbench_view_call
         && !app_only_goal_plan_sync
         && !app_only_work_result_state
+        && !app_only_pdf_chunk
         && !app_only_work_result_activity_detail
         && !app_only_work_result_send_message
         && !app_only_changes_file_diff
@@ -3003,6 +3012,7 @@ pub(super) async fn handle_call(
                 trace_diagnostics: trace_diagnostics_capable,
                 goal_plan_app: goal_plan_app_capable,
                 work_result_app: work_result_app_capable,
+                pdf_app: server_mcp_apps_enabled && stateless_2026,
                 agent_continuation_app: agent_continuation_app_capable,
             },
         )
@@ -3099,6 +3109,7 @@ pub(super) async fn handle_call(
     };
     if workbench_view_call
         || (app_only_work_result_state && !work_result_thread_panel)
+        || app_only_pdf_chunk
         || app_only_work_result_activity_detail
         || app_only_work_result_send_message
         || app_only_changes_file_diff
@@ -3112,6 +3123,11 @@ pub(super) async fn handle_call(
         // These tools are ModelHidden/app-visible only, so ordinary model tool
         // results retain the compact text fallback.
         attach_app_tool_content_fallback(&mut result);
+    }
+    if app_enabled && params.name == "present_pdf" {
+        if let Some(structured) = result.get("structuredContent").cloned() {
+            result["_meta"]["webcodex/pdfDocument"] = structured;
+        }
     }
     if (app_enabled && params.name == "present_work_result") || work_result_thread_panel {
         // Initial model-originated presentation keeps normal model content compact.

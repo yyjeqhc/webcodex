@@ -1,5 +1,11 @@
 # 正式 Work Result PDF 预览验证
 
+> 历史验证记录：本文描述最初的 Work Result PDF 预览。后续分支已改名为
+> `feat/pdf-viewer`，新增独立 `present_pdf` 阅读器，并完成正常 Runtime 切换和
+> 真实 ChatGPT 侧栏验证。当前实现与验证范围见
+> [PDF document viewer](../../architecture/pdf-document-viewer.md)；下文版本号、
+> 测试数量及部署阻塞状态保留为当时记录。
+
 实验分支：`experiment/pdf-sidebar-poc`。本次将 PDF.js **6.4.299** 接入正式
 `src/mcp_work_result_app.html`，资源地址升级为 `ui://webcodex/work-result/v25`。
 生产文件来自既有 App-only 工具的不可变 Git 快照，PDF 二进制只进入私有 MCP

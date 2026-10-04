@@ -1541,12 +1541,16 @@ pub(super) fn adapt_tool_result(
     text_json_compat: bool,
     result_presentation: McpToolResultPresentation,
 ) -> McpResourceToolResultAdaptation {
-    if tool_name == "get_work_result_state" {
+    if matches!(tool_name, "get_work_result_state" | "read_pdf_chunk") {
         // Binary previews belong only to the admitted App. Move bytes before
         // producing structured/text compatibility copies; neither contains PDF.
         let encoded = result
             .output
-            .get_mut("work_result_files")
+            .get_mut(if tool_name == "read_pdf_chunk" {
+                "pdf_chunk"
+            } else {
+                "work_result_files"
+            })
             .and_then(Value::as_object_mut)
             .and_then(|file| file.remove("content_base64"));
         if let Some(encoded) = encoded {

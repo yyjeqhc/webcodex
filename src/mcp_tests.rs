@@ -316,6 +316,8 @@ mod model_ergonomics;
 mod model_surface;
 #[path = "mcp_tests/oauth_scope.rs"]
 mod oauth_scope;
+#[path = "mcp_tests/pdf_document_app.rs"]
+mod pdf_document_app;
 #[path = "mcp_tests/plugin_check.rs"]
 mod plugin_check;
 #[path = "mcp_tests/plugin_tools.rs"]

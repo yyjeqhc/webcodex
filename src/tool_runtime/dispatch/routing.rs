@@ -118,6 +118,8 @@ impl ToolRuntime {
             | ToolCall::WorkOnProject { .. }
             | ToolCall::FinishCodingTask { .. }
             | ToolCall::PresentWorkResult { .. }
+            | ToolCall::PresentPdf { .. }
+            | ToolCall::ReadPdfChunk { .. }
             | ToolCall::WorkResultState { .. }
             | ToolCall::WorkResultActivityDetail { .. }
             | ToolCall::WorkResultSendMessage { .. }

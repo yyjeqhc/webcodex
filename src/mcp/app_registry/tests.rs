@@ -4,9 +4,10 @@ use std::collections::HashSet;
 #[test]
 fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
     let expected = [
+        "ui://webcodex/pdf/v1",
         "ui://webcodex/computer/v12",
         "ui://webcodex/workbench/v2",
-        "ui://webcodex/work-result/v25",
+        "ui://webcodex/work-result/v27",
         "ui://webcodex/goal-plan/v7",
         "ui://webcodex/agent-continuation/v18",
         "ui://webcodex/job-terminal-continuation/v2",
@@ -34,11 +35,13 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
             assert!(for_uri(&format!("{}{extra}", app.uri)).is_none());
         }
     }
-    assert_eq!(tools.len(), 6);
+    assert_eq!(tools.len(), 7);
     for retired in [
         "ui://webcodex/computer/v11",
         "ui://webcodex/changes/v3",
         "ui://webcodex/workbench/v1",
+        "ui://webcodex/work-result/v26",
+        "ui://webcodex/work-result/v25",
         "ui://webcodex/work-result/v24",
         "ui://webcodex/work-result/v23",
         "ui://webcodex/work-result/v22",
@@ -88,6 +91,7 @@ fn bundled_app_registry_preserves_read_only_cached_resource_without_new_bindings
     }
     for (tool, uri) in [
         ("open_webcodex_workbench", MCP_WORKBENCH_UI_RESOURCE_URI),
+        ("present_pdf", MCP_PDF_UI_RESOURCE_URI),
         ("present_work_result", MCP_WORK_RESULT_UI_RESOURCE_URI),
         ("present_goal_plan", MCP_GOAL_PLAN_UI_RESOURCE_URI),
         (
@@ -136,6 +140,11 @@ fn bundled_app_registry_keeps_resource_csp_display_modes_and_cache_policy_separa
                         "availableDisplayModes": ["inline", "fullscreen"], "preferredDisplayMode": "inline",
                     })
                 );
+            } else if app.uri == MCP_PDF_UI_RESOURCE_URI {
+                assert_eq!(
+                    contents[0]["_meta"]["openai/ui"],
+                    json!({"availableDisplayModes": ["fullscreen", "inline"], "preferredDisplayMode": "fullscreen"})
+                );
             } else {
                 assert_eq!(contents[0]["_meta"], meta);
             }
@@ -166,14 +175,18 @@ fn bundled_app_registry_metadata_preserves_existing_descriptor_fields() {
         );
         assert_eq!(descriptor["_meta"]["ui"]["other"], true);
         assert_eq!(descriptor["_meta"]["ui"]["resourceUri"], app.uri);
+        assert_eq!(
+            descriptor["title"],
+            app.tool_title
+                .map(Value::from)
+                .unwrap_or_else(|| before["title"].clone())
+        );
         if app.uri == MCP_WORKBENCH_UI_RESOURCE_URI {
-            assert_eq!(descriptor["title"], "Projects & Resources");
             assert_eq!(
                 descriptor["_meta"]["openai/ui"],
                 json!({"entrypoints":[{"type":"global"},{"type":"thread"}]})
             );
         } else {
-            assert_eq!(descriptor["title"], before["title"]);
             assert!(descriptor["_meta"].get("openai/ui").is_none());
         }
     }

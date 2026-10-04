@@ -36,12 +36,16 @@ row, refreshing the file snapshot, failure or teardown cancels rendering and
 clears the text layer/canvas. PDF.js receives a brief bounded Terminate handshake
 before the Worker and Blob URL are released (at most one second). Pending reads
 cannot recreate a closed renderer. No PDF byte cache survives close.
+Path filtering only hides a retained row: loading continues against the same
+pinned snapshot, and any error remains available when the row is shown again.
 
 One visible page has an 8-million-pixel backing limit, DPR at most 2, zoom from
 15% to 300%, fit-width, paging, selectable text and current-page search. The
 viewer does not instantiate scripting or annotation/link handling. XFA, eval,
 Wasm and external Worker fetches are disabled. Worker denial produces an error
 and explicit retry; there is no main-thread parser fallback.
+Embedded images above 16 million pixels and other PDF.js parsing errors fail
+the preview visibly rather than producing a successful but incomplete page.
 
 Toolbar groups wrap in a narrow panel. Explicit opening focuses the row again
 after load only if the reader has not scrolled during loading. Width changes

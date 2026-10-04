@@ -57,6 +57,17 @@ impl ToolRuntime {
                 .await
             }
 
+            ToolCall::PresentPdf { project, path } => self.present_pdf(project, path, auth).await,
+            ToolCall::ReadPdfChunk {
+                project,
+                path,
+                sha256,
+                bytes,
+                byte_offset,
+            } => {
+                self.read_pdf_chunk(project, path, sha256, bytes, byte_offset, auth)
+                    .await
+            }
             ToolCall::PresentWorkResult {
                 project,
                 session_id,

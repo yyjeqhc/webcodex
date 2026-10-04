@@ -6,7 +6,7 @@ import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@model
 import { z } from "zod";
 import { baseState, project } from "../../src/mcp_tests/work_result_app_fixture.mjs";
 
-export const RESOURCE_URI = "ui://webcodex/work-result/v25";
+export const RESOURCE_URI = "ui://webcodex/work-result/v27";
 const files = { text: "fixtures/text.pdf", cjk: "fixtures/cjk.pdf", scan: "fixtures/scan.pdf", ratio: "output/pdf/sidebar-match-630x496.pdf" };
 export async function createWorkResultFixtures() {
   const documents = new Map();

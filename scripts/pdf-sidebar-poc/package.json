@@ -9,7 +9,8 @@
     "mcp": "node preview-server.mjs",
     "test": "node --test test/*.test.mjs",
     "smoke": "node smoke.mjs",
-    "smoke:local": "node local-file-smoke.mjs"
+    "smoke:local": "node local-file-smoke.mjs",
+    "smoke:pdf-regressions": "node pdf-preview-regressions.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",

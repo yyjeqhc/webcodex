@@ -993,7 +993,16 @@ async fn job_telemetry_contention_omits_snapshot_without_waiting_or_mutating() {
     let registry = RunnerRegistry::default();
     let guard = registry.inner.lock().await;
     assert!(registry.try_job_telemetry_snapshots_for_auth(None, &["unknown"]).is_none());
+    assert!(
+        registry
+            .try_job_observability_views_for_auth(None, &["unknown"])
+            .is_none()
+    );
     assert!(guard.jobs_by_id.is_empty());
     drop(guard);
     assert!(registry.try_job_telemetry_snapshots_for_auth(None, &["unknown"]).unwrap().is_empty());
+    assert!(registry
+        .try_job_observability_views_for_auth(None, &["unknown"])
+        .unwrap()
+        .is_empty());
 }

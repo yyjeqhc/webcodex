@@ -340,7 +340,7 @@ fn build_job_audit_trace(
 }
 
 impl ToolRuntime {
-    pub(crate) async fn capture_job_audit_trace(
+    pub(crate) fn capture_job_audit_trace(
         &self,
         correlation: &mut ToolCallCorrelation,
         tool_name: &str,
@@ -355,8 +355,8 @@ impl ToolRuntime {
         let refs = ids.iter().map(String::as_str).collect::<Vec<_>>();
         let jobs = self
             .runner_registry
-            .job_observability_views_for_auth(access.as_ref(), &refs)
-            .await;
+            .try_job_observability_views_for_auth(access.as_ref(), &refs)
+            .unwrap_or_default();
         correlation.job_audit = Some(build_job_audit_trace(
             tool_name,
             &result.output,
@@ -467,8 +467,8 @@ mod tests {
         assert!(!serde_json::to_string(&item).unwrap().contains("PRIVATE"));
     }
 
-    #[tokio::test]
-    async fn missing_job_metadata_is_fail_soft_and_preserves_readiness_semantics() {
+    #[test]
+    fn missing_job_metadata_is_fail_soft_and_preserves_readiness_semantics() {
         let runtime = ToolRuntime::new_for_tests();
         let result = ToolResult::ok(json!({
             "wait_state":"deadline",
@@ -480,9 +480,7 @@ mod tests {
         let before_success = result.success;
         let before_output = result.output.clone();
         let mut correlation = ToolCallCorrelation::default();
-        runtime
-            .capture_job_audit_trace(&mut correlation, "wait_for_job_readiness", &result, None)
-            .await;
+        runtime.capture_job_audit_trace(&mut correlation, "wait_for_job_readiness", &result, None);
         assert_eq!(result.success, before_success);
         assert_eq!(
             result.output, before_output,

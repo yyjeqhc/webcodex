@@ -1962,25 +1962,27 @@ impl RunnerRegistry {
     }
 
     /// Bounded caller-authorized immutable Job views for outer observability.
-    /// Unlike ordinary Job reads this deliberately does not refresh lifecycle
-    /// state, touch receipts, or contact a Runner. Missing/hidden records are
-    /// simply omitted so telemetry can never change the caller's tool outcome.
-    pub async fn job_observability_views_for_auth(
+    /// Unlike ordinary Job reads this deliberately does not refresh lifecycle,
+    /// touch receipts, contact a Runner, or wait for the registry lock. Missing,
+    /// hidden, or contended metadata is omitted so telemetry can never change or
+    /// delay the caller's tool outcome.
+    pub fn try_job_observability_views_for_auth(
         &self,
         auth: Option<&crate::RunnerAccess>,
         job_ids: &[&str],
-    ) -> Vec<ShellJobInfo> {
-        let inner = self.inner.read().await;
-        job_ids
-            .iter()
-            .take(8)
-            .filter_map(|job_id| {
-                let job = inner.jobs_by_id.get(*job_id)?;
-                (job.visibility == ShellJobVisibility::Public
-                    && shell_job_visible_to_auth(auth, &inner, job))
-                .then(|| job_view(job))
-            })
-            .collect()
+    ) -> Option<Vec<ShellJobInfo>> {
+        self.inner.try_read(|inner| {
+            job_ids
+                .iter()
+                .take(8)
+                .filter_map(|job_id| {
+                    let job = inner.jobs_by_id.get(*job_id)?;
+                    (job.visibility == ShellJobVisibility::Public
+                        && shell_job_visible_to_auth(auth, inner, job))
+                    .then(|| job_view(job))
+                })
+                .collect()
+        })
     }
 
     /// Resolve one observability-only Project anchor for an exact Job set under

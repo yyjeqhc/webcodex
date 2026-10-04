@@ -160,3 +160,13 @@ test("untrusted messages are ignored and later results replace earlier cards", (
   assert.equal(view.nodes.state.textContent, "Validation failed");
   assert.equal(view.nodes.cards.children.length, 1);
 });
+
+test("validation card distinguishes expected negative results and unexpected success", () => {
+  const view = app();
+  view.result({ ...passed, passed: false, failure_kind: "validation_failed", failure_expectation_result: "matched_expected_failure" });
+  assert.equal(view.nodes.state.textContent, "Validation failed · Expected result");
+  view.result({ ...passed, failure_expectation_result: "unexpected_success" });
+  assert.equal(view.nodes.state.textContent, "Passed · Expectation not met");
+  view.result(passed);
+  assert.equal(view.nodes.state.textContent, "Passed");
+});

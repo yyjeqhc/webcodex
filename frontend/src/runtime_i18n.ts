@@ -4,6 +4,8 @@ export { RUNTIME_LANGUAGES, type RuntimeLanguage } from "./runtime_locales.js";
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Expected result": "符合预期",
+  "Expectation not met": "不符合预期",
   "Version": "版本",
   "Enabled": "已启用",
   "Disabled": "未启用",

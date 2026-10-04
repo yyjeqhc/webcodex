@@ -391,6 +391,24 @@ pub fn public_result_expectation_satisfied(
     }
 }
 
+/// Display-only result from the durable ledger's matcher; pending results stay absent.
+pub fn tool_result_expectation_classification(
+    success: bool,
+    expectation: &ToolCallExpectation,
+    output: &Value,
+    error: Option<&str>,
+) -> Option<&'static str> {
+    if !expectation.expected_failure
+        && expectation.result_expectation.is_none()
+        && expectation.accepted_exit_codes.is_empty()
+    {
+        return None;
+    }
+    let kind = actual_failure_kind_for_tool_result(output, error, None);
+    let result = classify_failure_expectation(success, expectation, kind.as_deref(), output);
+    (result != TOOL_EXPECTATION_RESULT_NONE).then_some(result)
+}
+
 pub(super) fn classify_failure_expectation(
     success: bool,
     expectation: &ToolCallExpectation,
@@ -1367,6 +1385,67 @@ mod result_expectation_tests {
             &json!({"accepted_exit_codes": [0, 1]}),
         )
         .is_err());
+    }
+
+    #[test]
+    fn display_expectation_uses_terminal_facts_without_overriding_failures() {
+        let expectation = ToolCallExpectation {
+            result_expectation: Some("failure".into()),
+            ..Default::default()
+        };
+        let completed =
+            json!({"execution_state":"completed", "exit_code":1, "failure_kind":"process_exit"});
+        assert_eq!(
+            tool_result_expectation_classification(false, &expectation, &completed, None),
+            Some("matched_expected_failure")
+        );
+        assert_eq!(
+            tool_result_expectation_classification(true, &expectation, &completed, None),
+            Some("unexpected_success")
+        );
+        assert_eq!(
+            tool_result_expectation_classification(
+                false,
+                &expectation,
+                &json!({"execution_state":"timed_out"}),
+                None
+            ),
+            Some("unexpected_failure")
+        );
+        assert_eq!(
+            tool_result_expectation_classification(
+                true,
+                &expectation,
+                &json!({"execution_state":"running", "job_id":"job"}),
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            tool_result_expectation_classification(
+                false,
+                &ToolCallExpectation::default(),
+                &completed,
+                None
+            ),
+            None
+        );
+        let accepted = ToolCallExpectation {
+            accepted_exit_codes: vec![1],
+            ..Default::default()
+        };
+        assert_eq!(
+            tool_result_expectation_classification(false, &accepted, &completed, None),
+            Some("matched_expected_result")
+        );
+        let rejected = ToolCallExpectation {
+            accepted_exit_codes: vec![0],
+            ..Default::default()
+        };
+        assert_eq!(
+            tool_result_expectation_classification(false, &rejected, &completed, None),
+            Some("expectation_mismatch")
+        );
     }
 
     #[test]

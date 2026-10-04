@@ -850,7 +850,12 @@
     const meta = result && typeof result === "object" && result._meta && typeof result._meta === "object"
       ? result._meta
       : null;
-    renderPresentation(meta ? meta[PRESENTATION_KEY] : null);
+    const presentation = meta ? meta[PRESENTATION_KEY] : null;
+    renderPresentation(presentation);
+    if (presentation && presentation.version === 1) {
+      if (["matched_expected_failure", "matched_expected_result"].includes(presentation.failure_expectation_result)) stateEl.textContent += " · Expected result";
+      else if (["expectation_mismatch", "unexpected_success", "unexpected_failure"].includes(presentation.failure_expectation_result)) stateEl.textContent += " · Expectation not met";
+    }
   }
 
   window.addEventListener("message", (event) => {

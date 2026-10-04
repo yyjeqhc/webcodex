@@ -116,6 +116,8 @@ pub struct WindowWorkflowLinkRecord {
 /// Payload-safe durable Window activity row used by Runtime Console queries.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WindowActivityEventRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_expectation_result: Option<String>,
     pub event_id: String,
     pub client_window_key: String,
     pub client_window_source: String,

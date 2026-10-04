@@ -730,6 +730,7 @@ fn work_result_window_activity_projection(observed: &Value) -> Value {
                 "server_trace_id": event.get("server_trace_id"),
                 "kind": semantics.kind.as_str(),
                 "status": event.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                "failure_expectation_result": event.get("failure_expectation_result"),
                 "meaningful": meaningful,
                 "started_at_ms": started_at_ms,
                 "ended_at_ms": ended_at_ms,

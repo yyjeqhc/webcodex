@@ -2345,3 +2345,23 @@ test("malformed content pages cannot claim complete, skip bytes or exceed UTF-8 
     assert.equal(nodes.controls.children[2].disabled, true);
   }
 });
+
+test("activity preserves raw outcomes and distinguishes expected failures and mismatches", async () => {
+  for (const [status, classification, label] of [
+    ["failed", "matched_expected_failure", "Failed · Expected result"],
+    ["failed", "matched_expected_result", "Failed · Expected result"],
+    ["success", "unexpected_success", "Succeeded · Expectation not met"],
+    ["failed", "expectation_mismatch", "Failed · Expectation not met"],
+    ["failed", undefined, "Failed"],
+  ]) {
+    const view = app("mcp_work_result_app.html");
+    view.toolInput(input);
+    view.toolResult({ work_result: { ...baseState, window_activity: {
+      ...baseState.window_activity, events: [{ ...baseState.window_activity.events[0], status, failure_expectation_result: classification }],
+      events_returned: 1, events_observed: 1,
+    } } });
+    await view.initialize();
+    const summary = view.nodes.windowActivity.children[0].children[0];
+    assert.equal(summary.children[1].textContent, label);
+  }
+});

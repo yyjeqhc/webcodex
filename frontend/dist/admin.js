@@ -26880,6 +26880,8 @@ function jL(e, i) {
   return r < 0 ? void 0 : DL[e]?.[r];
 }
 var yn = {
+  "Expected result": "符合预期",
+  "Expectation not met": "不符合预期",
   Version: "版本",
   Enabled: "已启用",
   Disabled: "未启用",

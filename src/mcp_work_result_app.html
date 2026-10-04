@@ -1953,7 +1953,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       time.textContent = new Date(row.started_at_ms).toLocaleString() + duration;
       main.append(label, time);
       const status = document.createElement("span"); status.className = "call-outcome";
-      const outcome = ({ success: "Succeeded", succeeded: "Succeeded", completed: "Completed", failed: "Failed", timeout: "Timed out", unknown: "Outcome unknown" })[row.status] || row.status;
+      let outcome = ({ success: "Succeeded", succeeded: "Succeeded", completed: "Completed", failed: "Failed", timeout: "Timed out", unknown: "Outcome unknown" })[row.status] || row.status;
+      if (["matched_expected_failure", "matched_expected_result"].includes(row.failure_expectation_result)) outcome += " · Expected result";
+      else if (["expectation_mismatch", "unexpected_success", "unexpected_failure"].includes(row.failure_expectation_result)) outcome += " · Expectation not met";
       status.textContent = row.running ? "Running" : row.meaningful ? outcome : "Observe · " + outcome;
       summary.append(main, status);
       const detail = document.createElement("div"); detail.className = "activity-detail activity-detail-state";

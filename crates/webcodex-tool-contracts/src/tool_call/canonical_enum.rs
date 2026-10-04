@@ -106,9 +106,13 @@ pub enum ToolCall {
         #[schemars(extend("default" = true))]
         /// Whether startup should include a small bounded Skills/Plugins selection catalog. Defaults to
         /// true: keep true/default on the first suitable call in fresh model/ClientWindow context.
-        /// Set false only while the current model context retains a complete/sufficient relevant catalog,
-        /// not merely because a Workflow Session or ClientWindow already exists. Refresh with true after
-        /// compaction, context loss/restoration/uncertainty, changed catalog revision/runtime, truncated
+        /// First entry to another Project in the same Window also keeps true/default: catalogs are
+        /// Project-scoped. Set false only while the current model context retains that Project's
+        /// complete/sufficient relevant catalog,
+        /// not merely because a Workflow Session or ClientWindow already exists.
+        /// Later tasks and return visits may reuse it; Session changes alone do not
+        /// require refresh. Refresh with true after compaction, context loss/restoration/uncertainty,
+        /// changed catalog revision/runtime, truncated
         /// discovery, missing relevant metadata, or explicit user request. This is request-local advice,
         /// never retained-context authority or Session state. False skips discovery observations. The catalog
         /// grants no authority, never loads Skill bodies, never creates Plugin bindings, and never

@@ -91,6 +91,9 @@ fn work_on_project_schema_and_registration() {
         "keep true/default",
         "fresh model/ClientWindow context",
         "complete/sufficient",
+        "First entry to another Project in the same Window",
+        "Project-scoped",
+        "return visits may reuse it",
         "not merely because a Workflow Session or ClientWindow already exists",
         "compaction",
         "context loss/restoration/uncertainty",
@@ -326,7 +329,7 @@ async fn work_on_project_extension_catalog_is_defaulted_bounded_and_skips_all_ex
         "wop-ext-skills",
         work_on_project_call_with_extensions(&project, "without extensions", false),
         Some(&auth),
-        "wop-ext-skills-off",
+        "wop-ext-skills-window",
     )
     .await;
     assert!(without_extensions.success, "{:?}", without_extensions.error);
@@ -339,9 +342,18 @@ async fn work_on_project_extension_catalog_is_defaulted_bounded_and_skips_all_ex
     let (with_extensions, with_requests) = dispatch_recording_startup_requests(
         &runtime,
         "wop-ext-skills",
-        work_on_project_call_with_extensions(&project, "with extensions", true),
+        ToolCall::from_tool_name(
+            "work_on_project",
+            json!({
+                "project": project,
+                "instruction": "refresh extensions in the same Window and Session",
+                "session_id": without_extensions.output["session_id"],
+                "include_extension_catalog": true,
+            }),
+        )
+        .unwrap(),
         Some(&auth),
-        "wop-ext-skills-on",
+        "wop-ext-skills-window",
     )
     .await;
     assert!(with_extensions.success, "{:?}", with_extensions.error);
@@ -351,6 +363,37 @@ async fn work_on_project_extension_catalog_is_defaulted_bounded_and_skips_all_ex
     assert!(with_requests
         .iter()
         .any(|kind| kind == "file_skill_read_file"));
+
+    assert_eq!(
+        with_extensions.output["session_id"],
+        without_extensions.output["session_id"]
+    );
+    let (reuse, reuse_requests) = dispatch_recording_startup_requests(
+        &runtime,
+        "wop-ext-skills",
+        ToolCall::from_tool_name(
+            "work_on_project",
+            json!({
+                "project": project, "instruction": "reuse retained catalog",
+                "session_id": with_extensions.output["session_id"],
+                "include_extension_catalog": false,
+            }),
+        )
+        .unwrap(),
+        Some(&auth),
+        "wop-ext-skills-window",
+    )
+    .await;
+    assert!(reuse.success, "{:?}", reuse.error);
+    assert_eq!(
+        reuse.output["session_id"],
+        with_extensions.output["session_id"]
+    );
+    assert!(reuse.output.get("extensions").is_none());
+    assert!(!reuse_requests.iter().any(|kind| matches!(
+        kind.as_str(),
+        "file_skill_list_packages" | "file_skill_read_file"
+    )));
 
     let skills = &with_extensions.output["extensions"]["skills"];
     assert_eq!(skills["status"], "available");
@@ -930,4 +973,57 @@ fn work_on_project_projection_preserves_observed_tracking_and_dirty_paths() {
     let instance = json!({"success": true, "output": result.output});
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
         .unwrap_or_else(|error| panic!("tracking startup projection must match schema: {error}"));
+}
+
+#[tokio::test]
+async fn work_on_project_catalog_switches_projects_in_one_window_without_sticky_suppression() {
+    let runtime = ToolRuntime::new_for_tests();
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    for (root, name) in [(a.path(), "skill-a"), (b.path(), "skill-b")] {
+        init_git_repo(root);
+        write_project_skill(
+            root,
+            name,
+            name,
+            "Task selection metadata",
+            "PRIVATE_SKILL_BODY",
+        );
+    }
+    let project_a = register_runner_project_at_path(&runtime, "catalog-a", "a", a.path()).await;
+    let project_b = register_runner_project_at_path(&runtime, "catalog-b", "b", b.path()).await;
+    let auth = bootstrap_auth_context();
+    for (client, project, catalog, expected) in [
+        ("catalog-a", &project_a, true, "skill-a"),
+        ("catalog-a", &project_a, false, "skill-a"),
+        ("catalog-b", &project_b, true, "skill-b"),
+        ("catalog-a", &project_a, false, "skill-a"),
+    ] {
+        let (result, requests) = dispatch_recording_startup_requests(
+            &runtime,
+            client,
+            work_on_project_call_with_extensions(project, "select project context", catalog),
+            Some(&auth),
+            "catalog-switch-window",
+        )
+        .await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(
+            requests
+                .iter()
+                .any(|kind| kind == "file_skill_list_packages"),
+            catalog
+        );
+        if catalog {
+            let skills = &result.output["extensions"]["skills"];
+            assert_eq!(skills["status"], "available");
+            assert_eq!(skills["truncated"], false);
+            let entries = skills["entries"].as_array().unwrap();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0]["name"], expected);
+        } else {
+            assert!(result.output.get("extensions").is_none());
+        }
+        assert!(!result.output.to_string().contains("PRIVATE_SKILL_BODY"));
+    }
 }

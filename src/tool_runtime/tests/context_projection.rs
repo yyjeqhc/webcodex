@@ -1331,3 +1331,79 @@ async fn bootstrap_explicit_context_refresh_is_not_suppressed_by_window_or_sessi
         );
     }
 }
+
+#[tokio::test]
+async fn bootstrap_project_switch_and_return_keep_context_requests_explicit() {
+    let runtime = ToolRuntime::new_for_tests();
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    for (root, rule) in [(a.path(), "PROJECT_A_RULE"), (b.path(), "PROJECT_B_RULE")] {
+        init_git_repo(root);
+        std::fs::write(root.join("AGENTS.md"), rule).unwrap();
+    }
+    let project_a = register_runner_project_at_path(&runtime, "switch-a", "a", a.path()).await;
+    let project_b = register_runner_project_at_path(&runtime, "switch-b", "b", b.path()).await;
+    // Fresh A, another task in retained A, first B with retained global workflow, return to A.
+    // Catalog behavior is covered independently by the startup discovery fixture.
+    for (client, project, keys, expected_rule) in [
+        (
+            "switch-a",
+            &project_a,
+            vec!["project.instructions", "webcodex.workflow"],
+            Some("PROJECT_A_RULE"),
+        ),
+        ("switch-a", &project_a, vec![], None),
+        (
+            "switch-b",
+            &project_b,
+            vec!["project.instructions"],
+            Some("PROJECT_B_RULE"),
+        ),
+        ("switch-a", &project_a, vec![], None),
+    ] {
+        let result = dispatch_with_context_in_window_and_local_agent(
+            &runtime,
+            client,
+            ToolCall::from_tool_name(
+                "work_on_project",
+                json!({
+                    "project": project, "instruction": "work in selected project",
+                    "include_extension_catalog": false,
+                }),
+            )
+            .unwrap(),
+            keys.iter().map(|key| (*key).to_string()).collect(),
+            Some("project-switch-window"),
+        )
+        .await;
+        assert!(result.success, "{:?}", result.error);
+        if let Some(rule) = expected_rule {
+            let material = context_material(&result, "project.instructions");
+            assert_eq!(material["status"], "available");
+            assert_eq!(material["projection"]["content_included"], true);
+            let body = material["projection"].to_string();
+            assert!(body.contains(rule));
+            let other_rule = if rule == "PROJECT_A_RULE" {
+                "PROJECT_B_RULE"
+            } else {
+                "PROJECT_A_RULE"
+            };
+            assert!(!body.contains(other_rule));
+        } else {
+            assert!(result.output.get("context_projection").is_none());
+            assert!(!result.output.to_string().contains("PROJECT_A_RULE"));
+            assert!(!result.output.to_string().contains("PROJECT_B_RULE"));
+        }
+        if keys.contains(&"webcodex.workflow") {
+            assert_eq!(
+                context_material(&result, "webcodex.workflow")["status"],
+                "available"
+            );
+        } else {
+            assert!(!result
+                .output
+                .to_string()
+                .contains("webcodex.coding_workflow"));
+        }
+    }
+}

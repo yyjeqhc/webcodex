@@ -104,20 +104,11 @@ pub enum ToolCall {
         #[schemars(with = "CodingGuidanceProfile")]
         guidance_profile: Option<CodingGuidanceProfile>,
         #[schemars(extend("default" = true))]
-        /// Whether startup should include a small bounded Skills/Plugins selection catalog. Defaults to
-        /// true: keep true/default on the first suitable call in fresh model/ClientWindow context.
-        /// First entry to another Project in the same Window also keeps true/default: catalogs are
-        /// Project-scoped. Set false only while the current model context retains that Project's
-        /// complete/sufficient relevant catalog,
-        /// not merely because a Workflow Session or ClientWindow already exists.
-        /// Later tasks and return visits may reuse it; Session changes alone do not
-        /// require refresh. Refresh with true after compaction, context loss/restoration/uncertainty,
-        /// changed catalog revision/runtime, truncated
-        /// discovery, missing relevant metadata, or explicit user request. This is request-local advice,
-        /// never retained-context authority or Session state. False skips discovery observations. The catalog
-        /// grants no authority, never loads Skill bodies, never creates Plugin bindings, and never
-        /// substitutes for the selected Plugin tool's exact describe schema and binding. Reuse an
-        /// applicable retained schema/binding; describe when missing or stale, not before every call.
+        /// Include the bounded Skills/Plugins catalog. keep true/default in fresh model/ClientWindow context
+        /// and on First entry to another Project; the catalog is Project-scoped. Set false only while that
+        /// Project's complete/sufficient catalog is retained; Workflow Session/ClientWindow alone is insufficient.
+        /// Refresh after compaction/context loss, changed catalog revision/runtime, truncated/missing metadata,
+        /// or explicit user request. This is request-local advice and grants no authority.
         #[serde(default = "default_true")]
         include_extension_catalog: bool,
         /// Optional explicit Workflow Session to continue exactly: canonical wc_sess_* or server-issued

@@ -21,7 +21,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "exact checkout resume",
         "session_id alone",
         "an explicit project must match",
-        "requires explicit source",
+        "requires an explicit source",
         "never retargets",
         "active accessible session",
         "never guess",

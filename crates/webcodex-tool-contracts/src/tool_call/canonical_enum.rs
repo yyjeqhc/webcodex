@@ -145,7 +145,8 @@ pub enum ToolCall {
         #[schemars(length(max = 16))]
         #[schemars(inner(length(min = 1, max = 512)))]
         #[serde(default)]
-        outputs: Vec<String>,        /// When true, return the minimal decision-complete closeout only: workspace cleanliness/conflicts,
+        outputs: Vec<String>,
+        /// When true, return the minimal decision-complete closeout only: workspace cleanliness/conflicts,
         /// hygiene state, bounded Job counts, final validation state/counts, tool-failure actionability
         /// counts, canonical task_outcome, evidence_integrity, warnings, and suggested_next_actions. Omits
         /// project/session identity, permissions, review/work/change/handoff provenance, facts/evidence
@@ -173,6 +174,29 @@ pub enum ToolCall {
         /// true; minimal diagnostics require bounded tails or safe result metadata.
         #[serde(default)]
         include_validation_summary: Option<bool>,
+    },
+
+    /// Select one authorized DOCX version for a dedicated read-only reader.
+    PresentDocx {
+        #[schemars(length(min = 1, max = 512))]
+        project: String,
+        /// Project-relative .docx file; no Git or Session required.
+        #[schemars(length(min = 1, max = 512))]
+        path: String,
+    },
+    /// App-only read of the exact DOCX size/SHA selected by present_docx.
+    ReadDocxChunk {
+        #[schemars(length(min = 1, max = 512))]
+        project: String,
+        #[schemars(length(min = 1, max = 512))]
+        path: String,
+        #[schemars(regex(pattern = "^[0-9a-f]{64}$"))]
+        sha256: String,
+        #[schemars(range(min = 4, max = 10485760))]
+        bytes: usize,
+        /// Offset into the selected file; each read returns at most 128 KiB.
+        #[schemars(range(max = 10485759))]
+        byte_offset: usize,
     },
 
     /// Explicitly present one persistent card for the current client Window.
@@ -1496,7 +1520,8 @@ pub enum ToolCall {
         /// Optional portable dependency-resolution policy. locked forbids adapters from
         /// repairing dependency selection state; it does not imply offline execution.
         #[serde(default)]
-        dependency_policy: Option<webcodex_core::project_build::ProjectDependencyPolicy>,        /// Total build execution budget, default 1800 seconds, clamped to 7 days.
+        dependency_policy: Option<webcodex_core::project_build::ProjectDependencyPolicy>,
+        /// Total build execution budget, default 1800 seconds, clamped to 7 days.
         /// Host handoff timing never extends this budget or starts a second build.
         #[serde(default)]
         #[schemars(range(min = 1))]

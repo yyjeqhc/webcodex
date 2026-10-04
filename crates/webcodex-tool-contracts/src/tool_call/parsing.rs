@@ -306,7 +306,8 @@ impl ToolCall {
         if name == "read_tool_manifest" {
             if let Some(object) = arguments.as_object_mut() {
                 if !object.contains_key("include_recommended_flows") {
-                    let exact_lookup = object.contains_key("tool_name") || object.contains_key("query");
+                    let exact_lookup =
+                        object.contains_key("tool_name") || object.contains_key("query");
                     object.insert(
                         "include_recommended_flows".to_string(),
                         Value::Bool(!exact_lookup),
@@ -421,6 +422,8 @@ impl ToolCall {
             Self::StartSession { .. } => "start_session",
             Self::WorkOnProject { .. } => "work_on_project",
             Self::FinishCodingTask { .. } => "finish_coding_task",
+            Self::PresentDocx { .. } => "present_docx",
+            Self::ReadDocxChunk { .. } => "read_docx_chunk",
             Self::PresentWorkResult { .. } => "present_work_result",
             Self::WorkResultState { .. } => "get_work_result_state",
             Self::WorkResultActivityDetail { .. } => "read_work_result_activity_detail",
@@ -697,7 +700,7 @@ impl ToolCall {
             | Self::WorkspaceCheckpointRestore { session_id, .. }
             | Self::WorkspaceCheckpointDelete { session_id, .. } => session_id.as_deref(),
             Self::SessionHandoffSummary { session_id, .. }
-            | Self::FinishCodingTask { session_id, .. } => Some(session_id.as_str()),            // Window-card presentation/refresh never becomes generic Session recorder
+            | Self::FinishCodingTask { session_id, .. } => Some(session_id.as_str()), // Window-card presentation/refresh never becomes generic Session recorder
             // evidence. An optional Session selector is association evidence only.
             Self::PresentWorkResult { .. }
             | Self::WorkResultState { .. }
@@ -780,7 +783,8 @@ impl ToolCall {
             Self::AcceptArtifactHandoff {
                 destination_project,
                 ..
-            } => Some(destination_project.as_str()),            Self::RunProcess { project, .. }
+            } => Some(destination_project.as_str()),
+            Self::RunProcess { project, .. }
             | Self::RunDetachedProcess { project, .. }
             | Self::CodingAgentStart { project, .. }
             | Self::StartAgentTaskCodingRun { project, .. }
@@ -860,6 +864,8 @@ impl ToolCall {
                 Some(project.as_str())
             }
             Self::FinishCodingTask { project, .. }
+            | Self::PresentDocx { project, .. }
+            | Self::ReadDocxChunk { project, .. }
             | Self::PresentWorkResult { project, .. }
             | Self::WorkResultState { project, .. }
             | Self::WorkResultActivityDetail { project, .. }

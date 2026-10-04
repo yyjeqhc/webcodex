@@ -91,6 +91,11 @@ pub fn exact_manifest_specialist_tool_specs() -> Vec<ToolSpec> {
         .collect()
 }
 
+/// Private binary transport for the dedicated DOCX reader.
+pub fn docx_app_tool_specs() -> Vec<ToolSpec> {
+    vec![tool_spec("read_docx_chunk", "DOCX App-only read of one 128 KiB segment from the exact authorized Project/path/size/SHA-256 selected by present_docx. Rechecks Project ownership, sensitive-path policy and Runner capability on every read. Binary bytes are carried only in private MCP result metadata; a changed version fails closed. Retry keeps the exact identity and offset; explicitly reopen to select a new version.")]
+}
+
 /// Goal Plan observation/synchronization contract. The single App-only tool is
 /// explicitly effectful: Server-owned stall revalidation may atomically create
 /// one durable Attention/Wake before returning the final bounded projection.

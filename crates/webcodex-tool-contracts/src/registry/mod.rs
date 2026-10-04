@@ -10,7 +10,7 @@ pub use output_schemas::{
     suggested_tool_call_schema_target,
 };
 pub use tool_specs::{
-    agent_continuation_app_tool_specs, exact_manifest_specialist_tool_specs,
+    agent_continuation_app_tool_specs, docx_app_tool_specs, exact_manifest_specialist_tool_specs,
     goal_plan_app_tool_specs, job_terminal_continuation_app_tool_specs,
     memory_management_tool_specs, memory_runtime_tool_specs, operator_diagnostic_tool_specs,
     registered_tool_specs, skill_management_tool_specs, skill_runtime_tool_specs,

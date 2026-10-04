@@ -111,6 +111,18 @@ disabling the underlying tools.
 
 The current Result App is intentionally static. September 2026 Host experiments proved that a separately designed MCP App controller can poll server-owned state and request later ChatGPT model turns, including a bounded foreground autonomous multi-turn loop, but background-tab model-turn scheduling is not an immediate guarantee. Those findings and the production design constraints are recorded in [`agent/mcp-app-continuation-experiments.md`](agent/mcp-app-continuation-experiments.md); they do not change the current Result App contract.
 
+### Dedicated DOCX reader
+
+`present_docx(project, path)` opens one authorized `.docx` in a dedicated read-only
+MCP App. It supports unchanged/untracked files without Git or a Workflow Session,
+pins size/SHA-256 (10 MiB maximum), and privately reads version-fenced segments.
+The reader offers fit width, zoom, optional fullscreen and original DOCX download.
+Common document styles are supported; layout/pagination may differ from Word.
+Legacy `.doc`, encrypted packages and editing are unsupported. A changed file
+requires explicit reopening; repeated presentation may create another Host card.
+The hidden `read_docx_chunk` cannot be admitted by generic model dispatch.
+See [DOCX architecture and bounds](architecture/docx-document-viewer.md).
+
 ### Live Work Result card
 
 `present_work_result` opens the separate Window work card with Activity, Results,

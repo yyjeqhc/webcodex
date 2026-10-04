@@ -2119,6 +2119,18 @@ impl ToolCallAuditProjection for ToolCall {
                 "include_handoff": include_handoff,
                 "include_validation_summary": include_validation_summary,
             }),
+            Self::PresentDocx { project, path } => {
+                serde_json::json!({"project": project, "path": path})
+            }
+            Self::ReadDocxChunk {
+                project,
+                path,
+                sha256,
+                bytes,
+                byte_offset,
+            } => serde_json::json!({
+                "project": project, "path": path, "sha256": sha256, "bytes": bytes, "byte_offset": byte_offset,
+            }),
             Self::PresentWorkResult {
                 project,
                 session_id,

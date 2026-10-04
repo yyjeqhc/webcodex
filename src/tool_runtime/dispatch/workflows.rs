@@ -57,6 +57,18 @@ impl ToolRuntime {
                 .await
             }
 
+            ToolCall::PresentDocx { project, path } => self.present_docx(project, path, auth).await,
+            ToolCall::ReadDocxChunk {
+                project,
+                path,
+                sha256,
+                bytes,
+                byte_offset,
+            } => {
+                self.read_docx_chunk(project, path, sha256, bytes, byte_offset, auth)
+                    .await
+            }
+
             ToolCall::PresentWorkResult {
                 project,
                 session_id,

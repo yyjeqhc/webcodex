@@ -7,6 +7,8 @@ use super::{AppListing, BundledMcpApp};
 pub(in crate::mcp) const MCP_COMPUTER_UI_RESOURCE_URI: &str = "ui://webcodex/computer/v12";
 // Existing gray-card diagnostic: do not introduce a cache reuse policy change.
 pub(in crate::mcp) const MCP_COMPUTER_UI_RESOURCE_TTL_MS: u64 = 0;
+pub(in crate::mcp) const MCP_DOCX_UI_RESOURCE_URI: &str = "ui://webcodex/docx/v1";
+pub(in crate::mcp) const MCP_DOCX_APP_HTML: &str = include_str!("../../mcp_docx_app.html");
 pub(in crate::mcp) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/changes/v4";
 pub(in crate::mcp) const MCP_WORKBENCH_UI_RESOURCE_URI: &str = "ui://webcodex/workbench/v2";
 pub(in crate::mcp) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v24";
@@ -80,6 +82,12 @@ pub(super) static BUILTIN_MCP_APPS: &[BundledMcpApp] = &[
         }),
         tools: &["present_job_terminal_continuation"],
         ..BundledMcpApp::template(MCP_JOB_TERMINAL_CONTINUATION_UI_RESOURCE_URI, MCP_JOB_TERMINAL_CONTINUATION_APP_HTML)
+    },
+    BundledMcpApp {
+        listing: Some(AppListing { name: "WebCodex DOCX", description: "Dedicated read-only DOCX reader for one authorized Project file version. Displays common text, tables and images; no Word-equivalent pagination or editing." }),
+        tools: &["present_docx"],
+        read_display_modes: &["inline", "fullscreen"],
+        ..BundledMcpApp::template(MCP_DOCX_UI_RESOURCE_URI, MCP_DOCX_APP_HTML)
     },
     // Readable for already-cached descriptors, but never newly listed or bound.
     BundledMcpApp::template(MCP_RESULT_UI_RESOURCE_URI, MCP_RESULT_APP_HTML),

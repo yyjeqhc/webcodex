@@ -1541,6 +1541,25 @@ pub(super) fn adapt_tool_result(
     text_json_compat: bool,
     result_presentation: McpToolResultPresentation,
 ) -> McpResourceToolResultAdaptation {
+    if tool_name == "read_docx_chunk" {
+        let mut result = result;
+        let binary = result
+            .output
+            .get_mut("docx_chunk")
+            .and_then(Value::as_object_mut)
+            .and_then(|chunk| chunk.remove("content_base64"));
+        let mut framed =
+            mcp_runtime_tool_result_fallback(result, text_json_compat, result_presentation);
+        if let Some(binary) = binary {
+            let meta = framed
+                .as_object_mut()
+                .unwrap()
+                .entry("_meta")
+                .or_insert_with(|| json!({}));
+            meta["webcodex/docxChunk"] = json!({"content_base64":binary});
+        }
+        return McpResourceToolResultAdaptation::Framed(framed);
+    }
     if artifact_presentation == ProjectArtifactPresentationMode::Export {
         return McpResourceToolResultAdaptation::Framed(mcp_artifact_export_tool_result(
             result,

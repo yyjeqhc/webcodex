@@ -50,7 +50,8 @@ set -euo pipefail
 # Everything uses temp dirs, temp ports, temp tokens, and a temp project.
 # Never reads or controls production services. No QUIC certs or prod domains.
 # Environment overrides: E2E_PORT, E2E_TOKEN, E2E_TIMEOUT_SECS,
-# E2E_SKIP_RUN=1 (syntax check only), CARGO_BIN.
+# E2E_SKIP_RUN=1 (syntax check only), CARGO_BIN, E2E_CARGO_PROFILE (dogfood by
+# default), E2E_RUNNER_TRANSPORT (websocket by default; auto exercises promotion).
 # Exit codes: 0 pass, 1 failures, 2 environment error.
 # ============================================================================
 
@@ -191,11 +192,11 @@ command -v git >/dev/null 2>&1 || { echo "git required" >&2; exit 2; }
 dump_logs() {
     log "---- server log (last 60 lines) ----"
     if [ -f "$SERVER_LOG" ]; then
-        sed -E 's/(Bearer )[^ ]*/\1<redacted>/g' "$SERVER_LOG" | tail -n 60 >&2
+        sed -E '/runtime_metric/d; s/(Bearer )[^ ]*/\1<redacted>/g' "$SERVER_LOG" | tail -n 60 >&2
     fi
     log "---- agent log (last 60 lines) ----"
     if [ -f "$RUNNER_LOG" ]; then
-        sed -E 's/(Bearer )[^ ]*/\1<redacted>/g' "$RUNNER_LOG" | tail -n 60 >&2
+        sed -E '/runtime_metric/d; s/(Bearer )[^ ]*/\1<redacted>/g' "$RUNNER_LOG" | tail -n 60 >&2
     fi
 }
 
@@ -205,10 +206,13 @@ if [ "${E2E_SKIP_RUN:-0}" = "1" ]; then
 fi
 
 # Build once so restarts reuse the same binaries.
-log "building webcodex + webcodex-runner (debug profile)"
-"$CARGO_BIN" build --quiet -p webcodex -p webcodex-runner --bins
-SERVER_BIN="$PROJECT_DIR/target/debug/webcodex-server"
-RUNNER_BIN="$PROJECT_DIR/target/debug/webcodex-runner"
+CARGO_PROFILE="${E2E_CARGO_PROFILE:-dogfood}"
+log "building webcodex + webcodex-runner ($CARGO_PROFILE profile)"
+"$CARGO_BIN" build --locked --quiet --profile "$CARGO_PROFILE" -p webcodex -p webcodex-runner --bins
+PROFILE_DIR="$CARGO_PROFILE"
+if [ "$CARGO_PROFILE" = "dev" ]; then PROFILE_DIR=debug; fi
+SERVER_BIN="$PROJECT_DIR/target/$PROFILE_DIR/webcodex-server"
+RUNNER_BIN="$PROJECT_DIR/target/$PROFILE_DIR/webcodex-runner"
 
 PORT="${E2E_PORT:-$(find_free_port)}"
 TMP_ROOT="$(mktemp -d -t webcodex-jobrecon-e2e-XXXXXX)"
@@ -276,7 +280,8 @@ display_name = "JobRecon E2E Agent"
 owner = "e2e"
 project_registry_dir = "${PROJECTS_DIR}"
 poll_interval_ms = 500
-transport = "websocket"
+transport = "${E2E_RUNNER_TRANSPORT:-websocket}"
+websocket_connect_timeout_secs = 1
 
 [policy]
 allow_raw_shell = true
@@ -318,8 +323,13 @@ wait_for_agent_online() {
         check_deadline
         local body; body="$(get_runtime_status || true)"
         if [ "$(json_get "$body" output.runners.online_count)" = "1" ]; then
-            echo "$body"
-            return 0
+            # Auto recovery is not complete merely because polling is online.
+            # Verify the preferred stream returns after every Server restart.
+            if [ "${E2E_RUNNER_TRANSPORT:-websocket}" != "auto" ] ||
+               [ "$(json_get "$body" output.connection_layers.server_transport.transport)" = "websocket" ]; then
+                echo "$body"
+                return 0
+            fi
         fi
         sleep 1
     done
@@ -356,6 +366,13 @@ run_process_call() {
     local encoded
     encoded="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$script")"
     tool_call "run_process" "{\"project\":\"${RUNTIME_PROJECT_ID}\",\"executable\":\"python3\",\"args\":[${encoded}],\"timeout_secs\":${timeout}}"
+}
+
+run_python_script_call() {
+    local script="$1"; local timeout="$2"
+    local encoded
+    encoded="$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1], encoding="utf-8").read()))' "$script")"
+    tool_call "run_script" "{\"project\":\"${RUNTIME_PROJECT_ID}\",\"language\":\"python\",\"script\":${encoded},\"timeout_secs\":${timeout}}"
 }
 
 observe_job_call() {
@@ -656,7 +673,10 @@ log "scenario B complete"
 # Scenario C: a handed-off structured process keeps job identity and refreshes
 # an old Server-epoch observation token after restart.
 # ----------------------------------------------------------------------------
-log "scenario C: structured process handoff across server restart"
+# Exercise both direct argv and Python semantic Job inventory. Both execute
+# the same child body, but only run_script registers context.shell=python.
+for C_SOURCE in run_process run_script; do
+log "scenario C: $C_SOURCE handoff across server restart"
 
 C_MARKER_FILE="$TEST_REPO/scenario-c-count.txt"
 C_SCRIPT="$TEST_REPO/scenario-c.py"
@@ -674,10 +694,20 @@ PY
 : >"$C_MARKER_FILE"
 
 # run_process uses the structured execution path. The child intentionally runs
-# longer than the 10s synchronous grace window so the SAME execution is handed
+# longer than the synchronous grace window so the SAME execution is handed
 # off rather than restarted.
-JOB_BODY_C="$(run_process_call "scenario-c.py" 120)"
-JOB_ID_C="$(json_get "$JOB_BODY_C" output.job_id)"
+if [ "$C_SOURCE" = "run_script" ]; then
+    JOB_BODY_C="$(run_python_script_call "$C_SCRIPT" 120)"
+else
+    JOB_BODY_C="$(run_process_call "scenario-c.py" 120)"
+fi
+JOB_ID_C="$(json_get "$JOB_BODY_C" output.continuation.arguments.items.0.job_id)"
+if [ -z "$JOB_ID_C" ]; then
+    fail "scenario C ($C_SOURCE): missing canonical Job continuation: ${JOB_BODY_C:0:2048}"
+    dump_logs
+    exit 1
+fi
+assert_eq "scenario C: handoff uses pending projection" "$(json_get "$JOB_BODY_C" output.execution_state)" "pending"
 assert_nonempty "scenario C: structured process handed off with job_id" "$JOB_ID_C"
 BODY_C_RUNNING="$(wait_for_job_status "$JOB_ID_C" running)" || { fail "scenario C: structured process did not reach running"; dump_logs; exit 1; }
 C_BASELINE="$(job_log_call "$JOB_ID_C")"
@@ -730,7 +760,8 @@ assert_eq "scenario C: structured command was never re-executed" "$C_START_AFTER
 LIST_BODY_C="$(tool_call "list_jobs" '{"limit":100}')"
 C_JOB_COUNT="$(printf '%s' "$(json_get "$LIST_BODY_C" output.jobs)" | python3 -c 'import json,sys; obj=json.loads(sys.stdin.read() or "[]"); print(len([j for j in obj if j.get("job_id")=="'"$JOB_ID_C"'"]))' 2>/dev/null || echo "?")"
 assert_eq "scenario C: exactly one record for original job_id" "$C_JOB_COUNT" "1"
-log "scenario C complete"
+log "scenario C ($C_SOURCE) complete"
+done
 
 # ----------------------------------------------------------------------------
 # Scenario D: exact first-class cargo_check handoff across a Server restart.
@@ -740,7 +771,13 @@ log "scenario D: cargo_check validation handoff across server restart"
 D_MARKER_FILE="$TEST_REPO/scenario-d-count.txt"
 rm -f -- "$D_MARKER_FILE"
 JOB_BODY_D="$(tool_call "cargo_check" "{\"project\":\"${RUNTIME_PROJECT_ID}\",\"timeout_secs\":180}" 120)"
-JOB_ID_D="$(json_get "$JOB_BODY_D" output.job_id)"
+JOB_ID_D="$(json_get "$JOB_BODY_D" output.continuation.arguments.items.0.job_id)"
+if [ -z "$JOB_ID_D" ]; then
+    fail "scenario D: missing canonical Job continuation: ${JOB_BODY_D:0:2048}"
+    dump_logs
+    exit 1
+fi
+assert_eq "scenario D: handoff uses pending projection" "$(json_get "$JOB_BODY_D" output.execution_state)" "pending"
 assert_nonempty "scenario D: cargo_check handed off with job_id" "$JOB_ID_D"
 BODY_D_RUNNING="$(wait_for_job_status "$JOB_ID_D" running)" || { fail "scenario D: cargo_check did not remain running after handoff"; dump_logs; exit 1; }
 D_BASELINE="$(job_log_call "$JOB_ID_D")"

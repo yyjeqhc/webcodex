@@ -442,7 +442,19 @@ Runner 断连是 liveness 事实，不等于工作丢失。已接受的活跃 Jo
 
 Server 会把稳定的 Runner `client_id` 与当前 live process lease 分开。stale/replacement process 不能继续使用旧 lease 提交结果，普通 child-process Job 也不会被 replacement Runner 接管。精确 lease identifier 属于内部 wire detail。
 
-重连以短延迟自动进行。认证失败等致命错误会停止 Runner，而不是无限重试。
+重连以短延迟自动进行。`auto` 降级到 polling 后不会永久停留：30 秒后，在没有未完成 HTTP dispatch 的安全边界重试首选流式传输（已配置的 QUIC，然后 WebSocket）。HTTP dispatch 忙时继续 polling，避免阻断存活检测和控制请求；正在运行的 Job 不等待结束、不重启。流式连接失败则继续 polling。网络超时、注册超时和退避也计入恢复耗时，因此 30 秒不是端到端恢复时限。显式 `polling` 仍保持 polling，显式 `websocket` 则持续重试 WebSocket。
+
+Runner 准入和 Server inventory 校验共用语义 shell 合同，包含 `python`，不接受 `python3` 等具体解释器名称作为语义身份。普通 Job 的开始、结束时间保证不早于因果上的前一个时间戳，覆盖启动、终态以及准入阶段直接拒绝；执行耗时仍独立测量，避免跨主机时钟偏差把正常执行后的 inventory 判为无效。
+
+注册明确返回 `job inventory shell is invalid` 或 `job inventory timestamps are inconsistent` 时，保留同一 Runner 实例和完整 Job inventory，以有界退避重试，不通过清空 active inventory 换取注册成功。持续拒绝仍需调查或更新有缺陷的组件；重试本身不代表已恢复。认证、身份/归属、协议及其他致命错误仍严格停止 Runner。操作系统 supervisor 应保持启用，但它重启进程不能代替同进程的 Job 恢复。
+
+Server-only 重启恢复不等于持久化执行：普通 active Job 依靠存活 Runner 的 inventory 重建。Server 内存中的待分发请求、历史结果 receipt 或持久化 Workflow Session 都不构成可自动重放命令的持久队列。隔离端到端验收覆盖运行中任务、离线完成、`run_process`、Python `run_script`、validation handoff，以及原 Job 身份、日志连续性和副作用不重复：
+
+```sh
+E2E_RUNNER_TRANSPORT=auto E2E_TIMEOUT_SECS=900 bash scripts/e2e_job_reconciliation_ws.sh
+```
+
+验收使用临时端口、令牌、目录和进程，默认构建 `dogfood` profile，不会重启已部署服务。
 
 ## 关停与重启
 

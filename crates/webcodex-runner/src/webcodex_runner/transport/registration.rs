@@ -24,6 +24,17 @@ use webcodex_core::runner_protocol::{
 
 pub(crate) const RUNNER_REGISTER_PATH: &str = "/api/shell/agent/register";
 
+/// These exact metadata failures must not turn a reconnect into process/Job
+/// termination. Retry the intact inventory; never omit active records or relax
+/// Server validation. Identity, ownership, bounds and protocol failures are not
+/// included. A corrected peer or terminal-history expiry may resolve rejection.
+pub(super) fn is_retryable_inventory_rejection(message: &str) -> bool {
+    matches!(
+        message,
+        "job inventory shell is invalid" | "job inventory timestamps are inconsistent"
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RegisterRecoveryAction {
     Retry,
@@ -34,6 +45,7 @@ pub(crate) enum RegisterRecoveryAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RegisterErrorKind {
     Transient,
+    InventoryRejected,
     LeaseConflict,
     Auth,
     EndpointMissing,
@@ -65,6 +77,14 @@ impl RegisterError {
             {
                 RegisterErrorKind::LeaseConflict
             }
+            RunnerHttpErrorKind::ClientRejected
+                if error
+                    .server_error
+                    .as_deref()
+                    .is_some_and(is_retryable_inventory_rejection) =>
+            {
+                RegisterErrorKind::InventoryRejected
+            }
             RunnerHttpErrorKind::ClientRejected => RegisterErrorKind::Rejected,
         };
         let message = if error.kind == RunnerHttpErrorKind::ProtocolDecode {
@@ -85,6 +105,8 @@ impl RegisterError {
             RegisterErrorKind::LeaseConflict
         } else if looks_like_auth_failure_message(&summary) {
             RegisterErrorKind::Auth
+        } else if is_retryable_inventory_rejection(&summary) {
+            RegisterErrorKind::InventoryRejected
         } else {
             RegisterErrorKind::Rejected
         };
@@ -96,7 +118,9 @@ impl RegisterError {
 
     pub(crate) fn recovery_action(&self) -> RegisterRecoveryAction {
         match self.kind {
-            RegisterErrorKind::Transient => RegisterRecoveryAction::Retry,
+            RegisterErrorKind::Transient | RegisterErrorKind::InventoryRejected => {
+                RegisterRecoveryAction::Retry
+            }
             RegisterErrorKind::LeaseConflict => RegisterRecoveryAction::WaitForLease,
             RegisterErrorKind::Auth
             | RegisterErrorKind::EndpointMissing

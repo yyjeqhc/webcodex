@@ -42,6 +42,11 @@ pub(super) fn decide_stream_session(
             StreamSessionDecision::Complete { shutdown: false }
         }
         Ok(RunnerSessionExit::TransportDisconnected) => StreamSessionDecision::Reconnect(None),
+        Err(error @ RunnerTransportError::InventoryRejected(_)) if !once => {
+            // Changing transport cannot fix rejected metadata. Keep the same
+            // process and inventory alive until the peer can reconcile it.
+            StreamSessionDecision::Reconnect(Some(error))
+        }
         Err(error) if error.is_proxy_configuration() => {
             if matches!(mode, StreamSupervisorMode::Strict(_)) {
                 StreamSessionDecision::Fatal(error.into_message())
@@ -213,16 +218,44 @@ pub(super) fn run_auto_runner(
     runner_instance_id: &str,
     runtime: &RunnerRuntimeState,
 ) -> Result<(), String> {
-    match run_stream_transport_runner(
-        &cfg,
+    run_auto_runner_with_retry_interval(
+        cfg,
         once,
         runner_instance_id,
         runtime,
-        StreamSupervisorMode::Auto,
-    )? {
-        StreamSupervisorExit::Completed => Ok(()),
-        StreamSupervisorExit::PollingFallback => {
-            run_polling_runner(cfg, once, runner_instance_id, runtime)
+        Duration::from_secs(30),
+    )
+}
+
+pub(super) fn run_auto_runner_with_retry_interval(
+    cfg: RunnerConfig,
+    once: bool,
+    runner_instance_id: &str,
+    runtime: &RunnerRuntimeState,
+    retry_interval: Duration,
+) -> Result<(), String> {
+    loop {
+        match run_stream_transport_runner(
+            &cfg,
+            once,
+            runner_instance_id,
+            runtime,
+            StreamSupervisorMode::Auto,
+        )? {
+            StreamSupervisorExit::Completed => return Ok(()),
+            StreamSupervisorExit::PollingFallback => {
+                match polling::run_polling_session(
+                    cfg.clone(),
+                    once,
+                    runner_instance_id,
+                    runtime.shutdown_flag(),
+                    runtime,
+                    (!once).then(|| Instant::now() + retry_interval),
+                )? {
+                    polling::PollingSessionExit::Completed => return Ok(()),
+                    polling::PollingSessionExit::RetryStream => {}
+                }
+            }
         }
     }
 }

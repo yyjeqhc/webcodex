@@ -5,6 +5,7 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RunnerTransportError {
     Transient(String),
+    InventoryRejected(String),
     ProxyConfiguration(String),
     Fatal(String),
 }
@@ -32,9 +33,10 @@ impl RunnerTransportError {
 
     pub(super) fn into_message(self) -> String {
         match self {
-            Self::Transient(message) | Self::ProxyConfiguration(message) | Self::Fatal(message) => {
-                message
-            }
+            Self::Transient(message)
+            | Self::InventoryRejected(message)
+            | Self::ProxyConfiguration(message)
+            | Self::Fatal(message) => message,
         }
     }
 }
@@ -42,9 +44,10 @@ impl RunnerTransportError {
 impl fmt::Display for RunnerTransportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Transient(message) | Self::ProxyConfiguration(message) | Self::Fatal(message) => {
-                f.write_str(message)
-            }
+            Self::Transient(message)
+            | Self::InventoryRejected(message)
+            | Self::ProxyConfiguration(message)
+            | Self::Fatal(message) => f.write_str(message),
         }
     }
 }
@@ -99,7 +102,13 @@ pub(super) fn is_fatal_config_or_tls_error(message: &str) -> bool {
 
 pub(super) fn classify_session_error(message: impl Into<String>) -> RunnerTransportError {
     let message = message.into();
-    if is_fatal_auth_or_register_error(&message) || is_fatal_config_or_tls_error(&message) {
+    let inventory_rejection = message
+        .strip_prefix("register rejected by server: ")
+        .or_else(|| message.strip_prefix("server error during register register_failed: "))
+        .is_some_and(registration::is_retryable_inventory_rejection);
+    if inventory_rejection {
+        RunnerTransportError::InventoryRejected(message)
+    } else if is_fatal_auth_or_register_error(&message) || is_fatal_config_or_tls_error(&message) {
         RunnerTransportError::fatal(message)
     } else {
         RunnerTransportError::transient(message)

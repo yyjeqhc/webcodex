@@ -22,5 +22,6 @@ include!("transport_tests/runtime_shutdown.rs");
 include!("transport_tests/polling_real_process.rs");
 include!("transport_tests/polling_recovery.rs");
 include!("transport_tests/transport_semantics.rs");
+include!("transport_tests/reconnect_reliability.rs");
 include!("transport_tests/project_inventory.rs");
 include!("transport_tests/streaming_proxy_quic.rs");

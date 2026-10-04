@@ -323,6 +323,12 @@ impl PollingDispatchSupervisor {
         }
     }
 
+    /// Transport handoff must consume every result/error from already
+    /// dequeued requests before replacing this completion supervisor.
+    pub(crate) fn is_idle(&self) -> bool {
+        self.in_flight == 0
+    }
+
     pub(crate) fn has_capacity(&self) -> bool {
         self.in_flight < POLLING_DISPATCH_MAX_IN_FLIGHT
     }

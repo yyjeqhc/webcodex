@@ -559,8 +559,46 @@ detached ownership state are excluded from ordinary receipt persistence.
 
 The Server distinguishes the stable Runner `client_id` from the current live process lease. A stale or replacement process cannot keep submitting results under the old lease, and ordinary child-process Jobs are not adopted by a replacement Runner. The exact lease identifier is an internal wire detail.
 
-Reconnect happens automatically with a short delay. Authentication failure and
-other fatal errors stop the Runner rather than looping forever.
+Reconnect happens automatically with a short delay. In `auto` mode, polling is
+not a permanent downgrade: after 30 seconds the Runner retries its preferred
+stream plan (configured QUIC, then WebSocket) at a safe request boundary. Busy
+HTTP dispatches defer promotion while polling continues; already-running Jobs
+are not drained or restarted. Failed stream attempts return to polling. Network
+and registration timeouts/backoff also contribute to recovery latency, so 30
+seconds is a retry interval, not an end-to-end recovery deadline. Explicit
+`polling` remains polling, and explicit `websocket` keeps retrying WebSocket.
+
+Runner admission and Server inventory validation share the same semantic shell
+identities, including `python` (not concrete executables such as `python3`).
+Ordinary Job start/end timestamps are clamped to their causal predecessors:
+`started_at >= created_at` and `ended_at >= started_at` (or `created_at` before
+execution). This covers immediate admission rejection as well as completion;
+execution duration remains independently measured. Clock skew must not make a
+normal retained Job inventory invalid after an otherwise successful execution.
+
+The exact registration metadata errors `job inventory shell is invalid` and
+`job inventory timestamps are inconsistent` retain the same Runner instance and
+intact Job inventory and retry with bounded backoff. Persistent rejection still
+requires investigation or a corrected peer; retries do not declare recovery
+successful. The Runner never clears active inventory to obtain registration.
+Authentication, identity/ownership, unsupported protocol and other fatal errors
+still stop the Runner. Keep an operating-system supervisor enabled as a safety
+net, but restarting a Runner is not a substitute for same-process Job recovery.
+
+Server-only restart recovery and durable execution are distinct. Active ordinary
+Jobs are reconstructed from the live Runner inventory; a Server-side pending
+request, a historical receipt, or a durable Workflow Session is not a durable
+execution queue or permission to replay a command. The restart acceptance harness
+covers running work, offline completion, `run_process`, Python `run_script`,
+validation handoff, original Job identity, log continuity and exactly-once
+fixture side effects:
+
+```sh
+E2E_RUNNER_TRANSPORT=auto E2E_TIMEOUT_SECS=900 bash scripts/e2e_job_reconciliation_ws.sh
+```
+
+The harness uses isolated ports, tokens, directories and processes and builds
+with the `dogfood` profile by default. It does not restart deployed services.
 
 ## Shutting down and restarting
 

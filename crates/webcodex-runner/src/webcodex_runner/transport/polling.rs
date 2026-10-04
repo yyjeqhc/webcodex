@@ -141,6 +141,12 @@ pub(super) fn handle_poll_failure(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PollingSessionExit {
+    Completed,
+    RetryStream,
+}
+
 pub(super) fn complete_polling_after_shutdown(
     client: &Client,
     cfg: &RunnerConfig,
@@ -149,7 +155,7 @@ pub(super) fn complete_polling_after_shutdown(
     runtime: &RunnerRuntimeState,
     polling_dispatches: &mut PollingDispatchSupervisor,
     project_cache: &mut RunnerProjectCache,
-) -> Result<(), String> {
+) -> Result<PollingSessionExit, String> {
     // Match the former synchronous dispatch race: a fatal submission response
     // that has already reached a worker gets a bounded chance to reach polling
     // control instead of being masked by a simultaneous clean shutdown.
@@ -161,6 +167,7 @@ pub(super) fn complete_polling_after_shutdown(
         }
     }
     complete_polling_shutdown(client, cfg, runner_instance_id, registered, runtime)
+        .map(|()| PollingSessionExit::Completed)
 }
 
 pub(super) fn run_polling_runner_with_shutdown(
@@ -170,6 +177,17 @@ pub(super) fn run_polling_runner_with_shutdown(
     shutdown: Arc<AtomicBool>,
     runtime: &RunnerRuntimeState,
 ) -> Result<(), String> {
+    run_polling_session(cfg, once, runner_instance_id, shutdown, runtime, None).map(|_| ())
+}
+
+pub(super) fn run_polling_session(
+    cfg: RunnerConfig,
+    once: bool,
+    runner_instance_id: &str,
+    shutdown: Arc<AtomicBool>,
+    runtime: &RunnerRuntimeState,
+    retry_stream_at: Option<Instant>,
+) -> Result<PollingSessionExit, String> {
     let client = Client::builder()
         .timeout(POLLING_HTTP_TIMEOUT)
         .build()
@@ -225,6 +243,17 @@ pub(super) fn run_polling_runner_with_shutdown(
                 }
             }
         }
+        if !once
+            && retry_stream_at.is_some_and(|deadline| Instant::now() >= deadline)
+            && polling_dispatches.is_idle()
+        {
+            // Completed HTTP outcomes were consumed above. Busy dispatches
+            // defer promotion while normal polling keeps liveness/control
+            // traffic moving. Jobs are independent: never drain them, send
+            // Offline, or signal process shutdown for a transport handoff.
+            eprintln!("webcodex-runner transport auto: polling fallback retrying preferred stream; retaining jobs and runner instance");
+            return Ok(PollingSessionExit::RetryStream);
+        }
         if !registered {
             match register(
                 &client,
@@ -272,7 +301,7 @@ pub(super) fn run_polling_runner_with_shutdown(
                         recovering = true;
                         let delay = recovery_backoff.next_delay();
                         eprintln!(
-                            "webcodex-runner transient register failure; retrying delay={} error={}",
+                            "webcodex-runner recoverable register failure; retaining job inventory and retrying delay={} error={}",
                             format_delay(delay),
                             concise_log_error(&error.to_string(), &cfg.token)
                         );
@@ -490,7 +519,8 @@ pub(super) fn run_polling_runner_with_shutdown(
                         runner_instance_id,
                         registered,
                         runtime,
-                    );
+                    )
+                    .map(|()| PollingSessionExit::Completed);
                 }
                 if let Some(delay) = polling_idle_delay(&mut idle_backoff, ran_request) {
                     if sleep_or_shutdown(delay, shutdown.as_ref()) {

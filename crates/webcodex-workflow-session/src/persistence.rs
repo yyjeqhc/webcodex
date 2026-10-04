@@ -28,6 +28,7 @@ use super::util::{
 use webcodex_core::project_instructions::ProjectInstructionsSummarySnapshot;
 use webcodex_core::workflow_session_contract::is_safe_job_id;
 
+mod resident;
 mod stream;
 
 fn v2_record_has_canonical_logical_invocation_shape(value: &Value) -> bool {
@@ -437,13 +438,25 @@ pub fn cold_session_from_record(
     record: &SessionRecord,
     max_events_per_session: usize,
 ) -> Result<ColdSessionRecord, serde_json::Error> {
-    debug_assert!(!record.lifecycle.allows_mutation());
     let project_instructions = record
         .project_instructions
         .as_ref()
         .map(|snapshot| snapshot.to_summary());
     let persisted = PersistedSessionRecord::from_record(record, max_events_per_session);
-    cold_session_from_persisted(&persisted, project_instructions)
+    let mut cold = cold_session_from_persisted(&persisted, project_instructions)?;
+    if record.lifecycle.allows_mutation() {
+        cold.resident_instructions = record
+            .project_instructions
+            .as_ref()
+            .map(|value| Arc::new(value.clone()));
+        cold.unfenced_completion_ids = record
+            .completion_assignment_fence_fingerprints
+            .iter()
+            .filter(|(_, fence)| fence.is_none())
+            .map(|(id, _)| id.clone())
+            .collect();
+    }
+    Ok(cold)
 }
 
 pub fn cold_session_from_persisted(
@@ -470,6 +483,8 @@ pub fn cold_session_from_persisted(
         updated_at: persisted.updated_at,
         project_instructions,
         raw,
+        resident_instructions: None,
+        unfenced_completion_ids: Vec::new(),
     })
 }
 
@@ -477,9 +492,24 @@ pub fn materialize_cold_session(
     record: &ColdSessionRecord,
     max_events_per_session: usize,
 ) -> Option<SessionRecord> {
-    serde_json::from_str::<PersistedSessionRecord>(record.raw.get())
-        .ok()?
-        .into_record(max_events_per_session)
+    let persisted = serde_json::from_str::<PersistedSessionRecord>(record.raw.get()).ok()?;
+    if persisted.session_id != record.session_id
+        || persisted.project != record.project
+        || persisted.owner_authority_fingerprint != record.owner_authority_fingerprint
+        || persisted.lifecycle != record.lifecycle
+        || persisted.mode != record.mode
+        || persisted.guards != record.guards
+        || persisted.updated_at != record.updated_at
+    {
+        return None;
+    }
+    if record.lifecycle.allows_mutation() {
+        // Only our canonical live serializer or the sanitizing stream loader
+        // creates these bytes. Do not apply disk-restore cleanup a second time.
+        Some(resident::materialize(persisted, record))
+    } else {
+        persisted.into_record(max_events_per_session)
+    }
 }
 
 pub struct RestoredSessionLedger {

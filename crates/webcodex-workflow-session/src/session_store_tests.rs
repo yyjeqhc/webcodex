@@ -1515,8 +1515,9 @@ fn restore_prunes_only_old_closed_history_and_keeps_active_identity() {
     assert_eq!(status.restored_sessions, 2);
     assert_eq!(status.active_sessions, 1);
     assert_eq!(status.closed_sessions, 1);
-    assert_eq!(status.hot_sessions, 1);
-    assert_eq!(status.cold_sessions, 1);
+    assert_eq!(status.hot_sessions, 0);
+    assert_eq!(status.cold_sessions, 2);
+    assert_eq!(status.active_cold_sessions, 1);
     assert_eq!(status.hot_session_capacity_target, 1);
     assert_eq!(status.historical_session_retention_limit, 1);
     assert_eq!(status.capacity_evictions, 1);

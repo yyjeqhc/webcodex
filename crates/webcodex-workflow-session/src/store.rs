@@ -76,6 +76,8 @@ use super::util::{
 mod identifier_tests;
 
 mod recency;
+mod residency;
+
 use recency::SessionRecency;
 mod writer;
 use writer::LedgerWriterGuard;
@@ -281,6 +283,15 @@ impl SessionStore {
             closed_sessions,
             hot_sessions,
             cold_sessions,
+            active_cold_sessions: inner.sessions.values().filter(|entry| {
+                matches!(entry, StoredSession::Cold(cold) if cold.lifecycle.allows_mutation())
+            }).count(),
+            cold_payload_bytes: inner.sessions.values().filter_map(|entry| {
+                match entry {
+                    StoredSession::Cold(cold) => Some(cold.raw.get().len()),
+                    StoredSession::Hot(_) => None,
+                }
+            }).sum(),
             hot_session_capacity_target: inner.hot_session_capacity_target,
             historical_session_retention_limit: inner.historical_session_retention_limit,
             capacity_evictions: inner.capacity_evictions,
@@ -522,6 +533,10 @@ impl SessionStore {
             }
 
             if let Some(session_id) = reusable_session_id {
+                if !inner.prepare_active_session(&session_id) {
+                    return Err(CodingSessionError::CommitFailed);
+                }
+
                 let (previous_mode, previous_guards, previous_execution_context) = {
                     let record = inner
                         .sessions
@@ -1075,10 +1090,12 @@ impl SessionStore {
         session_id: &str,
         resolved_project: &str,
     ) -> Option<SessionExecutionContext> {
-        let inner = self.inner.lock().expect("session store mutex poisoned");
-        let record = inner.sessions.get(session_id)?.hot()?;
-        (record.lifecycle.allows_mutation() && record.project.as_deref() == Some(resolved_project))
+        self.with_record_for_query(session_id, |record, _| {
+            (record.lifecycle.allows_mutation()
+                && record.project.as_deref() == Some(resolved_project))
             .then(|| record.execution_context.clone())
+        })
+        .flatten()
     }
 
     pub fn guard_state(&self, session_id: &str) -> Option<(SessionMode, SessionGuards)> {
@@ -1165,6 +1182,9 @@ impl SessionStore {
         }
         let outcome = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            if !inner.prepare_active_session(session_id) {
+                return Err(SessionExecutionContextUpdateError::UnknownSession);
+            }
             let stored = inner
                 .sessions
                 .get(session_id)
@@ -1833,6 +1853,10 @@ impl SessionStore {
 
         let (cold, hot_closed, recorded) = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            if !inner.prepare_active_session(session_id) {
+                return false;
+            }
+
             let max_events = inner.max_events_per_session;
             let Some(stored) = inner.sessions.get_mut(session_id) else {
                 return false;
@@ -1975,6 +1999,10 @@ impl SessionStore {
         let mut event = Some(event);
         let (cold, hot_closed) = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            if !inner.prepare_active_session(&session_id) {
+                return;
+            }
+
             let max_events_per_session = inner.max_events_per_session;
             let Some(stored) = inner.sessions.get_mut(&session_id) else {
                 return;
@@ -2085,6 +2113,9 @@ impl SessionStore {
         let mut permission = Some(permission);
         let (cold, hot_closed, found) = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            if !inner.prepare_active_session(session_id) {
+                return false;
+            }
             let Some(stored) = inner.sessions.get_mut(session_id) else {
                 return false;
             };
@@ -2133,6 +2164,9 @@ impl SessionStore {
         let mut evidence = Some(evidence);
         let (cold, hot_closed, found) = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            if !inner.prepare_active_session(session_id) {
+                return false;
+            }
             let Some(stored) = inner.sessions.get_mut(session_id) else {
                 return false;
             };
@@ -2751,6 +2785,8 @@ impl SessionStoreInner {
             .insert(session_id.clone(), StoredSession::Hot(record));
         self.touch(&session_id);
         self.enforce_historical_retention_bound();
+        self.compact_hot_sessions(&session_id);
+
         self.summary(&session_id, Some(DEFAULT_SUMMARY_LIMIT))
             .expect("newly inserted session must summarize")
     }
@@ -2761,6 +2797,10 @@ impl SessionStoreInner {
         session_id: &str,
     ) -> Result<Option<SessionCloseOutcome>, SessionCloseError> {
         self.touch(session_id);
+        if !self.prepare_active_session(session_id) {
+            return Err(SessionCloseError::UnknownSession);
+        }
+
         let lifecycle = self
             .sessions
             .get(session_id)
@@ -2819,6 +2859,9 @@ impl SessionStoreInner {
         delivery: Option<SessionMessageDelivery>,
     ) -> Result<SessionMessageDeliveryOutcome, SessionMessageError> {
         self.touch(&input.session_id);
+        if !self.prepare_active_session(&input.session_id) {
+            return Err(SessionMessageError::InvalidObservationState);
+        }
         let Some(stored) = self.sessions.get_mut(&input.session_id) else {
             return Err(SessionMessageError::UnknownSession);
         };
@@ -2931,6 +2974,13 @@ impl SessionStoreInner {
         session_id: &str,
         message_ids: &[String],
     ) -> super::model::SessionAckObservation {
+        if !self.prepare_active_session(session_id) {
+            return super::model::SessionAckObservation {
+                ignored_count: message_ids.len(),
+                ..Default::default()
+            };
+        }
+
         let Some(stored) = self.sessions.get_mut(session_id) else {
             return super::model::SessionAckObservation {
                 ignored_count: message_ids.len(),
@@ -2985,6 +3035,9 @@ impl SessionStoreInner {
         message_id: &str,
     ) -> Result<WithdrawSessionMessageOutcome, SessionMessageError> {
         self.touch(session_id);
+        if !self.prepare_active_session(session_id) {
+            return Err(SessionMessageError::InvalidObservationState);
+        }
         let Some(stored) = self.sessions.get_mut(session_id) else {
             return Err(SessionMessageError::UnknownSession);
         };
@@ -3051,6 +3104,9 @@ impl SessionStoreInner {
         input: ReplaceSessionMessageInput,
     ) -> Result<ReplaceSessionMessageOutcome, SessionMessageError> {
         self.touch(&input.session_id);
+        if !self.prepare_active_session(&input.session_id) {
+            return Err(SessionMessageError::InvalidObservationState);
+        }
         let Some(stored) = self.sessions.get_mut(&input.session_id) else {
             return Err(SessionMessageError::UnknownSession);
         };
@@ -3200,6 +3256,9 @@ impl SessionStoreInner {
         resolution: Option<String>,
     ) -> Result<(SessionMessage, bool), SessionMessageError> {
         self.touch(session_id);
+        if !self.prepare_active_session(session_id) {
+            return Err(SessionMessageError::InvalidObservationState);
+        }
         let Some(stored) = self.sessions.get_mut(session_id) else {
             return Err(SessionMessageError::UnknownSession);
         };
@@ -3258,6 +3317,9 @@ impl SessionStoreInner {
         current_request_acknowledged: bool,
     ) -> Result<(SessionMessage, bool), SessionMessageError> {
         self.touch(session_id);
+        if !self.prepare_active_session(session_id) {
+            return Err(SessionMessageError::InvalidObservationState);
+        }
         let Some(stored) = self.sessions.get_mut(session_id) else {
             return Err(SessionMessageError::UnknownSession);
         };
@@ -3322,6 +3384,9 @@ impl SessionStoreInner {
         input: CompleteSessionMessageInput,
     ) -> Result<CompleteSessionMessageOutcome, SessionMessageError> {
         self.touch(&input.session_id);
+        if !self.prepare_active_session(&input.session_id) {
+            return Err(SessionMessageError::InvalidObservationState);
+        }
         let Some(stored) = self.sessions.get_mut(&input.session_id) else {
             return Err(SessionMessageError::UnknownSession);
         };

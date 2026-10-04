@@ -78,8 +78,8 @@ fn scale_case(count: usize) -> Value {
 #[test]
 fn session_store_scale_smoke_preserves_identities_and_lifecycle() {
     let metrics = scale_case(4);
-    assert_eq!(metrics["hot_sessions_after_close"], 3);
-    assert_eq!(metrics["cold_sessions_after_close"], 1);
+    assert_eq!(metrics["hot_sessions_after_close"], 0);
+    assert_eq!(metrics["cold_sessions_after_close"], 4);
     assert!(metrics["ledger_bytes"].as_u64().unwrap() > 0);
 }
 

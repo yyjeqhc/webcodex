@@ -3,6 +3,8 @@ use crate::SessionStore;
 use std::io::Read;
 
 #[cfg(target_os = "linux")]
+mod active_benchmark;
+#[cfg(target_os = "linux")]
 mod benchmark;
 
 fn ledger() -> String {
@@ -29,14 +31,14 @@ fn streaming_restore_preserves_rows_and_accepts_version_after_rows() {
             .iter()
             .filter(|r| matches!(r, StoredSession::Hot(_)))
             .count(),
-        1
+        0
     );
     assert_eq!(
         rows.records
             .iter()
             .filter(|r| matches!(r, StoredSession::Cold(_)))
             .count(),
-        1
+        2
     );
 }
 

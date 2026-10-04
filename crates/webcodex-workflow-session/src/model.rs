@@ -205,10 +205,10 @@ pub struct SessionRecord {
 }
 
 /// Internal residency state is deliberately orthogonal to business lifecycle.
-/// Active sessions currently stay hot even when the advisory hot target is exceeded; they are
-/// never deleted to enforce that target. Historical closed sessions may keep only one compact,
-/// immutable durable JSON object plus the small metadata required for lifecycle/authorization
-/// checks and retention bookkeeping.
+/// Active identity is retained independently of the materialized working set. Cold
+/// records retain canonical JSON in memory, not a disk pointer: compaction neither
+/// deletes history nor depends on an unflushed disk generation. Only explicit Closed
+/// history retention may remove an identity.
 #[derive(Debug)]
 pub enum StoredSession {
     Hot(SessionRecord),
@@ -226,6 +226,12 @@ pub struct ColdSessionRecord {
     pub updated_at: i64,
     pub project_instructions: Option<ProjectInstructionsSummarySnapshot>,
     pub raw: Arc<RawValue>,
+    /// Process-local instruction bodies are not part of the durable ledger. Keep
+    /// them across Active compaction so an incomplete future scan can retain rules.
+    pub resident_instructions: Option<Arc<ProjectInstructionsSnapshot>>,
+    /// The durable format omits historical no-fence completion entries. A live
+    /// residency round trip must preserve those entries rather than sanitize them.
+    pub unfenced_completion_ids: Vec<String>,
 }
 
 impl StoredSession {
@@ -456,8 +462,13 @@ pub struct SessionStoreStatus {
     pub closed_sessions: usize,
     pub hot_sessions: usize,
     pub cold_sessions: usize,
-    /// Advisory materialized working-set target. Active Sessions may exceed it rather than be
-    /// destructively evicted.
+    /// Active identities represented by compact canonical JSON rather than a record tree.
+    pub active_cold_sessions: usize,
+    /// Encoded Cold JSON resident in RAM; excludes metadata, instructions and allocator costs.
+    pub cold_payload_bytes: usize,
+
+    /// Materialized working-set target, with one mutation target allowed when zero.
+    /// It limits expanded records, not total heap bytes or retained identities.
     pub hot_session_capacity_target: usize,
     /// Independent bound for retained Closed historical records. Active Sessions do not count
     /// toward this limit.

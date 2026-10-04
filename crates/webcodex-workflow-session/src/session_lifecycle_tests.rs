@@ -577,7 +577,7 @@ fn close_cleanup_evidence_rewrites_cold_payload_without_reheating() {
 }
 
 #[test]
-fn closed_cold_round_trip_preserves_evidence_and_active_stays_hot() {
+fn cold_round_trip_preserves_evidence_and_active_identity_without_hot_residency() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");
     let store = SessionStore::with_persistence(&ledger, 10, 20);
@@ -651,13 +651,13 @@ fn closed_cold_round_trip_preserves_evidence_and_active_stays_hot() {
     assert!(restored
         .cold_payload_bytes_for_test(&closed.session_id)
         .is_some_and(|bytes| bytes > 0));
-    assert!(restored
-        .hot_payload_entry_count_for_test(&active.session_id)
-        .is_some());
     assert_eq!(
-        restored.cold_payload_bytes_for_test(&active.session_id),
+        restored.hot_payload_entry_count_for_test(&active.session_id),
         None
     );
+    assert!(restored
+        .cold_payload_bytes_for_test(&active.session_id)
+        .is_some());
 
     let after_summary = restored.summary(&closed.session_id, Some(100)).unwrap();
     let after_messages = restored

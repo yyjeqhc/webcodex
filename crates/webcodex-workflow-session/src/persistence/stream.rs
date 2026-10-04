@@ -49,13 +49,12 @@ impl<'de> Visitor<'de> for RowsSeed {
             let Some(record) = record.into_record(self.0) else {
                 continue;
             };
-            let stored = if record.lifecycle.allows_mutation() {
-                StoredSession::Hot(record)
-            } else {
-                match cold_session_from_record(&record, self.0) {
-                    Ok(cold) => StoredSession::Cold(cold),
-                    Err(_) => StoredSession::Hot(record),
-                }
+            // Validate/sanitize one row before publication, then release its
+            // expanded tree regardless of lifecycle. Startup never retains every
+            // Active record hot; exact mutation will hydrate only its target.
+            let stored = match cold_session_from_record(&record, self.0) {
+                Ok(cold) => StoredSession::Cold(cold),
+                Err(_) => StoredSession::Hot(record),
             };
             out.records.push(stored);
         }

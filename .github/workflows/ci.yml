@@ -680,6 +680,12 @@ jobs:
         run: |
           cargo test --locked -p webcodex-environment --lib upgrade::
           cargo test --locked -p webcodex-environment --lib service::windows::
+      - name: Test Computer helper ownership and native Task Scheduler roundtrip
+        run: |
+          cargo test --locked -p webcodex-environment --lib session_service::
+          if ($LASTEXITCODE -ne 0) { throw "Computer helper ownership tests failed" }
+          cargo test --locked -p webcodex-environment --lib windows_helper_task_scheduler_roundtrip_is_owned -- --ignored
+          if ($LASTEXITCODE -ne 0) { throw "Computer helper Task Scheduler roundtrip failed" }
       - name: Test Windows unified installer routing and Desktop build freshness
         run: python -m unittest scripts.tests.test_prepare_windows_unified_installer scripts.tests.test_desktop_runtime_manifest scripts.tests.test_desktop_frontend_build
       - name: Test optional Codex observation adapter on Windows

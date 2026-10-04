@@ -3921,10 +3921,8 @@ fn compact_bootstrap_description_teaches_explicit_context_and_reuse() {
     compact_tool(&mut tool);
     let description = tool["description"].as_str().unwrap();
     for phrase in [
-        "AGENTS.md/CLAUDE.md",
-        "_wc.context",
-        "project.instructions",
-        "webcodex.workflow",
+        "_wc.context=[\"project.instructions\",\"webcodex.workflow\"]",
+        "project.instructions contains applicable AGENTS.md/CLAUDE.md",
         "Reuse complete instruction bodies",
         "workspace branch/HEAD/status",
         "semantic navigation",
@@ -3970,6 +3968,12 @@ async fn compact_bootstrap_guidance_matches_advertised_context_capability() {
         assert!(description.contains("session_id"));
         assert!(description.contains("stale/incomplete"));
         assert_eq!(description.contains("_wc.context"), modern);
+        let extension_description = tool["inputSchema"]["properties"]["include_extension_catalog"]
+            ["description"]
+            .as_str()
+            .expect("compact extension catalog guidance");
+        assert!(extension_description.contains("default true on fresh/first Project"));
+        assert!(extension_description.contains("complete/sufficient catalog for that Project"));
         if !modern {
             assert!(description.contains("read_files"));
         }

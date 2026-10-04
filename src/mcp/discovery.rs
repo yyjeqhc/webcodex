@@ -15,7 +15,7 @@ pub(super) fn compact_tool(tool: &mut Value) {
     if let Some(description) = tool["description"].as_str() {
         let selection = match name.as_str() {
             "work_on_project" if tool.pointer("/inputSchema/properties/_wc").is_none() => "Start file, data, diagnostic or coding work in a Project; Git optional. Omit session_id for a fresh Session; supply exact session_id to resume. Read applicable AGENTS.md/CLAUDE.md with read_files. Reuse workspace branch/HEAD/status and sufficient catalogs; refresh stale/incomplete facts before dependent work.",
-            "work_on_project" => "Start file, data, diagnostic or coding work; Git optional. Fresh: omit session_id; exact id resumes. _wc.context: project.instructions + webcodex.workflow + AGENTS.md/CLAUDE.md. Reuse complete instruction bodies, workspace branch/HEAD/status, semantic navigation and sufficient catalogs; refresh stale/incomplete.",
+            "work_on_project" => "Start file, data, diagnostic or coding work; Git optional. Fresh: omit session_id; exact id resumes. Fresh/uncertain model context: request _wc.context=[\"project.instructions\",\"webcodex.workflow\"]; project.instructions contains applicable AGENTS.md/CLAUDE.md. Reuse complete instruction bodies, workspace branch/HEAD/status, semantic navigation and sufficient catalogs; refresh stale/incomplete.",
             "get_work_result_state" => "App-only Work Result read; reauthorizes exact Project/Session; no attention, Session recording or snapshot mutation. files: advertised immutable paths; diff or UTF-8 content; max 32 KiB/page, 256 KiB/file.",
             "plugin_tool" => "Use Runner-owned Plugins via opaque bindings. Catalog selects; describe when schema/binding is missing. Reuse retained exact binding for the same Project; reconcile unknown outcomes.",
             "call_runtime_tool" => "Call one admitted runtime tool with its exact arguments. Use read_tool_manifest to discover the contract. Prefer an available direct callable; ordinary direct tools may fall back here when unavailable, but MCP App presentation tools must use their direct callable while Apps are enabled. Target validation and authority checks still apply.",
@@ -212,7 +212,7 @@ fn common_input_description(tool: &str, field: &str) -> Option<&'static str> {
         ("work_on_project", "guidance_profile") =>
             "Guidance only; explicit value wins; no authority.",
         ("work_on_project", "include_extension_catalog") =>
-            "Extension catalog; default true; false only when retained for the same Project.",
+            "Extension catalog; default true on fresh/first Project; false only while a complete/sufficient catalog for that Project is retained.",
         ("work_on_project", "session_id") =>
             "Omit fresh; exact active id/ref resumes its bound Project.",
         _ => return None,

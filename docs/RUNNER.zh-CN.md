@@ -448,6 +448,8 @@ Runner 准入和 Server inventory 校验共用语义 shell 合同，包含 `pyth
 
 注册明确返回 `job inventory shell is invalid` 或 `job inventory timestamps are inconsistent` 时，保留同一 Runner 实例和完整 Job inventory，以有界退避重试，不通过清空 active inventory 换取注册成功。持续拒绝仍需调查或更新有缺陷的组件；重试本身不代表已恢复。认证、身份/归属、协议及其他致命错误仍严格停止 Runner。操作系统 supervisor 应保持启用，但它重启进程不能代替同进程的 Job 恢复。
 
+不要在普通 `run_shell` Job 内用 `nohup ... &` 把 Runner watchdog 当作永久服务启动：普通执行在父命令结束后仍会清理其托管进程树，后台运行和重定向输出不构成执行所有权转移。Runner/watchdog 应交给该 Job 进程树之外的服务管理器。`run_detached_process` 是另一套有总生命周期上限的原生执行合同，不是无限期 shell 服务安装器。
+
 Server-only 重启恢复不等于持久化执行：普通 active Job 依靠存活 Runner 的 inventory 重建。Server 内存中的待分发请求、历史结果 receipt 或持久化 Workflow Session 都不构成可自动重放命令的持久队列。隔离端到端验收覆盖运行中任务、离线完成、`run_process`、Python `run_script`、validation handoff，以及原 Job 身份、日志连续性和副作用不重复：
 
 ```sh

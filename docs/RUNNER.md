@@ -585,6 +585,13 @@ Authentication, identity/ownership, unsupported protocol and other fatal errors
 still stop the Runner. Keep an operating-system supervisor enabled as a safety
 net, but restarting a Runner is not a substitute for same-process Job recovery.
 
+Do not launch a supposedly permanent Runner watchdog using `nohup ... &` inside
+an ordinary `run_shell` Job. Ordinary execution owns and cleans up its process
+tree when the parent command exits; backgrounding and redirecting output do not
+transfer that ownership. Install the Runner/watchdog through a service manager
+outside the Runner-owned Job tree. `run_detached_process` is a separate bounded
+native-execution contract, not an unbounded shell-service installer.
+
 Server-only restart recovery and durable execution are distinct. Active ordinary
 Jobs are reconstructed from the live Runner inventory; a Server-side pending
 request, a historical receipt, or a durable Workflow Session is not a durable

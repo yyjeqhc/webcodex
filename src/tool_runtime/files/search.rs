@@ -71,7 +71,7 @@ const SEARCH_PROJECT_TEXT_RG_EXCLUDE_GLOBS: &[&str] = &[
     "!**/*.key",
 ];
 
-pub(crate) const MAX_SEARCH_CONTEXT_LINES: usize = 80;
+pub(crate) use webcodex_tool_contracts::MAX_SEARCH_CONTEXT_LINES;
 pub(crate) const MAX_SEARCH_GLOBS: usize = 32;
 pub(crate) const MAX_SEARCH_GLOB_BYTES: usize = 256;
 pub(crate) const DEFAULT_SEARCH_TIMEOUT_SECS: u64 = 30;

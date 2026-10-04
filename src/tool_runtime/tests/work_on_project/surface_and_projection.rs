@@ -84,6 +84,28 @@ fn work_on_project_schema_and_registration() {
     );
     assert_eq!(props["include_extension_catalog"]["type"], "boolean");
     assert_eq!(props["include_extension_catalog"]["default"], true);
+    let catalog_advice = props["include_extension_catalog"]["description"]
+        .as_str()
+        .unwrap();
+    for phrase in [
+        "keep true/default",
+        "fresh model/ClientWindow context",
+        "complete/sufficient",
+        "not merely because a Workflow Session or ClientWindow already exists",
+        "compaction",
+        "context loss/restoration/uncertainty",
+        "changed catalog revision/runtime",
+        "truncated",
+        "missing relevant metadata",
+        "explicit user request",
+        "request-local",
+    ] {
+        assert!(
+            catalog_advice.contains(phrase),
+            "missing {phrase}: {catalog_advice}"
+        );
+    }
+
     for keyword in [
         "oneOf",
         "anyOf",

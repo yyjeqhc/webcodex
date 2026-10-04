@@ -87,7 +87,19 @@ async fn dispatch_with_context_and_local_agent(
     call: ToolCall,
     context_request: Vec<String>,
 ) -> ToolResult {
+    dispatch_with_context_in_window_and_local_agent(runtime, client_id, call, context_request, None)
+        .await
+}
+
+async fn dispatch_with_context_in_window_and_local_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    call: ToolCall,
+    context_request: Vec<String>,
+    window_id: Option<&str>,
+) -> ToolResult {
     let auth = auth_context(None, true);
+    let window = window_id.map(crate::client_window::ClientWindow::for_test);
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -97,7 +109,7 @@ async fn dispatch_with_context_and_local_agent(
                     Some(&auth),
                     SessionTransport::Mcp,
                     ToolCallRecorderMetadata::default(),
-                    None,
+                    window.as_ref(),
                     true,
                     context_request,
                     super::super::context_projection::ContextMaterialCapabilities::default(),
@@ -1275,4 +1287,47 @@ async fn bootstrap_instruction_snapshot_does_not_bypass_material_scope() {
         "unavailable"
     );
     assert!(!result.output.to_string().contains("PRIVATE_BOOTSTRAP_RULE"));
+}
+
+#[tokio::test]
+async fn bootstrap_explicit_context_refresh_is_not_suppressed_by_window_or_session() {
+    let root = tempfile::tempdir().unwrap();
+    init_git_repo(root.path());
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "context-refresh";
+    let project = register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let mut session_id = None;
+    // Same body after context loss, then changed instructions, all in the same Window/Session.
+    for body in ["INITIAL_RULE", "INITIAL_RULE", "CHANGED_RULE"] {
+        std::fs::write(root.path().join("AGENTS.md"), body).unwrap();
+        let result = dispatch_with_context_in_window_and_local_agent(
+            &runtime,
+            client,
+            ToolCall::from_tool_name(
+                "work_on_project",
+                json!({
+                    "project": project, "instruction": "refresh required context",
+                    "session_id": session_id, "include_extension_catalog": false,
+                }),
+            )
+            .unwrap(),
+            vec!["project.instructions".into(), "webcodex.workflow".into()],
+            Some("retained-window"),
+        )
+        .await;
+        assert!(result.success, "{:?}", result.error);
+        let current_session = result.output["session_id"].as_str().unwrap().to_string();
+        if let Some(previous) = &session_id {
+            assert_eq!(previous, &current_session);
+        }
+        session_id = Some(current_session);
+        let instructions = context_material(&result, "project.instructions");
+        assert_eq!(instructions["status"], "available");
+        assert_eq!(instructions["projection"]["content_included"], true);
+        assert!(instructions["projection"].to_string().contains(body));
+        assert_eq!(
+            context_material(&result, "webcodex.workflow")["status"],
+            "available"
+        );
+    }
 }

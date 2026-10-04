@@ -3497,3 +3497,63 @@ async fn search_project_text_rejects_empty_pattern() {
     assert_eq!(result.output["detail_code"], "invalid_pattern");
     assert_eq!(result.output["state_changed"], false);
 }
+
+#[tokio::test]
+async fn search_project_texts_max_context_runtime_result_matches_public_schema() {
+    let runtime = test_runtime();
+    let root = tempfile::tempdir().unwrap();
+    let body = format!("{}needle\n{}", "before\n".repeat(80), "after\n".repeat(80));
+    std::fs::write(root.path().join("notes.txt"), body).unwrap();
+    let project =
+        register_runner_project_at_path(&runtime, "search-bound", "demo", root.path()).await;
+    // Exercise both directions independently and together at the public ceiling.
+    for (before, after) in [(80, 0), (0, 80), (80, 80)] {
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let call = search_call(
+                project.clone(),
+                SearchRequest {
+                    context_before: Some(before),
+                    context_after: Some(after),
+                    ..raw_search_request()
+                },
+            );
+            async move {
+                runtime
+                    .dispatch_with_auth(call, Some(&auth_context(None, true)))
+                    .await
+            }
+        });
+        let req = wait_for_patch_agent_request(&runtime, "search-bound").await;
+        complete_agent_request_by_running_locally(&runtime, "search-bound", req).await;
+        let batch = task.await.unwrap();
+        assert!(batch.success, "{:?}", batch.error);
+        let schema = crate::tool_runtime::registry::output_schema_for_tool("search_project_texts");
+        let instance = serde_json::to_value(&batch).unwrap();
+        webcodex_tool_contracts::test_support::validate_schema_instance(&instance, &schema)
+            .unwrap();
+        // Prove the published ceiling is enforced, rather than only checking field names.
+        for field in ["context_before", "context_after"] {
+            let mut invalid = instance.clone();
+            invalid["output"]["items"][0]["output"][field] = json!(81);
+            assert!(
+                webcodex_tool_contracts::test_support::validate_schema_instance(&invalid, &schema)
+                    .is_err()
+            );
+        }
+        let result = extract_single_search_batch_result(batch);
+        for (field, count) in [("context_before", before), ("context_after", after)] {
+            // Sparse model projection omits zero-valued context knobs.
+            if count == 0 {
+                assert!(result.output.get(field).is_none());
+            } else {
+                assert_eq!(result.output[field], count);
+            }
+        }
+        let matched = &result.output["matches"][0];
+        assert_eq!(matched["line"], 81);
+        for (field, count) in [("context_before", before), ("context_after", after)] {
+            assert_eq!(matched[field].as_array().map_or(0, Vec::len), count);
+        }
+    }
+}

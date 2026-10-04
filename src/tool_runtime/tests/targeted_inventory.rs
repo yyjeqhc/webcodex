@@ -1223,6 +1223,19 @@ async fn workspace_resolution_never_creates_sessions_or_dispatches_and_does_not_
     )
     .await;
     let before = runtime.sessions.active_session_count_for_test(None);
+    for invalid_args in [
+        json!({"client_id":"special"}),
+        json!({"client_id":"special","query":"   "}),
+        json!({"client_id":"special","path":"/srv/release","query":"release"}),
+    ] {
+        let invalid = maintenance_call(&runtime, "resolve_workspace", invalid_args).await;
+        assert!(!invalid.success, "{invalid:?}");
+        assert_eq!(
+            invalid.error.as_deref(),
+            Some("invalid_workspace_selector"),
+            "{invalid:?}"
+        );
+    }
     let exact = maintenance_call(
         &runtime,
         "resolve_workspace",
@@ -1358,8 +1371,11 @@ async fn workspace_resolution_hides_foreign_runner_and_cached_git_is_opt_in() {
     register_target_agent_for_auth(&runtime, "alice-runner", "main", &alice).await;
     let denied = runtime
         .dispatch_with_auth(
-            ToolCall::from_tool_name("resolve_workspace", json!({"client_id":"alice-runner"}))
-                .unwrap(),
+            ToolCall::from_tool_name(
+                "resolve_workspace",
+                json!({"client_id":"alice-runner","query":"main"}),
+            )
+            .unwrap(),
             Some(&bob),
         )
         .await;
@@ -1367,7 +1383,11 @@ async fn workspace_resolution_hides_foreign_runner_and_cached_git_is_opt_in() {
     assert!(denied.output.get("candidates").is_none());
     let empty = runtime
         .dispatch_with_auth(
-            ToolCall::from_tool_name("resolve_workspace", json!({"client_id":"missing"})).unwrap(),
+            ToolCall::from_tool_name(
+                "resolve_workspace",
+                json!({"client_id":"missing","query":"main"}),
+            )
+            .unwrap(),
             Some(&bob),
         )
         .await;

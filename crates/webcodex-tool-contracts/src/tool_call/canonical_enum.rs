@@ -3895,6 +3895,7 @@ pub enum ToolCall {
     },
 
     /// Locate an already registered workspace without creating a Session or registration.
+    /// Exactly one selector is required: an exact registered path or a non-empty literal query.
     ResolveWorkspace {
         /// Exact caller-visible Runner; never fall through to another machine.
         #[schemars(length(min = 1, max = 128))]
@@ -3905,7 +3906,7 @@ pub enum ToolCall {
         path: Option<String>,
         /// Literal case-insensitive substring over id, name, path and description.
         #[serde(default)]
-        #[schemars(length(max = 200))]
+        #[schemars(length(min = 1, max = 200))]
         query: Option<String>,
         /// Candidate bound, default 20, clamped to 1..100. Never resolves ambiguous matches by rank.
         #[serde(default)]

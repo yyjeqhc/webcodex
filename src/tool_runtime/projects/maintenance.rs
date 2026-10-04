@@ -20,11 +20,14 @@ impl ToolRuntime {
         if client_id.is_empty()
             || client_id.chars().count() > 128
             || client_id.chars().any(char::is_control)
-            || (path.is_some() && query.is_some())
-            || query
-                .as_ref()
-                .is_some_and(|q| q.chars().count() > 200 || q.chars().any(char::is_control))
+            || query.as_ref().is_some_and(|q| {
+                q.trim().is_empty() || q.chars().count() > 200 || q.chars().any(char::is_control)
+            })
         {
+            return ToolResult::err("invalid_workspace_selector");
+        }
+        let query = query.map(|q| q.trim().to_lowercase());
+        if path.is_some() == query.is_some() {
             return ToolResult::err("invalid_workspace_selector");
         }
         if let Some(path) = &path {
@@ -43,9 +46,6 @@ impl ToolRuntime {
                 json!({"reason_code":"runner_unavailable"}),
             );
         };
-        let query = query
-            .map(|q| q.trim().to_lowercase())
-            .filter(|q| !q.is_empty());
         let mut matches = client
             .view
             .projects

@@ -149,7 +149,13 @@ impl JobManager {
             let previous_progress = job.snapshot.validation_progress.clone();
             let explicit_semantic =
                 delta.finished || delta.command_execution_state.is_some() || delta.error.is_some();
-            let now = chrono::Utc::now().timestamp();
+            // created_at belongs to the Server clock; later timestamps belong
+            // to this Runner. Preserve causal order despite clock skew or a
+            // local wall-clock rollback. Duration still uses monotonic time.
+            let now = chrono::Utc::now()
+                .timestamp()
+                .max(job.snapshot.created_at)
+                .max(job.snapshot.started_at.unwrap_or(job.snapshot.created_at));
             append_runner_stream(&mut job.snapshot.stdout, delta.stdout_chunk.as_deref());
             append_runner_stream(&mut job.snapshot.stderr, delta.stderr_chunk.as_deref());
             if let Some(max_bytes) = delta.stream_limit_bytes {

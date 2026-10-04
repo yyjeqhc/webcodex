@@ -1041,6 +1041,26 @@ pub struct ShellJobContext {
     pub structured_execution: Option<ShellJobStructuredExecutionMetadata>,
 }
 
+impl ShellJobContext {
+    /// Semantic execution identities shared by Runner admission and Server
+    /// reconciliation. Interpreter executable names are not shell identities.
+    pub fn is_valid_shell(shell: &str) -> bool {
+        matches!(
+            shell,
+            "sh" | "bash"
+                | "bash_login"
+                | "powershell"
+                | "python"
+                | "javascript"
+                | "typescript"
+                | "direct_argv"
+                | "configured"
+                | "custom"
+                | "remote"
+        )
+    }
+}
+
 /// One bounded stream tail plus absolute line range. `next_line` is the
 /// cursor immediately after the last retained/observed line; reconciliation
 /// replaces the server stream with this authoritative range instead of

@@ -2862,6 +2862,45 @@ fn job_inventory_accepts_bash_login_shell_context() {
     validate_job_inventory(CLIENT_ID, &[project_summary()], &inventory).unwrap();
 }
 
+#[tokio::test]
+async fn job_inventory_recovers_python_script_without_changing_semantic_identity() {
+    let mut snapshot = standalone_snapshot("python-reconnect", "running");
+    snapshot.context.shell = Some("python".to_string());
+    snapshot.context.structured_execution = Some(
+        crate::runner_protocol::ShellJobStructuredExecutionMetadata {
+            execution_source: "run_script".to_string(),
+            language: Some(ShellScriptLanguage::Python),
+            script_bytes: Some(24),
+            arg_count: 0,
+            stdin_present: false,
+            validation_identity: None,
+            validation_tool: None,
+            assertion_name: None,
+        },
+    );
+    let inventory = ShellJobInventory {
+        active_complete: true,
+        jobs: vec![snapshot.clone()],
+    };
+    validate_job_inventory(CLIENT_ID, &[project_summary()], &inventory).unwrap();
+    // A fresh Server must accept the retained Python Job at registration,
+    // rather than kill an otherwise healthy Runner on reconnect.
+    register(&RunnerRegistry::default(), INSTANCE_A, inventory).await;
+    for shell in ["python3", "python.exe", "unknown"] {
+        snapshot.context.shell = Some(shell.to_string());
+        let error = validate_job_inventory(
+            CLIENT_ID,
+            &[project_summary()],
+            &ShellJobInventory {
+                active_complete: true,
+                jobs: vec![snapshot.clone()],
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("shell is invalid"), "{error}");
+    }
+}
+
 #[test]
 fn job_inventory_accepts_javascript_structured_script_context() {
     let mut javascript = standalone_snapshot("javascript-running", "running");

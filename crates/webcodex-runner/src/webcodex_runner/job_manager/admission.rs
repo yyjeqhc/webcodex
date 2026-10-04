@@ -56,21 +56,11 @@ pub(super) fn validate_runner_job_context_operation(
     }) {
         return Err("job recovery context purpose is invalid".to_string());
     }
-    if context.shell.as_deref().is_some_and(|shell| {
-        !matches!(
-            shell,
-            "sh" | "bash"
-                | "bash_login"
-                | "powershell"
-                | "python"
-                | "javascript"
-                | "typescript"
-                | "configured"
-                | "custom"
-                | "remote"
-                | "direct_argv"
-        )
-    }) {
+    if context
+        .shell
+        .as_deref()
+        .is_some_and(|shell| !ShellJobContext::is_valid_shell(shell))
+    {
         return Err("job recovery context shell is invalid".to_string());
     }
 
@@ -389,7 +379,9 @@ impl JobManager {
             };
             let queue_locally = immediate_failure.is_none() && reserved >= self.max_concurrent;
             let slot_reserved = immediate_failure.is_none() && !queue_locally;
-            let now = chrono::Utc::now().timestamp();
+            let now = chrono::Utc::now()
+                .timestamp()
+                .max(start.metadata.created_at);
             let terminal = immediate_failure.is_some();
             jobs.insert(
                 job_id.clone(),

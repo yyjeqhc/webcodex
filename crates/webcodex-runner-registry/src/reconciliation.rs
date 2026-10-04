@@ -93,18 +93,7 @@ fn validate_context(
         return Err("job inventory purpose is invalid".to_string());
     }
     if context.shell.as_deref().is_some_and(|shell| {
-        !matches!(
-            shell,
-            "sh" | "bash"
-                | "bash_login"
-                | "powershell"
-                | "javascript"
-                | "typescript"
-                | "direct_argv"
-                | "configured"
-                | "custom"
-                | "remote"
-        )
+        !webcodex_core::runner_protocol::ShellJobContext::is_valid_shell(shell)
     }) {
         return Err("job inventory shell is invalid".to_string());
     }

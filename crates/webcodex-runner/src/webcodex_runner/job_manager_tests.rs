@@ -42,6 +42,126 @@ fn retained_terminal_job(job_id: &str, ended_at: i64) -> RunningJob {
 }
 
 #[test]
+fn rejected_job_timestamps_preserve_server_creation_time() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = JobManager::new(1);
+    manager.shutting_down.store(true, Ordering::SeqCst);
+    let future = chrono::Utc::now().timestamp() + 3600;
+    let mut request = shell_job_request(temp.path(), "never executed");
+    request.created_at = future;
+    let (sink, _rx) = ws_sink("ws-client");
+    manager.enqueue(
+        sink,
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy::default(),
+            ShellConfig::default(),
+            SshConfig::default(),
+            temp.path().join("projects"),
+            request,
+        ),
+    );
+    let inventory = manager.inventory();
+    assert_eq!(inventory.jobs.len(), 1);
+    let snapshot = &inventory.jobs[0];
+    assert_eq!(snapshot.status, "failed");
+    assert_eq!(snapshot.started_at, None);
+    assert_eq!(snapshot.created_at, future);
+    assert_eq!(snapshot.ended_at, Some(future));
+}
+
+#[test]
+fn retained_job_timestamps_preserve_causal_order_across_clocks() {
+    for (job_id, already_started, prestart_failure) in [
+        ("server-clock-ahead", false, false),
+        ("runner-clock-rollback", true, false),
+        ("prestart-server-clock-ahead", false, true),
+    ] {
+        let manager = JobManager::new(1);
+        let future = chrono::Utc::now().timestamp() + 3600;
+        let mut snapshot = test_job_snapshot(job_id);
+        snapshot.created_at = future;
+        snapshot.started_at = already_started.then_some(future + 60);
+        snapshot.status = if already_started {
+            "running"
+        } else {
+            "agent_queued"
+        }
+        .to_string();
+        lock_unpoison(&manager.jobs).insert(
+            job_id.to_string(),
+            RunningJob {
+                client_id: "test-agent".to_string(),
+                runner_instance_id: "test-instance".to_string(),
+                snapshot,
+                input: None,
+                child: None,
+                stop_requested: Arc::new(AtomicBool::new(false)),
+                slot_reserved: true,
+            },
+        );
+        if !prestart_failure {
+            manager
+                .record_update(
+                    job_id,
+                    RunnerJobDelta {
+                        status: "running".to_string(),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        }
+        manager
+            .record_update(
+                job_id,
+                RunnerJobDelta {
+                    status: if prestart_failure {
+                        "failed"
+                    } else {
+                        "completed"
+                    }
+                    .to_string(),
+                    command_execution_state: prestart_failure
+                        .then_some(ShellCommandExecutionState::NotStarted),
+                    exit_code: (!prestart_failure).then_some(0),
+                    duration_ms: Some(17),
+                    finished: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let inventory = manager.inventory();
+        let snapshot = &inventory.jobs[0];
+        assert_eq!(snapshot.created_at, future);
+        if prestart_failure {
+            assert_eq!(snapshot.started_at, None);
+        } else {
+            assert_eq!(
+                snapshot.started_at,
+                Some(future + if already_started { 60 } else { 0 })
+            );
+        }
+        assert_eq!(
+            snapshot.ended_at,
+            Some(snapshot.started_at.unwrap_or(future))
+        );
+        assert_eq!(snapshot.duration_ms, Some(17));
+        // A racing late event cannot revise the first terminal outcome.
+        assert!(manager
+            .record_update(
+                job_id,
+                RunnerJobDelta {
+                    status: "failed".to_string(),
+                    finished: true,
+                    ..Default::default()
+                }
+            )
+            .is_none());
+        assert_eq!(manager.inventory(), inventory);
+    }
+}
+
+#[test]
 fn job_update_delivery_signal_wakes_all_worker_consumers() {
     let signal = Arc::new(JobUpdateDeliverySignal::default());
     let mut waiters = Vec::new();

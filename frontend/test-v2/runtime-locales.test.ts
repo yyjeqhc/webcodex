@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { LANGUAGE_STORAGE_KEY, loadLanguagePreference, translate } from "../src/runtime_i18n.js";
 import { normalizeRuntimeLanguage, RUNTIME_LANGUAGES, WORK_TEXT } from "../src/runtime_locales.js";
@@ -19,6 +20,11 @@ describe("Runtime language preferences", () => {
     const spy = vi.spyOn(navigator, "languages", "get").mockReturnValue(["es-ES", "fr-CA"]);
     expect(loadLanguagePreference()).toBe("fr-FR");
     spy.mockRestore();
+  });
+  it("keeps the pre-React bootstrap aligned with every supported locale", () => {
+    const html = readFileSync("src/runtime-v2/runtime.html", "utf8");
+    expect(html).toContain("navigator.languages");
+    for (const { value } of RUNTIME_LANGUAGES) expect(html).toContain(`\"${value}\"`);
   });
   it("preserves interpolation fields in every catalog and falls back for raw evidence", () => {
     for (const [source, translations] of Object.entries(WORK_TEXT)) {

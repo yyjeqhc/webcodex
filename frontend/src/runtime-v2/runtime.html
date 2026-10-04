@@ -10,12 +10,20 @@
         const appearanceKey = "webcodex.runtime.appearance.v1";
         const languageKey = "webcodex.runtime.language.v1";
         let appearance = "system";
-        let language = navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+        const supportedLanguages = ["en", "zh-CN", "zh-TW", "ja-JP", "ko-KR", "de-DE", "fr-FR"];
+        const normalizeLanguage = (value) => {
+          const tag = String(value || "").toLowerCase();
+          if (!tag) return null;
+          if (tag === "zh-tw" || tag === "zh-hk" || tag.startsWith("zh-hant")) return "zh-TW";
+          if (tag.startsWith("zh")) return "zh-CN";
+          return supportedLanguages.find(candidate => candidate.toLowerCase() === tag || candidate.split("-")[0].toLowerCase() === tag.split("-")[0]) || null;
+        };
+        let language = (navigator.languages || []).map(normalizeLanguage).find(Boolean) || normalizeLanguage(navigator.language) || "en";
         try {
           const storedAppearance = localStorage.getItem(appearanceKey);
           if (storedAppearance === "light" || storedAppearance === "dark" || storedAppearance === "system") appearance = storedAppearance;
           const storedLanguage = localStorage.getItem(languageKey);
-          if (storedLanguage === "en" || storedLanguage === "zh-CN") language = storedLanguage;
+          language = normalizeLanguage(storedLanguage) || language;
         } catch {}
         const resolved = appearance === "system"
           ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")

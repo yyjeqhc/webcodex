@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDF 预览实验</title>
+<!-- PDF_POC_STYLE -->
+<style>
+:root { color-scheme: light dark; font: 14px system-ui,sans-serif; --bg:#f4f6f8; --fg:#152b3f; --line:#d3dbe3; --card:#fff; }
+:root[data-theme=dark]{--bg:#19232d;--fg:#e0e8ef;--line:#40505f;--card:#25323f}
+@media(prefers-color-scheme:dark){:root:not([data-theme]){--bg:#19232d;--fg:#e0e8ef;--line:#40505f;--card:#25323f}}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg)}
+header{padding:14px 16px;background:var(--card);border-bottom:1px solid var(--line)}
+h1{font-size:16px;margin:0 0 9px} .toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+button,select,input{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:6px 9px}
+button{cursor:pointer} button:disabled{opacity:.45;cursor:default} input[type=file]{width:100%;font-size:12px}
+#status{font-size:12px;margin:9px 0 0;line-height:1.5;overflow-wrap:anywhere} #page-info{min-width:65px;text-align:center}
+#stage{height:560px;max-height:calc(100vh - 174px);min-height:220px;overflow:auto;padding:16px;position:relative}
+#page{position:relative;margin:0 auto;background:white;box-shadow:0 3px 18px #0002}
+canvas{display:block} .textLayer{position:absolute;inset:0;overflow:clip;opacity:1;line-height:1;text-align:initial;z-index:2}
+#empty{padding:48px 16px;text-align:center;color:var(--fg)} details{padding:10px 16px;border-top:1px solid var(--line);font-size:12px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0} #search{width:140px} .file{margin-top:9px}
+</style></head><body>
+<header><h1>PDF 预览实验</h1><div class="toolbar">
+<button id="prev" aria-label="上一页" disabled>←</button><span id="page-info">0 / 0</span><button id="next" aria-label="下一页" disabled>→</button>
+<button id="minus" aria-label="缩小" disabled>−</button><button id="fit" disabled>适合宽度</button><button id="plus" aria-label="放大" disabled>＋</button>
+<button id="fullscreen" disabled>展开</button><button id="close" disabled>关闭文档</button>
+<input id="search" aria-label="搜索本页文字" placeholder="搜索本页文字"><button id="find" disabled>查找</button>
+</div><div class="file"><input id="file" type="file" accept="application/pdf,.pdf" aria-label="打开本机 PDF（不上传）"></div>
+<p id="status" role="status">等待 Host 连接；也可打开本机 PDF（不上传，最大 20 MiB）。</p></header>
+<main id="stage"><div id="empty">文档将在这里显示</div><div id="page" hidden><canvas></canvas><div class="textLayer"></div></div></main>
+<details><summary>兼容性诊断</summary><pre id="diagnostics"></pre></details>
+<!-- PDF_POC_SCRIPT -->
+</body></html>

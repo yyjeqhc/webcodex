@@ -1,0 +1,14 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDF.js MCP App compatibility harness</title><style>
+*{box-sizing:border-box}body{margin:0;padding:24px;background:#e7edf2;color:#172b3d;font:14px system-ui,sans-serif}
+h1{font-size:23px;margin:0 0 8px}p{line-height:1.6;margin:8px 0 16px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+button,select{font:inherit;border:1px solid #b9c8d5;padding:7px 10px;border-radius:8px;background:white;color:inherit;cursor:pointer}
+#panel{width:420px;max-width:100%;border:1px solid #bdcad7;border-radius:12px;background:white;overflow:hidden;box-shadow:0 12px 32px #18304315}
+iframe{display:block;border:0;width:100%;height:800px}#host-status{font-size:12px}#panel.fullscreen{width:100%}
+</style></head><body><h1>PDF.js 侧边栏兼容性实验</h1>
+<p>本地 MCP Apps SDK Host harness。下方 iframe 使用 sandbox 和严格 CSP；真实 ChatGPT 的兼容性须另行实测。</p>
+<div class="toolbar"><select id="sample" aria-label="PDF 样例"><option value="text">普通文本</option><option value="cjk">中文 CID 字体</option><option value="scan">扫描图片</option></select>
+<select id="policy" aria-label="Worker CSP"><option value="allow">允许 Blob Worker</option><option value="deny">禁止 Worker</option></select>
+<button id="reload">加载样例</button><button id="narrow">窄侧栏</button><button id="wide">宽面板</button><button id="theme">切换主题</button><button id="teardown">卸载组件</button></div>
+<p id="host-status" role="status">连接中…</p><div id="panel"><iframe id="viewer" title="PDF 预览实验" sandbox="allow-scripts allow-same-origin"></iframe></div>
+<script src="/host.js"></script></body></html>

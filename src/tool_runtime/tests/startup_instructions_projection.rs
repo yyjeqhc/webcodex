@@ -128,6 +128,53 @@ fn instruction_sidecar_budget_preserves_sources_and_local_guidance() {
 }
 
 #[test]
+fn repository_root_agents_and_builtin_workflow_fit_standard_startup_without_truncation() {
+    let body = include_str!("../../../AGENTS.md");
+    let projected_body = body.trim_end_matches('\n');
+    let snapshot = ProjectInstructionsSnapshot::from_candidates(
+        vec![LoadedInstructionCandidate {
+            source_scope: InstructionSourceScope::Project,
+            path: "AGENTS.md".into(),
+            content: body.into(),
+            total_lines: body.lines().count(),
+            full_sha256: None,
+        }],
+        true,
+    );
+    let instructions = instructions_projection(&snapshot, None, true, true, false);
+    assert_eq!(instructions["truncated"], false);
+    assert_eq!(instructions["sources"][0]["truncated"], false);
+    assert_eq!(instructions["sources"][0]["content"], projected_body);
+    assert!(instructions["sources"][0]["read_more"].is_null());
+
+    for profile in [
+        CodingGuidanceProfile::Direct,
+        CodingGuidanceProfile::HostCodeMode,
+    ] {
+        let mut brief = json!({
+            "workflow": builtin_coding_workflow_projection(profile),
+            "instructions": instructions.clone(),
+        });
+        enforce_hard_size_limit(&mut brief);
+        let bytes = serialized_len(&brief);
+        assert!(
+            bytes <= STANDARD_STARTUP_HARD_MAX_BYTES,
+            "{profile:?}: {bytes}"
+        );
+        assert_eq!(brief["instructions"]["truncated"], false, "{profile:?}");
+        assert_eq!(
+            brief["instructions"]["sources"][0]["truncated"], false,
+            "{profile:?}"
+        );
+        assert_eq!(
+            brief["instructions"]["sources"][0]["content"], projected_body,
+            "{profile:?}"
+        );
+        assert!(brief["instructions"]["sources"][0]["read_more"].is_null());
+    }
+}
+
+#[test]
 fn bootstrap_guidance_reuses_observations_with_explicit_freshness_exceptions() {
     let workflow = super::builtin_coding_workflow_projection(super::CodingGuidanceProfile::Direct);
     let guidance = workflow["model_protocol"].to_string();

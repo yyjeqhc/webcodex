@@ -1,6 +1,6 @@
 # Work Result PDF preview
 
-Work Result v25 adds PDF.js 6.4.299 to the existing changed-file reader, in both
+Work Result includes PDF.js 6.4.299 in the existing changed-file reader, in both
 the card and native conversation panel. Expanding a `.pdf` row selects PDF by
 default. Other file formats keep the existing diff/text/Markdown behavior.
 PDF.js, the module Worker, CMaps, standard fonts and their licenses are embedded
@@ -59,19 +59,11 @@ alongside Markdown/sections. `build-work-result-pdf.mjs --check` verifies it;
 
 Focused coverage includes `frontend/test/work-result-pdf.test.mjs`, Work Result
 controller tests, immutable PDF blob/authority tests, and private MCP framing.
-`node scripts/pdf-sidebar-poc/work-result-smoke.mjs` loads the **shipped HTML**
-in a real Edge browser using fixed synthetic fixture responses, strict sandbox
-and CSP. It checks narrow/wide layouts, Chinese text, scans, 630×496 geometry,
-search/paging, no external requests, Worker cleanup and Worker denial. Its local
-screenshots are not evidence of the ChatGPT Host itself.
+Run these maintained checks from the repository root:
 
-For a real ChatGPT Host test, the separate synthetic-only ingress can serve the
-same shipped HTML with `PDF_POC_WORK_RESULT=1`. A temporary Cloudflare tunnel
-connects that loopback test ingress; it is test infrastructure only and exposes
-no real Project paths. This does not replace backend authority tests or deploy
-the running WebCodex service. Production uses the existing WebCodex MCP/Secure
-Tunnel and resource delivery.
-
-The old standalone experiment retains its historical PDF.js 5.6.205 setup;
-the production bundle uses 6.4.299 after reviewing
-[Mozilla's scripting advisory](https://github.com/mozilla/pdf.js/security/advisories/GHSA-hq66-cqwq-w95j).
+```sh
+node --test frontend/test/work-result-pdf.test.mjs src/mcp_tests/work_result_app.test.mjs
+cargo test --locked -p webcodex --lib work_result_pdf
+cargo test --locked -p webcodex --lib work_result_content_pages
+cargo test --locked -p webcodex --lib mcp::tests::work_result_app
+```

@@ -58,34 +58,9 @@ Run `npm --prefix frontend run build:work-result` to generate both resources.
 are in `frontend/test/pdf-document-reader.test.mjs`; runtime and MCP tests are
 in the existing `pdf_document` domain modules.
 
-`node scripts/pdf-sidebar-poc/pdf-document-smoke.mjs` loads the shipped HTML in
-real headless Edge through the official SDK AppBridge, using only fixed public
-synthetic fixtures. It covers Chinese, scans, narrow/dark and wide/light layouts,
-geometry, paging/search/zoom, private-metadata/text fallback, no external network
-requests, Worker teardown, Worker denial and stale-version failure. Screenshots
-and a report are written to `scripts/pdf-sidebar-poc/artifacts/pdf-document/`.
-This is local browser evidence, not a real ChatGPT Host or deployed-runtime test.
+Run the maintained reader and authority/framing tests from the repository root:
 
-`npm --prefix scripts/pdf-sidebar-poc run smoke:pdf-regressions` checks image
-limits with highly compressed image-only PDFs in both shipped Apps, plus a
-delayed Work Result read hidden and restored by path filtering. Evidence is
-written to `scripts/pdf-sidebar-poc/artifacts/pdf-regressions/`.
-
-## Real ChatGPT Host verification
-
-On 2026-10-05, the local Desktop Runtime was switched through its normal Runtime
-selection flow to newly built dogfood Server, Runner and CLI binaries, version
-0.5.0, commit `6fa8b7edd210`, with `git_dirty=true`. The previous Runtime directory
-was preserved for rollback. Refreshing the existing Workstation plugin's tools
-made `present_pdf` available in ChatGPT.
-
-A fresh ChatGPT conversation opened the public Chinese, three-page text, scanned
-and 630-by-496 geometry fixtures through the direct presentation tool. The real
-Host displayed a dedicated PDF sidebar without Work Result tabs. Page navigation,
-page-local search, zoom and fullscreen were verified in the browser; Chinese text,
-the scan and all geometry corners rendered correctly. The Runner remained online
-with zero running or queued Jobs after the test.
-
-Real Host screenshots and `chatgpt-report.json` are retained separately from the
-local harness report under `scripts/pdf-sidebar-poc/artifacts/pdf-document/`.
-These files are ignored local evidence, not published artifacts.
+```sh
+node --test frontend/test/pdf-document-reader.test.mjs
+cargo test --locked -p webcodex --lib pdf_document
+```

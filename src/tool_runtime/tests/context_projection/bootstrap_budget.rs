@@ -1,6 +1,6 @@
 use super::*;
 use crate::tool_runtime::context_projection::{
-    ContextMaterialCapabilities, MAX_CONTEXT_PROJECTION_BYTES,
+    ContextMaterialCapabilities, ContextProjectionRequest, MAX_CONTEXT_PROJECTION_BYTES,
 };
 use crate::tool_runtime::tool_inputs::CodingGuidanceProfile;
 use webcodex_core::project_instructions::{
@@ -48,13 +48,15 @@ async fn bootstrap_budget_keeps_requested_workflow_and_honest_instruction_contin
             runtime
                 .add_requested_context_projection_with_guidance(
                     &mut result,
-                    &keys.iter().map(|key| key.to_string()).collect::<Vec<_>>(),
-                    Some(&project),
-                    Some(&auth),
-                    ContextMaterialCapabilities::default(),
-                    profile,
-                    None,
-                    Some(&snapshot),
+                    ContextProjectionRequest {
+                        requested: &keys.iter().map(|key| key.to_string()).collect::<Vec<_>>(),
+                        resolved_project: Some(&project),
+                        auth: Some(&auth),
+                        capabilities: ContextMaterialCapabilities::default(),
+                        guidance_profile: profile,
+                        window: None,
+                        instructions: Some(&snapshot),
+                    },
                 )
                 .await;
             assert!(result.success);
@@ -101,13 +103,15 @@ async fn bootstrap_budget_keeps_requested_workflow_and_honest_instruction_contin
     runtime
         .add_requested_context_projection_with_guidance(
             &mut result,
-            &["project.instructions".into(), "webcodex.workflow".into()],
-            Some(&project),
-            Some(&denied),
-            ContextMaterialCapabilities::default(),
-            CodingGuidanceProfile::HostCodeMode,
-            None,
-            Some(&snapshot),
+            ContextProjectionRequest {
+                requested: &["project.instructions".into(), "webcodex.workflow".into()],
+                resolved_project: Some(&project),
+                auth: Some(&denied),
+                capabilities: ContextMaterialCapabilities::default(),
+                guidance_profile: CodingGuidanceProfile::HostCodeMode,
+                window: None,
+                instructions: Some(&snapshot),
+            },
         )
         .await;
     assert_eq!(

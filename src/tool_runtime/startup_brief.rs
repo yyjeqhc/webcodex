@@ -4,8 +4,18 @@
 //! value. The projection is deterministic, bounded, path-safe, and contains
 //! only the facts a coding model needs to start or continue work.
 
-use crate::json_measurement::serialized_json_len;
-use serde::Serialize;
+#[cfg(test)]
+use super::instruction_projection::{
+    changed_instruction_sources, project_instructions_context_projection,
+};
+use super::instruction_projection::{instructions_projection, trim_instruction_source};
+use super::projection_text::{bounded_json_string, json_string_payload_len, serialized_len};
+use super::startup_catalog::{
+    StartupExtensions, StartupPluginsCatalog, StartupSkillsCatalog, PLUGIN_DISCOVERY_HINT,
+    SKILL_DISCOVERY_HINT, STARTUP_EXTENSION_CATALOG_HARD_MAX_BYTES,
+};
+#[cfg(test)]
+use super::startup_catalog::{StartupPluginEntry, StartupSkillEntry};
 use serde_json::{json, Value};
 #[cfg(test)]
 use std::collections::BTreeSet;
@@ -15,8 +25,7 @@ use super::guidance::{core_guidance, tool_strategy_guidance};
 #[cfg(test)]
 use super::project_instructions::INSTRUCTION_CANDIDATE_PATHS;
 use super::project_instructions::{
-    ProjectInstructionFile, ProjectInstructionsSnapshot, ProjectInstructionsSummarySnapshot,
-    MAX_LINES_PER_FILE,
+    ProjectInstructionsSnapshot, ProjectInstructionsSummarySnapshot,
 };
 use super::project_resolution::ResolvedProject;
 use super::session_context::canonical_repository_key;
@@ -26,16 +35,9 @@ use super::tool_inputs::{CodingGuidanceProfile, StartupDetail};
 // Reserve transport-envelope headroom so the rendered ToolResult stays
 // below the documented 32 KiB startup ceiling.
 pub(crate) const STANDARD_STARTUP_HARD_MAX_BYTES: usize = 30 * 1024;
-pub(crate) const STARTUP_EXTENSION_CATALOG_HARD_MAX_BYTES: usize = 6 * 1024;
-pub(crate) const STARTUP_SKILL_CATALOG_MAX_BYTES: usize = 2_900;
-pub(crate) const STARTUP_PLUGIN_CATALOG_MAX_BYTES: usize = 2_900;
-pub(crate) const STARTUP_EXTENSION_DESCRIPTION_MAX_BYTES: usize = 512;
 pub(crate) const REPOSITORY_OVERVIEW_NOT_REQUESTED_REASON: &str =
     "not_requested_by_work_on_project";
-const INSTRUCTION_CONTENT_JSON_BUDGET: usize = 10 * 1024;
 const MIN_INSTRUCTION_CONTENT_JSON_BYTES: usize = 512;
-const MAX_RULE_HEADINGS: usize = 6;
-const MAX_RULE_HEADING_JSON_BYTES: usize = 160;
 const MAX_CHANGED_PATHS: usize = 20;
 const MAX_MINIMAL_EXPLORATION_PATHS: usize = 3;
 const MAX_STANDARD_EXPLORATION_PATHS: usize = 12;
@@ -174,176 +176,6 @@ pub(crate) const REPOSITORY_MAX_SUGGESTED_READS: usize = 8;
 pub(crate) const REPOSITORY_MAX_ROOTS_PER_CLASS: usize = 8;
 pub(crate) const REPOSITORY_MAX_WARNINGS: usize = 8;
 pub(crate) const REPOSITORY_MAX_PROJECT_TYPE_EVIDENCE: usize = 4;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct StartupSkillEntry {
-    pub(crate) skill_id: String,
-    pub(crate) name: String,
-    pub(crate) description: String,
-    pub(crate) source_scope: String,
-    pub(crate) trust: String,
-    pub(crate) name_conflict: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct StartupPluginEntry {
-    pub(crate) plugin: String,
-    pub(crate) name: String,
-    pub(crate) tool: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) description: Option<String>,
-    #[serde(skip_serializing_if = "webcodex_core::plugin::PluginSelectionAnnotations::is_empty")]
-    pub(crate) annotations: webcodex_core::plugin::PluginSelectionAnnotations,
-}
-
-/// Shared startup metadata projection, not a resource store or authority.
-/// Entry types, discovery, and execution remain owned by their domains.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct StartupCatalog<Entry> {
-    pub(crate) status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) reason_code: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) catalog_revision: Option<String>,
-    pub(crate) total_count: usize,
-    pub(crate) returned_count: usize,
-    pub(crate) truncated: bool,
-    pub(crate) entries: Vec<Entry>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) discovery_hint: Option<&'static str>,
-}
-
-pub(crate) type StartupSkillsCatalog = StartupCatalog<StartupSkillEntry>;
-pub(crate) type StartupPluginsCatalog = StartupCatalog<StartupPluginEntry>;
-
-impl<Entry: Serialize> StartupCatalog<Entry> {
-    fn unavailable_with_hint(reason_code: &'static str, discovery_hint: &'static str) -> Self {
-        Self {
-            status: "unavailable",
-            reason_code: Some(reason_code),
-            catalog_revision: None,
-            total_count: 0,
-            returned_count: 0,
-            truncated: false,
-            entries: Vec::new(),
-            discovery_hint: Some(discovery_hint),
-        }
-    }
-
-    fn update_completeness(&mut self, upstream_truncated: bool, discovery_hint: &'static str) {
-        self.returned_count = self.entries.len();
-        self.truncated = upstream_truncated || self.returned_count < self.total_count;
-        self.discovery_hint = self.truncated.then_some(discovery_hint);
-    }
-
-    fn available_bounded(
-        catalog_revision: String,
-        total_count: usize,
-        upstream_truncated: bool,
-        entries: Vec<Entry>,
-        max_bytes: usize,
-        discovery_hint: &'static str,
-    ) -> Self {
-        let mut projection = Self {
-            status: "available",
-            reason_code: None,
-            catalog_revision: Some(catalog_revision),
-            total_count,
-            returned_count: 0,
-            truncated: false,
-            entries: Vec::new(),
-            discovery_hint: None,
-        };
-        for entry in entries {
-            projection.entries.push(entry);
-            projection.update_completeness(upstream_truncated, discovery_hint);
-            // Measure the full wire envelope: optional hints and JSON escaping
-            // participate in the budget. Preserve the original greedy prefix.
-            if !serialized_json_len(&projection)
-                .map(|bytes| bytes <= max_bytes)
-                .unwrap_or(false)
-            {
-                projection.entries.pop();
-                break;
-            }
-        }
-        projection.update_completeness(upstream_truncated, discovery_hint);
-        projection
-    }
-}
-
-impl StartupSkillsCatalog {
-    pub(crate) fn unavailable(reason_code: &'static str) -> Self {
-        Self::unavailable_with_hint(
-            reason_code,
-            "Use skills.catalog or list_skills for explicit discovery when available.",
-        )
-    }
-
-    pub(crate) fn available(
-        catalog_revision: String,
-        discovery_truncated: bool,
-        entries: Vec<StartupSkillEntry>,
-    ) -> Self {
-        Self::available_bounded(
-            catalog_revision,
-            entries.len(),
-            discovery_truncated,
-            entries,
-            STARTUP_SKILL_CATALOG_MAX_BYTES,
-            "Use skills.catalog or list_skills for broader or refreshed discovery.",
-        )
-    }
-}
-
-impl StartupPluginsCatalog {
-    pub(crate) fn unavailable(reason_code: &'static str) -> Self {
-        Self::unavailable_with_hint(
-            reason_code,
-            "Use explicit plugin_tool list and describe when Plugin discovery is available.",
-        )
-    }
-
-    pub(crate) fn available(
-        catalog_revision: String,
-        total_count: usize,
-        entries: Vec<StartupPluginEntry>,
-    ) -> Self {
-        Self::available_bounded(
-            catalog_revision,
-            total_count,
-            false,
-            entries,
-            STARTUP_PLUGIN_CATALOG_MAX_BYTES,
-            "Use plugins.catalog or explicit plugin_tool list and describe for broader or current schema discovery.",
-        )
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct StartupExtensions {
-    pub(crate) skills: StartupSkillsCatalog,
-    pub(crate) plugins: StartupPluginsCatalog,
-}
-
-impl StartupExtensions {
-    pub(crate) fn serialized_len(&self) -> usize {
-        serialized_json_len(self).unwrap_or(usize::MAX)
-    }
-}
-
-pub(crate) fn bounded_extension_description(value: &str) -> String {
-    if value.len() <= STARTUP_EXTENSION_DESCRIPTION_MAX_BYTES {
-        return value.to_string();
-    }
-    let mut end = STARTUP_EXTENSION_DESCRIPTION_MAX_BYTES;
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_string()
-}
 
 pub(crate) struct StartupBriefInput<'a> {
     pub(crate) guidance_profile: CodingGuidanceProfile,
@@ -784,263 +616,6 @@ fn roots_projection(source: &Value) -> Value {
             .unwrap_or_else(|| json!("conventional_directory_name")),
     );
     Value::Object(projected)
-}
-
-pub(crate) fn project_instructions_context_projection(
-    current: &ProjectInstructionsSnapshot,
-    max_bytes: usize,
-) -> Value {
-    // Sidecar requests observe current sources without Session retention. Its
-    // shared envelope is smaller than startup, especially with 16 global files.
-    let mut projection = instructions_projection(current, None, true, true, false);
-    if serialized_len(&projection) <= max_bytes {
-        return projection;
-    }
-    // Headings duplicate the body; remove this optional index before losing
-    // actual guidance or source identities.
-    if let Some(sources) = projection["sources"].as_array_mut() {
-        for source in sources {
-            source["headings"] = json!([]);
-        }
-    }
-    while serialized_len(&projection) > max_bytes {
-        let largest = projection["sources"].as_array().and_then(|sources| {
-            sources
-                .iter()
-                .enumerate()
-                .filter_map(|(index, source)| {
-                    source["content"]
-                        .as_str()
-                        .filter(|body| !body.is_empty())
-                        .map(|body| (index, json_string_payload_len(body)))
-                })
-                .max_by_key(|(_, bytes)| *bytes)
-        });
-        let Some((index, bytes)) = largest else {
-            // Essential source metadata itself does not fit. The owning
-            // sidecar envelope will return its existing explicit budget error.
-            break;
-        };
-        let source = &mut projection["sources"][index];
-        let body = source["content"].as_str().unwrap_or_default();
-        let (bounded, _) = bounded_json_string(body, bytes / 2);
-        source["read_more"] = if source["source_scope"] == "project" {
-            projected_read_more(source["path"].as_str().unwrap_or_default(), &bounded)
-        } else {
-            Value::Null
-        };
-        source["content"] = json!(bounded);
-        source["truncated"] = json!(true);
-        projection["truncated"] = json!(true);
-    }
-    projection
-}
-
-fn instructions_projection(
-    current: &ProjectInstructionsSnapshot,
-    previous: Option<&ProjectInstructionsSummarySnapshot>,
-    force_load: bool,
-    allow_content: bool,
-    minimal: bool,
-) -> Value {
-    let status = instruction_status(current, previous, force_load);
-    let include_content = allow_content
-        && (matches!(status, "loaded" | "changed")
-            || (status == "unavailable" && !current.files.is_empty()));
-    let changed_sources = if matches!(status, "changed" | "unavailable") {
-        changed_instruction_sources(current, previous)
-    } else {
-        Vec::new()
-    };
-    let mut remaining_content_budget = INSTRUCTION_CONTENT_JSON_BUDGET;
-    let mut projection_truncated = false;
-    let source_count = current.files.len();
-    let sources: Vec<Value> = current
-        .files
-        .iter()
-        .enumerate()
-        .map(|(index, file)| {
-            instruction_source_projection(
-                file,
-                include_content,
-                minimal,
-                source_count.saturating_sub(index),
-                &mut remaining_content_budget,
-                &mut projection_truncated,
-            )
-        })
-        .collect();
-    json!({
-        "status": status,
-        "sources": sources,
-        "changed_sources": changed_sources,
-        "content_included": include_content,
-        "truncated": current.truncated || projection_truncated,
-        "total_chars": current.total_chars,
-    })
-}
-
-fn instruction_status(
-    current: &ProjectInstructionsSnapshot,
-    previous: Option<&ProjectInstructionsSummarySnapshot>,
-    force_load: bool,
-) -> &'static str {
-    if !current.scan_complete {
-        return "unavailable";
-    }
-    if !current.loaded {
-        return if previous.is_some_and(|snapshot| snapshot.loaded) {
-            "changed"
-        } else {
-            "not_found"
-        };
-    }
-    let Some(previous) = previous else {
-        return "loaded";
-    };
-    if force_load {
-        return "loaded";
-    }
-    if instruction_snapshots_match(current, previous) {
-        "reused"
-    } else {
-        "changed"
-    }
-}
-
-fn instruction_snapshots_match(
-    current: &ProjectInstructionsSnapshot,
-    previous: &ProjectInstructionsSummarySnapshot,
-) -> bool {
-    current.loaded == previous.loaded
-        && current.truncated == previous.truncated
-        && current.total_chars == previous.total_chars
-        && current.files.len() == previous.files.len()
-        && current
-            .files
-            .iter()
-            .zip(&previous.files)
-            .all(|(left, right)| {
-                left.source_scope == right.source_scope
-                    && left.path == right.path
-                    && left.fingerprint == right.fingerprint
-                    && left.truncated == right.truncated
-            })
-}
-
-fn changed_instruction_sources(
-    current: &ProjectInstructionsSnapshot,
-    previous: Option<&ProjectInstructionsSummarySnapshot>,
-) -> Vec<String> {
-    let mut identities: Vec<_> = current
-        .files
-        .iter()
-        .map(|file| (file.source_scope, file.path.as_str()))
-        .collect();
-    if let Some(previous) = previous {
-        for file in &previous.files {
-            let identity = (file.source_scope, file.path.as_str());
-            if !identities.contains(&identity) {
-                identities.push(identity);
-            }
-        }
-    }
-
-    identities
-        .into_iter()
-        .filter_map(|(scope, path)| {
-            if !current.scope_complete(scope) {
-                return None;
-            }
-            let current_file = current
-                .files
-                .iter()
-                .find(|file| file.source_scope == scope && file.path == path);
-            let previous_file = previous.and_then(|snapshot| {
-                snapshot
-                    .files
-                    .iter()
-                    .find(|file| file.source_scope == scope && file.path == path)
-            });
-            let differs = match (current_file, previous_file) {
-                (Some(left), Some(right)) => {
-                    left.fingerprint != right.fingerprint || left.truncated != right.truncated
-                }
-                (None, None) => false,
-                _ => true,
-            };
-            differs.then(|| path.to_string())
-        })
-        .collect()
-}
-
-fn instruction_source_projection(
-    file: &ProjectInstructionFile,
-    include_content: bool,
-    minimal: bool,
-    remaining_sources: usize,
-    remaining_content_budget: &mut usize,
-    projection_truncated: &mut bool,
-) -> Value {
-    let headings = if minimal {
-        Vec::new()
-    } else {
-        file.content
-            .lines()
-            .map(str::trim)
-            .filter(|line| line.starts_with('#'))
-            .take(MAX_RULE_HEADINGS)
-            .map(|line| bounded_json_string(line, MAX_RULE_HEADING_JSON_BYTES).0)
-            .collect()
-    };
-    let (content, content_truncated) = if include_content {
-        // Divide the remaining aggregate budget across the remaining sources.
-        // Short earlier files leave their unused share available, while a long
-        // earlier file cannot starve a later changed rule of all content.
-        let source_budget = *remaining_content_budget / remaining_sources.max(1);
-        let (content, truncated) = bounded_json_string(&file.content, source_budget);
-        *remaining_content_budget =
-            remaining_content_budget.saturating_sub(json_string_payload_len(&content));
-        (Some(content), truncated)
-    } else {
-        (None, false)
-    };
-    *projection_truncated |= content_truncated;
-    let read_more = if content_truncated
-        && file.source_scope == super::project_instructions::InstructionSourceScope::Project
-    {
-        let returned = content.as_deref().unwrap_or_default();
-        projected_read_more(&file.path, returned)
-    } else if content_truncated {
-        Value::Null
-    } else {
-        serde_json::to_value(&file.read_more).unwrap_or(Value::Null)
-    };
-    json!({
-        "source_scope": file.source_scope,
-        "path": file.path,
-        "fingerprint": file.fingerprint,
-        "truncated": file.truncated || content_truncated,
-        "headings": headings,
-        "content": content,
-        "read_more": read_more,
-    })
-}
-
-fn projected_read_more(path: &str, returned: &str) -> Value {
-    let observed_lines = returned.lines().count().max(1);
-    let start_line = if returned.ends_with('\n') {
-        observed_lines.saturating_add(1)
-    } else {
-        // The byte-bound projection may end midway through a line. Re-reading
-        // that line is conservative and avoids losing its unseen suffix.
-        observed_lines
-    };
-    json!({
-        "path": path,
-        "start_line": start_line,
-        "limit": MAX_LINES_PER_FILE,
-    })
 }
 
 fn continuation_projection(
@@ -1524,30 +1099,6 @@ fn push_unique(values: &mut Vec<String>, value: &str) {
     }
 }
 
-/// Bound by the serialized JSON payload cost, not Unicode scalar count. This
-/// keeps control characters and escape-heavy content within the byte contract.
-fn bounded_json_string(value: &str, max_payload_bytes: usize) -> (String, bool) {
-    let mut output = String::new();
-    let mut used = 0usize;
-    for character in value.chars() {
-        let encoded = serde_json::to_string(&character.to_string())
-            .expect("single character JSON serialization");
-        let cost = encoded.len().saturating_sub(2);
-        if used.saturating_add(cost) > max_payload_bytes {
-            return (output, true);
-        }
-        output.push(character);
-        used = used.saturating_add(cost);
-    }
-    (output, false)
-}
-
-fn json_string_payload_len(value: &str) -> usize {
-    serde_json::to_string(value)
-        .map(|encoded| encoded.len().saturating_sub(2))
-        .unwrap_or(0)
-}
-
 fn enforce_hard_size_limit(brief: &mut Value) {
     // Reserve the same workflow allowance for either strategy. Otherwise a
     // larger guidance projection could trim unrelated instructions/evidence.
@@ -1571,14 +1122,8 @@ fn enforce_hard_size_limit(brief: &mut Value) {
     // through explicit discovery. Under aggregate startup pressure, trim them
     // before repository facts or project instruction prose.
     const EXTENSION_CATALOGS: &[(&str, &str)] = &[
-        (
-            "/extensions/skills",
-            "Use skills.catalog or list_skills for broader or refreshed discovery.",
-        ),
-        (
-            "/extensions/plugins",
-            "Use plugins.catalog or explicit plugin_tool list and describe for broader or current schema discovery.",
-        ),
+        ("/extensions/skills", SKILL_DISCOVERY_HINT),
+        ("/extensions/plugins", PLUGIN_DISCOVERY_HINT),
     ];
     loop {
         if serialized_len(brief) <= max_bytes {
@@ -1704,20 +1249,7 @@ fn enforce_hard_size_limit(brief: &mut Value) {
         let next_budget = current_budget
             .saturating_sub(512)
             .max(MIN_INSTRUCTION_CONTENT_JSON_BYTES);
-        let (bounded, _) = bounded_json_string(content, next_budget);
-        let path = source
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let read_more = if source["source_scope"] == "project" {
-            projected_read_more(&path, &bounded)
-        } else {
-            Value::Null
-        };
-        source["content"] = json!(bounded);
-        source["truncated"] = json!(true);
-        source["read_more"] = read_more;
+        trim_instruction_source(source, next_budget);
         brief["instructions"]["truncated"] = json!(true);
     }
 
@@ -1807,20 +1339,7 @@ fn enforce_hard_size_limit(brief: &mut Value) {
             .unwrap_or_default();
         let current_budget = json_string_payload_len(content);
         let next_budget = current_budget.saturating_sub(128);
-        let (bounded, _) = bounded_json_string(content, next_budget);
-        let path = source
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let read_more = if source["source_scope"] == "project" {
-            projected_read_more(&path, &bounded)
-        } else {
-            Value::Null
-        };
-        source["content"] = json!(bounded);
-        source["truncated"] = json!(true);
-        source["read_more"] = read_more;
+        trim_instruction_source(source, next_budget);
         brief["instructions"]["truncated"] = json!(true);
     }
 
@@ -1834,10 +1353,6 @@ fn enforce_hard_size_limit(brief: &mut Value) {
         serialized_len(brief) <= STANDARD_STARTUP_HARD_MAX_BYTES,
         "startup brief base contract exceeded its hard byte budget"
     );
-}
-
-fn serialized_len(value: &Value) -> usize {
-    serialized_json_len(value).unwrap_or(usize::MAX)
 }
 
 #[cfg(test)]

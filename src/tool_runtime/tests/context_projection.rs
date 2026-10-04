@@ -1259,13 +1259,15 @@ async fn bootstrap_instruction_snapshot_does_not_bypass_material_scope() {
     runtime
         .add_requested_context_projection_with_guidance(
             &mut result,
-            &["project.instructions".into()],
-            Some(&resolved),
-            Some(&auth),
-            Default::default(),
-            Default::default(),
-            None,
-            Some(&snapshot),
+            crate::tool_runtime::context_projection::ContextProjectionRequest {
+                requested: &["project.instructions".into()],
+                resolved_project: Some(&resolved),
+                auth: Some(&auth),
+                capabilities: Default::default(),
+                guidance_profile: Default::default(),
+                window: None,
+                instructions: Some(&snapshot),
+            },
         )
         .await;
     assert_eq!(

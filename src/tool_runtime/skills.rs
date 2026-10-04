@@ -3,7 +3,7 @@ use super::runtime_metrics::{
     observe_skill_source, RuntimeMetrics, SkillSourceMetricObservation, SkillSourceMetricOperation,
     SkillSourceMetricOutcomeClass, SkillSourceMetricSource,
 };
-use super::startup_brief::{
+use super::startup_catalog::{
     bounded_extension_description, StartupSkillEntry, StartupSkillsCatalog,
 };
 use super::{ExecutionPurpose, SuggestedToolCall, ToolResult, ToolRuntime};

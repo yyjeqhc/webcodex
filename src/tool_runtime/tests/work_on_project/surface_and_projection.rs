@@ -367,7 +367,7 @@ async fn work_on_project_extension_catalog_is_defaulted_bounded_and_skips_all_ex
         .len();
     assert!(
         extension_bytes
-            <= crate::tool_runtime::startup_brief::STARTUP_EXTENSION_CATALOG_HARD_MAX_BYTES,
+            <= crate::tool_runtime::startup_catalog::STARTUP_EXTENSION_CATALOG_HARD_MAX_BYTES,
         "extension payload exceeded hard bound: {extension_bytes}"
     );
     let without_bytes = serde_json::to_vec(&without_extensions.output)

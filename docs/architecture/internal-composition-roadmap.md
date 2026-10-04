@@ -1,9 +1,9 @@
 # Internal composition roadmap
 
-Baseline: `main@3cbf4341`, after Context/Guidance (#870), owned model-result
-projection (#871), Desktop panels (#873), MCP App registration (#874), and the
-independent validation handoff fix (#875). This is an implementation roadmap,
-not a commitment to external plugins or a wholesale runtime rewrite.
+Current series baseline: `main@d62d5b22`, after the foundation PRs and Work Result
+synchronous sections (#876) / bounded MCP presentation selection (#877). This is
+an implementation roadmap, not a commitment to external plugins or a wholesale
+runtime rewrite. PR completion below does not imply production deployment.
 
 ## Objective and protected core
 
@@ -33,61 +33,51 @@ The domain contracts are documented in [context/guidance](builtin-context-guidan
 [model results](builtin-result-projection.md), [Desktop panels](bundled-extension-panels.md)
 and [MCP Apps](bundled-mcp-apps.md).
 
-## Current series: complete useful display boundaries
+## Current series: finish the useful internal boundaries
 
-The independent Work Result sections change extracts synchronous checks/review,
-Job summary and activity/detail rendering with display-only dependencies. It
-adds deterministic bundled generation and source tests; HTML changes advance
-Work Result v22 to v23. Host RPC, exact input validation, identity, polling,
-lazy reads, drafts, focus/scroll and teardown remain in the existing controller.
+| Stage | Implemented slice | Boundary deliberately retained |
+| --- | --- | --- |
+| 1: display-family ownership | PR #878 moves complete Job/Git formatters and their registrations to domain modules. All 31 existing functions retain their bodies; four family tests supplement unchanged integration coverage. | Shared text/scalar bounds and optional metadata attachment remain together. No wholesale rewrite of file-view DOM. |
+| 2: actual UI read lifetimes | PR #879 fixes three reproduced activity-detail races and gives activity/final diff/workspace diff explicit shared-read ownership. Current views join one promise; generation and per-view checks fence cache cleanup and DOM writes. | Full-text page accumulation and collaboration/reference delivery already have useful local state/fences. Do not merge those different state machines just to reduce file size. |
+| 3: startup/Context dependencies | This change extracts pure instruction projection, typed startup catalog bounds, common JSON accounting and a named Context request bundle. Three instruction-shortening paths now share one scope-sensitive implementation. | Startup composition, continuation, verdict and aggregate priority stay together: their existing shared dataflow is not a defect. No service locator or new runtime registry. |
 
-This branch consolidates the eight bounded MCP presentation names into one
-registration/dispatch inventory, and moves all validation display formatting with
-its registrations into its own module. Job/Git formatting can remain in the
-parent while this change is deployed. No App URI, template, wire or data migration
-is required by this branch. The two changes touch disjoint paths and can land in
-either order. These PR-local results are not a claim that both are already in main.
+The stage-2 change advances only Work Result v23 to v24; stages 1 and 3 change no
+App identity. These three branches touch disjoint paths and can merge separately.
+Each leaves existing tool authority, schemas, Session/Job/audit truth, Native Tool
+Plugin protocol and persisted formats intact. No dual execution or rollout flag
+is needed to keep a partially adopted series usable.
 
-## Next stage 1: finish display-family ownership
+See [MCP families](mcp-presentation-families.md) and
+[startup boundaries](startup-projection-boundaries.md). The independent UI branch
+contains `docs/architecture/work-result-read-lifetimes.md`; it is not a required
+file dependency of this branch.
 
-Move the remaining Job/Git MCP display formatters and their existing tests into
-cohesive modules. Avoid merging MCP display metadata with canonical evidence or
-ToolRuntime model-result compaction: they serve different consumers. Review the
-remaining Work Result file/diff/output view code, extracting synchronous formatters
-before moving asynchronous controllers.
+## Evidence and stopping criteria
 
-Acceptance: identical supported tool set; unchanged output allowlists, text/item
-bounds, relative-path filtering, chronology and uncertain-state labels; no new
-card admission or eager requests. Keep the old owner working for unmigrated
-families. This stage is complete when family-local changes no longer require
-editing a second dispatch table, not when every helper has its own file.
+The activity defect was verified before implementation: refresh replaced the
+pending read's DOM root, then its success/failure updated only the old root; a
+collapsed root could also receive late rendering. Regression tests fail on the
+parent and pass after the fix. This justifies the small read owner with three real
+consumers, rather than an abstract UI lifecycle framework.
 
-## Next stage 2: isolate actual UI lifetimes
+Startup instruction and catalog projection have actual independent consumers.
+Separating them removes imports of the whole startup assembler from Context
+instruction and Skill catalog code. Named request fields make the normal and
+fail-closed sidecar target/snapshot differences reviewable. Existing evidence,
+identity, authorization and byte-limit regression suites remain authoritative.
 
-Extract one asynchronous view at a time: file/diff preview, activity details,
-then collaboration/reference UI. Give each view an explicit exact-scope binding
-and an owned request generation; retain the existing deadline, cancellation,
-cache and deduplication semantics. A collapsed, replaced or torn-down view must
-not apply late replies or restart a request merely because its component moved.
+Internal stages 1–3 are now addressed to these boundaries, not declared complete
+for every possible formatter or controller extraction. Further internal work is
+conditional on a demonstrated cross-owner change, duplicate observation, stale
+response, resource leak or inability to test a real behavior locally. Do not keep
+splitting files, relocating tests or registering helpers after that benefit ends.
+In particular, no need has yet been established to replace the exhaustive
+execution router, turn continuation facts into a service, rewrite working
+collaboration acknowledgement/delivery logic, or build a universal async facade.
 
-Acceptance: tests for scope switch during an in-flight request, collapse/reopen,
-repeated refresh, late success/failure, retained drafts/focus and teardown. Preserve
-Host-origin checks, exact Project/Window/Session selection and immutable snapshot
-identities. No new generic event bus or automatic retries. Registry APIs should
-not be expanded until a second real consumer needs them.
-
-## Next stage 3: reduce remaining core projection coupling
-
-Split startup-brief composition by actual data ownership (instruction projection,
-extension catalog bounds, continuation facts) and narrow oversized context
-parameter groups where current callers demonstrate a need. Review the existing
-ResultProjection helpers left behind in the parent. Keep authorization and data
-loading distinct from deterministic serialization/budget selection.
-
-Acceptance: startup/context payload bounds and instruction continuations preserved;
-request-local guidance and principal isolation unchanged; no repeated observation
-or second source of canonical truth. Do not turn `ToolRuntime` into a generic
-service locator. Stop when the remaining shared code is genuinely shared.
+Ordinary tools remain usable after each independent merge. Focused tests do not
+prove zero regression or live Host behavior; deployment smoke and performance
+claims require their own evidence.
 
 ## Conditional stage 4: external extension pilot
 

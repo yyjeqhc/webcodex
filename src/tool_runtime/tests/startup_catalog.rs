@@ -1,6 +1,6 @@
 //! Characterization of the startup-only catalog projection, not resource authority.
 
-use crate::tool_runtime::startup_brief::{
+use crate::tool_runtime::startup_catalog::{
     bounded_extension_description, StartupExtensions, StartupPluginEntry, StartupPluginsCatalog,
     StartupSkillEntry, StartupSkillsCatalog, STARTUP_EXTENSION_CATALOG_HARD_MAX_BYTES,
     STARTUP_PLUGIN_CATALOG_MAX_BYTES, STARTUP_SKILL_CATALOG_MAX_BYTES,

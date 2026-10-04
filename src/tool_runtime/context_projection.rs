@@ -25,6 +25,18 @@ pub(crate) struct ContextMaterialCapabilities {
     pub(crate) memory_surface: bool,
 }
 
+/// One request-local bundle of explicit selectors and already-observed evidence.
+/// It never resolves targets, loads instructions, or infers Session authority.
+pub(crate) struct ContextProjectionRequest<'a> {
+    pub requested: &'a [String],
+    pub resolved_project: Option<&'a ResolvedProject>,
+    pub auth: Option<&'a AuthContext>,
+    pub capabilities: ContextMaterialCapabilities,
+    pub guidance_profile: CodingGuidanceProfile,
+    pub window: Option<&'a crate::client_window::ClientWindow>,
+    pub instructions: Option<&'a super::project_instructions::ProjectInstructionsSnapshot>,
+}
+
 pub(crate) fn context_material_keys_csv() -> String {
     BUILTIN_CONTEXT_MATERIALS
         .advertised_keys()
@@ -74,13 +86,15 @@ impl ToolRuntime {
     ) {
         self.add_requested_context_projection_with_guidance(
             result,
-            requested,
-            resolved_project,
-            auth,
-            capabilities,
-            CodingGuidanceProfile::default(),
-            None,
-            None,
+            ContextProjectionRequest {
+                requested,
+                resolved_project,
+                auth,
+                capabilities,
+                guidance_profile: CodingGuidanceProfile::default(),
+                window: None,
+                instructions: None,
+            },
         )
         .await;
     }
@@ -88,14 +102,17 @@ impl ToolRuntime {
     pub(crate) async fn add_requested_context_projection_with_guidance(
         &self,
         result: &mut ToolResult,
-        requested: &[String],
-        resolved_project: Option<&ResolvedProject>,
-        auth: Option<&AuthContext>,
-        capabilities: ContextMaterialCapabilities,
-        guidance_profile: CodingGuidanceProfile,
-        window: Option<&crate::client_window::ClientWindow>,
-        instructions: Option<&super::project_instructions::ProjectInstructionsSnapshot>,
+        request: ContextProjectionRequest<'_>,
     ) {
+        let ContextProjectionRequest {
+            requested,
+            resolved_project,
+            auth,
+            capabilities,
+            guidance_profile,
+            window,
+            instructions,
+        } = request;
         if requested.is_empty() {
             return;
         }

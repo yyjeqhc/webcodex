@@ -38,9 +38,11 @@ use super::session_context::{
 use super::sessions::tool_failure_summary_from_events;
 use super::sessions::{self, SessionTransport, TOOL_CALL_RECORDING_SESSION_ID_FIELD};
 use super::startup_brief::{
-    bounded_extension_description, build_startup_brief, builtin_coding_workflow_projection,
-    startup_brief_from_output, StartupBriefInput, StartupExtensions, StartupPluginEntry,
-    StartupPluginsCatalog, REPOSITORY_OVERVIEW_NOT_REQUESTED_REASON,
+    build_startup_brief, builtin_coding_workflow_projection, startup_brief_from_output,
+    StartupBriefInput, REPOSITORY_OVERVIEW_NOT_REQUESTED_REASON,
+};
+use super::startup_catalog::{
+    bounded_extension_description, StartupExtensions, StartupPluginEntry, StartupPluginsCatalog,
 };
 use super::tool_catalog::model_visible_recommended_flows;
 use super::tool_inputs::{CodingGuidanceProfile, SessionMode, StartupDetail};

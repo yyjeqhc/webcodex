@@ -1,5 +1,6 @@
 //! Runtime tool dispatch and session/permission guard flow.
 
+use super::context_projection::ContextProjectionRequest;
 use super::edit_tool_telemetry;
 use super::result_projection::ModelFacingProjectionPlan;
 use super::session_context::{
@@ -254,13 +255,15 @@ impl ToolRuntime {
         if !context_request.is_empty() && result.output.get("context_projection").is_none() {
             self.add_requested_context_projection_with_guidance(
                 &mut result,
-                &context_request,
-                None,
-                auth,
-                material_capabilities,
-                context_guidance_profile,
-                window,
-                None,
+                ContextProjectionRequest {
+                    requested: &context_request,
+                    resolved_project: None,
+                    auth,
+                    capabilities: material_capabilities,
+                    guidance_profile: context_guidance_profile,
+                    window,
+                    instructions: None,
+                },
             )
             .await;
         }

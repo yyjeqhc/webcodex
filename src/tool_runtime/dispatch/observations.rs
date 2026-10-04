@@ -202,18 +202,20 @@ impl ToolRuntime {
         }
         self.add_requested_context_projection_with_guidance(
             result,
-            context_request,
-            bootstrap_context
-                .as_ref()
-                .map(|context| &context.project)
-                .or(context_projection_project.as_ref()),
-            auth,
-            material_capabilities,
-            context_guidance_profile,
-            window,
-            bootstrap_context
-                .as_ref()
-                .map(|context| &context.instructions),
+            ContextProjectionRequest {
+                requested: context_request,
+                resolved_project: bootstrap_context
+                    .as_ref()
+                    .map(|context| &context.project)
+                    .or(context_projection_project.as_ref()),
+                auth,
+                capabilities: material_capabilities,
+                guidance_profile: context_guidance_profile,
+                window,
+                instructions: bootstrap_context
+                    .as_ref()
+                    .map(|context| &context.instructions),
+            },
         )
         .await;
     }

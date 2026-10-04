@@ -35,3 +35,11 @@ For focused Runtime workflow layout checks after building `frontend`, run
 Project attribution, expanded Session activity, and horizontal overflow at 1440,
 1024, and 390 pixels in both themes. Fixture screenshots and the report go to
 `artifacts/liquid-glass-ui/runtime-workflow/`.
+
+For multilingual layout regression checks, build both renderers and run
+`node scripts/ui-smoke/localized-layout.mjs`. It covers all seven language choices,
+Desktop navigation and controls at 390/768/1024/1440 pixels, and Runtime collaboration
+at 390/1024/1440 pixels. It checks message/composer separation, reading space,
+fixed activity controls, and text containment. Screenshots and geometry evidence
+are written to `artifacts/localized-layout/`. This uses Chromium renderer fixtures;
+it does not validate native Windows/macOS WebView rendering.

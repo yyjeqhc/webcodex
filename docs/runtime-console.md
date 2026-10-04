@@ -4,16 +4,30 @@ Open `/runtime` and connect with an existing runtime credential.
 
 The default **Work** page opens **Activity**, with a Window list and a single
 workspace. Filter Windows by Project or search by activity, Project, Runner, or
-Window identity. The selected Window displays a chronological tool-call stream,
-without a Session selector or a separate context sidebar.
+Window identity. The selected Window displays a tool-call stream. Its compact
+header keeps the workspace and running status visible; **Window details** expands
+copyable Window, machine, directory and Project identities and activity timestamps.
 
 Every returned invocation has its own row, including repeated observe and
-diagnostic calls. Running and completed calls share start-time order, oldest
-first. Each row shows the tool name, status, start time, and duration (elapsed
-time for running calls). A Project path tag appears only when the call itself
-names a Project whose path is available; Session relations never supply a tag.
-There are no per-call technical disclosures or Session links. The Window view
-also does not fetch Session details or messages.
+diagnostic calls. Running and completed calls share start-time order, newest
+first by default. Use **Newest first** / **Oldest first** in the activity toolbar
+to change the order directly. The Session selector filters related calls without
+changing their chronological continuation membership. The toolbar remains in place
+while the calls scroll independently. Each row shows the tool name, status,
+start time, and duration (elapsed time for running calls). A Project path tag
+appears only when the call itself names an available Project. Linked Session tags
+can focus the list; **View Session record** opens retained Session evidence.
+
+The **Collaboration** tab gives the remaining height to the message transcript,
+with a separate composer below. Changing language preserves the message draft,
+Window identity, optional Session context, and exact retry payload. Interface copy
+supports the same seven language choices as Desktop: English, Simplified and
+Traditional Chinese, Japanese, Korean, German, and French. The language control is
+available before connection, in the sidebar, and in mobile preferences. The saved
+choice takes precedence over browser language. Work/Window controls and collaboration
+messages, delivery labels, and errors are localized; other Runtime surfaces currently
+fall back to English for missing translations. User messages and raw tool evidence
+are never translated.
 
 The console requests up to 2,000 retained calls. When the response is truncated,
 a visible notice explains that earlier calls are not available in this view;

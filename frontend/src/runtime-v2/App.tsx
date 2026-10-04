@@ -15,6 +15,7 @@ import { motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LANGUAGE_STORAGE_KEY,
+  RUNTIME_LANGUAGES,
   loadLanguagePreference,
   translate,
   type RuntimeLanguage,
@@ -257,11 +258,19 @@ export function App() {
     persistAccentPreference(color);
   };
 
+  const languageControl = () => (
+    <label className="runtime-language-control">
+      <Languages size={17} aria-hidden="true" />
+      <select aria-label={translate("Language", language)} value={language}
+        onChange={event => setLanguage(event.currentTarget.value as RuntimeLanguage)}>
+        {RUNTIME_LANGUAGES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select>
+    </label>
+  );
+
   const preferenceControls = () => (
     <>
-      <button type="button" title={translate("Language", language)} aria-label={translate("Language", language)} onClick={() => setLanguage((current) => current === "en" ? "zh-CN" : "en")}>
-        <Languages size={17} /><span>{language === "en" ? "中文" : "English"}</span>
-      </button>
+      {languageControl()}
       <button type="button" title={translate("Appearance", language)} aria-label={translate("Appearance", language)} onClick={cycleAppearance}>
         {appearance === "dark" ? <MoonStar size={17} /> : <Sun size={17} />}
         <span>{translate("Appearance", language)} · {translate(appearance === "system" ? "System" : appearance === "light" ? "Light" : "Dark", language)}</span>
@@ -278,9 +287,7 @@ export function App() {
       <>
         <AuthGate language={language} onConnect={connect} />
         <div className="auth-preferences-v2">
-          <button type="button" onClick={() => setLanguage((current) => current === "en" ? "zh-CN" : "en")} aria-label={translate("Language", language)}>
-            <Languages size={16} /> {language === "en" ? "中" : "EN"}
-          </button>
+          {languageControl()}
           <button type="button" onClick={cycleAppearance} aria-label={translate("Appearance", language)}>
             {appearance === "dark" ? <MoonStar size={16} /> : <Sun size={16} />}
           </button>

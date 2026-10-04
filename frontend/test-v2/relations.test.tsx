@@ -405,7 +405,7 @@ describe("Project / Session / Window relationships", () => {
     expect(steps).toHaveLength(205);
     expect(steps[0].textContent).toContain("tool-204");
     expect(steps.at(-1)?.textContent).toContain("tool-0");
-    fireEvent.change(screen.getByLabelText("Activity order"), { target: { value: "oldest" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Oldest first" }));
     expect(screen.getAllByTestId("window-workflow-step")[0].textContent).toContain("tool-0");
     expect(screen.queryByRole("button", { name: /Show more activity/ })).toBeNull();
     expect(screen.getByText("Earlier calls are not available in this view. Only retained activity is shown.")).toBeTruthy();
@@ -459,7 +459,7 @@ it("shows individual calls in order with exact Project paths and authoritative S
     ],
   })} />);
   expect(screen.getAllByTestId("window-workflow-step")[0].textContent).toContain("run_process");
-  fireEvent.change(screen.getByLabelText("Activity order"), { target: { value: "oldest" } });
+  fireEvent.click(screen.getByRole("radio", { name: "Oldest first" }));
   const calls = screen.getAllByTestId("window-workflow-step");
   expect(calls.map((call) => call.querySelector("header strong")?.textContent)).toEqual(["runtime_info", "runtime_info", "apply_patch", "run_process"]);
   expect(within(calls[0]).queryByTestId("window-project-tag")).toBeNull();

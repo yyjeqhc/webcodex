@@ -478,3 +478,27 @@
 .connection-recovery > p { margin: 10px 0 16px; font-size: 14px; }
 .connection-recovery .connection-impact { margin: 16px 0 0; color: var(--ui-text-secondary); }
 @media (max-width: 768px) { .dashboard-shortcuts { grid-template-columns: 1fr; gap: 12px; } .dashboard-shortcuts > button { padding: 20px; } .connection-profile { padding: 20px; } }
+
+/* Translated labels can take several lines; controls own their full text height. */
+.sidebar .nav-label { min-width: 0; flex: 1; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+.sidebar nav button { height: auto; padding-block: 10px; }
+.sidebar nav kbd, .settings-navigation svg, .extensions-navigation svg { flex-shrink: 0; }
+.sidebar-status strong, .sidebar-status span { overflow-wrap: anywhere; }
+.sidebar-status .sidebar-service-state { white-space: normal; }
+.page-heading-row, .dashboard-heading-actions, .extension-apply-bar { flex-wrap: wrap; }
+.page-heading-row > :first-child { min-width: 0; }
+.page-section h1, .page-section h2, .page-section h3,
+.settings-navigation > button, .extensions-navigation > button { overflow-wrap: anywhere; }
+.primary-button, .secondary-button, .danger-button { max-width: 100%; height: auto; padding-block: 9px; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; gap: 6px; }
+.primary-button svg, .secondary-button svg, .danger-button svg { flex-shrink: 0; }
+.mantine-Button-root.primary-button, .mantine-Button-root.secondary-button, .mantine-Button-root.danger-button { height: auto; }
+.mantine-Button-label { height: auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.settings-content, .extensions-content, .settings-navigation, .extensions-navigation { min-width: 0; }
+.setting-row > div, .permission-row > div { min-width: 0; overflow-wrap: anywhere; }
+.settings-page .setting-row select, .settings-page .accent-picker { flex-shrink: 0; max-width: 100%; }
+.workspace-status-strip > div { min-width: 0; overflow-wrap: anywhere; }
+.workspace-badge { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .sidebar nav button { padding-block: 0; }
+}
+.sidebar .nav-label, .settings-navigation > button, .extensions-navigation > button { hyphens: auto; }

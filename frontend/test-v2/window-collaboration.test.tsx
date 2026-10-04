@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { translate, RUNTIME_LANGUAGES } from "../src/runtime_i18n.js";
 import { describe, expect, it, vi } from "vitest";
 import type { RuntimeV2Client } from "../src/runtime-v2/api/client.js";
 import { WindowCollaboration } from "../src/runtime-v2/components/WindowCollaboration.js";
@@ -138,7 +139,7 @@ describe("Window collaboration", () => {
     await screen.findByText("Review done");
     expect(screen.getByText("Saved")).toBeTruthy();
     expect(screen.getByText("Included in tool result")).toBeTruthy();
-    expect(screen.getByText("4 messages")).toBeTruthy();
+    expect(screen.getByText("Messages: 4")).toBeTruthy();
     const windowReply = screen.getByText("Reply from this Window").closest("article");
     expect(windowReply?.textContent).toContain("This Window");
     expect(windowReply?.textContent).not.toMatch(/Saved|Included in tool result|Acknowledged/);
@@ -371,4 +372,25 @@ it("does not send while an input method is composing", async () => {
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "正在输入" } });
   fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", ctrlKey: true, isComposing: true });
   expect(post.mock.calls.some(([path]) => path === "window-collaboration-post")).toBe(false);
+});
+
+// Locale changes update interface copy without remounting or rewriting user data.
+it("switches every collaboration language while preserving the message draft and context", async () => {
+  const post = vi.fn(async () => ({ ok: true, status: 200, data: transcript }));
+  const client = { post } as unknown as RuntimeV2Client;
+  const onUnauthorized = vi.fn();
+  const panel = (language: typeof RUNTIME_LANGUAGES[number]["value"]) =>
+    <WindowCollaboration client={client} windowKey="exact-window" selectedSessionId="wc_sess_context" language={language} onUnauthorized={onUnauthorized} />;
+  const view = render(panel("en"));
+  await screen.findByText("Check failures");
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Keep this draft 原文" } });
+  for (const { value: language } of RUNTIME_LANGUAGES) {
+    view.rerender(panel(language));
+    expect((screen.getByRole("textbox", { name: translate("Message this Window", language) }) as HTMLTextAreaElement).value).toBe("Keep this draft 原文");
+    expect(screen.getByRole("button", { name: translate("Send", language), exact: true })).toBeTruthy();
+    expect(screen.getByText(translate("Saved", language))).toBeTruthy();
+    expect(screen.getByText("Check failures")).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: translate("Message type", language) })).toBeTruthy();
+  }
+  expect(post.mock.calls).toHaveLength(1);
 });

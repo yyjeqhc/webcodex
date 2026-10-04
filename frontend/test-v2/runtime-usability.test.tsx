@@ -20,7 +20,7 @@ describe("Runtime usability", () => {
     render(<WindowActivityFeed detail={detail} projects={[]} language="en" selectedSessionId="session-a" />);
     const tools = () => screen.getAllByTestId("window-workflow-step").map(row => row.querySelector("header strong")?.textContent);
     expect(tools()).toEqual(["continuation-a", "session-a"]);
-    fireEvent.change(screen.getByLabelText("Activity order"), { target: { value: "oldest" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Oldest first" }));
     expect(tools()).toEqual(["session-a", "continuation-a"]);
     expect(JSON.stringify(detail)).toBe(original);
   });

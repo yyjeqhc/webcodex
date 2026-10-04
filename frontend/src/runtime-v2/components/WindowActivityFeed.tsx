@@ -83,138 +83,145 @@ export function WindowActivityFeed({
 
   return (
     <section className="window-detail-section window-workflow-section" aria-label={t("Window activity")}>
-      <div className="window-session-focus">
-        <label htmlFor="window-activity-order">{t("Activity order")}</label>
-        <select id="window-activity-order" value={order} onChange={event => setOrder(event.currentTarget.value === "oldest" ? "oldest" : "newest")}>
-          <option value="newest">{t("Newest first")}</option>
-          <option value="oldest">{t("Oldest first")}</option>
-        </select>
-      </div>
-      {(filterSessions.length > 0 || activeSessionId) && (
-        <div className="window-session-focus">
-          <span>{t("Session")}</span>
-          <div className="window-session-focus-select" data-session-tone={selectedTone} data-active={Boolean(activeSessionId)}>
-            <span className="window-session-color-dot" />
-            <select
-              aria-label={t("Session filter")}
-              value={activeSessionId}
-              onChange={(event) => onSelectSession?.(event.currentTarget.value)}
-            >
-              <option value="">{t("All calls")}</option>
-              {activeSessionId && !filterSessions.some(session => session.workflow_session_id === activeSessionId) && (
-                <option value={activeSessionId}>{t("Session")} · {shortId(activeSessionId, 14, 6)}</option>
-              )}
-              {filterSessions.map((session, index) => (
-                <option key={session.workflow_session_id} value={session.workflow_session_id}>
-                  {(session.title || t("Work Session") + " " + (index + 1)) + " · " + shortId(session.workflow_session_id, 14, 6)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <small>{visibleCalls.length}/{calls.length}</small>
-        </div>
-      )}
-      {selectedProject && onOpenSessionRecord && <button type="button" className="text-button" onClick={() => onOpenSessionRecord(selectedProject, activeSessionId)}>{t("View Session record")}</button>}
-      {detail.sessions_truncated && <p className="inventory-note">{t("Some linked Sessions are not available in this view.")}</p>}
-      {activeSessionId && <CopyIdentity key={activeSessionId} value={activeSessionId} label={t("Session")} language={language} />}
-      {activeSessionId && !visibleCalls.length && <p className="inventory-note">{t("This Session is linked to the Window but has no retained calls.")}</p>}
-      {detail.active_count > detail.active_requests.length && <div className="inventory-note">{t("Some running calls are not shown.")} {detail.active_requests.length}/{detail.active_count}</div>}
-      {detail.activity_truncated && <div className="inventory-note">{t("Earlier calls are not available in this view. Only retained activity is shown.")}</div>}
-      <div className="window-workflow-list">
-        {visibleCalls.map((call) => {
-          const project = projects.find((row) => row.id === call.project);
-          const path = project?.path ? displayProjectPath(project.path) : undefined;
-          const success = ["ok", "success", "succeeded"].includes(call.status);
-          const failed = ["error", "failed", "failure"].includes(call.status);
-          const status = call.running ? "Running" : success ? "Succeeded" : failed ? "Failed" : call.status;
-          const primarySession = call.sessions.find((sessionId) => sessionMeta.has(sessionId));
-          const selectable = Boolean(primarySession && onSelectSession);
-          const asyncJob = call.asyncJobId ? jobsById.get(call.asyncJobId) : undefined;
-          const asyncJobLabel = asyncJob
-            ? asyncJob.active
-              ? t("Background running")
-              : asyncJob.status === "completed"
-                ? t("Completed")
-                : t(asyncJob.status)
-            : t("Background job");
-          const asyncJobDuration = asyncJob?.active && asyncJob.elapsed_secs !== undefined
-            ? durationText(asyncJob.elapsed_secs * 1000)
-            : asyncJob?.duration_ms !== undefined
-              ? durationText(asyncJob.duration_ms)
-              : "";
-          return (
-            <article
-              className={"window-call-card" + (call.running ? " running" : "") + (selectable ? " session-linked" : "")}
-              data-testid="window-workflow-step"
-              key={call.key}
-              onClick={() => primarySession && onSelectSession?.(primarySession)}
-            >
-              <header>
-                <strong>{call.tool}</strong>
-                <span className={"status-pill " + (call.running ? "" : success ? "good" : "warn")}>{t(status)}</span>
-              </header>
-              {(path || call.sessions.length > 0 || call.asyncJobId || call.observedJobIds.length > 0) && (
-                <div className="window-call-context">
-                  {path && <span className="window-project-tag" data-testid="window-project-tag" title={path}>{path}</span>}
-                  {call.sessions.map((sessionId) => {
-                    const linked = sessionMeta.get(sessionId);
-                    const tone = (sessionOrder.get(sessionId) ?? 0) % 8;
-                    const tagSelectable = Boolean(linked && onSelectSession);
-                    const selected = activeSessionId === sessionId;
-                    return (
-                      <button
-                        className={"window-session-tag" + (selected ? " selected" : "")}
-                        data-session-tone={tone}
-                        data-testid="window-session-tag"
-                        key={sessionId}
-                        type="button"
-                        disabled={!tagSelectable}
-                        title={(linked?.title ? linked.title + " · " : "") + sessionId}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (tagSelectable) onSelectSession?.(selected ? "" : sessionId);
-                        }}
-                      >
-                        <span className="window-session-color-dot" />
-                        {shortId(sessionId, 14, 6)}
-                      </button>
-                    );
-                  })}
-                  {call.asyncJobId && (
-                    <span className={"window-job-tag" + (asyncJob?.active ? " active" : "")} title={call.asyncJobId}>
-                      <span className="window-job-dot" />
-                      {asyncJobLabel} · {shortId(call.asyncJobId, 14, 6)}
-                      {asyncJobDuration && <small> · {asyncJobDuration}</small>}
-                    </span>
-                  )}
-                  {call.observedJobIds.map((jobId) => (
-                    <span className="window-job-tag observe" title={jobId} key={jobId}>
-                      <span className="window-job-dot" />
-                      {t("Observing")} · {shortId(jobId, 14, 6)}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div className="window-call-timing">
-                {call.running ? (
-                  <span className="window-call-live-time">{t("Running")} · <strong>{durationText(call.duration)}</strong></span>
-                ) : (
-                  <>
-                    <span className="window-call-clock">
-                      <time dateTime={new Date(call.startedAt).toISOString()} title={absoluteTime(call.startedAt)}>{clockTime(call.startedAt)}</time>
-                    </span>
-                    <span className="window-call-duration">
-                      <small>{t("Duration")}</small>
-                      <strong>{durationText(call.duration)}</strong>
-                    </span>
-                  </>
+      <div className="window-activity-toolbar" role="group" aria-label={t("Tool calls")}>
+        {(filterSessions.length > 0 || activeSessionId) && (
+          <div className="window-session-focus">
+            <span>{t("Session")}</span>
+            <div className="window-session-focus-select" data-session-tone={selectedTone} data-active={Boolean(activeSessionId)}>
+              <span className="window-session-color-dot" />
+              <select
+                aria-label={t("Session filter")}
+                value={activeSessionId}
+                onChange={(event) => onSelectSession?.(event.currentTarget.value)}
+              >
+                <option value="">{t("All calls")}</option>
+                {activeSessionId && !filterSessions.some(session => session.workflow_session_id === activeSessionId) && (
+                  <option value={activeSessionId}>{t("Session")} · {shortId(activeSessionId, 14, 6)}</option>
                 )}
-              </div>
-              {client && call.traceRef && <TraceCallDetails client={client} traceRef={call.traceRef} language={language} />}
-            </article>
-          );
-        })}
-        {!visibleCalls.length && <div className="empty-inline">{t(activeSessionId ? "No calls in this Session" : "No tool calls yet")}</div>}
+                {filterSessions.map((session, index) => (
+                  <option key={session.workflow_session_id} value={session.workflow_session_id}>
+                    {(session.title || t("Work Session") + " " + (index + 1)) + " · " + shortId(session.workflow_session_id, 14, 6)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <small>{visibleCalls.length}/{calls.length}</small>
+          </div>
+        )}
+        <fieldset className="window-activity-order">
+          <legend>{t("Activity order")}</legend>
+          {(["newest", "oldest"] as const).map(value => (
+            <label key={value}>
+              <input type="radio" name="window-activity-order" value={value} checked={order === value}
+                onChange={() => setOrder(value)} />
+              <span>{t(value === "newest" ? "Newest first" : "Oldest first")}</span>
+            </label>
+          ))}
+        </fieldset>
+        {selectedProject && onOpenSessionRecord && <button type="button" className="text-button" onClick={() => onOpenSessionRecord(selectedProject, activeSessionId)}>{t("View Session record")}</button>}
+        {detail.sessions_truncated && <p className="inventory-note">{t("Some linked Sessions are not available in this view.")}</p>}
+        {activeSessionId && <CopyIdentity key={activeSessionId} value={activeSessionId} label={t("Session")} language={language} />}
+      </div>
+      <div className="window-activity-results">
+        {activeSessionId && !visibleCalls.length && <p className="inventory-note">{t("This Session is linked to the Window but has no retained calls.")}</p>}
+        {detail.active_count > detail.active_requests.length && <div className="inventory-note">{t("Some running calls are not shown.")} {detail.active_requests.length}/{detail.active_count}</div>}
+        {detail.activity_truncated && <div className="inventory-note">{t("Earlier calls are not available in this view. Only retained activity is shown.")}</div>}
+        <div className="window-workflow-list">
+          {visibleCalls.map((call) => {
+            const project = projects.find((row) => row.id === call.project);
+            const path = project?.path ? displayProjectPath(project.path) : undefined;
+            const success = ["ok", "success", "succeeded"].includes(call.status);
+            const failed = ["error", "failed", "failure"].includes(call.status);
+            const status = call.running ? "Running" : success ? "Succeeded" : failed ? "Failed" : call.status;
+            const primarySession = call.sessions.find((sessionId) => sessionMeta.has(sessionId));
+            const selectable = Boolean(primarySession && onSelectSession);
+            const asyncJob = call.asyncJobId ? jobsById.get(call.asyncJobId) : undefined;
+            const asyncJobLabel = asyncJob
+              ? asyncJob.active
+                ? t("Background running")
+                : asyncJob.status === "completed"
+                  ? t("Completed")
+                  : t(asyncJob.status)
+              : t("Background job");
+            const asyncJobDuration = asyncJob?.active && asyncJob.elapsed_secs !== undefined
+              ? durationText(asyncJob.elapsed_secs * 1000)
+              : asyncJob?.duration_ms !== undefined
+                ? durationText(asyncJob.duration_ms)
+                : "";
+            return (
+              <article
+                className={"window-call-card" + (call.running ? " running" : "") + (selectable ? " session-linked" : "")}
+                data-testid="window-workflow-step"
+                key={call.key}
+                onClick={() => primarySession && onSelectSession?.(primarySession)}
+              >
+                <header>
+                  <strong>{call.tool}</strong>
+                  <span className={"status-pill " + (call.running ? "" : success ? "good" : "warn")}>{t(status)}</span>
+                </header>
+                {(path || call.sessions.length > 0 || call.asyncJobId || call.observedJobIds.length > 0) && (
+                  <div className="window-call-context">
+                    {path && <span className="window-project-tag" data-testid="window-project-tag" title={path}>{path}</span>}
+                    {call.sessions.map((sessionId) => {
+                      const linked = sessionMeta.get(sessionId);
+                      const tone = (sessionOrder.get(sessionId) ?? 0) % 8;
+                      const tagSelectable = Boolean(linked && onSelectSession);
+                      const selected = activeSessionId === sessionId;
+                      return (
+                        <button
+                          className={"window-session-tag" + (selected ? " selected" : "")}
+                          data-session-tone={tone}
+                          data-testid="window-session-tag"
+                          key={sessionId}
+                          type="button"
+                          disabled={!tagSelectable}
+                          title={(linked?.title ? linked.title + " · " : "") + sessionId}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (tagSelectable) onSelectSession?.(selected ? "" : sessionId);
+                          }}
+                        >
+                          <span className="window-session-color-dot" />
+                          {shortId(sessionId, 14, 6)}
+                        </button>
+                      );
+                    })}
+                    {call.asyncJobId && (
+                      <span className={"window-job-tag" + (asyncJob?.active ? " active" : "")} title={call.asyncJobId}>
+                        <span className="window-job-dot" />
+                        {asyncJobLabel} · {shortId(call.asyncJobId, 14, 6)}
+                        {asyncJobDuration && <small> · {asyncJobDuration}</small>}
+                      </span>
+                    )}
+                    {call.observedJobIds.map((jobId) => (
+                      <span className="window-job-tag observe" title={jobId} key={jobId}>
+                        <span className="window-job-dot" />
+                        {t("Observing")} · {shortId(jobId, 14, 6)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="window-call-timing">
+                  {call.running ? (
+                    <span className="window-call-live-time">{t("Running")} · <strong>{durationText(call.duration)}</strong></span>
+                  ) : (
+                    <>
+                      <span className="window-call-clock">
+                        <time dateTime={new Date(call.startedAt).toISOString()} title={absoluteTime(call.startedAt)}>{clockTime(call.startedAt)}</time>
+                      </span>
+                      <span className="window-call-duration">
+                        <small>{t("Duration")}</small>
+                        <strong>{durationText(call.duration)}</strong>
+                      </span>
+                    </>
+                  )}
+                </div>
+                {client && call.traceRef && <TraceCallDetails client={client} traceRef={call.traceRef} language={language} />}
+              </article>
+            );
+          })}
+          {!visibleCalls.length && <div className="empty-inline">{t(activeSessionId ? "No calls in this Session" : "No tool calls yet")}</div>}
+        </div>
       </div>
     </section>
   );

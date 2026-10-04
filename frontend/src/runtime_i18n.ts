@@ -1,6 +1,5 @@
-export {};
-
-export type RuntimeLanguage = "en" | "zh-CN";
+import { normalizeRuntimeLanguage, translateWorkText, type RuntimeLanguage } from "./runtime_locales.js";
+export { RUNTIME_LANGUAGES, type RuntimeLanguage } from "./runtime_locales.js";
 
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
@@ -984,15 +983,16 @@ Object.assign(RUNTIME_ZH_TEXT, {
 });
 
 export function languagePreference(value: unknown): RuntimeLanguage {
-  return value === "zh-CN" ? "zh-CN" : "en";
+  return normalizeRuntimeLanguage(typeof value === "string" ? value : undefined) || "en";
 }
 
 export function loadLanguagePreference(): RuntimeLanguage {
   try {
     const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    if (stored === "en" || stored === "zh-CN") return stored;
+    const language = normalizeRuntimeLanguage(stored);
+    if (language) return language;
   } catch { /* Fall through to the browser language. */ }
-  return navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+  return navigator.languages?.map(normalizeRuntimeLanguage).find(Boolean) || normalizeRuntimeLanguage(navigator.language) || "en";
 }
 
 Object.assign(RUNTIME_ZH_TEXT, {
@@ -1231,8 +1231,62 @@ Object.assign(RUNTIME_ZH_TEXT, {
   "Duration": "耗时"
 });
 
+Object.assign(RUNTIME_ZH_TEXT, {
+  "Acknowledged": "已确认",
+  "Included in tool result": "已附入工具结果",
+  "Saved": "已保存",
+  "You": "你",
+  "This Window": "此窗口",
+  "This Window → Peer Window": "此窗口 → 其他窗口",
+  "Peer Window": "其他窗口",
+  "High priority": "高优先级",
+  "Low priority": "低优先级",
+  "Normal": "普通",
+  "Message could not be sent. Send it again.": "消息未能发送，请重新发送。",
+  "Context is no longer available. Choose a Session or All calls, then send again.": "上下文已不可用。请重新选择 Session 或全部调用后再发送。",
+  "Collaboration is unavailable for this Window.": "此窗口当前无法协作。",
+  "Message could not be sent.": "消息未能发送。",
+  "Collaboration": "协作",
+  "Leave a message or instruction for this Window": "给这个窗口留下消息或指令",
+  "View new messages": "查看新消息",
+  "Context": "上下文",
+  "The current access key cannot collaborate (session:collaborate is required). Reconnect with a collaboration-enabled key.": "当前访问密钥没有协作权限（需要 session:collaborate）。请使用支持协作的访问密钥重新连接。",
+  "This Window is not available to the current access key.": "此窗口对当前访问密钥不可用。",
+  "Messages could not be refreshed.": "暂时无法刷新消息。",
+  "ACK requested": "要求确认",
+  "No messages yet": "暂无消息",
+  "Send a note or instruction to this Window.": "在这里给这个窗口留下消息或指令。",
+  "Showing recent messages": "当前显示最近的消息",
+  "Type": "类型",
+  "Message type": "消息类型",
+  "Guidance": "指令",
+  "Note": "备注",
+  "Question": "问题",
+  "Todo": "待办",
+  "Priority": "优先级",
+  "Message priority": "消息优先级",
+  "High": "高",
+  "Low": "低",
+  "Require ACK": "要求确认",
+  "Current Session": "关联当前 Session",
+  "Message this Window": "给这个窗口发消息",
+  "Send a message to this Window…": "给这个窗口发消息…",
+  "⌘/Ctrl + Enter to send": "⌘/Ctrl + Enter 发送",
+  "Sending…": "发送中…",
+  "Retry": "重试",
+  "Send": "发送",
+  "Send status unknown. Retry this message.": "发送状态未知，请重试此消息。",
+  "Proposal": "建议",
+  "Answer": "回答",
+  "Decision": "决定",
+  "Risk": "风险",
+  "Progress": "进展",
+  "Messages: {count}": "消息：{count}",
+  "Window details": "窗口详情"
+});
+
 export function translate(source: string, language: RuntimeLanguage = "en"): string {
-  return language === "zh-CN" ? (RUNTIME_ZH_TEXT[source] || source) : source;
+  return language === "zh-CN" ? (RUNTIME_ZH_TEXT[source] || source) : (translateWorkText(source, language) || source);
 }
 
 export function translateStaticNodeValue(source: string, language: RuntimeLanguage = "en"): string {
@@ -1247,9 +1301,9 @@ export function localizedCountLabel(
   pluralOrLanguage?: string | RuntimeLanguage,
   language: RuntimeLanguage = "en"
 ): string {
-  const isLang = pluralOrLanguage === "en" || pluralOrLanguage === "zh-CN";
+  const isLang = Boolean(pluralOrLanguage) && normalizeRuntimeLanguage(pluralOrLanguage) === pluralOrLanguage;
   const plural = isLang || !pluralOrLanguage ? singular + "s" : pluralOrLanguage;
-  const lang = isLang ? pluralOrLanguage : (language || "en");
+  const lang = isLang ? pluralOrLanguage as RuntimeLanguage : (language || "en");
   const count = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
   if (lang === "zh-CN") return count + " " + (ZH_COUNT_LABELS[singular] || RUNTIME_ZH_TEXT[singular] || singular);
   return count + " " + (count === 1 ? singular : plural);

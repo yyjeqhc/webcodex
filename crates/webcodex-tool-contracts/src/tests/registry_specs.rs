@@ -44,6 +44,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "mode=worktree",
         "exact git base",
         "project authority",
+        "read_more",
     ] {
         assert!(
             work_on_project_desc.contains(phrase),

@@ -1538,22 +1538,31 @@ async fn tool_manifest_default_flows_follow_exact_vs_discovery_shape_end_to_end(
     assert!(exact.success, "{:?}", exact.error);
     assert!(exact.output.get("recommended_flows").is_none());
 
-    let specialist_true = runtime
-        .dispatch(
-            ToolCall::from_tool_name(
-                "read_tool_manifest",
-                json!({
-                    "tool_name": "cargo_test",
-                    "include_recommended_flows": true
-                }),
+    for specialist in ["cargo_check", "cargo_test"] {
+        let specialist_true = runtime
+            .dispatch(
+                ToolCall::from_tool_name(
+                    "read_tool_manifest",
+                    json!({
+                        "tool_name": specialist,
+                        "include_recommended_flows": true
+                    }),
+                )
+                .unwrap(),
             )
-            .unwrap(),
-        )
-        .await;
-    assert!(specialist_true.success, "{:?}", specialist_true.error);
-    assert!(specialist_true.output["recommended_flows"]
-        .as_array()
-        .is_some_and(Vec::is_empty));
+            .await;
+        assert!(
+            specialist_true.success,
+            "{specialist}: {:?}",
+            specialist_true.error
+        );
+        assert!(
+            specialist_true.output["recommended_flows"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
+            "{specialist}"
+        );
+    }
 
     let ordinary_true = runtime
         .dispatch(

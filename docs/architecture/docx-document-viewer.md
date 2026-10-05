@@ -21,7 +21,8 @@ both structuredContent and text before returning them in widget-only `_meta`.
 Changed content fails closed. Retry retains the selected version; a fresh
 `present_docx` explicitly selects a new one. No immutable file cache is implied.
 Repeated Host delivery of the same result does not start another transfer.
-Teardown cancels pending reads and revokes the download object URL.
+Teardown cancels pending requests, releases verified bytes and disconnects the
+viewport observer.
 
 ## Renderer and limits
 
@@ -37,11 +38,17 @@ Preview bounds are 10 MiB compressed, 32 MiB expanded, 8 MiB per ZIP entry,
 local ZIP identities are preflighted; streaming decompression also enforces
 actual expansion bounds before accumulating oversized entries. ZIP64,
 encrypted/multipart ZIPs, legacy `.doc`, unsupported packages, XML DTD/entities
-and malformed content fail with a visible message. The original file download
-uses only the verified source bytes, never the sanitized/repacked render copy.
+and malformed content fail with a visible message. When the Host advertises
+`downloadFile`, `ui/download-file` carries only the
+verified original bytes in an embedded resource, never the sanitized render copy.
+The download control remains hidden when the Host does not support this capability;
+it never bypasses iframe download restrictions.
 
-The reader provides fit width, zoom, optional Host fullscreen and original DOCX
-download. Common text, tables, inline images, headers/footers and explicit page
+The reader follows Host viewport changes while fit width is selected, preserves
+manual zoom, and declares/checks supported display modes before requesting
+fullscreen.
+Original DOCX download is optional and mediated by the Host. Common text,
+tables, inline images, headers/footers and explicit page
 breaks are supported. Automatic Word-equivalent pagination, fields/TOC updates,
 complex shapes and exact font fidelity are not promised. The UI states that
 layout and pagination may differ from Word. Layout acceptance tests use the

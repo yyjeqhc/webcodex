@@ -11,15 +11,16 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const bytes = Buffer.from(await docxFixture({ unsafe: true }));
 const identity = { project: "agent:docx:demo", path: "reports/sample.docx", name: "sample.docx", bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
 const app = await readFile(resolve(root, "src/mcp_docx_app.html"));
-const host = `<!doctype html><html><body style="margin:0;background:#e8ebef"><iframe id="reader" style="border:0;width:460px;height:720px" sandbox="allow-scripts allow-same-origin allow-downloads" src="/viewer"></iframe><script>
-const viewer=document.getElementById('reader');let count=0,stale=false,hold=false,held=[];const selected=${JSON.stringify(identity)},encoded=${JSON.stringify(bytes.toString("base64"))};
+const host = `<!doctype html><html><body style="margin:0;background:#e8ebef"><iframe id="reader" style="border:0;width:460px;height:720px" sandbox="allow-scripts allow-same-origin" src="/viewer"></iframe><script>
+const viewer=document.getElementById('reader');let count=0,stale=false,hold=false,held=[],downloads=[],downloadDenied=false;const limited=new URLSearchParams(location.search).has('limited');const selected=${JSON.stringify(identity)},encoded=${JSON.stringify(bytes.toString("base64"))};
 window.select=(patch={})=>viewer.contentWindow.postMessage({jsonrpc:'2.0',method:'ui/notifications/tool-result',params:{_meta:{'webcodex/docxDocument':{success:true,output:{docx_document:{...selected,...patch}}}}}},'*');
-window.fixture={get count(){return count},get held(){return held.length},setStale(value){stale=value},setHold(value){hold=value},release(){for(const response of held)response();held=[]}};
+window.fixture={get downloads(){return downloads},setDownloadDenied(value){downloadDenied=value},get count(){return count},get held(){return held.length},setStale(value){stale=value},setHold(value){hold=value},release(){for(const response of held)response();held=[]}};
 addEventListener('message',event=>{if(event.source!==viewer.contentWindow||event.data?.jsonrpc!=='2.0')return;const message=event.data;
 const reply=result=>viewer.contentWindow.postMessage({jsonrpc:'2.0',id:message.id,result},'*');
-if(message.method==='ui/initialize')reply({hostContext:{theme:'light',displayMode:'inline'}});
+if(message.method==='ui/initialize')reply({hostCapabilities:limited?{}:{downloadFile:{}},hostContext:{theme:'light',displayMode:'inline',availableDisplayModes:limited?['inline']:['inline','fullscreen']}});
 if(message.method==='ui/notifications/initialized')window.select();
 if(message.method==='ui/request-display-mode'){viewer.style.width='1000px';reply({mode:'fullscreen'})}
+if(message.method==='ui/download-file'){downloads.push(message.params.contents[0].resource);reply({isError:downloadDenied})}
 if(message.method==='tools/call'){count++;const args=message.params.arguments;const value=stale?{success:false,output:{error_kind:'snapshot_changed'}}:{success:true,output:{docx_chunk:{project:args.project,path:args.path,sha256:args.sha256,bytes_total:args.bytes,byte_offset:0,next_byte_offset:null,complete:true}}};const response=()=>reply({content:[{type:'text',text:JSON.stringify(value)}],_meta:{'webcodex/docxChunk':{content_base64:encoded}}});hold?held.push(response):response()}
 });</script></body></html>`;
 const server = createServer((req, res) => {
@@ -45,12 +46,29 @@ try {
   assert.equal(await page.evaluate(() => fixture.count), 1);
   await page.evaluate(() => select());
   assert.equal(await page.evaluate(() => fixture.count), 1);
+  await page.evaluate(() => document.getElementById("reader").style.width = "350px");
+  await page.waitForFunction(() => {
+    const doc = document.getElementById("reader").contentDocument;
+    return doc.querySelector("section.docx").getBoundingClientRect().width <= doc.getElementById("viewport").clientWidth;
+  });
   await frame.getByRole("button", { name: "Zoom in", exact: true }).click();
+  const manualZoom = await frame.locator("#zoom").textContent();
+  await page.evaluate(() => document.getElementById("reader").style.width = "460px");
+  await frame.locator("#viewport").evaluate(element => new Promise(resolve => { const observer = new ResizeObserver(() => { observer.disconnect(); resolve(); }); observer.observe(element); }));
+  assert.equal(await frame.locator("#zoom").textContent(), manualZoom, "Host resize preserves manual zoom");
   await frame.getByRole("button", { name: "Fit width", exact: true }).click();
   const fit = await frame.locator("section.docx").first().evaluate(element => ({ page: element.getBoundingClientRect().width, viewport: document.getElementById("viewport").clientWidth }));
   assert.ok(fit.page <= fit.viewport, "fit width must fit the document page in a narrow reader");
-  const downloadEvent = page.waitForEvent("download"); await frame.locator("#download").click();
-  assert.equal((await downloadEvent).suggestedFilename(), "sample.docx");
+  await frame.locator("#download").click();
+  await page.waitForFunction(() => fixture.downloads.length === 1);
+  const downloaded = await page.evaluate(() => fixture.downloads[0]);
+  assert.equal(downloaded.uri, "file:///sample.docx");
+  assert.deepEqual(Buffer.from(downloaded.blob, "base64"), bytes, "Host download retains verified original bytes");
+  await page.evaluate(() => fixture.setDownloadDenied(true));
+  await frame.locator("#download").click();
+  await frame.getByText("Download unavailable. You can request a file export in the chat.", { exact: true }).waitFor({state:"visible"});
+  assert.equal(await frame.locator("section.docx").count(), 2, "Download denial preserves the document");
+  await page.evaluate(() => fixture.setDownloadDenied(false));
   await frame.getByRole("button", { name: "Expand", exact: true }).click();
   await page.waitForFunction(() => document.getElementById("reader").style.width === "1000px");
   await frame.getByRole("button", { name: "Fit width", exact: true }).click();
@@ -65,10 +83,17 @@ try {
   await frame.locator("#download").waitFor({ state: "visible" });
   assert.equal(await frame.locator("#filename").textContent(), "latest.docx");
   assert.equal(await frame.locator("section.docx").count(), 2);
+  await page.evaluate(() => document.getElementById("reader").contentWindow.postMessage({jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{displayMode:'inline',availableDisplayModes:['inline']}},'*'));
+  await frame.locator("#fullscreen").waitFor({state:"hidden"});
   const old = await page.evaluate(() => fixture.count);
   await page.evaluate(() => { const reader=document.getElementById("reader");reader.contentWindow.postMessage({jsonrpc:'2.0',id:900,method:'ui/resource-teardown',params:{}},'*'); });
   await frame.locator("#download").waitFor({ state: "hidden" });
   await page.evaluate(() => select()); assert.equal(await page.evaluate(() => fixture.count), old);
+  await page.goto(`http://127.0.0.1:${server.address().port}/?limited`);
+  await frame.locator("section.docx").first().waitFor({state:"visible"});
+  await frame.locator("#download").waitFor({state:"hidden"});
+  await frame.locator("#fullscreen").waitFor({state:"hidden"});
+  assert.deepEqual(await page.evaluate(() => fixture.downloads), [], "Unsupported Hosts receive no download requests");
   assert.deepEqual(errors, []); assert.deepEqual(external, []);
-  console.log("DOCX browser smoke passed: private/text fallback, rendering, zoom/fit, download, fullscreen, stale version, superseded read, teardown; no external resources.");
+  console.log("DOCX browser smoke passed: private/text fallback, rendering, responsive/manual zoom, capability-gated Host download/fullscreen, stale version, superseded read, teardown; no external resources.");
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }

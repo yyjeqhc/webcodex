@@ -545,7 +545,7 @@ including Session wrappers, gateway tools, and optional App metadata/tools.
 ### ChatGPT file bridge
 
 For viewing a project PDF, call `present_pdf(project, path)` directly. It opens
-the dedicated PDF App (`ui://webcodex/pdf/v10`) with a filename, page/zoom/search
+the dedicated PDF App (`ui://webcodex/pdf/v3`) with a filename, page/zoom/search
 toolbar and a full-height continuous-scroll reading area. It does not include Work Result activity,
 change lists or collaboration. Unchanged and untracked PDFs are supported;
 Git and Workflow Sessions are not prerequisites. The Host controls its outer

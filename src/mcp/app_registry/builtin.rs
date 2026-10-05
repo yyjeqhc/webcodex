@@ -28,7 +28,7 @@ pub(in crate::mcp) const MCP_AGENT_CONTINUATION_APP_HTML: &str =
 pub(in crate::mcp) const MCP_JOB_TERMINAL_CONTINUATION_APP_HTML: &str =
     include_str!("../../mcp_job_terminal_continuation_app.html");
 
-pub(in crate::mcp) const MCP_PDF_UI_RESOURCE_URI: &str = "ui://webcodex/pdf/v10";
+pub(in crate::mcp) const MCP_PDF_UI_RESOURCE_URI: &str = "ui://webcodex/pdf/v3";
 
 pub(super) static BUILTIN_MCP_APPS: &[BundledMcpApp] = &[
     BundledMcpApp {

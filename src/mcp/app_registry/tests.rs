@@ -4,7 +4,7 @@ use std::collections::HashSet;
 #[test]
 fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
     let expected = [
-        "ui://webcodex/pdf/v10",
+        "ui://webcodex/pdf/v3",
         "ui://webcodex/computer/v12",
         "ui://webcodex/workbench/v2",
         "ui://webcodex/work-result/v28",
@@ -39,13 +39,6 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
     for retired in [
         "ui://webcodex/pdf/v1",
         "ui://webcodex/pdf/v2",
-        "ui://webcodex/pdf/v3",
-        "ui://webcodex/pdf/v4",
-        "ui://webcodex/pdf/v5",
-        "ui://webcodex/pdf/v6",
-        "ui://webcodex/pdf/v7",
-        "ui://webcodex/pdf/v8",
-        "ui://webcodex/pdf/v9",
         "ui://webcodex/computer/v11",
         "ui://webcodex/changes/v3",
         "ui://webcodex/workbench/v1",

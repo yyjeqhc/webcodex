@@ -1,7 +1,7 @@
 # Dedicated PDF document viewer
 
 `present_pdf(project, path)` binds a direct model tool to the self-contained
-`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v10`. It selects one
+`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v3`. It selects one
 authorized project-relative `.pdf`, independent of Git changes, a Work Result
 card, or a Workflow Session. The App contains only document controls and the
 reading area; the Host owns the surrounding chrome and display mode.

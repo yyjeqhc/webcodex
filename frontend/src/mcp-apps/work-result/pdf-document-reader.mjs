@@ -8,8 +8,7 @@ export function privateToolMetadata(result, key) {
   const candidates = [result, result?.result, result?.toolResult, result?.tool_result];
   for (const candidate of candidates) {
     if (!candidate || typeof candidate !== "object") continue;
-    const meta = candidate._meta ?? candidate.meta;
-    const value = meta?.[key];
+    const value = candidate._meta?.[key] ?? candidate.meta?.[key];
     if (value && typeof value === "object") return value;
   }
   return null;

@@ -18,6 +18,7 @@ test("private App metadata survives common Host tool-result wrappers", () => {
   for (const result of [
     { _meta: { "webcodex/artifactChunk": payload } },
     { meta: { "webcodex/artifactChunk": payload } },
+    { _meta: { unrelated: true }, meta: { "webcodex/artifactChunk": payload } },
     { result: { _meta: { "webcodex/artifactChunk": payload } } },
     { toolResult: { _meta: { "webcodex/artifactChunk": payload } } },
     { tool_result: { meta: { "webcodex/artifactChunk": payload } } },

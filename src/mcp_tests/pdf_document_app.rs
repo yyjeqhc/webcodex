@@ -11,7 +11,7 @@ fn pdf_document_app_has_a_distinct_direct_binding_and_private_read_tool() {
         .unwrap();
     assert_eq!(
         present["_meta"]["ui"]["resourceUri"],
-        "ui://webcodex/pdf/v10"
+        "ui://webcodex/pdf/v3"
     );
     for name in ["read_app_artifact_chunk", "read_pdf_chunk"] {
         let read = tools.iter().find(|tool| tool["name"] == name).unwrap();

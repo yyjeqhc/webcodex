@@ -143,6 +143,15 @@ inherits the remaining absolute document budget; the Host may still fail a call
 earlier on its own, while WebCodex no longer introduces a contradictory shorter
 client timeout.
 
+A final v6 retest reopened the same 9,263,389-byte P25 paper after deployment and
+schema refresh. The App completed all 18 expected 512 KiB chunk calls, with
+byte offsets 0 through 8,912,896. The first chunk arrived about 3.2 seconds after
+`present_pdf`; the final chunk arrived about 66.0 seconds after `present_pdf`.
+Server handling stayed between 12 and 23 ms per observed chunk. This validates
+the combined production contract: normalized private metadata, 512 KiB
+Host-facing segments, one size-aware absolute document deadline, and no shorter
+per-call client timeout.
+
 ## Production conclusions
 
 1. Keep `present_pdf` as a direct read-only App presentation tool.

@@ -1043,3 +1043,116 @@ async fn api_token_mcp_behavior_unchanged() {
         .unwrap_or("")
         .contains("no_such_tool"));
 }
+
+#[tokio::test]
+async fn oauth_operator_diagnostics_are_unavailable_and_never_challenge_for_admin() {
+    let (_tmp, service, token) = oauth_mcp_service("runtime:read");
+    let (status, body, _) =
+        oauth_mcp_request(&service, &token, "tools/list", mcp_2026_params(json!({}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!listed_tool_names(&body).contains("read_tool_trace"));
+    for arguments in [
+        json!({"tool_name":"read_tool_trace"}),
+        json!({"query":"read_tool_trace"}),
+        json!({}),
+    ] {
+        let (status, body, challenge) = oauth_mcp_request(
+            &service,
+            &token,
+            "tools/call",
+            mcp_2026_params(json!({
+                "name": "read_tool_manifest", "arguments": arguments
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body:?}");
+        assert!(challenge.is_none());
+        assert!(!body.to_string().contains("require admin"));
+        let result = &body["result"]["structuredContent"];
+        if arguments.get("tool_name").is_some() {
+            assert_eq!(body["result"]["isError"], true);
+            assert_eq!(result["output"]["code"], "unknown_tool_manifest_tool");
+        } else if arguments.get("query").is_some() {
+            assert!(!result["output"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t["name"] == "read_tool_trace"));
+        }
+        assert!(!body.to_string().contains("trace_ref"));
+    }
+    let (status, body, challenge) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        mcp_2026_params(json!({
+            "name":"read_tool_manifest", "arguments":{"tool_name":"get_runtime_status"}
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["isError"], false);
+    assert_eq!(
+        body["result"]["structuredContent"]["output"]["name"],
+        "get_runtime_status"
+    );
+    assert!(challenge.is_none());
+    for params in [
+        json!({"name":"read_tool_trace", "arguments":{}}),
+        adaptive_gateway_params("read_tool_trace", json!({})),
+    ] {
+        let (status, body, challenge) =
+            oauth_mcp_request(&service, &token, "tools/call", mcp_2026_params(params)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body:?}");
+        assert!(challenge.is_none(), "{challenge:?}");
+        assert_ne!(body["error"], "insufficient_scope");
+        assert!(body["error"].as_str().unwrap().contains("admin"));
+        assert!(!body.to_string().contains("trace_ref"));
+    }
+}
+
+#[tokio::test]
+async fn oauth_browser_scopes_challenge_and_pass_the_canonical_gate() {
+    for (tool, arguments, scope) in [
+        (
+            "observe_browser",
+            json!({"action":"targets", "client_id":"missing-runner"}),
+            "browser:read",
+        ),
+        (
+            "control_browser",
+            json!({"action":"launch", "client_id":"missing-runner"}),
+            "browser:launch",
+        ),
+        (
+            "control_browser",
+            json!({"action":"navigate", "client_id":"missing-runner", "browser_id":"browser_abcdefghijklmnop", "page_id":"page_abcdefghijklmnop", "url":"https://example.test"}),
+            "browser:control",
+        ),
+    ] {
+        for granted in [false, true] {
+            let scopes = if granted {
+                format!("runtime:read {scope}")
+            } else {
+                "runtime:read".into()
+            };
+            let (_tmp, service, token) = oauth_mcp_service(&scopes);
+            let (status, body, challenge) = oauth_mcp_request(
+                &service,
+                &token,
+                "tools/call",
+                mcp_2026_params(adaptive_gateway_params(tool, arguments.clone())),
+            )
+            .await;
+            if granted {
+                // Missing Runner is a business failure after the authority gate.
+                assert_eq!(status, StatusCode::OK, "{tool}: {body:?}");
+                assert!(challenge.is_none());
+                assert!(!body.to_string().contains("insufficient_scope"));
+                assert!(!body.to_string().contains("trace_ref"));
+            } else {
+                assert_mcp_oauth_scope_rejected(status, &body, challenge.as_deref(), Some(scope));
+            }
+        }
+    }
+}

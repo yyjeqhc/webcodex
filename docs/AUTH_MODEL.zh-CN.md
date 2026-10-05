@@ -102,6 +102,10 @@ WebCodex 新增 scope 时不会静默扩大已有 OAuth client 的权限上限�
 
 普通 hosted shared-key OAuth 使用 `webcodex connect ... --auth oauth`：Runner 继续使用 shared key，而 MCP client 获得独立 OAuth credential。`--oauth-computer-permissions` 显式开放该流程中的额外 Computer 权限；`--oauth-local-mcp` 显式开放 Runner-owned local MCP provider。Managed-user OAuth 仍是另一条高级流程（`--auth managed-oauth`）。
 
+Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时显式指定 `--oauth-browser-permissions`，仅追加 `browser:read`、`browser:control`、`browser:launch`。默认 baseline 不包含 Browser scope；Browser 与 `--oauth-computer-permissions` 相互独立，也不使用 Computer consent checkbox。已有 client 不会自动扩权，历史窄权限仅追加显式选择的类别。scope ceiling 变化会撤销旧 grants 并要求重新授权；复用已启用 Browser 的 profile 时必须继续携带该 flag。
+
+Operator/admin diagnostics（如 `read_tool_trace`）不属于普通 OAuth delegation。`admin` 不在 OAuth supported scopes 或 shared-key bridge ceiling 中。Manifest discovery 同时检查 caller authority 和 protocol capability；即使硬编码调用，权限拒绝也不会发出暗示可通过 OAuth reconnect 获得 `admin` 的 challenge。Browser 等可委托 scope 缺失时仍返回标准 `WWW-Authenticate: Bearer error="insufficient_scope"`。
+
 Server 侧配置见[部署指南](DEPLOYMENT.zh-CN.md#oauth2)；MCP client 设置见 [MCP](MCP.zh-CN.md#oauth2)。
 
 ## Scope 与 authority
@@ -139,5 +143,3 @@ OAuth client 只有通过明确的 operator/user opt-in 才会得到这些 optio
 | OAuth client secret | client 创建时返回；保存在 client/operator 的 secret store |
 
 具体命令和恢复路径见 [CLI](CLI.zh-CN.md) 与[故障排查](TROUBLESHOOTING.zh-CN.md)。内部 identity/continuity 格式有意不放在这份 user-facing reference 中。
-
-Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时显式指定 `--oauth-browser-permissions`，仅追加 `browser:read`、`browser:control`、`browser:launch`。默认 baseline 不包含 Browser scope；Browser 与 `--oauth-computer-permissions` 相互独立，也不使用 Computer consent checkbox。已有 client 不会自动扩权，历史窄权限仅追加显式选择的类别。scope ceiling 变化会撤销旧 grants 并要求重新授权；复用已启用 Browser 的 profile 时必须继续携带该 flag。

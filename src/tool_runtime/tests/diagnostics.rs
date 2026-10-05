@@ -151,3 +151,95 @@ async fn trace_reader_tool_name_is_fail_closed_without_protocol_capability() {
     ));
     assert!(outcome.result.is_none());
 }
+
+#[tokio::test]
+async fn trace_manifest_and_call_require_authority_as_well_as_protocol_capability() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db =
+        std::sync::Arc::new(crate::Database::open(&tmp.path().join("diagnostics.db")).unwrap());
+    let runtime = ToolRuntime::new_for_tests().with_window_activity_database(db);
+    let ordinary = runtime_reader_auth();
+    let admin = admin_auth();
+    for (auth, admitted) in [
+        (None, false),
+        (Some(&ordinary), false),
+        (Some(&admin), true),
+    ] {
+        for capability in [false, true] {
+            let capable = ToolProtocolCapabilities {
+                trace_diagnostics: capability,
+                ..Default::default()
+            };
+            for arguments in [
+                json!({"tool_name":"read_tool_trace"}),
+                json!({"query":"read_tool_trace"}),
+                json!({"category":"runtime"}),
+                json!({}),
+            ] {
+                let exact = arguments.get("tool_name").is_some();
+                let result = runtime
+                    .tool_manifest(
+                        auth,
+                        arguments
+                            .get("tool_name")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string),
+                        arguments
+                            .get("category")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string),
+                        None,
+                        false,
+                        false,
+                        arguments
+                            .get("query")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string),
+                        None,
+                        capable,
+                    )
+                    .await;
+                if exact {
+                    assert_eq!(result.success, admitted && capability);
+                    if !result.success {
+                        assert_eq!(result.output["code"], "unknown_tool_manifest_tool");
+                    }
+                } else {
+                    assert!(result.success);
+                    assert_eq!(
+                        result.output["tools"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|t| t["name"] == "read_tool_trace"),
+                        admitted && capability
+                    );
+                }
+            }
+            if capability {
+                let outcome = runtime
+                    .call_tool_with_protocol_capabilities(
+                        ToolCallRequest {
+                            tool_name: "read_tool_trace".into(),
+                            arguments: json!({}),
+                        },
+                        context(auth),
+                        capable,
+                    )
+                    .await;
+                assert_eq!(outcome.error_status.is_none(), admitted);
+                if admitted {
+                    assert!(outcome.result.unwrap().success);
+                } else {
+                    assert!(matches!(
+                        outcome.error_status,
+                        Some(ToolCallErrorStatus::InsufficientScope {
+                            required_scope: Some(crate::auth::SCOPE_ADMIN),
+                            ..
+                        })
+                    ));
+                }
+            }
+        }
+    }
+}

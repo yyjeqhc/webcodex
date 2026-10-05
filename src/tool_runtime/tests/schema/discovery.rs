@@ -8,6 +8,7 @@ async fn discovery_materializes_only_the_requested_contract_shape() {
     take_counts();
     let exact = runtime
         .tool_manifest(
+            None,
             Some("run_process".into()),
             None,
             None,
@@ -31,6 +32,7 @@ async fn discovery_materializes_only_the_requested_contract_shape() {
     let category = runtime
         .tool_manifest(
             None,
+            None,
             Some("execution".into()),
             None,
             false,
@@ -52,6 +54,7 @@ async fn discovery_materializes_only_the_requested_contract_shape() {
     );
     let hidden = runtime
         .tool_manifest(
+            None,
             Some("read_memory".into()),
             None,
             None,
@@ -2529,8 +2532,13 @@ async fn tool_manifest_operator_extensions_require_explicit_family_capabilities(
     use crate::tool_runtime::kernel::ToolProtocolCapabilities;
 
     let runtime = test_runtime();
+    let admin = crate::auth::AuthContext {
+        is_bootstrap: true,
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap)
+    };
     let manifest = |tool_name: &'static str, capabilities: ToolProtocolCapabilities| {
         runtime.tool_manifest(
+            Some(&admin),
             Some(tool_name.to_string()),
             None,
             None,
@@ -2716,6 +2724,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
             None,
             None,
             None,
+            None,
             false,
             false,
             Some("batch unregister".into()),
@@ -2737,6 +2746,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
     for name in ["resolve_workspace", "unregister_projects"] {
         let exact = runtime
             .tool_manifest(
+                None,
                 Some(name.into()),
                 None,
                 None,
@@ -2752,6 +2762,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
     }
     let list = runtime
         .tool_manifest(
+            None,
             None,
             None,
             Some("maintenance".into()),
@@ -2770,6 +2781,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
         .all(|tool| tool["name"] != "work_on_project"));
     let hidden = runtime
         .tool_manifest(
+            None,
             None,
             None,
             None,

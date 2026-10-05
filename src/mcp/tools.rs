@@ -34,18 +34,8 @@ pub(super) const WORK_RESULT_THREAD_CONTEXT_META_KEY: &str = "webcodex/workResul
 const WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME: &str = "work_result_thread_panel";
 
 fn filter_specs_for_oauth(mut specs: Vec<ToolSpec>, auth: Option<&AuthContext>) -> Vec<ToolSpec> {
-    let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
     specs.retain(|spec| {
-        let authority = crate::tool_runtime::metadata::lookup_tool_metadata(&spec.name)
-            .map(|metadata| metadata.authority);
-        matches!(
-            authority,
-            Some(webcodex_core::authority::ToolAuthorityPolicy::RequireAny(_))
-        )
-        .then(|| check_runtime_tool_scope(auth, &spec.name).is_ok())
-        .unwrap_or_else(|| {
-            !oauth_scope_projection || check_runtime_tool_scope(auth, &spec.name).is_ok()
-        })
+        crate::tool_runtime::kernel::runtime_tool_scope_allows_discovery(auth, &spec.name)
     });
     specs
 }

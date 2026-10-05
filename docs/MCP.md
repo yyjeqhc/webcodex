@@ -299,6 +299,10 @@ When OAuth is enabled, MCP clients can use the authorization-code flow instead o
 
 For ordinary hosted `connect --auth oauth`, the Runner keeps its hosted credential while the MCP client receives a separate OAuth credential. Add `--oauth-computer-permissions`, `--oauth-local-mcp`, or `--oauth-local-ssh` only when those optional capabilities are needed. Existing clients are not silently widened; a real permission change requires reauthorization.
 
+Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.
+
+Operator/admin diagnostics such as `read_tool_trace` are outside ordinary OAuth delegation. Neither OAuth supported scopes nor the shared-key bridge ceiling includes `admin`. Manifest discovery checks caller authority as well as protocol capability. Hard-coded calls remain denied without a challenge suggesting OAuth reconnect can grant `admin`. Missing delegable scopes such as Browser scopes still return the standard `WWW-Authenticate: Bearer error="insufficient_scope"` challenge.
+
 Project-first `share --auth oauth` remains bound to that temporary share environment. Managed-user OAuth is a separate advanced flow (`connect --auth managed-oauth`). OAuth credentials are never valid on Runner transport.
 
 For the credential and scope model, see [Authentication](AUTH_MODEL.md#oauth2).
@@ -592,5 +596,3 @@ a project and a supporting ChatGPT host without a model manually carrying their
 Base64.
 
 Use [Coding Workflow](CODING_WORKFLOW.md) for the canonical `work_on_project` bootstrap, behavioral-role mental model, and validation/closeout guidance. See [Architecture](ARCHITECTURE.md) and the `webcodex` CLI for operator tooling.
-
-Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.

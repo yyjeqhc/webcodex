@@ -79,6 +79,10 @@ For supervised machine integration, `webcodex share --json --stop-on-stdin-eof` 
 
 `webcodex connect <server> --auth oauth --oauth-redirect-uri <exact-callback>` is the ordinary hosted OAuth path. The Runner keeps its existing hosted credential while the MCP client uses OAuth. Add `--oauth-computer-permissions`, `--oauth-local-mcp`, or `--oauth-local-ssh` only when those optional capabilities are actually needed; they are explicit permission changes and can require reauthorization. `--oauth-local-ssh` grants the MCP client the optional `ssh:local` authority needed by the model-facing `manage_ssh_resource` onboarding tool; it does not expose SSH credentials or make a registered resource active without the Runner restart reported by that tool. See [MCP](MCP.md#oauth2) for client setup and [Authentication](AUTH_MODEL.md#oauth2) for the security model.
 
+Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.
+
+Operator/admin diagnostics such as `read_tool_trace` are outside ordinary OAuth delegation. Neither OAuth supported scopes nor the shared-key bridge ceiling includes `admin`. Manifest discovery checks caller authority as well as protocol capability. Hard-coded calls remain denied without a challenge suggesting OAuth reconnect can grant `admin`. Missing delegable scopes such as Browser scopes still return the standard `WWW-Authenticate: Bearer error="insufficient_scope"` challenge.
+
 The advanced managed identity flow remains available as `--auth managed-oauth --oauth-redirect-uri <exact-callback>` and requires `webcodex login`; `--user` applies only to that mode.
 
 `disconnect` matches the canonical repository path, not a basename or project id. If the same
@@ -344,5 +348,3 @@ CLI requests follow the standard proxy environment by default
 `--no-system-proxy` to ignore proxy environment and connect directly. These
 flags affect only the CLI's own HTTP requests; `webcodex connect` does not
 persist or inject them into the Runner configuration.
-
-Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.

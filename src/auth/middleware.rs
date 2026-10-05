@@ -118,12 +118,21 @@ pub(crate) fn render_oauth_insufficient_scope(
     res.render(Json(oauth_insufficient_scope_body(description)));
 }
 
+/// Only advertise reauthorization when OAuth can delegate the missing authority.
+/// None retains the unqualified challenge used for alternative-scope denials.
+pub(crate) fn oauth_scope_denial_is_delegable(required_scope: Option<&str>) -> bool {
+    required_scope.is_none_or(|scope| crate::oauth_http::oauth_scopes_supported().contains(&scope))
+}
+
 pub(crate) fn scope_forbidden_body(
     auth: Option<&AuthContext>,
+    required_scope: Option<&str>,
     description: impl Into<String>,
 ) -> serde_json::Value {
     let description = description.into();
-    if auth.is_some_and(AuthContext::is_oauth_token) {
+    if auth.is_some_and(AuthContext::is_oauth_token)
+        && oauth_scope_denial_is_delegable(required_scope)
+    {
         oauth_insufficient_scope_body(description)
     } else {
         serde_json::json!({
@@ -140,12 +149,18 @@ pub(crate) fn render_scope_forbidden(
     description: impl Into<String>,
 ) {
     let description = description.into();
-    if auth.is_some_and(AuthContext::is_oauth_token) {
+    if auth.is_some_and(AuthContext::is_oauth_token)
+        && oauth_scope_denial_is_delegable(required_scope)
+    {
         render_oauth_insufficient_scope(res, required_scope, description);
         return;
     }
     res.status_code(StatusCode::FORBIDDEN);
-    res.render(Json(scope_forbidden_body(auth, description)));
+    res.render(Json(scope_forbidden_body(
+        auth,
+        required_scope,
+        description,
+    )));
 }
 
 // ---------------------------------------------------------------------------

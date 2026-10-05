@@ -467,6 +467,10 @@ webcodex connect https://your-domain.example --auth oauth \
 
 The Runner continues using its hosted credential while the MCP client receives a separate OAuth credential. `--oauth-computer-permissions` and `--oauth-local-mcp` are explicit opt-ins for optional capabilities; ordinary reconnect never silently adds them. A real OAuth permission change requires the client to authorize again. ChatGPT never receives the Runner/shared-key credential, and OAuth tokens are not valid on Runner transport.
 
+Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.
+
+Operator/admin diagnostics such as `read_tool_trace` are outside ordinary OAuth delegation. Neither OAuth supported scopes nor the shared-key bridge ceiling includes `admin`. Manifest discovery checks caller authority as well as protocol capability. Hard-coded calls remain denied without a challenge suggesting OAuth reconnect can grant `admin`. Missing delegable scopes such as Browser scopes still return the standard `WWW-Authenticate: Bearer error="insufficient_scope"` challenge.
+
 If a managed-user OAuth identity is specifically required, use the advanced `webcodex login` flow followed by `webcodex connect ... --auth managed-oauth --oauth-redirect-uri ...`; `--user` applies only there.
 
 Create an OAuth client (the `client_secret` is returned only once; only its
@@ -582,5 +586,3 @@ See [Troubleshooting](TROUBLESHOOTING.md) for the operational checklist and
 common fixes, including existing systemd services, `HTTP reachable: no`,
 missing client CLI on `PATH`, server-side pairing vs client-side enrollment,
 and `client online: no`.
-
-Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.

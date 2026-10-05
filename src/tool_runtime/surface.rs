@@ -451,13 +451,24 @@ pub(crate) fn recommended_flows() -> Vec<&'static str> {
         .collect()
 }
 
-fn tool_manifest_specs(capabilities: ToolProtocolCapabilities) -> Vec<ToolDescriptor> {
+fn tool_manifest_specs(
+    capabilities: ToolProtocolCapabilities,
+    auth: Option<&crate::auth::AuthContext>,
+) -> Vec<ToolDescriptor> {
     let mut specs = registered_tool_descriptors();
     specs.extend(
         stateless_operator_extension_tool_descriptors()
             .into_iter()
-            .filter(|spec| tool_manifest_extension_capability_allows(&spec.name, capabilities)),
+            .filter(|spec| {
+                tool_manifest_extension_capability_allows(&spec.name, capabilities)
+                    && super::kernel::check_runtime_tool_scope(auth, &spec.name).is_ok()
+            }),
     );
+    // Internal catalog projections have no caller and retain the complete
+    // model surface. Operator extensions above always need explicit authority.
+    if auth.is_some() {
+        specs.retain(|spec| super::kernel::runtime_tool_scope_allows_discovery(auth, &spec.name));
+    }
     specs
 }
 
@@ -633,6 +644,7 @@ impl ToolRuntime {
     /// ResponseTooLargeError.
     pub(super) async fn tool_manifest(
         &self,
+        auth: Option<&crate::auth::AuthContext>,
         tool_name: Option<String>,
         category: Option<String>,
         intent: Option<String>,
@@ -647,6 +659,7 @@ impl ToolRuntime {
                 return tool_manifest_exact_filter_conflict_result();
             }
             return match self.tool_manifest_exact_payload(
+                auth,
                 &tool_name,
                 include_recommended_flows,
                 include_risk_summary,
@@ -657,6 +670,7 @@ impl ToolRuntime {
             };
         }
         match self.tool_manifest_payload_for_categories(
+            auth,
             category.map(|category| vec![category]),
             intent,
             limit,
@@ -672,6 +686,7 @@ impl ToolRuntime {
 
     fn tool_manifest_exact_payload(
         &self,
+        auth: Option<&crate::auth::AuthContext>,
         raw_tool_name: &str,
         include_recommended_flows: bool,
         include_risk_summary: bool,
@@ -681,14 +696,14 @@ impl ToolRuntime {
         if tool_name.is_empty() {
             return Err(unknown_tool_manifest_tool_result(tool_name));
         }
-        let specs = tool_manifest_specs(protocol_capabilities);
+        let specs = tool_manifest_specs(protocol_capabilities, auth);
         let specialist_specs = exact_manifest_specialist_tool_descriptors();
         let tool_count = specs.len();
-        let Some(spec) = specs
-            .iter()
-            .chain(specialist_specs.iter())
-            .find(|spec| spec.name == tool_name)
-        else {
+        let Some(spec) = specs.iter().chain(specialist_specs.iter()).find(|spec| {
+            spec.name == tool_name
+                && (auth.is_none()
+                    || super::kernel::runtime_tool_scope_allows_discovery(auth, &spec.name))
+        }) else {
             return Err(unknown_tool_manifest_tool_result(tool_name));
         };
         let category = runtime_tool_category(spec.name.as_str());
@@ -773,6 +788,7 @@ impl ToolRuntime {
             return Ok(self.compact_tool_manifest_payload());
         }
         self.tool_manifest_payload_for_categories(
+            None,
             categories,
             intent,
             limit,
@@ -792,6 +808,7 @@ impl ToolRuntime {
         protocol_capabilities: ToolProtocolCapabilities,
     ) -> Result<Value, ToolResult> {
         self.tool_manifest_payload_for_categories(
+            None,
             category.map(|category| vec![category]),
             intent,
             None,
@@ -804,6 +821,7 @@ impl ToolRuntime {
 
     fn tool_manifest_payload_for_categories(
         &self,
+        auth: Option<&crate::auth::AuthContext>,
         categories: Option<Vec<String>>,
         intent: Option<String>,
         limit: Option<usize>,
@@ -822,7 +840,7 @@ impl ToolRuntime {
             },
         };
 
-        let specs = tool_manifest_specs(protocol_capabilities);
+        let specs = tool_manifest_specs(protocol_capabilities, auth);
         let tool_count = specs.len();
         let categories_requested = normalize_tool_manifest_categories(categories);
         let category = categories_requested
@@ -918,7 +936,7 @@ impl ToolRuntime {
         }
 
         if include_recommended_flows {
-            output["recommended_flows"] = Value::Array(if filtered {
+            output["recommended_flows"] = Value::Array(if filtered || auth.is_some() {
                 tool_manifest_recommended_flows_for_visible_tools(
                     returned_specs.iter().map(|spec| spec.name.as_str()),
                 )

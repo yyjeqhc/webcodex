@@ -75,6 +75,10 @@ Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS
 
 `webcodex connect <server> --auth oauth --oauth-redirect-uri <精确回调地址>` 是普通 hosted OAuth 路径。Runner 保持原有 hosted credential，MCP client 使用 OAuth。只有真正需要额外能力时才增加 `--oauth-computer-permissions`、`--oauth-local-mcp` 或 `--oauth-local-ssh`；它们属于显式权限变更，可能要求重新授权。`--oauth-local-ssh` 会授予 MCP client 使用模型侧 `manage_ssh_resource` 接入工具所需的可选 `ssh:local` authority；它不会暴露 SSH credential，也不会绕过工具返回的 Runner restart requirement 让新资源立即生效。Client 设置见 [MCP](MCP.zh-CN.md#oauth2)，安全模型见[认证](AUTH_MODEL.zh-CN.md#oauth2)。
 
+Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时显式指定 `--oauth-browser-permissions`，仅追加 `browser:read`、`browser:control`、`browser:launch`。默认 baseline 不包含 Browser scope；Browser 与 `--oauth-computer-permissions` 相互独立，也不使用 Computer consent checkbox。已有 client 不会自动扩权，历史窄权限仅追加显式选择的类别。scope ceiling 变化会撤销旧 grants 并要求重新授权；复用已启用 Browser 的 profile 时必须继续携带该 flag。
+
+Operator/admin diagnostics（如 `read_tool_trace`）不属于普通 OAuth delegation。`admin` 不在 OAuth supported scopes 或 shared-key bridge ceiling 中。Manifest discovery 同时检查 caller authority 和 protocol capability；即使硬编码调用，权限拒绝也不会发出暗示可通过 OAuth reconnect 获得 `admin` 的 challenge。Browser 等可委托 scope 缺失时仍返回标准 `WWW-Authenticate: Bearer error="insufficient_scope"`。
+
 高级 managed identity 流程仍保留为 `--auth managed-oauth --oauth-redirect-uri <精确回调地址>`，它才要求先 `webcodex login`；`--user` 也只用于该模式。
 
 `disconnect` 按 canonical 仓库路径匹配，不根据 basename 或 project id 猜测。如果同一仓库
@@ -324,5 +328,3 @@ CLI 请求默认遵循标准代理环境变量（`HTTP_PROXY`、`HTTPS_PROXY`、
 `NO_PROXY`）。用 `--proxy http://HOST:PORT` 为单次调用覆盖，或用
 `--no-system-proxy` 忽略代理环境直连。这些 flag 只影响 CLI 自身的 HTTP 请求；
 `webcodex connect` 不会把它们持久化或注入 Runner 配置。
-
-Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时显式指定 `--oauth-browser-permissions`，仅追加 `browser:read`、`browser:control`、`browser:launch`。默认 baseline 不包含 Browser scope；Browser 与 `--oauth-computer-permissions` 相互独立，也不使用 Computer consent checkbox。已有 client 不会自动扩权，历史窄权限仅追加显式选择的类别。scope ceiling 变化会撤销旧 grants 并要求重新授权；复用已启用 Browser 的 profile 时必须继续携带该 flag。

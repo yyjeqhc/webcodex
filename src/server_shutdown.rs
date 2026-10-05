@@ -172,6 +172,7 @@ pub(crate) async fn serve_until_termination<A, S>(
     graceful_timeout: Duration,
     stop_on_stdin_eof: bool,
     service_stop: impl Future<Output = ()> + Send,
+    tunnels: crate::server_tunnels::TunnelSupervisor,
 ) -> io::Result<()>
 where
     A: Acceptor + Send,
@@ -197,7 +198,15 @@ where
             }
         }
     };
-    serve_with_signal(server, service, coordinator, signal, graceful_timeout).await
+    serve_with_ingress(
+        server,
+        service,
+        coordinator,
+        signal,
+        graceful_timeout,
+        |stop| tunnels.run(stop),
+    )
+    .await
 }
 
 fn parent_eof_signal() -> io::Result<tokio::sync::oneshot::Receiver<()>> {
@@ -222,6 +231,7 @@ fn parent_eof_signal() -> io::Result<tokio::sync::oneshot::Receiver<()>> {
     Ok(rx)
 }
 
+#[cfg(test)]
 async fn serve_with_signal<A, S, F>(
     server: Server<A>,
     service: S,
@@ -234,18 +244,87 @@ where
     S: Into<Service> + Send,
     F: Future<Output = ShutdownReason> + Send,
 {
+    serve_with_ingress(
+        server,
+        service,
+        coordinator,
+        signal,
+        graceful_timeout,
+        |stop| crate::server_tunnels::TunnelSupervisor::default().run(stop),
+    )
+    .await
+}
+
+/// The ingress owner is polled alongside HTTP for its entire lifetime. Its stop
+/// phase must complete before HTTP admission closes; abrupt loss drops the owned
+/// future (and therefore every Tunnel owner) instead of detaching a poller.
+async fn serve_with_ingress<A, S, F, I, T>(
+    server: Server<A>,
+    service: S,
+    coordinator: Arc<ShutdownCoordinator>,
+    signal: F,
+    graceful_timeout: Duration,
+    start_ingress: I,
+) -> io::Result<()>
+where
+    A: Acceptor + Send,
+    S: Into<Service> + Send,
+    F: Future<Output = ShutdownReason> + Send,
+    I: FnOnce(tokio::sync::watch::Receiver<bool>) -> T,
+    T: Future<Output = ()> + Send,
+{
     let handle = server.handle();
     let serve = server.try_serve(service);
     tokio::pin!(serve);
     tokio::pin!(signal);
 
-    let reason = tokio::select! {
-        result = &mut serve => {
-            coordinator.mark_stopped();
-            return result;
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let mut ingress = Box::pin(start_ingress(stopped));
+    let mut ingress_finished = false;
+    let reason = loop {
+        tokio::select! {
+            result = &mut serve => {
+                let _ = stop.send(true);
+                if !ingress_finished {
+                    let _ = tokio::time::timeout(Duration::from_secs(15), &mut ingress).await;
+                }
+                coordinator.mark_stopped();
+                return result;
+            }
+            reason = &mut signal => break reason,
+            _ = &mut ingress, if !ingress_finished => ingress_finished = true,
         }
-        reason = &mut signal => reason,
     };
+
+    let _ = stop.send(true);
+    let mut http_result = None;
+    if !ingress_finished {
+        tracing::info!(
+            shutdown_signal = reason.as_str(),
+            "Stopping Tunnel ingress before HTTP drain"
+        );
+        let settle = async {
+            loop {
+                tokio::select! {
+                    _ = &mut ingress => break,
+                    result = &mut serve, if http_result.is_none() => http_result = Some(result),
+                }
+            }
+        };
+        if tokio::time::timeout(Duration::from_secs(15), settle)
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                "Tunnel owner shutdown deadline elapsed; retain unconfirmed restart fences"
+            );
+        }
+    }
+    drop(ingress);
+    if let Some(result) = http_result {
+        coordinator.mark_stopped();
+        return result;
+    }
 
     if coordinator.begin_draining() {
         tracing::info!(

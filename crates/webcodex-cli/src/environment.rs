@@ -3,7 +3,7 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use webcodex_environment::*;
 
-const USAGE: &str = "webcodex environment <COMMAND>\n\nconfigure [--create | --join URL] [--runner] [--project PATH | --no-project]\n          [--scope user|system]\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\ninvite\nadd-project PATH [--code-stdin] [--new-pairing-code]\nremove-project PROJECT_ID\nstatus|doctor\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\nrepair-credential runner\nrepair-user-credential [--token-file PATH]\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\nconfigure-tunnel [PROFILE] [--credentials-file PATH]\ntunnel-status [PROFILE]\nremove-tunnel [PROFILE]\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\nupgrade-finish|upgrade-rollback\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\ninstaller-apply --upgrade-receipt PATH --candidate-dir PATH --installer-file PATH --installer-target TARGET (OS authorization required)\ninstaller-verify --candidate-dir PATH\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\ninstaller-classify --expected-runtime-dir PATH (Windows)\npackage-upgrade-preflight|package-upgrade-prepare|package-upgrade-verify --candidate-dir PATH --expected-runtime-dir PATH (Windows)\npackage-upgrade-finish|package-upgrade-rollback --expected-runtime-dir PATH (Windows)\ninstaller-finish|installer-cancel\n\nPublic environment commands accept --json and --environment-dir PATH.\nInstaller finalization uses only the fixed owner authorization.\nAdvanced: --bin-dir PATH (configure and explicit migration).\n--runner enables local work without requiring an initial project.\nNew environments default to user services; saved environments retain their manager.\nUser scope: Linux systemd user manager (linger-dependent), macOS login LaunchAgent, Windows signed-in user task.\nSystem scope: boot services with explicit OS authorization; no automatic fallback.\nSame-machine creation issues separate local credentials automatically, without pairing input.\nViewer-only uses a user credential; pairing codes are only for Runner machines.\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\n";
+const USAGE: &str = "webcodex environment <COMMAND>\n\nconfigure [--create | --join URL] [--runner] [--project PATH | --no-project]\n          [--scope user|system]\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\ninvite\nadd-project PATH [--code-stdin] [--new-pairing-code]\nremove-project PROJECT_ID\nstatus|doctor\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\nrepair-credential runner\nrepair-user-credential [--token-file PATH]\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\nconfigure-tunnel [PROFILE] [--credentials-file PATH]\ntunnel-status [PROFILE]\ntunnel-host PROFILE --host embedded|standalone\nremove-tunnel [PROFILE]\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\nupgrade-finish|upgrade-rollback\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\ninstaller-apply --upgrade-receipt PATH --candidate-dir PATH --installer-file PATH --installer-target TARGET (OS authorization required)\ninstaller-verify --candidate-dir PATH\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\ninstaller-classify --expected-runtime-dir PATH (Windows)\npackage-upgrade-preflight|package-upgrade-prepare|package-upgrade-verify --candidate-dir PATH --expected-runtime-dir PATH (Windows)\npackage-upgrade-finish|package-upgrade-rollback --expected-runtime-dir PATH (Windows)\ninstaller-finish|installer-cancel\n\nPublic environment commands accept --json and --environment-dir PATH.\nInstaller finalization uses only the fixed owner authorization.\nAdvanced: --bin-dir PATH (configure and explicit migration).\n--runner enables local work without requiring an initial project.\nNew environments default to user services; saved environments retain their manager.\nUser scope: Linux systemd user manager (linger-dependent), macOS login LaunchAgent, Windows signed-in user task.\nSystem scope: boot services with explicit OS authorization; no automatic fallback.\nSame-machine creation issues separate local credentials automatically, without pairing input.\nViewer-only uses a user credential; pairing codes are only for Runner machines.\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\n";
 
 #[derive(Default)]
 struct Input {
@@ -25,6 +25,7 @@ struct Input {
     development_build: bool,
     credentials_file: Option<PathBuf>,
     profile: Option<String>,
+    tunnel_host: Option<TunnelHostMode>,
     upgrade_receipt: Option<PathBuf>,
     installer_file: Option<PathBuf>,
     installer_target: Option<String>,
@@ -67,6 +68,13 @@ fn parse(args: &[String]) -> Result<Input, String> {
             "--token-file" => input.token_file = Some(PathBuf::from(value(&mut iter)?)),
             "--credentials-file" => input.credentials_file = Some(PathBuf::from(value(&mut iter)?)),
             "--profile" => input.profile = Some(value(&mut iter)?),
+            "--host" => {
+                input.tunnel_host = Some(match value(&mut iter)?.as_str() {
+                    "embedded" => TunnelHostMode::Embedded,
+                    "standalone" => TunnelHostMode::Standalone,
+                    _ => return Err("--host must be embedded or standalone".into()),
+                })
+            }
             "--upgrade-receipt" => input.upgrade_receipt = Some(PathBuf::from(value(&mut iter)?)),
             "--installer-file" => input.installer_file = Some(PathBuf::from(value(&mut iter)?)),
             "--installer-target" => input.installer_target = Some(value(&mut iter)?),
@@ -111,6 +119,9 @@ fn parse(args: &[String]) -> Result<Input, String> {
     }
     if input.installer_file.is_some() && input.command != "installer-apply" {
         return Err("--installer-file applies only to verified unified installer handoff".into());
+    }
+    if input.tunnel_host.is_some() && input.command != "tunnel-host" {
+        return Err("--host applies only to the explicit tunnel-host command".into());
     }
     if input.credentials_file.is_some() && input.command != "configure-tunnel" {
         return Err("--credentials-file applies only to configure-tunnel".into());
@@ -768,6 +779,25 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                 Ok(format!("{}: Tunnel and local MCP are ready", status.id))
             }
         }
+        "tunnel-host" => {
+            let profile = input
+                .operand
+                .as_deref()
+                .ok_or("Specify an exact Tunnel profile")?;
+            let mode = input
+                .tunnel_host
+                .ok_or("Specify --host embedded or standalone")?;
+            core.backend
+                .set_tunnel_host(&store, profile, mode)
+                .map_err(|error| error.to_string())?;
+            if input.json {
+                Ok(serde_json::json!({"profile_id":profile,"host_mode":mode,"restart_required":true}).to_string())
+            } else {
+                Ok(format!(
+                    "{profile}: host={mode:?}; start the selected owner explicitly"
+                ))
+            }
+        }
         "tunnel-status" => {
             let status = core
                 .backend
@@ -778,8 +808,9 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                     .map_err(|_| "Could not encode Tunnel status".into())
             } else {
                 Ok(format!(
-                    "{}: running={:?}, Tunnel ready={}, local MCP ready={}",
+                    "{}: host={:?}, running={:?}, Tunnel ready={}, local MCP ready={}",
                     status.service_status.id,
+                    status.host_mode,
                     status.service_status.running,
                     status.tunnel_ready,
                     status.local_mcp_ready

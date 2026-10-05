@@ -2044,10 +2044,9 @@ fn configured_specs(
     if record.request.local_runner() {
         out.push(service_spec(store, record, Component::Runner)?);
     }
-    for profile in tunnel_profiles(store)?
-        .into_iter()
-        .filter(|profile| profile.installed)
-    {
+    for profile in tunnel_profiles(store)?.into_iter().filter(|profile| {
+        profile.installed && profile.host_mode == crate::TunnelHostMode::Standalone
+    }) {
         out.push(tunnel_service_spec(store, record, &profile.profile_id)?);
     }
     Ok(out)

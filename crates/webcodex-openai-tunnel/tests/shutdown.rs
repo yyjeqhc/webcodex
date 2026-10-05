@@ -13,13 +13,63 @@ async fn shutdown_with_inflight_effect_returns_uncertain_and_closes_owned_work()
     let client = client(&cp, &mcp, Limits::default(), DeadlinePolicy::default());
     let health = client.health();
     let mut polls = Polls::start(&mut cp, vec![json!([command("a")])]);
-    let (stop, task) = start(client);
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(client.run_with_drain(
+        async {
+            let _ = stopped.await;
+        },
+        std::time::Duration::from_millis(100),
+    ));
     let held = mcp.next().await;
     assert_eq!(finish(stop, task).await, Err(Error::Uncertain));
     assert!(!health.is_ready());
     held.respond(200, r#"{"jsonrpc":"2.0","id":"a","result":{}}"#);
     assert!(polls.responses.try_recv().is_err());
 }
+#[tokio::test]
+async fn ingress_stop_drains_admitted_queue_and_confirms_delivery_without_replay() {
+    let mut cp = Server::new().await;
+    let mut mcp = Server::new().await;
+    let client = client(
+        &cp,
+        &mcp,
+        Limits {
+            concurrency: 1,
+            ..Limits::default()
+        },
+        DeadlinePolicy::default(),
+    );
+    let health = client.health();
+    let mut polls = Polls::start(&mut cp, vec![json!([command("a"), command("b")])]);
+    let (stop, task) = start(client);
+    let first = mcp.next().await;
+    stop.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while health.is_ready() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    // The local MCP server remains available throughout ingress-stop/drain.
+    first.respond(200, r#"{"jsonrpc":"2.0","id":"a","result":{}}"#);
+    polls.response().await.respond(200, "");
+    let second = mcp.next().await;
+    assert_eq!(second.json()["id"], "b");
+    second.respond(200, r#"{"jsonrpc":"2.0","id":"b","result":{}}"#);
+    polls.response().await.respond(200, "");
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap(),
+        Ok(())
+    );
+    assert!(!health.has_uncertain_work());
+    assert_eq!(polls.count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(mcp.requests.try_recv().is_err());
+}
+
 #[tokio::test]
 async fn control_plane_auth_rejection_stops_without_retry() {
     for status in [401, 403] {

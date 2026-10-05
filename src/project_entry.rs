@@ -20,6 +20,9 @@ mod share_service;
 #[path = "project_entry_windows.rs"]
 mod windows_private_state;
 
+pub(crate) use openai_tunnel_service::{OpenAiTunnel, OpenAiTunnelPrerequisites};
+pub(crate) use regular_tunnel_service::probe_local_mcp;
+
 pub(crate) use regular_tunnel_service::{
     run_regular_server_tunnel_with_stop, RegularServerTunnelOptions,
 };

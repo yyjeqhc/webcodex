@@ -179,6 +179,22 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::PresentSpreadsheet { project: _, path } => {
+                if !matches!(transport, SessionTransport::Mcp) {
+                    ToolResult::err_with_output(
+                        "present_spreadsheet requires MCP resource presentation transport",
+                        serde_json::json!({"error_kind": "unsupported_transport", "required_transport": "mcp"}),
+                    )
+                } else {
+                    match project_resolution {
+                        Some(Ok(resolved)) => self.present_spreadsheet(&resolved, path, auth).await,
+                        Some(Err(error)) => error.into_tool_result(),
+                        None => ToolResult::err(
+                            "present_spreadsheet requires an exact resolved Runner project",
+                        ),
+                    }
+                }
+            }
             ToolCall::ProjectArtifact {
                 project,
                 path,

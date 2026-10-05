@@ -42,6 +42,7 @@ mod artifacts;
 mod inspection;
 mod mutations;
 mod search;
+mod spreadsheet;
 
 pub(crate) use artifacts::{
     artifact_upload_begin_failure_is_definite, artifact_upload_failure_is_definite,

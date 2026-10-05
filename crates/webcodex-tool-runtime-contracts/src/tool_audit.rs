@@ -1718,6 +1718,10 @@ impl ToolCallAuditProjection for ToolCall {
                 "overwrite": overwrite,
                 "idempotency_key_present": !idempotency_key.is_empty(),
             }),
+            Self::PresentSpreadsheet { project, path } => serde_json::json!({
+                "project": project,
+                "path": path,
+            }),
             Self::ProjectArtifact {
                 project,
                 path,

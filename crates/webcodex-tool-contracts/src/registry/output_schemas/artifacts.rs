@@ -120,6 +120,14 @@ fn project_artifact_output_schema() -> Value {
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
+        "present_spreadsheet" => Some(wrapped_output_schema(vec![
+            ("project", schema_type("string", "Canonical resolved Runtime Project id.")),
+            ("path", schema_type("string", "Exact Project-relative spreadsheet path.")),
+            ("name", schema_type("string", "Safe spreadsheet basename.")),
+            ("bytes", schema_type("integer", "Observed file size, at most 5 MiB.")),
+            ("sha256", schema_type("string", "SHA-256 fence for this exact file incarnation.")),
+            ("mime_type", schema_type("string", "Validated file MIME type.")),
+        ])),
         "inspect_project_artifact" => Some(project_artifact_output_schema()),
         "save_project_artifact" => Some(wrapped_output_schema(vec![
             (

@@ -3482,6 +3482,16 @@ pub enum ToolCall {
         #[schemars(length(min = 1, max = 128))]
         idempotency_key: String,
     },
+    /// Open one independent read-only spreadsheet view. No Workflow Session is required.
+    PresentSpreadsheet {
+        /// Exact runtime Project id or issued principal-scoped project reference.
+        #[schemars(length(min = 1, max = 512))]
+        project: String,
+        /// Project-relative CSV, TSV or XLSX file (at most 5 MiB; path up to 512 bytes).
+        #[schemars(length(min = 1, max = 512))]
+        path: String,
+    },
+
     /// Preferred unified read-side facade for Project artifacts. Physical
     /// dispatch remains action-specific: Runner-backed metadata/inspection and
     /// MCP presentation/authority for native images and complete export.

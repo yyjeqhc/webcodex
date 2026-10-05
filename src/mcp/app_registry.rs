@@ -23,6 +23,7 @@ pub(super) struct BundledMcpApp {
     tool_title: Option<&'static str>,
     tool_entrypoints: &'static [&'static str],
     read_display_modes: &'static [&'static str],
+    resource_domains: &'static [&'static str],
 }
 
 impl BundledMcpApp {
@@ -36,11 +37,20 @@ impl BundledMcpApp {
             tool_title: None,
             tool_entrypoints: &[],
             read_display_modes: &[],
+            resource_domains: &[],
         }
     }
 
-    pub fn read(&self, domain: Option<&str>) -> Value {
+    fn resource_metadata(&self, domain: Option<&str>) -> Value {
         let mut meta = resource_meta(domain);
+        if !self.resource_domains.is_empty() {
+            meta["ui"]["csp"]["resourceDomains"] = json!(self.resource_domains);
+        }
+        meta
+    }
+
+    pub fn read(&self, domain: Option<&str>) -> Value {
+        let mut meta = self.resource_metadata(domain);
         // Display modes were historically resource-read metadata only. Keep
         // resources/list and descriptor metadata separate from this projection.
         if let Some(preferred) = self.read_display_modes.first() {
@@ -99,7 +109,7 @@ pub(super) fn resources_list(domain: Option<&str>) -> Value {
             let listing = app.listing.as_ref()?;
             Some(json!({
                 "uri": app.uri, "name": listing.name, "description": listing.description,
-                "mimeType": MCP_UI_RESOURCE_MIME_TYPE, "_meta": resource_meta(domain),
+                "mimeType": MCP_UI_RESOURCE_MIME_TYPE, "_meta": app.resource_metadata(domain),
             }))
         })
         .collect();

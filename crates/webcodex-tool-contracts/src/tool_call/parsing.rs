@@ -583,6 +583,7 @@ impl ToolCall {
             Self::ImportConversationFilesToProject { .. } => "import_host_files",
             Self::TransferProjectArtifact { .. } => "transfer_project_artifact",
             Self::AcceptArtifactHandoff { .. } => "import_artifact_handoff",
+            Self::PresentSpreadsheet { .. } => "present_spreadsheet",
             Self::ProjectArtifact { .. } => "inspect_project_artifact",
             Self::ReadProjectArtifactMetadata { .. } => "read_project_artifact_metadata",
             Self::ReadProjectArtifact { .. } => "read_project_artifact_chunk",
@@ -836,6 +837,7 @@ impl ToolCall {
             | Self::SaveProjectArtifact { project, .. }
             | Self::ComputerSaveSnapshot { project, .. }
             | Self::ImportConversationFilesToProject { project, .. }
+            | Self::PresentSpreadsheet { project, .. }
             | Self::ProjectArtifact { project, .. }
             | Self::ReadProjectArtifactMetadata { project, .. }
             | Self::ReadProjectArtifact { project, .. }

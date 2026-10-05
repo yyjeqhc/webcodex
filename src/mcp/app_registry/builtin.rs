@@ -10,6 +10,7 @@ pub(in crate::mcp) const MCP_COMPUTER_UI_RESOURCE_TTL_MS: u64 = 0;
 pub(in crate::mcp) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/changes/v4";
 pub(in crate::mcp) const MCP_WORKBENCH_UI_RESOURCE_URI: &str = "ui://webcodex/workbench/v2";
 pub(in crate::mcp) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v28";
+pub(in crate::mcp) const MCP_SPREADSHEET_UI_RESOURCE_URI: &str = "ui://webcodex/spreadsheet/v8";
 pub(in crate::mcp) const MCP_GOAL_PLAN_UI_RESOURCE_URI: &str = "ui://webcodex/goal-plan/v7";
 pub(in crate::mcp) const MCP_AGENT_CONTINUATION_UI_RESOURCE_URI: &str =
     "ui://webcodex/agent-continuation/v18";
@@ -18,6 +19,7 @@ pub(in crate::mcp) const MCP_JOB_TERMINAL_CONTINUATION_UI_RESOURCE_URI: &str =
 
 pub(in crate::mcp) const MCP_COMPUTER_APP_HTML: &str = include_str!("../../mcp_computer_app.html");
 pub(in crate::mcp) const MCP_RESULT_APP_HTML: &str = include_str!("../../mcp_result_app.html");
+const MCP_SPREADSHEET_APP_HTML: &str = include_str!("../../mcp_spreadsheet_app.html");
 const MCP_WORKBENCH_APP_HTML: &str = include_str!("../../mcp_workbench_app.html");
 pub(in crate::mcp) const MCP_WORK_RESULT_APP_HTML: &str =
     include_str!("../../mcp_work_result_app.html");
@@ -37,6 +39,17 @@ pub(super) static BUILTIN_MCP_APPS: &[BundledMcpApp] = &[
         tool_title: Some("Open PDF"),
         read_display_modes: &["fullscreen", "inline"],
         ..BundledMcpApp::template(MCP_PDF_UI_RESOURCE_URI, include_str!("../../mcp_pdf_app.html"))
+    },
+    BundledMcpApp {
+        listing: Some(AppListing {
+            name: "WebCodex Spreadsheet Reader",
+            description: "Independent read-only CSV, TSV and XLSX data reader with local worksheet switching and cell selection. No activity, results or collaboration dashboard.",
+        }),
+        tools: &["present_spreadsheet"],
+        // The parser is embedded in this App and instantiated as a Blob Worker.
+        resource_domains: &["blob:"],
+        read_display_modes: &["inline", "fullscreen"],
+        ..BundledMcpApp::template(MCP_SPREADSHEET_UI_RESOURCE_URI, MCP_SPREADSHEET_APP_HTML)
     },
     BundledMcpApp {
         listing: Some(AppListing {

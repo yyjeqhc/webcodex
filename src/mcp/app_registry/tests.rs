@@ -5,6 +5,7 @@ use std::collections::HashSet;
 fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
     let expected = [
         "ui://webcodex/pdf/v3",
+        "ui://webcodex/spreadsheet/v8",
         "ui://webcodex/computer/v12",
         "ui://webcodex/workbench/v2",
         "ui://webcodex/work-result/v28",
@@ -35,8 +36,9 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
             assert!(for_uri(&format!("{}{extra}", app.uri)).is_none());
         }
     }
-    assert_eq!(tools.len(), 7);
+    assert_eq!(tools.len(), 8);
     for retired in [
+        "ui://webcodex/spreadsheet/v7",
         "ui://webcodex/pdf/v1",
         "ui://webcodex/pdf/v2",
         "ui://webcodex/computer/v11",
@@ -96,6 +98,7 @@ fn bundled_app_registry_preserves_read_only_cached_resource_without_new_bindings
         ("open_webcodex_workbench", MCP_WORKBENCH_UI_RESOURCE_URI),
         ("present_pdf", MCP_PDF_UI_RESOURCE_URI),
         ("present_work_result", MCP_WORK_RESULT_UI_RESOURCE_URI),
+        ("present_spreadsheet", MCP_SPREADSHEET_UI_RESOURCE_URI),
         ("present_goal_plan", MCP_GOAL_PLAN_UI_RESOURCE_URI),
         (
             "present_agent_continuation",
@@ -125,7 +128,11 @@ fn bundled_app_registry_keeps_resource_csp_display_modes_and_cache_policy_separa
         assert_eq!(meta["ui"]["prefersBorder"], true);
         assert_eq!(meta["ui"].get("domain"), domain.map(Value::from).as_ref());
         for resource in resources_list(domain)["resources"].as_array().unwrap() {
-            assert_eq!(resource["_meta"], meta);
+            let mut expected = meta.clone();
+            if resource["uri"] == MCP_SPREADSHEET_UI_RESOURCE_URI {
+                expected["ui"]["csp"]["resourceDomains"] = json!(["blob:"]);
+            }
+            assert_eq!(resource["_meta"], expected);
             assert_eq!(resource["mimeType"], MCP_UI_RESOURCE_MIME_TYPE);
         }
         for app in BUILTIN_MCP_APPS {
@@ -135,8 +142,14 @@ fn bundled_app_registry_keeps_resource_csp_display_modes_and_cache_policy_separa
             assert_eq!(contents[0]["uri"], app.uri);
             assert_eq!(contents[0]["text"], app.html);
             assert_eq!(contents[0]["mimeType"], MCP_UI_RESOURCE_MIME_TYPE);
-            assert_eq!(contents[0]["_meta"]["ui"], meta["ui"]);
-            if app.uri == MCP_WORKBENCH_UI_RESOURCE_URI {
+            let mut expected = meta.clone();
+            if app.uri == MCP_SPREADSHEET_UI_RESOURCE_URI {
+                expected["ui"]["csp"]["resourceDomains"] = json!(["blob:"]);
+            }
+            assert_eq!(contents[0]["_meta"]["ui"], expected["ui"]);
+            if app.uri == MCP_WORKBENCH_UI_RESOURCE_URI
+                || app.uri == MCP_SPREADSHEET_UI_RESOURCE_URI
+            {
                 assert_eq!(
                     contents[0]["_meta"]["openai/ui"],
                     json!({

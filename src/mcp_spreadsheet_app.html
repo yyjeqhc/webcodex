@@ -27,8 +27,10 @@ h1 { font-size: 15px; font-weight: 500; margin: 0; overflow-wrap: anywhere; }
 #sheets { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 12px; border-top: 1px solid var(--line); background: var(--subtle); }
 .sheet-tab { padding: 12px 10px; border: 0; border-bottom: 2px solid transparent; font: inherit; background: transparent; color: var(--muted); overflow-wrap: anywhere; max-width: 100%; cursor: var(--cursor-interaction,default); }
 .sheet-tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
-#status { padding: 10px 18px; color: var(--muted); min-height: 38px; font-size: 12px; overflow-wrap: anywhere; }
-@media (pointer: coarse) { .sheet-tab { min-height: 44px; } }
+#status-row { display: flex; align-items: center; gap: 10px; padding: 8px 18px; min-height: 42px; }
+#status { flex: 1; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+#retry { flex: 0 0 auto; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--text); font: inherit; cursor: var(--cursor-interaction,default); }
+@media (pointer: coarse) { .sheet-tab, #retry { min-height: 44px; } }
 </style>
 </head>
 <body>
@@ -39,7 +41,7 @@ h1 { font-size: 15px; font-weight: 500; margin: 0; overflow-wrap: anywhere; }
   <div id="viewport" role="grid" aria-label="Read-only worksheet" aria-readonly="true"><div id="spacer"><div id="cells"></div></div></div>
 </div>
 <div id="sheets" role="tablist" aria-label="Worksheets"></div>
-<div id="status" role="status" aria-live="polite">Waiting for spreadsheet…</div>
+<div id="status-row"><div id="status" role="status" aria-live="polite">Waiting for spreadsheet…</div><button id="retry" type="button" hidden>Retry</button></div>
 <script id="spreadsheet-worker" type="text/plain">
 /* BEGIN GENERATED SPREADSHEET WORKER */
 /* SheetJS CE 0.20.3 · https://sheetjs.com/
@@ -611,6 +613,7 @@ const WebCodexSpreadsheet = (() => {
   const rowHeight = 32, columnWidth = 144, gutter = 44;
   const { columnName, visibleRange } = WebCodexSpreadsheet;
   const status = message => { el('status').textContent = message; };
+  const retry = visible => { el('retry').hidden = !visible; };
   function notify(method, params) {
     if (!disposed) parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
   }
@@ -663,7 +666,7 @@ const WebCodexSpreadsheet = (() => {
     }
   }
   function invalidateSource(message) {
-    generation++; cancelReads(); stopWorker(); clearView(); source = null;
+    generation++; cancelReads(); stopWorker(); clearView(); source = null; retry(false);
     status(String(message).slice(0, 512));
   }
   function takeSource(result) {
@@ -682,7 +685,7 @@ const WebCodexSpreadsheet = (() => {
     generation++; cancelReads(); stopWorker(); clearView();
     source = { key, project: output.project, path: output.path, name: output.name, bytes: output.bytes, sha256: output.sha256 };
     el('filename').textContent = output.name;
-    status('Loading spreadsheet…');
+    retry(false); status('Loading spreadsheet…');
     if (initialized) void load();
   }
   function clearView() {
@@ -758,9 +761,9 @@ const WebCodexSpreadsheet = (() => {
         el('sheets').append(button);
       });
       if (!workbook.sheets.length) throw new Error('Workbook has no worksheets');
-      showSheet(0);
+      retry(false); showSheet(0);
     } catch (error) {
-      if (!disposed && epoch === generation) { clearView(); status('Unable to open: ' + String(error.message || error).slice(0, 512)); }
+      if (!disposed && epoch === generation) { clearView(); retry(true); status('Unable to open: ' + String(error.message || error).slice(0, 512)); }
     } finally { if (loadingEpoch === epoch) loadingEpoch = -1; }
   }
   function sheet() { return workbook?.sheets[sheetIndex]; }
@@ -861,6 +864,11 @@ const WebCodexSpreadsheet = (() => {
       select(selected[0] + row, selected[1] + column, true); render();
       el('cells').querySelector('[aria-selected="true"]')?.focus({ preventScroll: true });
     } else if (event.key === 'Delete' || event.key === 'Backspace' || (event.key.toLowerCase() === 'v' && (event.ctrlKey || event.metaKey))) event.preventDefault();
+  });
+  el('retry').addEventListener('click', () => {
+    if (!disposed && initialized && source && loadingEpoch < 0) {
+      retry(false); status('Loading spreadsheet…'); void load();
+    }
   });
   const resizeObserver = new ResizeObserver(scheduleRender);
   resizeObserver.observe(el('viewport')); resizeObserver.observe(document.body);

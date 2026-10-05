@@ -2,7 +2,7 @@
 
 `present_spreadsheet(project, path)` is the only added model-visible tool. It is a
 Direct Presentation tool with `project:read` and the owning Runner's FileRead
-capability. It opens `ui://webcodex/spreadsheet/v8`, an independent MCP App with no
+capability. It opens `ui://webcodex/spreadsheet/v1`, an independent MCP App with no
 Activity, Results or Collaboration tabs. Viewing a spreadsheet alone requires
 neither a Workflow Session nor `present_work_result`.
 
@@ -142,17 +142,18 @@ Earlier direct View resource reads were rejected by ChatGPT's widget scope. A
 single large private result was also truncated in this sample, and splitting
 that same result into an array did not deliver it completely. The v7 adapter
 therefore used a caller-bound export URI and spreadsheet-specific App-only reads.
-The current v8 adapter instead uses the mainline generic private App transport,
+A later dogfood adapter instead used the mainline generic private App transport,
 with wrapper normalization and a deadline scaled by Host round trips. The observed truncation is evidence for
 this Host test, not a documented universal payload limit. Other Hosts still
 require their own compatibility smoke test. Screenshots and synthetic fixtures
 are kept outside the tracked feature changes.
 
-The v8 transport convergence has deterministic coverage for 5 MiB transfers with
+The final transport convergence has deterministic coverage for 5 MiB transfers with
 15-second Host round trips, common Host wrappers, private metadata normalization,
 identity/continuation corruption, deadline expiry, replacement and teardown.
 Parser regressions cover a two-cell A1:IV50000 worksheet without scanning empty
-coordinates, and both plain and formula-bearing Excel error cells. The original
-v7 Host smoke is historical evidence; actual v8 ChatGPT smoke must be repeated
+coordinates, and both plain and formula-bearing Excel error cells. The v7/v8
+identities below are historical dogfood iterations; the unmerged production
+resource starts at v1. Actual production-resource ChatGPT smoke must be repeated
 before claiming acceptance of this transport change. Disposable recheckout
 fixtures are removed after a verified temporary-directory boundary.

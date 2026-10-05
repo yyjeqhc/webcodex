@@ -270,6 +270,23 @@ test('transfer deadline is bounded and a late final segment never starts parsing
   await late.teardown();
 });
 
+test('transient transfer failure exposes an explicit retry for the same pinned source', async () => {
+  const view = reader({ manual: true }); await view.initialize();
+  view.present(result('retry')); const first = view.chunks()[0];
+  await view.expire(120000);
+  assert.equal(view.nodes.retry.hidden, false); assert.match(view.nodes.status.textContent, /timed out/);
+  view.nodes.retry.events.click(); await flush();
+  assert.equal(view.nodes.retry.hidden, true); assert.equal(view.chunks().length, 2);
+  const second = view.chunks()[1];
+  assert.equal(second.params.arguments.byte_offset, 0);
+  await view.reply(second, segmentEnvelope(segment(second, bytes)));
+  view.workers[0].reply(); await flush();
+  assert.equal(view.nodes.grid.hidden, false); assert.equal(view.nodes.retry.hidden, true);
+  await view.reply(first, segmentEnvelope(segment(first, bytes)));
+  assert.equal(view.workers.length, 1);
+  await view.teardown();
+});
+
 test('public-only bytes and malformed continuations never enter the parser', async () => {
   for (const wrap of [value => ({ structuredContent: { ...value.structuredContent, output: { artifact_chunk: {
     ...value.structuredContent.output.artifact_chunk, content_base64: value._meta['webcodex/artifactChunk'].content_base64,

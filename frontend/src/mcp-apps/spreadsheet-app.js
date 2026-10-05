@@ -8,6 +8,7 @@
   const rowHeight = 32, columnWidth = 144, gutter = 44;
   const { columnName, visibleRange } = WebCodexSpreadsheet;
   const status = message => { el('status').textContent = message; };
+  const retry = visible => { el('retry').hidden = !visible; };
   function notify(method, params) {
     if (!disposed) parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
   }
@@ -60,7 +61,7 @@
     }
   }
   function invalidateSource(message) {
-    generation++; cancelReads(); stopWorker(); clearView(); source = null;
+    generation++; cancelReads(); stopWorker(); clearView(); source = null; retry(false);
     status(String(message).slice(0, 512));
   }
   function takeSource(result) {
@@ -79,7 +80,7 @@
     generation++; cancelReads(); stopWorker(); clearView();
     source = { key, project: output.project, path: output.path, name: output.name, bytes: output.bytes, sha256: output.sha256 };
     el('filename').textContent = output.name;
-    status('Loading spreadsheet…');
+    retry(false); status('Loading spreadsheet…');
     if (initialized) void load();
   }
   function clearView() {
@@ -155,9 +156,9 @@
         el('sheets').append(button);
       });
       if (!workbook.sheets.length) throw new Error('Workbook has no worksheets');
-      showSheet(0);
+      retry(false); showSheet(0);
     } catch (error) {
-      if (!disposed && epoch === generation) { clearView(); status('Unable to open: ' + String(error.message || error).slice(0, 512)); }
+      if (!disposed && epoch === generation) { clearView(); retry(true); status('Unable to open: ' + String(error.message || error).slice(0, 512)); }
     } finally { if (loadingEpoch === epoch) loadingEpoch = -1; }
   }
   function sheet() { return workbook?.sheets[sheetIndex]; }
@@ -258,6 +259,11 @@
       select(selected[0] + row, selected[1] + column, true); render();
       el('cells').querySelector('[aria-selected="true"]')?.focus({ preventScroll: true });
     } else if (event.key === 'Delete' || event.key === 'Backspace' || (event.key.toLowerCase() === 'v' && (event.ctrlKey || event.metaKey))) event.preventDefault();
+  });
+  el('retry').addEventListener('click', () => {
+    if (!disposed && initialized && source && loadingEpoch < 0) {
+      retry(false); status('Loading spreadsheet…'); void load();
+    }
   });
   const resizeObserver = new ResizeObserver(scheduleRender);
   resizeObserver.observe(el('viewport')); resizeObserver.observe(document.body);

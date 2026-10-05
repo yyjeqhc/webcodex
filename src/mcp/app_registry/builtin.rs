@@ -10,7 +10,7 @@ pub(in crate::mcp) const MCP_COMPUTER_UI_RESOURCE_TTL_MS: u64 = 0;
 pub(in crate::mcp) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/changes/v4";
 pub(in crate::mcp) const MCP_WORKBENCH_UI_RESOURCE_URI: &str = "ui://webcodex/workbench/v2";
 pub(in crate::mcp) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v28";
-pub(in crate::mcp) const MCP_SPREADSHEET_UI_RESOURCE_URI: &str = "ui://webcodex/spreadsheet/v8";
+pub(in crate::mcp) const MCP_SPREADSHEET_UI_RESOURCE_URI: &str = "ui://webcodex/spreadsheet/v1";
 pub(in crate::mcp) const MCP_GOAL_PLAN_UI_RESOURCE_URI: &str = "ui://webcodex/goal-plan/v7";
 pub(in crate::mcp) const MCP_AGENT_CONTINUATION_UI_RESOURCE_URI: &str =
     "ui://webcodex/agent-continuation/v18";
@@ -46,6 +46,7 @@ pub(super) static BUILTIN_MCP_APPS: &[BundledMcpApp] = &[
             description: "Independent read-only CSV, TSV and XLSX data reader with local worksheet switching and cell selection. No activity, results or collaboration dashboard.",
         }),
         tools: &["present_spreadsheet"],
+        tool_title: Some("Open Spreadsheet"),
         // The parser is embedded in this App and instantiated as a Blob Worker.
         resource_domains: &["blob:"],
         read_display_modes: &["inline", "fullscreen"],

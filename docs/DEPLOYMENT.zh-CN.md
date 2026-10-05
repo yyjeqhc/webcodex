@@ -26,7 +26,7 @@
 npm install -g @yyjeqhc/webcodex
 ```
 
-支持 Linux x64、Linux arm64、macOS x64、macOS arm64、Windows x64 与 Windows arm64。Windows 支持 CLI + Runner、显式前台 Server，以及显式本机 `webcodex share --tunnel cloudflare|openai|none`。Windows x64 支持 managed Cloudflare 获取；固定版本 upstream 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。managed OpenAI `tunnel-client` 支持 Windows x64/arm64。旧 `server install` / `runner install` 命令不托管 Windows 服务，仍可使用下文前台流程。新的 `environment` 流程实现了 SCM 服务与显式账户要求；参见[统一安装指南](unified-installation.zh-CN.md#服务与凭据)及待完成的原生验收。npm 包装器要求 Node.js 18 或更新。Linux x64 native artifact 以 glibc 2.17 或更新为兼容基线。
+支持 Linux x64、Linux arm64、macOS x64、macOS arm64、Windows x64 与 Windows arm64。Windows 支持 CLI + Runner、显式前台 Server，以及显式本机 `webcodex share --tunnel cloudflare|openai|none`。Windows x64 支持 managed Cloudflare 获取；固定版本 upstream 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。原生 OpenAI Tunnel 支持 Windows x64/arm64。旧 `server install` / `runner install` 命令不托管 Windows 服务，仍可使用下文前台流程。新的 `environment` 流程实现了 SCM 服务与显式账户要求；参见[统一安装指南](unified-installation.zh-CN.md#服务与凭据)及待完成的原生验收。npm 包装器要求 Node.js 18 或更新。Linux x64 native artifact 以 glibc 2.17 或更新为兼容基线。
 
 从源码构建：
 

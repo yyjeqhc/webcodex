@@ -64,7 +64,7 @@ window.__TAURI_INTERNALS__={transformCallback(fn){const id=callbackId++;callback
  case 'update_tunnel_config':if(args.request.action==='save'){state.openai_tunnel_config.saved_tunnel_id=args.request.tunnelId;state.openai_tunnel_config.effective_tunnel_id=args.request.tunnelId;}return structuredClone(state);
  case 'save_tunnel_profile':{
   const request=args.request;
-  state.connections={profiles:[{id:'fixture-connection',name:request.name,tunnel_id:request.tunnel_id,credential_present:Boolean(request.api_key),enabled:false,autostart:request.autostart,revision:1,source:'file',lifecycle:'stopped',pid:null,health:'unknown',last_error:null,ready:false,runtime_directory:null,health_url:null,log_file:null,tunnel_client_pid:null,local_mcp_url:null,logs:[]}],running:0,needs_attention:0,config_error:false};
+  state.connections={profiles:[{id:'fixture-connection',name:request.name,tunnel_id:request.tunnel_id,credential_present:Boolean(request.api_key),enabled:false,autostart:request.autostart,revision:1,source:'file',lifecycle:'stopped',pid:null,health:'unknown',last_error:null,ready:false,runtime_directory:null,local_mcp_url:null,logs:[]}],running:0,needs_attention:0,config_error:false};
   return structuredClone(state);
  }
  case 'activate_local_project':{let project=state.saved_projects.find(p=>p.path===args.request.projectPath);if(!project){project={path:args.request.projectPath,allowed_root:args.request.projectPath,is_git_repository:true,runtime_project_id:'agent:fixture-runner:gamma'};state.saved_projects.push(project);}state.project=project;return structuredClone(state);}

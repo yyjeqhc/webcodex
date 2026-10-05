@@ -67,7 +67,7 @@ macOS LaunchAgent 与 Windows 用户计划任务需要该用户保持登录。�
 
 Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS origin，可使用 `--tunnel none --public-url https://share.example`，并由 operator 自己把该 origin 反向代理/隧道到 loopback WebCodex Server；`--public-url` 只声明外部 origin/issuer，不会创建代理或 tunnel。
 
-`webcodex share --tunnel openai` 是显式 opt-in 的 OpenAI Secure MCP Tunnel provider。它要求 `CONTROL_PLANE_TUNNEL_ID` 与只授予 Tunnels Read + Use 的 Restricted `CONTROL_PLANE_API_KEY`，当前只支持 `--auth bearer`。WebCodex 会从 `WEBCODEX_TUNNEL_CLIENT_BIN`、`PATH` 或经过校验的 managed 下载解析固定 OpenAI `tunnel-client` v0.0.12；启动 daemon 前运行 `doctor`，并等待 `/readyz`。临时 WebCodex Bearer 只写入私有 share 目录，通过 file-backed MCP `Authorization` header 交给 `tunnel-client`，因此 ChatGPT 使用 Connection: Tunnel + No authentication。长驻 daemon 环境会显式移除 `OPENAI_ADMIN_KEY` 与 `OPENAI_API_KEY`；Runtime API key 仍只承担 control-plane authority。
+`webcodex share --tunnel openai` 使用原生 Rust Secure MCP Tunnel client，需要 `CONTROL_PLANE_TUNNEL_ID` 和具有 Tunnels Read + Use 权限的 Restricted `CONTROL_PLANE_API_KEY`，支持 `--auth bearer`。临时本地 Bearer 直接在内存中传递，仅注入固定的本地 MCP 请求；ChatGPT 使用 Connection: Tunnel + No authentication。启动时验证本地 MCP 和成功的控制面 poll，不再下载外部 tunnel-client 或启动 doctor/health 子进程。严格 deadline、有界接收、禁止本地重放及不确定重启标记见 [crate 契约](../crates/webcodex-openai-tunnel/README.md)。
 
 公网 `share` 会 best-effort 复制 MCP URL；默认 Bearer/OAuth 模式仍不会自动把临时 credential 复制进剪贴板。显式 `--auth query-token` 模式则按设计复制含临时 credential 的敏感 URL，并在状态输出中明确提示。Linux/macOS 交互式终端还会提供按 Enter 打开 ChatGPT App 设置的快捷入口。剪贴板/浏览器集成都只是 convenience，失败不会影响已经 ready 的 runtime。使用 `--no-copy-url` 可关闭剪贴板访问。
 

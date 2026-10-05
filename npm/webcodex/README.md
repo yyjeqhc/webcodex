@@ -33,7 +33,7 @@ npx --yes @yyjeqhc/webcodex share
 
 - Linux x64/arm64: local one-command `share`, Server, and Runner workflows.
 - macOS x64/arm64: local one-command `share` and Runner workflows.
-- Windows x64/arm64: CLI + Runner, foreground Server, and explicit local `share` with `cloudflare`, `openai`, or `none`. Windows x64 auto-manages the pinned Cloudflare binary; managed OpenAI `tunnel-client` supports x64 and arm64. The pinned Cloudflare release has no official Windows ARM64 artifact, so ARM64 Cloudflare use requires a trusted explicit/PATH binary. Managed Windows Server services remain unsupported.
+- Windows x64/arm64: CLI + Runner, foreground Server, and explicit local `share` with `cloudflare`, `openai`, or `none`. Windows x64 auto-manages the pinned Cloudflare binary; the built-in native OpenAI Tunnel supports x64 and arm64. The pinned Cloudflare release has no official Windows ARM64 artifact, so ARM64 Cloudflare use requires a trusted explicit/PATH binary. Managed Windows Server services remain unsupported.
 
 For normal Windows/Linux use, start with the [Full Setup guide](https://github.com/yyjeqhc/webcodex/blob/main/docs/PERSONAL_SETUP.md). Production hosting, OAuth, private-network details, proxy settings, and troubleshooting are available in the [WebCodex documentation](https://github.com/yyjeqhc/webcodex/tree/main/docs).
 
@@ -80,7 +80,7 @@ npx --yes @yyjeqhc/webcodex share
 
 - Linux x64/arm64：支持本机一键 `share`、Server 和 Runner 工作流。
 - macOS x64/arm64：支持本机一键 `share` 和 Runner 工作流。
-- Windows x64/arm64：支持 CLI、Runner、前台 Server，以及显式本机 `share --tunnel cloudflare|openai|none`。Windows x64 可自动管理固定版本 Cloudflare；OpenAI `tunnel-client` 的 managed 获取支持 x64/arm64。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。WebCodex 托管的 Windows Server service 仍不支持。
+- Windows x64/arm64：支持 CLI、Runner、前台 Server，以及显式本机 `share --tunnel cloudflare|openai|none`。Windows x64 可自动管理固定版本 Cloudflare；内置原生 OpenAI Tunnel 支持 x64/arm64。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。WebCodex 托管的 Windows Server service 仍不支持。
 
 Windows/Linux 普通使用先看[完整使用指南](https://github.com/yyjeqhc/webcodex/blob/main/docs/PERSONAL_SETUP.zh-CN.md)。生产部署、OAuth、私有网络细节、代理配置和故障排查再查看 [WebCodex 文档](https://github.com/yyjeqhc/webcodex/tree/main/docs)。
 

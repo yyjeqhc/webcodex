@@ -180,10 +180,7 @@ async fn a_present_file_is_not_startup_evidence() {
     assert_eq!(view.compatibility, ProtocolCompatibility::Unknown);
     assert_eq!(view.binaries[0].present, Some(true));
     assert_eq!(view.binaries[0].startup_check, BinaryStartupCheck::Failed);
-    assert_eq!(
-        view.binaries[0].error_code.as_deref(),
-        Some(expected_error)
-    );
+    assert_eq!(view.binaries[0].error_code.as_deref(), Some(expected_error));
     #[cfg(unix)]
     assert!(view.binaries[0].diagnostics.is_none());
     #[cfg(windows)]

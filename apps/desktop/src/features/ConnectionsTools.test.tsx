@@ -199,7 +199,7 @@ describe("Connections + Tools control surfaces", () => {
   it("shows proxy recovery for asynchronous readiness failure without a rejected start call", () => {
     const initial = state();
     initial.tunnel_proxy = { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true };
-    initial.connections = connectionSnapshot(connectionFixture({ id: "work", name: "ChatGPT Work", lifecycle: "error", pid: null, ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_daemon_readiness", reason_code: "tunnel_daemon_not_ready", auto_proxy_used: true }));
+    initial.connections = connectionSnapshot(connectionFixture({ id: "work", name: "ChatGPT Work", lifecycle: "error", pid: null, ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_control_plane", reason_code: "tunnel_control_plane_unreachable", auto_proxy_used: true }));
     render(<Harness mode="connections" initial={initial} />);
     const card = screen.getByRole("article", { name: "ChatGPT Work" });
     expect(within(card).getByText(/The failed attempt used an automatically detected proxy/)).toHaveTextContent("try Direct");
@@ -208,9 +208,8 @@ describe("Connections + Tools control surfaces", () => {
   });
 
   it.each([
-    ["tunnel_client_download_failed", "tunnel_client_download", "could not be downloaded", true],
-    ["tunnel_client_install_failed", "tunnel_client_install", "could not be installed", false],
-    ["tunnel_client_verification_failed", "tunnel_client_verification", "failed integrity verification", false],
+    ["tunnel_restart_uncertain", "tunnel_recovery", "Restart is blocked", false],
+    ["tunnel_control_plane_unreachable", "tunnel_control_plane", "Check internet", true],
   ] as const)("shows specific recovery for %s instead of blaming credentials", (reason_code, failure_stage, message, proxyHint) => {
     const initial = state();
     initial.tunnel_proxy = { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true };
@@ -226,14 +225,14 @@ describe("Connections + Tools control surfaces", () => {
   it("uses the failed attempt's proxy evidence rather than the current global setting", () => {
     const afterAutoFailure = state();
     afterAutoFailure.tunnel_proxy = { mode: "direct", custom_url: null, effective_source: "direct", effective_proxy_present: false, system_proxy_detected: true };
-    afterAutoFailure.connections = connectionSnapshot(connectionFixture({ lifecycle: "error", ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_daemon_readiness", reason_code: "tunnel_daemon_not_ready", auto_proxy_used: true }));
+    afterAutoFailure.connections = connectionSnapshot(connectionFixture({ lifecycle: "error", ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_control_plane", reason_code: "tunnel_control_plane_unreachable", auto_proxy_used: true }));
     const { unmount } = render(<Harness mode="connections" initial={afterAutoFailure} />);
     expect(screen.getByText(/The failed attempt used an automatically detected proxy/)).toHaveTextContent("try Direct");
     unmount();
 
     const afterDirectFailure = state();
     afterDirectFailure.tunnel_proxy = { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true };
-    afterDirectFailure.connections = connectionSnapshot(connectionFixture({ lifecycle: "error", ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_daemon_readiness", reason_code: "tunnel_daemon_not_ready", auto_proxy_used: false }));
+    afterDirectFailure.connections = connectionSnapshot(connectionFixture({ lifecycle: "error", ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_control_plane", reason_code: "tunnel_control_plane_unreachable", auto_proxy_used: false }));
     render(<Harness mode="connections" initial={afterDirectFailure} />);
     expect(screen.queryByText(/The failed attempt used an automatically detected proxy/)).not.toBeInTheDocument();
     expect(api.tunnelProfileAction).not.toHaveBeenCalled();
@@ -252,7 +251,7 @@ describe("Connections + Tools control surfaces", () => {
 
   it.each([
     ["tunnel_control_plane_unreachable", "tunnel_unavailable", "Cannot reach the OpenAI tunnel service", "network", "Proxy settings"],
-    ["tunnel_control_plane_probe_failed", "tunnel_unavailable", "Cannot reach the OpenAI tunnel service", "network", "Proxy settings"],
+    ["tunnel_control_plane_unreachable", "tunnel_unavailable", "Cannot reach the OpenAI tunnel service", "network", "Proxy settings"],
     [null, "local_mcp_unavailable", "Local MCP service is unreachable", "runtime", "Runtime"],
     [null, "health_stale", "Tunnel health reports stopped arriving", "diagnostics", "Troubleshooting"],
     [null, "protocol_invalid", "Tunnel client returned an invalid status", "diagnostics", "Troubleshooting"],

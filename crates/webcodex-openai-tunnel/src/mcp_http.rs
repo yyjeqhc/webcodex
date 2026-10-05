@@ -42,8 +42,10 @@ impl TunnelClient {
         };
         request = request
             .headers(headers)
-            .header("authorization", self.target.credential.0.clone())
             .header("accept", "application/json, text/event-stream");
+        if let Some(credential) = &self.target.credential {
+            request = request.header("authorization", credential.0.clone());
+        }
         if !termination {
             request = request
                 .header("content-type", "application/json")

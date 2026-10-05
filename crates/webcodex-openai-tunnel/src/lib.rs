@@ -12,7 +12,7 @@ mod response;
 pub mod wire;
 
 pub use error::Error;
-pub use health::Health;
+pub use health::{Health, HealthSnapshot};
 use policy::{DeadlinePolicy, Limits};
 use reqwest::{
     header::{HeaderValue, AUTHORIZATION},
@@ -71,13 +71,21 @@ impl ControlPlaneIdentity {
 }
 pub struct FixedMcpTarget {
     url: Url,
-    credential: Credential,
+    credential: Option<Credential>,
 }
 impl FixedMcpTarget {
     pub fn new(url: &str, credential: Credential) -> Result<Self, Error> {
         Ok(Self {
             url: checked_url(url)?,
-            credential,
+            credential: Some(credential),
+        })
+    }
+    /// Explicitly bind a target requiring no local Authorization header. This
+    /// never forwards the control-plane credential or admits command overrides.
+    pub fn unauthenticated(url: &str) -> Result<Self, Error> {
+        Ok(Self {
+            url: checked_url(url)?,
+            credential: None,
         })
     }
 }

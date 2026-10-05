@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "WebCodex Browser Bridge",
+  "version": "0.1.0",
+  "description": "Explicitly share one current Chrome tab with your local WebCodex Runner. Detaching never closes Chrome.",
+  "minimum_chrome_version": "118",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2+cX7t7koLtJagREt4B83ohOXFvZM550I56qOhnaxJWe/6O/NCl2Unl3jMJWXJFFjkyX+NB06J7MpfLqCwAUagS+bnkjzVhrxDJ0X4uKVbnBmTsJoTX6Yw1ydhtDhyte7pORHLLRV+JMcmGpL4BP6eYNeMR5MNs+usxDdDY8Uj/+V8brAbok2UEhtlie8PcTMFTS1QmYRz9IRlSRoukFMxm7NrAZGdi/AgNlSaahBNlbFQBxKtqv0O16OxoPFrh1NI3X9vRFGemb9Btr6YAW267g1zsdspcVXzJg2GxtgV59McN6Iv+gjrklTeLzZVRHn1taU7U5L/Y2D+9TVi9AKQIDAQAB",
+  "permissions": ["activeTab", "debugger", "nativeMessaging"],
+  "background": {"service_worker": "worker.js", "type": "module"},
+  "action": {"default_popup": "popup.html", "default_title": "Share or revoke this tab"}
+}

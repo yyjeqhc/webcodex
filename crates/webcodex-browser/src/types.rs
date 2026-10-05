@@ -163,9 +163,21 @@ pub struct BatchResult {
     pub error: Option<BrowserError>,
 }
 
+/// Ownership controls cleanup. External attachments never own a Chrome process.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserOwnership {
+    OwnedEphemeral,
+    OwnedManagedPersistent,
+    AttachedExternal,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BrowserSummary {
     pub browser_id: String,
+    pub ownership: BrowserOwnership,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     pub page_count: usize,
 }
 

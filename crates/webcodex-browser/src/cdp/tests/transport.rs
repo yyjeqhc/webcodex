@@ -210,9 +210,11 @@ fn snapshot_session(failed_method: Option<&'static str>, iframe: bool) {
     let child = ManagedChild::spawn(&mut command).unwrap();
     assert!(child.wait_tree_exit(Duration::from_secs(3)).unwrap());
     let mut backend = CdpBackend {
-        child,
-        _profile: tempfile::tempdir().unwrap(),
-        endpoint: Url::parse(&format!("ws://{address}/browser")).unwrap(),
+        owner: CdpOwner::Owned {
+            child,
+            profile: OwnedProfile::Ephemeral(tempfile::tempdir().unwrap()),
+            endpoint: Url::parse(&format!("ws://{address}/browser")).unwrap(),
+        },
         next_id: 41,
         collectors: HashMap::new(),
     };

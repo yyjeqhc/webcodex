@@ -5132,6 +5132,8 @@ name = "webcodex-browser"
 version = "0.5.0"
 dependencies = [
  "base64",
+ "fs2",
+ "libc",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -5141,6 +5143,8 @@ dependencies = [
  "url",
  "uuid",
  "webcodex-process",
+ "webcodex-runner-config",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

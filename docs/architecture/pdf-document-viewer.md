@@ -1,7 +1,7 @@
 # Dedicated PDF document viewer
 
 `present_pdf(project, path)` binds a direct model tool to the self-contained
-`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v4`. It selects one
+`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v5`. It selects one
 authorized project-relative `.pdf`, independent of Git changes, a Work Result
 card, or a Workflow Session. The App contains only document controls and the
 reading area; the Host owns the surrounding chrome and display mode.
@@ -66,6 +66,8 @@ the actual viewport and all currently visible pages, including scroll updates;
 prefetch notifications cannot select a page. An explicitly selected short page
 stays current while it remains fully visible. Fit width is computed independently
 for each page, and its canvas and text layer share that page's scale.
+Zoom, fit-width and container-width changes preserve the current page and the
+relative vertical position within it while page heights are recalculated.
 
 Offline fonts/CMaps, the 8-million-pixel canvas cap, disabled scripting/eval,
 XFA/Wasm/external fetches, the 16-million-pixel embedded-image limit, and
@@ -126,8 +128,9 @@ an isolated MCP Host fixture. Original, deterministic PDF samples cover mixed
 page sizes, rotation, embedded Type3 Chinese glyphs with ToUnicode mapping, a
 scan-only image, a 32-page document, oversized pages at DPR 2, and invalid PDF
 bytes. Assertions check image pixels, glyph painting, text selection/alignment,
-page navigation, zoom/resize cancellation, lazy loading, cache limits, duplicate
-delivery, version changes and teardown during transfer. It blocks external
+page navigation, reading-position preservation, zoom/resize cancellation, lazy
+loading, cache limits, duplicate delivery, version changes and teardown during
+transfer. It blocks external
 network fetches. Screenshots and the result report are local ignored artifacts
 under `artifacts/pdf-reader/`; it does not exercise a real MCP Host or native
 Server/Runner authority. See [UI smoke instructions](../../scripts/ui-smoke/README.md).

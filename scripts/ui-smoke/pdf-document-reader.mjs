@@ -241,6 +241,48 @@ try {
     } finally { await page.close(); }
   });
 
+  await run('reading position survives zoom, fit width and resize', async () => {
+    const mounted = await mount('long'); const { page, frame } = mounted;
+    try {
+      await painted(frame, 1); await jump(frame, 16);
+      await frame.locator('[data-page-number="16"]').evaluate(node => {
+        document.querySelector('.pdf-viewer-container').scrollTop += node.getBoundingClientRect().height / 4;
+      });
+      const position = () => frame.evaluate(() => {
+        const viewport = document.querySelector('.pdf-viewer-container').getBoundingClientRect();
+        const rect = document.querySelector('[data-page-number="16"]').getBoundingClientRect();
+        return { current: document.querySelector('.pdf-control-group span').textContent,
+          offset: (viewport.top - rect.top) / rect.height, height: rect.height };
+      });
+      const settle = () => frame.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await settle(); const initial = await position(); assert.equal(initial.current, '16 / 32');
+      const measurements = [];
+      for (const action of ['Zoom in', 500, 'Zoom out', 'Fit page width', 900, 390]) {
+        const before = await position();
+        const fit = await frame.getByRole('button', { name: 'Fit page width', exact: true }).textContent() === 'Fit width';
+        if (typeof action === 'number') await page.setViewportSize({ width: action, height: 720 });
+        else await frame.getByRole('button', { name: action, exact: true }).click();
+        await frame.waitForFunction(({ height, action, fit, offset }) => {
+          const node = document.querySelector('[data-page-number="16"]');
+          if (typeof action === 'number') {
+            const viewport = document.querySelector('.pdf-viewer-container'), rect = node.getBoundingClientRect();
+            if (fit) return Math.abs(rect.width - Math.min(800, viewport.clientWidth - 24)) < 2;
+            return Math.abs(rect.height - height) < 2
+              && Math.abs(viewport.getBoundingClientRect().top - rect.top - offset * rect.height) < 2;
+          }
+          return Math.abs(node.getBoundingClientRect().height - height) > 2 || action === 'Fit page width';
+        }, { height: before.height, action, fit, offset: initial.offset });
+        await settle(); const after = await position();
+        assert.equal(after.current, '16 / 32', `${action} changed the current page`);
+        assert.ok(Math.abs(after.offset - initial.offset) * after.height < 2,
+          `${action} moved the reading position: ${JSON.stringify({ initial, after })}`);
+        await painted(frame, 16); bounded(await cache(frame));
+        measurements.push({ action, ...after });
+      }
+      await verified(mounted); await close(mounted); return { measurements };
+    } finally { await page.close(); }
+  });
+
   await run('total canvas pixel budget at DPR 2', async () => {
     const mounted = await mount('wide', { dpr: 2 }); const { page, frame } = mounted;
     try {

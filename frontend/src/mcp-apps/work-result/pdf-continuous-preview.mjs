@@ -25,6 +25,7 @@ export function createPreview(host, options) {
   let readyCancel = null, workerFailure = null, scale = 1, fit = true, currentPage = 1;
   let resizeTimer = null, renderGeneration = 0, rendering = false, scrollFrame = null;
   let defaultGeometry = null;
+  let layoutWidth = null, readingPosition = null;
   const pageStates = new Map();
   const cachedPages = new Set(), nearPages = new Set(), visiblePages = new Set(), renderQueue = new Set();
   const current = () => !disposed && options.current();
@@ -265,7 +266,7 @@ export function createPreview(host, options) {
     void drainRenderQueue();
   }
   function updateCurrentPage() {
-    if (!current() || !pdf) return;
+    if (!current() || !pdf || viewport.clientWidth !== layoutWidth) return;
     const bounds = viewport.getBoundingClientRect();
     let best = null, fullyVisibleCurrent = false;
     for (const state of visiblePages) {
@@ -282,6 +283,7 @@ export function createPreview(host, options) {
       currentPage = best.state.number;
       controls(); summary(); schedulePages();
     }
+    rememberReadingPosition();
   }
   const visibleObserver = new IntersectionObserver(entries => {
     if (!current() || !pdf) return;
@@ -316,6 +318,7 @@ export function createPreview(host, options) {
     if (!current()) { firstProxy.cleanup(); return; }
     const firstView = firstProxy.getViewport({ scale: 1 });
     defaultGeometry = { width: firstView.width, height: firstView.height };
+    layoutWidth = viewport.clientWidth;
     pages.replaceChildren(); pageStates.clear();
     for (let number = 1; number <= pdf.numPages; number++) {
       if (!current()) return;
@@ -332,31 +335,46 @@ export function createPreview(host, options) {
       applyPageGeometry(state);
       pageObserver.observe(node); visibleObserver.observe(node);
     }
-    currentPage = 1; controls(); summary();
+    currentPage = 1; rememberReadingPosition(); controls(); summary();
     schedulePages();
   }
 
+  function rememberReadingPosition() {
+    // Width changes can already have changed CSS page margins before the observer runs.
+    if (viewport.clientWidth !== layoutWidth) return readingPosition;
+    const selected = pageStates.get(currentPage);
+    if (selected) {
+      const rect = selected.node.getBoundingClientRect();
+      readingPosition = { selected, offset: (viewport.getBoundingClientRect().top - rect.top) / rect.height };
+    }
+    return readingPosition;
+  }
   async function rescale() {
     if (!pdf || !current()) return;
+    const position = rememberReadingPosition();
     renderGeneration++;
     for (const state of pageStates.values()) {
       clearPage(state); applyPageGeometry(state);
     }
+    // Keep the current page and its relative reading position as page heights change.
+    layoutWidth = viewport.clientWidth;
+    if (position) {
+      const rect = position.selected.node.getBoundingClientRect();
+      viewport.scrollTop += rect.top - viewport.getBoundingClientRect().top + position.offset * rect.height;
+      currentPage = position.selected.number;
+    }
+    rememberReadingPosition();
     schedulePages(); summary(); controls();
   }
   function jump(number) {
     if (!pdf) return;
     const clamped = Math.max(1, Math.min(pdf.numPages, number));
     pageStates.get(clamped)?.node.scrollIntoView({ block: "start", behavior: "smooth" });
-    currentPage = clamped; controls(); summary(); schedulePages();
+    currentPage = clamped; rememberReadingPosition(); controls(); summary(); schedulePages();
   }
 
-  let observedWidth = null;
-  const resizeObserver = new ResizeObserver(entries => {
-    const width = entries[0]?.contentRect.width;
-    if (width === observedWidth) return;
-    observedWidth = width;
-    if (!current() || !pdf || !fit) return;
+  const resizeObserver = new ResizeObserver(() => {
+    if (viewport.clientWidth === layoutWidth || !current() || !pdf) return;
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => { void rescale(); }, 120);
   });
@@ -371,6 +389,7 @@ export function createPreview(host, options) {
     }
     nearPages.clear(); visiblePages.clear(); renderQueue.clear(); cachedPages.clear();
     pageStates.clear(); pages.replaceChildren();
+    layoutWidth = readingPosition = null;
     const task = loading; loading = null; pdf = null;
     const oldWorker = worker, oldPort = port, oldUrl = workerUrl;
     worker = port = workerUrl = null;

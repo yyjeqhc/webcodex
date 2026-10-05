@@ -115,7 +115,7 @@ addEventListener("message", event => {
 el("retry").onclick = () => { if (identity && !disposed) void open(); };
 addEventListener("pagehide", close, { once: true });
 addEventListener("beforeunload", close, { once: true });
-send("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "webcodex-pdf", title: "PDF", version: "2.1.0" }, appCapabilities: {} })
+send("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "webcodex-pdf", title: "PDF", version: "2.1.1" }, appCapabilities: {} })
   .then(result => {
     if (disposed) return; theme(result?.hostContext);
     parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");

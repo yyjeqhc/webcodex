@@ -27,7 +27,8 @@ WebCodex backend or frontend app build. Install Chromium with
 `WEBCODEX_SMOKE_BROWSER` to an installed Chrome/Chromium executable. It covers
 800/390-pixel layouts, mixed page sizes, rotation, text-layer alignment, embedded
 Chinese Type3 glyphs/selection/search, scan image pixel colors, rapid zoom and
-resize, 32-page lazy loading and scroll-back, the total canvas budget at DPR 2,
+resize, reading-position preservation, 32-page lazy loading and scroll-back,
+the total canvas budget at DPR 2,
 repeated delivery, version changes, parse errors, and transfer/Worker teardown.
 The Chinese sample tests an embedded font and Unicode text mapping, not every
 external CMap or OpenType font. Expected pixel colors and glyph/geometry assertions

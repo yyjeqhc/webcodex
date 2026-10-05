@@ -48,13 +48,13 @@ Open **Settings → Runtime & services**. Service status and local service contr
 
 Candidate inspection executes the selected binaries' bounded `--build-info-json` commands with a minimal environment. Choose only executables you intend to run. Probing verifies required files, executable status, declared native target/architecture, structured metadata, supported contract ranges and unchanged file hashes; it does not establish that modified code implements its declarations honestly.
 
-The candidate preview does not change active processes or the persisted selection. Different versions, different revisions, and dirty builds are accepted with advisories when the contracts overlap. Missing/non-executable files, wrong observable architecture, unsupported/malformed metadata or disjoint contracts block activation.
+Selecting a folder validates and applies it in the same user action. Different versions, different revisions, and dirty builds are accepted with advisories when the contracts overlap. Missing/non-executable files, wrong observable architecture, unsupported/malformed metadata or disjoint contracts block activation.
 
 File presence and **Startup check** are separate observations. A present file is not proof of permission to execute, including on Windows. Startup passes only when the bounded `--build-info-json` command succeeds and returns readable build information; declarations are then validated separately. Missing or unreadable files show **Not checked**, and filesystem inspection failures leave presence **Unconfirmed** rather than claiming the file is missing. A failed probe keeps compatibility **Unknown** unless observed build information proves an architecture or contract mismatch. All unverified candidates remain blocked from activation.
 
-The required-file checks and recovery guidance are visible without expanding build details. Failure details retain only the process exit code and safe I/O error kind, never arbitrary stderr or command output. For example, Windows `0xC0000022` means access was denied during startup; it does not identify Defender, AppLocker or another security component as the cause. Check OS protection history and collect a scoped launch trace when needed. A quarantined or missing executable is a separate case. These observations do not change OS security policy, restore quarantined files, or restart services.
+Healthy required-file checks are collapsed by default. Failed startup checks and recovery guidance expand automatically. Failure details retain only the process exit code and safe I/O error kind, never arbitrary stderr or command output. For example, Windows `0xC0000022` means access was denied during startup; it does not identify Defender, AppLocker or another security component as the cause. Check OS protection history and collect a scoped launch trace when needed. A quarantined or missing executable is a separate case. These observations do not change OS security policy, restore quarantined files, or restart services.
 
-Choose **Use this Runtime** only after reviewing the preview. **Use bundled Runtime** stages the bundled candidate for the same explicit confirmation flow. **Recheck Runtime** observes the currently selected files; it does not silently restart services or approve changed bytes.
+**Select Runtime folder…** and **Use bundled Runtime** validate and apply the chosen source directly. Only active or unconfirmed Jobs require an interruption confirmation. **Reload selected folder** revalidates a development build in place and restarts the owned Runtime. **Recheck Runtime**, under program inspection, remains observation-only.
 
 ### Switching, Jobs, and rollback
 
@@ -64,7 +64,7 @@ Desktop stops its owned Runner and, for a local setup, its owned Server, starts 
 
 Failed activation attempts one bounded restoration of the previous known-good source and verified files. The result distinguishes **previous Runtime restored** from **recovery required**. A failed/unconfirmed stop is not permission to spawn a replacement. If previous files were removed or changed, Desktop reports that recovery cannot be confirmed; it does not fall back secretly to bundled files.
 
-The Custom selection survives Quit/reopen. If its folder later disappears or becomes invalid, Desktop presents **Selected Runtime is unavailable**, with explicit bundled/other-folder/diagnostic recovery actions. Keep previously selected Runtime files available until a successful upgrade is confirmed.
+The Custom directory selection survives Quit/reopen. Rebuilding in that directory does not require selecting or approving it again: a new Desktop process probes the new files and accepts compatible binaries. Old persisted fingerprints remain diagnostics, not permanent byte approval gates. Each activation still rejects files changing during its own validation/startup. If the folder disappears or is invalid, Desktop presents **Selected Runtime is unavailable** with recovery actions and does not silently use another directory.
 
 ## Build your own Runtime
 

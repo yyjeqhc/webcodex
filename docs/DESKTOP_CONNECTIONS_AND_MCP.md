@@ -5,6 +5,29 @@ Desktop owns the user's persistent **desired configuration**. Processes and
 This development work does not change the repository release version or publish a
 release.
 
+## Runtime folders and everyday service controls
+
+Settings → Runtime & services shows service state first. A stopped local service
+has Start; a ready local service has Restart. Stop and credential repair are
+under Advanced. Remote processes never acquire local service actions.
+
+The bundled Runtime is the default; ordinary users need not select binaries.
+Selecting a custom folder validates and applies it in the same action. Desktop
+remembers the **directory**, not a permanent allowlist of those exact file bytes.
+After recompiling into `target/dogfood`, restart Desktop, or use **Reload selected
+folder** to validate and restart the Desktop-owned Runtime without selecting the
+folder again. A changed Git commit, dirty build or compatible version is diagnostic
+information, not a startup prohibition. An earlier saved fingerprint no longer
+blocks a compatible rebuild, including when loading an older Desktop configuration.
+
+Only interruptions with active or unconfirmed Jobs need additional confirmation.
+The native switch still checks the current owner, selected candidate/revision,
+architecture, protocol compatibility, and files changing *during* validation or
+startup. Missing/invalid binaries remain actionable errors; Desktop never silently
+falls back to a different directory. Healthy per-binary diagnostics are collapsed;
+failed startup checks expand so the broken component remains visible. Installed
+system/user-service environments retain their installer-based update path.
+
 ## One runtime, multiple connections
 
 ```text

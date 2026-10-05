@@ -43,8 +43,8 @@ describe("persistent local services", () => {
     expect(within(section).getByRole("heading", { name: "Server Connection" })).toBeInTheDocument();
     expect(within(section).getByRole("heading", { name: "Local task service" })).toBeInTheDocument();
     expect(api.environmentServiceAction).not.toHaveBeenCalled();
-    fireEvent.click(within(section).getByRole("button", { name: "Start Local Server" }));
-    await waitFor(() => expect(api.environmentServiceAction).toHaveBeenCalledExactlyOnceWith({ environmentId: "environment-1", component: "server", action: "start" }));
+    fireEvent.click(within(section).getByRole("button", { name: "Restart Local Server" }));
+    await waitFor(() => expect(api.environmentServiceAction).toHaveBeenCalledExactlyOnceWith({ environmentId: "environment-1", component: "server", action: "restart" }));
     await waitFor(() => expect(onState).toHaveBeenCalledWith(baseState));
   });
 
@@ -64,6 +64,7 @@ describe("persistent local services", () => {
     await screen.findByTestId("persistent-services");
     expect(screen.queryByRole("button", { name: "Repair Runner credential" })).not.toBeInTheDocument();
     rerender(wrap(<LocalServicesPanel state={baseState} onState={vi.fn()} />));
+    fireEvent.click(screen.getAllByText("Advanced")[1]);
     fireEvent.click(await screen.findByRole("button", { name: "Repair Runner credential" }));
     await waitFor(() => expect(api.environmentServiceAction).toHaveBeenCalledWith({ environmentId: "environment-1", component: "runner", action: "repair_credential" }));
     expect(screen.queryByLabelText("Existing Server user API token")).not.toBeInTheDocument();
@@ -80,7 +81,7 @@ describe("persistent local services", () => {
   it("surfaces only the safe error code returned by the service action", async () => {
     api.environmentServiceAction.mockRejectedValue({ code: "service_start_failed", message: "private host detail", next_action: "Retry" });
     render(wrap(<LocalServicesPanel state={baseState} onState={vi.fn()} />));
-    fireEvent.click(screen.getByRole("button", { name: "Start Local Server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restart Local Server" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("service_start_failed");
     expect(screen.queryByText("private host detail")).not.toBeInTheDocument();
   });

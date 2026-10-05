@@ -491,6 +491,8 @@ pub struct StoredDesktopConfig {
     pub runtime_binary_source: crate::runtime_selection::RuntimeSource,
     #[serde(default)]
     pub runtime_selection_revision: u64,
+    // Last explicitly activated build, for diagnostics and legacy config reads.
+    // Never an across-restart approval gate: custom directories track rebuilds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_binary_fingerprint: Option<String>,
     #[serde(default)]

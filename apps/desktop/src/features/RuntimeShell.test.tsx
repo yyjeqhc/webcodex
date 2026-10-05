@@ -86,17 +86,33 @@ describe("Runtime candidate and ownership semantics", () => {
     expect(screen.getByText(/系統拒絕了存取/)).toBeVisible();
     expect(screen.getByText(/相容性仍未確認/)).toBeVisible();
   });
-  it("previews mixed revisions/versions without mutation and only activates after explicit confirmation", async () => {
+  it("selects and validates a compatible folder in one action without redundant approval", async () => {
     render(wrap(<RuntimePanel state={state} onState={vi.fn()} />));
     await screen.findByRole("heading", { name: "Current Runtime" });
-    fireEvent.click(await screen.findByRole("button", { name: "Select Runtime folder…" }));
-    const previewHeading = await screen.findByRole("heading", { name: "Candidate Runtime" });
-    const preview = previewHeading.parentElement as HTMLElement;
+    expect(api.probeRuntime).not.toHaveBeenCalled();
     expect(api.switchRuntime).not.toHaveBeenCalled();
-    expect(within(preview).getByText("Compatible")).toBeInTheDocument();
-    expect(within(preview).getByText("Different versions")).toBeInTheDocument();
-    fireEvent.click(within(preview).getByRole("button", { name: "Use this Runtime" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select Runtime folder…" }));
+    await waitFor(() => expect(api.probeRuntime).toHaveBeenCalledExactlyOnceWith({ kind: "custom", directory: "/fixture/custom" }));
     await waitFor(() => expect(api.switchRuntime).toHaveBeenCalledExactlyOnceWith({ candidate_id: "candidate-fence", expected_selection_revision: 3, confirm_interrupt: false }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("reloads the remembered development folder without opening the directory picker", async () => {
+    api.runtimeSettings.mockResolvedValue({ ...settings, source: candidate.source, selected: candidate });
+    render(wrap(<RuntimePanel state={state} onState={vi.fn()} />));
+    expect(await screen.findByText(/Compatible updates are accepted/)).toBeVisible();
+    expect(screen.getByRole("heading", { name: "webcodex" })).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Reload selected folder" }));
+    await waitFor(() => expect(api.probeRuntime).toHaveBeenCalledExactlyOnceWith(candidate.source));
+    await waitFor(() => expect(api.switchRuntime).toHaveBeenCalledOnce());
+    expect(dialog.open).not.toHaveBeenCalled();
+  });
+  it("requires interruption confirmation when the Job count is unknown", async () => {
+    api.probeRuntime.mockResolvedValue({ ...settings, candidate, active_jobs: null });
+    render(wrap(<RuntimePanel state={state} onState={vi.fn()} />));
+    fireEvent.click(await screen.findByRole("button", { name: "Select Runtime folder…" }));
+    const confirm = await screen.findByRole("dialog", { name: "Runtime restart warning" });
+    expect(within(confirm).getByText("Job count is not confirmed.")).toBeVisible();
+    expect(api.switchRuntime).not.toHaveBeenCalled();
   });
   it("rejects incompatible candidates while the selected Runtime remains visible", async () => {
     api.probeRuntime.mockResolvedValue({ ...settings, candidate: { ...candidate, compatibility: "incompatible", error_code: "runtime_contract_incompatible" } });
@@ -111,7 +127,6 @@ describe("Runtime candidate and ownership semantics", () => {
     api.probeRuntime.mockResolvedValue({ ...settings, candidate, active_jobs: 2 });
     render(wrap(<RuntimePanel state={state} onState={vi.fn()} />));
     fireEvent.click(await screen.findByRole("button", { name: "Use bundled Runtime" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Use this Runtime" }));
     const confirm = await screen.findByRole("dialog", { name: "Runtime restart warning" });
     expect(within(confirm).getByText("Active Jobs: 2")).toBeInTheDocument(); expect(api.switchRuntime).not.toHaveBeenCalled();
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
@@ -122,6 +137,19 @@ describe("Runtime candidate and ownership semantics", () => {
     await waitFor(() => expect(switchButton).toBeEnabled());
     fireEvent.click(switchButton);
     await waitFor(() => expect(api.switchRuntime).toHaveBeenCalledWith(expect.objectContaining({ confirm_interrupt: true })));
+  });
+  it("asks for consent when native preflight discovers Jobs after the preview", async () => {
+    api.switchRuntime.mockRejectedValueOnce({ code: "runtime_switch_jobs_confirmation_required", message: "Jobs changed", next_action: "Confirm interruption" });
+    render(wrap(<RuntimePanel state={state} onState={vi.fn()} />));
+    fireEvent.click(await screen.findByRole("button", { name: "Select Runtime folder…" }));
+    const confirm = await screen.findByRole("dialog", { name: "Runtime restart warning" });
+    expect(api.switchRuntime).toHaveBeenCalledTimes(1);
+    expect(within(confirm).getByText("Job count is not confirmed.")).toBeVisible();
+    const retry = within(confirm).getByRole("button", { name: "Switch anyway" });
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    await waitFor(() => expect(api.switchRuntime).toHaveBeenCalledTimes(2));
+    expect(api.switchRuntime).toHaveBeenLastCalledWith({ candidate_id: "candidate-fence", expected_selection_revision: 3, confirm_interrupt: true });
   });
   it("reports rolled-back activation rather than claiming a successful switch", async () => {
     const outcome = { outcome: "rolled_back", reason_code: "server_start_failed", rollback_reason_code: null, selection_revision: 3, restart_required: false };

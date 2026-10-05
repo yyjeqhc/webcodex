@@ -7,6 +7,7 @@ async fn retired_app_resources_fail_closed_instead_of_serving_current_templates(
     let retired = [
         "ui://webcodex/docx/v1",
         "ui://webcodex/docx/v2",
+        "ui://webcodex/docx/v3",
         "ui://webcodex/agent-continuation/v1",
         "ui://webcodex/agent-continuation/v10",
         "ui://webcodex/agent-continuation/v11",

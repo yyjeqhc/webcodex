@@ -11,7 +11,7 @@ fn docx_document_app_has_a_distinct_direct_binding_and_private_read_tool() {
         .unwrap();
     assert_eq!(
         present["_meta"]["ui"]["resourceUri"],
-        "ui://webcodex/docx/v3"
+        "ui://webcodex/docx/v4"
     );
     let read = tools
         .iter()

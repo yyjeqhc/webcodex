@@ -11,7 +11,7 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
         "ui://webcodex/goal-plan/v7",
         "ui://webcodex/agent-continuation/v18",
         "ui://webcodex/job-terminal-continuation/v2",
-        "ui://webcodex/docx/v3",
+        "ui://webcodex/docx/v4",
     ];
     let listed = resources_list(None);
     let uris: Vec<_> = listed["resources"]
@@ -40,6 +40,7 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
     for retired in [
         "ui://webcodex/docx/v1",
         "ui://webcodex/docx/v2",
+        "ui://webcodex/docx/v3",
         "ui://webcodex/pdf/v1",
         "ui://webcodex/pdf/v2",
         "ui://webcodex/computer/v11",

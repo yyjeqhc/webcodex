@@ -40,7 +40,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ),
             "Open one independent read-only spreadsheet reader for an exact Project-relative CSV, TSV or XLSX file up to 5 MiB. Use this when the user wants to view a spreadsheet; viewing alone needs no present_work_result card or Workflow Session. Call directly so an MCP Apps Host receives the viewer descriptor. The MCP adapter delivers bounded file bytes privately to the App for the observed file incarnation, then switches sheets and selects cells locally. It shows stored numbers, formatted dates, formula text and cached formula results; it does not recalculate formulas, edit or save, execute macros, or load external links. Excel styling, charts and pivot rendering are outside this data reader. Every App read reauthorizes Project/path through read_app_artifact_chunk and rejects changed content; never silently retarget a mounted reader. Oversized, encrypted, malformed or excessive workbooks fail visibly. MCP is required; Hosts without Apps can read the returned file resource.",
         ),
-        156,
+        157,
         super::ToolDirectReason::Presentation,
     ),
     permission_risk(

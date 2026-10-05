@@ -198,6 +198,20 @@ pub enum ToolCall {
         byte_offset: usize,
     },
 
+    /// App-only generic read of one exact immutable artifact version for presentation renderers.
+    ReadAppArtifactChunk {
+        #[schemars(length(min = 1, max = 512))]
+        project: String,
+        #[schemars(length(min = 1, max = 512))]
+        path: String,
+        #[schemars(regex(pattern = "^[0-9a-f]{64}$"))]
+        sha256: String,
+        #[schemars(range(min = 1, max = 268435456))]
+        bytes: usize,
+        #[schemars(range(min = 0, max = 268435455))]
+        byte_offset: usize,
+    },
+
     /// Explicitly present one persistent card for the current client Window.
     /// Project authority is re-checked on every refresh; Workflow Session linkage is optional evidence.
     PresentWorkResult {

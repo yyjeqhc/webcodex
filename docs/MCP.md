@@ -545,19 +545,24 @@ including Session wrappers, gateway tools, and optional App metadata/tools.
 ### ChatGPT file bridge
 
 For viewing a project PDF, call `present_pdf(project, path)` directly. It opens
-the dedicated PDF App (`ui://webcodex/pdf/v2`) with a filename, page/zoom/search
-toolbar and a full-height reading area. It does not include Work Result activity,
+the dedicated PDF App (`ui://webcodex/pdf/v10`) with a filename, page/zoom/search
+toolbar and a full-height continuous-scroll reading area. It does not include Work Result activity,
 change lists or collaboration. Unchanged and untracked PDFs are supported;
 Git and Workflow Sessions are not prerequisites. The Host controls its outer
 sidebar and display mode. Rendering requires an MCP Apps-capable Host.
 
-The App privately calls model-hidden `read_pdf_chunk`, reauthorizing Project and
-Runner ownership on every read and pinning the selected file's size/SHA-256.
-Version changes fail closed; explicitly call `present_pdf` again to select the
-new version. PDF bytes stay in private MCP metadata. The 20 MiB file limit,
-128 KiB chunks, offline PDF.js renderer and Worker teardown remain bounded.
-Use `present_work_result` for substantial coding progress, and `present_pdf`
-when the user asks to view a PDF. See [PDF document viewer](architecture/pdf-document-viewer.md).
+The dedicated reader uses the App-only `read_app_artifact_chunk` bridge for bytes.
+That bridge is format-neutral and reuses the canonical artifact export chunk
+transport: each `tools/call` reauthorizes Project access, validates the pinned
+path/size/SHA-256 identity, and returns at most the canonical 1 MiB artifact chunk through private MCP metadata.
+A changed source fails closed. For a 9 MiB document this is roughly nine Host
+round trips rather than the legacy 128 KiB `read_pdf_chunk` loop's roughly seventy.
+The legacy PDF-specific reader remains available for compatibility but is no longer
+the dedicated reader's primary path. The PDF remains bounded at 20 MiB and PDF.js
+rechecks the assembled digest/header before rendering. Use `present_work_result`
+for substantial coding progress, and `present_pdf` when the user asks to view a
+PDF. See [PDF document viewer](architecture/pdf-document-viewer.md).
+The dedicated reader keeps PDF.js as the rendering engine but uses a small host-compatible continuous-scroll shell with viewport observation and nearby-page lazy rendering; Work Result retains its compact single-page preview. The transport still assembles and verifies the complete pinned file before PDF.js starts rendering, so progressive first-page range loading remains a separate optimization.
 
 When the connected MCP protocol/host admits the artifact capabilities, WebCodex supports
 host-native file transfer in both directions without routing complete binary

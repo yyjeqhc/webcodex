@@ -11,25 +11,38 @@ fn pdf_document_app_has_a_distinct_direct_binding_and_private_read_tool() {
         .unwrap();
     assert_eq!(
         present["_meta"]["ui"]["resourceUri"],
-        "ui://webcodex/pdf/v2"
+        "ui://webcodex/pdf/v10"
     );
-    let read = tools
-        .iter()
-        .find(|tool| tool["name"] == "read_pdf_chunk")
-        .unwrap();
-    assert_eq!(read["_meta"]["ui"]["visibility"], json!(["app"]));
-    assert!(read["_meta"]["ui"].get("resourceUri").is_none());
-    assert!(
-        !super::super::tools::adaptive_runtime_gateway_target_admitted_for_test(
-            "read_pdf_chunk",
-            true
-        )
-    );
+    for name in ["read_app_artifact_chunk", "read_pdf_chunk"] {
+        let read = tools.iter().find(|tool| tool["name"] == name).unwrap();
+        assert_eq!(read["_meta"]["ui"]["visibility"], json!(["app"]));
+        assert!(read["_meta"]["ui"].get("resourceUri").is_none());
+        assert!(
+            !super::super::tools::adaptive_runtime_gateway_target_admitted_for_test(name, true)
+        );
+    }
     assert!(super::super::presentation::tool_requires_direct_app_presentation("present_pdf"));
 }
 
 #[test]
 fn pdf_document_bytes_never_enter_public_mcp_content() {
+    let artifact_encoded = "QUJDRA==";
+    let artifact = mcp_runtime_tool_result(
+        "read_app_artifact_chunk",
+        false,
+        ToolResult::ok(
+            json!({"artifact_chunk": {"project":"agent:pdf:demo", "path":"report.pdf", "content_base64": artifact_encoded}}),
+        ),
+    );
+    assert_eq!(
+        artifact["_meta"]["webcodex/artifactChunk"]["content_base64"],
+        artifact_encoded
+    );
+    assert!(!artifact["structuredContent"]
+        .to_string()
+        .contains(artifact_encoded));
+    assert!(!artifact["content"].to_string().contains(artifact_encoded));
+
     let encoded = "JVBERi0xLjcK";
     let value = mcp_runtime_tool_result(
         "read_pdf_chunk",

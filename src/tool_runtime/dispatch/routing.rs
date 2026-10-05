@@ -120,6 +120,7 @@ impl ToolRuntime {
             | ToolCall::PresentWorkResult { .. }
             | ToolCall::PresentPdf { .. }
             | ToolCall::ReadPdfChunk { .. }
+            | ToolCall::ReadAppArtifactChunk { .. }
             | ToolCall::WorkResultState { .. }
             | ToolCall::WorkResultActivityDetail { .. }
             | ToolCall::WorkResultSendMessage { .. }

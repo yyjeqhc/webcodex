@@ -2030,6 +2030,7 @@ fn mcp_invocation_envelope_supported_fields(tool: &str) -> Vec<&'static str> {
         "sync_goal_plan"
             | "get_work_result_state"
             | "read_pdf_chunk"
+            | "read_app_artifact_chunk"
             | "read_changed_file_diff"
             | "search_mentions"
     ) || tool == WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME
@@ -2829,8 +2830,12 @@ pub(super) async fn handle_call(
             None => json!({"project": binding.project}),
         };
     }
-    let app_only_pdf_chunk =
-        server_mcp_apps_enabled && stateless_2026 && params.name == "read_pdf_chunk";
+    let app_only_pdf_chunk = server_mcp_apps_enabled
+        && stateless_2026
+        && matches!(
+            params.name.as_str(),
+            "read_pdf_chunk" | "read_app_artifact_chunk"
+        );
     let app_only_work_result_state =
         work_result_app_admitted && params.name == "get_work_result_state";
     let app_only_work_result_activity_detail =

@@ -36,6 +36,23 @@ pub use common::{
 };
 
 fn base_output_schema_for_tool(name: &str) -> Value {
+    if name == "read_app_artifact_chunk" {
+        let payload = json!({
+            "type":"object", "additionalProperties":false,
+            "properties":{
+                "project":{"type":"string","maxLength":512},
+                "path":{"type":"string","maxLength":512},
+                "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+                "bytes_total":{"type":"integer","minimum":1,"maximum":268435456},
+                "byte_offset":{"type":"integer","minimum":0,"maximum":268435455},
+                "next_byte_offset":{"type":["integer","null"],"minimum":1,"maximum":268435455},
+                "complete":{"type":"boolean"},
+                "content_base64":{"type":"string","maxLength":1398104,"description":"Runtime-only bytes; MCP moves them to private App metadata before structured/text framing."}
+            },
+            "required":["project","path","sha256","bytes_total","byte_offset","next_byte_offset","complete"]
+        });
+        return common::wrapped_output_schema(vec![("artifact_chunk", payload)]);
+    }
     if matches!(name, "present_pdf" | "read_pdf_chunk") {
         let identity = json!({
             "type": "object", "additionalProperties": false,

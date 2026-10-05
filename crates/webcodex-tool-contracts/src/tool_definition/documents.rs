@@ -11,6 +11,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ToolDirectReason::Presentation,
     ),
     document_read_definition("read_pdf_chunk", ToolVisibility::ModelHidden, ToolIdempotency::PureRead),
+    document_read_definition("read_app_artifact_chunk", ToolVisibility::ModelHidden, ToolIdempotency::PureRead),
 ];
 
 const DOCUMENT_AUDIT_FIELDS: &[ToolAuditResultField] = &[ToolAuditResultField::value("error_kind")];

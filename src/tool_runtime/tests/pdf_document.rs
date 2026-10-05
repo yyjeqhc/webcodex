@@ -176,6 +176,49 @@ async fn pdf_document_rejects_foreign_principal_and_unsafe_paths_before_read() {
 }
 
 #[tokio::test]
+async fn app_artifact_chunk_reuses_internal_chunk_size_and_preserves_version_fence() {
+    let (runtime, auth, project) = setup("app-artifact-read").await;
+    let data = vec![b'x'; super::super::files::INTERNAL_ARTIFACT_TRANSFER_CHUNK_BYTES + 17];
+    let sha256 = format!("{:x}", Sha256::digest(&data));
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let project = project.clone();
+        let sha256 = sha256.clone();
+        let bytes = data.len();
+        async move {
+            runtime
+                .read_app_artifact_chunk(
+                    project,
+                    "report.pdf".into(),
+                    sha256,
+                    bytes,
+                    0,
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    complete_chunk(
+        &runtime,
+        "app-artifact-read",
+        "report.pdf",
+        &data,
+        0,
+        super::super::files::INTERNAL_ARTIFACT_TRANSFER_CHUNK_BYTES,
+        false,
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["artifact_chunk"]["complete"], false);
+    assert_eq!(
+        result.output["artifact_chunk"]["next_byte_offset"],
+        super::super::files::INTERNAL_ARTIFACT_TRANSFER_CHUNK_BYTES
+    );
+}
+
+#[tokio::test]
 async fn pdf_document_read_requires_app_capability_even_with_read_scope() {
     let runtime = test_runtime();
     let auth = managed_oauth_auth_context("alice", None);

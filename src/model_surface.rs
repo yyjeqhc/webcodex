@@ -25,6 +25,7 @@ pub(crate) fn tool_requires_direct_app_presentation(tool_name: &str) -> bool {
         "present_work_result"
             | "present_pdf"
             | "present_docx"
+            | "present_spreadsheet"
             | "present_goal_plan"
             | "present_agent_continuation"
             | "present_job_terminal_continuation"
@@ -506,6 +507,7 @@ mod tests {
         for tool in [
             "present_work_result",
             "present_pdf",
+            "present_spreadsheet",
             "present_goal_plan",
             "present_agent_continuation",
             "present_job_terminal_continuation",

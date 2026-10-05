@@ -308,6 +308,7 @@ impl ToolRuntime {
             | ToolCall::SaveProjectArtifact { .. }
             | ToolCall::TransferProjectArtifact { .. }
             | ToolCall::AcceptArtifactHandoff { .. }
+            | ToolCall::PresentSpreadsheet { .. }
             | ToolCall::ProjectArtifact { .. }
             | ToolCall::ReadProjectArtifactMetadata { .. }
             | ToolCall::ReadProjectArtifact { .. }

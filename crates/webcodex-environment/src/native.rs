@@ -1145,11 +1145,38 @@ impl NativeEnvironment {
     }
 
     pub async fn invite(&self, store: &EnvironmentStore) -> SetupResultValue<Secret> {
+        self.invite_inner(store, None).await
+    }
+
+    /// Create an invitation only for the environment the caller observed.
+    /// The target is checked against the same locked record used for issuance,
+    /// before reading Server credentials or making an HTTP request.
+    pub async fn invite_for_environment(
+        &self,
+        store: &EnvironmentStore,
+        expected_environment_id: &str,
+    ) -> SetupResultValue<Secret> {
+        self.invite_inner(store, Some(expected_environment_id))
+            .await
+    }
+
+    async fn invite_inner(
+        &self,
+        store: &EnvironmentStore,
+        expected_environment_id: Option<&str>,
+    ) -> SetupResultValue<Secret> {
         let _lock = store.lock()?;
         crate::ensure_upgrade_idle_under_lock(store)?;
         let record = store.load_environment()?.ok_or_else(|| {
             diagnostic("not_configured", "Configure the Server environment first")
         })?;
+        if expected_environment_id.is_some_and(|expected| expected != record.environment_id) {
+            return Err(SetupDiagnostic::new(
+                "environment_changed",
+                "The saved environment changed before invitation creation",
+                "Refresh the saved environment before creating an invitation",
+            ));
+        }
         if !record.request.local_server() {
             return Err(diagnostic(
                 "server_admin_required",

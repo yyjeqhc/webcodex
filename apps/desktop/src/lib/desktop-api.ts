@@ -102,6 +102,8 @@ export const desktopApi = {
     userToken?: string | null;
     replacePairingCode?: boolean;
   }) => invoke<DesktopState>("configure_environment", { request }),
+  createEnvironmentInvitation: (environmentId: string) =>
+    invoke<{ environmentId: string; pairingCode: string }>("create_environment_invitation", { request: { environmentId } }),
   environmentServiceAction: (request: {
     environmentId: string;
     component: "server" | "runner";

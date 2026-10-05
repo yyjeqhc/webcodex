@@ -281,9 +281,9 @@ beforeEach(() => {
     renderApp();
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
     await changeServerConnection();
-    fireEvent.click(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /创建主节点/ }));
     expect(screen.getByRole("checkbox", { name: "允许 AI 在此电脑上工作" })).toBeChecked();
-    expect(screen.queryByRole("button", { name: "选择文件夹" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择文件夹" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith({
       mode: "create", serverUrl: null, projectPath: null, runner: true, serviceScope:"user",
@@ -295,11 +295,11 @@ beforeEach(() => {
     api.getState.mockResolvedValue(projectlessReadyState); renderApp();
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
     await changeServerConnection();
-    fireEvent.click(await screen.findByRole("button", { name: /连接现有 Server/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /加入主节点/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: "允许 AI 在此电脑上工作" }));
     fireEvent.change(screen.getByLabelText("Server URL"), { target: { value: "https://server.example" } });
     fireEvent.change(screen.getByLabelText("用户 API 凭据"), { target: { value: "wc_user_secret" } });
-    expect(screen.queryByLabelText("一次性登录码")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("一次性配对码")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "连接电脑" }));
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith({
       mode: "join", serverUrl: "https://server.example", projectPath: null, runner: false, serviceScope:"user",
@@ -313,9 +313,9 @@ beforeEach(() => {
     renderApp();
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
     await changeServerConnection();
-    fireEvent.click(await screen.findByRole("button", { name: /连接现有 Server/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /加入主节点/ }));
     fireEvent.change(screen.getByLabelText("Server URL"), { target: { value: "https://server.example" } });
-    const code = screen.getByLabelText("一次性登录码");
+    const code = screen.getByLabelText("一次性配对码");
     fireEvent.change(code, { target: { value: "wc_pair_once" } });
     fireEvent.click(screen.getByRole("button", { name: "连接电脑" }));
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith({
@@ -648,11 +648,11 @@ beforeEach(() => {
     renderApp();
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
     await changeServerConnection();
-    fireEvent.click(screen.getByRole("button", { name: /连接现有 Server/ }));
+    fireEvent.click(screen.getByRole("button", { name: /加入主节点/ }));
     expect(screen.getByText("将复用现有连接")).toBeInTheDocument();
-    expect(screen.queryByLabelText("一次性登录码")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("一次性配对码")).not.toBeInTheDocument();
 
-    expect(screen.queryByRole("button", { name: "选择文件夹" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择文件夹" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "连接电脑" }));
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({
       mode: "join", serverUrl, projectPath: null, runner: true, pairingCode: null,
@@ -673,7 +673,7 @@ beforeEach(() => {
     renderApp();
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
     await changeServerConnection();
-    fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    fireEvent.click(screen.getByRole("button", { name: /创建主节点/ }));
     expect(screen.queryByRole("checkbox", { name: "配置完成后连接 ChatGPT" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
 
@@ -824,8 +824,8 @@ beforeEach(() => {
     await waitFor(() => expect(api.configureLocal).toHaveBeenCalledTimes(1));
     expect(api.configureEnvironment).not.toHaveBeenCalled();
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: /在此电脑使用 WebCodex/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /连接现有 Server/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /创建主节点/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /加入主节点/ })).not.toBeInTheDocument();
   });
 
   it("keeps PowerShell 7 guidance available in manual local recovery without requiring a project", async () => {
@@ -841,7 +841,7 @@ beforeEach(() => {
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
 
     await changeServerConnection();
-    fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    fireEvent.click(screen.getByRole("button", { name: /创建主节点/ }));
     const guidance = screen.getByText("建议安装 PowerShell 7").closest("article");
     expect(guidance).not.toBeNull();
     expect(guidance).toHaveTextContent("Windows PowerShell 5.1");
@@ -860,7 +860,7 @@ beforeEach(() => {
     renderApp();
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
     await changeServerConnection();
-    fireEvent.click(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /创建主节点/ }));
     fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("runner_offline");
     expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({ projectPath: null, runner: true }));

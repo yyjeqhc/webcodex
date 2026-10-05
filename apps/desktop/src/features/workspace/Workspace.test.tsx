@@ -65,6 +65,19 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("product workspace task flows", () => {
+  it("offers Add device on a saved main node even with no observed devices or projects", async () => {
+    native.invoke.mockImplementation(async (_command, { request }) => request.kind === "overview"
+      ? { ...overview, projects: [], runners: [], visible_project_count: 0, recent_sessions: undefined }
+      : { projects: [], total: 0, truncated: false });
+    render(wrap(<ProjectsPanel />, { ...state, persistent_environment: "saved-main" }));
+    const add = await screen.findByRole("button", { name: "Add device" });
+    fireEvent.click(add);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("No invitation created")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Create invitation" })).toBeDisabled();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Loopback and wildcard addresses");
+  });
+
   it.each([[false, false], [true, false], [false, true], [true, true]])(
     "reports partial Session history for return truncation=%s and scan truncation=%s",
     async (truncated, scan_truncated) => {

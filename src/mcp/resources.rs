@@ -1454,6 +1454,7 @@ pub(super) fn project_artifact_presentation_mode(
         {
             ProjectArtifactPresentationMode::Image
         }
+        "present_spreadsheet" => ProjectArtifactPresentationMode::Export,
         "inspect_project_artifact" => match arguments.get("action").and_then(Value::as_str) {
             Some("image") => ProjectArtifactPresentationMode::Image,
             Some("export") => ProjectArtifactPresentationMode::Export,
@@ -1463,8 +1464,12 @@ pub(super) fn project_artifact_presentation_mode(
     }
 }
 
-fn artifact_export_operation_label(_tool_name: &str) -> &'static str {
-    "inspect_project_artifact(action=export)"
+fn artifact_export_operation_label(tool_name: &str) -> &'static str {
+    if tool_name == "present_spreadsheet" {
+        "present_spreadsheet"
+    } else {
+        "inspect_project_artifact(action=export)"
+    }
 }
 
 #[derive(Debug, Default)]

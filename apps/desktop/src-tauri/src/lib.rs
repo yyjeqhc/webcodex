@@ -132,6 +132,7 @@ pub fn run() {
             commands::inspect_project_access,
             commands::configure_local_setup,
             commands::configure_environment,
+            commands::create_environment_invitation,
             commands::environment_service_action,
             commands::repair_environment_user_credential,
             commands::activate_local_project,

@@ -10,6 +10,7 @@ import { ProjectRows } from "./ProjectRows";
 import { RunnerDevices } from "./RunnerDevices";
 import { projectRunnerId } from "./project-device";
 import { AddLocalProject } from "./AddLocalProject";
+import { AddDevice } from "./AddDevice";
 
 export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSettings?: () => void; onState?: (state: DesktopState) => void }) {
   const p = useProduct();
@@ -112,6 +113,7 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
       </div>
     </WorkspaceDialog>}
     {!rows.length && !workspace.error && !workspace.loading && <p className="workspace-empty">{p(query || device ? "noMatches" : "noProjects")}</p>}    {workspace.runner?.projects_truncated && <p className="workspace-notice">{p("partial")}</p>}
+    <AddDevice state={workspace.state} onViewDevices={workspace.refresh} />
     <RunnerDevices onComputerSettings={onComputerSettings} selectedDevice={device} onSelectDevice={fromDeviceCard} />
   </section>;
 }

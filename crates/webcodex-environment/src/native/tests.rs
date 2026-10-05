@@ -1,3 +1,6 @@
+#[path = "tests/invitation.rs"]
+mod invitation;
+
 #[path = "tests/project_addition.rs"]
 mod project_addition;
 

@@ -361,6 +361,15 @@ pub async fn configure_environment(
 }
 
 #[tauri::command]
+pub async fn create_environment_invitation(
+    request: crate::state::InvitationRequest,
+    state: State<'_, AppState>,
+) -> DesktopResult<crate::state::InvitationResponse> {
+    // A dedicated response: never publish invitation credentials as app state.
+    state.create_environment_invitation(request).await
+}
+
+#[tauri::command]
 pub async fn activate_local_project(
     request: ProjectRequest,
     app: AppHandle,

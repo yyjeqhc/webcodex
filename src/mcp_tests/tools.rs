@@ -2495,15 +2495,16 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     //   excludes App-only ui.visibility=["app"] tools and Host-only _meta/title.
     // - raw transport overhead measures the additional MCP tools/list JSON that
     //   a Host must receive. It is not a token/context budget.
-    // present_pdf adds one public entrypoint even without an Apps Host. Apps
-    // add 21 App-only descriptors plus one public Work Result
-    // thread entrypoint. Exact inventory counts remain a separate regression gate.
+    // present_pdf and present_spreadsheet each add a public entrypoint even
+    // without an Apps Host. Apps also add private descriptors and the public
+    // Work Result thread entrypoint. Exact inventory counts remain a separate
+    // regression gate.
     for (label, auth, max_tools, model_max_bytes) in [
-        ("anonymous", None, 26, 75_000),
-        ("scoped", Some(&scoped), 27, 78_000),
+        ("anonymous", None, 27, 75_000),
+        ("scoped", Some(&scoped), 28, 78_000),
         // Interactive pipe input is a CoreWorkflow Direct tool paired with
         // run_process, so each ordinary Adaptive inventory gains one descriptor.
-        ("admin", Some(&admin), 33, 90_000),
+        ("admin", Some(&admin), 34, 90_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();

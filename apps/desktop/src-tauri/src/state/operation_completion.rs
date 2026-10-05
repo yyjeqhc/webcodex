@@ -14,6 +14,7 @@ use crate::runtime_selection::RuntimeSwitchResult;
 enum FailureOwner {
     NewProcessDelta,
     DurableCoordinator,
+    NoProcessChanges,
 }
 
 #[derive(Clone, Copy)]
@@ -36,6 +37,7 @@ impl CompletionPolicy {
         // Exhaustive: a new operation must explicitly select its completion
         // owner instead of silently inheriting generic cleanup.
         let (failure_owner, runtime_error) = match kind {
+            EnvironmentInvite => (NoProcessChanges, Unchanged),
             EnvironmentMigration => (DurableCoordinator, ReflectResult),
             DesktopUpdate => (DurableCoordinator, Unchanged),
             RuntimeSwitch => (NewProcessDelta, PreserveSwitchRecovery),
@@ -79,6 +81,9 @@ impl<'a> OperationCompletion<'a> {
         baseline: &DesktopStateSnapshot,
         cleanup: Option<ProcessCleanup>,
     ) -> bool {
+        if self.policy.failure_owner == FailureOwner::NoProcessChanges {
+            return false;
+        }
         debug_assert_eq!(cleanup.is_some(), self.requires_process_cleanup());
         let Some(error) = self.error else {
             return false;

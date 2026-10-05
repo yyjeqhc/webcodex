@@ -191,6 +191,8 @@
 .setup-overview { margin-bottom: var(--ui-space-4); }
 .project-picker-card, .form-card, .detail-card { border-color: var(--ui-border-subtle); box-shadow: none; }
 .project-picker-card { min-height: 76px; }
+.project-picker-card code { overflow-wrap: anywhere; }
+.project-picker-card .setup-project-actions { display: flex; flex-wrap: wrap; }
 .provider-option label, .setup-choice-card { border-color: var(--ui-border-subtle); }
 .provider-option.selected label { border-color: var(--ui-accent); }
 
@@ -309,6 +311,8 @@
 
 /* Runtime operations and observations. */
 .shell-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-block: 14px; }
+.device-invitation { min-width: 0; overflow-wrap: anywhere; }
+.device-invitation li { margin-block: 10px; }
 .shell-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .shell-subsection { border-top: 1px solid var(--ui-border-subtle); padding-block: 20px; }
 .shell-subsection > label { display: block; margin-block: 12px 6px; font-size: 14px; font-weight: 600; }

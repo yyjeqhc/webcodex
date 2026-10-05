@@ -252,6 +252,7 @@ export function projectReadinessLabel(value: ProjectReadiness, t: Translate) {
 }
 
 const operationKeys: Record<DesktopOperationKind, MessageKey> = {
+  environment_invite: "operation.environmentInvite",
   runtime_probe: "operation.runtimeProbe",
   runtime_switch: "operation.runtimeSwitch",
   trace_update: "operation.traceUpdate",

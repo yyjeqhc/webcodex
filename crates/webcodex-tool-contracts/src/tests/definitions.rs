@@ -1499,3 +1499,33 @@ fn project_build_is_gateway_visible_but_not_adaptive_direct() {
         ToolAuditExecutionPolicy::DIRECT_ARGV_TEXT
     );
 }
+
+#[test]
+fn spreadsheet_presentation_is_one_direct_readonly_tool_with_no_session() {
+    use crate::tool_definition::ToolDirectReason;
+    let definition = lookup_tool_definition("present_spreadsheet").unwrap();
+    assert_eq!(
+        definition.adaptive_runtime_direct_reason(),
+        Some(ToolDirectReason::Presentation)
+    );
+    let specification = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "present_spreadsheet")
+        .unwrap();
+    assert_eq!(specification.annotations["readOnlyHint"], true);
+    assert_eq!(specification.annotations["destructiveHint"], false);
+    assert!(specification.input_schema["properties"]
+        .get("session_id")
+        .is_none());
+    let call = ToolCall::from_tool_name(
+        "present_spreadsheet",
+        json!({"project":"agent:reader:demo", "path":"budget.xlsx"}),
+    )
+    .unwrap();
+    assert!(matches!(call, ToolCall::PresentSpreadsheet { .. }));
+    assert!(ToolCall::from_tool_name(
+        "present_spreadsheet",
+        json!({"project":"agent:reader:demo"})
+    )
+    .is_err());
+}

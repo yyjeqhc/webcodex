@@ -25,9 +25,9 @@ WebCodex 可以在已注册的项目范围内读取和修改文件、执行命�
    下载与当前机器架构匹配的 Windows installer 或 DMG。当前 macOS 构建
    未经过 notarization；如果被拦截，进入**系统设置 → 隐私与安全 → 仍要打开**，
    不要全局关闭 Gatekeeper。
-2. **选择项目。**选择 **Local Full Runtime / 在此电脑使用 WebCodex**，再选择
-   真正的代码仓库目录，等待 **Service**、**Runner** 和 **Project** 全部 Ready。
-   WebCodex Desktop 是本机 Runtime 控制器，不是聊天界面。
+2. **创建主节点。**选择**创建主节点**，配置独立的 Server 和本机 Runner。
+   初始项目可以跳过，Runner 仍保持启用。等待设置完成并检查两个服务。
+   **加入主节点**把本机 Runner 接入已有 Server；参见[添加设备说明](desktop-guide.zh-CN.md#添加其他设备)。
 3. **创建 OpenAI Tunnel 凭据。**在 [OpenAI Tunnels 页面](https://platform.openai.com/settings/organization/tunnels)
    创建 Tunnel，记录完整且准确的 Tunnel ID；再到 [API keys 页面](https://platform.openai.com/settings/organization/api-keys)
    创建 API key。建议使用 Restricted key，只授予 Tunnel 所需权限，包括
@@ -127,7 +127,7 @@ ChatGPT 使用的项目。
 
 ### 可选：已保存配置的行为与存储位置
 
-这两个字段也可以在首次本机配置的可选 Tunnel 区域填写。已有保存的密钥时，API key 留空表示保留原密钥；界面不会取回密钥值，提交后输入框会清空。保存失败时会保留 Tunnel ID，并要求重新输入尚未保存的密钥。
+首次设置完成后，通过现有连接页面配置这两个字段。已有保存的密钥时，API key 留空表示保留原密钥；界面不会取回密钥值，提交后输入框会清空。保存失败时会保留 Tunnel ID，并要求重新输入尚未保存的密钥。
 
 **优先级：完整的已保存配置 → Desktop 进程继承的环境变量。** 不会混用文件中的 Tunnel ID 和环境中的 API key。保存不会修改系统环境。本应用管理的普通 Tunnel 正在运行时，会使用新配置替换该 Tunnel，不重启 Server 或 Runner；原先停止的 Tunnel 保持停止。OpenAI Quick Share 在下次启动时使用新值。保存成功和连接恢复是两个结果：替换失败时保留新配置，并明确提示重试连接。
 
@@ -161,20 +161,21 @@ Windows 用户可以设置当前用户的持久环境变量。macOS 从 Finder /
 
 ## 4. 启动本机运行环境并添加项目
 
-首次启动后，选择 **Local Full Runtime / 在此电脑使用 WebCodex**，再选择真正
-要让 ChatGPT 使用的代码仓库目录。WebCodex 只会访问你明确添加的项目，不会
-自动获得其他目录或整块磁盘的访问权限。
+首次启动后选择**创建主节点**，初始代码仓库可以选择或跳过，之后再添加；
+两种情况都保持本机 Runner 启用。Runner 文件访问策略仍是权限边界，项目注册
+不会授予策略之外的目录访问权。**高级**保留 Server-only、viewer-only 和 Quick Share；
+重新打开设置保持已保存的角色。
 
 在首页展开**查看运行诊断**，确认：
 
 - Service：运行中 / Ready；
 - Runner：已连接 / Ready；
-- Project：Ready，而且显示的是你刚选择的目录。
+- 如果选择了初始项目，Project：Ready，且目录准确。项目为空不会停止 Server 或 Runner。
 
-以后要使用其他代码仓库，可进入**项目**页面，点击**选择其他项目**或
-**添加项目**。
+之后可在**项目**页面添加本机项目，复用已有 Runner 身份和 Server 连接。
 
-**成功时你应该看到：**Service、Runner、Project 同时 Ready，Project 路径与实际目录一致。
+**成功时你应该看到：**Server 和本机 Runner 就绪。注册项目后核对准确的目录与所属
+Runner；ChatGPT 的真实项目读取仍用于单独确认整条连接。
 
 **失败时：**点击**重新激活项目**；仍然失败时再查看错误和**活动**详情。不要
 通过扩大项目访问范围来绕过错误。

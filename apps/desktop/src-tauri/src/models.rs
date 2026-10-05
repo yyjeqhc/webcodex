@@ -263,6 +263,7 @@ pub struct QuickShareState {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopOperationKind {
+    EnvironmentInvite,
     EnvironmentMigration,
     DesktopUpdate,
     EnvironmentService,
@@ -290,6 +291,7 @@ pub enum DesktopOperationKind {
 impl DesktopOperationKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::EnvironmentInvite => "environment_invite",
             Self::EnvironmentMigration => "environment_migration",
             Self::DesktopUpdate => "desktop_update",
             Self::EnvironmentService => "environment_service",
@@ -408,6 +410,9 @@ pub struct ChatGptActivitySnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopStateSnapshot {
+    /// Read-only projection of the sole authoritative Environment store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_setup: Option<EnvironmentSetupSnapshot>,
     #[serde(default)]
     pub can_repair_runner_credential: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -448,6 +453,7 @@ pub struct DesktopStateSnapshot {
 impl Default for DesktopStateSnapshot {
     fn default() -> Self {
         Self {
+            environment_setup: None,
             can_repair_runner_credential: false,
             setup_progress: None,
             persistent_environment: None,
@@ -560,8 +566,19 @@ pub struct StoredRuntime {
     pub runtime_project_id: Option<String>,
 }
 
-/// Transient native IPC input. Credentials are never included in Desktop state,
-/// activity entries, or the persistent setup journal.
+/// Non-secret projection from the authoritative Environment record or setup journal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnvironmentSetupSnapshot {
+    pub environment_id: String,
+    pub mode: String,
+    pub server_url: String,
+    pub runner: bool,
+    pub project_path: Option<String>,
+    pub service_scope: webcodex_environment::service::ServiceScope,
+    pub configured: bool,
+}
+
+/// Transient native IPC input; never persisted or logged.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentInput {

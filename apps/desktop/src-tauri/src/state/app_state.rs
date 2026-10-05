@@ -76,6 +76,7 @@ impl AppState {
                 .project(&mut snapshot.connections, snapshot.readiness.runtime_ready);
         }
         snapshot.current_operation = self.operations.current();
+        snapshot.environment_setup = environment_invitation::setup_snapshot(&snapshot);
         snapshot.activity_sequence = self.activity.latest_sequence();
         if snapshot.openai_tunnel_config.source == crate::models::TunnelConfigSource::Environment {
             snapshot.openai_tunnel_config = crate::tunnel_config::environment_snapshot();

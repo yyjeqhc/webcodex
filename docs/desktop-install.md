@@ -27,10 +27,11 @@ issues, and shared logs.
    matching your machine's architecture from [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases).
    On macOS, use **System Settings → Privacy & Security → Open Anyway** if the
    current non-notarized build is blocked; do not disable Gatekeeper globally.
-2. **Choose the project.** Select **Local Full Runtime / Use WebCodex on this
-   computer**, choose the actual repository directory, then wait until
-   **Service**, **Runner**, and **Project** are all Ready. WebCodex Desktop is a
-   runtime controller, not the chat interface.
+2. **Create the main node.** Choose **Create main node** to configure separate
+   Server and local Runner services. The initial repository is optional; skipping
+   it keeps the Runner enabled. Wait for setup to finish and check both services.
+   **Join main node** adds this computer’s Runner to an existing Server; see the
+   [device instructions](desktop-guide.md#add-another-device).
 3. **Create the OpenAI Tunnel credentials.** Create a Tunnel on the
    [OpenAI Tunnels page](https://platform.openai.com/settings/organization/tunnels),
    record its exact Tunnel ID, and create an API key on the
@@ -143,7 +144,7 @@ pass. Next, select the actual project ChatGPT should use.
 
 ### Optional: saved configuration behavior and storage
 
-The same fields are available in the optional Tunnel section during local setup. When a key is already saved, leaving its field blank keeps that key. Desktop never retrieves the secret into the UI; submission clears the input. A failed save retains the Tunnel ID but requires re-entering an unsaved key.
+After First Run, configure these fields through the existing Connection page. When a key is already saved, leaving its field blank keeps that key. Desktop never retrieves the secret into the UI; submission clears the input. A failed save retains the Tunnel ID but requires re-entering an unsaved key.
 
 **Priority: complete saved configuration → inherited Desktop process environment.** Desktop never combines a saved Tunnel ID with an environment API key. Saving does not modify system variables. An active Desktop-owned regular Tunnel is replaced with the saved configuration, without restarting Server or Runner. A stopped Tunnel remains stopped. OpenAI Quick Share uses the new values on its next start. Save success and connection recovery are distinct: a replacement failure retains the new configuration and asks you to retry the connection.
 
@@ -177,21 +178,25 @@ For screenshots, window observation, keyboard or pointer control, grant the rele
 
 ## 4. Start the local runtime and add your project
 
-On first use, choose **Local Full Runtime / Use WebCodex on this computer** and
-select the actual repository directory that ChatGPT should use. WebCodex grants
-access only to projects you explicitly add, not unrelated directories or the
-whole disk.
+On first use, choose **Create main node**. You can select an initial repository
+or skip it and add one later; the local Runner is enabled in either case. Runner
+filesystem policy remains the access boundary, and Project registration never
+grants access outside that policy. Advanced retains Server-only, viewer-only and
+Quick Share; reopening setup preserves saved roles.
 
 On Home, expand **View runtime diagnostics** and confirm:
 
 - Service: Running / Ready;
 - Runner: Connected / Ready;
-- Project: Ready, with the directory you selected.
+- Project: Ready with the selected directory, if you chose an initial Project.
+  An empty Project list does not stop Server or Runner.
 
-To use another repository later, open **Projects** and select **Choose another
-project** or **Add project**.
+To add a repository later, open **Projects → Add local project**. The existing
+Runner identity and Server connection are reused.
 
-**Success looks like:** Service, Runner, and Project are all Ready, and the displayed project path is exact.
+**Success looks like:** Server and local Runner are ready. When a Project has
+been registered, check its exact path and owning Runner. A real project read from
+ChatGPT still verifies the full connection separately.
 
 **If it fails:** use **Activate project again**. If it still fails, inspect the error and
 **Activity** details. Do not broaden project access to work around the error.

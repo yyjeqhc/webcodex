@@ -171,7 +171,7 @@ pub(crate) fn validate_artifact_mime_for_path(
     Ok(mime_type)
 }
 
-fn artifact_policy_rejected_result(path: &str, message: String) -> ToolResult {
+pub(super) fn artifact_policy_rejected_result(path: &str, message: String) -> ToolResult {
     ToolResult::err_with_output(
         message.clone(),
         json!({
@@ -589,13 +589,29 @@ impl ToolRuntime {
         path: String,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        self.export_project_artifact_metadata_resolved_with_limit(
+            resolved,
+            path,
+            auth,
+            MAX_PROJECT_ARTIFACT_EXPORT_BYTES,
+        )
+        .await
+    }
+
+    pub(super) async fn export_project_artifact_metadata_resolved_with_limit(
+        &self,
+        resolved: &ResolvedProject,
+        path: String,
+        auth: Option<&AuthContext>,
+        max_bytes: usize,
+    ) -> ToolResult {
         if let Err(error) = validate_artifact_file_path(&path) {
             return artifact_policy_rejected_result(&path, error);
         }
         let client_id = resolved.config.client_id.clone();
         let streaming_payload = json!({
             "path": path.clone(),
-            "max_bytes": MAX_PROJECT_ARTIFACT_EXPORT_BYTES,
+            "max_bytes": max_bytes,
             "allow_missing": false,
         });
         let output = match self

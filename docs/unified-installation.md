@@ -11,7 +11,7 @@ Get published files from [GitHub Releases](https://github.com/yyjeqhc/webcodex/r
 The following workflow applies when a validated installer for your platform is available; source previews are documented separately above.
 
 1. Install the platform package and open WebCodex Desktop.
-2. Choose **Use WebCodex on this computer**, keep **Allow AI to work on this computer** enabled, and confirm setup. No project selection is required. Disable local work only for an intentional Server-only machine.
+2. Choose **Create main node** and confirm setup. This creates independent Server and local Runner services even if you skip the optional initial Project. **Advanced** retains intentional Server-only setup; existing environments keep their saved role.
 3. Confirm Server, Runner, and project status in Desktop. Desktop, CLI, and the web runtime use the same Server-authorized view. Open `SERVER_URL/runtime` in a browser and use an existing user credential to view authorized Runners, projects, and status.
 4. Configure the existing ChatGPT MCP/Tunnel connection through the Server. ChatGPT remains connected to the central Server. A remote project path belongs to its Runner machine; it is not a local path on the Server computer.
 
@@ -19,9 +19,11 @@ Desktop closing does not stop persistent services. The GUI helper runs only in t
 
 ## Several computers
 
-Install the same package on each computer. Decide which machine hosts the central Server, and which machines own the repositories. A Server-only central machine can show projects on remote machines B and C when their Runners connect.
+Create the same complete main node as the single-computer flow. Other computers join it as additional Runners; the main node keeps its own local Runner and Projects. Install the appropriate OS/architecture package on each machine. Advanced Server-only and viewer-only capabilities remain available.
 
-On the central Server, create short-lived Runner invitation codes with `webcodex environment invite`. Displayed codes are secrets: deliver one only to the intended machine, and do not place it in command-line arguments or logs.
+On the main node, use **Projects → Add device**, supply a Server URL reachable from the additional machine, and explicitly click **Create invitation**. Install WebCodex there and choose **Join main node**; enter that direct URL and the one-time code in the protected input. The initial Project is optional and the Runner stays enabled. The CLI alternative remains `webcodex environment invite`. Codes are secrets; never put them in command-line arguments or logs.
+
+ChatGPT reaches the central Server through OpenAI Tunnel; additional Runners use the separate direct Server URL. A loopback or OpenAI URL is not a remote Runner endpoint. Check listener, firewall, DNS or private networking if the address is unreachable. The dialog does not change these settings. Invitation creation does not prove device connection; refresh the authorized devices and Projects view afterwards. See [Desktop device instructions](desktop-guide.md#add-another-device).
 
 On the central Server machine, create an environment:
 
@@ -29,13 +31,13 @@ On the central Server machine, create an environment:
 webcodex environment configure --create --project PATH
 ```
 
-Use `--no-project` if that machine has no repository. To enable AI work without choosing a default repository, use `webcodex environment configure --create --runner` instead. A remote machine can likewise use `webcodex environment configure --join https://server.example --runner --code-stdin`. Existing environments retain their saved role; use Desktop's explicit local-work option or the CLI's `add-project` transition to enable a viewer's first Runner. On each repository machine, join the Server:
+For a projectless main node in the CLI, use `webcodex environment configure --create --runner`; `--no-project` without `--runner` intentionally keeps the advanced Server-only role. A remote machine can likewise use `webcodex environment configure --join https://server.example --runner --code-stdin`. Existing environments retain their saved role; use Desktop's explicit local-work option or the CLI's `add-project` transition to enable a viewer's first Runner. On each repository machine, join the Server:
 
 ```text
 webcodex environment configure --join https://server.example --project PATH
 ```
 
-Use `--no-project` to join as a viewer without configuring a local Server or Runner. Desktop separates create/join from whether this computer permits local work. In the CLI, `--runner` enables a Runner without an initial project, while legacy `--project PATH` still enables a Runner and registers that explicit project. The selected flow requests the Server address, authentication, and any required system authorization. Joining as a viewer uses the user's personal access token, entered through secure hidden input or a protected `--token-file`; it does not use a pairing code. For example, import an existing user API credential from a protected file:
+Use `--no-project` to join as a viewer without configuring a local Server or Runner. Ordinary Desktop Create/Join enables local work; Advanced keeps explicit role alternatives. In the CLI, `--runner` enables a Runner without an initial project, while legacy `--project PATH` still enables a Runner and registers that explicit project. The selected flow requests the Server address, authentication, and any required system authorization. Joining as a viewer uses the user's personal access token, entered through secure hidden input or a protected `--token-file`; it does not use a pairing code. For example, import an existing user API credential from a protected file:
 
 ```text
 webcodex environment configure --join https://server.example --no-project --token-file PATH

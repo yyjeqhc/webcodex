@@ -24,15 +24,23 @@ Upgrading a legacy Desktop-owned environment preserves its Server, Runner identi
 
 ## First use
 
-1. Launch WebCodex Desktop and make the one-time local/remote environment choice. Local setup enables **Allow AI to work on this computer** by default, with no default Project. Confirm setup before persistent services or system authorization are requested; merely opening Desktop never binds a fresh machine to a local Server.
+1. Launch WebCodex Desktop and choose **Create main node** or **Join main node**. Ordinary creation runs separate Server and local Runner services; ordinary joining connects this computer’s Runner to an existing Server. An initial Project is optional; skipping it keeps the Runner enabled. Confirm setup before persistent services or system authorization are requested; merely opening Desktop never binds a fresh machine to a local Server.
 2. Start describing work in ChatGPT. When a request identifies a workspace path, the runtime resolves or registers that Project automatically within the Runner's allowed scope. Later launches observe saved persistent services rather than silently restarting stopped components.
 3. **Projects** shows Runtime Projects that have appeared. To add a local folder manually, choose **Add local folder**, select it, and confirm **Authorize and add folder**. This explicitly adds access to that folder and its subfolders through the existing local Runner; Server and Tunnel credentials are reused. Viewer-only connections cannot add local folders.
 4. Configure **OpenAI Secure Tunnel** only when external ChatGPT reachability is needed. Tunnel setup controls connectivity; it does not define Project authority.
 5. A real observed project call verifies prior client use, not current host presence.
 
-If you already have a remote Server, choose the existing Server option and enter its address. Enable local work and provide a one-time pairing code to connect this computer's Runner; no project selection is needed. Disable local work to join as a viewer using a user API credential. Saved connections reuse their identity. The remote operator owns its Runner policy and external connectivity.
+For **Join main node**, enter a direct Server URL reachable from this computer and a one-time pairing code in the protected input. ChatGPT uses OpenAI Tunnel separately; a Tunnel address or the main node’s loopback URL is not the additional Runner’s endpoint. You do not need the main node’s Tunnel key or bootstrap credential. Saved connections reuse their identity. **Advanced** retains explicit Server-only and viewer-only setup; reopening setup preserves an existing environment’s role and startup ownership.
 
-For temporary sharing of one project, choose Quick Share and a connection provider. Quick Share keeps its own explicit project selection and temporary lifecycle.
+For temporary sharing of one project, expand **Advanced**, choose Quick Share and a connection provider. Quick Share keeps its own explicit project selection and temporary lifecycle.
+
+## Add another device
+
+On a saved local Server environment, open **Projects → Add device** (also available before any device has appeared). Opening the dialog does not issue a code. Supply a Server URL reachable from the other machine, then explicitly choose **Create invitation**. The existing Core and Server authorization decide whether issuance is allowed; the advertised URL never selects the issuance target. No listener, firewall or service settings are changed.
+
+The ten-minute, single-use code is masked by default. **Show code** and each copy action require a click. Install WebCodex on the other machine, choose **Join main node**, and enter that URL and code. Its initial Project can be skipped. Closing the dialog, changing environment or ending the local display period clears the displayed code; closing does not revoke the Server invitation. Failed or uncertain requests are not retried automatically.
+
+Choose **View devices and projects** to refresh the existing authorized inventory. Invitation creation, a Runner appearing online, and a real ChatGPT Project read are separate observations. Projects remain on their owning machines; identical names and paths are distinguished by Runner and Project identities.
 
 ## Start each day on Home
 

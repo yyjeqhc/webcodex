@@ -3109,6 +3109,13 @@ pub(super) async fn handle_call(
             )
         }
     };
+    // Direct calls may omit discovery UI capabilities. Deliver the canonical identity
+    // privately as well, matching the generic App artifact transport's Host envelopes.
+    if server_mcp_apps_enabled && params.name == "present_spreadsheet" {
+        if let Some(structured) = result.get("structuredContent").cloned() {
+            result["_meta"]["webcodex/spreadsheetSource"] = structured;
+        }
+    }
     if app_only_docx_read
         || workbench_view_call
         || (app_only_work_result_state && !work_result_thread_panel)

@@ -61,6 +61,7 @@ pub(super) fn canonical_execution_project_binding(
         | ToolCall::ProjectOverview { project, .. }
         | ToolCall::WriteProjectFile { project, .. }
         | ToolCall::SaveProjectArtifact { project, .. }
+        | ToolCall::PresentSpreadsheet { project, .. }
         | ToolCall::ProjectArtifact { project, .. }
         | ToolCall::ReadProjectArtifactMetadata { project, .. }
         | ToolCall::ReadProjectArtifact { project, .. }

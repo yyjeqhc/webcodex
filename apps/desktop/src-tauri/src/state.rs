@@ -2,6 +2,8 @@ mod coding_agents;
 mod connections;
 mod diagnostics;
 mod environment;
+mod environment_invitation;
+pub use environment_invitation::{InvitationRequest, InvitationResponse};
 mod managed_instructions;
 mod mcp_providers;
 mod operation_completion;

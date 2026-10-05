@@ -61,6 +61,20 @@ fn every_operation_has_an_explicit_cleanup_owner() {
 }
 
 #[test]
+fn invitation_failure_cannot_terminalize_or_cleanup_runtime_startup() {
+    let error = failure();
+    let completion =
+        OperationCompletion::new(DesktopOperationKind::EnvironmentInvite, Some(&error));
+    let mut snapshot = starting();
+    snapshot.runtime_error = Some(failure());
+    let before = snapshot.clone();
+    assert!(!completion.requires_process_cleanup());
+    assert!(!completion.apply_failure(&mut snapshot, &Default::default(), None));
+    assert!(!completion.apply_runtime_error(&mut snapshot, None));
+    assert_eq!(snapshot, before);
+}
+
+#[test]
 fn cancellation_does_not_reclaim_a_durable_coordinators_restored_generation() {
     let error = crate::operation::cancelled_error();
     for kind in [

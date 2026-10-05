@@ -131,6 +131,7 @@ export interface TunnelProxySnapshot {
 }
 
 export type DesktopOperationKind =
+  | "environment_invite"
   | "desktop_update"
   | "environment_migration"
   | "environment_service"
@@ -200,6 +201,15 @@ export interface ChatGptActivitySnapshot {
 }
 
 export interface DesktopState {
+  environment_setup?: {
+    environment_id: string;
+    mode: "create" | "join";
+    server_url: string;
+    runner: boolean;
+    project_path: string | null;
+    service_scope: "user" | "system";
+    configured: boolean;
+  } | null;
   persistent_environment?: string | null;
   can_repair_runner_credential?: boolean;
   workspace_runner?: SettingsTarget | null;

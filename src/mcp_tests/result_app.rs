@@ -2105,15 +2105,15 @@ async fn mcp_validation_run_and_summary_use_real_canonical_contracts() {
                 rpc(
                     "tools/call",
                     Some(json!(3220)),
-                    mcp_2026_ui_params(json!({
-                        "name": "cargo_check",
-                        "arguments": {
+                    mcp_2026_ui_params(adaptive_runtime_gateway_params(
+                        "cargo_check",
+                        json!({
                             "project": project,
                             "session_id": session_id,
                             "timeout_secs": 60,
                             "sync_wait_secs": 1
-                        }
-                    })),
+                        }),
+                    )),
                 ),
                 Some(&auth),
             )

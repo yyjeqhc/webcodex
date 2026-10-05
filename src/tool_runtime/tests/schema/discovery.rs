@@ -1127,12 +1127,7 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
             "coding intent should not recommend {compatibility_or_overlap}: {names:?}"
         );
     }
-    for gateway_specialist in [
-        "project_validate",
-        "cargo_fmt",
-        "check_workspace_hygiene",
-        "finish_coding_task",
-    ] {
+    for gateway_specialist in ["cargo_fmt", "check_workspace_hygiene", "finish_coding_task"] {
         let tool = result.output["tools"]
             .as_array()
             .unwrap()
@@ -1156,6 +1151,7 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
         "run_script",
         "run_shell",
         "observe_jobs",
+        "project_validate",
         "review_changes",
     ] {
         let tool = result.output["tools"]
@@ -1168,8 +1164,8 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
         assert!(tool["gateway_tool"].is_null(), "{direct}");
     }
     for (advanced, expected_availability) in [
-        ("cargo_check", "direct"),
-        ("cargo_test", "direct"),
+        ("cargo_check", "gateway"),
+        ("cargo_test", "gateway"),
         ("go_test", "gateway"),
     ] {
         assert!(
@@ -1542,7 +1538,7 @@ async fn tool_manifest_default_flows_follow_exact_vs_discovery_shape_end_to_end(
     assert!(exact.success, "{:?}", exact.error);
     assert!(exact.output.get("recommended_flows").is_none());
 
-    let exact_true = runtime
+    let specialist_true = runtime
         .dispatch(
             ToolCall::from_tool_name(
                 "read_tool_manifest",
@@ -1554,8 +1550,25 @@ async fn tool_manifest_default_flows_follow_exact_vs_discovery_shape_end_to_end(
             .unwrap(),
         )
         .await;
-    assert!(exact_true.success, "{:?}", exact_true.error);
-    assert!(exact_true.output["recommended_flows"]
+    assert!(specialist_true.success, "{:?}", specialist_true.error);
+    assert!(specialist_true.output["recommended_flows"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
+
+    let ordinary_true = runtime
+        .dispatch(
+            ToolCall::from_tool_name(
+                "read_tool_manifest",
+                json!({
+                    "tool_name": "project_validate",
+                    "include_recommended_flows": true
+                }),
+            )
+            .unwrap(),
+        )
+        .await;
+    assert!(ordinary_true.success, "{:?}", ordinary_true.error);
+    assert!(ordinary_true.output["recommended_flows"]
         .as_array()
         .is_some_and(|flows| !flows.is_empty()));
 
@@ -2133,12 +2146,18 @@ async fn tool_manifest_exact_tool_returns_input_contract_without_output_schema()
             "read_tool_manifest exact contract output_schema must require {key}"
         );
     }
-    assert_eq!(contract["availability"], "direct");
-    assert!(contract["gateway_tool"].is_null());
+    assert_eq!(contract["availability"], "gateway");
+    assert_eq!(
+        contract["gateway_tool"],
+        crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
     assert!(contract.get("output_schema").is_none());
     assert_eq!(result.output["tools"][0]["name"], "cargo_test");
-    assert_eq!(result.output["tools"][0]["availability"], "direct");
-    assert!(result.output["tools"][0]["gateway_tool"].is_null());
+    assert_eq!(result.output["tools"][0]["availability"], "gateway");
+    assert_eq!(
+        result.output["tools"][0]["gateway_tool"],
+        crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
     assert!(result.output["tools"][0].get("input_schema").is_none());
 }
 

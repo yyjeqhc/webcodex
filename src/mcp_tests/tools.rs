@@ -2499,11 +2499,11 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     // add 21 App-only descriptors plus one public Work Result
     // thread entrypoint. Exact inventory counts remain a separate regression gate.
     for (label, auth, max_tools, model_max_bytes) in [
-        ("anonymous", None, 27, 75_000),
-        ("scoped", Some(&scoped), 28, 78_000),
+        ("anonymous", None, 26, 75_000),
+        ("scoped", Some(&scoped), 27, 78_000),
         // Interactive pipe input is a CoreWorkflow Direct tool paired with
         // run_process, so each ordinary Adaptive inventory gains one descriptor.
-        ("admin", Some(&admin), 34, 90_000),
+        ("admin", Some(&admin), 33, 90_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();
@@ -4134,30 +4134,33 @@ async fn mcp_published_validation_success_sparse_schema_contract() {
         panic!("tools/list failed");
     };
     let tools = value["result"]["tools"].as_array().unwrap();
-    for (name, output) in [
-        ("cargo_check", json!({})),
-        ("cargo_test", json!({"tests_run_count":28})),
-        (
-            "cargo_test",
-            json!({"tests_run_count":28,"test_count_assertion":{"minimum_tests":20}}),
-        ),
-        (
-            "cargo_test",
-            json!({"tests_run_count":0,"require_tests":false}),
-        ),
-        ("cargo_test", json!({"no_run":true})),
+    let published = &tools
+        .iter()
+        .find(|tool| tool["name"] == "project_validate")
+        .expect("project_validate must be the published validation descriptor")["outputSchema"];
+    for output in [
+        json!({
+            "adapter":"cargo_check",
+            "validation_target_id":"target:0123456789abcdef01234567",
+            "source_state":{"freshness":"unproven","observed_mutation_fence":"uncrossed"}
+        }),
+        json!({
+            "adapter":"cargo_test",
+            "validation_target_id":"target:0123456789abcdef01234567",
+            "tests_run_count":28,
+            "stdout_lines":2,
+            "stdout_tail":"running 28 tests\ntest result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "source_state":{"freshness":"unproven","observed_mutation_fence":"uncrossed"}
+        }),
     ] {
-        let published = &tools.iter().find(|tool| tool["name"] == name).unwrap()["outputSchema"];
         let mut wire = json!({"success":true,"error":null,"output":output});
-        wire["output"]["source_state"] =
-            json!({"freshness":"unproven","observed_mutation_fence":"uncrossed"});
         crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&wire, published)
             .unwrap();
         wire["output"]["tests_failed"] = json!(0);
         assert!(
             crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&wire, published)
                 .is_err(),
-            "{name}"
+            "project_validate"
         );
     }
 }

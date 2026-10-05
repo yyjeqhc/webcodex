@@ -79,7 +79,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Validation Code Mode for E1 reads plus project_validate, cargo_check and cargo_test. Prefer project_validate for portable validation; use direct Cargo validators when their advanced contract matters. Distill results before text(value). Children retain canonical Project/Session, permission, validation and Job semantics. Plugin/MCP gateways, shell/process tools, nested Job observation and recursive Code Mode remain unavailable.",
+            "Validation Code Mode for E1 reads plus project_validate, cargo_check and cargo_test. Prefer project_validate for portable validation; use Cargo validator specialists when their advanced contract matters. Distill results before text(value). Children retain canonical Project/Session, permission, validation and Job semantics. Plugin/MCP gateways, shell/process tools, nested Job observation and recursive Code Mode remain unavailable.",
         )),
         105,
         super::ToolDirectReason::CoreWorkflow,

@@ -474,18 +474,18 @@ fn mcp_pending_and_success_attention_match_published_output_schema() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|tool| tool["name"] == "cargo_check")
+        .find(|tool| tool["name"] == "project_validate")
         .unwrap();
     let continuation = json!({"follow_up_kind":"fallback_recovery", "tool":"observe_jobs", "arguments":{
         "items":[{"job_id":"wc_job_pending", "after_observation_token":"wj3_AAAAAAAAAAAAAAAAAAAAAA.1.0.0"}], "wait_secs":5, "wake_on":"terminal"
     }});
     let mut result = ToolResult::ok(
         json!({"execution_state":"pending", "continuation":continuation,
-            "job_attention":{"items":[{"job_id":"wc_job_done","tool":"cargo_check","outcome":"passed",
+            "job_attention":{"items":[{"job_id":"wc_job_done","tool":"project_validate","outcome":"passed",
                 "validation":{"kind":"check","source_state":{"freshness":"unproven","observed_mutation_fence":"uncrossed"}}}]}
         }),
     );
-    project_tool_result_suggested_calls("cargo_check", &mut result, &|target| {
+    project_tool_result_suggested_calls("project_validate", &mut result, &|target| {
         // This descriptor comes from the non-stateless MCP surface. The
         // operator-extension bit is target-specific admission, not a blanket
         // statement that the adapter supports extensions; observe_jobs remains

@@ -933,6 +933,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         ("run_script", 74),
         ("run_shell", 75),
         ("observe_jobs", 80),
+        ("project_validate", 95),
     ] {
         let definition = derived
             .iter()
@@ -969,6 +970,8 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         "upload_artifact_chunk",
         "finish_artifact_upload",
         "abort_artifact_upload",
+        "cargo_check",
+        "cargo_test",
         "go_test",
         "read_git_diff_hunks",
         "read_git_review_summary",

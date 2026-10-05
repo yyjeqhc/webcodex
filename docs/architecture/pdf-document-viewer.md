@@ -1,7 +1,7 @@
 # Dedicated PDF document viewer
 
 `present_pdf(project, path)` binds a direct model tool to the self-contained
-`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v5`. It selects one
+`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v6`. It selects one
 authorized project-relative `.pdf`, independent of Git changes, a Work Result
 card, or a Workflow Session. The App contains only document controls and the
 reading area; the Host owns the surrounding chrome and display mode.
@@ -40,9 +40,11 @@ generic artifact transport.
 
 The reader reconstructs the selected byte stream under one absolute, size-aware
 transfer deadline. The budget is at least 120 seconds and scales with the number
-of bounded 512 KiB Host round trips, capped at 15 minutes. Every continuation is
-validated, SHA-256 is recomputed, and the `%PDF-` header is checked before PDF.js
-receives the document.
+of bounded 512 KiB Host round trips, capped at 15 minutes. Each App-originated
+chunk request uses the remaining document budget as its Host timeout, so a
+separate shorter timer cannot terminate a transfer before the document deadline.
+Every continuation is validated, SHA-256 is recomputed, and the `%PDF-` header is
+checked before PDF.js receives the document.
 
 Rendering uses PDF.js 6.4.299 core parsing, page rendering, and `TextLayer`
 rather than the full `pdf_viewer.mjs` application layer. A small App shell

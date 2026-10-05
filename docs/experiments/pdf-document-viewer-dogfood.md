@@ -129,6 +129,20 @@ budget but scales it by expected Host round trips: 60 seconds plus 20 seconds pe
 client wait bound; Project authority, version fencing, per-call Host timeout,
 and full-document SHA verification are unchanged.
 
+A follow-up v5 dogfood run exposed one remaining mismatch: the whole-document
+budget for P25 was correctly raised to 420 seconds, but each App `tools/call`
+still had an independent 65-second timer. Two concurrently mounted readers were
+visible in the trace; each advanced through offsets 0, 524,288, 1,048,576, and
+1,572,864 with 12–24 ms Server handling, then no later request reached WebCodex.
+Regardless of the exact Host-side delay, the local 65-second timer could still
+abort a chunk before the 420-second document budget and therefore violated the
+intended single-deadline contract.
+
+Conclusion: v6 removes the independent 65-second App-call cap. Each chunk call
+inherits the remaining absolute document budget; the Host may still fail a call
+earlier on its own, while WebCodex no longer introduces a contradictory shorter
+client timeout.
+
 ## Production conclusions
 
 1. Keep `present_pdf` as a direct read-only App presentation tool.

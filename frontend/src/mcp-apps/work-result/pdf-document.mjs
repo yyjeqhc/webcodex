@@ -60,7 +60,7 @@ async function open() {
     request: async (offset, remaining) => {
       const result = await send("tools/call", { name: "read_app_artifact_chunk", arguments: {
         project: selected.project, path: selected.path, sha256: selected.sha256, bytes: selected.bytes, byte_offset: offset,
-      } }, Math.min(remaining, 65_000));
+      } }, remaining);
       const value = envelope(result);
       if (!value?.success) {
         if (value?.output?.error_kind === "snapshot_changed") throw new Error("PDF version changed · reopen the document");

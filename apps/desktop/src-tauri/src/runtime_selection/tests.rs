@@ -384,7 +384,7 @@ async fn failed_rebuild_can_be_fixed_in_place_and_started_without_selecting_agai
             .await
             .unwrap()
             .runner,
-        runner
+        runner.canonicalize().unwrap()
     );
     std::fs::remove_dir_all(dir).unwrap();
 }

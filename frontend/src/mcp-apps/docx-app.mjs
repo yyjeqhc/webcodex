@@ -28,7 +28,7 @@ export function mountDocxApp(win = window, doc = document) {
   function scale(value) { zoom = Math.max(0.25, Math.min(2, value)); el("stage").style.zoom = String(zoom); el("zoom").textContent = `${Math.round(zoom * 100)}%`; }
   function fitWidth() {
     const page = el("stage").querySelector("section.docx"), width = el("viewport").clientWidth;
-    if (!disposed && fitting && page?.offsetWidth && width > 32) scale((width - 32) / page.offsetWidth);
+    if (!disposed && fitting && page?.offsetWidth && width > 32) scale(width / (page.offsetWidth + 32));
   }
   const resizeObserver = new win.ResizeObserver(fitWidth);
   resizeObserver.observe(el("viewport"));

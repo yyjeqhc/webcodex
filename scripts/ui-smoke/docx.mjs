@@ -72,6 +72,8 @@ try {
   await frame.getByRole("button", { name: "Expand", exact: true }).click();
   await page.waitForFunction(() => document.getElementById("reader").style.width === "1000px");
   await frame.getByRole("button", { name: "Fit width", exact: true }).click();
+  const wideFit = await frame.locator("#viewport").evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+  assert.ok(wideFit.scroll <= wideFit.width, "Fit width includes scaled stage padding in a wide reader");
   const output = resolve(root, "artifacts/docx-viewer"); await mkdir(output, { recursive: true });
   await page.screenshot({ path: resolve(output, "reader.png") });
   await page.evaluate(() => { fixture.setStale(true); select({ path: "reports/changed.docx", name: "changed.docx" }); });

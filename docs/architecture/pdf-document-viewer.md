@@ -1,7 +1,7 @@
 # Dedicated PDF document viewer
 
 `present_pdf(project, path)` binds a direct model tool to the self-contained
-`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v5`. It selects one
+`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v6`. It selects one
 authorized project-relative `.pdf`, independent of Git changes, a Work Result
 card, or a Workflow Session. The App contains only document controls and the
 reading area; the Host owns the surrounding chrome and display mode.
@@ -45,6 +45,11 @@ chunk request uses the remaining document budget as its Host timeout, so a
 separate shorter timer cannot terminate a transfer before the document deadline.
 Every continuation is validated, SHA-256 is recomputed, and the `%PDF-` header is
 checked before PDF.js receives the document.
+Replacing or invalidating the selection, retrying, and teardown abort outstanding
+local chunk waits and remove their Host timeouts and cancellation listeners. This
+ends the old transfer without waiting for the document deadline; late Host
+responses are ignored. Repeated delivery of the same identity keeps the live
+transfer. Cancellation is local and does not cancel a dispatched Host tool call.
 
 Rendering uses PDF.js 6.4.299 core parsing, page rendering, and `TextLayer`
 rather than the full `pdf_viewer.mjs` application layer. A small App shell
@@ -129,8 +134,8 @@ page sizes, rotation, embedded Type3 Chinese glyphs with ToUnicode mapping, a
 scan-only image, a 32-page document, oversized pages at DPR 2, and invalid PDF
 bytes. Assertions check image pixels, glyph painting, text selection/alignment,
 page navigation, reading-position preservation, zoom/resize cancellation, lazy
-loading, cache limits, duplicate delivery, version changes and teardown during
-transfer. It blocks external
+loading, cache limits, duplicate delivery, version changes, cancellation on
+replacement/invalid selection, and teardown during transfer. It blocks external
 network fetches. Screenshots and the result report are local ignored artifacts
 under `artifacts/pdf-reader/`; it does not exercise a real MCP Host or native
 Server/Runner authority. See [UI smoke instructions](../../scripts/ui-smoke/README.md).

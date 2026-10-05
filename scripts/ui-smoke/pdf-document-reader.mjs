@@ -39,6 +39,15 @@ try {
       return route.continue();
     });
     await page.addInitScript(() => {
+      // Track artifact-request timeouts while keeping real browser timing.
+      const nativeSetTimeout = window.setTimeout.bind(window), nativeClearTimeout = window.clearTimeout.bind(window);
+      window.pdfHostTimers = new Set();
+      window.setTimeout = (callback, delay, ...args) => {
+        const id = nativeSetTimeout(() => { pdfHostTimers.delete(id); callback.apply(window, args); }, delay);
+        if (delay > 60_000) pdfHostTimers.add(id);
+        return id;
+      };
+      window.clearTimeout = id => { pdfHostTimers.delete(id); nativeClearTimeout(id); };
       const NativeWorker = Worker;
       window.pdfWorkerStats = { live: 0, created: 0, getPages: [] };
       window.Worker = class extends NativeWorker {
@@ -81,9 +90,10 @@ try {
             fixture.errors.push('Unpinned or unexpected artifact request');
             return reply(message.id, { structuredContent: { success: false } });
           }
+          const requestedSample = sample;
           const finish = () => {
             if (fixture.changed) return reply(message.id, { structuredContent: { success: false, output: { error_kind: 'snapshot_changed' } } });
-            const bytes = Uint8Array.from(atob(sample.encoded), char => char.charCodeAt(0));
+            const bytes = Uint8Array.from(atob(requestedSample.encoded), char => char.charCodeAt(0));
             const next = Math.min(args.byte_offset + 512 * 1024, bytes.length);
             const encoded = btoa(String.fromCharCode(...bytes.subarray(args.byte_offset, next)));
             reply(message.id, { tool_result: { structuredContent: { success: true, output: { artifact_chunk: {
@@ -126,6 +136,7 @@ try {
     await page.evaluate(() => closePdf());
     await page.waitForFunction(() => fixture.teardownAck);
     await frame.waitForFunction(() => pdfWorkerStats.live === 0 && !document.querySelector('canvas'));
+    assert.equal(await frame.evaluate(() => pdfHostTimers.size), 0, 'Teardown retained a Host request timer');
   }
   async function run(label, operation) {
     const result = { name: label, passed: false };
@@ -306,6 +317,32 @@ try {
       await frame.getByRole('status').filter({ hasText: reason }).waitFor();
       await frame.getByRole('button', { name: 'Retry preview' }).waitFor();
       if (options.changed) assert.equal(await frame.evaluate(() => pdfWorkerStats.created), 0);
+      await verified(mounted); await close(mounted); return {};
+    } finally { await page.close(); }
+  });
+
+  for (const replacement of [true, false]) await run(`${replacement ? 'replacement' : 'invalid selection'} cancels a pending transfer`, async () => {
+    const mounted = await mount('mixed', { hold: true }); const { page, frame } = mounted;
+    try {
+      await page.waitForFunction(() => fixture.held.length === 1);
+      assert.equal(await frame.evaluate(() => pdfHostTimers.size), 1);
+      await page.evaluate(() => deliverPdf());
+      await frame.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await page.evaluate(() => fixture.reads.length), 1, 'Repeated delivery restarted a pending transfer');
+      if (replacement) {
+        await page.evaluate(() => { fixture.hold = false; deliverPdf('chinese'); });
+        await frame.waitForFunction(() => document.querySelector('.textLayer')?.textContent.includes('中文'));
+        await painted(frame, 1);
+      } else {
+        await page.evaluate(() => document.querySelector('iframe').contentWindow.postMessage({ jsonrpc: '2.0',
+          method: 'ui/notifications/tool-result', params: { structuredContent: { success: false } } }, '*'));
+        await frame.getByRole('status').filter({ hasText: 'present_pdf did not succeed' }).waitFor();
+      }
+      assert.equal(await frame.evaluate(() => pdfHostTimers.size), 0, 'Old transfer retained its Host timeout');
+      await page.evaluate(() => fixture.held.forEach(finish => finish()));
+      await frame.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await frame.evaluate(() => pdfWorkerStats.created), replacement ? 1 : 0, 'Late bytes created an old Worker');
+      if (replacement) assert.equal(await frame.locator('#filename').textContent(), 'chinese.pdf');
       await verified(mounted); await close(mounted); return {};
     } finally { await page.close(); }
   });

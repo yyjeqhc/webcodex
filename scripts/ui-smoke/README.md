@@ -29,7 +29,9 @@ WebCodex backend or frontend app build. Install Chromium with
 Chinese Type3 glyphs/selection/search, scan image pixel colors, rapid zoom and
 resize, reading-position preservation, 32-page lazy loading and scroll-back,
 the total canvas budget at DPR 2,
-repeated delivery, version changes, parse errors, and transfer/Worker teardown.
+repeated delivery, version changes, parse errors, cancellation of pending transfers
+on replacement/invalid selection, and transfer/Worker teardown (including removal
+of Host request timers and rejection of late replies).
 The Chinese sample tests an embedded font and Unicode text mapping, not every
 external CMap or OpenType font. Expected pixel colors and glyph/geometry assertions
 are portable test oracles; screenshots are review evidence rather than unchecked

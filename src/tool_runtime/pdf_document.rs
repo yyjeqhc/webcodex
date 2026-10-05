@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 pub(crate) const MAX_PDF_BYTES: usize = 20 * 1024 * 1024;
 pub(crate) const PDF_CHUNK_BYTES: usize = 128 * 1024;
+pub(crate) const APP_ARTIFACT_CHUNK_BYTES: usize = 512 * 1024;
 
 fn pdf_error(kind: &str, message: &str) -> ToolResult {
     ToolResult::err_with_output(message, json!({"error_kind": kind, "state_changed": false}))
@@ -235,7 +236,7 @@ impl ToolRuntime {
         if let Err(error) = validate_app_artifact_target(&path, bytes, &sha256, byte_offset) {
             return error;
         }
-        let length = super::files::INTERNAL_ARTIFACT_TRANSFER_CHUNK_BYTES.min(bytes - byte_offset);
+        let length = APP_ARTIFACT_CHUNK_BYTES.min(bytes - byte_offset);
         let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
             Ok(resolved) => resolved,
             Err(error) => return error.into_tool_result(),

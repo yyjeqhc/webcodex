@@ -176,9 +176,9 @@ async fn pdf_document_rejects_foreign_principal_and_unsafe_paths_before_read() {
 }
 
 #[tokio::test]
-async fn app_artifact_chunk_reuses_internal_chunk_size_and_preserves_version_fence() {
+async fn app_artifact_chunk_uses_bounded_host_segment_and_preserves_version_fence() {
     let (runtime, auth, project) = setup("app-artifact-read").await;
-    let data = vec![b'x'; super::super::files::INTERNAL_ARTIFACT_TRANSFER_CHUNK_BYTES + 17];
+    let data = vec![b'x'; super::super::pdf_document::APP_ARTIFACT_CHUNK_BYTES + 17];
     let sha256 = format!("{:x}", Sha256::digest(&data));
     for stale in [false, true] {
         let task = tokio::spawn({
@@ -206,7 +206,7 @@ async fn app_artifact_chunk_reuses_internal_chunk_size_and_preserves_version_fen
             "report.pdf",
             &data,
             0,
-            super::super::files::INTERNAL_ARTIFACT_TRANSFER_CHUNK_BYTES,
+            super::super::pdf_document::APP_ARTIFACT_CHUNK_BYTES,
             stale,
         )
         .await;
@@ -220,7 +220,7 @@ async fn app_artifact_chunk_reuses_internal_chunk_size_and_preserves_version_fen
             assert_eq!(result.output["artifact_chunk"]["complete"], false);
             assert_eq!(
                 result.output["artifact_chunk"]["next_byte_offset"],
-                super::super::files::INTERNAL_ARTIFACT_TRANSFER_CHUNK_BYTES
+                super::super::pdf_document::APP_ARTIFACT_CHUNK_BYTES
             );
         }
     }

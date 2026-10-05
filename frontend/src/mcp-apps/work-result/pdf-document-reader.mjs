@@ -1,6 +1,6 @@
 import { MAX_PDF_BYTES } from "./pdf-reader.mjs";
 
-export const APP_ARTIFACT_CHUNK_BYTES = 1024 * 1024;
+export const APP_ARTIFACT_CHUNK_BYTES = 512 * 1024;
 const base64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const decode = value => Uint8Array.from(atob(value), char => char.charCodeAt(0));
 
@@ -24,7 +24,7 @@ async function verifyPdfDocument(bytes, identity, current, now, deadline) {
   return bytes;
 }
 
-// Presentation Apps share one version-fenced 1 MiB artifact bridge. The bridge
+// Presentation Apps share one version-fenced 512 KiB Host-facing artifact bridge. The bridge
 // reauthorizes Project access on every call; digest identity never grants authority.
 export async function readPdfDocument({
   identity, request, current, progress = () => {}, now = () => performance.now(),

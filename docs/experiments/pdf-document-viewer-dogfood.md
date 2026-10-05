@@ -69,12 +69,18 @@ viewer application until that Host boundary is understood.
 With the thin continuous shell, a 1 MiB chunk request reached WebCodex and the
 Server returned the response in milliseconds, but the App did not issue the
 next request. A diagnostic revision reduced the Host-facing segment to 512 KiB;
-the same one-chunk stop remained.
+that first attempt still stopped because private metadata wrapper handling was
+also incorrect.
 
-Conclusion: response size was not the demonstrated root cause. The final
-production contract returns to the canonical 1 MiB internal chunk size rather
-than permanently doubling Host round trips.
+After fixing private metadata normalization, the 512 KiB path completed full
+multi-chunk documents. A final 2026-10-05 probe then restored 1 MiB and reopened
+the 9,263,389-byte P25 paper: `present_pdf` succeeded, the first 1 MiB chunk
+completed server-side in 27 ms, and the serialized MCP response was 1,399,036
+bytes, but no second App chunk call arrived. This isolates a second Host-facing
+constraint in addition to the metadata wrapper bug.
 
+Conclusion: keep the canonical internal artifact transport, but bound the
+presentation App's Host-facing segment to 512 KiB.
 ### Private metadata wrapper normalization
 
 Structured tool-result parsing already accepted several Host wrapper shapes,
@@ -101,9 +107,10 @@ request used offset 8,912,896. The user then verified the rendered document was
 continuous, mouse scrolling crossed page boundaries, and zoom interaction
 worked.
 
-Conclusion: the demonstrated failure was Host tool-result wrapper handling for
-private metadata, not PDF parsing, Runner throughput, or the continuous-page
-renderer.
+Conclusion: private metadata normalization was necessary but not sufficient for
+1 MiB Host-facing responses. The demonstrated stable combination is normalized
+private metadata plus 512 KiB App segments; PDF parsing, Runner reads, and the
+continuous-page renderer were not the bottleneck in the successful runs.
 
 ## Production conclusions
 
@@ -114,8 +121,9 @@ renderer.
    structured/text model framing.
 4. Normalize both structured results and private metadata across observed Host
    wrapper aliases.
-5. Reuse the canonical 1 MiB internal artifact chunk. The temporary 512 KiB
-   probe did not change the failure mode before metadata normalization.
+5. Bound Host-facing App segments to 512 KiB. The internal artifact transport may
+   still use larger chunks elsewhere; the PDF App bound reflects observed ChatGPT
+   delivery behavior after metadata normalization.
 6. Use PDF.js core plus a thin continuous-scroll shell. Avoid the full viewer
    application bundle on this Host until compatibility is demonstrated.
 7. Keep Work Result's compact single-page preview separate from the dedicated

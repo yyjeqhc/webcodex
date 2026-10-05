@@ -47,7 +47,7 @@ fn base_output_schema_for_tool(name: &str) -> Value {
                 "byte_offset":{"type":"integer","minimum":0,"maximum":268435455},
                 "next_byte_offset":{"type":["integer","null"],"minimum":1,"maximum":268435455},
                 "complete":{"type":"boolean"},
-                "content_base64":{"type":"string","maxLength":1398104,"description":"Runtime-only bytes; MCP moves them to private App metadata before structured/text framing."}
+                "content_base64":{"type":"string","maxLength":699052,"description":"Runtime-only bytes; MCP moves them to private App metadata before structured/text framing."}
             },
             "required":["project","path","sha256","bytes_total","byte_offset","next_byte_offset","complete"]
         });

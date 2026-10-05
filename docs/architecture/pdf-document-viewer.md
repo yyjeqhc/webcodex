@@ -1,7 +1,7 @@
 # Dedicated PDF document viewer
 
 `present_pdf(project, path)` binds a direct model tool to the self-contained
-`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v3`. It selects one
+`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v4`. It selects one
 authorized project-relative `.pdf`, independent of Git changes, a Work Result
 card, or a Workflow Session. The App contains only document controls and the
 reading area; the Host owns the surrounding chrome and display mode.
@@ -22,7 +22,7 @@ DOCX/PPTX/XLSX renderers can share the same transport. Every read:
 - revalidates the project-relative artifact path and exact size/SHA-256;
 - reuses the authenticated Runner artifact-export path and its capability
   checks;
-- returns at most the canonical 1 MiB internal artifact chunk;
+- reads through the canonical internal artifact transport but bounds each Host-facing segment to 512 KiB;
 - fails closed with `snapshot_changed` if the selected bytes change.
 
 The adapter removes `content_base64` from model-visible structured/text
@@ -77,6 +77,11 @@ enough to assume top-level `_meta`. Private metadata is normalized with the
 same wrapper policy as structured results. The evidence and rejected
 alternatives are recorded in
 [PDF document viewer dogfood](../experiments/pdf-document-viewer-dogfood.md).
+
+A final 1 MiB live probe after metadata normalization still stopped after the
+first ~1.4 MiB serialized tool response. The production App therefore uses a
+512 KiB Host-facing segment even though the internal artifact transport
+supports 1 MiB chunks.
 
 ## Build and validation
 

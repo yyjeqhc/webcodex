@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { APP_ARTIFACT_CHUNK_BYTES, privateToolMetadata, readPdfDocument } from "../src/mcp-apps/work-result/pdf-document-reader.mjs";
+import { APP_ARTIFACT_CHUNK_BYTES, pdfDocumentTransferDeadlineMs, privateToolMetadata, readPdfDocument } from "../src/mcp-apps/work-result/pdf-document-reader.mjs";
 
 const data = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(APP_ARTIFACT_CHUNK_BYTES * 2, 42)]);
 const identity = { project: "agent:pdf:demo", path: "unchanged.pdf", bytes: data.length, sha256: createHash("sha256").update(data).digest("hex") };
@@ -12,6 +12,12 @@ const response = (offset, patch = {}) => {
     complete: next === data.length, ...patch }, encoded: data.subarray(offset, next).toString("base64") };
 };
 const options = request => ({ identity, request, current: () => true });
+
+test("document transfer deadline scales with bounded Host round trips", () => {
+  assert.equal(pdfDocumentTransferDeadlineMs(identity.bytes), 120_000);
+  assert.equal(pdfDocumentTransferDeadlineMs(9_263_389), 420_000);
+  assert.equal(pdfDocumentTransferDeadlineMs(20 * 1024 * 1024), 860_000);
+});
 
 test("private App metadata survives common Host tool-result wrappers", () => {
   const payload = { content_base64: "JVBERg==" };

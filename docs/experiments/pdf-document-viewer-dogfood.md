@@ -112,6 +112,23 @@ Conclusion: private metadata normalization was necessary but not sufficient for
 private metadata plus 512 KiB App segments; PDF parsing, Runner reads, and the
 continuous-page renderer were not the bottleneck in the successful runs.
 
+### Whole-document deadline under Host delay
+
+A final v4 dogfood run kept the stable 512 KiB segment and reopened the same
+9,263,389-byte P25 paper after a fresh schema refresh. Seven sequential chunks
+reached WebCodex at offsets 0 through 3,145,728. Server handling stayed between
+roughly 12 and 24 ms, but later Host handoff gaps were about 15–19 seconds. The
+reader's fixed 120-second whole-document deadline was therefore exhausted before
+the remaining chunks could be requested, and the App surfaced a Host request
+timeout/failure.
+
+Conclusion: the fixed 120-second document budget was inconsistent with the
+bounded 512 KiB transport under a slow Host. The reader now keeps one absolute
+budget but scales it by expected Host round trips: 60 seconds plus 20 seconds per
+512 KiB chunk, with a 120-second floor and 15-minute cap. This changes only the
+client wait bound; Project authority, version fencing, per-call Host timeout,
+and full-document SHA verification are unchanged.
+
 ## Production conclusions
 
 1. Keep `present_pdf` as a direct read-only App presentation tool.
@@ -128,7 +145,9 @@ continuous-page renderer were not the bottleneck in the successful runs.
    application bundle on this Host until compatibility is demonstrated.
 7. Keep Work Result's compact single-page preview separate from the dedicated
    document reader.
-8. Treat progressive/range loading as a separate optimization. The current
+8. Scale the whole-document deadline with the bounded Host round-trip count rather
+   than assuming every Host can deliver a multi-chunk file inside 120 seconds.
+9. Treat progressive/range loading as a separate optimization. The current
    reader verifies the complete selected file before PDF.js rendering starts.
 
 ## Follow-up opportunities

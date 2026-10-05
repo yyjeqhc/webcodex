@@ -3,6 +3,16 @@ import { MAX_PDF_BYTES } from "./pdf-reader.mjs";
 export const APP_ARTIFACT_CHUNK_BYTES = 512 * 1024;
 const base64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const decode = value => Uint8Array.from(atob(value), char => char.charCodeAt(0));
+const MIN_TRANSFER_DEADLINE_MS = 120_000;
+const TRANSFER_BASE_MS = 60_000;
+const TRANSFER_PER_CHUNK_MS = 20_000;
+const MAX_TRANSFER_DEADLINE_MS = 15 * 60_000;
+
+export function pdfDocumentTransferDeadlineMs(bytes) {
+  const chunks = Math.ceil(bytes / APP_ARTIFACT_CHUNK_BYTES);
+  return Math.min(MAX_TRANSFER_DEADLINE_MS,
+    Math.max(MIN_TRANSFER_DEADLINE_MS, TRANSFER_BASE_MS + chunks * TRANSFER_PER_CHUNK_MS));
+}
 
 export function privateToolMetadata(result, key) {
   const candidates = [result, result?.result, result?.toolResult, result?.tool_result];
@@ -29,7 +39,7 @@ async function verifyPdfDocument(bytes, identity, current, now, deadline) {
 export async function readPdfDocument({
   identity, request, current, progress = () => {}, now = () => performance.now(),
 }) {
-  const deadline = now() + 120_000;
+  const deadline = now() + pdfDocumentTransferDeadlineMs(identity.bytes);
   if (!Number.isSafeInteger(identity.bytes) || identity.bytes < 5 || identity.bytes > MAX_PDF_BYTES
     || !/^[0-9a-f]{64}$/.test(identity.sha256)) throw new Error("Invalid PDF document identity");
 

@@ -545,7 +545,7 @@ including Session wrappers, gateway tools, and optional App metadata/tools.
 ### ChatGPT file bridge
 
 For viewing a project PDF, call `present_pdf(project, path)` directly. It opens
-the dedicated PDF App (`ui://webcodex/pdf/v4`) with a filename, page/zoom/search
+the dedicated PDF App (`ui://webcodex/pdf/v5`) with a filename, page/zoom/search
 toolbar and a full-height continuous-scroll reading area. It does not include Work Result activity,
 change lists or collaboration. Unchanged and untracked PDFs are supported;
 Git and Workflow Sessions are not prerequisites. The Host controls its outer
@@ -562,7 +562,7 @@ the dedicated reader's primary path. The PDF remains bounded at 20 MiB and PDF.j
 rechecks the assembled digest/header before rendering. Use `present_work_result`
 for substantial coding progress, and `present_pdf` when the user asks to view a
 PDF. See [PDF document viewer](architecture/pdf-document-viewer.md).
-The dedicated reader keeps PDF.js as the rendering engine but uses a small host-compatible continuous-scroll shell with viewport observation and nearby-page lazy rendering; Work Result retains its compact single-page preview. The transport still assembles and verifies the complete pinned file before PDF.js starts rendering, so progressive first-page range loading remains a separate optimization.
+The dedicated reader keeps PDF.js as the rendering engine but uses a small host-compatible continuous-scroll shell with viewport observation and nearby-page lazy rendering; Work Result retains its compact single-page preview. Whole-file transfer keeps one absolute, size-aware deadline: at least 120 seconds and up to 15 minutes based on the bounded 512 KiB Host round trips. The transport still assembles and verifies the complete pinned file before PDF.js starts rendering, so progressive first-page range loading remains a separate optimization.
 
 When the connected MCP protocol/host admits the artifact capabilities, WebCodex supports
 host-native file transfer in both directions without routing complete binary

@@ -106,6 +106,20 @@ pub fn goal_plan_app_tool_specs() -> Vec<ToolSpec> {
     )]
 }
 
+/// Dedicated PDF App read; canonical definition stays ModelHidden.
+pub fn pdf_app_tool_specs() -> Vec<ToolSpec> {
+    vec![
+        tool_spec(
+            "read_app_artifact_chunk",
+            "App-only generic read of one 512 KiB Host-facing segment from an exact authorized Project/path/size/SHA-256 artifact version selected by a presentation App. Rechecks Project ownership, path policy and Runner capability on every read; binary bytes use private MCP metadata only. A changed version fails closed. The segment remains below the observed ChatGPT App delivery cliff while reusing the canonical internal artifact transport, and stays format-neutral so PDF, DOCX, PPTX and other renderers can share it.",
+        ),
+        tool_spec(
+            "read_pdf_chunk",
+            "Legacy PDF App-only read of one 128 KiB segment from the exact authorized Project/path/size/SHA-256 selected by present_pdf. Retained for compatibility; new dedicated readers should use read_app_artifact_chunk.",
+        ),
+    ]
+}
+
 /// Work Result App primitives. Canonical definitions stay ModelHidden; only the
 /// MCP Apps adapter projects live refresh, bounded Window collaboration, closeout
 /// sealing, and frozen lazy diff reads.
@@ -113,7 +127,7 @@ pub fn work_result_app_tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "get_work_result_state",
-            "App-only exact Work Result refresh: reauthorizes Project and optional Session; never consumes attention or records a Session. Returns Window activity/collaboration, Session evidence and an existing final-changes snapshot sealed by finish_coding_task; never creates/replaces it. files reads advertised immutable paths as diff or UTF-8 content (view=content, byte_offset), at most 32 KiB/page and 256 KiB/file.",
+            "App-only exact Work Result refresh: reauthorizes Project and optional Session; never consumes attention or records a Session. Returns Window activity/collaboration, Session evidence and an existing final-changes snapshot sealed by finish_coding_task; never creates/replaces it. files reads advertised immutable paths as diff, UTF-8 content (view=content, 32 KiB/page, 256 KiB/file), or PDF (view=pdf, 128 KiB/page, 20 MiB/file). byte_offset selects a bounded segment of the pinned blob; PDF bytes use private MCP App metadata webcodex/pdfChunk. Missing/stale snapshots require explicit file refresh; retry preserves the exact snapshot/path/offset.",
         ),
         tool_spec(
             "read_work_result_activity_detail",

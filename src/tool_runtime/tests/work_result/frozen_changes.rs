@@ -254,6 +254,166 @@ async fn ui_files(
 }
 
 #[tokio::test]
+async fn work_result_pdf_pages_are_bounded_immutable_and_reauthorize_snapshot_identity() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use webcodex_tool_contracts::{WorkResultFileView, WorkResultFilesRequest};
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "deleted.pdf", "%PDF-1.7\nbefore\n", "base");
+    fs::remove_file(tmp.path().join("deleted.pdf")).unwrap();
+    let mut original = vec![0; 256 * 1024 + 9];
+    original[..9].copy_from_slice(b"%PDF-1.7\n");
+    original[128 * 1024..128 * 1024 + 4].copy_from_slice(&[0xff, 1, 2, 3]);
+    fs::write(tmp.path().join("report[1].pdf"), &original).unwrap();
+    fs::write(tmp.path().join("fake.pdf"), "not a PDF").unwrap();
+    fs::write(tmp.path().join("empty.pdf"), "").unwrap();
+    fs::write(tmp.path().join("large.pdf"), vec![0; 20 * 1024 * 1024 + 1]).unwrap();
+    fs::write(tmp.path().join(".env"), "%PDF-1.7\nPRIVATE_SECRET").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("report[1].pdf", tmp.path().join("link.pdf")).unwrap();
+    let runtime = test_runtime();
+    let auth = auth_context(None, true);
+    let client = "pdf-result";
+    let project =
+        register_runner_project_at_path_with_auth(&runtime, client, "demo", tmp.path(), &auth)
+            .await;
+    let inventory = ui_files(
+        &runtime,
+        client,
+        &project,
+        None,
+        WorkResultFilesRequest::default(),
+        &auth,
+    )
+    .await;
+    assert!(inventory.success, "{:?}", inventory.error);
+    let snapshot = inventory.output["work_result_files"]["snapshot_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let request = |path: &str, offset| WorkResultFilesRequest {
+        snapshot_id: Some(snapshot.clone()),
+        path: Some(path.into()),
+        view: Some(WorkResultFileView::Pdf),
+        byte_offset: offset,
+        ..Default::default()
+    };
+    fs::write(
+        tmp.path().join("report[1].pdf"),
+        "%PDF-1.7\nlater live content",
+    )
+    .unwrap();
+    let mut collected = Vec::new();
+    loop {
+        let offset = collected.len();
+        let result = ui_files(
+            &runtime,
+            client,
+            &project,
+            None,
+            request("report[1].pdf", offset),
+            &auth,
+        )
+        .await;
+        assert!(result.success, "{:?}", result.error);
+        let page = &result.output["work_result_files"];
+        assert_eq!(page["view"], "pdf");
+        assert_eq!(page["byte_offset"], offset);
+        assert_eq!(page["bytes_total"], original.len());
+        let bytes = STANDARD
+            .decode(page["content_base64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(bytes.len(), (original.len() - offset).min(128 * 1024));
+        collected.extend_from_slice(&bytes);
+        if page["complete"] == true {
+            assert!(page["next_byte_offset"].is_null());
+            break;
+        }
+        assert_eq!(page["next_byte_offset"], collected.len());
+    }
+    assert_eq!(collected, original);
+    for (path, reason) in [
+        ("deleted.pdf", "deleted"),
+        ("fake.pdf", "not_pdf"),
+        ("empty.pdf", "not_pdf"),
+        ("large.pdf", "too_large"),
+    ] {
+        let result = ui_files(&runtime, client, &project, None, request(path, 0), &auth).await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(
+            result.output["work_result_files"]["unavailable_reason"],
+            reason
+        );
+        assert!(result.output["work_result_files"]
+            .get("content_base64")
+            .is_none());
+    }
+    #[cfg(unix)]
+    {
+        let result = ui_files(
+            &runtime,
+            client,
+            &project,
+            None,
+            request("link.pdf", 0),
+            &auth,
+        )
+        .await;
+        assert_eq!(
+            result.output["work_result_files"]["unavailable_reason"],
+            "symlink"
+        );
+    }
+    for (path, offset) in [
+        (".env", 0),
+        ("../outside.pdf", 0),
+        ("unadvertised.pdf", 0),
+        ("report[1].pdf", original.len()),
+        ("report[1].pdf", 20 * 1024 * 1024),
+    ] {
+        let result = ui_files(
+            &runtime,
+            client,
+            &project,
+            None,
+            request(path, offset),
+            &auth,
+        )
+        .await;
+        assert!(!result.success, "accepted {path} at {offset}");
+    }
+    let mut other = auth_context(Some("other-pdf-reader"), false);
+    other.role = Some("admin".to_string());
+    other.scopes = vec!["admin".to_string()];
+    let denied = ui_files(
+        &runtime,
+        client,
+        &project,
+        None,
+        request("report[1].pdf", 0),
+        &other,
+    )
+    .await;
+    assert!(!denied.success, "another principal read this snapshot");
+    let content = ui_files(
+        &runtime,
+        client,
+        &project,
+        None,
+        WorkResultFilesRequest {
+            view: Some(WorkResultFileView::Content),
+            ..request("report[1].pdf", 0)
+        },
+        &auth,
+    )
+    .await;
+    assert_eq!(
+        content.output["work_result_files"]["unavailable_reason"],
+        "binary"
+    );
+}
+
+#[tokio::test]
 async fn work_result_file_pages_share_frozen_source_and_never_require_a_session() {
     use webcodex_tool_contracts::WorkResultFilesRequest;
     let tmp = tempfile::tempdir().unwrap();

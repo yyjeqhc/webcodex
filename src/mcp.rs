@@ -1153,7 +1153,9 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             let estimated = estimate_json_bytes(&body);
             guard.response_serialized(403, estimated, Some(false), None, "forbidden");
             res.status_code(StatusCode::FORBIDDEN);
-            if auth.as_ref().is_some_and(AuthContext::is_oauth_token) {
+            if auth.as_ref().is_some_and(AuthContext::is_oauth_token)
+                && crate::auth::oauth_scope_denial_is_delegable(required_scope)
+            {
                 let challenge = crate::auth::oauth_insufficient_scope_challenge(required_scope);
                 if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
                     res.headers_mut().insert("www-authenticate", val);
@@ -1382,7 +1384,7 @@ fn scope_forbidden(
     description: impl Into<String>,
 ) -> McpOutcome {
     McpOutcome::Forbidden {
-        body: crate::auth::scope_forbidden_body(auth, description),
+        body: crate::auth::scope_forbidden_body(auth, required_scope, description),
         required_scope,
     }
 }

@@ -216,7 +216,6 @@ impl DesktopCore {
                         });
                 let runtime = &mut profile.runtime;
                 runtime.pid = None;
-                runtime.tunnel_client_pid = None;
                 runtime.process_started = status
                     .as_ref()
                     .is_some_and(|status| status.service_status.running == Some(true));

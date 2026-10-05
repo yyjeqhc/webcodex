@@ -91,7 +91,18 @@ async fn project_build_plan_requires_capability_and_stays_planning_only() {
         .enqueue_project_build_plan("build-runner".into(), build_request(), Some(&access))
         .await
         .unwrap_err();
+    assert!(error.starts_with("capability_unavailable:"), "{error}");
+    assert!(error.contains("Runner `build-runner`"), "{error}");
     assert!(error.contains("project_build_v1"), "{error}");
+    assert!(error.contains("upgrade that Runner"), "{error}");
+    assert!(registry
+        .poll(RunnerPollRequest {
+            client_id: "build-runner".into(),
+            runner_instance_id: "inst".into(),
+        })
+        .await
+        .unwrap()
+        .is_none());
 
     registry.register(registration(true)).await.unwrap();
     let (request_id, _rx) = registry
@@ -112,6 +123,35 @@ async fn project_build_plan_requires_capability_and_stays_planning_only() {
         polled.decode_operation().unwrap(),
         RunnerOperation::PlanProjectBuild(request) if request == build_request()
     ));
+}
+
+#[tokio::test]
+async fn project_build_scope_capability_error_identifies_runner_without_dispatch() {
+    let registry = RunnerRegistry::default();
+    let access = auth_context(None, true);
+    registry.register(registration(true)).await.unwrap();
+
+    let mut request = build_request();
+    request.scope = Some(webcodex_core::project_build::ProjectBuildScope {
+        packages: Vec::new(),
+        all_packages: true,
+    });
+    let error = registry
+        .enqueue_project_build_plan("build-runner".into(), request, Some(&access))
+        .await
+        .unwrap_err();
+    assert!(error.starts_with("capability_unavailable:"), "{error}");
+    assert!(error.contains("Runner `build-runner`"), "{error}");
+    assert!(error.contains("project_all_packages_v1"), "{error}");
+    assert!(error.contains("upgrade that Runner"), "{error}");
+    assert!(registry
+        .poll(RunnerPollRequest {
+            client_id: "build-runner".into(),
+            runner_instance_id: "inst".into(),
+        })
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -176,6 +216,55 @@ async fn project_build_job_handoff_emits_typed_start_build() {
 }
 
 #[tokio::test]
+async fn project_build_base_capability_error_identifies_runner_without_job_admission() {
+    let registry = RunnerRegistry::default();
+    registry.register(registration(false)).await.unwrap();
+
+    let error = registry
+        .start_job_with_metadata(
+            ShellJobOpRequest {
+                login: false,
+                op: "start".into(),
+                client_id: Some("build-runner".into()),
+                cwd: Some("/tmp/demo".into()),
+                command: Some(String::new()),
+                timeout_secs: Some(60),
+                job_id: None,
+                since_stdout_line: None,
+                since_stderr_line: None,
+                tail_lines: None,
+                limit: None,
+                codex: None,
+            },
+            "test".into(),
+            ShellJobStartMetadata {
+                project_id: Some("agent:build-runner:demo".into()),
+                project_cwd: Some(".".into()),
+                purpose: Some("build".into()),
+                shell: Some("direct_argv".into()),
+                visibility: ShellJobVisibility::Public,
+                structured_execution: Some(StructuredJobExecution::ProjectBuild(build_plan())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(error.starts_with("capability_unavailable:"), "{error}");
+    assert!(error.contains("Runner `build-runner`"), "{error}");
+    assert!(error.contains("project_build_v1"), "{error}");
+    assert!(error.contains("upgrade that Runner"), "{error}");
+    assert!(registry.list_jobs(Some(10)).await.is_empty());
+    assert!(registry
+        .poll(RunnerPollRequest {
+            client_id: "build-runner".into(),
+            runner_instance_id: "inst".into(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn go_project_build_job_handoff_requires_single_module_capability() {
     for supported in [false, true] {
         let registry = RunnerRegistry::default();
@@ -219,7 +308,10 @@ async fn go_project_build_job_handoff_requires_single_module_capability() {
             assert!(result.is_ok(), "{result:?}");
         } else {
             let error = result.unwrap_err();
+            assert!(error.starts_with("capability_unavailable:"), "{error}");
+            assert!(error.contains("Runner `build-runner`"), "{error}");
             assert!(error.contains("project_go_single_module_v1"), "{error}");
+            assert!(error.contains("upgrade that Runner"), "{error}");
             assert!(registry.list_jobs(Some(10)).await.is_empty());
         }
     }

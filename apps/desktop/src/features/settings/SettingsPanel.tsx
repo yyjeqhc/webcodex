@@ -159,6 +159,7 @@ export function SettingsPanel({
         <section className="settings-section">
         <h2>{p("serviceControls")}</h2><p className="field-help">{p("serviceControlsHelp")}</p>
         {visited.includes("runtime") && <LocalServicesPanel state={state} onState={onState} />}
+        <details className="workspace-technical"><summary>{p("advanced")}</summary>
         <div className="connection-actions">
           {onChangeSetup && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onChangeSetup}>{p("changeServer")}</button>}
           {!state.persistent_environment && onStopRuntime && state.topology?.server.kind === "local" && state.readiness.runtime_ready && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onStopRuntime}>{p("stop")} WebCodex</button>}
@@ -172,6 +173,7 @@ export function SettingsPanel({
         }}>{p("restartRunner")}</button></>}
         {runnerError && <SettingsError error={runnerError} />}
         {runnerSettings && <details className="workspace-technical"><summary>{p("details")}</summary><dl className="detail-list"><div><dt>Runner</dt><dd>{runnerSettings.target.config_path}</dd></div></dl></details>}
+        </details>
         <PowerShellInstallGuidance state={state} onState={onState} />
         </section>
         {visited.includes("runtime") && <RuntimePanel state={state} onState={onState} onActivity={onActivity} onUpdates={() => selectSection("about")} />}

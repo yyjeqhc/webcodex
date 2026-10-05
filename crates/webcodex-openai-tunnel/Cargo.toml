@@ -1,0 +1,31 @@
+[package]
+name = "webcodex-openai-tunnel"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Bounded Secure MCP Tunnel client with immutable targets and no local execution replay"
+repository = "https://github.com/yyjeqhc/webcodex"
+readme = "README.md"
+
+[features]
+default = ["cli"]
+cli = ["dep:sha2", "tokio/rt-multi-thread", "tokio/signal", "tokio/net", "tokio/io-util"]
+
+[[bin]]
+name = "webcodex-tunnel"
+path = "src/bin/webcodex-tunnel/main.rs"
+required-features = ["cli"]
+
+[dependencies]
+futures-util = "0.3"
+httpdate = "1"
+sha2 = { version = "0.10", optional = true }
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "stream", "system-proxy"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+tokio = { version = "1", features = ["sync", "time", "macros"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "test-util", "process"] }
+tempfile = "3"

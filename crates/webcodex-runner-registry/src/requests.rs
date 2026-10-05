@@ -64,6 +64,13 @@ use webcodex_core::runner_skill::{RunnerSkillExecutionRequest, RunnerSkillReques
 use webcodex_core::ssh_resource::{SshResourceRequest, SSH_RESOURCE_REQUEST_MAX_BYTES};
 use webcodex_core::workflow_session_contract::ExecutionShell;
 
+pub(super) fn capability_upgrade_error(client_id: &str, capability: RunnerFeature) -> String {
+    format!(
+        "capability_unavailable: Runner `{client_id}` does not support {}; upgrade that Runner to use this operation",
+        capability.as_wire_name()
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnqueueLspError {
     InvalidRequest {
@@ -2594,28 +2601,30 @@ impl RunnerRegistry {
         let runner = inner.runners.get(&client_id).ok_or("unknown Runner")?;
         assert_runner_access(access, runner)?;
         if !runner.runner_features.supports(RunnerFeature::ProjectBuild) {
-            return Err(
-                "capability_unavailable: upgrade target Runner for project_build_v1".into(),
-            );
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectBuild,
+            ));
         }
         if requires_all_packages
             && !runner
                 .runner_features
                 .supports(RunnerFeature::ProjectAllPackages)
         {
-            return Err(
-                "capability_unavailable: upgrade target Runner for project_all_packages_v1".into(),
-            );
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectAllPackages,
+            ));
         }
         if requires_dependency_policy
             && !runner
                 .runner_features
                 .supports(RunnerFeature::ProjectDependencyPolicy)
         {
-            return Err(
-                "capability_unavailable: upgrade target Runner for project_dependency_policy_v1"
-                    .into(),
-            );
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectDependencyPolicy,
+            ));
         }
         enqueue_pending_request_locked(
             self.telemetry.as_ref(),
@@ -2667,52 +2676,60 @@ impl RunnerRegistry {
             .runner_features
             .supports(RunnerFeature::ProjectValidation)
         {
-            return Err(
-                "capability_unavailable: upgrade target Runner for project_validation_v1".into(),
-            );
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectValidation,
+            ));
         }
         if requires_python
             && !runner
                 .runner_features
                 .supports(RunnerFeature::ProjectValidationPythonPytest)
         {
-            return Err("capability_unavailable: upgrade target Runner for project_validation_python_pytest_v1".into());
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectValidationPythonPytest,
+            ));
         }
         if requires_all_packages
             && !runner
                 .runner_features
                 .supports(RunnerFeature::ProjectAllPackages)
         {
-            return Err(
-                "capability_unavailable: upgrade target Runner for project_all_packages_v1".into(),
-            );
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectAllPackages,
+            ));
         }
         if requires_dependency_policy
             && !runner
                 .runner_features
                 .supports(RunnerFeature::ProjectDependencyPolicy)
         {
-            return Err(
-                "capability_unavailable: upgrade target Runner for project_dependency_policy_v1"
-                    .into(),
-            );
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectDependencyPolicy,
+            ));
         }
         if requires_test_options
             && !runner
                 .runner_features
                 .supports(RunnerFeature::ProjectValidationTestOptions)
         {
-            return Err("capability_unavailable: upgrade target Runner for project_validation_test_options_v1".into());
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectValidationTestOptions,
+            ));
         }
         if requires_package_scope
             && !runner
                 .runner_features
                 .supports(RunnerFeature::ProjectValidationPackageScope)
         {
-            return Err(
-                "capability_unavailable: upgrade target Runner for project_validation_package_scope_v1"
-                    .into(),
-            );
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectValidationPackageScope,
+            ));
         }
         enqueue_pending_request_locked(
             self.telemetry.as_ref(),

@@ -117,18 +117,14 @@ async fn mcp_2026_computer_app_is_minimal_handshake_and_snapshot_only() {
     let McpOutcome::Ok(resources) = resources else {
         panic!("expected UI resources/list");
     };
-    assert_eq!(
-        resources["result"]["resources"][0]["uri"],
-        MCP_COMPUTER_UI_RESOURCE_URI
-    );
-    assert_eq!(
-        resources["result"]["resources"][0]["mimeType"],
-        MCP_UI_RESOURCE_MIME_TYPE
-    );
-    assert_eq!(
-        resources["result"]["resources"][0]["_meta"],
-        expected_resource_meta
-    );
+    let computer_resource = resources["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|resource| resource["uri"] == MCP_COMPUTER_UI_RESOURCE_URI)
+        .expect("Computer App resource");
+    assert_eq!(computer_resource["mimeType"], MCP_UI_RESOURCE_MIME_TYPE);
+    assert_eq!(computer_resource["_meta"], expected_resource_meta);
 
     let resource = handle_mcp_request(
         &runtime,

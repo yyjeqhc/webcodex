@@ -351,6 +351,7 @@ mod tests {
             key_file: None,
             auth: ConnectAuth::SharedKey,
             oauth_redirect_uri: None,
+            oauth_browser_permissions: false,
             oauth_computer_permissions: false,
             oauth_local_mcp: false,
             oauth_local_plugins: false,

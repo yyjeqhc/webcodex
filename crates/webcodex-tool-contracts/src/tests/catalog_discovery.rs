@@ -326,7 +326,7 @@ fn edit_recommended_flow_converges_on_one_primary_editor() {
         .expect("edit recommended flow");
     assert_eq!(flow.tools.first().copied(), Some("read_files"));
     assert_eq!(flow.tools.get(1).copied(), Some("edit_project_files"));
-    assert_eq!(flow.tools.get(2).copied(), Some("cargo_check"));
+    assert_eq!(flow.tools.get(2).copied(), Some("project_validate"));
     assert!(flow.tools.contains(&"review_changes"));
     assert!(flow.tools.contains(&"finish_coding_task"));
     for specialist in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
@@ -803,13 +803,35 @@ fn audit_and_exploration_intents_prefer_canonical_batch_and_review_tools() {
 }
 
 #[test]
-fn validate_flow_uses_observe_jobs_without_recommending_job_status() {
+fn ordinary_validation_flows_prefer_project_gateway_and_keep_specialists_out() {
+    let edit = TOOL_RECOMMENDED_FLOWS
+        .iter()
+        .find(|flow| flow.name == "edit")
+        .unwrap();
+    assert!(edit.tools.contains(&"project_validate"));
+    assert!(!edit.tools.contains(&"cargo_check"));
+    assert!(!edit.tools.contains(&"cargo_test"));
+
     let validate = TOOL_RECOMMENDED_FLOWS
         .iter()
         .find(|flow| flow.name == "validate")
         .unwrap();
+    assert!(validate.tools.contains(&"project_validate"));
+    assert!(validate.tools.contains(&"cargo_fmt"));
     assert!(validate.tools.contains(&"observe_jobs"));
-    assert!(!validate.tools.contains(&"job_status"));
+    for advanced in ["cargo_check", "cargo_test", "go_test", "job_status"] {
+        assert!(!validate.tools.contains(&advanced), "{advanced}");
+    }
+
+    let release = TOOL_MANIFEST_INTENTS
+        .iter()
+        .find(|intent| intent.name == "release")
+        .unwrap();
+    assert!(release.tools.contains(&"project_validate"));
+    assert!(release.tools.contains(&"cargo_fmt"));
+    for advanced in ["cargo_check", "cargo_test", "go_test"] {
+        assert!(!release.tools.contains(&advanced), "{advanced}");
+    }
 }
 
 #[test]
@@ -850,18 +872,22 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
         "run_process",
         "run_shell",
         "observe_jobs",
-        "cargo_check",
-        "cargo_test",
+        "project_validate",
         "review_changes",
         "check_workspace_hygiene",
         "finish_coding_task",
         "run_script",
         "cargo_fmt",
-        "go_test",
         "find_definition",
         "find_references",
     ] {
         assert!(coding.tools.contains(&required), "missing {required}");
+    }
+    for advanced_specialist in ["cargo_check", "cargo_test", "go_test"] {
+        assert!(
+            !coding.tools.contains(&advanced_specialist),
+            "coding intent should prefer project_validate over {advanced_specialist}"
+        );
     }
     for compatibility_or_overlap in [
         "read_file",

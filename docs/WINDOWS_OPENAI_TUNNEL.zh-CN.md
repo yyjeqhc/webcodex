@@ -29,7 +29,7 @@ webcodex share --tunnel openai
 ```mermaid
 flowchart LR
     C[ChatGPT custom MCP app] -->|OpenAI Tunnel| CP[OpenAI control plane]
-    CP --> TC[tunnel-client on Windows]
+    CP --> TC[Native Rust Tunnel on Windows]
     TC -->|HTTP streamable MCP\nBearer stays local| S[WebCodex Server\n127.0.0.1:18080]
     R[WebCodex Runner] -->|WebSocket| S
     R --> P[C:\\src\\your-repository]
@@ -67,7 +67,7 @@ CONTROL_PLANE_API_KEY
 
 不要打印或提交 Tunnel ID、API key、WebCodex Bearer、bootstrap token 或 authorization-file 内容，也不要把它们放进文档、issue 或截图。
 
-WebCodex 会使用固定并校验的 OpenAI `tunnel-client`；当前实现也可以从 `WEBCODEX_TUNNEL_CLIENT_BIN` 或 `PATH` 解析它。
+WebCodex 使用内置原生 Rust Tunnel client，无需安装外部 tunnel-client。
 
 ## 2. 初始化 Windows 前台 Server
 
@@ -132,61 +132,23 @@ webcodex runner run --config <login-reported-runner-config>
 
 使用 `webcodex runner status --config <login-reported-runner-config>` 检查状态。此时 Server 应看到一个普通独立 Runner，并且 `C:\src\your-repository` 已经注册。以后需要增加更多 Project 时，再使用普通的 `webcodex project register --config ...` 流程。
 
-## 4. 先验证本地 MCP，再启动 OpenAI Tunnel
+## 4. 启动原生 Tunnel
 
-OpenAI `tunnel-client` 的关键目标是本机：
+已有本地 Server 使用 `webcodex server tunnel --provider openai --env-file <server-env-file>`；
+临时 Server/Runner 使用 `webcodex share --tunnel openai`。原生 Rust client 会先验证
+本地 `/mcp` 鉴权和成功的控制面 poll，再报告就绪。本地 Bearer 在内存中注入，
+不再下载外部二进制、运行 doctor 子进程或开放 `/readyz` 端口。
 
-```text
-http://127.0.0.1:18080/mcp
-```
+## 5. 分别检查两段连接
 
-WebCodex Bearer 应保留在本机，通过 file-backed `Authorization` header 注入给 `tunnel-client`；不要把这个 Bearer 复制到 ChatGPT。
+Desktop 与 `--json` 健康事件分别报告 `tunnel_ready`、`local_mcp_ready`，它们不证明
+ChatGPT Connector 已成功创建。请分别检查本地 Server、Restricted Tunnel 凭据和
+控制面网络路径。Desktop 代理设置作用于控制面，本地 MCP 绕过代理；CLI 可配置
+标准 `HTTPS_PROXY` / `NO_PROXY` 环境变量。重定向不能改变 endpoint 或凭据受众。
 
-启动 daemon 前先运行 `doctor`，要求它同时验证：
-
-- Tunnel ID；
-- Restricted control-plane API key；
-- 本地 WebCodex MCP；
-- 本地 Bearer 注入。
-
-成功后运行 Tunnel daemon，并为它配置健康检查：
-
-```text
---mcp.server-url url=http://127.0.0.1:18080/mcp,channel=main
---mcp.extra-headers Authorization: file:<private-authorization-file>
---health.listen-addr 127.0.0.1:0
---health.url-file <private-health-url-file>
-```
-
-WebCodex 的 `share --tunnel openai` 会自动完成相同类别的准备、`doctor` 和 `/readyz` 等待。手工拓扑只建议用于本文这种独立 Server/Runner 场景或排障。
-
-## 5. `/readyz` 正常但 ChatGPT 创建 Connector 失败
-
-`/readyz = 200` 只说明本地 Tunnel/MCP 一侧能够通过健康检查，并不能证明 `tunnel-client` 已经能够获取 OpenAI Tunnel metadata 并持续完成 control-plane poll。
-
-如果 ChatGPT 仍然创建失败，应检查 `tunnel-client` 日志中的 metadata/poll failure。浏览器能够联网也不能证明该进程使用相同 proxy、DNS 或 IPv6 路径。
-
-排障时按两条链路分别判断：
-
-```mermaid
-flowchart TD
-    A[tunnel-client /readyz = 200] --> B[MCP session initialized]
-    B --> C{OpenAI control-plane poll 可达?}
-    C -->|否| D[ChatGPT 能看到 Tunnel 元数据\n但创建 Connector 失败]
-    D --> E[检查 tunnel-client 日志]
-    E --> F[检查进程 proxy / DNS / IPv6 路径]
-    F --> G[需要时为 control-plane 单独设置 HTTP proxy]
-    G --> H[metadata fetched + poll 正常]
-    H --> I[Connector 创建成功]
-```
-
-如果该主机需要 HTTP proxy，先确认 proxy 本身能够访问 `api.openai.com`，再只把 **control-plane** 流量交给它：
-
-```text
---control-plane.http-proxy http://127.0.0.1:<proxy-port>
-```
-
-修改 route 后，应同时确认本地 readiness 与 control-plane metadata/poll 都正常，再重试创建 Connector。文末历史部分保留了 2026-08-30 真实 Clash 故障，它正是这条当前排障规则的证据来源。
+上次运行存在不确定工作时会阻止重启。请先处理之前的执行效果和待处理请求，再清除
+私有 `webcodex/tunnel-runs` 标记，或使用新的 Tunnel identity。
+详见[原生 client 契约](../crates/webcodex-openai-tunnel/README.md)。
 
 ## 6. 在 ChatGPT Developer Mode 创建 Connector
 
@@ -201,7 +163,7 @@ flowchart TD
 
 为什么是 **No authentication**？
 
-因为 OpenAI Tunnel 到本机 WebCodex MCP 的 Bearer 已由 `tunnel-client` 在本机注入。ChatGPT 不应该拿到或保存该 Bearer。
+因为 OpenAI Tunnel 到本机 WebCodex MCP 的 Bearer 已由原生 Rust Tunnel client 在本机注入。ChatGPT 不应该拿到或保存该 Bearer。
 
 ## 7. 通过 Connector 做端到端验收
 
@@ -221,9 +183,9 @@ WebCodex 返回的 Project handle 是结果，不是设置时需要用户自己�
 | --- | --- |
 | Windows Server | loopback listener 正常，`/mcp` 可达 |
 | Runner | `actual_transport=websocket`，Runner online |
-| Local MCP | `tunnel-client` 显示 `mcp session initialized` |
-| Tunnel health | `/readyz = 200` |
-| OpenAI control plane | metadata fetch 成功，poll 无持续失败 |
+| Local MCP | `local_mcp_ready: true` |
+| Native Tunnel | 成功完成一次 control-plane poll 后 `tunnel_ready: true` |
+| OpenAI control plane | poll 持续运行，且没有持续的认证、网络或协议失败 |
 | ChatGPT | Connector 可以创建并 Scan/加载 tools |
 | Project | login 阶段注册的 Project 可以通过 Connector 看到 |
 | Read | 可以通过新 Connector 读取仓库文件 |
@@ -233,9 +195,9 @@ WebCodex 返回的 Project handle 是结果，不是设置时需要用户自己�
 
 ## 9. 常见误区
 
-### `/readyz = 200` 就代表 Tunnel 完全可用
+### `tunnel_ready: true` 就代表 Connector 完全可用
 
-不是。还必须确认 OpenAI control-plane metadata/poll 正常。
+不是。它只证明原生 client 已成功完成 control-plane poll，不证明 ChatGPT 已创建 Connector 或加载 tools；还需要单独验证 ChatGPT 这一层。
 
 ### ChatGPT 需要填写 WebCodex Bearer
 
@@ -247,7 +209,7 @@ OpenAI Secure MCP Tunnel 模式不需要。选择 **No authentication**，Bearer
 
 ### `share --tunnel openai` 和本文手工拓扑完全不同
 
-底层核心链路相同：本地 WebCodex MCP + 本地 Bearer 注入 + OpenAI `tunnel-client`。区别是 `share` 自己管理临时 Server/Runner/session，而本文显式拆开 Server 和 Runner，便于验证长期拓扑和排障。
+底层核心链路相同：本地 WebCodex MCP + 本地 Bearer 注入 + 原生 Rust Tunnel client。区别是 `share` 自己管理临时 Server/Runner/session，而本文显式拆开 Server 和 Runner，便于验证长期拓扑和排障。
 
 ## Historical dogfood note — 2026-08-30
 
@@ -290,7 +252,7 @@ http://127.0.0.1:7890
 --control-plane.http-proxy http://127.0.0.1:7890
 ```
 
-之后 Tunnel log 显示 healthy proxy route 与正常 metadata/poll，Connector 创建成功。这是当前“浏览器联网和 `/readyz` 都不能单独证明 `tunnel-client` control-plane 可达”这一排障规则的历史证据。
+之后 Tunnel log 显示 healthy proxy route 与正常 metadata/poll，Connector 创建成功。其中 `/readyz`、metadata 和外部 `tunnel-client` 都属于已退役实现；当前原生 client 保留的排障结论是：浏览器或本地 MCP 可达，并不能证明 control-plane poll 健康。
 
 以下截图也来自 2026-08-30 的 ChatGPT UI，仅作历史参考；当前 UI 文案可能变化：
 

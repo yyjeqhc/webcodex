@@ -87,7 +87,6 @@ impl DesktopCore {
             .unwrap_or_else(|| resource_dir.join("webcodex-runtime"));
         let mut adapter = WebCodexAdapter::new(Some(runtime_directory));
         adapter.set_runtime_source(config.runtime_binary_source.clone());
-        adapter.set_runtime_approval(config.runtime_binary_fingerprint.clone());
         Ok(Self {
             data_dir,
             config_path,

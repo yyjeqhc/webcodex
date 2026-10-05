@@ -199,6 +199,42 @@ pub enum ToolCall {
         byte_offset: usize,
     },
 
+    /// Open one project PDF in a dedicated reader, independently of Git or a Session.
+    PresentPdf {
+        #[schemars(length(min = 1, max = 512))]
+        project: String,
+        #[schemars(length(min = 1, max = 512))]
+        path: String,
+    },
+
+    /// App-only read of the exact PDF version selected by present_pdf.
+    ReadPdfChunk {
+        #[schemars(length(min = 1, max = 512))]
+        project: String,
+        #[schemars(length(min = 1, max = 512))]
+        path: String,
+        #[schemars(regex(pattern = "^[0-9a-f]{64}$"))]
+        sha256: String,
+        #[schemars(range(min = 5, max = 20971520))]
+        bytes: usize,
+        #[schemars(range(min = 0, max = 20971519))]
+        byte_offset: usize,
+    },
+
+    /// App-only generic read of one exact immutable artifact version for presentation renderers.
+    ReadAppArtifactChunk {
+        #[schemars(length(min = 1, max = 512))]
+        project: String,
+        #[schemars(length(min = 1, max = 512))]
+        path: String,
+        #[schemars(regex(pattern = "^[0-9a-f]{64}$"))]
+        sha256: String,
+        #[schemars(range(min = 1, max = 268435456))]
+        bytes: usize,
+        #[schemars(range(min = 0, max = 268435455))]
+        byte_offset: usize,
+    },
+
     /// Explicitly present one persistent card for the current client Window.
     /// Project authority is re-checked on every refresh; Workflow Session linkage is optional evidence.
     PresentWorkResult {
@@ -231,7 +267,7 @@ pub enum ToolCall {
             pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
         ))]
         session_id: Option<String>,
-        /// Explicit file inventory, lazy diff, or bounded UTF-8 content page; omission keeps lightweight card state.
+        /// Explicit inventory, lazy diff, UTF-8 content or PDF page; omission keeps lightweight card state.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         files: Option<WorkResultFilesRequest>,
     },

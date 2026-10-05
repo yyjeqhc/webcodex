@@ -176,8 +176,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         tools: &[
             "read_files",
             "edit_project_files",
-            "cargo_check",
-            "cargo_test",
+            "project_validate",
             "review_changes",
             "finish_coding_task",
         ],
@@ -208,15 +207,12 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "validate",
         summary:
-            "Validate: use structured validators when their canonical diagnostics, evidence/test-count, validation identity, or same-execution Job semantics help; native execution is first-class when the command is outside or awkward for that contract.",
+            "Validate: use structured validators when their canonical diagnostics, evidence/test-count, validation identity, or same-execution Job semantics help; native execution is first-class when the command is outside or awkward for that contract. Prefer project_validate for portable common validation.",
         manifest_purpose:
-            "For portable project validation, prefer project_validate; dependency_policy.mode=locked prevents adapter-managed dependency selection updates for check/test without implying offline execution. Use cargo_fmt/cargo_check/cargo_test/go_test for advanced ecosystem options when their canonical argv, parsed diagnostics, validation identity, test-count proof, min_tests/require_tests, bounded projection, or same-execution Job handoff materially helps. Native validation is first-class when the command is outside or awkward for that structured contract: prefer run_process for one literal-argv executable, run_shell when shell grammar/output shaping is required, and run_script for program-like supported scripts. Keep independent failure/permission boundaries separate. cargo_fmt check=false retains ensure-format mutation truth; check=true stays read-only.",
+            "For portable project validation, prefer project_validate; dependency_policy.mode=locked prevents adapter-managed dependency selection updates for check/test without implying offline execution. Keep cargo_fmt for explicit formatting semantics; cargo_check/cargo_test/go_test remain exact-name advanced specialists rather than ordinary routing choices. Native validation is first-class when the command is outside or awkward for that structured contract: prefer run_process for one literal-argv executable, run_shell when shell grammar/output shaping is required, and run_script for program-like supported scripts. Keep independent failure/permission boundaries separate. cargo_fmt check=false retains ensure-format mutation truth; check=true stays read-only.",
         tools: &[
             "project_validate",
-    "cargo_fmt",
-            "cargo_check",
-            "cargo_test",
-            "go_test",
+            "cargo_fmt",
             "observe_jobs",
             "read_validation_summary",
             "run_process",
@@ -314,12 +310,10 @@ pub const CODING_INTENT_TOOL_NAMES: &[&str] = &[
     "run_script",
     "run_shell",
     "observe_jobs",
-    // Common structured validation with evidence semantics.
+    // Portable common validation plus explicit formatting semantics. Ecosystem
+    // validators remain exact-name advanced specialists rather than ordinary coding choices.
     "project_validate",
     "cargo_fmt",
-    "cargo_check",
-    "cargo_test",
-    "go_test",
     #[cfg(feature = "experimental-code-mode")]
     "execute_effectful_code_mode",
     // Primary ordinary review plus authoritative hygiene/closeout.
@@ -413,9 +407,7 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "get_git_status",
             "check_workspace_hygiene",
             "project_validate",
-    "cargo_fmt",
-            "cargo_check",
-            "cargo_test",
+            "cargo_fmt",
             "read_validation_summary",
             "observe_jobs",
             "list_jobs",

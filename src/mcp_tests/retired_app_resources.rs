@@ -43,6 +43,8 @@ async fn retired_app_resources_fail_closed_instead_of_serving_current_templates(
         "ui://webcodex/goal-plan/v5",
         "ui://webcodex/goal-plan/v6",
         "ui://webcodex/job-terminal-continuation/v1",
+        "ui://webcodex/pdf/v1",
+        "ui://webcodex/pdf/v2",
         "ui://webcodex/result/v1",
         "ui://webcodex/result/v2",
         "ui://webcodex/result/v3",

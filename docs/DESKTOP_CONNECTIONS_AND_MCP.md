@@ -5,6 +5,29 @@ Desktop owns the user's persistent **desired configuration**. Processes and
 This development work does not change the repository release version or publish a
 release.
 
+## Runtime folders and everyday service controls
+
+Settings → Runtime & services shows service state first. A stopped local service
+has Start; a ready local service has Restart. Stop and credential repair are
+under Advanced. Remote processes never acquire local service actions.
+
+The bundled Runtime is the default; ordinary users need not select binaries.
+Selecting a custom folder validates and applies it in the same action. Desktop
+remembers the **directory**, not a permanent allowlist of those exact file bytes.
+After recompiling into `target/dogfood`, restart Desktop, or use **Reload selected
+folder** to validate and restart the Desktop-owned Runtime without selecting the
+folder again. A changed Git commit, dirty build or compatible version is diagnostic
+information, not a startup prohibition. An earlier saved fingerprint no longer
+blocks a compatible rebuild, including when loading an older Desktop configuration.
+
+Only interruptions with active or unconfirmed Jobs need additional confirmation.
+The native switch still checks the current owner, selected candidate/revision,
+architecture, protocol compatibility, and files changing *during* validation or
+startup. Missing/invalid binaries remain actionable errors; Desktop never silently
+falls back to a different directory. Healthy per-binary diagnostics are collapsed;
+failed startup checks expand so the broken component remains visible. Installed
+system/user-service environments retain their installer-based update path.
+
 ## One runtime, multiple connections
 
 ```text
@@ -12,8 +35,8 @@ Desktop
   ├─ one local Server ── http://127.0.0.1:<server-port>/mcp
   ├─ one local Runner ── projects / instructions / skills / MCP providers
   └─ Connections
-       ├─ ChatGPT Personal ── owned tunnel-client A ── same /mcp
-       ├─ ChatGPT Work     ── owned tunnel-client B ── same /mcp
+       ├─ ChatGPT Personal ── owned native Tunnel A ── same /mcp
+       ├─ ChatGPT Work     ── owned native Tunnel B ── same /mcp
        └─ ...
 ```
 
@@ -22,7 +45,7 @@ Tunnel ID/API Key pair, enabled/autostart intent, and a revision. It is not a se
 Server or a second Runner. Reusing a Tunnel ID in another profile is rejected.
 Names do not identify processes: renaming an active profile leaves its PID intact.
 
-`ProcessKey::RegularTunnel(TunnelProfileId)` gives every owned CLI/tunnel-client
+`ProcessKey::RegularTunnel(TunnelProfileId)` gives every owned CLI/native Tunnel
 process tree its own supervisor entry. Server, Runner and Quick Share retain their
 singleton identities. Supervisor generations fence late monitors so an old child
 cannot overwrite or kill a replacement. Shutdown visits every owned exposure
@@ -30,9 +53,9 @@ before stopping the shared Runner and Server; graceful stdin EOF remains the fir
 stop mechanism. Platform process-group / Windows Job Object ownership remains in
 force.
 
-Every tunnel launch uses the existing UUID runtime directory, private authorization
-file, health URL file, individual log file, and `127.0.0.1:0` health listener. No
-per-profile WebCodex Server port or database is allocated. Managed starts do not
+Every tunnel launch uses a UUID runtime directory and an owned native Rust task.
+Credentials are injected in memory; health is reported through machine events.
+No per-profile MCP Server, health port or database is allocated. Managed starts do not
 race to overwrite the clipboard; **Copy ID** is explicit in each card.
 
 ### Lifecycle and health
@@ -45,7 +68,7 @@ stop retains the profile for recovery.
 
 Starting a profile publishes `starting` immediately. Its observer independently
 waits for a bounded ready event, then consumes health observations. The CLI probes
-its loopback tunnel health listener and the authenticated local `/mcp` information
+the native task’s poll state and the authenticated local `/mcp` information
 endpoint. No jobs or ChatGPT activity are synthesized by these probes. A local
 endpoint outage degrades affected connections; restoration can recover the same
 processes without a restart. A dead tunnel process requires an explicit Restart
@@ -69,9 +92,9 @@ its autostart choice; deleting the default does not resurrect environment fallba
 
 A start action being accepted is not proof that the tunnel is ready. Later
 readiness failures appear on the affected connection card, including after an
-automatic startup. Download, local installation and integrity verification
-failures have distinct recovery messages; changing credentials does not repair a
-full disk or an invalid downloaded binary. Integrity checks must never be bypassed.
+automatic startup. Authorization, capacity, protocol and uncertain-restart
+failures have distinct safe reason codes. An unresolved previous run must not be
+restarted automatically; resolve prior effects and pending work first.
 
 When **Auto** selected a detected proxy and the tunnel reports a network/readiness
 failure, the card offers an explicit diagnostic option: try **Direct** under
@@ -80,7 +103,7 @@ reported Clash TUN scenario in #720 without silently bypassing a user's proxy.
 Direct removes WebCodex's application-level proxy configuration; it does not
 turn off the operating system's TUN or guarantee a particular network route.
 Direct succeeding narrows the problem but does not establish the root cause.
-Custom/Direct choices, installation errors and verification errors do not trigger
+Custom/Direct choices, authorization errors and uncertain-restart errors do not trigger
 this Auto-proxy advice. Proxy settings are shared by Desktop connections; changes
 are applied on subsequent starts, not by silently restarting healthy peers.
 
@@ -201,19 +224,12 @@ preservation, A/B re-materialization, updates/removals and cross-feature PID sta
 Frontend tests cover named semantic controls, exact profile routing, deletion
 confirmation, write-only credentials, explicit Runner apply, and all six locales.
 
-The production CLI fixture PoC is executable with:
-
-```sh
-python3 scripts/tests/desktop_multi_tunnel_poc.py --webcodex <built-webcodex>
-```
-
-It replaces only tunnel-client/the remote control plane, while running two actual
-production `webcodex server tunnel` processes against one authenticated local MCP
-fixture. It checks unique real health ports, runtime/log/auth paths, independent
-stop/restart/failure, upstream outage/recovery, secret non-output and EOF cleanup.
-It does **not** prove two real ChatGPT accounts. Real dual-account E2E requires two
-independently issued, usable Tunnel ID/API Key pairs and the corresponding account
-access; never clone a live ID and label it a second account.
+The old fake-Go-binary CLI PoC was retired with the external client adapter.
+The native crate's loopback control-plane/MCP tests now cover command correlation,
+no replay, credential isolation, deadlines, bounded ingress and shutdown. Desktop
+connection tests cover per-profile machine events and generation fencing.
+These do not prove real dual-account ChatGPT acceptance; that requires two
+independently issued Tunnel identities and usable account access.
 
 Windows retains Job Object tree ownership and platform atomic-file helpers. Windows
 executable resolution recognizes native executable and command-wrapper extensions;
@@ -229,3 +245,8 @@ source/build/signature/Computer Use evidence in the PR. A rollback to a pre-prof
 Desktop also requires restoring its private configuration backup, not merely the
 old App. The independent `~/.local/lib/webcodex-dev/webcodex-runner` is not a Desktop
 runtime deployment target.
+
+Native Tunnel ready events use `schema_version: 2`: runtime metadata contains only
+`directory` and `local_mcp_url`. The native task has no child PID, health port or
+per-child log file. Health and failure events retain their unchanged version-1
+shapes. Desktop and CLI must be upgraded together for this ready-event contract.

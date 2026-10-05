@@ -24,7 +24,7 @@ Check the Runner and project state independently. If they remain available and t
 
 ## ChatGPT: temporary `share`
 
-Explicit `share` is supported on Linux, macOS, and Windows and owns a temporary single-project environment for that foreground run. Windows x64 can use the managed default Cloudflare Quick Tunnel; Windows ARM64 needs a trusted explicit/PATH `cloudflared` because the pinned Cloudflare release publishes no official ARM64 artifact. Managed OpenAI `tunnel-client` supports both Windows x64 and arm64.
+Explicit `share` is supported on Linux, macOS, and Windows and owns a temporary single-project environment for that foreground run. Windows x64 can use the managed default Cloudflare Quick Tunnel; Windows ARM64 needs a trusted explicit/PATH `cloudflared` because the pinned Cloudflare release publishes no official ARM64 artifact. Native OpenAI Tunnel supports both Windows x64 and arm64.
 
 For the default temporary public path, WebCodex reuses an explicit/PATH `cloudflared` or downloads its pinned verified managed copy automatically, then run:
 
@@ -75,7 +75,7 @@ For an OpenAI-only private transport, create/select a Secure MCP Tunnel, export
 `CONTROL_PLANE_TUNNEL_ID` plus a Restricted `CONTROL_PLANE_API_KEY` with Tunnels
 Read + Use, and run `webcodex share --tunnel openai`. ChatGPT uses Connection:
 Tunnel + No authentication; the temporary WebCodex Bearer stays local and is
-injected by the pinned verified OpenAI `tunnel-client`.
+injected by the native Rust Tunnel client.
 
 For a long-lived **loopback-only** Server reached through OpenAI Secure Tunnel,
 ChatGPT host-file rewrites authenticated by the explicitly allowed local tunnel
@@ -86,12 +86,12 @@ existing explicit value is never overwritten. The exception works only when
 `WEBCODEX_ADDR` resolves to loopback and the authenticated credential is either a
 normal user API token or the configured Server bootstrap credential used by the
 Desktop regular Tunnel. The regular Tunnel derives that credential from the local
-`WEBCODEX_TOKEN` configuration and injects it into its private tunnel-client
+`WEBCODEX_TOKEN` configuration and injects it into its private native Tunnel
 authorization; users should not copy or expose that credential. Independent/network-
 accessible Servers remain off by default and must not use this as a substitute for
 OAuth.
 
-For a regular independent Windows Server + Runner reached through OpenAI Tunnel, or to troubleshoot a case where local `/readyz` is healthy but ChatGPT Connector creation still fails, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material, not required reading for a first-time user.
+For a regular independent Windows Server + Runner reached through OpenAI Tunnel, or to troubleshoot a case where local MCP is healthy but ChatGPT Connector creation still fails, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material, not required reading for a first-time user.
 
 ## Result cards
 
@@ -310,6 +310,10 @@ PersistentShell details.
 When OAuth is enabled, MCP clients can use the authorization-code flow instead of a static token. Register the client's exact callback URL, keep `offline_access` when the host requests refresh-token support, and follow the connection values produced by `share --auth oauth` or `connect --auth oauth`. Server setup is in [Deployment](DEPLOYMENT.md#oauth2).
 
 For ordinary hosted `connect --auth oauth`, the Runner keeps its hosted credential while the MCP client receives a separate OAuth credential. Add `--oauth-computer-permissions`, `--oauth-local-mcp`, or `--oauth-local-ssh` only when those optional capabilities are needed. Existing clients are not silently widened; a real permission change requires reauthorization.
+
+Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.
+
+Operator/admin diagnostics such as `read_tool_trace` are outside ordinary OAuth delegation. Neither OAuth supported scopes nor the shared-key bridge ceiling includes `admin`. Manifest discovery checks caller authority as well as protocol capability. Hard-coded calls remain denied without a challenge suggesting OAuth reconnect can grant `admin`. Missing delegable scopes such as Browser scopes still return the standard `WWW-Authenticate: Bearer error="insufficient_scope"` challenge.
 
 Project-first `share --auth oauth` remains bound to that temporary share environment. Managed-user OAuth is a separate advanced flow (`connect --auth managed-oauth`). OAuth credentials are never valid on Runner transport.
 
@@ -555,6 +559,26 @@ serialized-byte and advertised-tool-count budgets on final Stateless results,
 including Session wrappers, gateway tools, and optional App metadata/tools.
 
 ### ChatGPT file bridge
+
+For viewing a project PDF, call `present_pdf(project, path)` directly. It opens
+the dedicated PDF App (`ui://webcodex/pdf/v3`) with a filename, page/zoom/search
+toolbar and a full-height continuous-scroll reading area. It does not include Work Result activity,
+change lists or collaboration. Unchanged and untracked PDFs are supported;
+Git and Workflow Sessions are not prerequisites. The Host controls its outer
+sidebar and display mode. Rendering requires an MCP Apps-capable Host.
+
+The dedicated reader uses the App-only `read_app_artifact_chunk` bridge for bytes.
+That bridge is format-neutral and reuses the canonical artifact export chunk
+transport: each `tools/call` reauthorizes Project access, validates the pinned
+path/size/SHA-256 identity, and returns at most 512 KiB per Host-facing call through private MCP metadata.
+A changed source fails closed. For a 9 MiB document this is roughly eighteen Host
+round trips rather than the legacy 128 KiB `read_pdf_chunk` loop's roughly seventy.
+The legacy PDF-specific reader remains available for compatibility but is no longer
+the dedicated reader's primary path. The PDF remains bounded at 20 MiB and PDF.js
+rechecks the assembled digest/header before rendering. Use `present_work_result`
+for substantial coding progress, and `present_pdf` when the user asks to view a
+PDF. See [PDF document viewer](architecture/pdf-document-viewer.md).
+The dedicated reader keeps PDF.js as the rendering engine but uses a small host-compatible continuous-scroll shell with viewport observation and nearby-page lazy rendering; Work Result retains its compact single-page preview. Whole-file transfer keeps one absolute, size-aware deadline: at least 120 seconds and up to 15 minutes based on the bounded 512 KiB Host round trips. Each App-originated chunk call inherits the remaining document budget instead of imposing a second shorter timeout. The transport still assembles and verifies the complete pinned file before PDF.js starts rendering, so progressive first-page range loading remains a separate optimization.
 
 When the connected MCP protocol/host admits the artifact capabilities, WebCodex supports
 host-native file transfer in both directions without routing complete binary

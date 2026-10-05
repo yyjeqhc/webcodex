@@ -418,6 +418,7 @@ fn parse_connect(args: &[String]) -> CliAction {
     let mut key_file = None;
     let mut auth = ConnectAuth::SharedKey;
     let mut oauth_redirect_uri = None;
+    let mut oauth_browser_permissions = false;
     let mut oauth_computer_permissions = false;
     let mut oauth_local_mcp = false;
     let mut oauth_local_plugins = false;
@@ -462,6 +463,7 @@ fn parse_connect(args: &[String]) -> CliAction {
                     return cli_parse_error("--oauth-redirect-uri requires a value".to_string())
                 }
             },
+            "--oauth-browser-permissions" => oauth_browser_permissions = true,
             "--oauth-computer-permissions" => oauth_computer_permissions = true,
             "--oauth-local-mcp" => oauth_local_mcp = true,
             "--oauth-local-plugins" => oauth_local_plugins = true,
@@ -530,6 +532,11 @@ fn parse_connect(args: &[String]) -> CliAction {
             // actual optional grants are still selected in browser consent.
         }
         ConnectAuth::ManagedOAuth => {
+            if oauth_browser_permissions {
+                return cli_parse_error(
+                    "--oauth-browser-permissions requires --auth oauth".to_string(),
+                );
+            }
             if oauth_computer_permissions {
                 return cli_parse_error(
                     "--oauth-computer-permissions requires --auth oauth".to_string(),
@@ -562,6 +569,11 @@ fn parse_connect(args: &[String]) -> CliAction {
             }
         }
         ConnectAuth::SharedKey => {
+            if oauth_browser_permissions {
+                return cli_parse_error(
+                    "--oauth-browser-permissions requires --auth oauth".to_string(),
+                );
+            }
             if oauth_computer_permissions {
                 return cli_parse_error(
                     "--oauth-computer-permissions requires --auth oauth".to_string(),
@@ -605,6 +617,7 @@ fn parse_connect(args: &[String]) -> CliAction {
         key_file,
         auth,
         oauth_redirect_uri,
+        oauth_browser_permissions,
         oauth_computer_permissions,
         oauth_local_mcp,
         oauth_local_plugins,

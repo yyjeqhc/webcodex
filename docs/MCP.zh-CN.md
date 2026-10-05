@@ -24,7 +24,7 @@ FORBIDDEN: This conversation does not support developer MCPs
 
 ## ChatGPT：临时 `share`
 
-显式 `share` 支持 Linux、macOS 与 Windows，并由当前前台进程持有临时单项目环境。Windows x64 可直接使用 managed 默认 Cloudflare Quick Tunnel；固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 需要受信任的显式/`PATH` `cloudflared`。managed OpenAI `tunnel-client` 支持 Windows x64/arm64。
+显式 `share` 支持 Linux、macOS 与 Windows，并由当前前台进程持有临时单项目环境。Windows x64 可直接使用 managed 默认 Cloudflare Quick Tunnel；固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 需要受信任的显式/`PATH` `cloudflared`。原生 OpenAI Tunnel 支持 Windows x64/arm64。
 
 默认临时公网路径会复用显式指定/`PATH` 中的 `cloudflared`，否则由 WebCodex 自动下载并校验固定的 managed 副本，然后执行：
 
@@ -105,8 +105,8 @@ share 的 Project Credential，并不是 PAT/OAuth/shared-key 的通用 query au
 如果只需要 OpenAI 产品的私有 transport，创建/选择 Secure MCP Tunnel，导出
 `CONTROL_PLANE_TUNNEL_ID` 与只授予 Tunnels Read + Use 的 Restricted
 `CONTROL_PLANE_API_KEY`，然后运行 `webcodex share --tunnel openai`。ChatGPT 使用
-Connection: Tunnel + No authentication；临时 WebCodex Bearer 留在本机，由固定且经过校验的
-OpenAI `tunnel-client` 注入。
+Connection: Tunnel + No authentication；临时 WebCodex Bearer 留在本机，由
+原生 Rust Tunnel client 在内存中注入。
 
 对于通过 OpenAI Secure Tunnel 访问的长期 **loopback-only** Server，可以设置
 `WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true`，从而信任由明确允许的本地 tunnel
@@ -114,10 +114,10 @@ credential 认证的 ChatGPT host-file rewrite。WebCodex Desktop 自 v0.4.2 起
 本机 loopback Server 默认写入该值；已有显式配置不会被覆盖。该例外仅在 `WEBCODEX_ADDR`
 解析为 loopback，且当前 credential 是普通 user API token，或 Desktop regular Tunnel 使用的
 已配置 Server bootstrap credential 时生效。regular Tunnel 从本机 `WEBCODEX_TOKEN` 配置派生
-该 credential，并只把它注入私有 tunnel-client authorization；用户不应复制或暴露该
+该 credential，并只把它注入原生 Tunnel 的固定本地 Authorization；用户不应复制或暴露该
 credential。独立/network-accessible Server 仍默认关闭，不应使用它替代 OAuth。
 
-如果在 Windows 上使用普通独立 Server + Runner 并通过 OpenAI Tunnel 接入，或排查“本地 `/readyz` 正常但 ChatGPT Connector 创建失败”的情况，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。它是深入配置/排障文档，不是普通用户第一次必须阅读的教程。
+如果在 Windows 上使用普通独立 Server + Runner 并通过 OpenAI Tunnel 接入，或排查“本地 MCP 正常但 ChatGPT Connector 创建失败”的情况，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。它是深入配置/排障文档，不是普通用户第一次必须阅读的教程。
 
 ## 对话侧边栏中的 Work Result
 
@@ -216,6 +216,10 @@ replacement Runner，也不会在 uncertain outcome 后自动 replay。Raw SSH t
 启用 OAuth 后，MCP client 可以使用 authorization-code flow，而不是静态 token。注册 client 实际要求的精确 callback URL；host 要求 refresh-token support 时保留 `offline_access`；连接参数以 `share --auth oauth` 或 `connect --auth oauth` 的输出为准。Server 配置见[部署指南](DEPLOYMENT.zh-CN.md#oauth2)。
 
 普通 hosted `connect --auth oauth` 中，Runner 保持原 hosted credential，MCP client 获得独立 OAuth credential。只有真正需要额外能力时才增加 `--oauth-computer-permissions`、`--oauth-local-mcp` 或 `--oauth-local-ssh`。已有 client 不会被静默扩权；真实权限变化要求重新授权。
+
+Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时显式指定 `--oauth-browser-permissions`，仅追加 `browser:read`、`browser:control`、`browser:launch`。默认 baseline 不包含 Browser scope；Browser 与 `--oauth-computer-permissions` 相互独立，也不使用 Computer consent checkbox。已有 client 不会自动扩权，历史窄权限仅追加显式选择的类别。scope ceiling 变化会撤销旧 grants 并要求重新授权；复用已启用 Browser 的 profile 时必须继续携带该 flag。
+
+Operator/admin diagnostics（如 `read_tool_trace`）不属于普通 OAuth delegation。`admin` 不在 OAuth supported scopes 或 shared-key bridge ceiling 中。Manifest discovery 同时检查 caller authority 和 protocol capability；即使硬编码调用，权限拒绝也不会发出暗示可通过 OAuth reconnect 获得 `admin` 的 challenge。Browser 等可委托 scope 缺失时仍返回标准 `WWW-Authenticate: Bearer error="insufficient_scope"`。
 
 Project-first `share --auth oauth` 仍绑定本次临时 share 环境。Managed-user OAuth 是另一条高级流程（`connect --auth managed-oauth`）。OAuth credential 永远不能用于 Runner transport。
 

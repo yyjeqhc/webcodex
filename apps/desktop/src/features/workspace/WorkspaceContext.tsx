@@ -59,6 +59,7 @@ function authorizationFailed(reason: WorkspaceErrorReason | null | undefined): b
   return reason === "authenticationRequired" || reason === "permissionDenied";
 }
 interface WorkspaceValue {
+  contextKey: string;
   runners: ServerRunnerSummary[]; fleetStale: boolean;
   state: DesktopState; runner: RunnerOverview | null; projects: WorkspaceProject[]; windows: WindowSummary[];
   sessions: WorkflowSession[]; loading: boolean; busy: boolean; error: boolean; errorReason: WorkspaceErrorReason; windowsError: boolean; windowsErrorReason: WorkspaceErrorReason; refresh: () => void; removeProject: (id: string) => void; revision: number;
@@ -175,7 +176,7 @@ export function WorkspaceProvider({ state, suspended = false, preservePollDeadli
     setSelection(current => current?.kind === "session" && !projects.some(project => project.id === current.project) ? null : current);
   }, [projects]);
   const ids = new Set(projects.map(project => project.id));
-  return <WorkspaceContext.Provider value={{ state, runners: current?.runners || [], fleetStale: !ready || Boolean(current?.error), runner: current?.runner || null, projects,
+  return <WorkspaceContext.Provider value={{ contextKey: key, state, runners: current?.runners || [], fleetStale: !ready || Boolean(current?.error), runner: current?.runner || null, projects,
     windows: (current?.windows || []).filter(row => !row.last_project || ids.has(row.last_project)),
     sessions: (current?.runner?.recent_sessions?.sessions || []).filter(session => !session.project_id || ids.has(session.project_id)), loading: ready && !busy && (loading || !current),
     busy, error: Boolean(current?.error), errorReason: current?.errorReason || "loadError", windowsError: Boolean(current?.windowsError), windowsErrorReason: current?.windowsErrorReason || "loadError", refresh, removeProject, revision, selection, setSelection,

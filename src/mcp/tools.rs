@@ -34,18 +34,8 @@ pub(super) const WORK_RESULT_THREAD_CONTEXT_META_KEY: &str = "webcodex/workResul
 const WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME: &str = "work_result_thread_panel";
 
 fn filter_specs_for_oauth(mut specs: Vec<ToolSpec>, auth: Option<&AuthContext>) -> Vec<ToolSpec> {
-    let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
     specs.retain(|spec| {
-        let authority = crate::tool_runtime::metadata::lookup_tool_metadata(&spec.name)
-            .map(|metadata| metadata.authority);
-        matches!(
-            authority,
-            Some(webcodex_core::authority::ToolAuthorityPolicy::RequireAny(_))
-        )
-        .then(|| check_runtime_tool_scope(auth, &spec.name).is_ok())
-        .unwrap_or_else(|| {
-            !oauth_scope_projection || check_runtime_tool_scope(auth, &spec.name).is_ok()
-        })
+        crate::tool_runtime::kernel::runtime_tool_scope_allows_discovery(auth, &spec.name)
     });
     specs
 }
@@ -370,6 +360,7 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
                 .into_iter()
                 .chain(crate::tool_runtime::work_result_app_tool_specs())
                 .chain(crate::tool_runtime::docx_app_tool_specs())
+                .chain(crate::tool_runtime::pdf_app_tool_specs())
                 .chain(crate::tool_runtime::agent_continuation_app_tool_specs())
                 .chain(crate::tool_runtime::job_terminal_continuation_app_tool_specs())
                 .collect(),
@@ -759,6 +750,7 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
             tool_name,
             Some(
                 "sync_goal_plan"
+                    | "read_pdf_chunk"
                     | "get_work_result_state"
                     | "read_docx_chunk"
                     | "read_changed_file_diff"
@@ -2030,6 +2022,8 @@ fn mcp_invocation_envelope_supported_fields(tool: &str) -> Vec<&'static str> {
         "sync_goal_plan"
             | "get_work_result_state"
             | "read_docx_chunk"
+            | "read_pdf_chunk"
+            | "read_app_artifact_chunk"
             | "read_changed_file_diff"
             | "search_mentions"
     ) || tool == WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME
@@ -2831,6 +2825,12 @@ pub(super) async fn handle_call(
     }
     let app_only_docx_read =
         server_mcp_apps_enabled && stateless_2026 && params.name == "read_docx_chunk";
+    let app_only_pdf_chunk = server_mcp_apps_enabled
+        && stateless_2026
+        && matches!(
+            params.name.as_str(),
+            "read_pdf_chunk" | "read_app_artifact_chunk"
+        );
     let app_only_work_result_state =
         work_result_app_admitted && params.name == "get_work_result_state";
     let app_only_work_result_activity_detail =
@@ -2860,6 +2860,7 @@ pub(super) async fn handle_call(
         && !app_only_docx_read
         && !app_only_goal_plan_sync
         && !app_only_work_result_state
+        && !app_only_pdf_chunk
         && !app_only_work_result_activity_detail
         && !app_only_work_result_send_message
         && !app_only_changes_file_diff
@@ -3013,6 +3014,7 @@ pub(super) async fn handle_call(
                 goal_plan_app: goal_plan_app_capable,
                 work_result_app: work_result_app_capable,
                 docx_app: server_mcp_apps_enabled && stateless_2026,
+                pdf_app: server_mcp_apps_enabled && stateless_2026,
                 agent_continuation_app: agent_continuation_app_capable,
             },
         )
@@ -3110,6 +3112,7 @@ pub(super) async fn handle_call(
     if app_only_docx_read
         || workbench_view_call
         || (app_only_work_result_state && !work_result_thread_panel)
+        || app_only_pdf_chunk
         || app_only_work_result_activity_detail
         || app_only_work_result_send_message
         || app_only_changes_file_diff
@@ -3132,6 +3135,11 @@ pub(super) async fn handle_call(
                 .entry("_meta")
                 .or_insert_with(|| json!({}));
             meta["webcodex/docxDocument"] = structured;
+        }
+    }
+    if app_enabled && params.name == "present_pdf" {
+        if let Some(structured) = result.get("structuredContent").cloned() {
+            result["_meta"]["webcodex/pdfDocument"] = structured;
         }
     }
     if (app_enabled && params.name == "present_work_result") || work_result_thread_panel {

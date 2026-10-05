@@ -8,6 +8,7 @@ async fn discovery_materializes_only_the_requested_contract_shape() {
     take_counts();
     let exact = runtime
         .tool_manifest(
+            None,
             Some("run_process".into()),
             None,
             None,
@@ -31,6 +32,7 @@ async fn discovery_materializes_only_the_requested_contract_shape() {
     let category = runtime
         .tool_manifest(
             None,
+            None,
             Some("execution".into()),
             None,
             false,
@@ -52,6 +54,7 @@ async fn discovery_materializes_only_the_requested_contract_shape() {
     );
     let hidden = runtime
         .tool_manifest(
+            None,
             Some("read_memory".into()),
             None,
             None,
@@ -250,7 +253,7 @@ impl CodeModeHost for CallableExampleHost {
                     }]
                 }),
                 "get_git_status" => json!({"stdout": "## clean"}),
-                "cargo_check" => json!({
+                "project_validate" => json!({
                     "execution_state": "pending",
                     "continuation": {"follow_up_kind": "fallback_recovery", "tool": "observe_jobs",
                         "arguments": {"items":[{"job_id":"wc_job_example"}]}}
@@ -1127,12 +1130,7 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
             "coding intent should not recommend {compatibility_or_overlap}: {names:?}"
         );
     }
-    for gateway_specialist in [
-        "cargo_fmt",
-        "go_test",
-        "check_workspace_hygiene",
-        "finish_coding_task",
-    ] {
+    for gateway_specialist in ["cargo_fmt", "check_workspace_hygiene", "finish_coding_task"] {
         let tool = result.output["tools"]
             .as_array()
             .unwrap()
@@ -1156,8 +1154,7 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
         "run_script",
         "run_shell",
         "observe_jobs",
-        "cargo_check",
-        "cargo_test",
+        "project_validate",
         "review_changes",
     ] {
         let tool = result.output["tools"]
@@ -1168,6 +1165,44 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
             .unwrap_or_else(|| panic!("missing canonical coding tool {direct}"));
         assert_eq!(tool["availability"], "direct", "{direct}");
         assert!(tool["gateway_tool"].is_null(), "{direct}");
+    }
+    for (advanced, expected_availability) in [
+        ("cargo_check", "gateway"),
+        ("cargo_test", "gateway"),
+        ("go_test", "gateway"),
+    ] {
+        assert!(
+            !names.contains(&advanced),
+            "ordinary coding intent must not recommend advanced validator {advanced}"
+        );
+        let exact = runtime
+            .dispatch(ToolCall::ToolManifest {
+                query: None,
+                limit: None,
+                tool_name: Some(advanced.to_string()),
+                category: None,
+                intent: None,
+                include_recommended_flows: false,
+                include_risk_summary: false,
+            })
+            .await;
+        assert!(exact.success, "{advanced}: {:?}", exact.error);
+        assert_eq!(
+            exact.output["contract"]["availability"],
+            expected_availability
+        );
+        if expected_availability == "direct" {
+            assert!(
+                exact.output["contract"]["gateway_tool"].is_null(),
+                "{advanced}"
+            );
+        } else {
+            assert_eq!(
+                exact.output["contract"]["gateway_tool"],
+                crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "{advanced}"
+            );
+        }
     }
 }
 
@@ -1264,18 +1299,9 @@ async fn tool_manifest_intent_can_combine_with_category_filter() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    // Coding intent keeps executable validation choices, while the read-only
-    // validation_summary remains available through exact/category discovery.
-    assert_eq!(
-        names,
-        vec![
-            "project_validate",
-            "cargo_fmt",
-            "cargo_check",
-            "cargo_test",
-            "go_test"
-        ]
-    );
+    // Coding intent keeps the portable project gateway plus explicit formatting;
+    // advanced ecosystem validators remain available through exact/category discovery.
+    assert_eq!(names, vec!["project_validate", "cargo_fmt"]);
 }
 
 #[tokio::test]
@@ -1515,20 +1541,46 @@ async fn tool_manifest_default_flows_follow_exact_vs_discovery_shape_end_to_end(
     assert!(exact.success, "{:?}", exact.error);
     assert!(exact.output.get("recommended_flows").is_none());
 
-    let exact_true = runtime
+    for specialist in ["cargo_check", "cargo_test"] {
+        let specialist_true = runtime
+            .dispatch(
+                ToolCall::from_tool_name(
+                    "read_tool_manifest",
+                    json!({
+                        "tool_name": specialist,
+                        "include_recommended_flows": true
+                    }),
+                )
+                .unwrap(),
+            )
+            .await;
+        assert!(
+            specialist_true.success,
+            "{specialist}: {:?}",
+            specialist_true.error
+        );
+        assert!(
+            specialist_true.output["recommended_flows"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
+            "{specialist}"
+        );
+    }
+
+    let ordinary_true = runtime
         .dispatch(
             ToolCall::from_tool_name(
                 "read_tool_manifest",
                 json!({
-                    "tool_name": "cargo_test",
+                    "tool_name": "project_validate",
                     "include_recommended_flows": true
                 }),
             )
             .unwrap(),
         )
         .await;
-    assert!(exact_true.success, "{:?}", exact_true.error);
-    assert!(exact_true.output["recommended_flows"]
+    assert!(ordinary_true.success, "{:?}", ordinary_true.error);
+    assert!(ordinary_true.output["recommended_flows"]
         .as_array()
         .is_some_and(|flows| !flows.is_empty()));
 
@@ -2106,12 +2158,18 @@ async fn tool_manifest_exact_tool_returns_input_contract_without_output_schema()
             "read_tool_manifest exact contract output_schema must require {key}"
         );
     }
-    assert_eq!(contract["availability"], "direct");
-    assert!(contract["gateway_tool"].is_null());
+    assert_eq!(contract["availability"], "gateway");
+    assert_eq!(
+        contract["gateway_tool"],
+        crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
     assert!(contract.get("output_schema").is_none());
     assert_eq!(result.output["tools"][0]["name"], "cargo_test");
-    assert_eq!(result.output["tools"][0]["availability"], "direct");
-    assert!(result.output["tools"][0]["gateway_tool"].is_null());
+    assert_eq!(result.output["tools"][0]["availability"], "gateway");
+    assert_eq!(
+        result.output["tools"][0]["gateway_tool"],
+        crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
     assert!(result.output["tools"][0].get("input_schema").is_none());
 }
 
@@ -2529,8 +2587,13 @@ async fn tool_manifest_operator_extensions_require_explicit_family_capabilities(
     use crate::tool_runtime::kernel::ToolProtocolCapabilities;
 
     let runtime = test_runtime();
+    let admin = crate::auth::AuthContext {
+        is_bootstrap: true,
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap)
+    };
     let manifest = |tool_name: &'static str, capabilities: ToolProtocolCapabilities| {
         runtime.tool_manifest(
+            Some(&admin),
             Some(tool_name.to_string()),
             None,
             None,
@@ -2716,6 +2779,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
             None,
             None,
             None,
+            None,
             false,
             false,
             Some("batch unregister".into()),
@@ -2737,6 +2801,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
     for name in ["resolve_workspace", "unregister_projects"] {
         let exact = runtime
             .tool_manifest(
+                None,
                 Some(name.into()),
                 None,
                 None,
@@ -2752,6 +2817,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
     }
     let list = runtime
         .tool_manifest(
+            None,
             None,
             None,
             Some("maintenance".into()),
@@ -2770,6 +2836,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
         .all(|tool| tool["name"] != "work_on_project"));
     let hidden = runtime
         .tool_manifest(
+            None,
             None,
             None,
             None,

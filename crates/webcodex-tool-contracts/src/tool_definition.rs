@@ -18,6 +18,7 @@ mod communication;
 mod computer;
 mod diagnostics;
 mod discovery;
+mod documents;
 mod docx;
 mod edits;
 mod files;
@@ -1302,6 +1303,7 @@ pub fn tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {
 const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     TOOL_DEFINITION_HEAD,
     sessions::DEFINITIONS,
+    documents::DEFINITIONS,
     communication::DEFINITIONS,
     goals::DEFINITIONS,
     agent_tasks::DEFINITIONS,

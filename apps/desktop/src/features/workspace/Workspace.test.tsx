@@ -1,5 +1,7 @@
+import { useLayoutEffect } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { GitSummary, WorkflowSession, WorkspaceProject, ServerRunnerSummary } from "../../models/workspace";
 import type { DesktopState } from "../../models/topology";
 import { LocaleProvider } from "../../i18n/locale";
 import { PRODUCT_LOCALES, PRODUCT_MESSAGES, productText } from "../../i18n/product";
@@ -63,6 +65,47 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("product workspace task flows", () => {
+  it.each([[false, false], [true, false], [false, true], [true, true]])(
+    "reports partial Session history for return truncation=%s and scan truncation=%s",
+    async (truncated, scan_truncated) => {
+      const normal = native.invoke.getMockImplementation()!;
+      native.invoke.mockImplementation((command, value) => value.request.kind === "overview"
+        ? Promise.resolve({ ...overview, recent_sessions: { sessions: [session], truncated, scan_truncated } })
+        : normal(command, value));
+      render(wrap(<ActivityPanel activity={[]} />));
+      fireEvent.click(screen.getByRole("tab", { name: "Workflow Sessions" }));
+      await screen.findByText(session.title);
+      expect(Boolean(screen.queryByText("History is partial"))).toBe(truncated || scan_truncated);
+    },
+  );
+
+  it.each([[true, false], [false, true], [true, true]])(
+    "does not claim empty history is complete when truncation=%s and scan truncation=%s",
+    async (truncated, scan_truncated) => {
+      const normal = native.invoke.getMockImplementation()!;
+      native.invoke.mockImplementation((command, value) => value.request.kind === "overview"
+        ? Promise.resolve({ ...overview, recent_sessions: { sessions: [], truncated, scan_truncated } })
+        : normal(command, value));
+      render(wrap(<ActivityPanel activity={[]} />));
+      fireEvent.click(screen.getByRole("tab", { name: "Workflow Sessions" }));
+      expect(await screen.findByText("History is partial")).toBeInTheDocument();
+      expect(screen.getByText("No sessions observed in this partial history")).toBeInTheDocument();
+      expect(screen.queryByText("No Workflow Sessions yet")).not.toBeInTheDocument();
+    },
+  );
+
+  it("retains the complete empty Session history message", async () => {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => value.request.kind === "overview"
+      ? Promise.resolve({ ...overview, recent_sessions: { sessions: [], truncated: false, scan_truncated: false } })
+      : normal(command, value));
+    render(wrap(<ActivityPanel activity={[]} />));
+    await screen.findByRole("button", { name: /Fix export workflow/ });
+    fireEvent.click(screen.getByRole("tab", { name: "Workflow Sessions" }));
+    expect(screen.getByText("No Workflow Sessions yet")).toBeInTheDocument();
+    expect(screen.queryByText("History is partial")).not.toBeInTheDocument();
+  });
+
   it("ignores failures from pre-refresh observations and resumes overview and Git reads", async () => {
     const pending = new Map<string, (error: Error) => void>();
     const normal = native.invoke.getMockImplementation()!;
@@ -110,16 +153,71 @@ describe("product workspace task flows", () => {
     expect(screen.getByRole("button", { name: "Remove project alpha" })).toBeInTheDocument();
   });
 
-  it("shows no local Runner on a viewer while retaining raw stopped readiness", () => {
+  it.each([
+    ["http://127.0.0.1:18080", null],
+    ["http://192.0.2.10:18080", null],
+    ["https://central.example", null],
+    ["http://127.0.0.1:18080", "viewer-environment"],
+    ["http://192.0.2.10:18080", "viewer-environment"],
+    ["https://central.example", "viewer-environment"],
+  ])("scopes viewer status without inferring ownership from %s (%s)", (url, persistent_environment) => {
     const viewer = { ...state, readiness: { ...state.readiness, runner: "stopped" as const },
-      topology: { ...state.topology!, server: { kind: "remote" as const, url: "https://central.example" }, runner: { kind: "none" as const } } } as DesktopState;
+      persistent_environment, connections: connectionSnapshot(),
+      topology: { ...state.topology!, server: { kind: "remote" as const, url }, runner: { kind: "none" as const } } } as DesktopState;
     render(wrap(<><WorkspaceStatus state={viewer} /><Sidebar state={viewer} navigation="home" setNavigation={vi.fn()} /></>, viewer));
     expect(screen.getByRole("status")).toHaveTextContent("Server ConnectionRunning");
-    expect(screen.getByRole("status")).toHaveTextContent("Local task serviceNot configured");
-    expect(screen.getByRole("status")).not.toHaveTextContent("Local task serviceStopped");
+    expect(screen.getByRole("status")).not.toHaveTextContent("Local task service");
+    expect(screen.getByRole("status")).toHaveTextContent("Desktop Tunnel connectionsNo Tunnel connections saved in Desktop");
     expect(screen.getByRole("complementary")).toHaveTextContent("Server Connection · Running");
-    expect(screen.getByRole("complementary")).not.toHaveTextContent("Local task service · Stopped");
+    expect(screen.getByRole("complementary")).toHaveTextContent("No Tunnel connections saved in Desktop");
+    expect(screen.getByRole("complementary")).not.toHaveTextContent("Local task service");
+    expect(screen.queryByText("ChatGPT connected")).not.toBeInTheDocument();
+    expect(native.invoke.mock.calls.every(([command]) => command === "workspace_query")).toBe(true);
+    expect(api.restartOwnedRunner).not.toHaveBeenCalled();
     expect(viewer.readiness.runner).toBe("stopped");
+  });
+
+  it.each([null, "server-environment"])("hides an absent Runner on a Server-only environment (%s)", persistent_environment => {
+    const serverOnly = { ...state, persistent_environment, topology: { ...state.topology!, runner: { kind: "none" as const } },
+      connections: connectionSnapshot(connectionFixture({ pid: null })) };
+    render(wrap(<><WorkspaceStatus state={serverOnly} /><Sidebar state={serverOnly} navigation="home" setNavigation={vi.fn()} /></>, serverOnly));
+    expect(screen.getByRole("status")).toHaveTextContent("Server ConnectionRunning");
+    expect(screen.getByRole("status")).not.toHaveTextContent("Local task service");
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 1 Desktop tunnels locally ready");
+    expect(screen.getByRole("complementary")).toHaveTextContent("Server Connection · Running");
+  });
+
+  it("does not invent a configured Runner before topology is available", () => {
+    const unknown = { ...state, topology: null };
+    render(wrap(<><WorkspaceStatus state={unknown} /><Sidebar state={unknown} navigation="home" setNavigation={vi.fn()} /></>, unknown));
+    expect(screen.getByRole("status")).not.toHaveTextContent("Local task service");
+    expect(screen.getByRole("complementary")).not.toHaveTextContent("Local task service");
+  });
+
+  it.each([null, "full-environment"])("keeps configured local Runner readiness in a Full Runtime (%s)", persistent_environment => {
+    const full = { ...state, persistent_environment, readiness: { ...state.readiness, runner: "error" as const, runtime_ready: false } };
+    render(wrap(<><WorkspaceStatus state={full} /><Sidebar state={full} navigation="home" setNavigation={vi.fn()} /></>, full));
+    expect(screen.getByRole("status")).toHaveTextContent("Local task serviceUnavailable");
+    expect(screen.getByRole("complementary")).toHaveTextContent("Local task service · Unavailable");
+  });
+
+  it("shows the configured Runner when joining an independently managed Server", () => {
+    const joined = { ...state, persistent_environment: "joined-environment",
+      topology: { ...state.topology!, server: { kind: "remote" as const, url: "https://central.example" } }, connections: connectionSnapshot() };
+    render(wrap(<><WorkspaceStatus state={joined} /><Sidebar state={joined} navigation="home" setNavigation={vi.fn()} /></>, joined));
+    expect(screen.getByRole("status")).toHaveTextContent("Local task serviceRunning");
+    expect(screen.getByRole("complementary")).toHaveTextContent("Local task service · Running");
+    expect(screen.getByRole("status")).toHaveTextContent("No Tunnel connections saved in Desktop");
+  });
+
+  it("keeps Quick Share exposure separate from saved Tunnel connections", () => {
+    const quickShare = { ...state, topology: { ...state.topology!, experience: "quick_share" as const },
+      readiness: { ...state.readiness, exposure: "remote_ready" as const }, connections: connectionSnapshot() };
+    render(wrap(<><WorkspaceStatus state={quickShare} /><Sidebar state={quickShare} navigation="home" setNavigation={vi.fn()} /></>, quickShare));
+    expect(screen.getByRole("status")).toHaveTextContent("Quick ShareRunning");
+    expect(screen.getByRole("complementary")).toHaveTextContent("Quick Share · Running");
+    expect(screen.queryByText("Desktop Tunnel connections")).not.toBeInTheDocument();
+    expect(screen.queryByText("No Tunnel connections saved in Desktop")).not.toBeInTheDocument();
   });
 
   it("keeps a viewer read-only without offering a local project picker", () => {
@@ -132,19 +230,27 @@ describe("product workspace task flows", () => {
   it("describes locally ready tunnels without counting a live but unhealthy process as ready", () => {
     const selected = { ...state, connections: connectionSnapshot(connectionFixture({ ready: false, process_started: true, lifecycle: "running" })) };
     render(wrap(<><WorkspaceStatus state={selected} /><Sidebar state={selected} navigation="home" setNavigation={vi.fn()} /></>, selected));
-    expect(screen.getByRole("status")).toHaveTextContent("0 of 1 tunnels locally ready");
-    expect(screen.getByRole("complementary")).toHaveTextContent("0 of 1 tunnels locally ready");
+    expect(screen.getByRole("status")).toHaveTextContent("0 of 1 Desktop tunnels locally ready");
+    expect(screen.getByRole("complementary")).toHaveTextContent("0 of 1 Desktop tunnels locally ready");
     expect(screen.queryByText("ChatGPT connected")).not.toBeInTheDocument();
   });
   it.each([
-    [connectionSnapshot(), "No tunnels configured"],
-    [{ ...connectionSnapshot(), config_error: true }, "Tunnel status unconfirmed"],
-    [undefined, "Tunnel status unconfirmed"],
+    [connectionSnapshot(), "No Tunnel connections saved in Desktop"],
+    [{ ...connectionSnapshot(), config_error: true }, "Desktop Tunnel status unconfirmed"],
+    [undefined, "Desktop Tunnel status unconfirmed"],
   ])("distinguishes missing configuration from unavailable tunnel observations", (connections, label) => {
     const selected = { ...state, connections };
     render(wrap(<WorkspaceStatus state={selected} />, selected));
     expect(screen.getByRole("status")).toHaveTextContent(label);
     expect(screen.getByRole("status")).not.toHaveTextContent("0 / 0");
+  });
+
+  it("does not show cached readiness as healthy when Tunnel configuration is unreadable", () => {
+    const selected = { ...state, connections: { ...connectionSnapshot(connectionFixture()), config_error: true } };
+    render(wrap(<WorkspaceStatus state={selected} />, selected));
+    expect(screen.getByRole("status")).toHaveTextContent("Desktop Tunnel status unconfirmed");
+    const row = screen.getByText("Desktop Tunnel connections").closest("div")!;
+    expect(row.querySelector(".status-dot.ready")).toBeNull();
   });
   it.each([
     ["workspace_authentication_required", "User authentication is missing or expired. Restore your Server credential."],
@@ -195,7 +301,7 @@ describe("product workspace task flows", () => {
     expect(screen.getByRole("row", { name: "alpha" })).toHaveTextContent("Runs on · This computer");
     if (availability === true) {
       expect(devices).toHaveTextContent("still require system permissions");
-      expect(within(devices).queryByRole("button")).not.toBeInTheDocument();
+      expect(within(devices).queryByRole("button", { name: "Desktop access settings" })).not.toBeInTheDocument();
     } else {
       if (availability === false) expect(devices).toHaveTextContent("File and command tools do not depend on this session");
       else expect(devices).not.toHaveTextContent("Desktop session unavailable");
@@ -533,4 +639,465 @@ it("keeps Runner overview when only the default display Project disappears", asy
   view.rerender(wrap(<ProjectsPanel />, projectless));
   expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
   expect(native.invoke.mock.calls.filter(([, value]) => value.request.kind === "overview")).toHaveLength(calls);
+});
+
+describe("Workflow Session loaded-record filters", () => {
+  function record(title: string, changes: Partial<WorkflowSession> = {}): WorkflowSession {
+    return { ...session, session_id: `fixture-${title}`, title, running_call: false, running_jobs: 0,
+      overview: { attention: { open_todos: 0, open_questions: 0, open_risks: 0 } }, ...changes };
+  }
+  function inventory(rows: WorkflowSession[], truncated = false, scanTruncated = false) {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => value.request.kind === "overview"
+      ? Promise.resolve({ ...overview, recent_sessions: { sessions: rows, truncated, scan_truncated: scanTruncated } }) : normal(command, value));
+  }
+  async function openSessions(count: number) {
+    fireEvent.click(screen.getByRole("tab", { name: "Workflow Sessions" }));
+    await waitFor(() => expect(screen.getByText("Loaded sessions")).toHaveTextContent(`Loaded sessions ${count}`));
+    return screen.getByRole("combobox", { name: "Session filter" });
+  }
+
+  it("counts loaded records and selects actual calls or jobs, not idle open sessions or uncertain job inventories", async () => {
+    inventory([record("Idle fixture"), record("Call fixture", { running_call: true }), record("Job fixture", { running_jobs: 1 }), record("Unknown jobs fixture", { running_jobs_complete: false })]);
+    render(wrap(<ActivityPanel activity={[]} />));
+    const filter = await openSessions(4);
+    expect(screen.getByRole("button", { name: /Idle fixture/ })).toHaveTextContent("Open");
+    native.invoke.mockClear();
+    fireEvent.change(filter, { target: { value: "running" } });
+    expect(screen.getByRole("button", { name: /Call fixture/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Job fixture/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Idle fixture/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Unknown jobs fixture/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Matching loaded sessions")).toHaveTextContent("Matching loaded sessions 2");
+    expect(native.invoke).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(filter).toHaveValue("all");
+    expect(screen.getByText("Matching loaded sessions")).toHaveTextContent("Matching loaded sessions 4");
+    expect(native.invoke).not.toHaveBeenCalled();
+  });
+
+  it.each(["open_todos", "open_questions", "open_risks"] as const)("finds positive %s without requiring running work", async field => {
+    inventory([record("Attention fixture", { overview: { attention: { open_todos: 0, open_questions: 0, open_risks: 0, [field]: 1 } } }), record("Idle fixture")]);
+    render(wrap(<ActivityPanel activity={[]} />));
+    fireEvent.change(await openSessions(2), { target: { value: "attention" } });
+    expect(screen.getByRole("button", { name: /Attention fixture/ })).toHaveTextContent("Open");
+    expect(screen.queryByRole("button", { name: /Idle fixture/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Matching loaded sessions")).toHaveTextContent("Matching loaded sessions 1");
+  });
+
+  it("includes failed checks and excludes unavailable, inconclusive, not-run and passed checks", async () => {
+    const states = ["failed", "unavailable", "inconclusive", "not_run", "passed"];
+    inventory(states.map(state => record(`${state} fixture`, { overview: { attention: { open_todos: 0, open_questions: 0, open_risks: 0 }, validation: { state } } })));
+    render(wrap(<ActivityPanel activity={[]} />));
+    fireEvent.change(await openSessions(5), { target: { value: "attention" } });
+    expect(screen.getByRole("button", { name: /failed fixture/ })).toHaveTextContent("Checks failed");
+    for (const state of states.slice(1)) expect(screen.queryByRole("button", { name: new RegExp(`${state} fixture`) })).not.toBeInTheDocument();
+  });
+
+  it("combines Project and session filters, clears both on no matches, and preserves partial-history warnings", async () => {
+    inventory([record("Alpha running fixture", { running_call: true }), record("Beta idle fixture", { project_id: beta.id })], true);
+    render(wrap(<ActivityPanel activity={[]} />));
+    const filter = await openSessions(2);
+    fireEvent.change(filter, { target: { value: "running" } });
+    fireEvent.click(screen.getByRole("button", { name: "Project: All Projects" }));
+    const picker = screen.getByRole("dialog", { name: "Project" });
+    fireEvent.click(within(picker).getByRole("button", { name: /beta/ }));
+    expect(screen.getByText("No matching sessions")).toBeInTheDocument();
+    expect(screen.queryByText(productText("en-US", "noSessions"))).not.toBeInTheDocument();
+    expect(screen.getByText("Loaded sessions")).toHaveTextContent("Loaded sessions 2");
+    expect(screen.getByText("Matching loaded sessions")).toHaveTextContent("Matching loaded sessions 0");
+    expect(screen.getByText("History is partial")).toBeInTheDocument();
+    expect(screen.getByText(/Counts describe loaded records only/)).toBeInTheDocument();
+    native.invoke.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(filter).toHaveValue("all");
+    expect(screen.getByRole("button", { name: "Project: All Projects" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Alpha running fixture/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Beta idle fixture/ })).toBeInTheDocument();
+    expect(native.invoke).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { truncated: true, scanTruncated: false }, { truncated: false, scanTruncated: true },
+  ])("keeps filtered empty-state precedence and loaded counts on partial history %j", async flags => {
+    inventory([], flags.truncated, flags.scanTruncated);
+    render(wrap(<ActivityPanel activity={[]} />));
+    const filter = await openSessions(0);
+    await screen.findByText(productText("en-US", "noObservedSessions"));
+    expect(screen.getByText("History is partial")).toBeInTheDocument();
+    native.invoke.mockClear();
+    fireEvent.change(filter, { target: { value: "running" } });
+    expect(screen.getByText("No matching sessions")).toBeInTheDocument();
+    expect(screen.queryByText(productText("en-US", "noObservedSessions"))).not.toBeInTheDocument();
+    expect(screen.getByText("Loaded sessions")).toHaveTextContent("Loaded sessions 0");
+    expect(screen.getByText("Matching loaded sessions")).toHaveTextContent("Matching loaded sessions 0");
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(filter).toHaveValue("all");
+    expect(screen.getByText(productText("en-US", "noObservedSessions"))).toBeInTheDocument();
+    expect(screen.queryByText("No matching sessions")).not.toBeInTheDocument();
+    expect(screen.getByText("History is partial")).toBeInTheDocument();
+    expect(native.invoke).not.toHaveBeenCalled();
+  });
+
+  it("keeps Window and System views independent of the session filter", async () => {
+    inventory([record("Idle fixture")]);
+    render(wrap(<ActivityPanel activity={[]} />));
+    fireEvent.change(await openSessions(1), { target: { value: "running" } });
+    expect(screen.getByText("No matching sessions")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Tool calls" }));
+    expect(screen.queryByRole("combobox", { name: "Session filter" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Open call details/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Service events" }));
+    expect(screen.queryByRole("combobox", { name: "Session filter" })).not.toBeInTheDocument();
+    expect(screen.queryByText("No matching sessions")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Workflow Sessions" }));
+    expect(screen.getByRole("combobox", { name: "Session filter" })).toHaveValue("running");
+  });
+
+  it("resets session filters on Server changes and authorization loss", async () => {
+    inventory([record("Idle fixture")]);
+    const normal = native.invoke.getMockImplementation()!;
+    const boundaryFrames: { kind: string; status: string; project: string }[] = [];
+    let observedContext: string | undefined;
+    function BoundaryFrames() {
+      const current = useWorkspace();
+      useLayoutEffect(() => {
+        const changed = observedContext !== undefined && observedContext !== current.contextKey;
+        observedContext = current.contextKey;
+        if (changed || current.error) boundaryFrames.push({ kind: changed ? "context" : "authorization", status: (screen.getByRole("combobox", { name: "Session filter" }) as HTMLSelectElement).value, project: screen.getByRole("button", { name: /^Project:/ }).getAttribute("aria-label") || "" });
+      });
+      return null;
+    }
+    const content = <><ActivityPanel activity={[]} /><BoundaryFrames /></>;
+    const view = render(wrap(content));
+    fireEvent.change(await openSessions(1), { target: { value: "running" } });
+    fireEvent.click(screen.getByRole("button", { name: "Project: All Projects" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Project" })).getByRole("button", { name: /beta/ }));
+    view.rerender(wrap(content, { ...state, topology: { ...state.topology!, server: { kind: "remote", url: "https://fixture.example" } } }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Session filter" })).toHaveValue("all"));
+    await screen.findByRole("button", { name: /Idle fixture/ });
+    fireEvent.change(screen.getByRole("combobox", { name: "Session filter" }), { target: { value: "attention" } });
+    native.invoke.mockRejectedValue({ code: "workspace_permission_denied" });
+    fireEvent.click(within(screen.getByRole("heading", { name: "Activity" }).parentElement!).getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("combobox", { name: "Session filter" })).toHaveValue("all");
+    expect(screen.queryByRole("button", { name: /Idle fixture/ })).not.toBeInTheDocument();
+    native.invoke.mockImplementation(normal);
+    fireEvent.click(within(screen.getByRole("heading", { name: "Activity" }).parentElement!).getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("button", { name: /Idle fixture/ });
+    expect(screen.getByRole("combobox", { name: "Session filter" })).toHaveValue("all");
+    expect(boundaryFrames.some(frame => frame.kind === "context")).toBe(true);
+    expect(boundaryFrames.some(frame => frame.kind === "authorization")).toBe(true);
+    for (const frame of boundaryFrames) {
+      expect(frame.status).toBe("all");
+      expect(frame.project).toBe("Project: All Projects");
+    }
+  });
+
+  it("keeps focus and Project keyboard navigation usable at a narrow viewport", async () => {
+    const width = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    try {
+      inventory([record("Idle fixture"), record("Beta running fixture", { project_id: beta.id, running_jobs: 1 })]);
+      render(wrap(<ActivityPanel activity={[]} />));
+      const first = screen.getByRole("tab", { name: "Tool calls" }); first.focus();
+      fireEvent.keyDown(first, { key: "ArrowRight" });
+      expect(screen.getByRole("tab", { name: "Workflow Sessions" })).toHaveFocus();
+      await waitFor(() => expect(screen.getByText("Loaded sessions")).toHaveTextContent("Loaded sessions 2"));
+      const filter = screen.getByRole("combobox", { name: "Session filter" }); filter.focus();
+      expect(filter).toHaveFocus(); fireEvent.change(filter, { target: { value: "running" } });
+      const trigger = screen.getByRole("button", { name: "Project: All Projects" });
+      fireEvent.click(trigger);
+      const picker = screen.getByRole("dialog", { name: "Project" });
+      fireEvent.keyDown(picker, { key: "ArrowDown" });
+      expect(within(picker).getByRole("button", { name: /alpha/ })).toHaveFocus();
+      fireEvent.keyDown(picker, { key: "ArrowDown" });
+      expect(within(picker).getByRole("button", { name: /beta/ })).toHaveFocus();
+      fireEvent.click(document.activeElement!);
+      expect(trigger).toHaveFocus();
+      expect(screen.getByRole("button", { name: /Beta running fixture/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
+    } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: width }); }
+  });
+
+  it.each(PRODUCT_LOCALES)("localizes the session filters and loaded-record counts in %s", async locale => {
+    localStorage.setItem("webcodex.desktop.locale", locale);
+    inventory([record("Idle fixture")]);
+    render(wrap(<ActivityPanel activity={[]} />));
+    fireEvent.click(screen.getByRole("tab", { name: productText(locale, "sessions") }));
+    const filter = screen.getByRole("combobox", { name: productText(locale, "sessionFilter") });
+    expect(within(filter).getByRole("option", { name: productText(locale, "allSessions") })).toBeInTheDocument();
+    expect(within(filter).getByRole("option", { name: productText(locale, "runningSessions") })).toBeInTheDocument();
+    expect(within(filter).getByRole("option", { name: productText(locale, "sessionsNeedAttention") })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(productText(locale, "loadedSessions"))).toHaveTextContent("1"));
+    fireEvent.change(filter, { target: { value: "attention" } });
+    expect(screen.getByText(productText(locale, "noMatchingSessions"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: productText(locale, "clearActivityFilters") })).toBeInTheDocument();
+  });
+});
+
+describe("project Git overview", () => {
+  const dirty: GitSummary = { branch: "feat/overview", clean: false, git_available: true, non_git_project: false,
+    files: [{ path: "src/export.ts", status: " M" }], files_total: 1, files_truncated: false };
+  const observe = (git: GitSummary) => {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => value.request.kind === "project_git" && value.request.project === alpha.id
+      ? Promise.resolve(git) : normal(command, value));
+  };
+  it("shows exact change counts and expands returned files without another query", async () => {
+    observe({ ...dirty, files_total: 205, files_truncated: true });
+    render(wrap(<ProjectsPanel />));
+    const row = await screen.findByRole("row", { name: "alpha" });
+    const summary = await within(row).findByText("Changed files: 205", { selector: "summary" });
+    expect(row).toHaveTextContent("feat/overview");
+    expect(row).toHaveTextContent("Showing part of the changed file list");
+    const reads = native.invoke.mock.calls.length;
+    fireEvent.click(summary);
+    expect(summary.parentElement).toHaveAttribute("open");
+    expect(within(row).getByText("src/export.ts")).toBeInTheDocument();
+    expect(within(row).getByText("M")).toBeInTheDocument();
+    expect(native.invoke).toHaveBeenCalledTimes(reads);
+    fireEvent.click(summary);
+    expect(summary.parentElement).not.toHaveAttribute("open");
+  });
+
+  it.each([
+    ["clean", { ...dirty, clean: true, files: [], files_total: 0 }, "clean"],
+    ["non-Git", { ...dirty, branch: null, non_git_project: true, clean: null, files: [], files_total: null }, "notGit"],
+    ["unavailable Git", { ...dirty, branch: null, git_available: false, clean: null, files: [], files_total: null }, "projectStatusUnconfirmed"],
+    ["unknown cleanliness", { ...dirty, clean: null, files: [], files_total: null }, "projectStatusUnconfirmed"],
+    ["unknown count", { ...dirty, files_total: null }, "projectGitHasChanges"],
+  ] as const)("distinguishes %s from zero changes", async (_scenario, git, key) => {
+    observe({ ...git, files: git.files ? [...git.files] : git.files }); render(wrap(<ProjectsPanel />));
+    const row = await screen.findByRole("row", { name: "alpha" });
+    expect(await within(row).findByText(productText("en-US", key))).toBeInTheDocument();
+    expect(within(row).queryByText("Changed files: 0")).not.toBeInTheDocument();
+    if (key !== "clean") expect(within(row).queryByText(productText("en-US", "clean"))).not.toBeInTheDocument();
+  });
+
+  it("keeps dirty state with no returned files and marks a truncated list", async () => {
+    observe({ ...dirty, files: [], files_total: 20, files_truncated: true });
+    render(wrap(<ProjectsPanel />));
+    const row = await screen.findByRole("row", { name: "alpha" });
+    expect(await within(row).findByText("Changed files: 20")).toBeInTheDocument();
+    expect(within(row).getByText("Showing part of the changed file list")).toBeInTheDocument();
+    expect(within(row).queryByText(productText("en-US", "clean"))).not.toBeInTheDocument();
+  });
+
+  it("clears stale changes when refreshing fails", async () => {
+    observe(dirty); render(wrap(<ProjectsPanel />));
+    const row = await screen.findByRole("row", { name: "alpha" });
+    await within(row).findByText("Changed files: 1");
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => value.request.kind === "project_git" && value.request.project === alpha.id
+      ? Promise.reject(new Error("private probe failure")) : normal(command, value));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await within(row).findByText(productText("en-US", "projectStatusUnconfirmed"));
+    expect(row).not.toHaveTextContent("Changed files: 1");
+    expect(row).not.toHaveTextContent("src/export.ts");
+    expect(row).not.toHaveTextContent("private probe failure");
+  });
+
+  it("shows loading without declaring the workspace clean", async () => {
+    let resolve!: (value: GitSummary) => void;
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => value.request.kind === "project_git" && value.request.project === alpha.id
+      ? new Promise<GitSummary>(done => { resolve = done; }) : normal(command, value));
+    render(wrap(<ProjectsPanel />));
+    const row = await screen.findByRole("row", { name: "alpha" });
+    await within(row).findByText(productText("en-US", "loading"));
+    expect(row).not.toHaveTextContent(productText("en-US", "clean"));
+    await act(async () => resolve(dirty));
+    expect(row).toHaveTextContent("Changed files: 1");
+  });
+
+  it("does not probe disconnected projects or call them clean", async () => {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => {
+      const projects = [{ ...alpha, connected: false }, beta];
+      if (value.request.kind === "overview") return Promise.resolve({ ...overview, projects });
+      if (value.request.kind === "projects") return Promise.resolve({ projects, total: 2, truncated: false });
+      return normal(command, value);
+    });
+    render(wrap(<ProjectsPanel />));
+    await screen.findAllByText("feat/export");
+    const row = screen.getByRole("row", { name: "alpha" });
+    expect(row).toHaveTextContent(productText("en-US", "projectStatusUnconfirmed"));
+    expect(native.invoke.mock.calls.some(([, args]) => args.request.kind === "project_git" && args.request.project === alpha.id)).toBe(false);
+  });
+
+  it("renders the same Git overview in narrow-screen project cards", async () => {
+    const original = window.matchMedia;
+    const media = vi.spyOn(window, "matchMedia").mockImplementation(query => ({ ...original(query), matches: query === "(max-width: 600px)" }));
+    try {
+      observe(dirty); render(wrap(<ProjectsPanel />));
+      const card = await screen.findByRole("article", { name: "alpha" });
+      const summary = await within(card).findByText("Changed files: 1", { selector: "summary" });
+      fireEvent.click(summary);
+      expect(within(card).getByText("src/export.ts")).toBeInTheDocument();
+      expect(summary.parentElement).toHaveAttribute("open");
+    } finally { media.mockRestore(); }
+  });
+
+  it.each(PRODUCT_LOCALES)("localizes Git changes in %s", async locale => {
+    localStorage.setItem("webcodex.desktop.locale", locale);
+    observe({ ...dirty, files_total: 205, files_truncated: true }); render(wrap(<ProjectsPanel />));
+    const row = await screen.findByRole("row", { name: "alpha" });
+    expect(await within(row).findByText(productText(locale, "projectGitChangeCount").replace("{count}", "205"))).toBeInTheDocument();
+    expect(within(row).getByText(productText(locale, "projectGitPartialFiles"))).toBeInTheDocument();
+  });
+});
+
+describe("project device filters", () => {
+  const sharedLocal = { ...alpha, id: "agent:mini:shared", path: "/work/shared", name: "shared", client_id: "mini" };
+  const sharedRemote = { ...sharedLocal, id: "agent:remote:shared", client_id: "remote" };
+  const explicitRemote = { ...beta, id: "agent:mini:override", client_id: "remote", name: "override" };
+  const devices = [{ client_id: "mini", connected: true }, { client_id: "remote", connected: false }, { client_id: "empty", connected: false }];
+  const viewer = { ...state, project: null, saved_projects: [], workspace_runner: null,
+    topology: { ...state.topology!, server: { kind: "remote" as const, url: "https://central.example" }, runner: { kind: "none" as const } } } as DesktopState;
+  const fleet = (projects: WorkspaceProject[] = [sharedLocal, sharedRemote, explicitRemote], runners: ServerRunnerSummary[] = devices) => {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => {
+      if (value.request.kind === "overview") return Promise.resolve({ ...overview, runners, projects, recent_sessions: undefined });
+      if (value.request.kind === "projects") return Promise.resolve({ projects, total: projects.length, truncated: false });
+      return normal(command, value);
+    });
+  };
+
+  it("filters exact Runner identities, combines search, and clears both filters", async () => {
+    fleet(); render(wrap(<ProjectsPanel />, viewer));
+    const filter = screen.getByRole("combobox", { name: productText("en-US", "executionDevice") });
+    await waitFor(() => expect(within(filter).getByRole("option", { name: "remote" })).toBeInTheDocument());
+    fireEvent.change(filter, { target: { value: "remote" } });
+    expect(screen.getAllByRole("row", { name: "shared" })).toHaveLength(1);
+    expect(screen.getByRole("row", { name: "shared" })).toHaveTextContent("remote");
+    expect(screen.getByRole("row", { name: "override" })).toBeInTheDocument();
+    expect(screen.getByText("Showing 2 of 3 loaded projects")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox", { name: productText("en-US", "search") }), { target: { value: "shared" } });
+    expect(screen.queryByRole("row", { name: "override" })).not.toBeInTheDocument();
+    expect(screen.getByText("Showing 1 of 3 loaded projects")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(filter).toHaveValue("");
+    expect(screen.getByRole("searchbox", { name: productText("en-US", "search") })).toHaveValue("");
+    expect(screen.getAllByRole("row", { name: "shared" })).toHaveLength(2);
+    expect(within(filter).queryByRole("option", { name: new RegExp(productText("en-US", "thisComputer")) })).not.toBeInTheDocument();
+  });
+
+  it("links offline device cards to the focused filter and supports devices without projects", async () => {
+    fleet(); render(wrap(<ProjectsPanel onState={vi.fn()} />, viewer));
+    const remote = await screen.findByRole("button", { name: "View projects · remote" });
+    expect(remote).toHaveAttribute("type", "button");
+    fireEvent.click(remote);
+    const filter = screen.getByRole("combobox", { name: productText("en-US", "executionDevice") });
+    expect(filter).toHaveFocus(); expect(filter).toHaveValue("remote");
+    expect(remote).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: /Remove project/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View projects · empty" }));
+    expect(filter).toHaveValue("empty");
+    expect(screen.getByText("Showing 0 of 3 loaded projects")).toBeInTheDocument();
+    expect(screen.getByText(productText("en-US", "noMatches"))).toBeInTheDocument();
+  });
+
+  it("uses canonical agent IDs when client_id is absent and labels only a configured local Runner", async () => {
+    fleet([{ ...alpha, client_id: undefined }, { ...beta, client_id: undefined }], devices);
+    render(wrap(<ProjectsPanel onState={vi.fn()} />));
+    const filter = screen.getByRole("combobox", { name: productText("en-US", "executionDevice") });
+    await waitFor(() => expect(within(filter).getByRole("option", { name: `${productText("en-US", "thisComputer")} · mini` })).toBeInTheDocument());
+    fireEvent.change(filter, { target: { value: "mini" } });
+    expect(screen.getByRole("row", { name: "alpha" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove project alpha" })).toBeInTheDocument();
+  });
+
+  it("resets device selection when changing Server context", async () => {
+    fleet(); const view = render(wrap(<ProjectsPanel />, viewer));
+    fireEvent.click(await screen.findByRole("button", { name: "View projects · remote" }));
+    const next = { ...viewer, topology: { ...viewer.topology!, server: { kind: "remote" as const, url: "https://other.example" } } };
+    view.rerender(wrap(<ProjectsPanel />, next));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: productText("en-US", "executionDevice") })).toHaveValue(""));
+    view.rerender(wrap(<ProjectsPanel />, viewer));
+    await waitFor(() => expect(screen.getAllByRole("row", { name: "shared" })).toHaveLength(2));
+    expect(screen.getByRole("combobox", { name: productText("en-US", "executionDevice") })).toHaveValue("");
+  });
+
+  it("preserves a selected offline device during stale refresh but clears it on authorization loss", async () => {
+    fleet(); render(wrap(<ProjectsPanel />, viewer));
+    fireEvent.click(await screen.findByRole("button", { name: "View projects · remote" }));
+    native.invoke.mockRejectedValue({ code: "workspace_server_unreachable" });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("combobox", { name: productText("en-US", "executionDevice") })).toHaveValue("remote");
+    native.invoke.mockRejectedValue({ code: "workspace_permission_denied" });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: productText("en-US", "executionDevice") })).toHaveValue(""));
+    expect(screen.queryByRole("option", { name: "remote" })).not.toBeInTheDocument();
+  });
+
+  it("retains the selected option when a partial refresh omits that device", async () => {
+    fleet(); render(wrap(<ProjectsPanel />, viewer));
+    fireEvent.click(await screen.findByRole("button", { name: "View projects · remote" }));
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => {
+      if (value.request.kind === "overview") return Promise.resolve({ ...overview, runners: [devices[0]], projects: [sharedLocal], recent_sessions: undefined });
+      if (value.request.kind === "projects") return Promise.resolve({ projects: [sharedLocal], total: 3, truncated: true });
+      return normal(command, value);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText(productText("en-US", "partial"));
+    const filter = screen.getByRole("combobox", { name: productText("en-US", "executionDevice") });
+    expect(filter).toHaveValue("remote");
+    expect(within(filter).getByRole("option", { name: "remote" })).toBeInTheDocument();
+    expect(screen.getByText("Showing 0 of 1 loaded projects")).toBeInTheDocument();
+  });
+
+  it("shows device-filtered project cards on narrow screens", async () => {
+    const original = window.matchMedia;
+    const media = vi.spyOn(window, "matchMedia").mockImplementation(query => ({ ...original(query), matches: query === "(max-width: 600px)" }));
+    try {
+      fleet(); render(wrap(<ProjectsPanel />, viewer));
+      fireEvent.click(await screen.findByRole("button", { name: "View projects · remote" }));
+      expect(await screen.findByRole("article", { name: "shared" })).toHaveTextContent("remote");
+      expect(screen.getAllByRole("article", { name: "shared" })).toHaveLength(1);
+      expect(screen.getByRole("combobox", { name: productText("en-US", "executionDevice") })).toHaveFocus();
+    } finally { media.mockRestore(); }
+  });
+
+  it("keeps the select and results consistent in the first complete refresh frame", async () => {
+    const frames: Array<{ device: string; count: string | null }> = [];
+    function ObserveFrame() {
+      const workspace = useWorkspace();
+      useLayoutEffect(() => {
+        if (!workspace.loading && workspace.projects.length === 1) frames.push({
+          device: (screen.getByRole("combobox", { name: productText("en-US", "executionDevice") }) as HTMLSelectElement).value,
+          count: screen.getByRole("status").textContent,
+        });
+      });
+      return null;
+    }
+    fleet(); render(wrap(<><ProjectsPanel /><ObserveFrame /></>, viewer));
+    fireEvent.click(await screen.findByRole("button", { name: "View projects · remote" }));
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => {
+      if (value.request.kind === "overview") return Promise.resolve({ ...overview, runners: [devices[0]], projects: [sharedLocal], recent_sessions: undefined });
+      if (value.request.kind === "projects") return Promise.resolve({ projects: [sharedLocal], total: 1, truncated: false });
+      return normal(command, value);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText("Showing 1 of 1 loaded projects");
+    expect(frames.length).toBeGreaterThan(0);
+    expect(frames.every(frame => frame.device === "" && frame.count === "Showing 1 of 1 loaded projects")).toBe(true);
+  });
+
+  it("clears a device absent from a complete refreshed inventory", async () => {
+    fleet(); render(wrap(<ProjectsPanel />, viewer));
+    fireEvent.click(await screen.findByRole("button", { name: "View projects · remote" }));
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => {
+      if (value.request.kind === "overview") return Promise.resolve({ ...overview, runners: [devices[0]], projects: [sharedLocal], recent_sessions: undefined });
+      if (value.request.kind === "projects") return Promise.resolve({ projects: [sharedLocal], total: 1, truncated: false });
+      return normal(command, value);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: productText("en-US", "executionDevice") })).toHaveValue(""));
+    expect(screen.getByText("Showing 1 of 1 loaded projects")).toBeInTheDocument();
+  });
 });

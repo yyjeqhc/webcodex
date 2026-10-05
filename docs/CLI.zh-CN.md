@@ -67,13 +67,17 @@ macOS LaunchAgent 与 Windows 用户计划任务需要该用户保持登录。�
 
 Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS origin，可使用 `--tunnel none --public-url https://share.example`，并由 operator 自己把该 origin 反向代理/隧道到 loopback WebCodex Server；`--public-url` 只声明外部 origin/issuer，不会创建代理或 tunnel。
 
-`webcodex share --tunnel openai` 是显式 opt-in 的 OpenAI Secure MCP Tunnel provider。它要求 `CONTROL_PLANE_TUNNEL_ID` 与只授予 Tunnels Read + Use 的 Restricted `CONTROL_PLANE_API_KEY`，当前只支持 `--auth bearer`。WebCodex 会从 `WEBCODEX_TUNNEL_CLIENT_BIN`、`PATH` 或经过校验的 managed 下载解析固定 OpenAI `tunnel-client` v0.0.12；启动 daemon 前运行 `doctor`，并等待 `/readyz`。临时 WebCodex Bearer 只写入私有 share 目录，通过 file-backed MCP `Authorization` header 交给 `tunnel-client`，因此 ChatGPT 使用 Connection: Tunnel + No authentication。长驻 daemon 环境会显式移除 `OPENAI_ADMIN_KEY` 与 `OPENAI_API_KEY`；Runtime API key 仍只承担 control-plane authority。
+`webcodex share --tunnel openai` 使用原生 Rust Secure MCP Tunnel client，需要 `CONTROL_PLANE_TUNNEL_ID` 和具有 Tunnels Read + Use 权限的 Restricted `CONTROL_PLANE_API_KEY`，支持 `--auth bearer`。临时本地 Bearer 直接在内存中传递，仅注入固定的本地 MCP 请求；ChatGPT 使用 Connection: Tunnel + No authentication。启动时验证本地 MCP 和成功的控制面 poll，不再下载外部 tunnel-client 或启动 doctor/health 子进程。严格 deadline、有界接收、禁止本地重放及不确定重启标记见 [crate 契约](../crates/webcodex-openai-tunnel/README.md)。
 
 公网 `share` 会 best-effort 复制 MCP URL；默认 Bearer/OAuth 模式仍不会自动把临时 credential 复制进剪贴板。显式 `--auth query-token` 模式则按设计复制含临时 credential 的敏感 URL，并在状态输出中明确提示。Linux/macOS 交互式终端还会提供按 Enter 打开 ChatGPT App 设置的快捷入口。剪贴板/浏览器集成都只是 convenience，失败不会影响已经 ready 的 runtime。使用 `--no-copy-url` 可关闭剪贴板访问。
 
 面向受监督的 machine integration，可使用 `webcodex share --json --stop-on-stdin-eof`。它仍保持原有前台生命周期，但会把 supervising parent 关闭 stdin 视为停止请求，使 Desktop 或其他 structured process owner 可以让 `share` 自己清理临时 Server、Runner 与 Tunnel，而不需要拼 shell signal 命令。该 flag 在非 `--json` 模式下会被拒绝。
 
 `webcodex connect <server> --auth oauth --oauth-redirect-uri <精确回调地址>` 是普通 hosted OAuth 路径。Runner 保持原有 hosted credential，MCP client 使用 OAuth。只有真正需要额外能力时才增加 `--oauth-computer-permissions`、`--oauth-local-mcp` 或 `--oauth-local-ssh`；它们属于显式权限变更，可能要求重新授权。`--oauth-local-ssh` 会授予 MCP client 使用模型侧 `manage_ssh_resource` 接入工具所需的可选 `ssh:local` authority；它不会暴露 SSH credential，也不会绕过工具返回的 Runner restart requirement 让新资源立即生效。Client 设置见 [MCP](MCP.zh-CN.md#oauth2)，安全模型见[认证](AUTH_MODEL.zh-CN.md#oauth2)。
+
+Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时显式指定 `--oauth-browser-permissions`，仅追加 `browser:read`、`browser:control`、`browser:launch`。默认 baseline 不包含 Browser scope；Browser 与 `--oauth-computer-permissions` 相互独立，也不使用 Computer consent checkbox。已有 client 不会自动扩权，历史窄权限仅追加显式选择的类别。scope ceiling 变化会撤销旧 grants 并要求重新授权；复用已启用 Browser 的 profile 时必须继续携带该 flag。
+
+Operator/admin diagnostics（如 `read_tool_trace`）不属于普通 OAuth delegation。`admin` 不在 OAuth supported scopes 或 shared-key bridge ceiling 中。Manifest discovery 同时检查 caller authority 和 protocol capability；即使硬编码调用，权限拒绝也不会发出暗示可通过 OAuth reconnect 获得 `admin` 的 challenge。Browser 等可委托 scope 缺失时仍返回标准 `WWW-Authenticate: Bearer error="insufficient_scope"`。
 
 高级 managed identity 流程仍保留为 `--auth managed-oauth --oauth-redirect-uri <精确回调地址>`，它才要求先 `webcodex login`；`--user` 也只用于该模式。
 

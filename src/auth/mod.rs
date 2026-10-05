@@ -89,8 +89,8 @@ pub(crate) use scopes::{is_agent_scope, scopes_to_string, validate_agent_scopes,
 
 pub(crate) use middleware::{
     bearer_token, get_config, get_db, json_error, oauth_insufficient_scope_challenge,
-    render_scope_forbidden, require_json_same_origin, require_mcp_json_request,
-    require_mcp_request_authority, scope_forbidden_body, AuthMiddleware,
+    oauth_scope_denial_is_delegable, render_scope_forbidden, require_json_same_origin,
+    require_mcp_json_request, require_mcp_request_authority, scope_forbidden_body, AuthMiddleware,
 };
 #[cfg(test)]
 pub(crate) use middleware::{

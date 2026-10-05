@@ -349,8 +349,11 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
                 "insufficient_scope",
             );
             guard.dispatch_finished(false, Some(false), "insufficient_scope");
-            let response_body =
-                crate::auth::scope_forbidden_body(auth.as_ref(), description.clone());
+            let response_body = crate::auth::scope_forbidden_body(
+                auth.as_ref(),
+                required_scope,
+                description.clone(),
+            );
             guard.capture_payload("final_response", &response_body);
             let estimated = estimate_json_bytes(&response_body);
             guard.response_serialized(

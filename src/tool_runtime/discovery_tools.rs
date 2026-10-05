@@ -69,6 +69,7 @@ impl ToolRuntime {
                 include_risk_summary,
             } => {
                 self.tool_manifest(
+                    auth,
                     tool_name,
                     category,
                     intent,

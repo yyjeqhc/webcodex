@@ -3,7 +3,7 @@ import type { DesktopState } from "../models/topology";
 import { LANGUAGES, useLocale } from "../i18n/locale";
 import { useProduct } from "../i18n/product";
 import { useConnectionsTools } from "../i18n/connections-tools";
-import { statusKey, tunnelReadinessText } from "../features/workspace/WorkspaceStatus";
+import { desktopStatusPresentation, statusKey } from "../features/workspace/WorkspaceStatus";
 import { useAppearance } from "../hooks/useAppearance";
 import { AccentPicker } from "./AccentPicker";
 import { BrandMark } from "../../../../frontend/src/ui/BrandMark";
@@ -23,7 +23,7 @@ export function Sidebar({ state, navigation, setNavigation }: { state: DesktopSt
   const p = useProduct(); const c = useConnectionsTools();
   const nextAppearance = appearance === "system" ? "light" : appearance === "light" ? "dark" : "system";
   const AppearanceIcon = appearance === "dark" ? Moon : appearance === "light" ? Sun : Monitor;
-  const hasLocalRunner = state.topology?.runner?.kind !== "none";
+  const presentation = desktopStatusPresentation(state, p);
   return (
       <aside className="sidebar">
         <div className="brand"><BrandMark /><div><strong>WebCodex</strong><span>Desktop</span></div></div>
@@ -80,8 +80,8 @@ export function Sidebar({ state, navigation, setNavigation }: { state: DesktopSt
           <AccentPicker color={accent} onChange={setAccent} compact />
         </div>
         <div className="sidebar-status">
-          <i className={`status-dot ${(hasLocalRunner ? state.readiness.runtime_ready : state.readiness.server === "ready") ? "ready" : "unknown"}`} aria-hidden="true" />
-          <div><strong>{p(hasLocalRunner ? "localExecutionService" : "serverConnection")}<span className="sidebar-service-state"> · {p(statusKey(hasLocalRunner ? state.readiness.runner : state.readiness.server))}</span></strong><span>{state.topology?.experience === "quick_share" ? `Quick Share · ${p(statusKey(state.readiness.exposure === "remote_ready" ? "ready" : state.readiness.exposure))}` : tunnelReadinessText(state.connections, p)}</span></div>
+          <i className={`status-dot ${presentation.primaryReady ? "ready" : "unknown"}`} aria-hidden="true" />
+          <div><strong>{presentation.primaryLabel}<span className="sidebar-service-state"> · {p(statusKey(presentation.primaryStatus))}</span></strong><span>{presentation.connectionText}</span></div>
         </div>
       </aside>
   );

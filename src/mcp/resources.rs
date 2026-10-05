@@ -1536,7 +1536,7 @@ pub(super) enum McpResourceToolResultAdaptation {
 pub(super) fn adapt_tool_result(
     tool_name: &str,
     artifact_presentation: ProjectArtifactPresentationMode,
-    result: ToolResult,
+    mut result: ToolResult,
     context: McpResourceToolCallContext,
     text_json_compat: bool,
     result_presentation: McpToolResultPresentation,
@@ -1559,6 +1559,34 @@ pub(super) fn adapt_tool_result(
             meta["webcodex/docxChunk"] = json!({"content_base64":binary});
         }
         return McpResourceToolResultAdaptation::Framed(framed);
+    }
+    if matches!(
+        tool_name,
+        "get_work_result_state" | "read_pdf_chunk" | "read_app_artifact_chunk"
+    ) {
+        // Binary previews belong only to the admitted App. Move bytes before
+        // producing structured/text compatibility copies; neither contains binary data.
+        let output_key = match tool_name {
+            "read_pdf_chunk" => "pdf_chunk",
+            "read_app_artifact_chunk" => "artifact_chunk",
+            _ => "work_result_files",
+        };
+        let encoded = result
+            .output
+            .get_mut(output_key)
+            .and_then(Value::as_object_mut)
+            .and_then(|file| file.remove("content_base64"));
+        if let Some(encoded) = encoded {
+            let mut framed =
+                mcp_runtime_tool_result_fallback(result, text_json_compat, result_presentation);
+            let meta_key = if tool_name == "read_app_artifact_chunk" {
+                "webcodex/artifactChunk"
+            } else {
+                "webcodex/pdfChunk"
+            };
+            framed["_meta"] = json!({meta_key: {"content_base64": encoded}});
+            return McpResourceToolResultAdaptation::Framed(framed);
+        }
     }
     if artifact_presentation == ProjectArtifactPresentationMode::Export {
         return McpResourceToolResultAdaptation::Framed(mcp_artifact_export_tool_result(

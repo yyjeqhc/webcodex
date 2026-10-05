@@ -1,27 +1,64 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DesktopState } from "../../models/topology";
 import type { MachineBuildInfo, RuntimeSettings } from "../../models/runtime-shell";
 import type { RuntimeUpdates } from "../../hooks/useRuntimeUpdates";
+import { useProduct } from "../../i18n/product";
 import { useShellText } from "../../i18n/runtime-shell";
 import { desktopApi } from "../../lib/desktop-api";
 import { UpdateWorkflow } from "./UpdateWorkflow";
 
 export function AboutPanel({ state, updates }: { state: DesktopState; updates?: RuntimeUpdates }) {
-  const s = useShellText(); const [desktop, setDesktop] = useState<MachineBuildInfo | null>(null); const [runtime, setRuntime] = useState<RuntimeSettings | null>(null);
+  const s = useShellText(); const p = useProduct();
+  const [desktop, setDesktop] = useState<MachineBuildInfo | null>(null);
+  const [runtime, setRuntime] = useState<RuntimeSettings | null>(null);
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
+  const [runtimeError, setRuntimeError] = useState(false);
+  const runtimeRequest = useRef(0);
   const showWorkflow = Boolean(updates?.status?.update_available || updates?.status?.download?.pending_install || updates?.status?.download?.error_kind === "recovery_required");
   const [linkError, setLinkError] = useState(false);
   useEffect(() => { let alive = true;
+    const request = ++runtimeRequest.current;
+    setRuntime(null); setRuntimeError(false); setRuntimeBusy(true);
     void Promise.resolve().then(() => desktopApi.desktopBuildInfo()).then(value => { if (alive) setDesktop(value); }).catch(() => undefined);
-    void Promise.resolve().then(() => desktopApi.runtimeSettings()).then(value => { if (alive) setRuntime(value); }).catch(() => undefined);
-    return () => { alive = false; };
-  }, [state.binaries?.directory, state.binaries?.git_commit]);
+    void Promise.resolve().then(() => desktopApi.runtimeSettings()).then(value => {
+      if (alive && request === runtimeRequest.current) setRuntime(value);
+    }).catch(() => {
+      if (alive && request === runtimeRequest.current) setRuntimeError(true);
+    }).finally(() => {
+      if (alive && request === runtimeRequest.current) setRuntimeBusy(false);
+    });
+    return () => { alive = false; ++runtimeRequest.current; };
+  }, [state.binaries?.directory, state.binaries?.git_commit, state.binaries?.version]);
+  const recheck = async () => {
+    if (runtimeBusy || state.current_operation) return;
+    const request = ++runtimeRequest.current;
+    setRuntimeBusy(true); setRuntimeError(false); setRuntime(null);
+    try {
+      const next = await desktopApi.recheckRuntime();
+      if (request === runtimeRequest.current) setRuntime(next);
+    } catch {
+      if (request === runtimeRequest.current) setRuntimeError(true);
+    } finally {
+      if (request === runtimeRequest.current) setRuntimeBusy(false);
+    }
+  };
+  const selected = runtime?.selected;
+  const runtimeUnconfirmed = runtimeError || Boolean(runtime?.unavailable_code || selected?.error_code || (selected?.compatibility === "unknown" && selected.checked_at_ms > 0));
+  const runtimeVersions = selected?.binaries.map(binary => `${binary.name} ${binary.metadata?.version ?? p(binary.error_code ? "runtimeVersionUnavailable" : "runtimeStartupNotChecked")}`).join(" · ");
+  const compatibility = selected?.compatibility === "incompatible" ? p("runtimeIncompatible") : runtimeUnconfirmed ? p("runtimeVersionUnavailable") : selected?.compatibility === "compatible" ? p("runtimeCompatible") : p("runtimeStartupNotChecked");
+  const updateMessage = updates?.checking ? s("Checking for updates…") : updates?.manualError ? s("Update check unavailable; Runtime is unaffected.") : updates?.status?.update_available ? s("A new stable WebCodex release is available.") : updates?.status?.state === "up_to_date" ? p("noNewerStableRelease") : s("Update status unknown");
   const link = (kind: "documentation" | "github" | "report_issue" | "contributing" | "desktop_development") => { setLinkError(false); void desktopApi.openDiagnosticResource(kind).catch(() => setLinkError(true)); };
   return <section className="settings-section" aria-labelledby="about-webcodex-title"><h2 id="about-webcodex-title">{s("About WebCodex")}</h2>
-    <dl className="runtime-facts"><div><dt>{s("Desktop version")}</dt><dd>{desktop?.version ?? s("Unknown")}</dd></div><div><dt>{s("Desktop revision")}</dt><dd><code>{desktop?.git_commit ?? s("Unknown")}</code>{desktop?.git_dirty ? ` · ${s("Dirty build")}` : ""}</dd></div>
-      <div><dt>{s("Runtime versions")}</dt><dd>{runtime?.selected?.binaries.map(binary => `${binary.name} ${binary.metadata?.version ?? "—"}`).join(" · ") || state.binaries?.version || s("Unknown")}</dd></div>
-      <div><dt>{s("Compatibility")}</dt><dd>{s(runtime?.selected?.compatibility === "compatible" ? "Compatible" : runtime?.selected?.compatibility === "incompatible" ? "Incompatible" : "Unknown")}</dd></div></dl>
+    <dl className="runtime-facts"><div><dt>{p("desktopBuildVersion")}</dt><dd>{desktop?.version ?? s("Unknown")}</dd></div><div><dt>{p("desktopBuildRevision")}</dt><dd><code>{desktop?.git_commit ?? s("Unknown")}</code>{desktop?.git_dirty ? ` · ${s("Dirty build")}` : ""}</dd></div>
+      <div><dt>{p(updates?.manualError || updates?.status?.cached ? "latestKnownStableRelease" : "latestStableRelease")}</dt><dd>{updates?.status?.latest?.version ?? p(updates?.manualError ? "runtimeVersionUnavailable" : "runtimeStartupNotChecked")}</dd></div>
+      <div><dt>{p("localRuntimeVersions")}</dt><dd>{runtimeVersions || p(runtimeUnconfirmed ? "runtimeVersionUnavailable" : "runtimeStartupNotChecked")}</dd></div>
+      <div><dt>{p("localRuntimeCompatibility")}</dt><dd>{compatibility}</dd></div></dl>
+    <p className="field-help">{p("localRuntimeVersionsHelp")}</p>
+    <button type="button" className="secondary-button" disabled={runtimeBusy || Boolean(state.current_operation)} onClick={() => void recheck()}>{p("recheckLocalRuntime")}</button>
+    {runtimeBusy && <p role="status">{p("checkingLocalRuntime")}</p>}
+    {runtimeUnconfirmed && <p role="alert">{p(selected?.compatibility === "incompatible" ? "runtimeMismatchHelp" : "localRuntimeCheckFailed")}</p>}
     <p className="field-help">{s("Stable updates can download automatically. Installation and closing Desktop always require your confirmation.")}</p>
-    {updates && <><p role="status">{s(updates.checking ? "Checking for updates…" : updates.manualError ? "Update check unavailable; Runtime is unaffected." : updates.status?.update_available ? "A new stable WebCodex release is available." : updates.status?.state === "up_to_date" ? "Up to date" : "Update status unknown")}{updates.status?.latest ? ` · ${updates.status.latest.version}` : ""}</p>
+    {updates && <><p role="status">{updateMessage}</p>
       <button type="button" className="secondary-button" disabled={updates.checking || updates.actionBusy} onClick={() => void updates.check()}>{s("Check for updates")}</button>
       <label className="update-preference"><input type="checkbox" checked={updates.status?.automatic_download ?? true} disabled={!updates.status || updates.actionBusy} onChange={event => void updates.setAutomaticDownload(event.currentTarget.checked)} />{s("Automatically download stable updates")}</label>
       {updates.actionError && !showWorkflow && <p role="status">{s("The update action could not be completed. Review the update status.")}</p>}

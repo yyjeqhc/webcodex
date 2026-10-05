@@ -59,6 +59,7 @@ __pycache__/
 /artifacts/docx-viewer/
 /artifacts/desktop-workflow/
 /artifacts/desktop-runtime-probe/
+/artifacts/desktop-runtime-simple/
 /artifacts/desktop-clarity/
 /artifacts/projects-runtime/
 /artifacts/runtime-call-stream/

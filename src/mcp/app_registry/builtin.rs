@@ -11,7 +11,7 @@ pub(in crate::mcp) const MCP_DOCX_UI_RESOURCE_URI: &str = "ui://webcodex/docx/v1
 pub(in crate::mcp) const MCP_DOCX_APP_HTML: &str = include_str!("../../mcp_docx_app.html");
 pub(in crate::mcp) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/changes/v4";
 pub(in crate::mcp) const MCP_WORKBENCH_UI_RESOURCE_URI: &str = "ui://webcodex/workbench/v2";
-pub(in crate::mcp) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v24";
+pub(in crate::mcp) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v28";
 pub(in crate::mcp) const MCP_GOAL_PLAN_UI_RESOURCE_URI: &str = "ui://webcodex/goal-plan/v7";
 pub(in crate::mcp) const MCP_AGENT_CONTINUATION_UI_RESOURCE_URI: &str =
     "ui://webcodex/agent-continuation/v18";
@@ -30,7 +30,16 @@ pub(in crate::mcp) const MCP_AGENT_CONTINUATION_APP_HTML: &str =
 pub(in crate::mcp) const MCP_JOB_TERMINAL_CONTINUATION_APP_HTML: &str =
     include_str!("../../mcp_job_terminal_continuation_app.html");
 
+pub(in crate::mcp) const MCP_PDF_UI_RESOURCE_URI: &str = "ui://webcodex/pdf/v3";
+
 pub(super) static BUILTIN_MCP_APPS: &[BundledMcpApp] = &[
+    BundledMcpApp {
+        listing: Some(AppListing { name: "WebCodex PDF", description: "Dedicated read-only PDF reader for one explicitly selected project document." }),
+        tools: &["present_pdf"],
+        tool_title: Some("Open PDF"),
+        read_display_modes: &["fullscreen", "inline"],
+        ..BundledMcpApp::template(MCP_PDF_UI_RESOURCE_URI, include_str!("../../mcp_pdf_app.html"))
+    },
     BundledMcpApp {
         listing: Some(AppListing {
             name: "WebCodex Computer",

@@ -1,2 +1,7 @@
 *.sh text eol=lf
 *.toml text eol=lf
+
+# Frontend freshness checks compare these generated assets byte-for-byte.
+frontend/dist/** text eol=lf
+src/mcp_pdf_app.html text eol=lf
+src/mcp_work_result_app.html text eol=lf

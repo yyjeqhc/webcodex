@@ -136,7 +136,7 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
     assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/changes/v4");
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v24"
+        "ui://webcodex/work-result/v28"
     );
     assert!(super::super::app_registry::resource_meta(None)["ui"]
         .get("domain")
@@ -2105,15 +2105,15 @@ async fn mcp_validation_run_and_summary_use_real_canonical_contracts() {
                 rpc(
                     "tools/call",
                     Some(json!(3220)),
-                    mcp_2026_ui_params(json!({
-                        "name": "cargo_check",
-                        "arguments": {
+                    mcp_2026_ui_params(adaptive_runtime_gateway_params(
+                        "cargo_check",
+                        json!({
                             "project": project,
                             "session_id": session_id,
                             "timeout_secs": 60,
                             "sync_wait_secs": 1
-                        }
-                    })),
+                        }),
+                    )),
                 ),
                 Some(&auth),
             )

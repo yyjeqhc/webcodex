@@ -71,7 +71,7 @@ focused evidence.
 
 ## Fixture concurrent-tunnel PoC
 
-`scripts/tests/desktop_multi_tunnel_poc.py` exercised two actual production CLI
+The former `scripts/tests/desktop_multi_tunnel_poc.py` (retired when the native Rust client replaced the external Go adapter) exercised two actual production CLI
 `webcodex server tunnel` processes with fixture tunnel clients, targeting one
 authenticated loopback MCP fixture. It verified concurrent operation, unique real
 health ports and runtime/log/auth paths, independent stop/restart/failure,

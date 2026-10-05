@@ -239,7 +239,7 @@ pub(crate) fn usage() -> &'static str {
 starts a local Server + Runner for the foreground lifetime, and ends when the command exits.\n\
 For full daily use, configure the regular WebCodex Server + Runner flow instead. The default\n\
 Cloudflare Quick Tunnel reuses or auto-manages a verified `cloudflared`. The opt-in\n\
-OpenAI Secure MCP Tunnel provider uses a pinned verified `tunnel-client` and keeps\n\
+OpenAI Secure MCP Tunnel provider uses the native Rust Tunnel client and keeps\n\
 the temporary WebCodex Bearer credential local. Public URL sharing best-effort\n\
 copies only the MCP URL by default; `--auth query-token` explicitly opts into a\n\
 single sensitive URL carrying the temporary share credential. Use `--no-copy-url`\n\
@@ -250,7 +250,7 @@ starting services. `run` is the explicit foreground local runtime step. Its opti
 `--console-assets-dir` enables loopback-only development assets for that run.\n\
 `--auth query-token` is a temporary share-only convenience for MCP clients that\n\
 cannot configure a Bearer header; `--auth oauth` adds project-bound OAuth.\n\
-On Windows, explicit `webcodex share` is supported. Managed Cloudflare acquisition is available on Windows x64; Windows ARM64 requires a trusted explicit/PATH cloudflared because the pinned upstream release has no official ARM64 artifact. Managed OpenAI tunnel-client supports Windows x64/arm64.\n"
+On Windows, explicit `webcodex share` is supported. Managed Cloudflare acquisition is available on Windows x64; Windows ARM64 requires a trusted explicit/PATH cloudflared because the pinned upstream release has no official ARM64 artifact. Native OpenAI Tunnel supports Windows x64/arm64.\n"
 }
 
 pub(crate) fn readiness_with_probe(

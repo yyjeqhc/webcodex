@@ -149,7 +149,7 @@ CONTROL_PLANE_TUNNEL_ID
 CONTROL_PLANE_API_KEY
 ```
 
-无需额外设置 `OPENAI_ADMIN_KEY` 或 `OPENAI_API_KEY`。首次启动 OpenAI Secure Tunnel 时，WebCodex 会自动下载并校验固定版本的 `tunnel-client`；通常不用手动安装。下载失败时检查网络或代理，高级用户可指定 `WEBCODEX_TUNNEL_CLIENT_BIN`。
+无需额外设置 `OPENAI_ADMIN_KEY` 或 `OPENAI_API_KEY`。OpenAI Secure Tunnel 使用内置 Rust client，无需下载或安装额外的 tunnel-client。启动失败时请检查连接健康状态；若提示上次工作未确认，先处理执行效果与待处理请求，再恢复连接。
 
 Windows 用户可以设置当前用户的持久环境变量。macOS 从 Finder / Dock 启动不会读取 `~/.zshrc`；需要从已加载变量的 Terminal 启动应用，或者配置登录会话环境。如果选择这种高级方式，修改变量后须通过托盘 **退出 WebCodex**，再重新启动。关闭窗口只是隐藏，不会更新进程环境。**重新检测配置** 不会执行 shell 启动脚本，也不会读取手工修改的配置文件。
 

@@ -10,6 +10,7 @@ members = [
     "crates/webcodex-core",
     "crates/webcodex-environment",
     "crates/webcodex-lsp",
+    "crates/webcodex-openai-tunnel",
     "crates/webcodex-persistent-shell",
     "crates/webcodex-process",
     "crates/webcodex-runner",
@@ -53,6 +54,7 @@ name = "webcodex-server"
 path = "src/bin/webcodex-server.rs"
 
 [dependencies]
+webcodex-openai-tunnel = { path = "crates/webcodex-openai-tunnel", version = "0.1.0", default-features = false }
 webcodex-admin = { path = "crates/webcodex-admin" }
 webcodex-build-info = { path = "crates/webcodex-build-info" }
 webcodex-code-mode = { path = "crates/webcodex-code-mode", optional = true }

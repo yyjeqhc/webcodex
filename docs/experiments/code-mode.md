@@ -524,12 +524,14 @@ const edit = await tools.edit_project_files({changes:[{
   kind:"edit", path:"src/example.rs", expected_read_revision:revision,
   edits:[{kind:"replace_exact", old_text:"old", new_text:"new"}]
 }]});
-if (!edit.success || typeof edit.output?.state_changed !== "boolean") {
+if (!edit.success || typeof edit.output?.changed !== "boolean") {
   throw new Error("Inspect the edit recovery; do not validate a rejected edit");
 }
 const check = await tools.project_validate({action:"check"});
-text({state_changed:edit.output.state_changed, call_success:check.success,
-      source_state:check.output?.source_state, job_handoff:!!check.output?.job_id});
+text({changed:edit.output.changed, call_success:check.success,
+      source_state:check.output?.source_state,
+      execution_state:check.output?.execution_state,
+      continuation:check.output?.continuation});
 ```
 
 On JS throw or frontend timeout, already-dispatched edit/validation truth survives in the same effect receipt. The existing bounded drain and actionable recovery remain; unknown outcomes fail closed and **the entire JavaScript program is never automatically retried**. A receipt continuation, not a copied or reconstructed identity in `text`, is authoritative.

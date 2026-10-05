@@ -26,6 +26,8 @@ export function app(filename, { deliverToolMeta = true, deliverToolStructuredCon
       tagName: String(tagName).toUpperCase(),
       textContent: "", hidden: false, open: false, children: [], className: "", type: "", onclick: null, ontoggle: null,
       parentNode: null,
+      get ownerDocument() { return document; },
+      style: { setProperty() {} },
       get isConnected() { return !!this.documentNode || !!this.parentNode?.isConnected; },
       contains(node) { return node === this || this.children.some(child => child.contains(node)); },
       focus() { document.activeElement = this; },
@@ -70,7 +72,13 @@ export function app(filename, { deliverToolMeta = true, deliverToolStructuredCon
     return id;
   }
   runInNewContext(script, {
-    document, parent, addEventListener, TextEncoder, crypto, navigator, btoa, Date: HostDate,
+    document, parent, addEventListener, TextEncoder, crypto, navigator, btoa, atob, Date: HostDate,
+    // These controller tests do not render canvases. The shipped PDF bundle
+    // constructs an identity DOMMatrix on initialization; real graphics/Worker
+    // behavior is covered by the browser harness.
+    DOMMatrix: class DOMMatrix {},
+    ResizeObserver: class ResizeObserver { observe() {} disconnect() {} },
+    performance: { now: () => nowMs },
     getSelection: () => selection.value,
     get scrollY() { return viewport.scrollY; },
     get innerHeight() { return viewport.innerHeight; },

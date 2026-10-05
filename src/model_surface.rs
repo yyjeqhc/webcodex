@@ -22,8 +22,9 @@ pub(crate) const TOOL_SURFACE_AVAILABILITY_UNAVAILABLE: &str = "unavailable";
 pub(crate) fn tool_requires_direct_app_presentation(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        "present_docx"
-            | "present_work_result"
+        "present_work_result"
+            | "present_pdf"
+            | "present_docx"
             | "present_goal_plan"
             | "present_agent_continuation"
             | "present_job_terminal_continuation"
@@ -504,6 +505,7 @@ mod tests {
     fn direct_app_presentation_requirement_is_closed_and_explicit() {
         for tool in [
             "present_work_result",
+            "present_pdf",
             "present_goal_plan",
             "present_agent_continuation",
             "present_job_terminal_continuation",

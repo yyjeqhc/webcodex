@@ -12,7 +12,7 @@ For everyday WebCodex use and the full regular Server + Runner coding experience
 - Git and a repository you are comfortable letting an AI inspect.
 - Linux, macOS, or Windows x64 for the fully managed default Cloudflare `share` flow.
 
-Windows supports explicit local `webcodex share`. On Windows ARM64, the pinned Cloudflare release has no official ARM64 binary, so `--tunnel cloudflare` requires a trusted `WEBCODEX_CLOUDFLARED_BIN`/`PATH` binary; managed OpenAI `tunnel-client` and `--tunnel none` remain available.
+Windows supports explicit local `webcodex share`. On Windows ARM64, the pinned Cloudflare release has no official ARM64 binary, so `--tunnel cloudflare` requires a trusted `WEBCODEX_CLOUDFLARED_BIN`/`PATH` binary; native OpenAI Tunnel and `--tunnel none` remain available.
 
 ## 1. Run WebCodex
 

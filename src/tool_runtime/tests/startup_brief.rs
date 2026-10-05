@@ -249,7 +249,8 @@ fn assert_builtin_workflow(output: &Value) {
         .as_str()
         .expect("work result presentation guidance");
     for phrase in [
-        "substantial Project work",
+        "substantial coding work",
+        "present_pdf(project, path)",
         "stable client Window",
         "present_work_result(project) exactly once",
         "first successful project-scoped WebCodex action",

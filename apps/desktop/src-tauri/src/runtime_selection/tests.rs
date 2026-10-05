@@ -180,10 +180,7 @@ async fn a_present_file_is_not_startup_evidence() {
     assert_eq!(view.compatibility, ProtocolCompatibility::Unknown);
     assert_eq!(view.binaries[0].present, Some(true));
     assert_eq!(view.binaries[0].startup_check, BinaryStartupCheck::Failed);
-    assert_eq!(
-        view.binaries[0].error_code.as_deref(),
-        Some(expected_error)
-    );
+    assert_eq!(view.binaries[0].error_code.as_deref(), Some(expected_error));
     #[cfg(unix)]
     assert!(view.binaries[0].diagnostics.is_none());
     #[cfg(windows)]
@@ -307,27 +304,87 @@ fn state_round_trip_keeps_custom_and_unknown_entries() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn an_ordinary_restart_rejects_replaced_custom_files_until_explicit_reapproval() {
+async fn ordinary_restart_reprobes_rebuilt_custom_directory_instead_of_pinning_old_bytes() {
     let dir = fixture(|_, _| {});
-    let source = RuntimeSource::Custom {
-        directory: dir.clone(),
-    };
     let (_, resolved) = candidate(&dir).await;
-    let approved_fingerprint = resolved.unwrap().fingerprint;
-
+    let old_fingerprint = resolved.unwrap().fingerprint;
+    // Restore the same persisted config an older Desktop wrote, including its
+    // obsolete approval hash. No new selection/confirmation is needed.
+    let config: crate::models::StoredDesktopConfig = serde_json::from_value(serde_json::json!({
+        "runtime_binary_source": { "kind": "custom", "directory": dir },
+        "runtime_binary_fingerprint": old_fingerprint,
+    }))
+    .unwrap();
     let mut replacement = webcodex_build_info::machine_build_info("webcodex-runner");
     replacement.git_commit = Some("abcdef012345abcdef012345abcdef012345abcd".into());
+    replacement.git_dirty = Some(true);
     write_fixture_binary(&dir, "webcodex-runner", &replacement);
-
-    // Model a new Desktop process: source and approval are restored from the
-    // persisted config, while no candidate bytes are cached in memory.
     let mut adapter = crate::webcodex::WebCodexAdapter::new(None);
-    adapter.set_runtime_source(source);
-    adapter.set_runtime_approval(Some(approved_fingerprint));
+    adapter.set_runtime_source(config.runtime_binary_source);
+    let current = adapter
+        .ensure_binaries(&CancellationContext::never())
+        .await
+        .unwrap();
+    assert_ne!(current.fingerprint, old_fingerprint);
+    assert_eq!(current.directory, dir.canonicalize().unwrap());
+    assert_eq!(current.builds[2], replacement);
+    verify_resolved_files(current).await.unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn rebuilt_custom_directory_still_rejects_incompatible_binaries_without_fallback() {
+    let dir = fixture(|_, _| {});
+    let bundled = fixture(|_, _| {});
+    let mut replacement = webcodex_build_info::machine_build_info("webcodex-runner");
+    replacement.desktop_runtime_contract.min_generation = 99;
+    replacement.desktop_runtime_contract.max_generation = 99;
+    write_fixture_binary(&dir, "webcodex-runner", &replacement);
+    let mut adapter = crate::webcodex::WebCodexAdapter::new(Some(bundled.clone()));
+    adapter.set_runtime_source(RuntimeSource::Custom {
+        directory: dir.clone(),
+    });
     let error = adapter
         .ensure_binaries(&CancellationContext::never())
         .await
         .unwrap_err();
-    assert_eq!(error.code, "runtime_candidate_changed");
+    assert_eq!(error.code, "runtime_contract_incompatible");
+    assert!(adapter.binaries().is_err());
+    std::fs::remove_dir_all(dir).unwrap();
+    std::fs::remove_dir_all(bundled).unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn failed_rebuild_can_be_fixed_in_place_and_started_without_selecting_again() {
+    let dir = fixture(|_, _| {});
+    let runner = dir.join("webcodex-runner");
+    std::fs::remove_file(&runner).unwrap();
+    let mut adapter = crate::webcodex::WebCodexAdapter::new(None);
+    adapter.set_runtime_source(RuntimeSource::Custom {
+        directory: dir.clone(),
+    });
+    assert_eq!(
+        adapter
+            .ensure_binaries(&CancellationContext::never())
+            .await
+            .unwrap_err()
+            .code,
+        "binary_missing"
+    );
+    write_fixture_binary(
+        &dir,
+        "webcodex-runner",
+        &webcodex_build_info::machine_build_info("webcodex-runner"),
+    );
+    assert_eq!(
+        adapter
+            .ensure_binaries(&CancellationContext::never())
+            .await
+            .unwrap()
+            .runner,
+        runner.canonicalize().unwrap()
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }

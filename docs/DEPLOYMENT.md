@@ -33,7 +33,7 @@ For existing published runtime/CLI artifacts, the npm thin installer/wrapper rem
 npm install -g @yyjeqhc/webcodex
 ```
 
-Supported package platforms are Linux x64, Linux arm64, macOS x64, macOS arm64, Windows x64, and Windows arm64. Windows supports CLI + Runner, explicit foreground Server, and explicit local `webcodex share --tunnel cloudflare|openai|none`. Windows x64 supports managed Cloudflare acquisition; Windows ARM64 Cloudflare requires a trusted explicit/PATH binary because the pinned upstream release has no official ARM64 artifact. Managed OpenAI `tunnel-client` supports Windows x64/arm64. The legacy `server install` / `runner install` commands do not manage Windows services; the foreground examples below remain available. The new `environment` workflow implements SCM services with explicit account requirements; see [Unified installation](unified-installation.md#services-and-credentials) and its pending native acceptance. The npm wrapper
+Supported package platforms are Linux x64, Linux arm64, macOS x64, macOS arm64, Windows x64, and Windows arm64. Windows supports CLI + Runner, explicit foreground Server, and explicit local `webcodex share --tunnel cloudflare|openai|none`. Windows x64 supports managed Cloudflare acquisition; Windows ARM64 Cloudflare requires a trusted explicit/PATH binary because the pinned upstream release has no official ARM64 artifact. Native OpenAI Tunnel supports Windows x64/arm64. The legacy `server install` / `runner install` commands do not manage Windows services; the foreground examples below remain available. The new `environment` workflow implements SCM services with explicit account requirements; see [Unified installation](unified-installation.md#services-and-credentials) and its pending native acceptance. The npm wrapper
 requires Node.js 18 or newer. The native Linux x64 artifact targets glibc 2.17
 or newer.
 
@@ -466,6 +466,10 @@ webcodex connect https://your-domain.example --auth oauth \
 ```
 
 The Runner continues using its hosted credential while the MCP client receives a separate OAuth credential. `--oauth-computer-permissions` and `--oauth-local-mcp` are explicit opt-ins for optional capabilities; ordinary reconnect never silently adds them. A real OAuth permission change requires the client to authorize again. ChatGPT never receives the Runner/shared-key credential, and OAuth tokens are not valid on Runner transport.
+
+Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.
+
+Operator/admin diagnostics such as `read_tool_trace` are outside ordinary OAuth delegation. Neither OAuth supported scopes nor the shared-key bridge ceiling includes `admin`. Manifest discovery checks caller authority as well as protocol capability. Hard-coded calls remain denied without a challenge suggesting OAuth reconnect can grant `admin`. Missing delegable scopes such as Browser scopes still return the standard `WWW-Authenticate: Bearer error="insufficient_scope"` challenge.
 
 If a managed-user OAuth identity is specifically required, use the advanced `webcodex login` flow followed by `webcodex connect ... --auth managed-oauth --oauth-redirect-uri ...`; `--user` applies only there.
 

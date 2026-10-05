@@ -149,9 +149,9 @@ specialist `apply_patch` 遇到 `matching_mode_rejected` 时，保持 matching g
 
 Formatting 属于收尾，不是每次编辑后的 validation。普通循环是：编辑 → focused validation → 必要时继续编辑 → 源码稳定 → format 一次 → 最终 review/validation。Rust 格式化应在相关源码稳定后、最终 diff/closeout 前执行；只有后续 Rust 编辑可能改变格式时才重跑。`cargo_fmt(check=false)` 用于有意执行最终格式化，`check=true` 用于需要最终只读格式证明的情况。CI/release 格式检查保持不变。
 
-能使用 `cargo_test`、`cargo_check`、`go_test` 等 structured validation 时优先使用它们。先运行能够发现当前回归的最小检查，只有实际受影响的边界需要时才扩大范围。
+普通、可移植的 structured validation 优先使用 `project_validate`；只有确实需要高级生态专属选项时，才显式选择 `cargo_check`、`cargo_test`、`go_test` 等 specialist contract。先运行能够发现当前回归的最小检查，只有实际受影响的边界需要时才扩大范围。
 
-检查一个 Cargo workspace package 时，`cargo_check` 接受 `package`；检查多个 package 时传入 `packages`。WebCodex 会对该集合排序并去重，然后在同一个 Cargo 进程中使用重复的 `-p` selector。两个 selector 互斥，显式空列表无效。
+普通 package-scoped validation 使用 `project_validate.scope.packages`，由 WebCodex 在有界范围内校验后交给选定 adapter 转译；Rust 会在确定性排序、去重后映射为一次带重复 `-p` selector 的 Cargo 调用。只有确实需要高级 Cargo 专属 contract 时，才使用 `cargo_check` 的 `package` / `packages` specialist selector。
 
 如果一个确定需要执行的 validation 超过 Server 管理的 synchronous grace，它会自动以**同一个 execution** handoff 为 Job，模型不需要调整 handoff timing。随后只继续独立的源码读取、搜索、diff/architecture inspection 或 review，再观察该 Job；不要为了“并行”额外启动 CPU-heavy validation。如果运行中的 validation 所覆盖源码随后发生 mutation，那么其结果只能算 stale/cache-warmup evidence，不能证明 final workspace；最终源码仍需重新运行 task-appropriate validation。
 

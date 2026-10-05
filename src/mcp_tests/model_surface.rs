@@ -115,6 +115,23 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
     };
     let names = tool_names(&value);
     assert!(names.contains(&crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME));
+    let project_validate = value["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "project_validate")
+        .expect("project_validate must have a dedicated bounded descriptor");
+    assert_eq!(project_validate["annotations"]["readOnlyHint"], false);
+    assert_eq!(project_validate["annotations"]["destructiveHint"], false);
+    assert_eq!(project_validate["annotations"]["idempotentHint"], false);
+    assert_eq!(project_validate["annotations"]["openWorldHint"], false);
+    let gateway = value["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
+        .expect("Adaptive gateway descriptor");
+    assert_eq!(gateway["annotations"]["destructiveHint"], true);
     #[cfg(feature = "experimental-code-mode")]
     {
         const MAX_EXPERIMENTAL_CODE_MODE_TOOL_BYTES: usize = 4 * 1024;
@@ -154,8 +171,7 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "write_job_input",
         "run_script",
         "run_shell",
-        "cargo_check",
-        "cargo_test",
+        "project_validate",
         "review_changes",
         "observe_jobs",
         "wait_for_job_readiness",
@@ -215,6 +231,9 @@ async fn specialist_tools_remain_discoverable_with_canonical_gateway_contracts()
     let runtime = test_runtime();
     let listed = crate::mcp::tools::mcp_tools_list_payload_with_compact(false);
     for name in [
+        "cargo_check",
+        "cargo_test",
+        "go_test",
         "read_workspace_changes",
         "read_session_handoff",
         "rotate_agent_continuation_endpoint",
@@ -541,7 +560,7 @@ async fn call_runtime_tool_cannot_target_itself() {
 #[tokio::test]
 async fn call_runtime_tool_rejects_direct_app_presentation_targets_when_apps_are_enabled() {
     let runtime = test_runtime();
-    for (index, target) in ["present_work_result", "present_goal_plan"]
+    for (index, target) in ["present_work_result", "present_pdf", "present_goal_plan"]
         .into_iter()
         .enumerate()
     {

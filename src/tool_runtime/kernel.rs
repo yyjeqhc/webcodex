@@ -93,6 +93,8 @@ pub(crate) struct ToolProtocolCapabilities {
     pub(crate) work_result_app: bool,
     /// Adapter admission for the ModelHidden DOCX binary transport.
     pub(crate) docx_app: bool,
+    /// Dedicated PDF App reads; never supplies Project authority.
+    pub(crate) pdf_app: bool,
     /// Protocol-surface support for ModelHidden MCP App Host-continuation
     /// coordination. Canonical communication authorization and exact
     /// process-local Host binding validation remain mandatory in the runtime.
@@ -155,6 +157,22 @@ fn session_selector_failure(error: super::SessionSelectorError) -> ToolCallOutco
             correlation: Default::default(),
         },
     }
+}
+
+/// Shared scope projection for authenticated discovery surfaces. Operator
+/// extensions always require their declared authority; ordinary non-OAuth
+/// catalogs retain their established visibility behavior.
+pub(crate) fn runtime_tool_scope_allows_discovery(
+    auth: Option<&AuthContext>,
+    tool_name: &str,
+) -> bool {
+    let requires_check = auth.is_some_and(AuthContext::is_oauth_token)
+        || runtime_tool_operator_extension_family(tool_name).is_some()
+        || matches!(
+            crate::auth::scopes::oauth_scope_policy_for_runtime_tool(tool_name),
+            OAuthToolScopePolicy::RequireAny(_)
+        );
+    !requires_check || check_runtime_tool_scope(auth, tool_name).is_ok()
 }
 
 pub(crate) fn check_runtime_tool_scope(
@@ -337,6 +355,7 @@ impl ToolRuntime {
                 goal_plan_app: false,
                 work_result_app: false,
                 docx_app: false,
+                pdf_app: false,
                 agent_continuation_app: false,
             },
         )
@@ -545,6 +564,24 @@ impl ToolRuntime {
                 error_status: Some(ToolCallErrorStatus::InvalidArguments {
                     message: "DOCX reads require Stateless MCP 2026 DOCX App capability"
                         .to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+                canonical_audit_output: None,
+                canonical_state_changed: None,
+                correlation: Default::default(),
+            };
+        }
+        if matches!(
+            request.tool_name.as_str(),
+            "read_pdf_chunk" | "read_app_artifact_chunk"
+        ) && !capabilities.pdf_app
+        {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments {
+                    message: "PDF reads require the dedicated MCP App capability".to_string(),
                 }),
                 project: None,
                 model_ergonomics: None,

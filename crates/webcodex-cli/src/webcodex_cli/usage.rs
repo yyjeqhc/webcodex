@@ -83,6 +83,7 @@ Options:\n\
   --auth bearer|oauth|managed-oauth\n\
                              MCP authentication mode [default: bearer]\n\
   --oauth-redirect-uri URL   Exact OAuth callback URL; required with OAuth modes\n\
+  --oauth-browser-permissions\n\
   --oauth-computer-permissions\n\
                              Allow ordinary OAuth browser consent to offer optional Computer permissions\n\
   --oauth-local-mcp           Explicitly allow this OAuth client to request mcp:local authority\n\
@@ -102,6 +103,8 @@ OAuth mode uses that same key for Runner transport and provisions a bridge clien
 after the matching Runner group is connected. Enter the shared key only on WebCodex's\n\
 browser authorize page; ChatGPT receives OAuth client credentials/tokens, never the key.\n\
 Without explicit opt-ins the bridge keeps the direct shared-key model-facing baseline.\n\
+--oauth-browser-permissions adds only browser:read, browser:control, and browser:launch.\n\
+Existing clients require explicit opt-in and reauthorization when their scope ceiling changes.\n\
 --oauth-computer-permissions adds only the fixed launch/display/pointer/clipboard Computer\n\
 ceiling; browser checkboxes decide the actual grant. --oauth-local-mcp adds class-level\n\
 mcp:local authority for Runner-owned MCP providers in this shared-key group.\n\

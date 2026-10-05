@@ -27,8 +27,9 @@ export function mountDocxApp(win = window, doc = document) {
   }
   function scale(value) { zoom = Math.max(0.25, Math.min(2, value)); el("stage").style.zoom = String(zoom); el("zoom").textContent = `${Math.round(zoom * 100)}%`; }
   function fitWidth() {
-    const page = el("stage").querySelector("section.docx"), width = el("viewport").clientWidth;
-    if (!disposed && fitting && page?.offsetWidth && width > 32) scale(width / (page.offsetWidth + 32));
+    const pages = [...el("stage").querySelectorAll("section.docx")], width = el("viewport").clientWidth;
+    const pageWidth = Math.max(0, ...pages.map(page => page.offsetWidth));
+    if (!disposed && fitting && pageWidth && width > 32) scale(width / (pageWidth + 32));
   }
   const resizeObserver = new win.ResizeObserver(fitWidth);
   resizeObserver.observe(el("viewport"));

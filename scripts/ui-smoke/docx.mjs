@@ -59,6 +59,13 @@ try {
   await frame.getByRole("button", { name: "Fit width", exact: true }).click();
   const fit = await frame.locator("section.docx").first().evaluate(element => ({ page: element.getBoundingClientRect().width, viewport: document.getElementById("viewport").clientWidth }));
   assert.ok(fit.page <= fit.viewport, "fit width must fit the document page in a narrow reader");
+  const chromePadding = await frame.locator("#stage section.docx header, #stage section.docx footer").evaluateAll(elements => elements.map(element => getComputedStyle(element).padding));
+  assert.ok(chromePadding.every(padding => !["8px 16px", "12px 16px"].includes(padding)), "reader chrome spacing must not affect document headers or footers");
+  await frame.locator("section.docx").nth(1).evaluate(element => { element.style.width = "1200px"; });
+  await frame.getByRole("button", { name: "Fit width", exact: true }).click();
+  const mixedFit = await frame.locator("section.docx").nth(1).evaluate(element => ({ page: element.getBoundingClientRect().width, viewport: document.getElementById("viewport").clientWidth }));
+  assert.ok(mixedFit.page <= mixedFit.viewport, "fit width must use the widest page in a mixed-orientation document");
+  await frame.locator("section.docx").nth(1).evaluate(element => { element.style.width = ""; });
   await frame.locator("#download").click();
   await page.waitForFunction(() => fixture.downloads.length === 1);
   const downloaded = await page.evaluate(() => fixture.downloads[0]);

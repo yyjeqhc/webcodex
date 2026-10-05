@@ -33,6 +33,9 @@ test("DOCX ZIP preflight rejects malformed files, traversal and excessive expans
   const zip = await JSZip.loadAsync(bytes); zip.file("../escape.xml", "bad");
   const unsafe = await zip.generateAsync({ type: "uint8array" });
   assert.throws(() => inspectDocxZip(unsafe), /Unsafe/);
+  const aliased = await JSZip.loadAsync(bytes); aliased.file("word//document.xml", "<document/>");
+  const aliasedBytes = await aliased.generateAsync({ type: "uint8array" });
+  assert.throws(() => inspectDocxZip(aliasedBytes), /Unsafe/);
 });
 test("DOCX XML complexity and declarations are rejected before rendering", async () => {
   const instance = dom(); await assert.rejects(prepareDocx(await docxFixture({ manyNodes: true }), window), /complex/);
@@ -42,10 +45,12 @@ test("DOCX XML complexity and declarations are rejected before rendering", async
 test("Rendered DOCX sanitization strips active content and unsafe CSS", () => {
   const instance = dom(), stage = document.querySelector(".docx-stage"), styles = document.createElement("div");
   stage.innerHTML = '<p style="position:fixed;z-index:999;color:red">safe</p><a href="javascript:alert(1)">link</a><iframe srcdoc="bad"></iframe><img src="https://example.invalid/a">';
-  styles.innerHTML = '<style>body {color:blue}</style><style>@import "https://example.invalid";</style>';
+  styles.innerHTML = '<style>body {color:blue}</style><style>p.docx-num-1-0 {display:list-item;list-style-type:decimal} .docx {--docx-bullet:url(data:image/png;base64,AAAA)}</style><style>@import "https://example.invalid";</style>';
   sanitizeDocx(stage, styles, window); assert.equal(stage.querySelectorAll("iframe,a[href],img[src]").length, 0);
   assert.equal(stage.querySelector("p").style.position, ""); assert.equal(stage.querySelector("p").style.color, "red");
-  assert.ok(stage.querySelector("style").textContent.startsWith(".docx-stage body")); instance.window.close();
+  assert.ok(stage.querySelector("style").textContent.startsWith(".docx-stage body"));
+  assert.match(stage.querySelector("style").textContent, /list-style-type: decimal/);
+  assert.doesNotMatch(stage.querySelector("style").textContent, /url\s*\(/i); instance.window.close();
 });
 
 test("Actual ZIP expansion is bounded even when declared sizes are dishonest", async () => {

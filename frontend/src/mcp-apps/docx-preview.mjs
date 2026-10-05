@@ -28,7 +28,7 @@ export function inspectDocxZip(bytes) {
       || uncompressed > MAX_ENTRY_BYTES || local + 30 > start || compressed > bytes.length
       || offset + 46 + length + extra + comment > end) throw new Error("Unsupported DOCX ZIP entry");
     const name = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(offset + 46, offset + 46 + length));
-    if (!name || name.length > 512 || /[\\\0]/.test(name) || /^(?:\/|[A-Za-z]:)/.test(name)
+    if (!name || name.length > 512 || /[\\\0]/.test(name) || /^(?:\/|[A-Za-z]:)/.test(name) || name.includes("//")
       || name.split("/").some(part => part === ".." || part === ".") || names.has(name)) throw new Error("Unsafe DOCX ZIP path");
     if (view.getUint32(local, true) !== 0x04034b50 || local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true) + compressed > start)
       throw new Error("Invalid DOCX local ZIP entry");
@@ -111,9 +111,9 @@ function safeDeclarations(style) {
 export function sanitizeDocx(container, styles, win) {
   const doc = container.ownerDocument, purifier = createDOMPurify(win), scoped = [];
   for (const source of styles.querySelectorAll("style")) {
-    // Import, escaped tokens and URL declarations cannot cross the detached render boundary.
+    // Import and escaped tokens cannot cross the detached render boundary; unsafe declarations are stripped below.
     const text = source.textContent;
-    if (text.length > 512 * 1024 || /[\\<]|@import|url\s*\(|expression\s*\(/i.test(text)) continue;
+    if (text.length > 512 * 1024 || /[\\<]|@import/i.test(text)) continue;
     const probe = doc.createElement("style"); probe.media = "not all"; probe.textContent = text; doc.head.append(probe);
     try {
       const rules = [...(probe.sheet?.cssRules || [])];
@@ -122,7 +122,7 @@ export function sanitizeDocx(container, styles, win) {
         if (rule.type === win.CSSRule.STYLE_RULE && rule.selectorText.length <= 512) {
           safeDeclarations(rule.style);
           scoped.push(`${rule.selectorText.split(",").map(selector => `.docx-stage ${selector.trim()}`).join(",")} {${rule.style.cssText}}`);
-        } else if (/^@counter-style docx-/i.test(rule.cssText)) scoped.push(rule.cssText);
+        } else if (/^@counter-style docx-/i.test(rule.cssText) && !/[\\<>]|url\s*\(|expression\s*\(|javascript\s*:/i.test(rule.cssText)) scoped.push(rule.cssText);
       }
     } finally { probe.remove(); }
   }

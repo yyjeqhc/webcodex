@@ -37,9 +37,9 @@ fn root() -> PathBuf {
         .join("webcodex-connection-runtime-tests")
         .join("regular-tunnel-runtime")
 }
-fn metadata(port: u16) -> Value {
+fn metadata() -> Value {
     let directory = root().join(format!("openai-{}", uuid::Uuid::new_v4().simple()));
-    json!({"directory":directory, "health_url":format!("http://127.0.0.1:{port}"), "log_file":directory.join("openai-tunnel.log"), "tunnel_client_pid":42, "local_mcp_url":"http://127.0.0.1:62645/mcp"})
+    json!({"directory":directory, "local_mcp_url":"http://127.0.0.1:62645/mcp"})
 }
 const FIXTURE_CHILD_ENV: &str = "WEBCODEX_CONNECTION_FIXTURE_CHILD";
 const FIXTURE_EVENTS_ENV: &str = "WEBCODEX_FIXTURE_EVENTS";
@@ -80,12 +80,11 @@ async fn start(
     registry: &ConnectionRuntimes,
     supervisor: &Arc<tokio::sync::Mutex<ProcessSupervisor>>,
     id: TunnelProfileId,
-    port: u16,
 ) -> ProcessSnapshot {
     let mut supervisor_guard = supervisor.lock().await;
     let key = ProcessKey::RegularTunnel(id);
     let command = fixture(&[
-        json!({"event":"ready", "schema_version":1, "provider":"openai", "runtime":metadata(port)}),
+        json!({"event":"ready", "schema_version":2, "provider":"openai", "runtime":metadata()}),
         json!({"event":"health", "schema_version":1, "tunnel_ready":true, "local_mcp_ready":true}),
     ]);
     let events = supervisor_guard
@@ -133,20 +132,12 @@ async fn concurrent_observers_are_independent_and_stale_generation_cannot_kill_r
     )));
     let a = TunnelProfileId::new();
     let b = TunnelProfileId::new();
-    let first_a = start(&registry, &supervisor, a, 51001).await;
-    let first_b = start(&registry, &supervisor, b, 51002).await;
+    let first_a = start(&registry, &supervisor, a).await;
+    let first_b = start(&registry, &supervisor, b).await;
     let running = wait_running(&registry, &[a, b]).await;
-    assert_ne!(
-        running.profiles[0].runtime.health_url,
-        running.profiles[1].runtime.health_url
-    );
     assert_ne!(
         running.profiles[0].runtime.runtime_directory,
         running.profiles[1].runtime.runtime_directory
-    );
-    assert_ne!(
-        running.profiles[0].runtime.log_file,
-        running.profiles[1].runtime.log_file
     );
     assert_eq!(
         running.profiles[0].runtime.local_mcp_url,
@@ -169,7 +160,7 @@ async fn concurrent_observers_are_independent_and_stale_generation_cannot_kill_r
             .pid,
         first_b.pid
     );
-    let second_a = start(&registry, &supervisor, a, 51003).await;
+    let second_a = start(&registry, &supervisor, a).await;
     wait_running(&registry, &[a, b]).await;
     assert_ne!(first_a.generation, second_a.generation);
     assert!(!registry.update(a, first_a.generation, |s| s.lifecycle =
@@ -211,30 +202,28 @@ async fn concurrent_observers_are_independent_and_stale_generation_cannot_kill_r
 }
 
 #[test]
-fn desktop_supervision_does_not_preempt_first_run_tunnel_client_install() {
-    // The managed download may consume 120s before the child's separate 60s
-    // startup phase. Desktop must leave enough room for the child to emit a
-    // typed failure instead of replacing it with tunnel_startup_timeout.
-    assert!(STARTUP_TIMEOUT > Duration::from_secs(120 + 60));
+fn desktop_supervision_allows_native_tunnel_startup() {
+    // Leave room for the native CLI's bounded startup error.
+    assert!(STARTUP_TIMEOUT > Duration::from_secs(60));
     assert_eq!(
         safe_failure_evidence(&json!({
             "event": "failure",
             "schema_version": 1,
             "provider": "openai",
-            "failure_stage": "tunnel_client_download",
-            "reason_code": "tunnel_client_download_failed"
+            "failure_stage": "tunnel_recovery",
+            "reason_code": "tunnel_restart_uncertain"
         })),
-        Some(("tunnel_client_download", "tunnel_client_download_failed"))
+        Some(("tunnel_recovery", "tunnel_restart_uncertain"))
     );
     assert_eq!(
         safe_failure_evidence(&json!({
             "event": "failure",
             "schema_version": 1,
             "provider": "openai",
-            "failure_stage": "tunnel_client_install",
-            "reason_code": "tunnel_client_install_failed"
+            "failure_stage": "tunnel_control_plane",
+            "reason_code": "tunnel_auth_rejected"
         })),
-        Some(("tunnel_client_install", "tunnel_client_install_failed"))
+        Some(("tunnel_control_plane", "tunnel_auth_rejected"))
     );
 }
 
@@ -247,7 +236,7 @@ async fn malformed_or_secret_bearing_child_failure_stays_local_and_safe() {
     )));
     let a = TunnelProfileId::new();
     let b = TunnelProfileId::new();
-    let first_a = start(&registry, &supervisor, a, 51011).await;
+    let first_a = start(&registry, &supervisor, a).await;
     wait_running(&registry, &[a]).await;
     let key = ProcessKey::RegularTunnel(b);
     let mut guard = supervisor.lock().await;
@@ -306,20 +295,9 @@ async fn malformed_or_secret_bearing_child_failure_stays_local_and_safe() {
 }
 
 #[test]
-fn metadata_rejects_remote_health_credentials_traversal_or_another_local_server() {
-    let valid = metadata(51234);
+fn metadata_rejects_obsolete_fields_traversal_or_another_local_server() {
+    let valid = metadata();
     assert!(runtime_metadata(&valid, &root(), "http://127.0.0.1:62645/mcp").is_some());
-    for url in [
-        "https://example.test",
-        "http://user:secret@127.0.0.1:80",
-        "http://127.0.0.1:80/?key=secret",
-        "http://127.0.0.1:80/elsewhere",
-        "http://127.0.0.1",
-    ] {
-        let mut invalid = valid.clone();
-        invalid["health_url"] = json!(url);
-        assert!(runtime_metadata(&invalid, &root(), "http://127.0.0.1:62645/mcp").is_none());
-    }
     for (key, value) in [
         ("directory", json!(root().join("../escaped"))),
         ("log_file", json!("/tmp/unrelated.log")),

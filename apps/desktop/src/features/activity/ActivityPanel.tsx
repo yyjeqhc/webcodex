@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { NativeSelect } from "@mantine/core";
 import { MessageSquare, TerminalSquare, ArrowRight } from "lucide-react";
 import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
 import { useShellText } from "../../i18n/runtime-shell";
 import type { ActivityEntry } from "../../models/topology";
-import type { WindowDetail, WindowSummary } from "../../models/workspace";
+import type { WindowDetail, WindowSummary, WorkflowSession } from "../../models/workspace";
 import { displayProjectPath, projectName, sessionTitle, useWorkspace, workspaceQuery } from "../workspace/WorkspaceContext";
 import { observationTime } from "../workspace/WorkspaceStatus";
 import { WindowActivityDetail } from "./WindowActivityDetail";
@@ -17,6 +18,15 @@ import { executionLabel, recentMeaningfulCalls } from "./window-evidence";
 type Tab = "windows" | "sessions" | "system";
 const TABS: Tab[] = ["windows", "sessions", "system"];
 const PAGE_SIZE = 8;
+type SessionFilter = "all" | "running" | "attention";
+function sessionMatchesFilter(session: WorkflowSession, filter: SessionFilter): boolean {
+  if (filter === "running") return session.running_call || session.running_jobs > 0;
+  if (filter === "attention") {
+    const attention = session.overview.attention;
+    return attention.open_todos > 0 || attention.open_questions > 0 || attention.open_risks > 0 || session.overview.validation?.state === "failed";
+  }
+  return true;
+}
 
 function useWindowPreviews(rows: WindowSummary[], enabled: boolean, revision: number) {
   const [data, setData] = useState<Record<string, WindowDetail>>({});
@@ -44,10 +54,24 @@ function useWindowPreviews(rows: WindowSummary[], enabled: boolean, revision: nu
 
 export function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
   const p = useProduct(); const s = useShellText(); const { locale } = useLocale(); const workspace = useWorkspace();
-  const [tab, setTab] = useState<Tab>("windows"); const [project, setProject] = useState(""); const [page, setPage] = useState(0);
+  const [tab, setTab] = useState<Tab>("windows"); const [selectedProject, setProject] = useState(""); const [page, setPage] = useState(0);
+  const [selectedSessionFilter, setSessionFilter] = useState<SessionFilter>("all");
+  const [filterContext, setFilterContext] = useState(workspace.contextKey);
+  const authorizationLost = workspace.error && ["authenticationRequired", "permissionDenied"].includes(workspace.errorReason);
+  // A new inventory or permission boundary must never render with the previous
+  // context's filters while the cleanup effect is waiting to run.
+  const filtersInvalid = filterContext !== workspace.contextKey || authorizationLost;
+  const project = filtersInvalid ? "" : selectedProject;
+  const sessionFilter = filtersInvalid ? "all" : selectedSessionFilter;
+  useEffect(() => { setFilterContext(workspace.contextKey); setSessionFilter("all"); setProject(""); }, [workspace.contextKey]);
+  useEffect(() => {
+    if (authorizationLost) { setSessionFilter("all"); setProject(""); }
+  }, [authorizationLost]);
+  const clearSessionFilters = () => { setSessionFilter("all"); setProject(""); };
   const windows = useMemo(() => workspace.windows.filter(row => !project || row.last_project === project)
     .slice().sort((a, b) => (b.active_count > 0 ? 1 : 0) - (a.active_count > 0 ? 1 : 0) || (b.last_meaningful_activity_at_ms ?? b.last_seen_at_ms) - (a.last_meaningful_activity_at_ms ?? a.last_seen_at_ms)), [workspace.windows, project]);
-  const sessions = workspace.sessions.filter(row => !project || row.project_id === project);
+  const historyPartial = Boolean(workspace.runner?.recent_sessions?.truncated || workspace.runner?.recent_sessions?.scan_truncated);
+  const sessions = workspace.sessions.filter(row => (!project || row.project_id === project) && sessionMatchesFilter(row, sessionFilter));
   const visible = windows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const previews = useWindowPreviews(visible, tab === "windows" && !workspace.state.current_operation, workspace.revision);
   useEffect(() => { setPage(0); }, [project, tab]);
@@ -65,7 +89,13 @@ export function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
     <p className="activity-description">{descriptions[tab]}</p>
     {tab !== "system" && <div className="activity-view-toolbar">
       <div className="activity-project-filter"><span className="filter-label">{s("Project")}</span><ProjectPicker label={s("Project")} allLabel={p("allProjects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: displayProjectPath(row.path) }))} /></div>
-      <div className="activity-counts">{tab === "windows" ? <><span>{p("callSources")} <strong>{windows.length}</strong></span><span>{p("callsInProgress")} <strong>{windows.reduce((total, row) => total + row.active_count, 0)}</strong></span></> : <><span>{p("sessions")} <strong>{sessions.length}</strong></span><span>{p("inProgress")} <strong>{sessions.filter(row => row.running_call || row.running_jobs > 0).length}</strong></span></>}</div>
+      {tab === "sessions" && <div className="activity-session-filter"><NativeSelect id="activity-session-filter" size="md" classNames={{ input: "ui-mantine-input", label: "ui-mantine-label" }} label={p("sessionFilter")} value={sessionFilter} onChange={event => setSessionFilter(event.currentTarget.value as SessionFilter)} data={[
+        { value: "all", label: p("allSessions") }, { value: "running", label: p("runningSessions") }, { value: "attention", label: p("sessionsNeedAttention") },
+      ]} /></div>}
+      <div className="activity-counts" aria-live={tab === "sessions" ? "polite" : undefined}>{tab === "windows" ? <><span>{p("callSources")} <strong>{windows.length}</strong></span><span>{p("callsInProgress")} <strong>{windows.reduce((total, row) => total + row.active_count, 0)}</strong></span></> : <><span>{p("loadedSessions")} <strong>{workspace.sessions.length}</strong></span><span>{p("matchingLoadedSessions")} <strong>{sessions.length}</strong></span></>}</div>
+    </div>}
+    {tab === "sessions" && <div className="activity-session-filter-help"><p className="field-help">{p("sessionFilterHelp")}</p>
+      {(project || sessionFilter !== "all") && sessions.length > 0 && <button type="button" className="secondary-button" onClick={clearSessionFilters}>{p("clearActivityFilters")}</button>}
     </div>}
     {workspace.loading && <p role="status" className="workspace-notice">{p("loading")}</p>}
     <section role="tabpanel" id={`activity-view-${tab}`} aria-labelledby={`activity-tab-${tab}`}>
@@ -108,8 +138,8 @@ export function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
           </span>
         </button>;
       })}
-      {!sessions.length && !workspace.loading && <WorkspaceEmptyState kind="activity" message={p("noSessions")} action={<button type="button" className="secondary-button" onClick={workspace.refresh}>{p("refresh")}</button>} />}
-      {workspace.runner?.recent_sessions?.truncated && <p className="field-help">{s("History is partial")}</p>}
+      {!sessions.length && !workspace.loading && <WorkspaceEmptyState kind="activity" message={p(project || sessionFilter !== "all" ? "noMatchingSessions" : historyPartial ? "noObservedSessions" : "noSessions")} action={project || sessionFilter !== "all" ? <button type="button" className="secondary-button" onClick={clearSessionFilters}>{p("clearActivityFilters")}</button> : <button type="button" className="secondary-button" onClick={workspace.refresh}>{p("refresh")}</button>} />}
+      {historyPartial && <p className="field-help">{s("History is partial")}</p>}
     </>}
     {tab === "system" && <SystemActivity activity={activity} />}
     </section>

@@ -12,3 +12,15 @@
 .settings-page .settings-section { margin-top: var(--ui-space-8); }.settings-page .settings-section > h2 { margin-bottom: 10px; font-size: 15px; }.settings-page .setting-row, .permission-row { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-space-5); padding: 13px 0; border-bottom: 1px solid var(--ui-border-subtle); font-size: 15px; }.settings-page .setting-row select { width: 180px; }.setting-value { color: var(--ui-text-tertiary); font-size: 14px; text-align: right; }.permission-row > span { margin-right: auto; }.permission-allowed { color: var(--ui-success); }.permission-needed { color: var(--ui-warning); }
 @media (max-width: 768px) { .workspace-status-strip { flex-wrap: wrap; gap: var(--ui-space-3) var(--ui-space-6); }.workspace-status-strip > div { min-width: 88px; }.workspace-quick-actions > span { flex-basis: 100%; }.project-avatar { display: none; }.workspace-project-row { gap: var(--ui-space-2); }.project-row-meta { gap: 3px 8px; }.extension-row { align-items: flex-start; flex-wrap: wrap; }.workspace-dialog { padding: var(--ui-space-5); }.workspace-dialog > header { top: -20px; margin: -20px -20px 16px; padding: 16px 20px 12px; } }
 @media (max-width: 600px) { .workspace-status-strip { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }.workspace-status-strip > div { min-width: 0; }.dashboard-heading-actions { gap: 5px; }.dashboard-heading-actions .primary-button { order: 1; }.workspace-quick-actions { margin-bottom: var(--ui-space-6); }.workspace-project-row { flex-wrap: wrap; }.workspace-project-row > button { margin-left: auto; }.window-row-state { margin-left: auto; }.workspace-timeline > article { gap: var(--ui-space-2); }.activity-project-filter { align-items: flex-start; flex-direction: column; }.activity-project-filter select { width: 100%; }.workspace-dialog { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }.settings-page .setting-row, .permission-row { align-items: flex-start; flex-direction: column; gap: 8px; }.settings-page .setting-row select { width: 100%; } }
+
+.project-git-state { display: block; margin-top: 5px; color: var(--ui-text-secondary); font-size: 14px; overflow-wrap: anywhere; }
+.project-git-changes summary { cursor: pointer; }
+.project-git-changes ul { max-height: 12rem; overflow: auto; list-style: none; margin: 8px 0 0; padding: 0; }
+.project-git-changes li { display: flex; align-items: flex-start; gap: 6px; padding: 3px 0; }
+.project-git-changes li > span { min-width: 0; overflow-wrap: anywhere; }
+.project-git-file-status { flex: 0 0 auto; white-space: pre; }
+
+.workspace-project-filters { display: flex; flex-wrap: wrap; gap: var(--ui-space-3); }
+.workspace-project-filters .workspace-search { flex: 1 1 240px; min-width: 0; width: auto; margin-bottom: 0; }
+.project-filter-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--ui-space-2); margin: var(--ui-space-3) 0 var(--ui-space-4); color: var(--ui-text-secondary); font-size: 14px; }
+.runner-device > button[aria-pressed="true"] { background: var(--ui-accent-soft); color: var(--ui-accent); }

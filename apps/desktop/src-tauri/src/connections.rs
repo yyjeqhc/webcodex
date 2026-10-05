@@ -13,11 +13,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 
-// The child owns normal phase deadlines. A first-run managed tunnel-client
-// download may consume the shared 120s download budget before verification and
-// the bounded 60s doctor/control-plane/readiness phase begins. Keep Desktop's
-// deadline as a supervision fail-safe so it cannot mask the child's typed error.
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(240);
+// The native CLI owns its 60s startup budget. Allow it to report a typed
+// failure before the Desktop supervision deadline expires.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(75);
 const HEALTH_STALE_AFTER: Duration = Duration::from_secs(12);
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,9 +70,6 @@ pub struct ConnectionRuntimeSnapshot {
     /// attempt evidence, not the current global proxy preference.
     pub auto_proxy_used: Option<bool>,
     pub runtime_directory: Option<PathBuf>,
-    pub health_url: Option<String>,
-    pub log_file: Option<PathBuf>,
-    pub tunnel_client_pid: Option<u32>,
     pub local_mcp_url: Option<String>,
     pub logs: VecDeque<ConnectionLogEntry>,
 }
@@ -240,7 +235,6 @@ impl ConnectionRuntimes {
             };
             if success {
                 entry.state.pid = None;
-                entry.state.tunnel_client_pid = None;
             }
             log(
                 &mut entry.state,
@@ -321,7 +315,7 @@ impl ConnectionRuntimes {
             };
             match event.get("event").and_then(Value::as_str) {
                 Some("ready") if !ready_seen => {
-                    if event["schema_version"] != 1 || event["provider"] != "openai" {
+                    if event["schema_version"] != 2 || event["provider"] != "openai" {
                         break ConnectionError::ProtocolInvalid;
                     }
                     let Some(metadata) =
@@ -332,9 +326,6 @@ impl ConnectionRuntimes {
                     if !self.update(id, generation, |state| {
                         state.lifecycle = ConnectionLifecycle::Running;
                         state.runtime_directory = Some(metadata.directory);
-                        state.health_url = Some(metadata.health_url);
-                        state.log_file = Some(metadata.log_file);
-                        state.tunnel_client_pid = Some(metadata.tunnel_client_pid);
                         state.local_mcp_url = Some(metadata.local_mcp_url);
                         state.process_ready = true;
                         state.failure_stage = None;
@@ -448,7 +439,6 @@ impl ConnectionRuntimes {
             self.update(id, generation, |state| {
                 if cleaned {
                     state.pid = None;
-                    state.tunnel_client_pid = None;
                 } else {
                     state.last_error = Some(ConnectionError::StopFailed);
                     log(state, "stop_failed");
@@ -466,16 +456,11 @@ fn safe_failure_evidence(event: &Value) -> Option<(&str, &str)> {
     let reason = event["reason_code"].as_str()?;
     let valid = matches!(
         (stage, reason),
-        (
-            "tunnel_client_verification",
-            "tunnel_client_verification_failed"
-        ) | ("tunnel_client_download", "tunnel_client_download_failed")
-            | ("tunnel_client_install", "tunnel_client_install_failed")
-            | ("tunnel_doctor", "tunnel_doctor_failed")
-            | ("tunnel_control_plane", "tunnel_control_plane_unreachable")
-            | ("tunnel_control_plane", "tunnel_control_plane_probe_failed")
-            | ("tunnel_daemon_start", "tunnel_daemon_start_failed")
-            | ("tunnel_daemon_readiness", "tunnel_daemon_not_ready")
+        ("tunnel_control_plane", "tunnel_control_plane_unreachable")
+            | ("tunnel_control_plane", "tunnel_auth_rejected")
+            | ("tunnel_recovery", "tunnel_restart_uncertain")
+            | ("tunnel_capacity", "tunnel_capacity_exhausted")
+            | ("tunnel_protocol", "tunnel_protocol_failed")
             | ("local_mcp", "local_mcp_unavailable")
             | ("tunnel_startup", "tunnel_startup_failed")
     );
@@ -513,9 +498,6 @@ fn log(state: &mut ConnectionRuntimeSnapshot, event: &'static str) {
 #[serde(deny_unknown_fields)]
 struct RuntimeMetadata {
     directory: PathBuf,
-    health_url: String,
-    log_file: PathBuf,
-    tunnel_client_pid: u32,
     local_mcp_url: String,
 }
 fn runtime_metadata(
@@ -526,9 +508,7 @@ fn runtime_metadata(
     let metadata: RuntimeMetadata = serde_json::from_value(value.clone()).ok()?;
     if metadata.directory.parent()? != expected_root
         || !metadata.directory.is_absolute()
-        || metadata.log_file != metadata.directory.join("openai-tunnel.log")
         || metadata.local_mcp_url != local_mcp_url
-        || metadata.tunnel_client_pid == 0
     {
         return None;
     }
@@ -538,18 +518,6 @@ fn runtime_metadata(
         .to_str()?
         .strip_prefix("openai-")?;
     if name.len() != 32 || !name.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    let url = url::Url::parse(&metadata.health_url).ok()?;
-    if url.scheme() != "http"
-        || !matches!(url.host_str()?, "127.0.0.1" | "localhost" | "[::1]" | "::1")
-        || url.port().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || !matches!(url.path(), "" | "/")
-    {
         return None;
     }
     Some(metadata)
@@ -567,12 +535,12 @@ mod protocol_tests {
             "schema_version": 1,
             "provider": "openai",
             "failure_stage": "tunnel_control_plane",
-            "reason_code": "tunnel_control_plane_probe_failed",
+            "reason_code": "tunnel_auth_rejected",
             "future_optional": {"ignored": true}
         });
         assert_eq!(
             safe_failure_evidence(&event),
-            Some(("tunnel_control_plane", "tunnel_control_plane_probe_failed"))
+            Some(("tunnel_control_plane", "tunnel_auth_rejected"))
         );
     }
 
@@ -580,8 +548,8 @@ mod protocol_tests {
     fn safe_failure_evidence_fails_closed_on_malformed_or_unknown_codes() {
         for event in [
             json!({"event":"failure","schema_version":1,"provider":"openai"}),
-            json!({"event":"failure","schema_version":2,"provider":"openai","failure_stage":"tunnel_doctor","reason_code":"tunnel_doctor_failed"}),
-            json!({"event":"failure","schema_version":1,"provider":"openai","failure_stage":"tunnel_doctor","reason_code":"private_runtime_key_rejected"}),
+            json!({"event":"failure","schema_version":2,"provider":"openai","failure_stage":"tunnel_protocol","reason_code":"tunnel_protocol_failed"}),
+            json!({"event":"failure","schema_version":1,"provider":"openai","failure_stage":"tunnel_protocol","reason_code":"private_runtime_key_rejected"}),
         ] {
             assert_eq!(safe_failure_evidence(&event), None);
         }

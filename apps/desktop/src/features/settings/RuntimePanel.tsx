@@ -17,6 +17,7 @@ export function RuntimePanel({ state, onState, onActivity, onUpdates }: { state:
   const [confirm, setConfirm] = useState<RuntimeCandidate | null>(null);
   const [result, setResult] = useState<RuntimeSwitchResult | null>(null);
   const alive = useRef(true);
+  const runningAction = useRef(false);
   useEffect(() => {
     alive.current = true;
     void Promise.resolve().then(() => desktopApi.runtimeSettings()).then(value => { if (alive.current) { setSettings(value); setResult(value.last_switch); } })
@@ -25,33 +26,53 @@ export function RuntimePanel({ state, onState, onActivity, onUpdates }: { state:
   }, []);
   const disabled = busy || Boolean(state.current_operation);
   const run = async (action: () => Promise<void>) => {
-    if (disabled) return;
+    if (disabled || runningAction.current) return;
+    runningAction.current = true;
     setBusy(true); setError(null);
     try { await action(); } catch (value) { if (alive.current) setError(normalizeDesktopError(value)); }
-    finally { if (alive.current) setBusy(false); }
+    finally { runningAction.current = false; if (alive.current) setBusy(false); }
   };
-  const probe = (source: RuntimeSource) => run(async () => {
-    const next = await desktopApi.probeRuntime(source);
-    if (alive.current) { setSettings(next); setResult(null); }
-  });
-  const choose = () => run(async () => {
-    const directory = await open({ title: s("Select Runtime folder…"), directory: true, multiple: false });
-    if (typeof directory !== "string" || !alive.current) return;
-    const next = await desktopApi.probeRuntime({ kind: "custom", directory });
-    if (alive.current) { setSettings(next); setResult(null); }
-  });
-  const activate = (candidate: RuntimeCandidate, confirmInterrupt: boolean) => run(async () => {
-    const next = await desktopApi.switchRuntime({ candidate_id: candidate.candidate_id, expected_selection_revision: candidate.selection_revision, confirm_interrupt: confirmInterrupt });
-    if (alive.current) { setResult(next); setConfirm(null); }
+  const apply = async (candidate: RuntimeCandidate, confirmInterrupt: boolean) => {
+    let next: RuntimeSwitchResult;
+    try {
+      next = await desktopApi.switchRuntime({ candidate_id: candidate.candidate_id, expected_selection_revision: candidate.selection_revision, confirm_interrupt: confirmInterrupt });
+    } catch (value) {
+      const failure = normalizeDesktopError(value);
+      if (!confirmInterrupt && failure.code === "runtime_switch_jobs_confirmation_required" && alive.current) {
+        // The native preflight found work after our earlier observation. It has
+        // not stopped anything. Ask once; never automatically retry with consent.
+        setSettings(current => current && ({ ...current, active_jobs: null }));
+        setConfirm(candidate);
+        return;
+      }
+      throw value;
+    }
+    if (!alive.current) return;
+    setResult(next); setConfirm(null);
     onState(await desktopApi.getState());
     const current = await desktopApi.runtimeSettings();
     if (alive.current) setSettings(current);
+  };
+  const select = async (source: RuntimeSource) => {
+    const next = await desktopApi.probeRuntime(source);
+    if (!alive.current) return;
+    setSettings(next); setResult(null);
+    const candidate = next.candidate;
+    if (!candidate || candidate.error_code || candidate.compatibility !== "compatible" || !next.can_switch) return;
+    // Folder selection/reload is the user's intent. Do not require a redundant
+    // preview approval; confirm only when this may interrupt work. The native
+    // transaction still rechecks the exact candidate, owner and live Job count.
+    if (next.active_jobs !== 0) setConfirm(candidate);
+    else await apply(candidate, false);
+  };
+  const choose = () => run(async () => {
+    const directory = await open({ title: s("Select Runtime folder…"), directory: true, multiple: false });
+    if (typeof directory === "string" && alive.current) await select({ kind: "custom", directory });
   });
+  const activate = (candidate: RuntimeCandidate, confirmInterrupt: boolean) => run(() => apply(candidate, confirmInterrupt));
   const stageSwitch = () => {
     const candidate = settings?.candidate;
-    if (!candidate || candidate.compatibility !== "compatible" || !settings.can_switch || disabled) return;
-    // The native side rechecks Jobs and both identity/byte fences immediately
-    // before stopping anything. A stale zero here never grants that authority.
+    if (!candidate || candidate.error_code || candidate.compatibility !== "compatible" || !settings.can_switch || disabled) return;
     if (settings.active_jobs !== 0) setConfirm(candidate);
     else void activate(candidate, false);
   };
@@ -61,7 +82,7 @@ export function RuntimePanel({ state, onState, onActivity, onUpdates }: { state:
   const errorCard = presentation && <div role="alert" className="error-card"><strong>{presentation.title}</strong><span>{presentation.action}</span><details><summary>{p("details")}</summary><code>{error?.code}</code></details></div>;
   return <div className="runtime-settings-panel" data-webcodex-panel="runtime">
     <h2>{s("Current Runtime")}</h2>
-    <p className="field-help">{p("runtimeFilesHelp")}</p>
+    <p className="field-help">{p(settings?.source.kind === "custom" ? "runtimeFolderHelp" : "runtimeSimpleHelp")}</p>
     {settings ? <>
       <dl className="runtime-facts"><div><dt>{s("Source")}</dt><dd>{s(settings.source.kind === "bundled" ? "Bundled" : "Custom")}</dd></div></dl>
       {settings.source.kind === "custom" && <code className="runtime-directory">{settings.source.directory}</code>}
@@ -70,15 +91,16 @@ export function RuntimePanel({ state, onState, onActivity, onUpdates }: { state:
       {!settings.can_switch && <div className="shell-notice"><p>{p(switchHelp)}</p>{switchHelp === "runtimeManagedHelp" && onUpdates && <button type="button" className="secondary-button" onClick={onUpdates}>{p("aboutAndUpdates")}</button>}<details><summary>{p("details")}</summary><code>{settings.switch_unavailable_reason}</code></details></div>}
     </> : !error && <p role="status">{s("Loading…")}</p>}
     <div className="shell-actions">
-      <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(async () => { const next = await desktopApi.recheckRuntime(); if (alive.current) setSettings(next); })}>{s("Recheck Runtime")}</button>
-      {settings?.can_switch && <><button type="button" className="secondary-button" disabled={disabled} onClick={() => void probe({ kind: "bundled" })}>{s("Use bundled Runtime")}</button>
+      {settings?.source.kind === "custom" && settings.can_switch && <button type="button" className="primary-button" disabled={disabled} onClick={() => void run(() => select(settings.source))}>{p("reloadRuntimeFolder")}</button>}
+      {settings?.can_switch && <><button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(() => select({ kind: "bundled" }))}>{s("Use bundled Runtime")}</button>
       <button type="button" className="secondary-button" disabled={disabled} onClick={() => void choose()}>{s("Select Runtime folder…")}</button></>}
     </div>
+    <details className="workspace-technical"><summary>{p("runtimeInspection")}</summary><button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(async () => { const next = await desktopApi.recheckRuntime(); if (alive.current) setSettings(next); })}>{s("Recheck Runtime")}</button></details>
     {settings?.candidate && <div className="runtime-candidate" data-webcodex-panel="runtime-candidate">
       <h3>{s("Candidate Runtime")}</h3><p className="field-help">{p("runtimeCandidateHelp")}</p>
       {settings.candidate.directory && <code className="runtime-directory">{settings.candidate.directory}</code>}
       <BinaryFacts candidate={settings.candidate} />
-      <button type="button" className="primary-button" disabled={disabled || !settings.can_switch || settings.candidate.compatibility !== "compatible"} onClick={stageSwitch}>{s("Use this Runtime")}</button>
+      <button type="button" className="primary-button" disabled={disabled || !settings.can_switch || Boolean(settings.candidate.error_code) || settings.candidate.compatibility !== "compatible"} onClick={stageSwitch}>{s("Use this Runtime")}</button>
     </div>}
     {result && <div className={`shell-notice ${result.outcome === "recovery_required" ? "warning" : ""}`} role={result.outcome === "recovery_required" ? "alert" : "status"}>
       <strong>{s(resultTitle)}</strong>{result.reason_code && <code>{result.reason_code}</code>}{result.rollback_reason_code && <code>{result.rollback_reason_code}</code>}
@@ -104,7 +126,7 @@ function BinaryFacts({ candidate, checkedDesktopContract }: { candidate: Runtime
     {candidate.compatibility !== "compatible" && !candidate.error_code && <p className="field-help">{p("runtimeUnavailableHelp")}</p>}
     {candidate.error_code && <div className="shell-notice warning" role="alert"><strong>{p("runtimeVerificationFailed")}</strong><p>{p(candidate.compatibility === "incompatible" ? "runtimeMismatchHelp" : candidate.compatibility === "unknown" && candidate.binaries.length ? "runtimeCheckUnconfirmedHelp" : "runtimeUnavailableHelp")}</p><details><summary>{p("details")}</summary><code>{candidate.error_code}</code></details></div>}
     {candidate.advisories.includes("runtime_files_changed_restart_required") && <p className="workspace-notice" role="status">{p("needsRestart")}</p>}
-    {!!candidate.binaries.length && <div className="runtime-binary-list" aria-label={s("Required binaries")}>{candidate.binaries.map(binary => <article key={binary.name}>
+    {!!candidate.binaries.length && <details className="workspace-technical" open={Boolean(candidate.error_code)}><summary>{s("Required binaries")}</summary><div className="runtime-binary-list" aria-label={s("Required binaries")}>{candidate.binaries.map(binary => <article key={binary.name}>
       <h4>{binary.name}</h4><dl className="runtime-facts"><div><dt>{s("File")}</dt><dd>{binary.present === null ? p("runtimeFileUnconfirmed") : s(binary.present ? "Present" : "Missing")}</dd></div><div><dt>{p("runtimeStartupCheck")}</dt><dd>{p(binary.startup_check === "passed" ? "runtimeStartupPassed" : binary.startup_check === "failed" ? "runtimeStartupFailed" : "runtimeStartupNotChecked")}</dd></div></dl>
       {binary.error_code && <p className="field-help">{p(binaryFailureHelp(binary))}</p>}
       {(binary.metadata || binary.error_code) && <details className="workspace-technical"><summary>{p("details")}</summary>
@@ -114,7 +136,7 @@ function BinaryFacts({ candidate, checkedDesktopContract }: { candidate: Runtime
         {binary.diagnostics?.exit_code != null && <p>{p("runtimeExitCode")}: <code>{binary.diagnostics.exit_code} / 0x{(binary.diagnostics.exit_code >>> 0).toString(16).padStart(8, "0").toUpperCase()}</code></p>}
         {binary.diagnostics?.io_kind && <p><code>{binary.diagnostics.io_kind}</code></p>}
       </details>}
-    </article>)}</div>}
+    </article>)}</div></details>}
     <details className="workspace-technical runtime-build-details"><summary>{p("buildDetails")}</summary>
     <dl className="runtime-facts">
       {checkedDesktopContract && <div><dt>{s("Desktop contract")}</dt><dd>[{checkedDesktopContract.min_generation}, {checkedDesktopContract.max_generation}]</dd></div>}

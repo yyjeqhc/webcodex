@@ -366,6 +366,9 @@
 .activity-view-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px 24px; padding-bottom: 20px; border-bottom: 1px solid var(--ui-border-subtle); }
 .activity-view-toolbar .activity-project-filter { margin: 0; flex: 1 1 330px; min-width: 0; }
 .activity-view-toolbar .project-picker { width: min(280px, 100%); }
+.activity-session-filter { flex: 1 1 230px; max-width: 320px; min-width: 0; }
+.activity-session-filter-help { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-block: 12px; }
+.activity-session-filter-help .field-help { flex: 1 1 300px; margin: 0; }
 .activity-counts { display: flex; gap: 12px 20px; flex-wrap: wrap; color: var(--ui-text-secondary); font-size: 14px; }
 .activity-counts strong { margin-left: 5px; color: var(--ui-text-primary); }
 .activity-work-row { display: flex; align-items: flex-start; gap: 14px; width: 100%; min-width: 0; text-align: left; padding: 22px 8px; border: 0; border-bottom: 1px solid var(--ui-border-subtle); background: transparent; color: inherit; cursor: pointer; }
@@ -396,7 +399,7 @@
 [data-webcodex-page="activity"] .activity-row strong { font-size: 15px; line-height: 1.6; }
 @media (max-width: 600px) {
   .activity-view-toolbar { align-items: stretch; }
-  .activity-view-toolbar .activity-project-filter { flex: 1 1 100%; }
+  .activity-view-toolbar .activity-project-filter, .activity-view-toolbar .activity-session-filter { flex: 1 1 100%; max-width: none; }
   .activity-work-row { gap: 8px; padding-inline: 0; }
   .activity-work-icon { flex-basis: 20px; }
   .activity-work-copy .session-row-heading { flex-wrap: wrap; }

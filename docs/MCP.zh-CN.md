@@ -24,7 +24,7 @@ FORBIDDEN: This conversation does not support developer MCPs
 
 ## ChatGPT：临时 `share`
 
-显式 `share` 支持 Linux、macOS 与 Windows，并由当前前台进程持有临时单项目环境。Windows x64 可直接使用 managed 默认 Cloudflare Quick Tunnel；固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 需要受信任的显式/`PATH` `cloudflared`。managed OpenAI `tunnel-client` 支持 Windows x64/arm64。
+显式 `share` 支持 Linux、macOS 与 Windows，并由当前前台进程持有临时单项目环境。Windows x64 可直接使用 managed 默认 Cloudflare Quick Tunnel；固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 ARM64 需要受信任的显式/`PATH` `cloudflared`。原生 OpenAI Tunnel 支持 Windows x64/arm64。
 
 默认临时公网路径会复用显式指定/`PATH` 中的 `cloudflared`，否则由 WebCodex 自动下载并校验固定的 managed 副本，然后执行：
 
@@ -105,8 +105,8 @@ share 的 Project Credential，并不是 PAT/OAuth/shared-key 的通用 query au
 如果只需要 OpenAI 产品的私有 transport，创建/选择 Secure MCP Tunnel，导出
 `CONTROL_PLANE_TUNNEL_ID` 与只授予 Tunnels Read + Use 的 Restricted
 `CONTROL_PLANE_API_KEY`，然后运行 `webcodex share --tunnel openai`。ChatGPT 使用
-Connection: Tunnel + No authentication；临时 WebCodex Bearer 留在本机，由固定且经过校验的
-OpenAI `tunnel-client` 注入。
+Connection: Tunnel + No authentication；临时 WebCodex Bearer 留在本机，由
+原生 Rust Tunnel client 在内存中注入。
 
 对于通过 OpenAI Secure Tunnel 访问的长期 **loopback-only** Server，可以设置
 `WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true`，从而信任由明确允许的本地 tunnel
@@ -114,10 +114,10 @@ credential 认证的 ChatGPT host-file rewrite。WebCodex Desktop 自 v0.4.2 起
 本机 loopback Server 默认写入该值；已有显式配置不会被覆盖。该例外仅在 `WEBCODEX_ADDR`
 解析为 loopback，且当前 credential 是普通 user API token，或 Desktop regular Tunnel 使用的
 已配置 Server bootstrap credential 时生效。regular Tunnel 从本机 `WEBCODEX_TOKEN` 配置派生
-该 credential，并只把它注入私有 tunnel-client authorization；用户不应复制或暴露该
+该 credential，并只把它注入原生 Tunnel 的固定本地 Authorization；用户不应复制或暴露该
 credential。独立/network-accessible Server 仍默认关闭，不应使用它替代 OAuth。
 
-如果在 Windows 上使用普通独立 Server + Runner 并通过 OpenAI Tunnel 接入，或排查“本地 `/readyz` 正常但 ChatGPT Connector 创建失败”的情况，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。它是深入配置/排障文档，不是普通用户第一次必须阅读的教程。
+如果在 Windows 上使用普通独立 Server + Runner 并通过 OpenAI Tunnel 接入，或排查“本地 MCP 正常但 ChatGPT Connector 创建失败”的情况，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。它是深入配置/排障文档，不是普通用户第一次必须阅读的教程。
 
 ## 对话侧边栏中的 Work Result
 

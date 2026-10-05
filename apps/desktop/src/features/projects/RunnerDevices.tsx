@@ -2,7 +2,7 @@ import { Monitor } from "lucide-react";
 import { useProduct } from "../../i18n/product";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 
-export function RunnerDevices({ onComputerSettings }: { onComputerSettings?: () => void }) {
+export function RunnerDevices({ onComputerSettings, selectedDevice, onSelectDevice }: { onComputerSettings?: () => void; selectedDevice?: string; onSelectDevice?: (id: string) => void }) {
   const p = useProduct(); const workspace = useWorkspace();
   if (!workspace.runners.length) return null;
   return <section className="runner-devices" aria-labelledby="runner-devices-title">
@@ -18,6 +18,8 @@ export function RunnerDevices({ onComputerSettings }: { onComputerSettings?: () 
         {!local && <p className="runner-device-identifier">{p("deviceIdentifier")} · <code>{runner.client_id}</code></p>}
         <p className="runner-desktop-state">{p(desktopLabel)}</p>
         <p className="runner-device-help">{p(help)}</p>
+        {onSelectDevice && <button type="button" className="secondary-button" aria-pressed={selectedDevice === runner.client_id}
+          aria-label={`${p("viewDeviceProjects")} · ${runner.client_id}`} onClick={() => onSelectDevice(runner.client_id)}>{p("viewDeviceProjects")}</button>}
         {local && runner.connected && !stale && desktop !== true && onComputerSettings && <button type="button" className="secondary-button" onClick={onComputerSettings}>{p("checkDesktopPermissions")}</button>}
         {local && <details className="runner-device-details"><summary>{p("deviceIdentifier")}</summary><code>{runner.client_id}</code></details>}
       </li>;

@@ -700,7 +700,7 @@ beforeEach(() => {
     api.getState.mockResolvedValue(observed); api.observeChatgptActivity.mockResolvedValue(observed); renderApp();
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
     expect(screen.getByText(/最近 ChatGPT 活动/)).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("ChatGPT 隧道1 个隧道 · 0 个本地就绪");
+    expect(screen.getByRole("status")).toHaveTextContent("Desktop 中的 Tunnel 连接Desktop 中 1 个隧道 · 0 个本地就绪");
     fireEvent.click(screen.getByRole("button", { name: "连接" }));
     expect(screen.getByText(/最近 ChatGPT 活动/)).toBeInTheDocument();
     expect(screen.queryByText(/ChatGPT 未连接|等待 ChatGPT|已验证 ChatGPT 使用/)).not.toBeInTheDocument();
@@ -710,7 +710,7 @@ beforeEach(() => {
     api.getState.mockResolvedValue(readyState); renderApp();
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
     expect(screen.getByText("尚未观察到 ChatGPT 活动")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Server 连接运行中本机任务服务运行中ChatGPT 隧道1 个隧道 · 0 个本地就绪");
+    expect(screen.getByRole("status")).toHaveTextContent("Server 连接运行中本机任务服务运行中Desktop 中的 Tunnel 连接Desktop 中 1 个隧道 · 0 个本地就绪");
     expect(screen.queryByText(/ChatGPT 未连接|等待 ChatGPT|不代表 ChatGPT/)).not.toBeInTheDocument();
   });
 
@@ -1050,7 +1050,7 @@ beforeEach(() => {
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
 
     fireEvent.click(screen.getByRole("button", { name: "连接" }));
-    expect(await within(screen.getByRole("main")).findByText("1 个隧道 · 1 个本地就绪")).toBeInTheDocument();
+    expect(await within(screen.getByRole("main")).findByText("Desktop 中 1 个隧道 · 1 个本地就绪")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "启动" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止 ChatGPT" })).toBeInTheDocument();
   });
@@ -1222,7 +1222,7 @@ beforeEach(() => {
       });
 
       const readyStatus = screen.getByRole("status", { name: "工作区" });
-      expect(readyStatus).toHaveTextContent("Server 连接运行中本机任务服务运行中ChatGPT 隧道1 个隧道 · 1 个本地就绪");
+      expect(readyStatus).toHaveTextContent("Server 连接运行中本机任务服务运行中Desktop 中的 Tunnel 连接Desktop 中 1 个隧道 · 1 个本地就绪");
       expect(screen.getByText("尚未观察到 ChatGPT 活动")).toBeInTheDocument();
       expect(screen.queryByText(/等待 ChatGPT|ChatGPT 未连接|外部连接已验证/)).not.toBeInTheDocument();
       expect(api.getState).toHaveBeenCalledTimes(1);
@@ -1233,7 +1233,7 @@ beforeEach(() => {
 
       expect(api.getState).toHaveBeenCalledTimes(2);
       expect(api.refresh).toHaveBeenCalledTimes(0);
-      expect(screen.getByRole("status", { name: "工作区" })).toHaveTextContent("Server 连接运行中本机任务服务运行中ChatGPT 隧道1 个隧道 · 0 个本地就绪");
+      expect(screen.getByRole("status", { name: "工作区" })).toHaveTextContent("Server 连接运行中本机任务服务运行中Desktop 中的 Tunnel 连接Desktop 中 1 个隧道 · 0 个本地就绪");
       expect(screen.queryByText(/ChatGPT 连接尚未验证|ChatGPT 未连接|等待 ChatGPT/)).not.toBeInTheDocument();
 
       view.unmount();

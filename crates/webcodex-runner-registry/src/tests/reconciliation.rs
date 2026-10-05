@@ -664,7 +664,10 @@ async fn go_project_validation_is_fenced_again_at_job_admission() {
             assert!(result.is_ok(), "{result:?}");
         } else {
             let error = result.unwrap_err();
+            assert!(error.starts_with("capability_unavailable:"), "{error}");
+            assert!(error.contains(&format!("Runner `{CLIENT_ID}`")), "{error}");
             assert!(error.contains("project_go_single_module_v1"), "{error}");
+            assert!(error.contains("upgrade that Runner"), "{error}");
             assert!(registry.list_jobs(Some(10)).await.is_empty());
         }
     }
@@ -692,7 +695,11 @@ async fn project_test_options_are_fenced_again_at_job_admission() {
         let result = registry.start_job_with_metadata(start_request("validation"), "tester".into(), metadata).await;
         if supported { assert!(result.is_ok(), "{result:?}"); }
         else {
-            assert!(result.unwrap_err().contains("project_validation_test_options_v1"));
+            let error = result.unwrap_err();
+            assert!(error.starts_with("capability_unavailable:"), "{error}");
+            assert!(error.contains(&format!("Runner `{CLIENT_ID}`")), "{error}");
+            assert!(error.contains("project_validation_test_options_v1"), "{error}");
+            assert!(error.contains("upgrade that Runner"), "{error}");
             assert!(registry.list_jobs(Some(10)).await.is_empty());
         }
     }
@@ -3940,9 +3947,11 @@ async fn project_validation_python_pytest_capability_rechecked_at_job_admission(
         if supported {
             assert!(result.is_ok(), "{result:?}");
         } else {
-            assert!(result
-                .unwrap_err()
-                .contains("project_validation_python_pytest_v1"));
+            let error = result.unwrap_err();
+            assert!(error.starts_with("capability_unavailable:"), "{error}");
+            assert!(error.contains(&format!("Runner `{CLIENT_ID}`")), "{error}");
+            assert!(error.contains("project_validation_python_pytest_v1"), "{error}");
+            assert!(error.contains("upgrade that Runner"), "{error}");
             assert!(registry.list_jobs(Some(10)).await.is_empty());
         }
     }

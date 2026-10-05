@@ -24,7 +24,7 @@ Check the Runner and project state independently. If they remain available and t
 
 ## ChatGPT: temporary `share`
 
-Explicit `share` is supported on Linux, macOS, and Windows and owns a temporary single-project environment for that foreground run. Windows x64 can use the managed default Cloudflare Quick Tunnel; Windows ARM64 needs a trusted explicit/PATH `cloudflared` because the pinned Cloudflare release publishes no official ARM64 artifact. Managed OpenAI `tunnel-client` supports both Windows x64 and arm64.
+Explicit `share` is supported on Linux, macOS, and Windows and owns a temporary single-project environment for that foreground run. Windows x64 can use the managed default Cloudflare Quick Tunnel; Windows ARM64 needs a trusted explicit/PATH `cloudflared` because the pinned Cloudflare release publishes no official ARM64 artifact. Native OpenAI Tunnel supports both Windows x64 and arm64.
 
 For the default temporary public path, WebCodex reuses an explicit/PATH `cloudflared` or downloads its pinned verified managed copy automatically, then run:
 
@@ -75,7 +75,7 @@ For an OpenAI-only private transport, create/select a Secure MCP Tunnel, export
 `CONTROL_PLANE_TUNNEL_ID` plus a Restricted `CONTROL_PLANE_API_KEY` with Tunnels
 Read + Use, and run `webcodex share --tunnel openai`. ChatGPT uses Connection:
 Tunnel + No authentication; the temporary WebCodex Bearer stays local and is
-injected by the pinned verified OpenAI `tunnel-client`.
+injected by the native Rust Tunnel client.
 
 For a long-lived **loopback-only** Server reached through OpenAI Secure Tunnel,
 ChatGPT host-file rewrites authenticated by the explicitly allowed local tunnel
@@ -86,12 +86,12 @@ existing explicit value is never overwritten. The exception works only when
 `WEBCODEX_ADDR` resolves to loopback and the authenticated credential is either a
 normal user API token or the configured Server bootstrap credential used by the
 Desktop regular Tunnel. The regular Tunnel derives that credential from the local
-`WEBCODEX_TOKEN` configuration and injects it into its private tunnel-client
+`WEBCODEX_TOKEN` configuration and injects it into its private native Tunnel
 authorization; users should not copy or expose that credential. Independent/network-
 accessible Servers remain off by default and must not use this as a substitute for
 OAuth.
 
-For a regular independent Windows Server + Runner reached through OpenAI Tunnel, or to troubleshoot a case where local `/readyz` is healthy but ChatGPT Connector creation still fails, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material, not required reading for a first-time user.
+For a regular independent Windows Server + Runner reached through OpenAI Tunnel, or to troubleshoot a case where local MCP is healthy but ChatGPT Connector creation still fails, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material, not required reading for a first-time user.
 
 ## Result cards
 

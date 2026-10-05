@@ -6,7 +6,9 @@ use webcodex_core::project_build::{
 use webcodex_core::project_validation::{
     ProjectDependencyMode, ProjectDependencyPolicy, ProjectValidationAction,
     ProjectValidationAdapter, ProjectValidationProvenance, ProjectValidationRequest,
+    ProjectValidationScope, ProjectValidationTestOptions,
 };
+use webcodex_core::runner_protocol::RunnerCapabilityId;
 
 fn locked_policy() -> ProjectDependencyPolicy {
     ProjectDependencyPolicy {
@@ -154,9 +156,197 @@ async fn dependency_policy_is_fenced_before_project_build_planning() {
             assert!(result.is_ok(), "{result:?}");
         } else {
             let error = result.unwrap_err();
+            assert!(error.starts_with("capability_unavailable:"), "{error}");
+            assert!(error.contains("Runner `policy-runner`"), "{error}");
             assert!(error.contains("project_dependency_policy_v1"), "{error}");
+            assert!(error.contains("upgrade that Runner"), "{error}");
         }
     }
+}
+
+#[tokio::test]
+async fn project_validation_base_capability_error_identifies_runner_without_dispatch() {
+    let registry = RunnerRegistry::default();
+    let access = auth_context(None, true);
+    let mut registration = registration(true);
+    registration.capabilities.project_validation_v1 = false;
+    registry.register(registration).await.unwrap();
+
+    let mut request = locked_validation_request();
+    request.dependency_policy = None;
+    let error = registry
+        .enqueue_project_validation_plan("policy-runner".into(), request, Some(&access))
+        .await
+        .unwrap_err();
+    assert!(error.starts_with("capability_unavailable:"), "{error}");
+    assert!(error.contains("Runner `policy-runner`"), "{error}");
+    assert!(error.contains("project_validation_v1"), "{error}");
+    assert!(error.contains("upgrade that Runner"), "{error}");
+    assert!(registry
+        .poll(RunnerPollRequest {
+            client_id: "policy-runner".into(),
+            runner_instance_id: "inst".into(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn project_validation_base_capability_error_identifies_runner_without_job_admission() {
+    let registry = RunnerRegistry::default();
+    let mut registration = registration(true);
+    registration.capabilities.project_validation_v1 = false;
+    registry.register(registration).await.unwrap();
+
+    let error = registry
+        .start_job_with_metadata(
+            start_request("cargo check --all-targets"),
+            "test".into(),
+            locked_validation_metadata(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.starts_with("capability_unavailable:"), "{error}");
+    assert!(error.contains("Runner `policy-runner`"), "{error}");
+    assert!(error.contains("project_validation_v1"), "{error}");
+    assert!(error.contains("upgrade that Runner"), "{error}");
+    assert!(registry.list_jobs(Some(10)).await.is_empty());
+    assert!(registry
+        .poll(RunnerPollRequest {
+            client_id: "policy-runner".into(),
+            runner_instance_id: "inst".into(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn project_validation_optional_capability_errors_identify_runner_without_dispatch() {
+    let cases = [
+        (
+            RunnerCapabilityId::ProjectValidationPythonPytest,
+            ProjectValidationRequest {
+                action: ProjectValidationAction::Test,
+                adapter: ProjectValidationAdapter::Python,
+                dependency_policy: None,
+                ..locked_validation_request()
+            },
+        ),
+        (
+            RunnerCapabilityId::ProjectAllPackages,
+            ProjectValidationRequest {
+                scope: Some(ProjectValidationScope {
+                    packages: Vec::new(),
+                    all_packages: true,
+                }),
+                dependency_policy: None,
+                ..locked_validation_request()
+            },
+        ),
+        (
+            RunnerCapabilityId::ProjectDependencyPolicy,
+            locked_validation_request(),
+        ),
+        (
+            RunnerCapabilityId::ProjectValidationTestOptions,
+            ProjectValidationRequest {
+                action: ProjectValidationAction::Test,
+                test: Some(ProjectValidationTestOptions::default()),
+                dependency_policy: None,
+                ..locked_validation_request()
+            },
+        ),
+        (
+            RunnerCapabilityId::ProjectValidationPackageScope,
+            ProjectValidationRequest {
+                scope: Some(ProjectValidationScope {
+                    packages: vec!["crate".into()],
+                    all_packages: false,
+                }),
+                dependency_policy: None,
+                ..locked_validation_request()
+            },
+        ),
+    ];
+
+    for (capability, request) in cases {
+        let registry = RunnerRegistry::default();
+        let access = auth_context(None, true);
+        let mut registration = registration(true);
+        registration.capabilities.set(capability, false);
+        registry.register(registration).await.unwrap();
+
+        let error = registry
+            .enqueue_project_validation_plan("policy-runner".into(), request, Some(&access))
+            .await
+            .unwrap_err();
+        assert!(error.starts_with("capability_unavailable:"), "{error}");
+        assert!(error.contains("Runner `policy-runner`"), "{error}");
+        assert!(error.contains(capability.as_wire_name()), "{error}");
+        assert!(error.contains("upgrade that Runner"), "{error}");
+        assert!(registry
+            .poll(RunnerPollRequest {
+                client_id: "policy-runner".into(),
+                runner_instance_id: "inst".into(),
+            })
+            .await
+            .unwrap()
+            .is_none());
+    }
+}
+
+#[tokio::test]
+async fn project_build_capability_diagnostic_follows_runner_authorization() {
+    let registry = RunnerRegistry::default();
+    let mut registration = registration(false);
+    registration.owner = Some("alice".into());
+    registry.register(registration).await.unwrap();
+
+    let access = RunnerAccess {
+        global_visibility: true,
+        owner_bypass: false,
+        username: Some("bob".into()),
+        group: None,
+    };
+    let error = registry
+        .enqueue_project_build_plan(
+            "policy-runner".into(),
+            locked_build_request(),
+            Some(&access),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("owned by alice"), "{error}");
+    assert!(!error.contains("capability_unavailable"), "{error}");
+    assert!(!error.contains("project_build_v1"), "{error}");
+    assert!(!error.contains("upgrade that Runner"), "{error}");
+
+    let error = registry
+        .start_job_with_metadata_for_access(
+            start_request(""),
+            "test".into(),
+            ShellJobStartMetadata {
+                project_id: Some("agent:policy-runner:demo".into()),
+                project_cwd: Some(".".into()),
+                purpose: Some("build".into()),
+                shell: Some("direct_argv".into()),
+                visibility: ShellJobVisibility::Public,
+                structured_execution: Some(StructuredJobExecution::ProjectBuild(
+                    locked_build_plan(),
+                )),
+                ..Default::default()
+            },
+            Some(&access),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("owned by alice"), "{error}");
+    assert!(!error.contains("capability_unavailable"), "{error}");
+    assert!(!error.contains("project_build_v1"), "{error}");
+    assert!(!error.contains("upgrade that Runner"), "{error}");
 }
 
 #[tokio::test]
@@ -176,7 +366,10 @@ async fn dependency_policy_is_fenced_before_project_validation_planning() {
             assert!(result.is_ok(), "{result:?}");
         } else {
             let error = result.unwrap_err();
+            assert!(error.starts_with("capability_unavailable:"), "{error}");
+            assert!(error.contains("Runner `policy-runner`"), "{error}");
             assert!(error.contains("project_dependency_policy_v1"), "{error}");
+            assert!(error.contains("upgrade that Runner"), "{error}");
         }
     }
 }
@@ -208,7 +401,10 @@ async fn dependency_policy_is_fenced_again_at_project_build_job_admission() {
             assert!(result.is_ok(), "{result:?}");
         } else {
             let error = result.unwrap_err();
+            assert!(error.starts_with("capability_unavailable:"), "{error}");
+            assert!(error.contains("Runner `policy-runner`"), "{error}");
             assert!(error.contains("project_dependency_policy_v1"), "{error}");
+            assert!(error.contains("upgrade that Runner"), "{error}");
             assert!(registry.list_jobs(Some(10)).await.is_empty());
         }
     }
@@ -232,7 +428,10 @@ async fn dependency_policy_is_fenced_again_at_project_validation_job_admission()
             assert!(result.is_ok(), "{result:?}");
         } else {
             let error = result.unwrap_err();
+            assert!(error.starts_with("capability_unavailable:"), "{error}");
+            assert!(error.contains("Runner `policy-runner`"), "{error}");
             assert!(error.contains("project_dependency_policy_v1"), "{error}");
+            assert!(error.contains("upgrade that Runner"), "{error}");
             assert!(registry.list_jobs(Some(10)).await.is_empty());
         }
     }

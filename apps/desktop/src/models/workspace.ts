@@ -50,8 +50,8 @@ export interface WindowDetail extends WindowSummary {
   sessions_truncated: boolean; activity_truncated: boolean;
 }
 export interface GitSummary {
-  branch?: string; clean?: boolean; git_available: boolean; non_git_project: boolean;
-  files?: { path: string; status?: string }[]; files_total: number; files_truncated: boolean;
+  branch?: string | null; clean?: boolean | null; git_available: boolean; non_git_project: boolean;
+  files?: { path: string; status?: string }[] | null; files_total: number | null; files_truncated: boolean;
 }
 export interface InstructionSummary { source_scope: "runner" | "project"; path: string; fingerprint: string; truncated: boolean; total_lines: number }
 export interface SkillSummary { skill_id: string; name: string; description?: string; source?: string; source_scope?: string; trust?: string; available?: boolean }

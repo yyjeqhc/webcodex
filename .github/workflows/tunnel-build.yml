@@ -1,0 +1,56 @@
+name: Standalone Tunnel artifacts
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+# This builds separate Tunnel downloads only. It never publishes a Release,
+# modifies npm's three-binary contract, or installs/restarts a user service.
+permissions:
+  contents: read
+
+jobs:
+  tunnel:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux-x64
+            binary: webcodex-tunnel
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+            binary: webcodex-tunnel
+          - runner: macos-15
+            platform: darwin-arm64
+            binary: webcodex-tunnel
+          - runner: macos-15-intel
+            platform: darwin-x64
+            binary: webcodex-tunnel
+          - runner: windows-latest
+            platform: win32-x64
+            binary: webcodex-tunnel.exe
+          - runner: windows-11-arm
+            platform: win32-arm64
+            binary: webcodex-tunnel.exe
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      WEBCODEX_TUNNEL_SOURCE_COMMIT: ${{ github.sha }}
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - name: Test standalone contracts
+        run: cargo test --locked -p webcodex-openai-tunnel
+      - name: Check library without the CLI
+        run: cargo check --locked -p webcodex-openai-tunnel --no-default-features --lib
+      - name: Build standalone binary
+        run: cargo build --locked --release -p webcodex-openai-tunnel --bin webcodex-tunnel
+      - name: Package exact source without changing application bundles
+        run: python scripts/package_tunnel_artifact.py --binary target/release/${{ matrix.binary }} --out-dir tunnel-dist --platform ${{ matrix.platform }} --expected-source-sha ${{ github.sha }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: standalone-tunnel-${{ matrix.platform }}-${{ github.sha }}
+          path: tunnel-dist/*.tar.gz
+          if-no-files-found: error

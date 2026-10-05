@@ -23,9 +23,6 @@ export interface TunnelConnection {
   reason_code: string | null;
   auto_proxy_used: boolean | null;
   runtime_directory: string | null;
-  health_url: string | null;
-  log_file: string | null;
-  tunnel_client_pid: number | null;
   local_mcp_url: string | null;
   logs: { timestamp_ms: number; event: string }[];
 }

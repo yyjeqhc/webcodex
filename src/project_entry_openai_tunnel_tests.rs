@@ -1,283 +1,152 @@
 use super::*;
 
-#[test]
-fn runtime_command_inherits_only_tunnel_authority_not_server_bootstrap_or_openai_admin_keys() {
-    let prerequisites = OpenAiTunnelPrerequisites {
-        binary: PathBuf::from("tunnel-client"),
-        tunnel_id: "tunnel_0123456789abcdef0123456789abcdef".to_string(),
+#[tokio::test]
+async fn cancelled_stop_retains_the_owned_task_for_drop_cleanup() {
+    let temp = tempfile::tempdir().unwrap();
+    let guard = acquire_guard(temp.path(), "cancelled-stop").unwrap();
+    let (stop, _rx) = oneshot::channel();
+    // A task that cannot complete before this owner observes it or aborts it.
+    let task = tokio::spawn(std::future::pending::<Result<(), Error>>());
+    let abort = task.abort_handle();
+    let mut tunnel = OpenAiTunnel {
+        task: Some(task),
+        stop: Some(stop),
+        health: Health::default(),
+        guard: guard.clone(),
     };
-    let mut command = Command::new("tunnel-client");
-    configure_runtime_command(
-        &mut command,
-        &prerequisites,
-        "http://127.0.0.1:8080/mcp",
-        Path::new("authorization"),
-    );
-
-    let env = command.as_std().get_envs().collect::<Vec<_>>();
-    for key in ["WEBCODEX_TOKEN", "OPENAI_ADMIN_KEY", "OPENAI_API_KEY"] {
-        assert!(env
-            .iter()
-            .any(|(name, value)| { name.to_str() == Some(key) && value.is_none() }));
+    tokio::select! {
+        biased;
+        _ = tunnel.stop() => panic!("pending task completed"),
+        _ = std::future::ready(()) => {},
     }
-    assert!(env.iter().any(|(name, value)| {
-        name.to_str() == Some("CONTROL_PLANE_TUNNEL_ID")
-            && value.and_then(|value| value.to_str()) == Some(prerequisites.tunnel_id.as_str())
-    }));
+    assert!(
+        tunnel.task.is_some(),
+        "cancelling stop must not detach the owned task"
+    );
+    drop(tunnel);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !abort.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        guard.exists(),
+        "unobserved shutdown must retain the restart fence"
+    );
 }
 
 #[test]
-fn tunnel_ids_are_strict_and_runtime_key_never_part_of_the_id_contract() {
+fn tunnel_id_is_a_fixed_validated_binding() {
     assert!(valid_tunnel_id("tunnel_0123456789abcdef0123456789abcdef"));
     for invalid in [
-        "0123456789abcdef0123456789abcdef",
+        "",
+        "tunnel_x",
         "tunnel_0123456789ABCDEF0123456789ABCDEF",
-        "tunnel_0123456789abcdef",
-        "tunnel_0123456789abcdef0123456789abcdef0",
-        "tunnel_0123456789abcdef0123456789abcdeg",
+        "../other",
     ] {
-        assert!(
-            !valid_tunnel_id(invalid),
-            "accepted invalid tunnel id {invalid}"
-        );
+        assert!(!valid_tunnel_id(invalid));
+    }
+}
+#[test]
+fn restart_guard_blocks_concurrent_owner_and_unclean_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("runs");
+    let marker = acquire_guard(&root, "tunnel_fixture").unwrap();
+    assert_eq!(
+        acquire_guard(&root, "tunnel_fixture").unwrap_err().code,
+        "tunnel_restart_uncertain"
+    );
+    assert!(acquire_guard(&root, "tunnel_another").is_ok());
+    assert_eq!(
+        std::fs::read_to_string(&marker).unwrap(),
+        "native-tunnel-run-v1\n"
+    );
+    // Only an observed clean stop or explicit operator resolution clears this latch.
+    std::fs::remove_file(&marker).unwrap();
+    assert!(acquire_guard(&root, "tunnel_fixture").is_ok());
+}
+#[test]
+fn diagnostics_do_not_contain_authority_material() {
+    for error in [Error::Authentication, Error::Uncertain, Error::Transport] {
+        let product = tunnel_error(error);
+        assert!(!product.message.contains("Bearer"));
+        assert!(!product.message.contains("https://"));
     }
 }
 
-#[test]
-fn official_release_assets_and_extracted_binaries_are_pinned_per_supported_platform() {
-    let linux_amd64 = tunnel_client_asset_for("linux", "x86_64").unwrap();
-    assert_eq!(
-        linux_amd64.file_name,
-        "tunnel-client-v0.0.12-linux-amd64.zip"
-    );
-    assert_eq!(
-        linux_amd64.archive_sha256,
-        "2bb693bd7b5cd28da7ce09cd9e309529dbb33b7cc9dc0058e62a064688f92c81"
-    );
-    assert_eq!(
-        linux_amd64.binary_sha256,
-        "ee9d4a75bc0b42f36f345aa96231e0db1ab00488122f34ebc99d6db055b6603e"
-    );
-
-    let linux_arm64 = tunnel_client_asset_for("linux", "aarch64").unwrap();
-    assert_eq!(
-        linux_arm64.binary_sha256,
-        "0a48e6696de0df5951c013e40be81ce775e6644e209758c48795a0ecbda06406"
-    );
-    let darwin_amd64 = tunnel_client_asset_for("macos", "x86_64").unwrap();
-    assert_eq!(
-        darwin_amd64.binary_sha256,
-        "4133dab2575223252732a998210c34b7ed96a51765cf5ea835a8e24cf2be1272"
-    );
-    let darwin_arm64 = tunnel_client_asset_for("macos", "aarch64").unwrap();
-    assert_eq!(
-        darwin_arm64.binary_sha256,
-        "b1757220cf4722cec9085ee4a908cf0ee4c1a499a33bd99979b9a9c7669e29b1"
-    );
-    assert_eq!(darwin_arm64.target, "darwin-arm64");
-
-    let windows_amd64 = tunnel_client_asset_for("windows", "x86_64").unwrap();
-    assert_eq!(windows_amd64.target, "windows-amd64");
-    assert_eq!(windows_amd64.member_name, "tunnel-client.exe");
-    assert_eq!(
-        windows_amd64.archive_sha256,
-        "2a2804933924e38a502d62b61f0266cb80d56d65744f4c29876b2bf9c1544356"
-    );
-    assert_eq!(
-        windows_amd64.binary_sha256,
-        "6649169733686805ca16cccd91774594d0c017fd729c37ad4ce1cd18323d9ae8"
-    );
-    let windows_arm64 = tunnel_client_asset_for("windows", "aarch64").unwrap();
-    assert_eq!(windows_arm64.target, "windows-arm64");
-    assert_eq!(windows_arm64.member_name, "tunnel-client.exe");
-    assert_eq!(
-        windows_arm64.archive_sha256,
-        "65ab54221554481bb1c23b6015b99abe0b7f79b08593f4fb17a9e2e25532281d"
-    );
-    assert_eq!(
-        windows_arm64.binary_sha256,
-        "480684ec1031fc2985c7e87f9d669e7dfda4012a8ecdab21eabe1b5deafdd656"
-    );
-}
-
-#[test]
-fn managed_root_prefers_private_xdg_then_home() {
-    let temp = tempfile::tempdir().unwrap();
-    let state = temp.path().join("state");
-    let home = temp.path().join("home");
-    let local = temp.path().join("local");
-    assert_eq!(
-        managed_tunnel_client_root_from(
-            Some(state.as_os_str()),
-            Some(home.as_os_str()),
-            Some(local.as_os_str()),
+// Dedicated adapter lifecycle fixture. The crate's domain tests own wire behavior.
+async fn idle_tunnel(root: &Path) -> OpenAiTunnel {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = TunnelClient::new(
+        ControlPlaneIdentity::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "fixture",
+            Credential::bearer("fixture-control").unwrap(),
         )
         .unwrap(),
-        state.join("webcodex/tools/tunnel-client")
-    );
-    assert_eq!(
-        managed_tunnel_client_root_from(None, Some(home.as_os_str()), Some(local.as_os_str()),)
-            .unwrap(),
-        home.join(".local/state/webcodex/tools/tunnel-client")
-    );
-    assert_eq!(
-        managed_tunnel_client_root_from(None, None, Some(local.as_os_str())).unwrap(),
-        local.join("WebCodex/tools/tunnel-client")
-    );
-    assert!(managed_tunnel_client_root_from(None, None, None).is_err());
-    assert!(managed_tunnel_client_root_from(
-        Some(OsStr::new("relative")),
-        Some(home.as_os_str()),
-        None,
-    )
-    .is_err());
-}
-
-#[test]
-fn health_url_accepts_only_bounded_loopback_http_origins() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("health.url");
-    for valid in [
-        "http://127.0.0.1:12345\n",
-        "http://localhost:43210/\n",
-        "http://[::1]:3000\n",
-    ] {
-        fs::write(&path, valid).unwrap();
-        let result = read_loopback_health_url(&path).unwrap();
-        assert!(result.starts_with("http://"));
-    }
-    for invalid in [
-        "https://127.0.0.1:12345",
-        "http://example.com:12345",
-        "http://127.0.0.1",
-        "http://user:secret@127.0.0.1:12345",
-        "http://127.0.0.1:12345/readyz",
-        "http://127.0.0.1:12345?secret=value",
-    ] {
-        fs::write(&path, invalid).unwrap();
-        assert!(
-            read_loopback_health_url(&path).is_err(),
-            "accepted {invalid}"
-        );
-    }
-}
-
-#[test]
-fn zip_extraction_reads_only_the_exact_tunnel_client_member() {
-    let temp = tempfile::tempdir().unwrap();
-    let archive_path = temp.path().join("client.zip");
-    let file = File::create(&archive_path).unwrap();
-    let mut archive = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default();
-    archive.start_file("../tunnel-client", options).unwrap();
-    archive.write_all(b"wrong").unwrap();
-    archive.start_file("tunnel-client", options).unwrap();
-    archive.write_all(b"expected-binary").unwrap();
-    archive.finish().unwrap();
-
-    let destination = temp.path().join("extracted");
-    extract_tunnel_client(&archive_path, &destination, "tunnel-client").unwrap();
-    assert_eq!(fs::read(&destination).unwrap(), b"expected-binary");
-    assert!(!temp.path().join("tunnel-client").exists());
-
-    let windows_archive_path = temp.path().join("windows-client.zip");
-    let file = File::create(&windows_archive_path).unwrap();
-    let mut archive = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default();
-    archive.start_file("../tunnel-client.exe", options).unwrap();
-    archive.write_all(b"wrong-windows").unwrap();
-    archive.start_file("tunnel-client.exe", options).unwrap();
-    archive.write_all(b"expected-windows-binary").unwrap();
-    archive.finish().unwrap();
-    let windows_destination = temp.path().join("extracted.exe");
-    extract_tunnel_client(
-        &windows_archive_path,
-        &windows_destination,
-        "tunnel-client.exe",
+        FixedMcpTarget::new(
+            "http://127.0.0.1:9/mcp",
+            Credential::bearer("fixture-local").unwrap(),
+        )
+        .unwrap(),
+        DeadlinePolicy::default(),
+        Limits::default(),
     )
     .unwrap();
-    assert_eq!(
-        fs::read(&windows_destination).unwrap(),
-        b"expected-windows-binary"
-    );
-    assert!(!temp.path().join("tunnel-client.exe").exists());
+    let guard = acquire_guard(root, "fixture").unwrap();
+    let health = client.health();
+    let (tx, rx) = oneshot::channel();
+    let task = tokio::spawn(client.run(async {
+        let _ = rx.await;
+    }));
+    let mut tunnel = OpenAiTunnel {
+        task: Some(task),
+        stop: Some(tx),
+        health,
+        guard,
+    };
+    let observed = tokio::time::timeout(Duration::from_secs(5), async {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = [0; 8192];
+        let n = socket.read(&mut buf).await.unwrap();
+        assert!(n > 0);
+        socket
+            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        while !tunnel.health.is_ready() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    if observed.is_err() {
+        tunnel.stop().await;
+        panic!("fixture did not reach poll readiness");
+    }
+    tunnel
 }
 
-#[test]
-fn stale_managed_install_cleanup_is_age_and_name_fenced() {
+#[tokio::test]
+async fn observed_idle_shutdown_clears_restart_marker() {
     let temp = tempfile::tempdir().unwrap();
-    let owned = temp
-        .path()
-        .join(".install-0123456789abcdef0123456789abcdef");
-    let malformed = temp.path().join(".install-not-webcodex-owned");
-    let owned_file = temp
-        .path()
-        .join(".install-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    fs::create_dir(&owned).unwrap();
-    fs::create_dir(&malformed).unwrap();
-    fs::write(&owned_file, b"not a staging directory").unwrap();
-
-    cleanup_stale_install_dirs_before(temp.path(), SystemTime::UNIX_EPOCH);
-    assert!(owned.is_dir());
-    assert!(malformed.is_dir());
-    assert!(owned_file.is_file());
-
-    cleanup_stale_install_dirs_before(temp.path(), SystemTime::now() + Duration::from_secs(60));
-    assert!(!owned.exists());
-    assert!(malformed.is_dir());
-    assert!(owned_file.is_file());
+    let mut tunnel = idle_tunnel(temp.path()).await;
+    let marker = tunnel.guard.clone();
+    tunnel.stop().await;
+    assert!(!marker.exists());
+    assert!(!tunnel.health.is_ready());
 }
-
-#[test]
-fn managed_download_failure_has_a_distinct_safe_error_code() {
-    let error = download_error("connection failed");
-    assert_eq!(error.code, "tunnel_client_download_failed");
-    assert!(!error.message.contains("CONTROL_PLANE"));
-    assert!(!error.message.contains("Authorization"));
-}
-
-#[test]
-fn managed_install_failures_are_distinct_from_network_download_failures() {
-    assert_eq!(
-        managed_tool_path_error().code,
-        "tunnel_client_install_failed"
-    );
-    assert_eq!(
-        extraction_error("archive invalid").code,
-        "tunnel_client_install_failed"
-    );
+#[tokio::test]
+async fn dropping_owner_retains_restart_marker() {
     let temp = tempfile::tempdir().unwrap();
-    let artifact = temp.path().join("artifact.zip");
-    fs::write(&artifact, b"not the pinned artifact").unwrap();
-    let error = verify_sha256(
-        &artifact,
-        "0000000000000000000000000000000000000000000000000000000000000000",
-        "downloaded tunnel-client archive",
-    )
-    .unwrap_err();
-    assert_eq!(error.code, "tunnel_client_verification_failed");
-}
-
-#[test]
-fn version_verification_requires_the_pinned_client_line() {
-    assert!(tunnel_client_version_output_is_pinned(
-        true,
-        b"0.0.12+test (git sha: abc)\n",
-        b"",
-    ));
-    assert!(tunnel_client_version_output_is_pinned(
-        true,
-        b"",
-        b"0.0.12+test (git sha: abc)\n",
-    ));
-    assert!(!tunnel_client_version_output_is_pinned(
-        true,
-        b"0.0.13\n",
-        b"",
-    ));
-    assert!(!tunnel_client_version_output_is_pinned(
-        false,
-        b"0.0.12+test (git sha: abc)\n",
-        b"",
-    ));
+    let tunnel = idle_tunnel(temp.path()).await;
+    let marker = tunnel.guard.clone();
+    drop(tunnel);
+    assert!(marker.exists());
+    assert_eq!(
+        acquire_guard(temp.path(), "fixture").unwrap_err().code,
+        "tunnel_restart_uncertain"
+    );
 }

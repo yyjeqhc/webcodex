@@ -11,10 +11,9 @@ fs.mkdirSync(output, { recursive: true });
 const fixture = await startFixtureServer();
 const cases = [
   { name: 'openai-direct', error: 'tunnel_unavailable', reason: 'tunnel_control_plane_unreachable', title: 'Cannot reach the OpenAI tunnel service', section: 'network', auto: false },
-  { name: 'openai-proxy', error: 'tunnel_unavailable', reason: 'tunnel_control_plane_probe_failed', title: 'Cannot reach the OpenAI tunnel service', section: 'network', auto: true },
+  { name: 'openai-proxy', error: 'tunnel_unavailable', reason: 'tunnel_control_plane_unreachable', title: 'Cannot reach the OpenAI tunnel service', section: 'network', auto: true },
   { name: 'local-mcp', error: 'local_mcp_unavailable', reason: 'local_mcp_unavailable', title: 'Local MCP service is unreachable', section: 'runtime' },
-  { name: 'download', error: 'tunnel_unavailable', reason: 'tunnel_client_download_failed', title: 'Tunnel client download failed', section: 'network' },
-  { name: 'install', error: 'tunnel_unavailable', reason: 'tunnel_client_install_failed', title: 'Tunnel client installation failed', section: 'diagnostics' },
+  { name: 'recovery', error: 'tunnel_unavailable', reason: 'tunnel_restart_uncertain', title: 'Previous Tunnel work is unconfirmed', section: 'diagnostics' },
   { name: 'health-stale', error: 'health_stale', reason: 'tunnel_health_stale', title: 'Tunnel health reports stopped arriving', section: 'diagnostics' },
   { name: 'no-error-code', error: null, reason: null, title: 'Connection unavailable', section: 'diagnostics' },
 ];
@@ -35,7 +34,7 @@ try {
           last_error: current.error, ready: false, process_started: true, process_ready: true,
           tunnel_ready: current.name === 'local-mcp', local_mcp_ready: current.name !== 'local-mcp',
           reason_code: current.reason, failure_stage: null, auto_proxy_used: current.auto ?? null,
-          runtime_directory: null, health_url: null, log_file: null, local_mcp_url: null, tunnel_client_pid: null, logs: [] };
+          runtime_directory: null, local_mcp_url: null, logs: [] };
         state.connections = { profiles: [profile], running: 0, needs_attention: 1, config_error: false };
         state.tunnel_proxy = { mode: current.auto ? 'auto' : 'direct', custom_url: null, effective_source: current.auto ? 'system' : 'direct', effective_proxy_present: Boolean(current.auto), system_proxy_detected: Boolean(current.auto) };
         await route.fulfill({ response, json: state });

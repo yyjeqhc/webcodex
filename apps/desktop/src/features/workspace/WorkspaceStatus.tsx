@@ -24,15 +24,32 @@ export function tunnelReadinessText(connections: ConnectionsSnapshot | undefined
   if (!connections.profiles.length) return p("noTunnels");
   return p("tunnelsReadyCount").replace("{ready}", String(connections.running)).replace("{total}", String(connections.profiles.length));
 }
+// These observations describe the configured Desktop environment, not every
+// service running on this machine or the Server's external connectivity.
+export function desktopStatusPresentation(state: DesktopState, p: (key: ProductKey) => string) {
+  const localRunnerConfigured = state.topology?.runner?.kind === "local";
+  const quickShare = state.topology?.experience === "quick_share";
+  const quickShareStatus = state.readiness.exposure === "remote_ready" ? "ready" : state.readiness.exposure;
+  return {
+    localRunnerConfigured,
+    primaryLabel: p(localRunnerConfigured ? "localExecutionService" : "serverConnection"),
+    primaryStatus: localRunnerConfigured ? state.readiness.runner : state.readiness.server,
+    primaryReady: localRunnerConfigured ? state.readiness.runtime_ready : state.readiness.server === "ready",
+    connectionLabel: quickShare ? "Quick Share" : p("tunnels"),
+    connectionText: quickShare ? `Quick Share · ${p(statusKey(quickShareStatus))}` : tunnelReadinessText(state.connections, p),
+    connectionReady: quickShare ? quickShareStatus === "ready" : Boolean(state.connections && !state.connections.config_error && state.connections.running > 0),
+    externalConnectionUnobserved: !quickShare && state.topology?.server.kind === "remote",
+  };
+}
 export function WorkspaceStatus({ state }: { state: DesktopState }) {
   const p = useProduct();
-  const hasLocalRunner = state.topology?.runner?.kind !== "none";
+  const presentation = desktopStatusPresentation(state, p);
   const values: Array<[string, string]> = [[p("serverConnection"), state.readiness.server]];
-  values.push([p("localExecutionService"), hasLocalRunner ? state.readiness.runner : "notConfigured"]);
+  if (presentation.localRunnerConfigured) values.push([p("localExecutionService"), state.readiness.runner]);
   if (state.topology?.experience === "quick_share") values.push(["Quick Share", state.readiness.exposure === "remote_ready" ? "ready" : state.readiness.exposure]);
   return <dl className="workspace-status-strip" aria-label={p("workspace")} role="status">
-    {values.map(([name, status]) => <div key={name}><dt>{name}</dt><dd><i className={`status-dot ${status === "ready" ? "ready" : status === "error" ? "error" : "unknown"}`} aria-hidden="true" />{status === "notConfigured" ? p("notConfigured") : p(statusKey(status))}</dd></div>)}
-    {state.topology?.experience !== "quick_share" && <div><dt>{p("tunnels")}</dt><dd><i className={`status-dot ${(state.connections?.running ?? 0) > 0 ? "ready" : "unknown"}`} aria-hidden="true" />{tunnelReadinessText(state.connections, p)}</dd></div>}
+    {values.map(([name, status]) => <div key={name}><dt>{name}</dt><dd><i className={`status-dot ${status === "ready" ? "ready" : status === "error" ? "error" : "unknown"}`} aria-hidden="true" />{p(statusKey(status))}</dd></div>)}
+    {state.topology?.experience !== "quick_share" && <div><dt>{presentation.connectionLabel}</dt><dd><i className={`status-dot ${presentation.connectionReady ? "ready" : "unknown"}`} aria-hidden="true" />{presentation.connectionText}</dd></div>}
   </dl>;
 }
 export function ChatgptObservation({ state }: { state: DesktopState }) {

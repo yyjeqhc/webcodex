@@ -170,7 +170,6 @@ impl AppState {
             core.configuration_issue = None;
             core.snapshot.configuration_issue = None;
             core.adapter.set_runtime_source(core.config.runtime_binary_source.clone());
-            core.adapter.set_runtime_approval(core.config.runtime_binary_fingerprint.clone());
             core.snapshot.topology = core.config.topology.clone();
             core.snapshot.project = project_snapshot(&core.config);
             core.snapshot.readiness = aggregate_readiness(ServerReadiness::Stopped, RunnerReadiness::Stopped, ExposureReadiness::Disabled, ProjectReadiness::Configured);
@@ -443,8 +442,6 @@ impl DesktopCore {
                 self.config = previous_config.clone();
                 self.adapter
                     .set_runtime_source(previous_config.runtime_binary_source.clone());
-                self.adapter
-                    .set_runtime_approval(previous_config.runtime_binary_fingerprint.clone());
                 self.snapshot.readiness.runtime_ready = false;
                 if local {
                     self.snapshot.readiness.server = ServerReadiness::Error;

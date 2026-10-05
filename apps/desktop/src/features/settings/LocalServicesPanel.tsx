@@ -24,15 +24,23 @@ export function LocalServicesPanel({ state, onState }: { state: DesktopState; on
   return <div className="service-status-list" data-testid={environmentId ? "persistent-services" : undefined}>
     {(["server", "runner"] as const).filter(component => component === "server" || state.topology?.runner?.kind === "local").map(component => {
       const local = state.topology?.[component]?.kind === "local";
+      const readiness = state.readiness[component];
+      const running = readiness === "ready";
+      const transitioning = readiness === "starting" || readiness === "connecting";
+      const primary = running ? "restart" : "start";
       return <div className="service-status-row" key={component}>
         <div><h3>{p(component === "server" ? "serverConnection" : "localExecutionService")}</h3><span className="workspace-badge">{p(statusKey(state.readiness[component]))}</span></div>
-        {environmentId && local && <div className="shell-actions">{(["start", "stop", "restart"] as const).map(action => <button type="button" key={action} className="secondary-button" disabled={disabled} onClick={() => void act(component, action)} aria-label={`${p(action)} ${s(component === "server" ? "Local Server" : "Local Runner")}`}>{p(action)}</button>)}
-          {component === "runner" && state.can_repair_runner_credential && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void act("runner", "repair_credential")}>{s("Repair Runner credential")}</button>}
-        </div>}
+        {environmentId && local && <div className="shell-actions">
+          <button type="button" className="secondary-button" disabled={disabled || transitioning} onClick={() => void act(component, primary)} aria-label={`${p(primary)} ${s(component === "server" ? "Local Server" : "Local Runner")}`}>{p(primary)}</button>
+          <details className="workspace-technical"><summary>{p("advanced")}</summary>
+            <button type="button" className="secondary-button" disabled={disabled || readiness === "stopped"} onClick={() => void act(component, "stop")} aria-label={`${p("stop")} ${s(component === "server" ? "Local Server" : "Local Runner")}`}>{p("stop")}</button>
+            {component === "runner" && state.can_repair_runner_credential && <><button type="button" className="secondary-button" disabled={disabled} onClick={() => void act("runner", "repair_credential")}>{s("Repair Runner credential")}</button><p className="field-help">{s("Credential repair uses the native operating system prompt.")}</p></>}
+          </details>
+        </div>
+        }
       </div>;
     })}
     {environmentId && <p className="field-help">{p("serviceRecoveryHelp")}</p>}
-    {environmentId && state.can_repair_runner_credential && <p className="field-help">{s("Credential repair uses the native operating system prompt.")}</p>}
     {presentation && <div className="error-card" role="alert"><strong>{presentation.title}</strong><span>{presentation.action}</span><details><summary>{p("details")}</summary><code>{error?.code}</code></details></div>}
   </div>;
 }

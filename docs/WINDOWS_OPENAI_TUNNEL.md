@@ -29,7 +29,7 @@ This document focuses on the lower-level independent Server + independent Runner
 ```mermaid
 flowchart LR
     C[ChatGPT custom MCP app] -->|OpenAI Tunnel| CP[OpenAI control plane]
-    CP --> TC[tunnel-client on Windows]
+    CP --> TC[Native Rust Tunnel on Windows]
     TC -->|HTTP streamable MCP\nBearer stays local| S[WebCodex Server\n127.0.0.1:18080]
     R[WebCodex Runner] -->|WebSocket| S
     R --> P[C:\\src\\your-repository]
@@ -67,7 +67,7 @@ Use a Restricted `CONTROL_PLANE_API_KEY` with only Tunnels **Read + Use** when p
 
 Never print or commit the Tunnel ID, API key, WebCodex Bearer, bootstrap token, or authorization-file contents.
 
-WebCodex uses a pinned and verified OpenAI `tunnel-client`; the implementation can also resolve it from `WEBCODEX_TUNNEL_CLIENT_BIN` or `PATH`.
+WebCodex embeds its native Rust Tunnel client; no separate tunnel-client installation is required.
 
 ## 2. Initialize a Windows foreground Server
 
@@ -132,56 +132,26 @@ webcodex runner run --config <login-reported-runner-config>
 
 Check the returned config with `webcodex runner status --config <login-reported-runner-config>`. At this point the Server should see a normal independent Runner with `C:\src\your-repository` already registered. Add more projects later with the normal `webcodex project register --config ...` workflow when needed.
 
-## 4. Validate local MCP before exposing it through the Tunnel
+## 4. Start the native Tunnel
 
-The `tunnel-client` MCP target is the loopback endpoint:
+Use `webcodex server tunnel --provider openai --env-file <server-env-file>` for
+an existing local Server, or `webcodex share --tunnel openai` for a temporary
+Server/Runner. The native Rust client verifies local authenticated `/mcp` and a
+successful control-plane poll before readiness. Local Bearer injection stays in
+memory. There is no separate binary download, doctor child, or `/readyz` port.
 
-```text
-http://127.0.0.1:18080/mcp
-```
+## 5. Diagnose the two connection hops
 
-Keep the WebCodex Bearer local and inject it through a file-backed `Authorization` header. Do not paste that Bearer into ChatGPT.
+Desktop and `--json` health events expose `tunnel_ready` and `local_mcp_ready`
+separately. Neither proves real ChatGPT connector creation. Check local Server
+health, Restricted Tunnel credentials, and the control-plane network route.
+Desktop proxy settings apply to the control plane; local MCP bypasses proxies.
+For CLI use, configure standard `HTTPS_PROXY`/`NO_PROXY` environment settings.
+Redirects never change the endpoint or credential audience.
 
-Before starting the long-lived daemon, run `tunnel-client doctor`. Require it to validate the Tunnel ID, Restricted control-plane API key, local WebCodex MCP reachability, and local Bearer injection together.
-
-The runtime arguments are conceptually:
-
-```text
---mcp.server-url url=http://127.0.0.1:18080/mcp,channel=main
---mcp.extra-headers Authorization: file:<private-authorization-file>
---health.listen-addr 127.0.0.1:0
---health.url-file <private-health-url-file>
-```
-
-`webcodex share --tunnel openai` automates the same categories of setup, runs `doctor`, and waits for `/readyz`. Manual operation is intended for an explicit independent Server/Runner topology or deep troubleshooting.
-
-## 5. If `/readyz` is healthy but Connector creation fails
-
-`/readyz = 200` proves the local Tunnel/MCP side is healthy enough to answer the health probe. It does **not** prove that `tunnel-client` can fetch Tunnel metadata and maintain the OpenAI control-plane poll.
-
-If ChatGPT still fails to create the Connector, inspect the `tunnel-client` log for metadata/poll failures. A browser being able to reach the Internet is not sufficient evidence: the `tunnel-client` process may have different proxy, DNS, or IPv6 routing.
-
-The useful troubleshooting split is:
-
-```mermaid
-flowchart TD
-    A[tunnel-client /readyz = 200] --> B[MCP session initialized]
-    B --> C{OpenAI control-plane poll reachable?}
-    C -->|No| D[ChatGPT sees Tunnel metadata\nbut Connector creation fails]
-    D --> E[Inspect tunnel-client log]
-    E --> F[Check process proxy / DNS / IPv6 path]
-    F --> G[Set a control-plane-only HTTP proxy if needed]
-    G --> H[metadata fetch + poll succeed]
-    H --> I[Connector creation succeeds]
-```
-
-If the host requires an HTTP proxy, first verify that the proxy can reach `api.openai.com`, then route only the OpenAI control plane through it:
-
-```text
---control-plane.http-proxy http://127.0.0.1:<proxy-port>
-```
-
-After changing the route, require both local readiness and healthy control-plane metadata/poll behavior before retrying Connector creation. The 2026-08-30 historical section below records the concrete Clash failure that established this troubleshooting rule.
+An uncertain previous run blocks restart. Resolve earlier effects and pending
+requests before clearing its private `webcodex/tunnel-runs` marker, or use a new
+Tunnel identity. See the [native client contract](../crates/webcodex-openai-tunnel/README.md).
 
 ## 6. Create the ChatGPT Connector
 
@@ -194,7 +164,7 @@ In ChatGPT Developer Mode, create a custom MCP app and use:
 5. acknowledge the custom MCP risk notice;
 6. create/scan the app tools.
 
-Why **No authentication**? The WebCodex Bearer for the local MCP hop is already injected locally by `tunnel-client`. ChatGPT should not receive or store it.
+Why **No authentication**? The WebCodex Bearer for the local MCP hop is already injected locally by the native Rust Tunnel client. ChatGPT should not receive or store it.
 
 ## 7. Validate end to end through the Connector
 
@@ -214,9 +184,9 @@ Do not treat “the process started” as completion. Validate every layer that 
 | --- | --- |
 | Windows Server | loopback listener is active and `/mcp` is reachable |
 | Runner | Runner is online and `actual_transport=websocket` |
-| Local MCP | `tunnel-client` reports `mcp session initialized` |
-| Tunnel health | `/readyz = 200` |
-| OpenAI control plane | metadata fetch succeeds and polling does not continuously fail |
+| Local MCP | `local_mcp_ready: true` |
+| Native Tunnel | `tunnel_ready: true` after a successful control-plane poll |
+| OpenAI control plane | polling continues without persistent authentication, network, or protocol failures |
 | ChatGPT | Connector is created and its tools load |
 | Project | the Project registered during login is visible through the Connector |
 | Read | files can be read through the new Connector |
@@ -226,9 +196,9 @@ The last project/read/write checks are what prove parity with the normal hosted 
 
 ## 9. Common mistakes
 
-### Treating `/readyz = 200` as full Tunnel readiness
+### Treating `tunnel_ready: true` as full Connector readiness
 
-Do not. Also require healthy OpenAI control-plane metadata/poll behavior.
+Do not. It proves the native client completed a successful control-plane poll, not that ChatGPT created the Connector or loaded its tools. Validate the ChatGPT layer separately.
 
 ### Pasting the WebCodex Bearer into ChatGPT
 
@@ -240,7 +210,7 @@ It does not. Foreground Server and Runner operation is supported. The tradeoff i
 
 ### Assuming `share --tunnel openai` is unrelated to this topology
 
-The core transport is the same: local WebCodex MCP, local Bearer injection, and OpenAI `tunnel-client`. `share` owns a temporary Server/Runner/session automatically; this guide keeps the Server and Runner explicit so they can behave like a normal long-lived topology and be diagnosed independently.
+The core transport is the same: local WebCodex MCP, local Bearer injection, and the native Rust Tunnel client. `share` owns a temporary Server/Runner/session automatically; this guide keeps the Server and Runner explicit so they can behave like a normal long-lived topology and be diagnosed independently.
 
 ## Historical dogfood note — 2026-08-30
 
@@ -283,7 +253,7 @@ Routing only the control plane through that proxy:
 --control-plane.http-proxy http://127.0.0.1:7890
 ```
 
-changed the Tunnel log to a healthy proxy route and successful metadata/poll state; Connector creation then succeeded. This is historical evidence for the current troubleshooting rule that browser connectivity and local `/readyz` do not prove `tunnel-client` control-plane reachability.
+changed the Tunnel log to a healthy proxy route and successful metadata/poll state; Connector creation then succeeded. Those `/readyz`, metadata, and external `tunnel-client` details describe the retired implementation. The current native client preserves the underlying troubleshooting rule: browser or local MCP reachability does not prove that the control-plane poll is healthy.
 
 ## Related documentation
 

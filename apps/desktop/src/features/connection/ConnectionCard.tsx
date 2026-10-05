@@ -10,16 +10,13 @@ function recoveryFor(profile: TunnelConnection): Recovery {
   // connection failure's reason code is still retained for diagnostics.
   if (profile.last_error === "stop_failed") return { title: "stopFailed", action: "stopRecovery", settings: "diagnostics" };
   switch (profile.reason_code) {
-    case "tunnel_client_download_failed": return { title: "downloadFailedTitle", action: "tunnelDownloadFailed", settings: "network" };
-    case "tunnel_client_install_failed": return { title: "installFailedTitle", action: "tunnelInstallFailed", settings: "diagnostics" };
-    case "tunnel_client_verification_failed": return { title: "verificationFailedTitle", action: "tunnelVerificationFailed", settings: "diagnostics" };
-    case "tunnel_control_plane_unreachable":
-    case "tunnel_control_plane_probe_failed": return { title: "controlPlaneFailed", action: "networkRecovery", settings: "network" };
-    case "tunnel_daemon_start_failed": return { title: "daemonFailed", action: "diagnosticsRecovery", settings: "diagnostics" };
+    case "tunnel_restart_uncertain": return { title: "restartUncertain", action: "restartUncertainRecovery", settings: "diagnostics" };
+    case "tunnel_auth_rejected": return { title: "connectionUnavailable", action: "credentialRecovery", settings: "diagnostics" };
+    case "tunnel_capacity_exhausted":
+    case "tunnel_protocol_failed": return { title: "protocolFailed", action: "diagnosticsRecovery", settings: "diagnostics" };
+    case "tunnel_control_plane_unreachable": return { title: "controlPlaneFailed", action: "networkRecovery", settings: "network" };
     case "local_mcp_unavailable": return { title: "localMcpFailed", action: "localMcpRecovery", settings: "runtime" };
-    case "tunnel_daemon_not_ready":
-    case "tunnel_startup_failed":
-    case "tunnel_doctor_failed": return { title: "startupFailed", action: "networkRecovery", settings: "network" };
+    case "tunnel_startup_failed": return { title: "startupFailed", action: "networkRecovery", settings: "network" };
   }
   switch (profile.last_error) {
     case "local_mcp_unavailable": return { title: "localMcpFailed", action: "localMcpRecovery", settings: "runtime" };
@@ -51,7 +48,7 @@ export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEd
   // Readiness is asynchronous: use the observed per-profile failure, not only a
   // rejected start command. Never infer a proxy cause or silently switch routes.
   const autoProxyRecovery = profile.auto_proxy_used === true && profile.last_error === "tunnel_unavailable" && (
-    !profile.reason_code || ["tunnel_client_download_failed", "tunnel_control_plane_unreachable", "tunnel_control_plane_probe_failed", "tunnel_daemon_not_ready", "tunnel_unavailable"].includes(profile.reason_code)
+    !profile.reason_code || ["tunnel_control_plane_unreachable", "tunnel_unavailable"].includes(profile.reason_code)
   );
   return <article className="connection-profile" aria-labelledby={`connection-${profile.id}`} data-tunnel-profile-id={profile.id}>
     <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{c("secureTunnel")}</span></div><span className={`connection-state ${profile.ready ? "ready" : ""}`} role="status"><i className={`status-dot ${profile.ready ? "ready" : failed ? "error" : "unknown"}`} aria-hidden="true" />{status}</span></header>
@@ -70,7 +67,7 @@ export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEd
     </div>
     <details className="connection-details"><summary>{p("advanced")} · {profile.name}</summary>
       {profile.credential_present && <p>{c("credentials")}</p>}
-      <dl><dt>Profile ID</dt><dd><code>{profile.id}</code></dd><dt>PID</dt><dd>{profile.pid ?? "—"}</dd><dt>Process started</dt><dd>{String(profile.process_started)}</dd><dt>Process ready</dt><dd>{String(profile.process_ready)}</dd><dt>Tunnel ready</dt><dd>{profile.tunnel_ready === null ? "—" : String(profile.tunnel_ready)}</dd><dt>Local MCP ready</dt><dd>{profile.local_mcp_ready === null ? "—" : String(profile.local_mcp_ready)}</dd>{profile.failure_stage && <><dt>Failure stage</dt><dd><code>{profile.failure_stage}</code></dd></>}{profile.reason_code && <><dt>Reason code</dt><dd><code>{profile.reason_code}</code></dd></>}{profile.local_mcp_url && <><dt>MCP</dt><dd><code>{profile.local_mcp_url}</code></dd></>}{profile.runtime_directory && <><dt>Runtime</dt><dd><code>{profile.runtime_directory}</code></dd></>}{profile.health_url && <><dt>Health</dt><dd><code>{profile.health_url}</code></dd></>}{profile.log_file && <><dt>Log</dt><dd><code>{profile.log_file}</code></dd></>}</dl>
+      <dl><dt>Profile ID</dt><dd><code>{profile.id}</code></dd><dt>PID</dt><dd>{profile.pid ?? "—"}</dd><dt>Process started</dt><dd>{String(profile.process_started)}</dd><dt>Process ready</dt><dd>{String(profile.process_ready)}</dd><dt>Tunnel ready</dt><dd>{profile.tunnel_ready === null ? "—" : String(profile.tunnel_ready)}</dd><dt>Local MCP ready</dt><dd>{profile.local_mcp_ready === null ? "—" : String(profile.local_mcp_ready)}</dd>{profile.failure_stage && <><dt>Failure stage</dt><dd><code>{profile.failure_stage}</code></dd></>}{profile.reason_code && <><dt>Reason code</dt><dd><code>{profile.reason_code}</code></dd></>}{profile.local_mcp_url && <><dt>MCP</dt><dd><code>{profile.local_mcp_url}</code></dd></>}{profile.runtime_directory && <><dt>Runtime</dt><dd><code>{profile.runtime_directory}</code></dd></>}</dl>
       {profile.logs.length > 0 && <><h3>{c("logs")}</h3><ol className="connection-events">{profile.logs.map((entry, index) => <li key={`${entry.timestamp_ms}-${index}`}><time>{formatTime(entry.timestamp_ms)}</time><code>{entry.event}</code></li>)}</ol></>}
     </details>
   </article>;

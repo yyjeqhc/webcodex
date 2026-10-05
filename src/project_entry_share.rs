@@ -131,7 +131,7 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
         return Err("--public-url requires --tunnel none; managed tunnel providers own their transport endpoint".to_string());
     }
     if tunnel == TunnelProvider::OpenAiSecure && auth != ShareAuth::Bearer {
-        return Err("--tunnel openai currently requires --auth bearer; WebCodex keeps that temporary Bearer credential local and tunnel-client injects it into the private MCP hop".to_string());
+        return Err("--tunnel openai currently requires --auth bearer; WebCodex keeps that temporary Bearer credential local and the native Tunnel client injects it into the private MCP hop".to_string());
     }
     match auth {
         ShareAuth::OAuth if oauth_redirect_uri.as_deref().is_none_or(str::is_empty) => {
@@ -284,12 +284,6 @@ impl ShareSession {
             let _ = std::fs::remove_dir_all(&directory);
         }
         result
-    }
-
-    fn write_openai_authorization_file(&self) -> Result<PathBuf, ProductError> {
-        let path = self.directory.join("openai-mcp-authorization");
-        write_new_private(&path, format!("Bearer {}", self.credential).as_bytes())?;
-        Ok(path)
     }
 }
 
@@ -712,18 +706,10 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
     }
 
     let mut openai_tunnel = if let Some(prerequisites) = openai_prerequisites.as_ref() {
-        let authorization_file = match session.write_openai_authorization_file() {
-            Ok(path) => path,
-            Err(error) => {
-                runtime.stop().await;
-                return Err(error);
-            }
-        };
         match super::openai_tunnel_service::start_openai_tunnel(
             prerequisites,
             &mcp_url(&runtime.local_url),
-            &authorization_file,
-            &session.directory,
+            &session.credential,
             startup_deadline,
         )
         .await
@@ -942,7 +928,7 @@ fn share_access_labels(
 
 fn render_openai_share_ready(project_name: &str, tunnel_id: &str) -> String {
     format!(
-        "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. Connection: Tunnel\n3. Tunnel: {tunnel_id}\n4. Authentication: No authentication\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nReady for ChatGPT through OpenAI Secure MCP Tunnel.\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: OpenAI Secure MCP Tunnel\nPublic access: no public WebCodex endpoint; outbound-only OpenAI Tunnel transport\nWebCodex authentication: the temporary Bearer credential stays local and is injected by tunnel-client into the private MCP hop. Do not paste it into ChatGPT.\nCredential lifetime: temporary; stopping this share removes the local credential and tunnel-client process. The Platform Tunnel identity remains operator managed.\nPress Ctrl-C to stop sharing."
+        "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. Connection: Tunnel\n3. Tunnel: {tunnel_id}\n4. Authentication: No authentication\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nReady for ChatGPT through OpenAI Secure MCP Tunnel.\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: OpenAI Secure MCP Tunnel\nPublic access: no public WebCodex endpoint; outbound-only OpenAI Tunnel transport\nWebCodex authentication: the temporary Bearer credential stays local and is injected by the native Tunnel client into the private MCP hop. Do not paste it into ChatGPT.\nCredential lifetime: temporary; stopping this share removes the local credential and Tunnel task. The Platform Tunnel identity remains operator managed.\nPress Ctrl-C to stop sharing."
     )
 }
 
@@ -1648,11 +1634,6 @@ mod tests {
         let session = ShareSession::create(&state).unwrap();
         assert_ne!(session.credential, persistent_value);
         assert_eq!(fs::read_to_string(&persistent).unwrap(), persistent_before);
-        let authorization_file = session.write_openai_authorization_file().unwrap();
-        assert_eq!(
-            fs::read_to_string(&authorization_file).unwrap(),
-            format!("Bearer {}", session.credential)
-        );
         assert_eq!(
             crate::auth::read_protected_secret(&session.credential_file).unwrap(),
             session.credential
@@ -1684,14 +1665,6 @@ mod tests {
                     & 0o777,
                 0o600
             );
-            assert_eq!(
-                fs::metadata(&authorization_file)
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
         }
         let directory = session.directory.clone();
         #[cfg(windows)]
@@ -1700,7 +1673,6 @@ mod tests {
                 (state.join("share"), true),
                 (session.directory.clone(), true),
                 (session.credential_file.clone(), false),
-                (authorization_file.clone(), false),
             ] {
                 let sddl =
                     super::super::windows_private_state::dacl_sddl(&path, directory).unwrap();
@@ -1715,7 +1687,6 @@ mod tests {
         }
         drop(session);
         assert!(!directory.exists());
-        assert!(!authorization_file.exists());
         assert!(persistent.is_file());
     }
 

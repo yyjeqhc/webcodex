@@ -12,7 +12,7 @@
 - Git，以及一个可以让 AI 安全查看的代码仓库。
 - Linux、macOS 或 Windows x64 可直接使用完整 managed Cloudflare 本机 `share` 流程。
 
-Windows 已支持显式本机 `webcodex share`。固定版本 Cloudflare 没有官方 Windows ARM64 binary，因此 Windows ARM64 使用 `--tunnel cloudflare` 时需要通过 `WEBCODEX_CLOUDFLARED_BIN`/`PATH` 提供受信任 binary；managed OpenAI `tunnel-client` 与 `--tunnel none` 仍可用。
+Windows 已支持显式本机 `webcodex share`。固定版本 Cloudflare 没有官方 Windows ARM64 binary，因此 Windows ARM64 使用 `--tunnel cloudflare` 时需要通过 `WEBCODEX_CLOUDFLARED_BIN`/`PATH` 提供受信任 binary；内置原生 OpenAI Tunnel 与 `--tunnel none` 在 Windows x64/arm64 均可用。
 
 ## 1. 运行 WebCodex
 

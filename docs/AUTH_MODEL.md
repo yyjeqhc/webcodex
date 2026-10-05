@@ -143,3 +143,5 @@ These do **not** refer to WebCodex's separate Durable Agent / Conversation / Age
 | OAuth client secret | returned at client creation; store it in the client/operator's secret store |
 
 For command-specific setup and recovery paths, use [CLI](CLI.md) and [Troubleshooting](TROUBLESHOOTING.md). Internal identity and continuity formats are intentionally omitted from this user-facing reference.
+
+Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.

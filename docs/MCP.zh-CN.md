@@ -430,3 +430,5 @@ operator/gateway primitive 保留。旧的 `export_project_artifact` compatibili
 能力的 ChatGPT 中，可以在 project 与 host 之间直接传递，而不需要模型手工搬运 Base64。
 
 请阅读 [Coding 工作流](CODING_WORKFLOW.zh-CN.md)，使用 canonical `work_on_project` bootstrap / behavioral role 心智模型，并遵循其中的 validation/closeout guidance。运维工具见 [架构](ARCHITECTURE.md) 与 `webcodex` CLI。
+
+Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时显式指定 `--oauth-browser-permissions`，仅追加 `browser:read`、`browser:control`、`browser:launch`。默认 baseline 不包含 Browser scope；Browser 与 `--oauth-computer-permissions` 相互独立，也不使用 Computer consent checkbox。已有 client 不会自动扩权，历史窄权限仅追加显式选择的类别。scope ceiling 变化会撤销旧 grants 并要求重新授权；复用已启用 Browser 的 profile 时必须继续携带该 flag。

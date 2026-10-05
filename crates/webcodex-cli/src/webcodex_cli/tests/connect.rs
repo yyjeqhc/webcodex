@@ -324,6 +324,7 @@ async fn connect_rejects_invalid_url_and_missing_project_before_network_or_write
         key_file: None,
         auth: ConnectAuth::SharedKey,
         oauth_redirect_uri: None,
+        oauth_browser_permissions: false,
         oauth_computer_permissions: false,
         oauth_local_mcp: false,
         oauth_local_plugins: false,
@@ -349,4 +350,25 @@ async fn connect_rejects_invalid_url_and_missing_project_before_network_or_write
     .unwrap_err();
     assert!(error.contains("does not exist"), "{error}");
     assert!(!tmp.path().join("config").exists());
+}
+
+#[test]
+fn browser_oauth_flag_is_independent_and_documented() {
+    for computer in [false, true] {
+        let mut args = vec![
+            "connect",
+            "https://example.test",
+            "--auth",
+            "oauth",
+            "--oauth-redirect-uri",
+            "https://client.example/callback",
+            "--oauth-browser-permissions",
+        ];
+        if computer {
+            args.push("--oauth-computer-permissions");
+        }
+        let options = parsed(&args);
+        assert!(options.oauth_browser_permissions);
+        assert_eq!(options.oauth_computer_permissions, computer);
+    }
 }

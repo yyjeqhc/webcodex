@@ -25,6 +25,12 @@ pub const SHARED_KEY_MODEL: &[&str] = &[
     SCOPE_COMPUTER_READ,
     SCOPE_COMPUTER_CONTROL,
 ];
+/// Explicit Browser delegation, independent of Computer consent.
+pub const OPTIONAL_BROWSER: &[&str] = &[
+    SCOPE_BROWSER_READ,
+    SCOPE_BROWSER_CONTROL,
+    SCOPE_BROWSER_LAUNCH,
+];
 pub const OPTIONAL_COMPUTER: &[&str] = &[
     SCOPE_COMPUTER_LAUNCH,
     SCOPE_COMPUTER_DISPLAY_READ,

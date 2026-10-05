@@ -592,3 +592,5 @@ a project and a supporting ChatGPT host without a model manually carrying their
 Base64.
 
 Use [Coding Workflow](CODING_WORKFLOW.md) for the canonical `work_on_project` bootstrap, behavioral-role mental model, and validation/closeout guidance. See [Architecture](ARCHITECTURE.md) and the `webcodex` CLI for operator tooling.
+
+Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.

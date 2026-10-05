@@ -506,3 +506,5 @@ Server 在 `/runtime` 提供 Runtime Console。它通过与 ToolRuntime 相同�
 运维检查清单与常见修复（已有 systemd 服务、`HTTP reachable: no`、客户端 PATH
 缺少 CLI、server 侧 pairing 与客户端 enrollment 的区别、`client online: no`）
 见[故障排查](TROUBLESHOOTING.zh-CN.md)。
+
+Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时显式指定 `--oauth-browser-permissions`，仅追加 `browser:read`、`browser:control`、`browser:launch`。默认 baseline 不包含 Browser scope；Browser 与 `--oauth-computer-permissions` 相互独立，也不使用 Computer consent checkbox。已有 client 不会自动扩权，历史窄权限仅追加显式选择的类别。scope ceiling 变化会撤销旧 grants 并要求重新授权；复用已启用 Browser 的 profile 时必须继续携带该 flag。

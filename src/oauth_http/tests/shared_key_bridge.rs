@@ -1944,6 +1944,24 @@ async fn selected_launch_scope_survives_code_access_and_refresh_rotation_without
 #[tokio::test]
 async fn explicit_computer_opt_in_expands_existing_client_and_revokes_existing_grants_only_on_change(
 ) {
+    assert_optional_opt_in_revokes_grants(
+        "computer_permissions",
+        webcodex_core::authority::profiles::OPTIONAL_COMPUTER,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn explicit_browser_opt_in_expands_existing_client_and_revokes_existing_grants_only_on_change(
+) {
+    assert_optional_opt_in_revokes_grants(
+        "browser_permissions",
+        webcodex_core::authority::profiles::OPTIONAL_BROWSER,
+    )
+    .await;
+}
+
+async fn assert_optional_opt_in_revokes_grants(flag: &str, optional_scopes: &[&str]) {
     let env = crate::auth::AuthEnvGuard::new();
     env.enable_direct_shared_key();
     let config = test_config(oauth2_enabled_bridge());
@@ -1990,7 +2008,7 @@ async fn explicit_computer_opt_in_expands_existing_client_and_revokes_existing_g
         "redirect_uri": "https://expand.example/callback",
         "client_id": client.client_id,
         "previous_allowed_scopes": ["runtime:read", "project:read"],
-        "computer_permissions": false
+        (flag): false
     });
     let mut baseline = TestClient::post("http://localhost/api/oauth/shared-key-client/provision")
         .add_header("authorization", format!("Bearer {shared_key}"), true)
@@ -2022,7 +2040,7 @@ async fn explicit_computer_opt_in_expands_existing_client_and_revokes_existing_g
             "redirect_uri": "https://expand.example/callback",
             "client_id": client.client_id,
             "previous_allowed_scopes": ["runtime:read", "project:read"],
-            "computer_permissions": true
+            (flag): true
         }))
         .send(&service)
         .await;
@@ -2031,15 +2049,10 @@ async fn explicit_computer_opt_in_expands_existing_client_and_revokes_existing_g
     assert_eq!(elevated_json["scope_ceiling_changed"], true);
     assert_eq!(
         elevated_json["client"]["allowed_scopes"],
-        serde_json::json!([
-            "runtime:read",
-            "project:read",
-            "computer:launch",
-            "computer:display_read",
-            "computer:pointer_control",
-            "computer:clipboard_read",
-            "computer:clipboard_write"
-        ])
+        serde_json::json!(["runtime:read", "project:read"]
+            .into_iter()
+            .chain(optional_scopes.iter().copied())
+            .collect::<Vec<_>>())
     );
     for restored in [
         "project:write",
@@ -2076,10 +2089,15 @@ async fn explicit_computer_opt_in_expands_existing_client_and_revokes_existing_g
         .unwrap();
     let (noop_access, _) = seed_access_token(&db, &elevated_client, &user, "runtime:read");
     let (noop_refresh, _) = seed_refresh_token(&db, &elevated_client, &user, "runtime:read");
+    let requested = if flag == "browser_permissions" {
+        optional_scopes.join(" ")
+    } else {
+        "runtime:read".to_string()
+    };
     let noop_code_body = bridge_form_body(
         &elevated_client,
         "https://expand.example/callback",
-        "runtime:read",
+        &requested,
         shared_key,
     );
     let noop_code_resp = post_form("http://localhost/oauth/authorize/bridge", noop_code_body)
@@ -2094,22 +2112,21 @@ async fn explicit_computer_opt_in_expands_existing_client_and_revokes_existing_g
         .1
         .into_owned();
     let noop_code_record = auth_code_by_plaintext(&db, &noop_code);
+    assert_eq!(noop_code_record.scopes, requested);
+    let denied = TestClient::post("http://localhost/api/oauth/shared-key-client/provision")
+        .add_header("authorization", format!("Bearer {shared_key}"), true)
+        .json(&baseline_body)
+        .send(&service)
+        .await;
+    assert_eq!(denied.status_code, Some(StatusCode::CONFLICT));
 
     let mut noop = TestClient::post("http://localhost/api/oauth/shared-key-client/provision")
         .add_header("authorization", format!("Bearer {shared_key}"), true)
         .json(&serde_json::json!({
             "redirect_uri": "https://expand.example/callback",
             "client_id": client.client_id,
-            "previous_allowed_scopes": [
-                "runtime:read",
-                "project:read",
-                "computer:launch",
-                "computer:display_read",
-                "computer:pointer_control",
-                "computer:clipboard_read",
-                "computer:clipboard_write"
-            ],
-            "computer_permissions": true
+            "previous_allowed_scopes": elevated_client.allowed_scopes_vec(),
+            (flag): true
         }))
         .send(&service)
         .await;
@@ -2281,4 +2298,87 @@ async fn bridge_authorize_rejects_denied_scopes_and_allows_project_write_job_run
     let record = auth_code_by_plaintext(&db, code);
     assert_eq!(record.scopes, "project:write job:run");
     assert_eq!(record.subject_kind, "shared_key");
+}
+
+#[test]
+fn browser_scopes_are_explicit_and_independent_of_computer_consent() {
+    use webcodex_core::authority::profiles::{OPTIONAL_BROWSER, OPTIONAL_COMPUTER};
+    for computer in [false, true] {
+        let mut ceiling = bridge_oauth_scopes().to_vec();
+        if computer {
+            ceiling.extend_from_slice(OPTIONAL_COMPUTER);
+        }
+        for browser in [false, true] {
+            let mut scopes = ceiling.clone();
+            if browser {
+                scopes.extend_from_slice(OPTIONAL_BROWSER);
+            }
+            for scope in OPTIONAL_BROWSER {
+                assert_eq!(
+                    normalize_bridge_oauth_scopes(Some(scope), &scopes.join(" ")).is_ok(),
+                    browser
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn browser_provision_replacement_and_rotation_preserve_narrow_authority() {
+    use webcodex_core::authority::profiles::{OPTIONAL_BROWSER, OPTIONAL_COMPUTER};
+    let env = crate::auth::AuthEnvGuard::new();
+    env.enable_direct_shared_key();
+    let (_tmp, db) = test_db();
+    let registry = Arc::new(crate::RunnerRegistry::default());
+    let shared_key = "browser-provision-test";
+    register_shared_key_runner(&registry, shared_key).await;
+    let service = Service::new(build_router_with_session_and_registry(
+        test_config(oauth2_enabled_bridge()),
+        db,
+        Arc::new(AuthorizeSessionStore::new()),
+        registry,
+    ));
+    for computer in [false, true] {
+        for browser in [false, true] {
+            let mut expected = vec!["project:read"];
+            if computer {
+                expected.extend_from_slice(OPTIONAL_COMPUTER);
+            }
+            if browser {
+                expected.extend_from_slice(OPTIONAL_BROWSER);
+            }
+            for client_id in [None, Some("wc_client_missing")] {
+                let mut response = TestClient::post(
+                    "http://localhost/api/oauth/shared-key-client/provision",
+                )
+                .add_header("authorization", format!("Bearer {shared_key}"), true)
+                .json(&serde_json::json!({
+                    "redirect_uri": "https://browser.example/callback", "client_id": client_id,
+                    "previous_allowed_scopes": ["project:read"], "browser_permissions": browser,
+                    "computer_permissions": computer
+                }))
+                .send(&service)
+                .await;
+                assert_eq!(response.status_code, Some(StatusCode::OK));
+                let body: serde_json::Value = response.take_json().await.unwrap();
+                assert_eq!(
+                    body["client"]["allowed_scopes"],
+                    serde_json::json!(expected)
+                );
+                if browser {
+                    let denied =
+                        TestClient::post("http://localhost/api/oauth/shared-key-client/provision")
+                            .add_header("authorization", format!("Bearer {shared_key}"), true)
+                            .json(&serde_json::json!({
+                                "redirect_uri": "https://browser.example/callback",
+                                "client_id": client_id, "previous_allowed_scopes": expected,
+                                "computer_permissions": computer
+                            }))
+                            .send(&service)
+                            .await;
+                    assert_eq!(denied.status_code, Some(StatusCode::CONFLICT));
+                }
+            }
+        }
+    }
 }

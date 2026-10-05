@@ -582,3 +582,5 @@ See [Troubleshooting](TROUBLESHOOTING.md) for the operational checklist and
 common fixes, including existing systemd services, `HTTP reachable: no`,
 missing client CLI on `PATH`, server-side pairing vs client-side enrollment,
 and `client online: no`.
+
+Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.

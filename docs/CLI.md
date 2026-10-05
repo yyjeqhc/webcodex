@@ -344,3 +344,5 @@ CLI requests follow the standard proxy environment by default
 `--no-system-proxy` to ignore proxy environment and connect directly. These
 flags affect only the CLI's own HTTP requests; `webcodex connect` does not
 persist or inject them into the Runner configuration.
+
+Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.

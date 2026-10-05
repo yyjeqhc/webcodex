@@ -78,11 +78,16 @@ fn sync_directory(path: &Path) -> Result<(), &'static str> {
     let _ = path;
     Ok(())
 }
+#[cfg(any(windows, test))]
+fn windows_default_root(local_app_data: &std::ffi::OsStr) -> PathBuf {
+    PathBuf::from(local_app_data).join("WebCodex/state/tunnel-runs")
+}
+
 fn default_root() -> Result<PathBuf, &'static str> {
     #[cfg(windows)]
     {
         std::env::var_os("LOCALAPPDATA")
-            .map(|s| PathBuf::from(s).join("webcodex/tunnel-runs"))
+            .map(|s| windows_default_root(&s))
             .ok_or("LOCALAPPDATA is unavailable; specify --state-dir")
     }
     #[cfg(not(windows))]
@@ -92,5 +97,19 @@ fn default_root() -> Result<PathBuf, &'static str> {
             .or_else(|| std::env::var_os("HOME").map(|s| PathBuf::from(s).join(".local/state")))
             .map(|p| p.join("webcodex/tunnel-runs"))
             .ok_or("user state directory unavailable; specify --state-dir")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_default_root_matches_embedded_webcodex_state_layout() {
+        let base = std::ffi::OsStr::new(r"C:\Users\fixture\AppData\Local");
+        assert_eq!(
+            windows_default_root(base),
+            PathBuf::from(base).join("WebCodex/state/tunnel-runs")
+        );
     }
 }

@@ -318,7 +318,13 @@ pub(crate) fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabili
     // Browser capabilities are registration-required and depend on the actual
     // Runner-local Chromium-family discovery result. The Server must never infer
     // them from OS, protocol generation, shell, or Computer capabilities.
-    let browser_available = webcodex_browser::discover_chromium_executable().is_some();
+    let owned_browser_available = webcodex_browser::discover_chromium_executable().is_some();
+    let browser_extension_bridge = webcodex_browser::extension_bridge_available();
+    let browser_available = owned_browser_available || browser_extension_bridge;
+    capabilities.set(
+        RunnerCapabilityId::BrowserExtensionBridge,
+        browser_extension_bridge,
+    );
     capabilities.set(RunnerCapabilityId::BrowserObserve, browser_available);
     capabilities.set(RunnerCapabilityId::BrowserControl, browser_available);
     // This binary publishes exact snapshot node `actions` and enforces the same
@@ -329,7 +335,17 @@ pub(crate) fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabili
         browser_available,
     );
     capabilities.set(RunnerCapabilityId::BrowserBatch, browser_available);
-    capabilities.set(RunnerCapabilityId::BrowserLaunch, browser_available);
+    capabilities.set(RunnerCapabilityId::BrowserLaunch, owned_browser_available);
+    capabilities.set(
+        RunnerCapabilityId::BrowserManagedProfile,
+        owned_browser_available,
+    );
+    capabilities.set(
+        RunnerCapabilityId::BrowserSurfaceHandoff,
+        browser_available
+            && cfg!(any(target_os = "macos", windows))
+            && !super::super::computer_session::configured(),
+    );
     // Native read-only desktop observation is implemented only on macOS and
     // Windows. Unsupported platforms advertise false and fail closed.
     capabilities.set(

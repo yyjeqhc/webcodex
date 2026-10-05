@@ -566,6 +566,10 @@ pub struct RunnerComputerOperation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunnerBrowserOperationKind {
+    DiscoverExternal,
+    AttachExternal,
+    LaunchManaged,
+    ResolveSurface,
     ListBrowsers,
     ListPages,
     Snapshot,
@@ -600,6 +604,10 @@ impl RunnerBrowserOperationKind {
 
     pub fn wire_kind(self) -> &'static str {
         match self {
+            Self::DiscoverExternal => "browser_discover",
+            Self::AttachExternal => "browser_attach",
+            Self::LaunchManaged => "browser_launch_managed",
+            Self::ResolveSurface => "browser_surface",
             Self::ListBrowsers => "browser_list_browsers",
             Self::ListPages => "browser_list_pages",
             Self::Snapshot => "browser_snapshot",
@@ -626,6 +634,10 @@ impl RunnerBrowserOperationKind {
 
     pub fn from_wire(kind: &str) -> Option<Self> {
         Some(match kind {
+            "browser_discover" => Self::DiscoverExternal,
+            "browser_attach" => Self::AttachExternal,
+            "browser_launch_managed" => Self::LaunchManaged,
+            "browser_surface" => Self::ResolveSurface,
             "browser_list_browsers" => Self::ListBrowsers,
             "browser_list_pages" => Self::ListPages,
             "browser_snapshot" => Self::Snapshot,

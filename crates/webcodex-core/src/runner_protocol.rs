@@ -824,6 +824,24 @@ runner_capabilities! {
         #[serde(default, skip_serializing_if = "is_false")]
         pub browser_launch: bool = false;
     }
+    BrowserExtensionBridge => RUNNER_CAPABILITY_BROWSER_EXTENSION_BRIDGE("browser_extension_bridge"),
+    v2_baseline = false {
+        /// Live Runner-owned authenticated Native Messaging bridge, not raw CDP attach.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub browser_extension_bridge: bool = false;
+    }
+    BrowserManagedProfile => RUNNER_CAPABILITY_BROWSER_MANAGED_PROFILE("browser_managed_profile"),
+    v2_baseline = false {
+        /// Explicit, named, private persistent Browser profiles; not inferred from launch.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub browser_managed_profile: bool = false;
+    }
+    BrowserSurfaceHandoff => RUNNER_CAPABILITY_BROWSER_SURFACE_HANDOFF("browser_surface_handoff"),
+    v2_baseline = false {
+        /// Exact live Browser process to native Computer surface correlation.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub browser_surface_handoff: bool = false;
+    }
     ComputerObserve => RUNNER_CAPABILITY_COMPUTER_OBSERVE("computer_observe"),
     v2_baseline = false {
         /// Native read-only desktop/window observation. Missing on older Runners
@@ -2808,6 +2826,9 @@ mod envelope_tests {
                 browser_element_action_admission: false,
                 browser_batch: false,
                 browser_launch: false,
+                browser_extension_bridge: false,
+                browser_managed_profile: false,
+                browser_surface_handoff: false,
                 computer_observe: false,
                 computer_application_discovery: false,
                 computer_application_launch: false,

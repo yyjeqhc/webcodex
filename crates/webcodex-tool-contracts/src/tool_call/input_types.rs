@@ -705,6 +705,16 @@ impl BrowserSnapshotModeCall {
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BrowserObserveToolCall {
     Targets,
+    /// Discover only tabs explicitly shared in the local Chrome extension.
+    Discover { #[schemars(length(min = 1, max = 128))] client_id: String },
+    /// Resolve one exact native window owned by this Browser. Requires Browser
+    /// and Computer read authority; ambiguous windows are not guessed.
+    Surface {
+        #[schemars(length(min = 1, max = 128))]
+        client_id: String,
+        #[schemars(regex(pattern = "^browser_[A-Za-z0-9_-]{16,64}$"))]
+        browser_id: String,
+    },
     Browsers {
         #[schemars(length(min = 1, max = 128))]
         client_id: String,
@@ -790,6 +800,8 @@ impl BrowserObserveToolCall {
         match self {
             Self::Targets => "targets",
             Self::Browsers { .. } => "browsers",
+            Self::Surface { .. } => "surface",
+            Self::Discover { .. } => "discover",
             Self::Pages { .. } => "pages",
             Self::Snapshot { .. } => "snapshot",
             Self::Console { .. } => "console",
@@ -884,9 +896,25 @@ pub enum BrowserBatchOperation {
     },
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserLaunchModeCall { Ephemeral, Managed }
+impl BrowserLaunchModeCall {
+    pub const fn as_str(self) -> &'static str {
+        match self { Self::Ephemeral => "ephemeral", Self::Managed => "managed" }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BrowserActToolCall {
+    /// Attach an exact live extension offer. Closing this Browser only detaches.
+    Attach {
+        #[schemars(length(min = 1, max = 128))]
+        client_id: String,
+        #[schemars(regex(pattern = "^attachment_[A-Za-z0-9_-]{16,64}$"))]
+        attachment_id: String,
+    },
     Batch {
         #[schemars(length(min = 1, max = 128))]
         client_id: String,
@@ -901,6 +929,15 @@ pub enum BrowserActToolCall {
     Launch {
         #[schemars(length(min = 1, max = 128))]
         client_id: String,
+        /// Default is the existing headless, temporary Browser. Managed launches
+        /// a visible Browser with a private persistent WebCodex-owned profile.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<BrowserLaunchModeCall>,
+        /// Required only for managed mode. A name, never a profile filesystem path.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(length(min = 1, max = 48))]
+        #[schemars(regex(pattern = "^[a-z0-9][a-z0-9_-]{0,47}$"))]
+        profile: Option<String>,
     },
     NewPage {
         #[schemars(length(min = 1, max = 128))]
@@ -1055,6 +1092,7 @@ impl BrowserActToolCall {
     pub const fn action_name(&self) -> &'static str {
         match self {
             Self::Launch { .. } => "launch",
+            Self::Attach { .. } => "attach",
             Self::NewPage { .. } => "new_page",
             Self::Navigate { .. } => "navigate",
             Self::Reload { .. } => "reload",

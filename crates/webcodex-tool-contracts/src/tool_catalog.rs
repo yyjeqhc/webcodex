@@ -222,7 +222,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "browser",
-        summary: "Browser/CDP runtime: discover Browser-capable Runners, launch an owned ephemeral Browser, use adaptive semantic snapshots and diagnostic deltas, act only through opaque identities, then re-observe after navigation or uncertain effects.",
+        summary: "Browser/CDP: launch ephemeral/managed, or discover and attach an extension-shared tab. Use opaque ids and snapshot-admitted actions. surface resolves one exact Computer window. External close only detaches; re-observe after navigation or uncertainty.",
         manifest_purpose: "Use observe_browser for targets/browsers/pages/snapshot/screenshot/diagnostics and control_browser for Browser effects. Use batch for 1..32 ordered input_text/select_option/set_value/click/upload_file operations admitted by one current snapshot on one Browser/page. Ordinary field effects preserve sibling element ids; navigation, document replacement and new snapshots stale prior authority. Batch checks freshness between effects, settles once, and stops on rejection, document change or uncertainty. Read completion counts and stopped certainty before observing recovery; never blindly retry outcome_unknown. Take a fresh verification snapshot after filling and after structural/page changes. Snapshot auto mode compacts large pages to admitted controls and semantic choices; diagnostics since_cursor returns only later events.",
         tools: &["observe_browser", "control_browser"],
     },

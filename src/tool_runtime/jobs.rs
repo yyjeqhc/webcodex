@@ -10,7 +10,9 @@ use super::helpers::{
     project_relative_runner_cwd, resolve_runner_cwd, validate_raw_shell_command_length,
 };
 use super::tool_result::{RecoveryKind, SuggestedToolCall, ToolResult};
-use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
+use super::{
+    execution_outcome::ExecutionOutcomeFacts, ExecutionPurpose, ExecutionShell, ToolRuntime,
+};
 use crate::auth::AuthContext;
 use crate::runner_http::{command_preview, ShellJobStartMetadata, COMMAND_PREVIEW_MAX_CHARS};
 use crate::runner_protocol::{
@@ -1039,31 +1041,27 @@ pub(crate) fn observe_job_details_call(job_id: &str) -> Value {
 /// The continuation retains durable identity; Job lifecycle/bookkeeping stays in canonical
 /// Session/registry state.
 pub(super) fn sparsify_job_handoff_model_result(result: &mut ToolResult) {
-    if !result.success {
-        return;
-    }
-    let Some(output) = result.output.as_object_mut() else {
-        return;
+    let (job_id, token) = {
+        let facts = ExecutionOutcomeFacts::from_result(result);
+        if !facts.has_job_handoff() {
+            return;
+        }
+        (
+            facts
+                .job_id()
+                .expect("handoff identity was checked")
+                .to_string(),
+            facts.observation_token().map(str::to_string),
+        )
     };
-    if !matches!(
-        output.get("execution_state").and_then(Value::as_str),
-        Some("queued" | "running" | "started" | "pending")
-    ) {
-        return;
-    }
-    let Some(job_id) = output
-        .get("job_id")
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
-    else {
+    let Some(output) = result.output.as_object_mut() else {
         return;
     };
     let call = &output["continuation"];
     if call["tool"] != "observe_jobs" || call["arguments"]["items"][0]["job_id"] != job_id {
         return;
     }
-    let token = output.get("observation_token").and_then(Value::as_str);
-    if call["arguments"]["items"][0]["after_observation_token"].as_str() != token {
+    if call["arguments"]["items"][0]["after_observation_token"].as_str() != token.as_deref() {
         return;
     }
     let continuation = call.clone();

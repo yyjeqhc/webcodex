@@ -6,7 +6,7 @@ use super::kernel::{
     check_runtime_tool_scope, ToolCallContext, ToolCallErrorStatus, ToolCallOutcome,
     ToolCallRequest, ToolInvocationMetadata, ToolProtocolCapabilities, ToolTransport,
 };
-use super::{ToolCall, ToolResult, ToolRuntime};
+use super::{execution_outcome::ExecutionOutcomeFacts, ToolCall, ToolResult, ToolRuntime};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use webcodex_core::workflow_session_contract::{
@@ -710,22 +710,12 @@ fn main_projection(result: &ToolResult, dispatched: bool) -> Value {
 }
 
 fn main_execution_state(result: &ToolResult, dispatched: bool) -> &'static str {
-    if !dispatched
-        || result.output["execution_state"] == "not_started"
-        || result.output["dispatch_certainty"] == "not_started"
-        || result.output["error_kind"] == "permission_denied"
-    {
+    let facts = ExecutionOutcomeFacts::from_result(result);
+    if !dispatched || facts.is_definitely_not_started() {
         "definitely_not_started"
-    } else if result.output["execution_state"] == "outcome_unknown"
-        || result.output["failure_kind"] == "outcome_unknown"
-    {
+    } else if facts.is_outcome_unknown() {
         "outcome_unknown"
-    } else if matches!(
-        result.output["execution_state"].as_str(),
-        Some("queued" | "running" | "started" | "pending")
-    ) || result.output["terminal"] == false
-        || result.output["promoted_to_job"] == true
-    {
+    } else if facts.is_pending() {
         "started"
     } else if result.success {
         "succeeded"
@@ -765,15 +755,13 @@ async fn execute(
 
 fn project_result(kind: &str, result: &ToolResult) -> Value {
     let output = &result.output;
+    let facts = ExecutionOutcomeFacts::from_result(result);
     let replayed = output["replayed"]
         .as_bool()
         .or_else(|| output["already_closed"].as_bool())
         .or_else(|| output["already_consumed"].as_bool())
         .unwrap_or(false);
-    let prestart = !result.success
-        && (output["error_kind"] == "permission_denied"
-            || output["execution_state"] == "not_started"
-            || output["dispatch_certainty"] == "not_started");
+    let prestart = !result.success && facts.is_definitely_not_started();
     let changed = output["state_changed"].as_bool().or_else(|| {
         if prestart {
             Some(false)
@@ -786,9 +774,9 @@ fn project_result(kind: &str, result: &ToolResult) -> Value {
             )
         }
     });
-    let error_kind = output["error_kind"]
-        .as_str()
-        .or_else(|| output["failure_kind"].as_str())
+    let error_kind = facts
+        .error_kind()
+        .or_else(|| facts.failure_kind())
         .filter(|kind| {
             kind.len() <= 96
                 && kind
@@ -797,8 +785,7 @@ fn project_result(kind: &str, result: &ToolResult) -> Value {
         });
     let unknown = !result.success
         && (changed.is_none()
-            || output["execution_state"] == "outcome_unknown"
-            || output["failure_kind"] == "outcome_unknown"
+            || facts.is_outcome_unknown()
             || error_kind.is_some_and(|kind| kind.ends_with("serialization_failed")));
     let mut projection = json!({"kind": kind, "success": result.success,
         "execution_state": if result.success { "succeeded" } else if prestart { "definitely_not_started" } else if unknown { "outcome_unknown" } else { "failed" },

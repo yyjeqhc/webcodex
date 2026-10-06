@@ -9,7 +9,7 @@ mod waits;
 
 pub(super) use registry::ModelFacingProjectionPlan;
 
-use super::{ResolvedProject, ToolCall, ToolResult};
+use super::{execution_outcome::ExecutionOutcomeFacts, ResolvedProject, ToolCall, ToolResult};
 use serde_json::Value;
 
 fn is_structured_validation_tool(tool_name: &str) -> bool {
@@ -20,28 +20,17 @@ fn is_structured_validation_tool(tool_name: &str) -> bool {
 }
 
 fn sparsify_terminal_structured_validation_success(tool_name: &str, result: &mut ToolResult) {
-    if !is_structured_validation_tool(tool_name) || !result.success {
+    if !is_structured_validation_tool(tool_name) {
+        return;
+    }
+    let terminal_success = ExecutionOutcomeFacts::from_result(result).is_terminal_success()
+        && result.output.get("passed").and_then(Value::as_bool) == Some(true);
+    if !terminal_success {
         return;
     }
     let Some(output) = result.output.as_object_mut() else {
         return;
     };
-    let terminal_success = output.get("execution_state").and_then(Value::as_str)
-        == Some("completed")
-        && output.get("command_started").and_then(Value::as_bool) == Some(true)
-        && output.get("command_completed").and_then(Value::as_bool) == Some(true)
-        && output.get("passed").and_then(Value::as_bool) == Some(true)
-        && output.get("promoted_to_job").and_then(Value::as_bool) == Some(false)
-        && output.get("terminal").and_then(Value::as_bool) == Some(true)
-        && output.get("job_id").map(Value::is_null).unwrap_or(true)
-        && output.get("job_status").map(Value::is_null).unwrap_or(true)
-        && output
-            .get("observation_token")
-            .map(Value::is_null)
-            .unwrap_or(true);
-    if !terminal_success {
-        return;
-    }
 
     for key in [
         "project",
@@ -92,18 +81,15 @@ fn sparsify_structured_validation_runtime_metadata(tool_name: &str, result: &mut
     if !is_structured_validation_tool(tool_name) {
         return;
     }
+    let pending =
+        result.success && ExecutionOutcomeFacts::from_result(result).has_pending_execution_state();
     let Some(output) = result.output.as_object_mut() else {
         return;
     };
     for key in ["execution_source", "purpose", "executor", "shell"] {
         output.remove(key);
     }
-    if result.success
-        && matches!(
-            output.get("execution_state").and_then(Value::as_str),
-            Some("queued" | "running" | "started" | "pending")
-        )
-    {
+    if pending {
         for key in [
             "project",
             "cwd",
@@ -144,29 +130,13 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
     if !matches!(
         tool_name,
         "project_build" | "run_process" | "run_script" | "run_skill_resource"
-    ) || !result.success
+    ) || !ExecutionOutcomeFacts::from_result(result).is_terminal_command_success()
     {
         return;
     }
     let Some(output) = result.output.as_object_mut() else {
         return;
     };
-    let terminal_success = output.get("execution_state").and_then(Value::as_str)
-        == Some("completed")
-        && output.get("command_started").and_then(Value::as_bool) == Some(true)
-        && output.get("command_completed").and_then(Value::as_bool) == Some(true)
-        && output.get("command_ok").and_then(Value::as_bool) == Some(true)
-        && output.get("promoted_to_job").and_then(Value::as_bool) == Some(false)
-        && output.get("terminal").and_then(Value::as_bool) == Some(true)
-        && output.get("job_id").map(Value::is_null).unwrap_or(true)
-        && output.get("job_status").map(Value::is_null).unwrap_or(true)
-        && output
-            .get("observation_token")
-            .map(Value::is_null)
-            .unwrap_or(true);
-    if !terminal_success {
-        return;
-    }
 
     for key in [
         "promoted_to_job",
@@ -237,31 +207,20 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
 /// Shell context is runtime-selected, so it is not redundant with the request.
 /// Only a proven ordinary synchronous terminal result may lose lifecycle facts.
 fn sparsify_terminal_shell_success(result: &mut ToolResult) {
-    if !result.success || result.error.is_some() {
+    if result.error.is_some()
+        || !ExecutionOutcomeFacts::from_result(result).is_terminal_command_success()
+    {
         return;
     }
     let Some(output) = result.output.as_object_mut() else {
         return;
     };
-    if output.get("execution_state").and_then(Value::as_str) != Some("completed")
-        || [
-            "command_started",
-            "command_completed",
-            "command_ok",
-            "terminal",
-        ]
-        .iter()
-        .any(|key| output.get(*key).and_then(Value::as_bool) != Some(true))
-        || output.get("promoted_to_job").and_then(Value::as_bool) != Some(false)
-        || output.get("exit_code").and_then(Value::as_i64) != Some(0)
+    if output.get("exit_code").and_then(Value::as_i64) != Some(0)
         || output.get("tool_failure").and_then(Value::as_bool) != Some(false)
         || output.get("executor").and_then(Value::as_str) != Some("agent")
         || output.get("execution_source").and_then(Value::as_str) != Some("run_shell")
         || [
             "requested_surface",
-            "job_id",
-            "job_status",
-            "observation_token",
             "continuation",
             "activity",
             "failure_kind",

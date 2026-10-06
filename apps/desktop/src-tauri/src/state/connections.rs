@@ -684,6 +684,17 @@ fn persistent_runtime_projection(
             ..Default::default()
         };
     };
+    if status.profile_id != profile.profile_id
+        || status.tunnel_id != profile.tunnel_id
+        || status.host_mode != profile.host_mode
+        || status.autostart != profile.autostart
+    {
+        return crate::connections::ConnectionRuntimeSnapshot {
+            lifecycle: ConnectionLifecycle::Error,
+            last_error: Some(ConnectionError::StartFailed),
+            ..Default::default()
+        };
+    }
     if matches!(
         status.service_status.ownership,
         webcodex_environment::service::Ownership::Foreign

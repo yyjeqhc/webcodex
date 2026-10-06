@@ -1006,6 +1006,9 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                     TunnelConfigurationNextAction::StartStandalone => format!(
                         "{profile}: saved; start the separate Tunnel service explicitly"
                     ),
+                    TunnelConfigurationNextAction::RestartStandalone => format!(
+                        "{profile}: saved; restart the separate Tunnel service explicitly"
+                    ),
                 })
             }
         }
@@ -1038,9 +1041,11 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                     .map_err(|_| "Could not encode Tunnel status".into())
             } else {
                 Ok(format!(
-                    "{}: host={:?}, running={:?}, Tunnel ready={}, local MCP ready={}, Server restart required={}",
-                    status.service_status.id,
+                    "{} (Tunnel {}): host={:?}, autostart={}, running={:?}, Tunnel ready={}, local MCP ready={}, Server restart required={}",
+                    status.profile_id,
+                    status.tunnel_id,
                     status.host_mode,
+                    status.autostart,
                     status.service_status.running,
                     status.tunnel_ready,
                     status.local_mcp_ready,

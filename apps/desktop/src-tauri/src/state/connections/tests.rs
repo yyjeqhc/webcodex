@@ -158,8 +158,11 @@ fn environment_profile(
 fn persistent_projection_preserves_cli_identity_and_surfaces_one_explicit_server_restart() {
     let profile = environment_profile(webcodex_environment::TunnelHostMode::Embedded, true);
     let pending = webcodex_environment::TunnelRuntimeObservation {
+        profile_id: "work".into(),
+        tunnel_id: "tunnel_work".into(),
         service_status: service_status(true),
         host_mode: webcodex_environment::TunnelHostMode::Embedded,
+        autostart: true,
         ready: false,
         tunnel_ready: false,
         local_mcp_ready: false,
@@ -183,8 +186,11 @@ fn persistent_projection_preserves_cli_identity_and_surfaces_one_explicit_server
     assert!(!projected.runtime.process_started);
 
     let applied = webcodex_environment::TunnelRuntimeObservation {
+        profile_id: "work".into(),
+        tunnel_id: "tunnel_work".into(),
         service_status: service_status(true),
         host_mode: webcodex_environment::TunnelHostMode::Embedded,
+        autostart: true,
         ready: true,
         tunnel_ready: true,
         local_mcp_ready: true,
@@ -200,11 +206,36 @@ fn persistent_projection_preserves_cli_identity_and_surfaces_one_explicit_server
 }
 
 #[test]
+fn persistent_projection_fails_closed_when_runtime_identity_differs_from_catalog() {
+    let profile = environment_profile(webcodex_environment::TunnelHostMode::Embedded, true);
+    let observation = webcodex_environment::TunnelRuntimeObservation {
+        profile_id: "work".into(),
+        tunnel_id: "tunnel_other".into(),
+        service_status: service_status(true),
+        host_mode: webcodex_environment::TunnelHostMode::Embedded,
+        autostart: true,
+        ready: true,
+        tunnel_ready: true,
+        local_mcp_ready: true,
+        configured_revision: 3,
+        applied_revision: Some(3),
+        server_restart_required: false,
+    };
+    let projected = persistent_connection_projection(profile, Ok(observation));
+    assert_eq!(projected.runtime.lifecycle, ConnectionLifecycle::Error);
+    assert_eq!(projected.runtime.last_error, Some(ConnectionError::StartFailed));
+    assert!(!projected.runtime.ready);
+}
+
+#[test]
 fn disabled_server_owned_profile_is_not_misreported_as_failed_while_server_runs() {
     let profile = environment_profile(webcodex_environment::TunnelHostMode::Embedded, false);
     let observation = webcodex_environment::TunnelRuntimeObservation {
+        profile_id: "work".into(),
+        tunnel_id: "tunnel_work".into(),
         service_status: service_status(true),
         host_mode: webcodex_environment::TunnelHostMode::Embedded,
+        autostart: false,
         ready: false,
         tunnel_ready: false,
         local_mcp_ready: false,

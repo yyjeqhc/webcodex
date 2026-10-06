@@ -82,6 +82,7 @@ pub enum TunnelConfigurationNextAction {
     StartServer,
     RestartServer,
     StartStandalone,
+    RestartStandalone,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,9 +95,12 @@ pub struct TunnelConfigurationResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TunnelRuntimeObservation {
+    pub profile_id: String,
+    pub tunnel_id: String,
     pub service_status: service::ServiceStatus,
     #[serde(default)]
     pub host_mode: TunnelHostMode,
+    pub autostart: bool,
     pub ready: bool,
     pub tunnel_ready: bool,
     pub local_mcp_ready: bool,
@@ -426,10 +430,72 @@ pub(crate) fn ensure_server_tunnel_environment(store: &EnvironmentStore) -> Setu
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TunnelBindingMutation {
+    None,
+    Create,
+    RotateCredential,
+}
+
+#[derive(Debug)]
+struct TunnelBindingPlan {
+    tunnel_id: String,
+    mutation: TunnelBindingMutation,
+}
+
+fn plan_tunnel_binding(
+    existing: Option<&TunnelProfileBinding>,
+    candidate: Option<&TunnelCredentials>,
+    expected_revision: Option<u64>,
+) -> SetupResultValue<TunnelBindingPlan> {
+    match (existing, candidate) {
+        (Some(saved), Some(candidate)) => {
+            validate_credentials(candidate)?;
+            if saved.tunnel_id.expose() != candidate.tunnel_id.expose() {
+                return Err(diagnostic(
+                    "tunnel_binding_conflict",
+                    "This profile already owns another Tunnel identity",
+                ));
+            }
+            let mutation = if saved.api_key.expose() == candidate.api_key.expose() {
+                TunnelBindingMutation::None
+            } else if expected_revision.is_some() {
+                TunnelBindingMutation::RotateCredential
+            } else {
+                return Err(SetupDiagnostic::new(
+                    "tunnel_credential_rotation_requires_revision",
+                    "Updating a saved Tunnel credential requires a current profile revision",
+                    "Reload the profile and retry through the write-only credential editor; configure-tunnel remains idempotent for existing profiles",
+                ));
+            };
+            Ok(TunnelBindingPlan {
+                tunnel_id: saved.tunnel_id.expose().to_owned(),
+                mutation,
+            })
+        }
+        (Some(saved), None) => Ok(TunnelBindingPlan {
+            tunnel_id: saved.tunnel_id.expose().to_owned(),
+            mutation: TunnelBindingMutation::None,
+        }),
+        (None, Some(candidate)) => {
+            validate_credentials(candidate)?;
+            Ok(TunnelBindingPlan {
+                tunnel_id: candidate.tunnel_id.expose().to_owned(),
+                mutation: TunnelBindingMutation::Create,
+            })
+        }
+        (None, None) => Err(diagnostic(
+            "tunnel_credentials",
+            "The original Tunnel credentials are required for the first configuration",
+        )),
+    }
+}
+
 fn write_profile_binding(
     store: &EnvironmentStore,
     profile_id: &str,
     credentials: &TunnelCredentials,
+    previous: Option<&TunnelProfileBinding>,
 ) -> SetupResultValue<()> {
     validate_credentials(credentials)?;
     let directory = profile_directory(store, profile_id);
@@ -441,9 +507,17 @@ fn write_profile_binding(
             "Server listening address is unavailable",
         )
     })?;
+    let local_token = match previous {
+        Some(saved) => Secret::new(saved.local_token.expose().to_owned()),
+        None => bootstrap_token(store)?,
+    };
+    let proxy_line = previous
+        .and_then(|saved| saved.proxy.as_ref())
+        .map(|proxy| format!("WEBCODEX_TUNNEL_PROXY={}\n", proxy.expose()))
+        .unwrap_or_default();
     let content = Secret::new(format!(
-        "WEBCODEX_ADDR={address}\nWEBCODEX_TOKEN={}\nCONTROL_PLANE_TUNNEL_ID={}\nCONTROL_PLANE_API_KEY={}\nWEBCODEX_TUNNEL_PROFILE_ID={profile_id}\n",
-        bootstrap_token(store)?.expose(),
+        "WEBCODEX_ADDR={address}\nWEBCODEX_TOKEN={}\nCONTROL_PLANE_TUNNEL_ID={}\nCONTROL_PLANE_API_KEY={}\nWEBCODEX_TUNNEL_PROFILE_ID={profile_id}\n{proxy_line}",
+        local_token.expose(),
         credentials.tunnel_id.expose(),
         credentials.api_key.expose()
     ));
@@ -695,32 +769,10 @@ impl NativeEnvironment {
             .exists()
             .then(|| tunnel_profile_binding(store, profile_id))
             .transpose()?;
-        let tunnel_id = match (&existing_binding, credentials) {
-            (Some(saved), Some(candidate)) => {
-                validate_credentials(candidate)?;
-                if saved.tunnel_id.expose() != candidate.tunnel_id.expose()
-                    || saved.api_key.expose() != candidate.api_key.expose()
-                {
-                    return Err(diagnostic(
-                        "tunnel_binding_conflict",
-                        "This profile already contains another Tunnel identity or credential",
-                    ));
-                }
-                saved.tunnel_id.expose().to_owned()
-            }
-            (Some(saved), None) => saved.tunnel_id.expose().to_owned(),
-            (None, Some(candidate)) => {
-                validate_credentials(candidate)?;
-                candidate.tunnel_id.expose().to_owned()
-            }
-            (None, None) => {
-                return Err(diagnostic(
-                    "tunnel_credentials",
-                    "The original Tunnel credentials are required for the first configuration",
-                ))
-            }
-        };
-        ensure_unique_tunnel_identity(store, &profiles, profile_id, &tunnel_id)?;
+        let binding_plan =
+            plan_tunnel_binding(existing_binding.as_ref(), credentials, expected_revision)?;
+        let credential_changed = binding_plan.mutation == TunnelBindingMutation::RotateCredential;
+        ensure_unique_tunnel_identity(store, &profiles, profile_id, &binding_plan.tunnel_id)?;
 
         let desired_name = match name {
             Some(value) => validate_name(value)?,
@@ -737,24 +789,13 @@ impl NativeEnvironment {
         if host_mode == TunnelHostMode::Embedded {
             ensure_server_tunnel_environment(store)?;
         }
-        if existing_binding.is_none() {
-            write_profile_binding(
-                store,
-                profile_id,
-                credentials.expect("validated new binding"),
-            )?;
-        }
-        let health_path = profile_directory(store, profile_id).join("readiness.json");
-        if !health_path.exists() {
-            atomic_private_write(&health_path, b"{}")?;
-        }
 
         let runtime_changed;
         let index = if let Some(index) = existing_index {
             let profile = &mut profiles[index];
             let previous_runtime_revision = profile.effective_runtime_revision();
             let name_changed = profile.display_name() != desired_name;
-            runtime_changed = profile.autostart != desired_autostart;
+            runtime_changed = profile.autostart != desired_autostart || credential_changed;
             if name_changed || runtime_changed {
                 profile.revision = next_revision(profile.revision)?;
             } else {
@@ -787,6 +828,20 @@ impl NativeEnvironment {
             profiles.len() - 1
         };
         validate_catalog(&profiles)?;
+        let profile_directory = profile_directory(store, profile_id);
+        ensure_private_directory(&profile_directory)?;
+        let health_path = profile_directory.join("readiness.json");
+        if !health_path.exists() {
+            atomic_private_write(&health_path, b"{}")?;
+        }
+        if binding_plan.mutation != TunnelBindingMutation::None {
+            write_profile_binding(
+                store,
+                profile_id,
+                credentials.expect("validated binding mutation"),
+                existing_binding.as_ref(),
+            )?;
+        }
         store.write_json("tunnel.json", &profiles)?;
 
         if host_mode == TunnelHostMode::Embedded {
@@ -812,7 +867,11 @@ impl NativeEnvironment {
         if !start_standalone {
             let owner_status = ServiceManager::inspect(&standalone_spec).map_err(service_error)?;
             let next_action = if owner_status.running == Some(true) {
-                TunnelConfigurationNextAction::None
+                if credential_changed {
+                    TunnelConfigurationNextAction::RestartStandalone
+                } else {
+                    TunnelConfigurationNextAction::None
+                }
             } else {
                 TunnelConfigurationNextAction::StartStandalone
             };
@@ -837,18 +896,20 @@ impl NativeEnvironment {
         }
         profiles[index].installed = true;
         store.write_json("tunnel.json", &profiles)?;
-        if ServiceManager::inspect(&standalone_spec)
-            .map_err(service_error)?
-            .running
-            != Some(true)
-        {
+        let standalone_ready = ServiceManager::inspect(&standalone_spec).map_err(service_error)?;
+        let operation = if credential_changed && standalone_ready.running == Some(true) {
+            ServiceOperation::Restart
+        } else {
+            ServiceOperation::Start
+        };
+        if operation == ServiceOperation::Restart || standalone_ready.running != Some(true) {
             write_tunnel_health(&health_path, false, false)?;
         }
         let owner_status = crate::privilege::service_operation_spec(
             store,
             &environment,
             standalone_spec.clone(),
-            ServiceOperation::Start,
+            operation,
             None,
         )
         .await?;
@@ -869,9 +930,14 @@ impl NativeEnvironment {
         store: &EnvironmentStore,
         profile_id: &str,
     ) -> SetupResultValue<TunnelRuntimeObservation> {
+        let _lock = store.lock()?;
         let environment = store
             .load_environment()?
             .ok_or_else(|| diagnostic("not_configured", "Configure this environment first"))?;
+        let snapshot = tunnel_profile_snapshots(store)?
+            .into_iter()
+            .find(|profile| profile.profile_id == profile_id)
+            .ok_or_else(|| diagnostic("tunnel_profile", "Tunnel profile does not exist"))?;
         let profile = tunnel_profiles(store)?
             .into_iter()
             .find(|profile| profile.profile_id == profile_id)
@@ -900,8 +966,11 @@ impl NativeEnvironment {
             (false, false)
         };
         Ok(TunnelRuntimeObservation {
+            profile_id: profile.profile_id,
+            tunnel_id: snapshot.tunnel_id,
             service_status,
             host_mode: profile.host_mode,
+            autostart: profile.autostart,
             ready: tunnel_ready && local_mcp_ready,
             tunnel_ready,
             local_mcp_ready,
@@ -1254,6 +1323,106 @@ mod tests {
             installed: false,
             started: false,
         }
+    }
+
+    fn binding(tunnel_id: &str, api_key: &str) -> TunnelProfileBinding {
+        TunnelProfileBinding {
+            tunnel_id: Secret::new(tunnel_id.to_owned()),
+            api_key: Secret::new(api_key.to_owned()),
+            local_token: Secret::new("local-token".to_owned()),
+            proxy: Some(Secret::new("http://proxy.test".to_owned())),
+        }
+    }
+
+    fn credentials(tunnel_id: &str, api_key: &str) -> TunnelCredentials {
+        TunnelCredentials {
+            tunnel_id: Secret::new(tunnel_id.to_owned()),
+            api_key: Secret::new(api_key.to_owned()),
+        }
+    }
+
+    #[test]
+    fn credential_rotation_requires_a_current_revision_and_never_changes_identity() {
+        let saved = binding("tunnel_work", "old-key");
+        let same = credentials("tunnel_work", "old-key");
+        assert_eq!(
+            plan_tunnel_binding(Some(&saved), Some(&same), None)
+                .unwrap()
+                .mutation,
+            TunnelBindingMutation::None
+        );
+
+        let rotated = credentials("tunnel_work", "new-key");
+        assert_eq!(
+            plan_tunnel_binding(Some(&saved), Some(&rotated), Some(7))
+                .unwrap()
+                .mutation,
+            TunnelBindingMutation::RotateCredential
+        );
+        assert_eq!(
+            plan_tunnel_binding(Some(&saved), Some(&rotated), None)
+                .unwrap_err()
+                .code,
+            "tunnel_credential_rotation_requires_revision"
+        );
+
+        let foreign = credentials("tunnel_other", "new-key");
+        assert_eq!(
+            plan_tunnel_binding(Some(&saved), Some(&foreign), Some(7))
+                .unwrap_err()
+                .code,
+            "tunnel_binding_conflict"
+        );
+    }
+
+    #[test]
+    fn rotating_a_credential_preserves_local_mcp_binding_and_proxy() {
+        let temp = crate::test_tempdir().unwrap();
+        let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+        let server_dir = store.root().join("server");
+        ensure_private_directory(&server_dir).unwrap();
+        atomic_private_write(
+            &server_dir.join("webcodex.env"),
+            b"WEBCODEX_ADDR=127.0.0.1:62645\nWEBCODEX_TOKEN=bootstrap-token\n",
+        )
+        .unwrap();
+        let profile_dir = server_dir.join("tunnels/work");
+        ensure_private_directory(&profile_dir).unwrap();
+        atomic_private_write(
+            &profile_dir.join("webcodex.env"),
+            b"WEBCODEX_ADDR=127.0.0.1:62645\nWEBCODEX_TOKEN=local-token\nCONTROL_PLANE_TUNNEL_ID=tunnel_work\nCONTROL_PLANE_API_KEY=old-private-key\nWEBCODEX_TUNNEL_PROFILE_ID=work\nWEBCODEX_TUNNEL_PROXY=http://proxy.example:7890\n",
+        )
+        .unwrap();
+        let previous = tunnel_profile_binding(&store, "work").unwrap();
+        let rotated = credentials("tunnel_work", "new-private-key");
+        write_profile_binding(&store, "work", &rotated, Some(&previous)).unwrap();
+
+        let saved = tunnel_profile_binding(&store, "work").unwrap();
+        assert_eq!(saved.tunnel_id.expose(), "tunnel_work");
+        assert_eq!(saved.api_key.expose(), "new-private-key");
+        assert_eq!(saved.local_token.expose(), "local-token");
+        assert_eq!(
+            saved.proxy.as_ref().map(Secret::expose),
+            Some("http://proxy.example:7890")
+        );
+        let raw = read_secret(&profile_dir.join("webcodex.env")).unwrap();
+        assert!(!raw.expose().contains("old-private-key"));
+        let debug = format!("{saved:?}");
+        for secret in ["new-private-key", "local-token", "proxy.example"] {
+            assert!(!debug.contains(secret));
+        }
+    }
+
+    #[test]
+    fn first_binding_requires_credentials_and_records_creation() {
+        assert_eq!(
+            plan_tunnel_binding(None, None, None).unwrap_err().code,
+            "tunnel_credentials"
+        );
+        let candidate = credentials("tunnel_work", "first-key");
+        let plan = plan_tunnel_binding(None, Some(&candidate), None).unwrap();
+        assert_eq!(plan.tunnel_id, "tunnel_work");
+        assert_eq!(plan.mutation, TunnelBindingMutation::Create);
     }
 
     #[test]

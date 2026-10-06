@@ -585,6 +585,33 @@ impl Database {
                     requires_ack, first_projected_at_ms, created_at_ms
                 );
 
+            -- Historical peer bodies move here atomically before the bounded
+            -- delivery queue evicts them. This table never grants a live route.
+            CREATE TABLE IF NOT EXISTS window_peer_message_history (
+                message_id TEXT PRIMARY KEY,
+                principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL,
+                sender_window_key TEXT NOT NULL, recipient_window_key TEXT NOT NULL,
+                sender_peer_id TEXT NOT NULL, recipient_peer_id TEXT NOT NULL,
+                kind TEXT NOT NULL, priority TEXT NOT NULL, message TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL, sender_session_id TEXT, sender_project TEXT,
+                requires_ack INTEGER NOT NULL,
+                first_projected_at_ms INTEGER, first_ack_observed_at_ms INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_operator_attention_recent ON window_operator_messages
+                (principal_kind, principal_id, created_at_ms DESC, message_id DESC);
+            CREATE INDEX IF NOT EXISTS idx_operator_transcript_page ON window_operator_messages
+                (principal_kind, principal_id, recipient_window_key, created_at_ms DESC, message_id DESC);
+            CREATE INDEX IF NOT EXISTS idx_model_reply_transcript_page ON window_model_replies
+                (principal_kind, principal_id, window_key, created_at_ms DESC, message_id DESC);
+            CREATE INDEX IF NOT EXISTS idx_peer_transcript_in ON window_peer_messages
+                (principal_kind, principal_id, recipient_window_key, created_at_ms DESC, message_id DESC);
+            CREATE INDEX IF NOT EXISTS idx_peer_transcript_out ON window_peer_messages
+                (principal_kind, principal_id, sender_window_key, created_at_ms DESC, message_id DESC);
+            CREATE INDEX IF NOT EXISTS idx_peer_history_in ON window_peer_message_history
+                (principal_kind, principal_id, recipient_window_key, created_at_ms DESC, message_id DESC);
+            CREATE INDEX IF NOT EXISTS idx_peer_history_out ON window_peer_message_history
+                (principal_kind, principal_id, sender_window_key, created_at_ms DESC, message_id DESC);
+
             CREATE TABLE IF NOT EXISTS window_peer_discoveries (
                 principal_kind TEXT NOT NULL,
                 principal_id TEXT NOT NULL,

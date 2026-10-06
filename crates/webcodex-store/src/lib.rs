@@ -52,6 +52,7 @@ mod peer_collaboration;
 mod window_collaboration;
 #[cfg(test)]
 mod window_collaboration_tests;
+mod window_history;
 pub use window_collaboration::*;
 mod project_reference;
 mod schema;

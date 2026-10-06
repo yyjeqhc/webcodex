@@ -6,6 +6,7 @@ use serde_json::json;
 struct ListInput {
     client_window_key: String,
     limit: Option<usize>,
+    before_message_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -131,12 +132,23 @@ pub(super) async fn list(req: &mut Request, depot: &mut Depot, res: &mut Respons
             Ok(recipient) => recipient,
             Err(e) => return render_error(res, e),
         };
-    let mut output = runtime.window_collaboration_for_principal(
+    if input.limit.is_some_and(|limit| !(1..=100).contains(&limit))
+        || input.before_message_id.as_deref().is_some_and(|id| {
+            !webcodex_core::workflow_session_contract::is_valid_session_message_id(id)
+        })
+    {
+        return render_error(res, RuntimeConsoleError::Invalid);
+    }
+    let mut output = runtime.window_collaboration_page_for_principal(
         &input.client_window_key,
         &recipient_kind,
         &recipient_principal,
         input.limit.unwrap_or(50),
+        input.before_message_id.as_deref(),
     );
+    if output["error_kind"] == "history_cursor_unavailable" {
+        res.status_code(StatusCode::BAD_REQUEST);
+    }
     output["client_window_key"] = json!(input.client_window_key);
     res.render(Json(output));
 }

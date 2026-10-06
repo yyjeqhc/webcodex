@@ -2,6 +2,119 @@ use super::*;
 use crate::runtime_console_http::window_collaboration;
 
 #[tokio::test]
+async fn window_collaboration_app_pages_are_window_scoped_read_only_and_independent_of_session() {
+    use crate::client_window::ClientWindow;
+    use crate::tool_runtime::tool_call::WorkResultCollaborationRequest;
+    let (_temp, db, runtime) = test_runtime_with_goal_db();
+    let auth = scoped_oauth(&[
+        SCOPE_RUNTIME_READ,
+        SCOPE_PROJECT_READ,
+        SCOPE_SESSION_COLLABORATE,
+    ]);
+    let project = "agent:history-api:demo";
+    register_project(&runtime, "history-api", "demo", "/history-api", Some(&auth)).await;
+    let client_window = ClientWindow::for_test("history-api");
+    record_window_event(&db, &auth, client_window.key(), Some(project), None, 5000);
+    for i in 0..9 {
+        let result = runtime
+            .work_result_send_message_with_kind(
+                project.into(),
+                None,
+                format!("saved-{i}"),
+                format!("history-key-{i}"),
+                "question",
+                Some(&auth),
+                Some(&client_window),
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
+    }
+    let page = runtime
+        .work_result_collaboration_page(
+            project.into(),
+            None,
+            WorkResultCollaborationRequest {
+                limit: Some(3),
+                before_message_id: None,
+            },
+            Some(&auth),
+            Some(&client_window),
+        )
+        .await;
+    assert!(page.success, "{:?}", page.error);
+    let body = &page.output["work_result_collaboration"];
+    assert_eq!(body["messages"].as_array().unwrap().len(), 3);
+    assert_eq!(body["truncated"], true);
+    assert!(body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["kind"] == "question" && row["first_projected_at_ms"].is_null()));
+    let cursor = body["next_before"].as_str().unwrap().to_string();
+    let older = runtime
+        .work_result_collaboration_page(
+            project.into(),
+            None,
+            WorkResultCollaborationRequest {
+                limit: Some(3),
+                before_message_id: Some(cursor.clone()),
+            },
+            Some(&auth),
+            Some(&client_window),
+        )
+        .await;
+    assert!(older.success);
+    assert_eq!(
+        older.output["work_result_collaboration"]["history_scope"],
+        body["history_scope"]
+    );
+    for (limit, target) in [
+        (Some(0), Some(&client_window)),
+        (Some(101), Some(&client_window)),
+        (Some(3), None),
+    ] {
+        let denied = runtime
+            .work_result_collaboration_page(
+                project.into(),
+                None,
+                WorkResultCollaborationRequest {
+                    limit,
+                    before_message_id: None,
+                },
+                Some(&auth),
+                target,
+            )
+            .await;
+        assert!(!denied.success);
+    }
+    let other_window = ClientWindow::for_test("other-history");
+    let foreign = runtime
+        .work_result_collaboration_page(
+            project.into(),
+            None,
+            WorkResultCollaborationRequest {
+                limit: Some(3),
+                before_message_id: Some(cursor),
+            },
+            Some(&auth),
+            Some(&other_window),
+        )
+        .await;
+    assert!(!foreign.success, "a cursor cannot retarget another Window");
+    let denied = scoped_oauth(&[SCOPE_RUNTIME_READ, SCOPE_PROJECT_READ]);
+    let result = runtime
+        .work_result_collaboration_page(
+            project.into(),
+            None,
+            WorkResultCollaborationRequest::default(),
+            Some(&denied),
+            Some(&client_window),
+        )
+        .await;
+    assert!(!result.success);
+}
+
+#[tokio::test]
 async fn window_collaboration_survives_operator_token_rotation_for_visible_project() {
     let (_tmp, db, runtime) = test_runtime_with_goal_db();
     let mut window_auth = scoped_oauth(&[

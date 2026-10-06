@@ -237,6 +237,20 @@ impl Database {
                     .map(|identity| identity.1.as_str()),
             ],
         )?;
+        // Transcript retention is independent of attention/routing retention.
+        // Move, do not copy indefinitely: archive and queue eviction share a commit.
+        tx.execute(
+            "INSERT INTO window_peer_message_history (
+                message_id, principal_kind, principal_id, sender_window_key, recipient_window_key,
+                sender_peer_id, recipient_peer_id, kind, priority, message, created_at_ms,
+                sender_session_id, sender_project, requires_ack, first_projected_at_ms, first_ack_observed_at_ms)
+             SELECT message_id, principal_kind, principal_id, sender_window_key, recipient_window_key,
+                sender_peer_id, recipient_peer_id, kind, priority, message, created_at_ms,
+                sender_session_id, sender_project, requires_ack, first_projected_at_ms, first_ack_observed_at_ms
+             FROM window_peer_messages WHERE principal_kind=?1 AND principal_id=?2
+             ORDER BY created_at_ms DESC, message_id DESC LIMIT -1 OFFSET ?3",
+            params![input.principal_kind, input.principal_id, MAX_RETAINED_PEER_MESSAGES_PER_PRINCIPAL as i64],
+        )?;
         tx.execute(
             "DELETE FROM window_peer_messages
              WHERE rowid IN (

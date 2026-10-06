@@ -46,6 +46,7 @@ fn valid_window_message_priority(value: &str) -> bool {
 }
 
 impl ToolRuntime {
+    #[cfg(test)]
     pub(crate) async fn post_window_operator_message(
         &self,
         target_window_key: &str,
@@ -325,18 +326,44 @@ impl ToolRuntime {
         recipient_principal_id: &str,
         limit: usize,
     ) -> serde_json::Value {
+        self.window_collaboration_page_for_principal(
+            window,
+            recipient_principal_kind,
+            recipient_principal_id,
+            limit,
+            None,
+        )
+    }
+
+    pub(crate) fn window_collaboration_page_for_principal(
+        &self,
+        window: &str,
+        kind: &str,
+        principal: &str,
+        limit: usize,
+        before: Option<&str>,
+    ) -> serde_json::Value {
         let unavailable = || json!({"available":false,"can_send":false,"messages":[]});
         let Some(db) = self.communication_db.as_ref() else {
             return unavailable();
         };
-        match db.window_collaboration_transcript(
-            recipient_principal_kind,
-            recipient_principal_id,
-            window,
-            limit,
-        ) {
-            Ok((messages, truncated)) => {
-                json!({"available":true,"can_send":true,"returned":messages.len(),"messages":messages,"truncated":truncated})
+        match db.window_collaboration_page(kind, principal, window, limit, before) {
+            Ok(Some((messages, truncated))) => {
+                let next_before = if truncated {
+                    messages.first().map(|message| message.message_id.clone())
+                } else {
+                    None
+                };
+                // Opaque cache namespace only; a cursor/scope never grants authority.
+                let history_scope = format!(
+                    "{:x}",
+                    Sha256::digest(serde_json::to_vec(&(kind, principal, window)).unwrap())
+                );
+                json!({"available":true,"can_send":true,"returned":messages.len(),"messages":messages,
+                    "truncated":truncated,"next_before":next_before,"history_scope":history_scope})
+            }
+            Ok(None) => {
+                json!({"available":false,"can_send":false,"messages":[],"error_kind":"history_cursor_unavailable"})
             }
             Err(_) => unavailable(),
         }

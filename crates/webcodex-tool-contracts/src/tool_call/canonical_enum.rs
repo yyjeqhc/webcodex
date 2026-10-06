@@ -255,6 +255,10 @@ pub enum ToolCall {
         /// Explicit inventory, lazy diff, UTF-8 content or PDF page; omission keeps lightweight card state.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         files: Option<WorkResultFilesRequest>,
+        /// Read a bounded older conversation page without refreshing workspace state.
+        /// Mutually exclusive with files; cursor never changes the Host Window.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        collaboration: Option<WorkResultCollaborationRequest>,
     },
 
     /// Work Result App-only lazy read of one completed call in the current
@@ -266,9 +270,9 @@ pub enum ToolCall {
         server_trace_id: String,
     },
 
-    /// Work Result App-only collaboration write. The App fixes the business kind
-    /// to guidance + requires_ack and supplies one bounded replay key so uncertain
-    /// Host delivery can be retried without duplicating the retained message.
+    /// Work Result App-only collaboration write. An explicit intent remains
+    /// conversational metadata, never a task assignment or execution approval.
+    /// The exact payload and key must survive uncertain Host delivery.
     #[serde(rename = "send_work_result_message")]
     WorkResultSendMessage {
         project: String,
@@ -282,6 +286,8 @@ pub enum ToolCall {
         message: String,
         #[schemars(length(min = 1, max = 128))]
         delivery_key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<SessionMessageKind>,
     },
 
     /// Work Result App-only lazy read from one opaque frozen final-changes snapshot.

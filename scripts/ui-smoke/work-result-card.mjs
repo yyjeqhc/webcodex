@@ -37,6 +37,7 @@ try {
       window.writes = [];
       window.reads = [];
       window.frozenReads = [];
+      window.workspaceSnapshot = 'wc_changes_snapshot_' + '3'.repeat(32);
       const frame = document.createElement('iframe');
       addEventListener('message', event => {
         if (event.source !== frame.contentWindow) return;
@@ -53,10 +54,10 @@ try {
           if (request.params.name === 'get_work_result_state') {
             const args = request.params.arguments;
             window.reads.push(args);
-            const snapshot_id = 'wc_changes_snapshot_' + '3'.repeat(32);
+            const snapshot_id = args.files?.snapshot_id || window.workspaceSnapshot;
             const files = args.files?.path ? {
               project: state.project, snapshot_id, path: args.files.path,
-              diff: '@@ -1 +1 @@\n-old\n+reviewed', truncated: false,
+              diff: '@@ -1 +1 @@\n-old\n+' + (snapshot_id.endsWith('3'.repeat(32)) ? 'reviewed' : 'current'), truncated: false,
             } : {
               project: state.project, snapshot_id, offset: 0, files_total: 1, source_truncated: false, next_offset: null,
               files: [{ path: 'src/a.rs', kind: 'modified', additions: 4, deletions: 1 }],
@@ -125,6 +126,21 @@ try {
     await card.locator('#refresh').click();
     await card.getByRole('button', { name: 'Refresh', exact: true }).waitFor();
     assert.equal(await card.locator('#workspaceFiles .file-toggle').getAttribute('aria-expanded'), 'true');
+    await card.getByRole('button', { name: 'Pin snapshot for review', exact: true }).click();
+    assert.equal(await card.locator('#workspacePin').getAttribute('aria-pressed'), 'true');
+    const pinnedReads = await page.evaluate(() => window.reads.filter(args => args.files).length);
+    await page.evaluate(() => {
+      window.workspaceSnapshot = 'wc_changes_snapshot_' + '4'.repeat(32);
+      // Equal numstat still permits different code contents.
+      window.fixtureState.workspace_observation = { reused: false, max_reuse_ms: 30000, semantics: 'bounded_snapshot_not_filesystem_freshness' };
+    });
+    await card.locator('#refresh').click();
+    await card.getByRole('button', { name: 'Refresh', exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.reads.filter(args => args.files).length), pinnedReads);
+    await card.locator('#workspaceFiles .diff').filter({ hasText: '+reviewed' }).waitFor();
+    await card.getByRole('button', { name: 'Follow changes', exact: true }).click();
+    await card.locator('#workspaceFiles .diff').filter({ hasText: '+current' }).waitFor();
+    assert.equal(await card.locator('#workspacePin').getAttribute('aria-pressed'), 'false');
     if (thread) assert(await page.evaluate(() => window.reads.filter(args => !args.files).every(args => args.session_id === window.fixtureState.session_id)));
     if (thread) {
       await page.evaluate(() => {
@@ -140,11 +156,11 @@ try {
       assert.equal(await page.evaluate(() => window.frozenReads.length), 0);
       assert(await card.locator('#panelResults').evaluate(node => {
         const top = id => node.querySelector('#' + id).getBoundingClientRect().top;
-        return top('workspaceChangesSection') < top('resultChecks') && top('resultChecks') < top('finalChanges');
+        return top('resultChecks') < top('workspaceChangesSection') && top('workspaceChangesSection') < top('finalChanges');
       }));
       await card.locator('#frozenFiles .file-toggle').click();
       await card.locator('#frozenFiles .diff').filter({ hasText: '+final' }).waitFor();
-      const frozen = await card.locator('#frozenFiles .diff').innerText();
+      const frozen = await card.locator('#frozenFiles pre.diff:not(.full-text)').innerText();
       await page.evaluate(() => {
         window.fixtureState.state_version = 'wr2_' + 'e'.repeat(64);
         window.fixtureState.workspace = { ...window.fixtureState.workspace, additions: 6,
@@ -152,7 +168,7 @@ try {
       });
       await card.locator('#refresh').click();
       await card.getByRole('button', { name: 'Refresh', exact: true }).waitFor();
-      assert.equal(await card.locator('#frozenFiles .diff').innerText(), frozen);
+      assert.equal(await card.locator('#frozenFiles pre.diff:not(.full-text)').innerText(), frozen);
       assert.equal(await page.evaluate(() => window.frozenReads.length), 1);
     }
     await page.screenshot({ path: fileURLToPath(new URL(`work-result-${surface}-files-${width}.png`, output)), fullPage: true });
@@ -181,5 +197,5 @@ try {
     assert.deepEqual(errors, []);
     await page.close();
   }
-  console.log('Work Result inline card and thread review: lazy diff, Session refresh, folded diagnostics, keyboard disclosure, selection preservation, exact retry, reduced motion and narrow layout passed at 800 / 390 px.');
+  console.log('Work Result inline card and thread review: lazy diff, follow/pin snapshots, Session refresh, folded diagnostics, keyboard disclosure, selection preservation, exact retry, reduced motion and narrow layout passed at 800 / 390 px.');
 } finally { await browser.close(); }

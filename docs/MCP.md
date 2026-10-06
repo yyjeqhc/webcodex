@@ -139,8 +139,13 @@ Window-linked Session evidence never becomes refresh authority. Reopen the panel
 to select a newer successful presentation; missing Window identity or binding
 fails closed. Current authorization and snapshot fences still apply on every read.
 Changed files and Final Changes offer lazy Full text previews only for advertised
-paths. Current files use the pinned working-tree snapshot; final files use the
-sealed final tree, even after later workspace edits. Content loads in explicit
+paths. Changed files follow fresh workspace observations by default, renewing
+only a previously inspected view and keeping each read bound to an exact
+working-tree snapshot. Pin snapshot for review keeps that code stable while
+activity and workspace status refresh; Follow changes resumes updates. Final
+files always use the sealed final tree, even after later workspace edits.
+Snapshot retention and expiry remain bounded; failed reads never retarget code.
+Content loads in explicit
 32 KiB pages up to 256 KiB per file; the card labels partial content and the cap.
 A deleted file has no final version. Binary, non-UTF-8, symlink and submodule
 contents are unavailable; failed or expired reads never fall back to a live path.

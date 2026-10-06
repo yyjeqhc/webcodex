@@ -41,9 +41,13 @@ Each section has a sticky file selector and previous/next controls for its shown
 files; Show more explicitly extends that list. File expansion remains lazy.
 Unified Diff hunks show old/new line numbers, with wrapping enabled by default
 and an optional horizontal code scroller. Full text and Markdown reuse the same
-pinned snapshot reads and preview limits. Refreshing an unchanged snapshot keeps
-file nodes, folding, mode and reading position; refreshing the file snapshot
-discards those states. Inline cards keep their compact layout. No reading state
+pinned snapshot reads and preview limits. Changed files follow fresh workspace
+observations by default; users choose Pin snapshot for review when they need a
+stable code view, and Follow changes to resume updates. Renewing an unchanged
+snapshot keeps file nodes, folding, mode and reading position; replacing the
+snapshot discards those states and reopens still-present expanded files. Sealed
+Final Changes and their content previews remain independent. Inline cards keep
+their compact layout. No reading state
 is persisted across closing and reopening a panel.
 
 Each file navigator can filter all loaded paths with a literal, case-insensitive

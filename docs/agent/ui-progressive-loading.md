@@ -101,10 +101,25 @@ snapshot cannot be read through the unassociated live-workspace route.
 A live inspection snapshot represents **net HEAD-to-working-tree changes**. It
 is distinct from both sealed task changes and the status summary's separate
 staging information. Staged-only intermediate content reverted in the working
-tree may therefore have no net file diff. The UI labels this snapshot as pinned;
-Refresh file snapshot explicitly observes newer edits. A newer live status must
-not silently rewrite a diff the user is reading. Old page/diff completions cannot
-retarget a refreshed view. Git capture uses the existing private index and safe
+tree may therefore have no net file diff. Changed files follow workspace changes
+by default. After a fresh workspace observation, an already inspected file view
+acquires one bounded snapshot page, sharing an in-flight acquisition. Only a
+different exact snapshot replaces the view; expanded files then read their new
+diffs. Reused metadata polls and unchanged code retain the mounted reading state.
+Fresh observations can detect changes even when status and line counts match.
+No file inspection is started merely by presenting the card.
+
+Pin snapshot for review explicitly retains the current immutable code view (or
+captures one if none exists). Activity and current workspace status still update,
+but clean status or later edits cannot retarget these reviewed files. Follow
+changes resumes renewal; Refresh file snapshot explicitly replaces a pinned view.
+Snapshot retention remains process-local, quota-bounded and subject to expiry;
+unavailable snapshots never fall back to live files. Sealed Final Changes stay
+separate and retain their exact Session/code identity regardless of this local
+view choice. Neither the tool nor the UI infers an implementation/review role
+from a Window identity. Old page/diff completions cannot retarget a refreshed
+view, and workspace renewal preserves pending/cached final content previews.
+Git capture uses the existing private index and safe
 configuration path; it does not change the real index, refs or working tree,
 though unreachable observation blobs/trees can be written to Git's object store.
 

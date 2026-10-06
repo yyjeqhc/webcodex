@@ -359,6 +359,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         <button id="workspaceLess" class="refresh" type="button" hidden>Show fewer files</button>
         <button id="workspaceCollapse" class="refresh" type="button">Collapse all files</button>
         <button id="workspaceReload" class="refresh" type="button" hidden>Refresh file snapshot</button>
+        <button id="workspacePin" class="refresh" type="button" aria-pressed="false">Pin snapshot for review</button>
+        <p id="workspaceTracking" class="secondary">Following changes. Pin a snapshot to keep reviewed files stable.</p>
         <div id="workspaceMeta" class="secondary"></div>
       </section>
       <section id="resultChecks" class="section" tabindex="-1" aria-labelledby="checksHeading">
@@ -2274,6 +2276,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
         clearDisplay(); preparePosition(); void loadDiff(); return;
       }
       if (activeContentPreview && activeContentPreview !== clearDisplay) activeContentPreview();
+      clearDisplay.final = final;
       activeContentPreview = clearDisplay;
       preparePosition();
       pdfHost.hidden = value !== "pdf";
@@ -2420,12 +2423,18 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   let workspaceEpoch = 0;
   let workspacePagePromise = null;
   let workspaceVisible = INITIAL_FROZEN_FILES;
+  let workspaceFollowing = true;
+  let workspaceFollowPromise = null;
   const workspaceNodes = new Map();
 
   function resetWorkspaceFiles() {
     workspaceEpoch++; workspaceSnapshot = null; workspacePagePromise = null;
-    if (activeContentPreview) { activeContentPreview(); activeContentPreview = null; }
-    contentCache.clear(); contentPending.clear();
+    workspaceFollowPromise = null;
+    if (activeContentPreview && !activeContentPreview.final) { activeContentPreview(); activeContentPreview = null; }
+    // Workspace replacement must not cancel or evict sealed-result previews.
+    for (const cache of [contentCache, contentPending]) {
+      for (const key of cache.keys()) if (JSON.parse(key)[1] === null) cache.delete(key);
+    }
     workspaceVisible = INITIAL_FROZEN_FILES;
     workspaceNodes.clear(); workspaceDiffReads.reset();
     renderQuoteControls();
@@ -2465,6 +2474,41 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     workspacePagePromise = pendingPage;
     try { return await pendingPage; }
     finally { if (workspacePagePromise === pendingPage) workspacePagePromise = null; }
+  }
+
+  function renderWorkspaceTracking() {
+    const button = el("workspacePin");
+    button.disabled = tornDown || !hostInitialized || !identity;
+    button.setAttribute("aria-pressed", String(!workspaceFollowing));
+    button.textContent = workspaceFollowing ? "Pin snapshot for review" : "Follow changes";
+    el("workspaceTracking").textContent = workspaceFollowing
+      ? "Following changes. Viewed files update as the workspace changes; pin a snapshot for stable review."
+      : "Pinned for review. Activity and workspace status still update; these files keep the same code snapshot.";
+  }
+
+  async function refreshFollowingWorkspace() {
+    if (tornDown || !hostInitialized || !workspaceFollowing || !workspaceSnapshot || workspaceFollowPromise) return;
+    const epoch = workspaceEpoch;
+    const pending = readFilesPage(null, null, 0);
+    const current = () => !tornDown && workspaceFollowing && epoch === workspaceEpoch && workspaceFollowPromise === pending;
+    workspaceFollowPromise = pending;
+    try {
+      const page = await pending;
+      if (!current()) return;
+      if (page.snapshot_id === workspaceSnapshot?.snapshot_id) { renderWorkspaceRows(); return; }
+      const root = el("workspaceFiles"), shown = workspaceVisible;
+      const expanded = new Set(Array.from(root.children).filter(row => row.children[0].getAttribute("aria-expanded") === "true").map(row => row.filePath));
+      const anchor = readingAnchor();
+      resetWorkspaceFiles(); workspaceSnapshot = page; workspaceVisible = shown;
+      root.replaceChildren(); renderWorkspaceRows();
+      el("workspaceReload").hidden = false;
+      for (const row of root.children) if (expanded.has(row.filePath) && !row.hidden) row.expand?.();
+      restoreReadingAnchor(anchor);
+    } catch (_) {
+      if (current()) el("workspaceMeta").textContent = "New changes unavailable · retaining the previous file snapshot. Refresh files to retry.";
+    } finally {
+      if (workspaceFollowPromise === pending) workspaceFollowPromise = null;
+    }
   }
 
   async function loadWorkspaceDiff(file, state, pre, visible) {
@@ -2524,7 +2568,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     el("workspaceMore").hidden = (query || end >= source.files.length) && (workspaceSnapshot ? source.next_offset === null : !source.truncated);
     el("workspaceLess").hidden = !!query || end <= INITIAL_FROZEN_FILES;
     el("workspaceMeta").textContent = `Showing ${visibleFileRows(false).length} of ${source.files_total} files${workspaceSnapshot
-      ? " · pinned net working-tree snapshot; refresh files for newer edits" : ""}${source.source_truncated ? " · limited by source bounds or path policy" : ""}`;
+      ? workspaceFollowing ? " · following net working-tree changes" : " · pinned net working-tree snapshot; refresh files for newer edits" : ""}${source.source_truncated ? " · limited by source bounds or path policy" : ""}`;
   }
 
   async function showMoreFiles(final) {
@@ -2552,13 +2596,18 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   }
 
   let renderedWorkspace = null;
-  function renderWorkspace(workspace) {
+  function renderWorkspace(workspace, observation) {
     el("branch").textContent = workspace.branch || "Window activity";
+    renderWorkspaceTracking();
     const fingerprint = JSON.stringify(workspace);
+    const changed = renderedWorkspace !== null && fingerprint !== renderedWorkspace;
+    // Equal status/numstat does not prove equal file contents. Fresh observations
+    // renew only an already inspected view; ordinary reused polls stay lightweight.
+    if (workspace.git_available && (changed || observation?.reused === false)) void refreshFollowingWorkspace();
     if (fingerprint === renderedWorkspace) return;
     renderedWorkspace = fingerprint;
     const root = el("workspaceFiles");
-    if (!workspaceSnapshot || workspace.clean || !workspace.git_available) {
+    if ((!workspaceSnapshot && !workspacePagePromise) || (workspaceFollowing && !workspace.git_available)) {
       resetWorkspaceFiles(); workspaceSeed = workspace; root.replaceChildren();
       el("workspaceReload").hidden = true;
     }
@@ -2776,7 +2825,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
       el("activityAge").textContent = "";
     }
     renderMessages(state.collaboration);
-    renderWorkspace(state.workspace);
+    renderWorkspace(state.workspace, state.workspace_observation);
     renderQuoteControls();
     el("workspaceChangesSection").hidden = !state.workspace.git_available && !!state.task_outputs;
     el("resultChecks").hidden = threadSession === undefined && (!state.session_id || (!state.validation && !state.review));
@@ -2902,6 +2951,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   }
 
   function updateRefreshControl() {
+    renderWorkspaceTracking();
     const button = el("refresh");
     button.disabled = tornDown || !hostInitialized || !identity || refreshInFlight;
     button.textContent = refreshInFlight ? "Refreshing…" : "Refresh";
@@ -3160,8 +3210,26 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   el("workspaceLess").onclick = () => { workspaceVisible = INITIAL_FROZEN_FILES; renderWorkspaceRows(); };
   el("workspaceCollapse").onclick = () => { for (const row of el("workspaceFiles").children) row.collapse?.(); };
   el("workspaceReload").onclick = () => {
+    if (tornDown) return;
     resetWorkspaceFiles(); renderedWorkspace = null;
     if (lastRenderedState) renderWorkspace(lastRenderedState.workspace);
+  };
+  el("workspacePin").onclick = async () => {
+    if (tornDown || !hostInitialized || !identity) return;
+    workspaceFollowing = !workspaceFollowing;
+    // Do not let a capture started under Follow overwrite a later explicit pin.
+    workspaceFollowPromise = null;
+    renderWorkspaceTracking();
+    if (workspaceFollowing) { void refreshFollowingWorkspace(); return; }
+    const epoch = workspaceEpoch;
+    try {
+      await ensureWorkspaceSnapshot();
+      if (!tornDown && !workspaceFollowing && epoch === workspaceEpoch) {
+        renderWorkspaceRows(); el("workspaceReload").hidden = false;
+      }
+    } catch (_) {
+      if (!tornDown && !workspaceFollowing && epoch === workspaceEpoch) el("workspaceMeta").textContent = "Snapshot unavailable · refresh files to retry.";
+    }
   };
   el("composer").onsubmit = event => { event.preventDefault(); void sendMessageFromCard(); };
   el("messageInput").oninput = () => {

@@ -101,3 +101,136 @@ for (const final of [false, true]) test(`${final ? "final" : "workspace"} diff t
   row.collapse(); row.expand(); await flush();
   assert.equal(view.calls(name).length, count);
 });
+
+const files = view => view.calls("get_work_result_state").filter(call => call.params.arguments.files);
+const inventory = (id = snapshot_id) => toolResult({ work_result_files: {
+  project, session_id: null, snapshot_id: id, offset: 0, next_offset: null,
+  files_total: 1, source_truncated: false,
+  files: [{ path: "src/a.rs", kind: "modified", additions: 1, deletions: 1, binary: false }],
+} });
+async function observeWorkspace(view, { reused = false, workspace = baseState.workspace } = {}) {
+  view.nodes.refresh.onclick(); await flush();
+  const request = view.calls("get_work_result_state").filter(call => !call.params.arguments.files).at(-1);
+  await view.reply(request, toolResult({ work_result: {
+    ...baseState, workspace, workspace_observation: { reused, max_reuse_ms: 30000, semantics: "bounded_snapshot_not_filesystem_freshness" },
+  } }));
+}
+const newerSnapshot = `wc_changes_snapshot_${"3".repeat(32)}`;
+
+test("following fresh observations updates equal-count diffs and fences the older pending read", async () => {
+  const { view, row, request, response, pre } = await pendingDiff(false);
+  assert.equal(view.nodes.workspacePin.disabled, false);
+  assert.equal(view.nodes.workspacePin.getAttribute("aria-pressed"), "false");
+  await observeWorkspace(view, { reused: true });
+  assert.equal(files(view).length, 2, "reused metadata cannot trigger another Git snapshot");
+  await observeWorkspace(view);
+  const capture = files(view).at(-1);
+  assert.equal(capture.params.arguments.files.snapshot_id, undefined);
+  assert.equal(view.nodes.workspaceFiles.children[0], row, "keep the previous view until capture succeeds");
+  await view.reply(capture, inventory(newerSnapshot));
+  const replacement = view.nodes.workspaceFiles.children[0];
+  assert.notEqual(replacement, row);
+  assert.equal(replacement.children[0].getAttribute("aria-expanded"), "true");
+  const diff = files(view).at(-1);
+  assert.equal(diff.params.arguments.files.snapshot_id, newerSnapshot);
+  await view.reply(request, response);
+  assert.equal(pre.children.length, 0, "old completion cannot populate the new view");
+  await view.reply(diff, toolResult({ work_result_files: {
+    project, session_id: null, snapshot_id: newerSnapshot, path: "src/a.rs", diff: "+current\n", truncated: false,
+  } }));
+  assert.equal(replacement.children[1].children[1].children[0].textContent, "+current");
+});
+
+test("an unchanged exact snapshot preserves pending diffs and repeated observations share one capture", async () => {
+  const { view, row, request, response, pre } = await pendingDiff(false);
+  await observeWorkspace(view);
+  const capture = files(view).at(-1), count = files(view).length;
+  await observeWorkspace(view);
+  assert.equal(files(view).length, count, "only one renewal may run at once");
+  await view.reply(capture, inventory());
+  assert.equal(view.nodes.workspaceFiles.children[0], row);
+  await view.reply(request, response);
+  assert.equal(pre.children[0].textContent, "+late");
+  assert.equal(files(view).length, count, "the same code state needs no new diff read");
+});
+
+test("explicit pin retains its code and pending diff even when current workspace becomes clean", async () => {
+  const { view, row, request, response, pre } = await pendingDiff(false);
+  await view.nodes.workspacePin.onclick();
+  const count = files(view).length;
+  await observeWorkspace(view, { workspace: { ...baseState.workspace, clean: true, files: [], files_total: 0, additions: 0, deletions: 0 } });
+  assert.equal(view.nodes.workspacePin.getAttribute("aria-pressed"), "true");
+  assert.equal(view.nodes.workspaceFiles.children[0], row);
+  assert.equal(view.nodes.workspaceStatus.textContent, "No uncommitted changes");
+  assert.match(view.nodes.workspaceTracking.textContent, /Pinned for review/);
+  assert.equal(files(view).length, count);
+  await view.reply(request, response);
+  assert.equal(pre.children[0].textContent, "+late");
+});
+
+for (const failed of [false, true]) test(`pinning while a follow capture is pending fences its late ${failed ? "failure" : "success"} and permits later following`, async () => {
+  const { view, row } = await pendingDiff(false);
+  await observeWorkspace(view);
+  const oldCapture = files(view).at(-1);
+  await view.nodes.workspacePin.onclick();
+  await view.nodes.workspacePin.onclick(); await flush();
+  const newCapture = files(view).at(-1);
+  assert.notEqual(newCapture, oldCapture);
+  await view.reply(oldCapture, failed ? { structuredContent: { success: false, output: {} } } : inventory(newerSnapshot));
+  assert.equal(view.nodes.workspaceFiles.children[0], row);
+  assert.doesNotMatch(view.nodes.workspaceMeta.textContent, /unavailable/);
+  await view.reply(newCapture, inventory(newerSnapshot));
+  assert.notEqual(view.nodes.workspaceFiles.children[0], row);
+});
+
+test("failed renewal retains the previous view and teardown ignores late captures", async () => {
+  const { view, row } = await pendingDiff(false);
+  await observeWorkspace(view);
+  await view.reply(files(view).at(-1), { structuredContent: { success: false, output: {} } });
+  assert.equal(view.nodes.workspaceFiles.children[0], row);
+  assert.match(view.nodes.workspaceMeta.textContent, /retaining the previous file snapshot/);
+  await observeWorkspace(view);
+  await view.reply(files(view).at(-1), inventory());
+  assert.doesNotMatch(view.nodes.workspaceMeta.textContent, /unavailable/, "successful unchanged capture clears a previous failure");
+  await observeWorkspace(view);
+  const capture = files(view).at(-1), count = files(view).length;
+  await view.teardown(); await view.reply(capture, inventory(newerSnapshot));
+  await view.nodes.workspacePin.onclick();
+  assert.equal(files(view).length, count);
+});
+
+test("pin before the first diff captures code without being retargeted by a newer status", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: baseState }); await view.initialize();
+  assert.equal(files(view).length, 0, "early presentation stays lightweight");
+  const pin = view.nodes.workspacePin.onclick(); await flush();
+  const capture = files(view)[0];
+  await observeWorkspace(view, { workspace: { ...baseState.workspace, files_total: 2 } });
+  await view.reply(capture, inventory()); await pin;
+  assert.equal(view.nodes.workspaceFiles.children.length, 1);
+  assert.equal(view.nodes.workspaceFiles.children[0].filePath, "src/a.rs");
+  assert.equal(view.nodes.workspacePin.getAttribute("aria-pressed"), "true");
+  assert.equal(files(view).length, 1);
+});
+
+test("following working changes leaves a sealed Full text preview and its pending read intact", async () => {
+  const { view, row: finalRow } = await pendingDiff(true);
+  const controls = finalRow.children[1].children[2];
+  controls.children.find(button => button.textContent === "Full text").onclick(); await flush();
+  const textRead = files(view).at(-1), args = textRead.params.arguments;
+  assert.equal(args.session_id, session_id);
+  const liveRow = view.nodes.workspaceFiles.children[0];
+  liveRow.expand(); await flush();
+  await view.reply(files(view).at(-1), inventory());
+  await observeWorkspace(view);
+  await view.reply(files(view).at(-1), inventory(newerSnapshot));
+  assert.equal(view.nodes.frozenFiles.children[0], finalRow);
+  await view.reply(textRead, toolResult({ work_result_files: {
+    project, session_id, snapshot_id: args.files.snapshot_id, path: "src/a.rs", view: "content",
+    byte_offset: 0, bytes_total: 6, content: "sealed", complete: true, limited: false, next_byte_offset: null,
+  } }));
+  assert.equal(finalRow.children[1].children[3].children[1].textContent, "sealed");
+  const reads = files(view).filter(call => call.params.arguments.files.view === "content").length;
+  controls.children.find(button => button.textContent === "Full text").onclick(); await flush();
+  assert.equal(files(view).filter(call => call.params.arguments.files.view === "content").length, reads);
+});

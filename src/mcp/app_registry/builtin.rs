@@ -9,7 +9,7 @@ pub(in crate::mcp) const MCP_COMPUTER_UI_RESOURCE_URI: &str = "ui://webcodex/com
 pub(in crate::mcp) const MCP_COMPUTER_UI_RESOURCE_TTL_MS: u64 = 0;
 pub(in crate::mcp) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/changes/v4";
 pub(in crate::mcp) const MCP_WORKBENCH_UI_RESOURCE_URI: &str = "ui://webcodex/workbench/v2";
-pub(in crate::mcp) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v28";
+pub(in crate::mcp) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v29";
 pub(in crate::mcp) const MCP_SPREADSHEET_UI_RESOURCE_URI: &str = "ui://webcodex/spreadsheet/v1";
 pub(in crate::mcp) const MCP_GOAL_PLAN_UI_RESOURCE_URI: &str = "ui://webcodex/goal-plan/v7";
 pub(in crate::mcp) const MCP_AGENT_CONTINUATION_UI_RESOURCE_URI: &str =
@@ -74,7 +74,7 @@ pub(super) static BUILTIN_MCP_APPS: &[BundledMcpApp] = &[
     BundledMcpApp {
         listing: Some(AppListing {
             name: "WebCodex",
-            description: "Persistent user-facing card for one client Window and Project. Present it once near the start of substantial work; the mounted App refreshes the same bounded Window ActionAudit activity used by WebUI, including observe/diagnostic actions, without creating extra cards. Workflow Session collaboration and immutable final changes are optional linked evidence that may appear later; live internal checks/review state is not the primary UI.",
+            description: "Persistent user-facing card for one client Window and Project. Present it once near the start of substantial work; the mounted App refreshes the same bounded Window ActionAudit activity used by WebUI, including observe/diagnostic actions, without creating extra cards. Changed files follow fresh workspace observations; users can pin their code snapshot for stable review. Workflow Session collaboration and immutable final changes are optional linked evidence that may appear later; live internal checks/review state is not the primary UI.",
         }),
         tools: &["present_work_result"],
         ..BundledMcpApp::template(MCP_WORK_RESULT_UI_RESOURCE_URI, MCP_WORK_RESULT_APP_HTML)

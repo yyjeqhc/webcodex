@@ -4,8 +4,10 @@ use std::path::PathBuf;
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
-        let root =
-            std::env::temp_dir().join(format!("webcodex-tunnel-profiles-{}", uuid::Uuid::new_v4()));
+        let temp = std::env::temp_dir();
+        #[cfg(unix)]
+        let temp = fs::canonicalize(temp).unwrap();
+        let root = temp.join(format!("webcodex-tunnel-profiles-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("secrets")).unwrap();
         Self(root)
     }

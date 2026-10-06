@@ -159,7 +159,7 @@ async fn write_project_file_rejects_project_mismatched_read_revision_before_disp
         .get_runner_view(&resolved.config.client_id)
         .await
         .unwrap();
-    let revision = runtime.read_revisions.observe(
+    let revision = runtime.reads.observe_revision(
         super::super::read_revisions::ReadRevisionTarget {
             project_id: "agent:other:project".to_string(),
             path: "existing.txt".to_string(),

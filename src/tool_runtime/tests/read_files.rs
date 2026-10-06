@@ -33,11 +33,11 @@ async fn read_files_snapshot_service_does_not_retain_unrelated_runtime_state() {
         .unwrap()
         .to_string();
     let reader = super::super::files::ProjectFileReader::new(registry.clone());
-    let cache = runtime.read_cache.clone();
-    let unrelated_state = std::sync::Arc::downgrade(&runtime.read_revisions);
+    let reads = runtime.reads.clone();
+    let unrelated_state = std::sync::Arc::downgrade(&runtime.presentation);
     let read = super::super::read_cache::READ_SCOPE.scope(
         super::super::read_cache::ReadScope::new(None, Some("service-session")),
-        cache.read_project_snapshot(
+        reads.read_project_snapshot(
             &reader,
             &resolved,
             &runner_project_id,
@@ -52,8 +52,8 @@ async fn read_files_snapshot_service_does_not_retain_unrelated_runtime_state() {
     tokio::pin!(read);
     assert!(futures_util::poll!(&mut read).is_pending());
     let request = next_read_request(&runtime, client).await;
-    // Physical work needs the cache and Runner, not Session/validation/read-
-    // revision state or any other capability owned by the composing runtime.
+    // The read domain retains its own cache/revisions and the narrow Runner
+    // reader, not presentation, Session or validation state from ToolRuntime.
     drop(runtime);
     assert!(unrelated_state.upgrade().is_none());
     registry

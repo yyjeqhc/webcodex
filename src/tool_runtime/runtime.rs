@@ -126,10 +126,9 @@ pub struct ToolRuntime {
     pub(crate) session_shells: SessionShellRegistry,
     pub(crate) semantic_navigation_probe_timeout: Duration,
     pub(crate) repository_overview_probe_timeout: Duration,
-    /// Process-local model-facing handles for exact full-file read snapshots.
-    /// Clones share the registry; a Server runtime restart creates a new epoch.
-    pub(crate) read_revisions: Arc<super::read_revisions::ReadRevisionRegistry>,
-    pub(crate) read_cache: Arc<super::read_cache::ReadCache>,
+    /// Retained read state is shared by clones; restart creates a new revision
+    /// epoch and empty cache. View-local read deadlines deliberately stay below.
+    pub(crate) reads: Arc<super::workspace_reads::WorkspaceReadRuntime>,
     /// Non-authoritative presentation retention. Clones share this service;
     /// independent runtimes and restarts start with empty caches.
     pub(super) presentation: Arc<super::presentation::PresentationRuntime>,
@@ -243,8 +242,7 @@ impl ToolRuntime {
                 super::semantic_navigation::DEFAULT_SEMANTIC_NAVIGATION_PROBE_TIMEOUT,
             repository_overview_probe_timeout:
                 super::coding_task::DEFAULT_REPOSITORY_OVERVIEW_PROBE_TIMEOUT,
-            read_revisions: Arc::new(super::read_revisions::ReadRevisionRegistry::new()),
-            read_cache: Arc::new(super::read_cache::ReadCache::default()),
+            reads: Arc::default(),
             presentation: Arc::default(),
             validation_sources: Arc::new(
                 super::validation_source::ValidationSourceRegistry::default(),

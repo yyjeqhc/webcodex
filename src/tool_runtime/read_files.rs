@@ -1,7 +1,7 @@
 //! Bounded multi-file reads built from the canonical single-file read core.
 
 use super::project_resolution::ResolvedProject;
-use super::read_revisions::ReadRevisionTarget;
+use super::workspace_reads::WorkspaceReadRuntime;
 use super::{ReadFilesItem, SuggestedToolCall, ToolCall, ToolResult, ToolRuntime};
 use crate::json_measurement::serialized_json_len;
 use futures_util::{stream, StreamExt};
@@ -160,21 +160,6 @@ impl ReadModelProjection {
             }
             Self::None => {}
         }
-    }
-}
-
-fn read_revision_target(
-    resolved: &ResolvedProject,
-    path: &str,
-    runner_instance_id: &str,
-) -> ReadRevisionTarget {
-    ReadRevisionTarget {
-        project_id: resolved.resolved_id.clone(),
-        path: path.to_string(),
-        client_id: resolved.config.client_id.clone(),
-        runner_instance_id: runner_instance_id.to_string(),
-        project_root: resolved.config.path.clone(),
-        root_fingerprint: resolved.root_fingerprint.clone(),
     }
 }
 
@@ -827,7 +812,7 @@ impl ToolRuntime {
         deadline: Instant,
     ) -> ToolResult {
         let reader = super::files::ProjectFileReader::new(self.runner_registry.clone());
-        self.read_cache
+        self.reads
             .read_project_snapshot(
                 &reader,
                 resolved,
@@ -900,11 +885,11 @@ impl ToolRuntime {
             });
         }
 
-        let target = read_revision_target(resolved, path, runner_instance_id);
+        let target = WorkspaceReadRuntime::revision_target(resolved, path, runner_instance_id);
         let read_revision = output
             .get("sha256")
             .and_then(Value::as_str)
-            .map(|sha256| self.read_revisions.observe(target, sha256.to_string()));
+            .map(|sha256| self.reads.observe_revision(target, sha256.to_string()));
         let member_result = super::files::slice_read_file_result(
             &output,
             member.start_line,
@@ -1029,9 +1014,10 @@ impl ToolRuntime {
                 async move {
                     let PlannedRead { item, members } = planned;
                     let path = item.path;
-                    let target = read_revision_target(resolved, &path, &runner_instance_id);
+                    let target =
+                        WorkspaceReadRuntime::revision_target(resolved, &path, &runner_instance_id);
                     let expected_sha256 = match item.expected_read_revision {
-                        Some(revision) => match self.read_revisions.resolve(revision, &target) {
+                        Some(revision) => match self.reads.resolve_revision(revision, &target) {
                             Ok(sha256) => Some(sha256),
                             Err(_) => {
                                 let result = stale_read_revision_failure(&path);
@@ -1136,7 +1122,7 @@ impl ToolRuntime {
                         output
                             .get("sha256")
                             .and_then(Value::as_str)
-                            .map(|sha256| self.read_revisions.observe(target, sha256.to_string()))
+                            .map(|sha256| self.reads.observe_revision(target, sha256.to_string()))
                     } else {
                         None
                     };

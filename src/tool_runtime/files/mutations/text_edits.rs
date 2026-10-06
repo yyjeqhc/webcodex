@@ -1,11 +1,10 @@
 //! Transactional file-change validation, revision binding, and dispatch.
 
 use super::lifecycle::{await_structured_edit_response, structured_edit_not_started_result};
-use super::preflight::{
-    read_files_recovery, read_revision_rejection, read_revision_target, validate_edit_file_path,
-};
+use super::preflight::{read_files_recovery, read_revision_rejection, validate_edit_file_path};
 use super::text_edits_result::apply_text_edits_agent_stdout_result;
 use super::*;
+use crate::tool_runtime::workspace_reads::WorkspaceReadRuntime;
 
 fn apply_text_edit_local_guard_capability_rejection(reason: impl AsRef<str>) -> ToolResult {
     let reason = reason.as_ref();
@@ -523,9 +522,12 @@ impl ToolRuntime {
         for (change_index, change) in changes.iter().enumerate() {
             let expected_sha256 = match change.expected_read_revision {
                 Some(revision) => {
-                    let target =
-                        read_revision_target(&resolved, &change.path, &runner.runner_instance_id);
-                    match self.read_revisions.resolve(revision, &target) {
+                    let target = WorkspaceReadRuntime::revision_target(
+                        &resolved,
+                        &change.path,
+                        &runner.runner_instance_id,
+                    );
+                    match self.reads.resolve_revision(revision, &target) {
                         Ok(sha256) => Some(sha256),
                         Err(error) => {
                             let mut result =
@@ -734,9 +736,12 @@ impl ToolRuntime {
                         .expect("validated rename destination"),
                     _ => change.path.as_str(),
                 };
-                let target =
-                    read_revision_target(&resolved, final_path, &runner.runner_instance_id);
-                Some(self.read_revisions.observe(
+                let target = WorkspaceReadRuntime::revision_target(
+                    &resolved,
+                    final_path,
+                    &runner.runner_instance_id,
+                );
+                Some(self.reads.observe_revision(
                     target,
                     new_sha256.expect("validated final apply_text_edits sha256"),
                 ))

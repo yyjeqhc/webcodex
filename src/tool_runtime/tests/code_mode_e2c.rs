@@ -393,8 +393,7 @@ async fn e2c_expired_read_revision_rejected_before_write_dispatch_blocks_ignored
         .unwrap();
     // Simulate a lost Control read-registry epoch using a real old token. A new
     // read alone does NOT expire old snapshots: Runner hash guards still apply.
-    runtime.read_revisions =
-        Arc::new(crate::tool_runtime::read_revisions::ReadRevisionRegistry::new());
+    runtime.reads = Arc::default();
     fs::write(root.path().join("src/example.rs"), "newer\n").unwrap();
     let source = EDIT.replace("expected_read_revision:revision", &format!("expected_read_revision:{revision}"))
         + "try {await tools.project_validate({action:'check'});} catch(e) {text({edit_success:edit.success,state:edit.output.execution_state,blocked:String(e)});}";

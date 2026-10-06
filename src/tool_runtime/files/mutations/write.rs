@@ -4,10 +4,9 @@ use super::lifecycle::{
     await_structured_edit_response, structured_edit_not_started_result,
     structured_edit_outcome_unknown_result,
 };
-use super::preflight::{
-    read_files_recovery, read_revision_rejection, read_revision_target, validate_edit_file_path,
-};
+use super::preflight::{read_files_recovery, read_revision_rejection, validate_edit_file_path};
 use super::*;
+use crate::tool_runtime::workspace_reads::WorkspaceReadRuntime;
 
 fn sanitize_write_project_file_model_recovery(
     mut result: ToolResult,
@@ -193,8 +192,12 @@ impl ToolRuntime {
         };
         let expected_sha256 = match expected_read_revision {
             Some(revision) => {
-                let target = read_revision_target(&resolved, &path, &runner.runner_instance_id);
-                match self.read_revisions.resolve(revision, &target) {
+                let target = WorkspaceReadRuntime::revision_target(
+                    &resolved,
+                    &path,
+                    &runner.runner_instance_id,
+                );
+                match self.reads.resolve_revision(revision, &target) {
                     Ok(sha256) => Some(sha256),
                     Err(error) => {
                         return read_revision_rejection(&resolved.resolved_id, &path, error)

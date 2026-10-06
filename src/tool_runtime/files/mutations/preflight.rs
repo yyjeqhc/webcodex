@@ -53,21 +53,6 @@ pub(super) fn read_revision_rejection(
     .with_recovery(crate::tool_runtime::RecoveryKind::FixInput)
 }
 
-pub(super) fn read_revision_target(
-    resolved: &ResolvedProject,
-    path: &str,
-    runner_instance_id: &str,
-) -> ReadRevisionTarget {
-    ReadRevisionTarget {
-        project_id: resolved.resolved_id.clone(),
-        path: path.to_string(),
-        client_id: resolved.config.client_id.clone(),
-        runner_instance_id: runner_instance_id.to_string(),
-        project_root: resolved.config.path.clone(),
-        root_fingerprint: resolved.root_fingerprint.clone(),
-    }
-}
-
 /// Maximum decoded size for whole-payload/model-facing artifact operations.
 /// These paths aggregate content or return it as base64/JSON, so they remain at
 /// 10 MiB even though data-plane upload/export paths admit larger files.

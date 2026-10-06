@@ -28,6 +28,25 @@ pub(crate) struct ReadRevisionTarget {
     pub root_fingerprint: Option<String>,
 }
 
+impl ReadRevisionTarget {
+    /// Single construction path for read caches, revision observations and edit
+    /// preflight. These six fields are the exact Project/path/owner/root fence.
+    pub(super) fn from_resolved(
+        resolved: &super::ResolvedProject,
+        path: &str,
+        runner_instance_id: &str,
+    ) -> Self {
+        Self {
+            project_id: resolved.resolved_id.clone(),
+            path: path.to_string(),
+            client_id: resolved.config.client_id.clone(),
+            runner_instance_id: runner_instance_id.to_string(),
+            project_root: resolved.config.path.clone(),
+            root_fingerprint: resolved.root_fingerprint.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq)]
 struct ReadRevisionSnapshot {
     target: ReadRevisionTarget,

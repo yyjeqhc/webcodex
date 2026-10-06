@@ -202,15 +202,12 @@ pub(in crate::tool_runtime::tests) async fn seed_read_revision(
         .get_runner_view(&resolved.config.client_id)
         .await
         .expect("owning Runner");
-    runtime.read_revisions.observe(
-        super::super::super::read_revisions::ReadRevisionTarget {
-            project_id: resolved.resolved_id,
-            path: path.to_string(),
-            client_id: resolved.config.client_id,
-            runner_instance_id: runner.runner_instance_id,
-            project_root: resolved.config.path,
-            root_fingerprint: resolved.root_fingerprint,
-        },
+    runtime.reads.observe_revision(
+        super::super::super::workspace_reads::WorkspaceReadRuntime::revision_target(
+            &resolved,
+            path,
+            &runner.runner_instance_id,
+        ),
         sha256.to_string(),
     )
 }

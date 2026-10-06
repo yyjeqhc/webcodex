@@ -248,14 +248,7 @@ impl ReadCache {
         let key = ReadKey {
             snapshot: SnapshotKey {
                 scope,
-                target: ReadRevisionTarget {
-                    project_id: resolved.resolved_id.clone(),
-                    path: path.clone(),
-                    client_id: resolved.config.client_id.clone(),
-                    runner_instance_id: runner_instance_id.to_owned(),
-                    project_root: resolved.config.path.clone(),
-                    root_fingerprint: resolved.root_fingerprint.clone(),
-                },
+                target: ReadRevisionTarget::from_resolved(resolved, &path, runner_instance_id),
             },
             start: range.start_line,
             limit: range.limit,

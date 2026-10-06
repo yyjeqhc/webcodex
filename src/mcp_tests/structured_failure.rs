@@ -648,7 +648,7 @@ async fn seed_failure_edit_revision(runtime: &ToolRuntime) -> u64 {
         .get_runner_view(&resolved.config.client_id)
         .await
         .expect("failure Runner");
-    runtime.read_revisions.observe(
+    runtime.reads.observe_revision(
         crate::tool_runtime::ReadRevisionTarget {
             project_id: resolved.resolved_id,
             path: "probe.txt".to_string(),

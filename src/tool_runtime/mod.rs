@@ -92,6 +92,7 @@ mod projects;
 mod read_cache;
 mod read_files;
 mod read_revisions;
+mod workspace_reads;
 #[cfg(test)]
 pub(crate) use read_revisions::ReadRevisionTarget;
 mod optional_enrichment;

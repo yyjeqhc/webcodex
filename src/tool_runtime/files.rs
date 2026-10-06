@@ -15,7 +15,7 @@ use super::helpers::{
     validate_project_relative_path,
 };
 use super::project_resolution::ResolvedProject;
-use super::read_revisions::{ReadRevisionLookupError, ReadRevisionTarget, MAX_JSON_SAFE_INTEGER};
+use super::read_revisions::{ReadRevisionLookupError, MAX_JSON_SAFE_INTEGER};
 use super::shell::{dispatch_uncertainty_lifecycle, runner_command_lifecycle};
 use super::tool_inputs::{
     ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind,

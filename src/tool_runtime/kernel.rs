@@ -554,11 +554,7 @@ impl ToolRuntime {
                 correlation: Default::default(),
             };
         }
-        if matches!(
-            request.tool_name.as_str(),
-            "read_pdf_chunk" | "read_app_artifact_chunk"
-        ) && !capabilities.artifact_app
-        {
+        if request.tool_name == "read_app_artifact_chunk" && !capabilities.artifact_app {
             return ToolCallOutcome {
                 success: false,
                 result: None,

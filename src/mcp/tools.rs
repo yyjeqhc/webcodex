@@ -749,7 +749,6 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
             tool_name,
             Some(
                 "sync_goal_plan"
-                    | "read_pdf_chunk"
                     | "get_work_result_state"
                     | "read_changed_file_diff"
                     | "search_mentions"
@@ -2019,7 +2018,6 @@ fn mcp_invocation_envelope_supported_fields(tool: &str) -> Vec<&'static str> {
         tool,
         "sync_goal_plan"
             | "get_work_result_state"
-            | "read_pdf_chunk"
             | "read_app_artifact_chunk"
             | "read_changed_file_diff"
             | "search_mentions"
@@ -2820,12 +2818,8 @@ pub(super) async fn handle_call(
             None => json!({"project": binding.project}),
         };
     }
-    let app_only_artifact_read = server_mcp_apps_enabled
-        && stateless_2026
-        && matches!(
-            params.name.as_str(),
-            "read_pdf_chunk" | "read_app_artifact_chunk"
-        );
+    let app_only_artifact_read =
+        server_mcp_apps_enabled && stateless_2026 && params.name == "read_app_artifact_chunk";
     let app_only_work_result_state =
         work_result_app_admitted && params.name == "get_work_result_state";
     let app_only_work_result_activity_detail =

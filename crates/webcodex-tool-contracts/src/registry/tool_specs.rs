@@ -108,10 +108,6 @@ pub fn artifact_app_tool_specs() -> Vec<ToolSpec> {
             "read_app_artifact_chunk",
             "App-only generic read of one 512 KiB Host-facing segment from an exact authorized Project/path/size/SHA-256 artifact version selected by a presentation App. Rechecks Project ownership, path policy and Runner capability on every read; binary bytes use private MCP metadata only. A changed version fails closed. The segment remains below the observed ChatGPT App delivery cliff while reusing the canonical internal artifact transport, and stays format-neutral so PDF, DOCX, PPTX and other renderers can share it.",
         ),
-        tool_spec(
-            "read_pdf_chunk",
-            "Legacy PDF App-only read of one 128 KiB segment from the exact authorized Project/path/size/SHA-256 selected by present_pdf. Retained for compatibility; new dedicated readers should use read_app_artifact_chunk.",
-        ),
     ]
 }
 

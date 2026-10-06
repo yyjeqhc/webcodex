@@ -576,10 +576,10 @@ The dedicated reader uses the App-only `read_app_artifact_chunk` bridge for byte
 That bridge is format-neutral and reuses the canonical artifact export chunk
 transport: each `tools/call` reauthorizes Project access, validates the pinned
 path/size/SHA-256 identity, and returns at most 512 KiB per Host-facing call through private MCP metadata.
-A changed source fails closed. For a 9 MiB document this is roughly eighteen Host
-round trips rather than the legacy 128 KiB `read_pdf_chunk` loop's roughly seventy.
-The legacy PDF-specific reader remains available for compatibility but is no longer
-the dedicated reader's primary path. The PDF remains bounded at 20 MiB and PDF.js
+A changed source fails closed. A 9 MiB document needs eighteen Host round trips.
+The unreleased PDF-specific `read_pdf_chunk` adapter has been removed; older
+mounted readers must be reopened from the current descriptor. The PDF remains
+bounded at 20 MiB and PDF.js
 rechecks the assembled digest/header before rendering. Use `present_work_result`
 for substantial coding progress, and `present_pdf` when the user asks to view a
 PDF. See [PDF document viewer](architecture/pdf-document-viewer.md).

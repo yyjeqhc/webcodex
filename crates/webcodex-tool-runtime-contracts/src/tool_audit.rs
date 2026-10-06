@@ -2127,7 +2127,6 @@ impl ToolCallAuditProjection for ToolCall {
                 serde_json::json!({"project": project, "path": path})
             }
             Self::PresentPdf { project, path }
-            | Self::ReadPdfChunk { project, path, .. }
             | Self::ReadAppArtifactChunk { project, path, .. } => {
                 serde_json::json!({
                     "project": project,

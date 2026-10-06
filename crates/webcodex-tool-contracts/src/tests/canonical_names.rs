@@ -214,6 +214,25 @@ fn retired_v04_tool_names_are_not_admitted_or_reused_for_other_operations() {
 }
 
 #[test]
+fn retired_pdf_chunk_is_absent_from_catalog_and_parser() {
+    let retired = "read_pdf_chunk";
+    assert!(lookup_tool_definition(retired).is_none());
+    assert!(!known_tool_names().any(|name| name == retired));
+    let arguments = serde_json::json!({
+        "project": "agent:pdf:demo",
+        "path": "report.pdf",
+        "sha256": "a".repeat(64),
+        "bytes": 10,
+        "byte_offset": 0,
+    });
+    let error = ToolCall::from_tool_name(retired, arguments.clone())
+        .expect_err("unreleased PDF read adapter must remain retired");
+    assert!(error.contains("unknown tool"), "{error}");
+    let current = ToolCall::from_tool_name("read_app_artifact_chunk", arguments).unwrap();
+    assert_eq!(current.tool_name(), "read_app_artifact_chunk");
+}
+
+#[test]
 fn frequent_names_stay_readable_without_old_aliases_or_scope_changes() {
     for (name, old) in [
         ("import_host_files", "import_conversation_files_to_project"),

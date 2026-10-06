@@ -1548,12 +1548,11 @@ pub(super) fn adapt_tool_result(
 ) -> McpResourceToolResultAdaptation {
     if matches!(
         tool_name,
-        "get_work_result_state" | "read_pdf_chunk" | "read_app_artifact_chunk"
+        "get_work_result_state" | "read_app_artifact_chunk"
     ) {
         // Binary previews belong only to the admitted App. Move bytes before
         // producing structured/text compatibility copies; neither contains binary data.
         let output_key = match tool_name {
-            "read_pdf_chunk" => "pdf_chunk",
             "read_app_artifact_chunk" => "artifact_chunk",
             _ => "work_result_files",
         };

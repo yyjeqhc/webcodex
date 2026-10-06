@@ -97,7 +97,7 @@ async fn pdf_document_opens_without_git_or_session_and_pins_header_to_metadata()
 }
 
 #[tokio::test]
-async fn pdf_document_chunk_fences_version_and_hides_changed_version_proof() {
+async fn app_artifact_chunk_completes_small_document_and_hides_changed_version_proof() {
     let (runtime, auth, project) = setup("pdf-read").await;
     let data = b"%PDF-1.7\nunchanged document";
     for stale in [false, true] {
@@ -107,7 +107,7 @@ async fn pdf_document_chunk_fences_version_and_hides_changed_version_proof() {
             let project = project.clone();
             async move {
                 runtime
-                    .read_pdf_chunk(
+                    .read_app_artifact_chunk(
                         project,
                         "report.pdf".into(),
                         format!("{:x}", Sha256::digest(data)),
@@ -135,7 +135,7 @@ async fn pdf_document_chunk_fences_version_and_hides_changed_version_proof() {
             assert!(!result.output.to_string().contains("private-current-digest"));
         } else {
             assert!(result.success, "{:?}", result.error);
-            assert_eq!(result.output["pdf_chunk"]["complete"], true);
+            assert_eq!(result.output["artifact_chunk"]["complete"], true);
         }
     }
 }
@@ -145,7 +145,7 @@ async fn pdf_document_rejects_foreign_principal_and_unsafe_paths_before_read() {
     let (runtime, _, project) = setup("pdf-owner").await;
     let foreign = managed_oauth_auth_context("bob", None);
     let result = runtime
-        .read_pdf_chunk(
+        .read_app_artifact_chunk(
             project.clone(),
             "report.pdf".into(),
             "a".repeat(64),
@@ -226,11 +226,11 @@ async fn app_artifact_chunk_uses_bounded_host_segment_and_preserves_version_fenc
     }
 }
 #[tokio::test]
-async fn pdf_document_read_requires_app_capability_even_with_read_scope() {
+async fn app_artifact_chunk_requires_app_capability_even_with_read_scope() {
     let runtime = test_runtime();
     let auth = managed_oauth_auth_context("alice", None);
     let result = runtime.call_tool_with_context(crate::tool_runtime::kernel::ToolCallRequest {
-        tool_name: "read_pdf_chunk".into(), arguments: json!({"project":"agent:pdf:demo", "path":"report.pdf", "sha256":"a".repeat(64), "bytes":10, "byte_offset":0})
+        tool_name: "read_app_artifact_chunk".into(), arguments: json!({"project":"agent:pdf:demo", "path":"report.pdf", "sha256":"a".repeat(64), "bytes":10, "byte_offset":0})
     }, crate::tool_runtime::kernel::ToolCallContext { transport: crate::tool_runtime::kernel::ToolTransport::Api,
         session_id:None, auth:Some(&auth), window:None, record_oauth_scope_denials:false, host_file_import_trust: crate::tool_runtime::kernel::HostFileImportTrust::Untrusted }).await;
     assert!(!result.success);
@@ -240,12 +240,12 @@ async fn pdf_document_read_requires_app_capability_even_with_read_scope() {
 }
 
 #[tokio::test]
-async fn pdf_document_app_capability_never_replaces_project_read_scope() {
+async fn app_artifact_chunk_capability_never_replaces_project_read_scope() {
     use crate::tool_runtime::kernel::*;
     let (runtime, mut auth, project) = setup("pdf-scope").await;
     auth.scopes = vec![crate::auth::SCOPE_RUNTIME_READ.to_string()];
     let outcome = runtime.call_tool_with_invocation_metadata(ToolCallRequest {
-        tool_name: "read_pdf_chunk".into(), arguments: json!({"project":project,"path":"report.pdf","sha256":"a".repeat(64),"bytes":10,"byte_offset":0}),
+        tool_name: "read_app_artifact_chunk".into(), arguments: json!({"project":project,"path":"report.pdf","sha256":"a".repeat(64),"bytes":10,"byte_offset":0}),
     }, ToolCallContext { transport:ToolTransport::Mcp, session_id:None, auth:Some(&auth), window:None,
         record_oauth_scope_denials:false, host_file_import_trust:HostFileImportTrust::Untrusted },
         ToolInvocationMetadata::default(), ToolProtocolCapabilities {artifact_app:true,..Default::default()}).await;

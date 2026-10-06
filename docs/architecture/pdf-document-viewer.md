@@ -32,9 +32,10 @@ wrapper aliases observed for both structured results and private metadata
 (`result`, `result.result`, `result.toolResult`, and
 `result.tool_result`) before validating the chunk identity and continuation.
 
-The older PDF-specific `read_pdf_chunk` remains temporarily available for
-already-mounted compatibility clients, but new dedicated readers use only the
-generic artifact transport.
+The PDF-specific `read_pdf_chunk` existed only on unreleased v0.5 revisions and
+has been removed. The dedicated reader uses only the generic artifact transport.
+An older mounted App must be reopened from the current descriptor; there is no
+old-tool alias. See the [compatibility policy](../compatibility-policy.md).
 
 ## Reader behavior
 

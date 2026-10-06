@@ -5,7 +5,6 @@ use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 
 pub(crate) const MAX_PDF_BYTES: usize = 20 * 1024 * 1024;
-pub(crate) const PDF_CHUNK_BYTES: usize = 128 * 1024;
 pub(crate) const APP_ARTIFACT_CHUNK_BYTES: usize = 512 * 1024;
 
 fn pdf_error(kind: &str, message: &str) -> ToolResult {
@@ -268,51 +267,6 @@ impl ToolRuntime {
         }
         let next = byte_offset + length;
         ToolResult::ok(json!({"artifact_chunk": {
-            "project": resolved.resolved_id, "path": path, "sha256": sha256,
-            "bytes_total": bytes, "byte_offset": byte_offset,
-            "next_byte_offset": if next == bytes { None } else { Some(next) },
-            "complete": next == bytes, "content_base64": output["content_base64"],
-        }}))
-    }
-
-    pub(crate) async fn read_pdf_chunk(
-        &self,
-        project: String,
-        path: String,
-        sha256: String,
-        bytes: usize,
-        byte_offset: usize,
-        auth: Option<&AuthContext>,
-    ) -> ToolResult {
-        if let Err(error) = validate_pdf_target(&path, bytes, &sha256, byte_offset) {
-            return error;
-        }
-        let length = PDF_CHUNK_BYTES.min(bytes - byte_offset);
-        // Reauthorize each read: a digest never replaces ownership or path policy.
-        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
-            Ok(resolved) => resolved,
-            Err(error) => return error.into_tool_result(),
-        };
-        let output = match self
-            .read_project_artifact_export_chunk_internal(
-                &resolved.resolved_id,
-                &path,
-                bytes,
-                &sha256,
-                byte_offset,
-                length,
-                auth,
-            )
-            .await
-        {
-            Ok(output) => output,
-            Err(_) => return pdf_error("pdf_read_unavailable", "PDF could not be read"),
-        };
-        if let Err(error) = validate_pdf_segment(&output, &path, bytes, byte_offset, length) {
-            return error;
-        }
-        let next = byte_offset + length;
-        ToolResult::ok(json!({"pdf_chunk": {
             "project": resolved.resolved_id, "path": path, "sha256": sha256,
             "bytes_total": bytes, "byte_offset": byte_offset,
             "next_byte_offset": if next == bytes { None } else { Some(next) },

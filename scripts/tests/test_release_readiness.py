@@ -530,7 +530,8 @@ class WorkflowContractTests(unittest.TestCase):
         windows_aggregate = job_block("test-windows", "test-native")
         native_aggregate = workflow[workflow.index("  test-native:\n"):]
         for required_aggregate in (aggregate, macos_aggregate, windows_aggregate, native_aggregate):
-            self.assertIn("if: always()", required_aggregate)
+            self.assertIn("if: ${{ !cancelled() }}", required_aggregate)
+            self.assertNotIn("if: always()", required_aggregate)
         self.assertIn("NEEDS_DOCKER: ${{ needs.changes.outputs.needs_docker }}", native_aggregate)
         self.assertIn("expected_docker=skipped", native_aggregate)
         self.assertNotIn("FULL_NATIVE_REQUESTED", workflow)

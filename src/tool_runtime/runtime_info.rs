@@ -2,15 +2,16 @@
 
 mod resources;
 
+use super::runtime_compatibility::{
+    build_alignment_name, compatibility_facts_against, SourceAlignmentStatus,
+};
 use super::tool_definition::model_visible_tool_definitions;
 use super::{permissions, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_protocol::{RunnerView, ShellJobInfo};
 use serde_json::{json, Value};
 use webcodex_core::coding_agent::safe_provider_inventory;
-use webcodex_core::desktop_runtime_contract::{
-    build_alignment, runner_protocol_compatibility, ProtocolCompatibility, DESKTOP_RUNTIME_CONTRACT,
-};
+use webcodex_core::desktop_runtime_contract::{ProtocolCompatibility, DESKTOP_RUNTIME_CONTRACT};
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 const LIST_RUNNERS_MAX_CLIENT_IDS: usize = 8;
@@ -528,7 +529,10 @@ impl ToolRuntime {
         output.insert("projects".to_string(), projects);
         // Runtime Console, admin HTTP, and CLI ops consume this established key.
         output.insert("runners".to_string(), runners);
-        output.insert("connection_layers".to_string(), connection_layers);
+        output.insert(
+            "connection_layers".to_string(),
+            connection_layers.into_value(),
+        );
         output.insert(
             "protocol_compatibility".to_string(),
             version_compatibility["protocol_compatibility"].clone(),
@@ -1045,14 +1049,35 @@ fn connection_states(
     }
 }
 
-fn connection_layers(
+#[derive(Debug, Clone)]
+pub(super) struct RuntimeConnectionLayers {
+    pub(super) runner_process: Value,
+    pub(super) server_transport: Value,
+    pub(super) server_registration: Value,
+    pub(super) project_registry: Value,
+    pub(super) last_successful_tool_call: Value,
+}
+
+impl RuntimeConnectionLayers {
+    fn into_value(self) -> Value {
+        json!({
+            "runner_process": self.runner_process,
+            "server_transport": self.server_transport,
+            "server_registration": self.server_registration,
+            "project_registry": self.project_registry,
+            "last_successful_tool_call": self.last_successful_tool_call,
+        })
+    }
+}
+
+pub(super) fn connection_layers(
     clients: &[RunnerView],
     registered_projects: usize,
     online_projects: usize,
     observations: &super::observations::RuntimeObservations,
     auth: Option<&AuthContext>,
     now: i64,
-) -> Value {
+) -> RuntimeConnectionLayers {
     let states = connection_states(clients, registered_projects, online_projects);
     // Freshest client drives single-value observations; counts stay explicit.
     let freshest = clients.iter().max_by_key(|c| c.last_seen);
@@ -1272,13 +1297,13 @@ fn connection_layers(
         ),
     };
 
-    json!({
-        "runner_process": runner_process,
-        "server_transport": server_transport,
-        "server_registration": server_registration,
-        "project_registry": project_registry,
-        "last_successful_tool_call": last_successful_tool_call,
-    })
+    RuntimeConnectionLayers {
+        runner_process,
+        server_transport,
+        server_registration,
+        project_registry,
+        last_successful_tool_call,
+    }
 }
 
 /// Mixed-version diagnostics: a connected runner is not automatically
@@ -1292,7 +1317,7 @@ impl ToolRuntime {
     }
 }
 
-fn version_compatibility(clients: &[RunnerView]) -> Value {
+pub(super) fn version_compatibility(clients: &[RunnerView]) -> Value {
     let build = crate::build_info::runtime_build_info();
     version_compatibility_against(
         clients,
@@ -1312,130 +1337,89 @@ fn version_compatibility_against(
     server_build: Value,
     detailed: bool,
 ) -> Value {
-    let mut overall = if clients.is_empty() {
-        "no_runners"
-    } else {
-        "compatible"
-    };
-    let mut source_overall = if clients.is_empty() {
-        "no_runners"
-    } else {
-        "aligned"
-    };
-    let mut alignment_rank = if clients.is_empty() { 1 } else { 0 };
-    let mut mixed_builds_present = false;
-    let runners: Vec<Value> = clients
-        .iter()
-        .filter_map(|client| {
-            let build_version = client.build.as_ref().and_then(|b| b.version.clone());
-            let build_git_commit = client.build.as_ref().and_then(|b| b.git_commit.clone());
-            let build_git_dirty = client.build.as_ref().and_then(|b| b.git_dirty);
-            let version_matches_server = build_version
-                .as_deref()
-                .map(|version| version == server_version);
-            let git_commit_matches_server = match (build_git_commit.as_deref(), server_git_commit) {
-                (Some(runner), Some(server)) => Some(runner == server),
-                _ => None,
-            };
-            let source_matches_server = match (
-                git_commit_matches_server,
-                build_git_dirty,
-                server_git_dirty,
-            ) {
-                (Some(false), _, _) => Some(false),
-                (Some(true), Some(false), Some(false)) => Some(true),
-                (Some(true), Some(true), _) | (Some(true), _, Some(true)) => Some(false),
-                _ => None,
-            };
-            let (source_status, source_reason_code, source_action) = match source_matches_server {
-                Some(true) => ("aligned", None, None),
-                Some(false) if git_commit_matches_server == Some(false) => (
-                    "different",
-                    Some("runner_git_commit_differs_from_server"),
-                    Some("diagnostic only: normal compatible builds may differ in source revision"),
-                ),
-                Some(false) => (
-                    "different",
-                    Some("dirty_build_prevents_exact_source_alignment"),
-                    Some("diagnostic only: modified builds remain the operator responsibility"),
-                ),
-                None => (
-                    "unknown",
-                    Some("build_source_identity_incomplete"),
-                    Some("use builds that report git commit and dirty state for exact source alignment"),
-                ),
-            };
-            match (source_status, source_overall) {
-                ("different", _) => source_overall = "different",
-                ("unknown", "aligned") => source_overall = "unknown",
-                _ => {}
-            }
+    let facts =
+        compatibility_facts_against(clients, server_version, server_git_commit, server_git_dirty);
+    let runners: Vec<Value> = if detailed {
+        clients
+            .iter()
+            .zip(&facts.runners)
+            .map(|(client, facts)| {
+                let (source_reason_code, source_action) = match facts.source_alignment {
+                    SourceAlignmentStatus::Aligned => (None, None),
+                    SourceAlignmentStatus::Different
+                        if facts.git_commit_matches_server == Some(false) => (
+                        Some("runner_git_commit_differs_from_server"),
+                        Some(
+                            "diagnostic only: normal compatible builds may differ in source revision",
+                        ),
+                    ),
+                    SourceAlignmentStatus::Different => (
+                        Some("dirty_build_prevents_exact_source_alignment"),
+                        Some(
+                            "diagnostic only: modified builds remain the operator responsibility",
+                        ),
+                    ),
+                    SourceAlignmentStatus::Unknown | SourceAlignmentStatus::NoRunners => (
+                        Some("build_source_identity_incomplete"),
+                        Some(
+                            "use builds that report git commit and dirty state for exact source alignment",
+                        ),
+                    ),
+                };
+                let (reason_code, action) = match facts.protocol_compatibility {
+                    ProtocolCompatibility::Compatible => (None, None),
+                    ProtocolCompatibility::Incompatible => (
+                        Some("runner_protocol_generation_unsupported"),
+                        Some("use a Runner with a supported protocol generation"),
+                    ),
+                    ProtocolCompatibility::Unknown => (
+                        Some("runner_protocol_generation_unavailable"),
+                        Some("reconnect with an explicit supported protocol generation"),
+                    ),
+                };
+                let build_built_at = client.build.as_ref().and_then(|b| b.built_at.clone());
+                let build_target = client.build.as_ref().and_then(|b| b.target.clone());
+                let build_architecture = client
+                    .build
+                    .as_ref()
+                    .and_then(|b| b.architecture.clone());
 
-            let protocol = runner_protocol_compatibility(client.runner_protocol_generation.get());
-            let (status, reason_code, action) = match protocol {
-                ProtocolCompatibility::Compatible => ("compatible", None, None),
-                ProtocolCompatibility::Incompatible => ("incompatible", Some("runner_protocol_generation_unsupported"), Some("use a Runner with a supported protocol generation")),
-                ProtocolCompatibility::Unknown => ("unknown", Some("runner_protocol_generation_unavailable"), Some("reconnect with an explicit supported protocol generation")),
-            };
-            if status == "incompatible" || (status == "unknown" && overall == "compatible") {
-                overall = status;
-            }
-            let alignment = build_alignment(
-                build_version.as_deref(), build_git_commit.as_deref(), build_git_dirty,
-                Some(server_version), server_git_commit, server_git_dirty,
-            );
-            use webcodex_core::desktop_runtime_contract::BuildAlignment;
-            alignment_rank = alignment_rank.max(match alignment {
-                BuildAlignment::Exact => 0,
-                BuildAlignment::Unknown => 1,
-                BuildAlignment::DifferentCommit => 2,
-                BuildAlignment::DifferentVersion => 3,
-                BuildAlignment::Dirty => 4,
-            });
-            mixed_builds_present |= version_matches_server == Some(false) || source_matches_server == Some(false);
-            if !detailed { return None; }
-            let build_built_at = client.build.as_ref().and_then(|b| b.built_at.clone());
-            let build_target = client.build.as_ref().and_then(|b| b.target.clone());
-            let build_architecture = client
-                .build
-                .as_ref()
-                .and_then(|b| b.architecture.clone());
-
-            Some(json!({
-                "client_id": client.client_id,
-                "runner_protocol_generation": client.runner_protocol_generation.get(),
-                "build_version": build_version,
-                "build_git_commit": build_git_commit,
-                "build_git_dirty": build_git_dirty,
-                "build_built_at": build_built_at,
-                "build_target": build_target,
-                "build_architecture": build_architecture,
-                "version_matches_server": version_matches_server,
-                "protocol_compatibility": protocol,
-                "build_alignment": alignment,
-                "status": status,
-                "reason_code": reason_code,
-                "action": action,
-                "source_alignment": {
-                    "status": source_status,
-                    "git_commit_matches_server": git_commit_matches_server,
-                    "source_matches_server": source_matches_server,
-                    "reason_code": source_reason_code,
-                    "action": source_action,
-                },
-            }))
-        })
-        .collect();
-    let build_alignment = [
-        "exact",
-        "unknown",
-        "different_commit",
-        "different_version",
-        "dirty",
-    ][alignment_rank];
+                json!({
+                    "client_id": facts.client_id,
+                    "runner_protocol_generation": client.runner_protocol_generation.get(),
+                    "build_version": facts.build_version,
+                    "build_git_commit": facts.build_git_commit,
+                    "build_git_dirty": facts.build_git_dirty,
+                    "build_built_at": build_built_at,
+                    "build_target": build_target,
+                    "build_architecture": build_architecture,
+                    "version_matches_server": facts.version_matches_server,
+                    "protocol_compatibility": facts.protocol_compatibility,
+                    "build_alignment": facts.build_alignment,
+                    "status": facts.status_name(),
+                    "reason_code": reason_code,
+                    "action": action,
+                    "source_alignment": {
+                        "status": facts.source_alignment.as_str(),
+                        "git_commit_matches_server": facts.git_commit_matches_server,
+                        "source_matches_server": facts.source_matches_server,
+                        "reason_code": source_reason_code,
+                        "action": source_action,
+                    },
+                })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let overall = facts.status.status_name();
+    let protocol_compatibility = facts.status.protocol_name();
+    let build_alignment = build_alignment_name(facts.build_alignment);
+    let source_overall = facts.source_alignment.as_str();
+    let mixed_builds_present = facts.mixed_builds_present;
     if !detailed {
         return json!({
-            "protocol_compatibility": if overall == "no_runners" { "unknown" } else { overall },
+            "protocol_compatibility": protocol_compatibility,
             "build_alignment": build_alignment,
             "source_alignment": {"status": source_overall},
             "mixed_builds_present": mixed_builds_present
@@ -1443,7 +1427,7 @@ fn version_compatibility_against(
     }
     json!({
         "status": overall,
-        "protocol_compatibility": if overall == "no_runners" { "unknown" } else { overall },
+        "protocol_compatibility": protocol_compatibility,
         "build_alignment": build_alignment,
         "source_alignment": {
             "status": source_overall,

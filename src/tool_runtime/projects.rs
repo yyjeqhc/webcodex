@@ -188,6 +188,7 @@ fn existing_project_path_result(client_id: &str, project: &RunnerProjectSummary)
 }
 
 impl ToolRuntime {
+    #[cfg(test)]
     pub(crate) async fn list_projects(&self, auth: Option<&AuthContext>) -> ToolResult {
         self.list_projects_with_options(auth, ListProjectsOptions::default())
             .await
@@ -1027,7 +1028,9 @@ fn project_source(project: &RunnerProjectSummary) -> &'static str {
     }
 }
 
-fn project_git_available(project: &crate::runner_protocol::RunnerProjectSummary) -> Option<bool> {
+pub(super) fn project_git_available(
+    project: &crate::runner_protocol::RunnerProjectSummary,
+) -> Option<bool> {
     if project.git_branch.is_some() || project.git_head.is_some() || project.git_dirty.is_some() {
         Some(true)
     } else {
@@ -1076,7 +1079,7 @@ fn smoke_project_capabilities(
 ///   configured; `"not_configured"` if no profile resolves at all; and
 ///   `"unknown"` if the Runner did not report a shell-profiles summary so the
 ///   configured set cannot be checked.
-fn resolve_project_shell_profile(
+pub(super) fn resolve_project_shell_profile(
     project_shell_profile: Option<&str>,
     summary: Option<&crate::runner_protocol::ShellProfilesSummary>,
 ) -> (Option<String>, &'static str) {

@@ -40,6 +40,11 @@ impl PermissionEvaluator {
         }
     }
 
+    /// Construction-time resolved authority mode for internal observability.
+    pub(crate) fn mode_name(&self) -> &str {
+        self.config.mode_name()
+    }
+
     /// Evaluator fixed to a known mode (unit tests / explicit wiring).
     #[cfg(test)]
     pub(crate) fn with_mode(mode: AuthorityMode) -> Self {

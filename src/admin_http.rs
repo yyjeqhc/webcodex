@@ -4,11 +4,13 @@ use crate::admin_project_lifecycle::{
 };
 use crate::auth::{AuthContext, AuthKind};
 use crate::tool_runtime::activity::ActivityVisibility;
-use crate::tool_runtime::{ToolResult, ToolRuntime};
+use crate::tool_runtime::admin_dashboard::{
+    AdminDashboardDevice, AdminDashboardOverview, AdminDashboardProject, AdminDashboardSnapshot,
+};
+use crate::tool_runtime::ToolRuntime;
 use crate::Database;
 use salvo::prelude::*;
-use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use serde_json::{json, Value};
 use std::sync::Arc;
 
 const ACTIVITY_LIMIT: usize = 50;
@@ -32,10 +34,6 @@ fn error(res: &mut Response, status: StatusCode, message: &str) {
     res.render(Json(json!({"error": {"message": message}})));
 }
 
-fn text(value: Option<&Value>) -> Option<String> {
-    value.and_then(Value::as_str).map(str::to_string)
-}
-
 fn section_status(success: bool, safe_error: &str) -> Value {
     if success {
         json!({"status": "ok", "error": null})
@@ -44,209 +42,134 @@ fn section_status(success: bool, safe_error: &str) -> Value {
     }
 }
 
-fn compatibility_by_client(status: &Value) -> HashMap<String, String> {
-    status
-        .pointer("/version_compatibility/runners")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|runner| {
-            Some((
-                runner.get("client_id")?.as_str()?.to_string(),
-                runner
-                    .get("protocol_compatibility")
-                    .or_else(|| runner.get("status"))
-                    .and_then(Value::as_str)
-                    .filter(|value| matches!(*value, "compatible" | "incompatible" | "unknown"))
-                    .unwrap_or("unknown")
-                    .to_string(),
-            ))
-        })
-        .collect()
+fn device_row(device: AdminDashboardDevice) -> Value {
+    let client_id = if device.client_id.is_empty() {
+        Value::Null
+    } else {
+        json!(device.client_id)
+    };
+    json!({
+        "display_name": device.display_name,
+        "client_id": client_id,
+        "status": device.status,
+        "transport": device.transport,
+        "hostname": device.hostname,
+        "last_seen": device.last_seen,
+        "capabilities": device.capabilities,
+        "project_count": device.project_count,
+        "active_jobs": device.active_jobs,
+        "runner_protocol_generation": device.runner_protocol_generation,
+        "compatibility": device.compatibility,
+        "protocol_compatibility": device.protocol_compatibility,
+        "build_alignment": device.build_alignment,
+    })
 }
 
-fn enabled_capabilities(value: Option<&Value>) -> Vec<String> {
-    let mut names = value
-        .and_then(Value::as_object)
-        .into_iter()
-        .flatten()
-        .filter_map(|(name, enabled)| {
-            enabled
-                .as_bool()
-                .filter(|enabled| *enabled)
-                .map(|_| name.clone())
-        })
-        .collect::<Vec<_>>();
-    names.sort();
-    names
+fn project_row(project: AdminDashboardProject, bootstrap: bool) -> Value {
+    let client_id = if project.client_id.is_empty() {
+        Value::Null
+    } else {
+        json!(project.client_id)
+    };
+    let path = if bootstrap {
+        json!(project.path)
+    } else {
+        json!("hidden for non-bootstrap admin")
+    };
+    json!({
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "client_id": client_id,
+        "path": path,
+        "readiness": if project.connected {"online"} else {"offline"},
+        "git_available": project.git_available,
+        "allow_patch": project.allow_patch,
+        "enabled": project.enabled,
+        "lifecycle_status": if project.enabled {"enabled"} else {"disabled"},
+        "revision": project.revision,
+        "active_jobs": project.active_jobs,
+        "actions": {
+            "enable": !project.enabled,
+            "disable": project.enabled,
+            "unregister": project.active_jobs == 0
+        },
+        "shell_profile_status": project.shell_profile_status,
+        "compatibility": project.compatibility,
+        "protocol_compatibility": project.protocol_compatibility,
+        "build_alignment": project.build_alignment,
+        "console_hint": "Use /runtime with that project's credential; credentials never belong in URLs.",
+    })
+}
+
+fn overview_row(overview: AdminDashboardOverview) -> Value {
+    json!({
+        "version": overview.version,
+        "build_commit": overview.build_commit,
+        "authority_mode": overview.authority_mode,
+        "runners_total": overview.runners_total,
+        "runners_online": overview.runners_online,
+        "projects_total": overview.projects_total,
+        "projects_online": overview.projects_online,
+        "active_jobs": overview.active_jobs,
+        "version_compatibility": overview.version_compatibility,
+        "protocol_compatibility": overview.protocol_compatibility,
+        "build_alignment": overview.build_alignment,
+        "desktop_runtime_contract": overview.desktop_runtime_contract,
+    })
 }
 
 fn project_dashboard(
-    status_result: ToolResult,
-    agents_result: ToolResult,
-    projects_result: ToolResult,
+    snapshot: AdminDashboardSnapshot,
     activity_result: Result<Vec<Value>, ()>,
     bootstrap: bool,
 ) -> Value {
-    let overview_ok = status_result.success;
-    let devices_ok = agents_result.success;
-    let projects_ok = projects_result.success;
+    let AdminDashboardSnapshot {
+        overview,
+        devices,
+        projects,
+    } = snapshot;
+    let overview_ok = overview.is_ok();
+    let devices_ok = devices.is_ok();
+    let projects_ok = projects.is_ok();
     let activity_ok = activity_result.is_ok();
-    let status = if overview_ok {
-        status_result.output
-    } else {
-        Value::Null
-    };
-    let compatibility = compatibility_by_client(&status);
-    let alignment: HashMap<String, Value> = status
-        .pointer("/version_compatibility/runners")
-        .and_then(Value::as_array)
+
+    let diagnostics = overview
+        .as_ref()
+        .map(|overview| {
+            json!({
+                "runner_process": overview.diagnostics.runner_process.clone(),
+                "server_transport": overview.diagnostics.server_transport.clone(),
+                "server_registration": overview.diagnostics.server_registration.clone(),
+                "project_registry": overview.diagnostics.project_registry.clone(),
+                "version_compatibility": overview.diagnostics.version_compatibility.clone(),
+            })
+        })
+        .unwrap_or_else(|_| json!({}));
+    let overview = overview.map(overview_row).unwrap_or(Value::Null);
+
+    let mut device_rows = devices
+        .unwrap_or_default()
         .into_iter()
-        .flatten()
-        .filter_map(|runner| {
-            Some((
-                runner.get("client_id")?.as_str()?.to_string(),
-                runner
-                    .get("build_alignment")
-                    .cloned()
-                    .unwrap_or(Value::Null),
-            ))
-        })
-        .collect();
-    let global_compat = status
-        .pointer("/version_compatibility/status")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-
-    let mut device_rows = if devices_ok {
-        agents_result
-            .output
-            .get("runners")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|agent| {
-                let client_id = agent
-                    .get("client_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                json!({
-                    "display_name": text(agent.get("display_name")),
-                    "client_id": if client_id.is_empty() { Value::Null } else { json!(client_id) },
-                    "status": text(agent.get("status")).unwrap_or_else(|| if agent.get("connected").and_then(Value::as_bool).unwrap_or(false) {"online".into()} else {"offline".into()}),
-                    "transport": text(agent.get("transport")),
-                    "hostname": text(agent.get("hostname")),
-                    "last_seen": agent.get("last_seen").cloned().unwrap_or(Value::Null),
-                    "capabilities": enabled_capabilities(agent.get("capabilities")),
-                    "project_count": agent.get("projects_count").cloned().unwrap_or_else(|| json!(0)),
-                    "active_jobs": agent.get("active_jobs").cloned().unwrap_or_else(|| json!(0)),
-                    "runner_protocol_generation": agent.get("runner_protocol_generation").cloned().unwrap_or(Value::Null),
-                    "compatibility": compatibility.get(client_id).map(String::as_str).unwrap_or("unknown"),
-                    "protocol_compatibility": compatibility.get(client_id).map(String::as_str).unwrap_or("unknown"),
-                    "build_alignment": alignment.get(client_id).cloned().unwrap_or(Value::Null),
-                })
-            })
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-    device_rows.sort_by(|a, b| {
-        a["client_id"]
+        .map(device_row)
+        .collect::<Vec<_>>();
+    device_rows.sort_by(|left, right| {
+        left["client_id"]
             .as_str()
             .unwrap_or_default()
-            .cmp(b["client_id"].as_str().unwrap_or_default())
+            .cmp(right["client_id"].as_str().unwrap_or_default())
     });
-
-    let mut project_rows = if projects_ok {
-        projects_result
-            .output
-            .get("projects")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|project| {
-                let connected = project
-                    .get("connected")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                let client_id = project
-                    .get("client_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let capabilities = project
-                    .get("capabilities")
-                    .cloned()
-                    .unwrap_or_else(|| json!({}));
-                let enabled = project.get("enabled").and_then(Value::as_bool).unwrap_or(true);
-                let active_jobs = project.get("active_jobs").and_then(Value::as_u64).unwrap_or(0);
-                json!({
-                    "id": text(project.get("id")),
-                    "name": text(project.get("name")),
-                    "description": project.get("description").cloned().unwrap_or(Value::Null),
-                    "client_id": if client_id.is_empty() { Value::Null } else { json!(client_id) },
-                    "path": if bootstrap { project.get("path").cloned().unwrap_or(Value::Null) } else { json!("hidden for non-bootstrap admin") },
-                    "readiness": if connected {"online"} else {"offline"},
-                    "git_available": capabilities.get("git_available").cloned().unwrap_or(Value::Null),
-                    "allow_patch": project.get("allow_patch").cloned().unwrap_or(Value::Null),
-                    "enabled": enabled,
-                    "lifecycle_status": if enabled {"enabled"} else {"disabled"},
-                    "revision": project.get("revision").cloned().unwrap_or(Value::Null),
-                    "active_jobs": active_jobs,
-                    "actions": {
-                        "enable": !enabled,
-                        "disable": enabled,
-                        "unregister": active_jobs == 0
-                    },
-                    "shell_profile_status": project.get("shell_profile_status").cloned().unwrap_or(Value::Null),
-                    "compatibility": compatibility.get(client_id).map(String::as_str).unwrap_or("unknown"),
-                    "protocol_compatibility": compatibility.get(client_id).map(String::as_str).unwrap_or("unknown"),
-                    "build_alignment": alignment.get(client_id).cloned().unwrap_or(Value::Null),
-                    "console_hint": "Use /runtime with that project's credential; credentials never belong in URLs.",
-                })
-            })
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-    project_rows.sort_by(|a, b| {
-        a["id"]
+    let mut project_rows = projects
+        .unwrap_or_default()
+        .into_iter()
+        .map(|project| project_row(project, bootstrap))
+        .collect::<Vec<_>>();
+    project_rows.sort_by(|left, right| {
+        left["id"]
             .as_str()
             .unwrap_or_default()
-            .cmp(b["id"].as_str().unwrap_or_default())
+            .cmp(right["id"].as_str().unwrap_or_default())
     });
-
-    let activity = activity_result.unwrap_or_default();
-    let overview = if overview_ok {
-        json!({
-            "version": status.get("version").cloned().unwrap_or(Value::Null),
-            "build_commit": status.pointer("/build/git_commit").cloned().unwrap_or(Value::Null),
-            "authority_mode": status.pointer("/authority/mode").cloned().unwrap_or(Value::Null),
-            "runners_total": status.pointer("/runners/count").cloned().unwrap_or_else(|| json!(0)),
-            "runners_online": status.pointer("/runners/online_count").cloned().unwrap_or_else(|| json!(0)),
-            "projects_total": status.pointer("/projects/runner_registered/count").cloned().unwrap_or_else(|| json!(0)),
-            "projects_online": status.pointer("/projects/runner_registered/online_count").cloned().unwrap_or_else(|| json!(0)),
-            "active_jobs": status.pointer("/jobs/active_count").cloned().unwrap_or_else(|| json!(0)),
-            "version_compatibility": global_compat,
-            "protocol_compatibility": status.get("protocol_compatibility").cloned().unwrap_or_else(|| json!("unknown")),
-            "build_alignment": status.get("build_alignment").cloned().unwrap_or(Value::Null),
-            "desktop_runtime_contract": status.get("desktop_runtime_contract").cloned().unwrap_or(Value::Null),
-        })
-    } else {
-        Value::Null
-    };
-    let diagnostics = if overview_ok {
-        json!({
-            "runner_process": status.pointer("/connection_layers/runner_process").cloned().unwrap_or(Value::Null),
-            "server_transport": status.pointer("/connection_layers/server_transport").cloned().unwrap_or(Value::Null),
-            "server_registration": status.pointer("/connection_layers/server_registration").cloned().unwrap_or(Value::Null),
-            "project_registry": status.pointer("/connection_layers/project_registry").cloned().unwrap_or(Value::Null),
-            "version_compatibility": status.get("version_compatibility").cloned().unwrap_or(Value::Null),
-        })
-    } else {
-        Value::Object(Map::new())
-    };
 
     json!({
         "section_status": {
@@ -259,7 +182,7 @@ fn project_dashboard(
         "devices": device_rows,
         "projects": project_rows,
         "diagnostics": diagnostics,
-        "activity": activity,
+        "activity": activity_result.unwrap_or_default(),
         "limits": {"activity": ACTIVITY_LIMIT}
     })
 }
@@ -438,9 +361,7 @@ async fn dashboard(req: &mut Request, depot: &mut Depot, res: &mut Response) {
         );
     };
 
-    let status = runtime.runtime_status(Some(&auth)).await;
-    let agents = runtime.list_runners(Some(&auth)).await;
-    let projects = runtime.list_projects(Some(&auth)).await;
+    let snapshot = runtime.admin_dashboard_snapshot(&auth).await;
     let activity = db
         .list_workspace_activity_for_clients(ACTIVITY_LIMIT, None, ActivityVisibility::Global, &[])
         .map(|rows| {
@@ -458,9 +379,7 @@ async fn dashboard(req: &mut Request, depot: &mut Depot, res: &mut Response) {
         .map_err(|_| ());
 
     res.render(Json(project_dashboard(
-        status,
-        agents,
-        projects,
+        snapshot,
         activity,
         auth.is_bootstrap(),
     )));
@@ -501,29 +420,120 @@ mod tests {
         (status, body)
     }
 
+    fn populated_snapshot() -> AdminDashboardSnapshot {
+        AdminDashboardSnapshot {
+            overview: Ok(AdminDashboardOverview {
+                version: "1.2.3".to_string(),
+                build_commit: Some("abcdef0".to_string()),
+                authority_mode: "trusted_agent".to_string(),
+                runners_total: 2,
+                runners_online: 1,
+                projects_total: 3,
+                projects_online: 1,
+                active_jobs: 0,
+                version_compatibility: "compatible".to_string(),
+                protocol_compatibility: "compatible".to_string(),
+                build_alignment: "different_version".to_string(),
+                desktop_runtime_contract:
+                    webcodex_core::desktop_runtime_contract::DESKTOP_RUNTIME_CONTRACT,
+                diagnostics: crate::tool_runtime::admin_dashboard::AdminDashboardDiagnostics {
+                    runner_process: json!({"status":"online"}),
+                    server_transport: json!({"status":"online"}),
+                    server_registration: json!({"status":"online"}),
+                    project_registry: json!({"status":"online"}),
+                    version_compatibility: json!({"status":"compatible"}),
+                },
+            }),
+            devices: Ok(vec![
+                AdminDashboardDevice {
+                    display_name: Some("B".to_string()),
+                    client_id: "runner-b".to_string(),
+                    status: "stale".to_string(),
+                    transport: "quic".to_string(),
+                    hostname: None,
+                    last_seen: 2,
+                    capabilities: vec!["git".to_string(), "shell".to_string()],
+                    project_count: 1,
+                    active_jobs: 0,
+                    runner_protocol_generation: 2,
+                    compatibility: "compatible".to_string(),
+                    protocol_compatibility: "compatible".to_string(),
+                    build_alignment: "different_version".to_string(),
+                },
+                AdminDashboardDevice {
+                    display_name: Some("A".to_string()),
+                    client_id: "runner-a".to_string(),
+                    status: "online".to_string(),
+                    transport: "websocket".to_string(),
+                    hostname: None,
+                    last_seen: 1,
+                    capabilities: vec!["git".to_string(), "shell".to_string()],
+                    project_count: 1,
+                    active_jobs: 0,
+                    runner_protocol_generation: 2,
+                    compatibility: "compatible".to_string(),
+                    protocol_compatibility: "compatible".to_string(),
+                    build_alignment: "exact".to_string(),
+                },
+            ]),
+            projects: Ok(vec![
+                AdminDashboardProject {
+                    id: "agent:runner-b:zeta".to_string(),
+                    name: Some("Zeta".to_string()),
+                    description: None,
+                    client_id: "runner-b".to_string(),
+                    path: "/secret/zeta".to_string(),
+                    connected: false,
+                    git_available: Some(false),
+                    allow_patch: true,
+                    enabled: true,
+                    revision: None,
+                    active_jobs: 0,
+                    shell_profile_status: "default".to_string(),
+                    compatibility: "compatible".to_string(),
+                    protocol_compatibility: "compatible".to_string(),
+                    build_alignment: "different_version".to_string(),
+                },
+                AdminDashboardProject {
+                    id: "agent:runner-a:alpha".to_string(),
+                    name: Some("Alpha".to_string()),
+                    description: None,
+                    client_id: "runner-a".to_string(),
+                    path: "/safe/alpha".to_string(),
+                    connected: true,
+                    git_available: Some(true),
+                    allow_patch: true,
+                    enabled: true,
+                    revision: None,
+                    active_jobs: 0,
+                    shell_profile_status: "default".to_string(),
+                    compatibility: "compatible".to_string(),
+                    protocol_compatibility: "compatible".to_string(),
+                    build_alignment: "exact".to_string(),
+                },
+                AdminDashboardProject {
+                    id: "agent:unknown:orphan".to_string(),
+                    name: Some("Orphan".to_string()),
+                    description: None,
+                    client_id: "unknown".to_string(),
+                    path: "/hidden/orphan".to_string(),
+                    connected: false,
+                    git_available: None,
+                    allow_patch: false,
+                    enabled: true,
+                    revision: None,
+                    active_jobs: 0,
+                    shell_profile_status: "unknown".to_string(),
+                    compatibility: "unknown".to_string(),
+                    protocol_compatibility: "unknown".to_string(),
+                    build_alignment: "unknown".to_string(),
+                },
+            ]),
+        }
+    }
+
     fn populated_projection(bootstrap: bool) -> Value {
-        let status = ToolResult::ok(json!({
-            "version": "1.2.3",
-            "version_compatibility": {
-                "status": "compatible",
-                "protocol_compatibility": "compatible",
-                "build_alignment": "different_version",
-                "runners": [
-                    {"client_id":"runner-b","status":"compatible","protocol_compatibility":"compatible","build_alignment":"different_version","runner_protocol_generation":2},
-                    {"client_id":"runner-a","status":"compatible","protocol_compatibility":"compatible","build_alignment":"exact","runner_protocol_generation":2}
-                ]
-            }
-        }));
-        let agents = ToolResult::ok(json!({"runners":[
-            {"client_id":"runner-b","display_name":"B","status":"stale","transport":"quic","runner_protocol_generation":2,"capabilities":{"shell":true,"patch":false,"git":true}},
-            {"client_id":"runner-a","display_name":"A","status":"online","transport":"websocket","runner_protocol_generation":2,"capabilities":{"shell":true,"git":true}}
-        ]}));
-        let projects = ToolResult::ok(json!({"projects":[
-            {"id":"agent:runner-b:zeta","client_id":"runner-b","name":"Zeta","path":"/secret/zeta","connected":false,"capabilities":{"git_available":false}},
-            {"id":"agent:runner-a:alpha","client_id":"runner-a","name":"Alpha","path":"/safe/alpha","connected":true,"capabilities":{"git_available":true}},
-            {"id":"agent:unknown:orphan","client_id":"unknown","name":"Orphan","path":"/hidden/orphan","connected":false}
-        ]}));
-        project_dashboard(status, agents, projects, Ok(vec![]), bootstrap)
+        project_dashboard(populated_snapshot(), Ok(vec![]), bootstrap)
     }
 
     #[tokio::test]
@@ -600,35 +610,33 @@ mod tests {
 
     #[test]
     fn data_source_failures_are_independent_and_safe() {
+        let snapshot = populated_snapshot();
         let cases = [
             project_dashboard(
-                ToolResult::err("secret /path"),
-                ToolResult::ok(json!({"runners":[]})),
-                ToolResult::ok(json!({"projects":[]})),
+                AdminDashboardSnapshot {
+                    overview: Err(()),
+                    ..snapshot.clone()
+                },
                 Ok(vec![]),
-                true,
+                false,
             ),
             project_dashboard(
-                ToolResult::ok(json!({})),
-                ToolResult::err("secret token"),
-                ToolResult::ok(json!({"projects":[]})),
+                AdminDashboardSnapshot {
+                    devices: Err(()),
+                    ..snapshot.clone()
+                },
                 Ok(vec![]),
-                true,
+                false,
             ),
             project_dashboard(
-                ToolResult::ok(json!({})),
-                ToolResult::ok(json!({"runners":[]})),
-                ToolResult::err("secret env"),
+                AdminDashboardSnapshot {
+                    projects: Err(()),
+                    ..snapshot.clone()
+                },
                 Ok(vec![]),
-                true,
+                false,
             ),
-            project_dashboard(
-                ToolResult::ok(json!({})),
-                ToolResult::ok(json!({"runners":[]})),
-                ToolResult::ok(json!({"projects":[]})),
-                Err(()),
-                true,
-            ),
+            project_dashboard(snapshot, Err(()), false),
         ];
         let sections = ["overview", "devices", "projects", "activity"];
         for (body, failed) in cases.into_iter().zip(sections) {

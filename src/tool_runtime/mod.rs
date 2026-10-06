@@ -4,6 +4,7 @@
 //! No HTTP framework types here — pure Rust input/output.
 
 pub mod activity;
+pub(crate) mod admin_dashboard;
 mod agent_task;
 mod agent_wait;
 mod artifact_transfer;
@@ -97,6 +98,7 @@ pub(crate) mod resource_references;
 mod result_projection;
 mod return_timing;
 mod runtime;
+mod runtime_compatibility;
 mod runtime_info;
 pub(crate) mod runtime_metrics;
 mod script;

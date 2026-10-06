@@ -30,6 +30,13 @@ fn input(args: &[&str]) -> Result<Input, String> {
     )
 }
 
+#[tokio::test]
+async fn update_command_dispatches_to_the_terminal_adapter() {
+    let args = ["update", "--help"].map(str::to_owned);
+    let output = run(&args).await.unwrap();
+    assert!(output.starts_with("webcodex environment update <COMMAND>"));
+}
+
 #[test]
 fn business_choices_and_resume_are_unambiguous() {
     let create = input(&["configure", "--create", "--no-project"]).unwrap();

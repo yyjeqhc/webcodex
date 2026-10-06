@@ -196,6 +196,9 @@ pub(crate) async fn run(args: &[String]) -> Result<String, String> {
 }
 
 async fn run_inner(args: &[String]) -> Result<String, String> {
+    if args.first().map(String::as_str) == Some("update") {
+        return update::run(&args[1..]).await;
+    }
     #[cfg(unix)]
     if args.first().map(String::as_str) == Some("__installer-child") {
         if args.len() != 4

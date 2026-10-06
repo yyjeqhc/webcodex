@@ -23,9 +23,11 @@ Server API 完成。
 ### 环境配置
 
 个人新安装可执行 `webcodex environment configure --create --runner --scope user`，
-再运行 `webcodex environment configure-tunnel default` 和 `webcodex environment status`。
-同机用户/Runner 凭据由内部生成，无需手动 pairing。Linux 退出登录后的持续运行取决于 linger；
-macOS LaunchAgent 与 Windows 用户计划任务需要该用户保持登录。旧服务不会被自动接管。
+再运行 `webcodex environment configure-tunnel default --host embedded` 和
+`webcodex environment status`。持久环境推荐由 Server 托管：Server 只在启动时装载 profile，
+配置过程不会安装 standalone Tunnel 服务，也不会暗中重启正在工作的 Server。同机用户/Runner
+凭据由内部生成，无需手动 pairing。Linux 退出登录后的持续运行取决于 linger；macOS
+LaunchAgent 与 Windows 用户计划任务需要该用户保持登录。旧服务不会被自动接管。
 [生命周期与兼容边界](implementation/personal-environment-lifecycle.md)。
 
 `webcodex environment` 与 Desktop 调用同一配置核心。该命名空间配置本机持久环境；原有项目级 `webcodex setup` 含义保持不变。安装包供应与原生验收状态见[统一安装指南](unified-installation.zh-CN.md)和[部署验收清单](unified-deployment-validation.md)。
@@ -40,7 +42,10 @@ macOS LaunchAgent 与 Windows 用户计划任务需要该用户保持登录。�
 | `invite` | 在环境的本机 Server 创建 Runner 短期邀请；显示的 code 属于敏感信息。 |
 | `add-project PATH` | 复用已有 Runner 身份；查看端需先完成 Runner 接入。 |
 | `status --json` / `doctor --json` | 查看已保存配置、Server 连通性、Runner/项目就绪状态和结构化诊断。 |
-| `start COMPONENT` / `stop COMPONENT` / `restart COMPONENT` | 显式控制环境所拥有的 `server`、`runner` 或 `tunnel`。 |
+| `start COMPONENT` / `stop COMPONENT` / `restart COMPONENT` | 显式控制环境所拥有的 `server`、`runner` 或 standalone `tunnel`；命名 standalone Tunnel 使用 `--profile NAME`。 |
+| `configure-tunnel [PROFILE] --host embedded\|standalone [--credentials-file PATH]` | 创建时直接选择由 Server 托管或独立服务托管。凭据只允许隐藏输入或受保护文件。 |
+| `tunnel-status [PROFILE]` | 查看精确 profile 身份、owner、就绪状态，以及是否需要显式重启 Server。 |
+| `tunnel-host PROFILE --host embedded\|standalone` | 仅在旧 owner 已干净停止、standalone 服务已卸载后，显式转移已有 profile 的 owner。 |
 | `repair-user-credential [--token-file PATH]` | 核实并替换已保存用户凭据，不配对 Runner 或改变服务状态。 |
 | `repair-credential runner` | 通过隐藏输入修复 Windows SCM 账户凭据。 |
 

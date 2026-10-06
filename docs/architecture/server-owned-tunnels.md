@@ -12,6 +12,18 @@ The Server reads its `tunnel.json` once at startup. Old records without
 loaded. An embedded record cannot also claim an installed or started standalone
 service. Duplicate profile names and duplicate Tunnel identities are rejected.
 Configuration is capped at 64 records, 16 embedded profiles and 32 KiB per profile.
+There is deliberately no dynamic profile reload: a running Server continues with
+the startup catalog until the operator explicitly restarts it.
+
+For a persistent Environment, `EnvironmentStore` is the only Tunnel profile
+catalog authority. CLI and Desktop read and mutate the same `tunnel.json` records
+and the same private per-profile bindings. The historical Desktop
+`secrets/tunnel-config.json` remains authoritative only for legacy/non-persistent
+Desktop runtimes. If that file is present after entering persistent mode, Desktop
+uses it only as a conflict fence: exact credential claims may coexist, while a
+missing or different identity/credential fails closed. It is never silently
+copied over, overwritten, or deleted, and extra CLI-created Environment profiles
+remain visible in Desktop.
 
 Each embedded profile uses the existing layout:
 
@@ -31,10 +43,31 @@ An optional `WEBCODEX_TUNNEL_PROXY` is an explicit HTTP(S) control-plane proxy,
 for example `http://127.0.0.1:7890`. Absence means direct control-plane access;
 ambient proxy variables are not used by embedded profiles. The local MCP hop and
 readiness probe always disable proxies, redirects and implicit request retries.
-Identity, key, local token and proxy form one immutable binding. Loading a missing
-field never consults inherited process environment or another profile.
+Profile ID, Tunnel ID, local token and proxy remain exact per-profile bindings.
+An API key may be replaced only by a write-only, current-revision-fenced update;
+loading a missing field never consults inherited process environment or another
+profile.
 
-For an installed user Environment, the explicit command is:
+Create a Server-owned profile directly instead of creating a standalone service
+and transferring it later:
+
+```
+webcodex environment configure-tunnel work \
+  --host embedded \
+  --credentials-file /secure/work.json
+```
+
+This writes the exact profile record and private binding with `host_mode=embedded`,
+adds the selected Environment to the owning Server configuration, and never
+installs or starts a standalone Tunnel service. The structured result reports
+`server_restart_required` and a `next_action`. A running Server is not hot-reloaded
+or restarted implicitly, so operators can configure several profiles and perform
+one explicit `webcodex environment restart server` afterward. If the Server is
+stopped or absent, configuration still succeeds and reports `start_server`.
+`--host standalone` retains the existing install/start semantics for a separate
+per-profile service.
+
+For an existing profile, ownership transfer remains a separate explicit operation:
 
 ```
 webcodex environment tunnel-host <profile> --host embedded

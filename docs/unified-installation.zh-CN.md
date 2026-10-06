@@ -88,7 +88,11 @@ webcodex environment migrate-legacy-server \
 
 ## Tunnel 配置
 
-使用 `webcodex environment configure-tunnel PROFILE --credentials-file PATH` 配置命名 Tunnel profile。受保护的 JSON 文件包含 `tunnel_id` 和 `api_key`；CLI 也支持通过隐藏终端输入提供凭据。使用 `webcodex environment tunnel-status PROFILE` 查看状态，或使用 `webcodex environment remove-tunnel PROFILE` 删除 profile。通过 `webcodex environment start tunnel --profile PROFILE`、`stop tunnel --profile PROFILE` 或 `restart tunnel --profile PROFILE` 管理指定 profile。请妥善保护凭据文件，并在使用后删除。
+持久本机 Server 推荐在创建时直接选择 Server owner：`webcodex environment configure-tunnel work --host embedded --credentials-file /secure/work.json`。受保护 JSON 只包含 `tunnel_id` 和 `api_key`，也可使用隐藏终端输入。该命令把精确 profile 与私有 local-MCP binding 写入 `EnvironmentStore`，绝不安装或启动 standalone Tunnel 服务，也不会 hot reload 或暗中重启正在工作的 Server。JSON 结果会返回 `server_restart_required` 和 `next_action`；可连续配置多个 profile，最后按提示只执行一次 `webcodex environment restart server`。Desktop 中对应 **Run with WebCodex Server (recommended)**，并显示同一个显式重启操作。
+
+只有明确需要独立 per-profile 服务时才使用 `--host standalone`；原有 `start|stop|restart tunnel --profile PROFILE` 生命周期保持不变。已有 profile 改 owner 仍必须在干净停止并卸载 standalone 服务后显式执行 `tunnel-host PROFILE --host ...`；配置流程不会自动接管 foreign 或 legacy 服务。使用 `tunnel-status PROFILE` 查看状态，使用 `remove-tunnel PROFILE` 删除 profile。
+
+持久模式下，CLI 与 Desktop 都以 `EnvironmentStore` 为唯一 profile catalog。历史 Desktop `secrets/tunnel-config.json` 只服务 legacy/non-persistent runtime；若它与持久 Environment 同时存在，只作为 fail-closed credential 冲突栅栏，不再是第二套可写 catalog。请妥善保护凭据文件，并在使用后删除。
 
 ## 服务与凭据
 

@@ -88,7 +88,11 @@ webcodex environment migrate-legacy-server \
 
 ## Tunnel profiles
 
-Configure a named Tunnel profile with `webcodex environment configure-tunnel PROFILE --credentials-file PATH`. The protected JSON file contains `tunnel_id` and `api_key`; alternatively, the CLI accepts the credentials through hidden terminal input. Inspect or remove a profile with `webcodex environment tunnel-status PROFILE` and `webcodex environment remove-tunnel PROFILE`. Control one profile with `webcodex environment start tunnel --profile PROFILE`, `stop tunnel --profile PROFILE`, or `restart tunnel --profile PROFILE`. Keep the credential file private and remove it after use.
+For a persistent local Server, create the recommended Server-owned profile directly with `webcodex environment configure-tunnel work --host embedded --credentials-file /secure/work.json`. The protected JSON contains only `tunnel_id` and `api_key`; hidden terminal input is also supported. This saves the exact profile and private local-MCP binding in `EnvironmentStore`, never installs or starts a standalone Tunnel service, and never hot-reloads or restarts a running Server. JSON output reports `server_restart_required` and `next_action`; configure several profiles first, then run one explicit `webcodex environment restart server` when requested. Desktop exposes the same choice as **Run with WebCodex Server (recommended)** and shows the same explicit restart action.
+
+Use `--host standalone` when a separate per-profile service is intentionally required. Its existing `start|stop|restart tunnel --profile PROFILE` lifecycle remains unchanged. Changing the owner of an existing profile still requires the explicit `tunnel-host PROFILE --host ...` flow after a clean stop and standalone uninstall; configuration never auto-adopts a foreign or legacy service. Inspect or remove profiles with `tunnel-status PROFILE` and `remove-tunnel PROFILE`.
+
+In persistent mode, `EnvironmentStore` is the canonical profile catalog for both CLI and Desktop. The historical Desktop `secrets/tunnel-config.json` remains only for legacy/non-persistent runtimes; if it coexists with a persistent Environment it is a fail-closed credential conflict fence, not a second writable catalog. Keep credential files private and remove them after use.
 
 ## Services and credentials
 

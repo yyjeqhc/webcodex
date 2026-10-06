@@ -129,44 +129,42 @@ Do not commit or share real API keys, WebCodex tokens, or authorization values.
 
 ## 3. Save Tunnel configuration inside Desktop (recommended)
 
-Open **Connection → Tunnel connection settings**. This editor stays visible while the regular Tunnel is running or stopped:
+Open **Connections** and add a ChatGPT connection. In a persistent local Environment:
 
-1. Enter your Tunnel ID in **Tunnel ID**.
-2. Enter an API key authorized for that Tunnel in the **Tunnel API key** password field.
-3. Click **Save configuration**. Once the source shows the local configuration file, you can start the connection. **No Desktop restart is required.**
+1. Enter a profile name and the exact **Tunnel ID**.
+2. Enter the authorized API key in the write-only password field.
+3. Choose **Run with WebCodex Server (recommended)**, or choose **Separate Tunnel service (advanced)** only when an independent service lifecycle is required.
+4. Save the profile. Saving never restarts a working Server. Add any remaining profiles, then use the single explicit **Restart Server** action if Desktop reports that the saved runtime state has not been applied.
 
-Desktop stores the API key **unencrypted** in the current user's local
-application-data directory. Keep it out of projects, Git, tickets, screenshots,
-and shared backups.
+A Server-owned profile is written to the current `EnvironmentStore` and is loaded only when the Server starts. It never creates a standalone Tunnel service. A separate-service profile retains per-profile Start, Stop and Restart controls. Existing owners cannot be changed in the ordinary editor; use the explicit ownership-transfer flow after the previous owner is cleanly stopped and uninstalled.
 
-**Success looks like:** the source is the local file and both presence checks
-pass. Next, select the actual project ChatGPT should use.
+Desktop never reads an API key back into the form. Leaving the key blank while editing retains the selected profile's saved key; a replacement is accepted only against the current profile revision. Keys remain unencrypted in an owner-private binding, so keep Environment data, support bundles, tickets, screenshots and backups appropriately protected.
 
-### Optional: saved configuration behavior and storage
+**Success looks like:** each card shows its independent name, Tunnel ID, owner, autostart and readiness. A Server-owned profile may show **Restart Server** until the one explicit restart loads all pending profiles. Saving configuration and observing a live Tunnel are separate results.
 
-After First Run, configure these fields through the existing Connection page. When a key is already saved, leaving its field blank keeps that key. Desktop never retrieves the secret into the UI; submission clears the input. A failed save retains the Tunnel ID but requires re-entering an unsaved key.
+### Profile authority and legacy storage
 
-**Priority: complete saved configuration → inherited Desktop process environment.** Desktop never combines a saved Tunnel ID with an environment API key. Saving does not modify system variables. An active Desktop-owned regular Tunnel is replaced with the saved configuration, without restarting Server or Runner. A stopped Tunnel remains stopped. OpenAI Quick Share uses the new values on its next start. Save success and connection recovery are distinct: a replacement failure retains the new configuration and asks you to retry the connection.
+For a persistent Environment, `EnvironmentStore` is canonical for both CLI and Desktop: `tunnel.json` stores the catalog and `server/tunnels/<profile>/webcodex.env` stores the private binding. A profile added by CLI appears on the Desktop Connections page, and a Desktop save is visible to CLI `tunnel-status`.
 
-The file is `secrets/tunnel-config.json` in Desktop's local application data directory:
+A historical Desktop `secrets/tunnel-config.json` is not a second writable catalog in persistent mode. It is checked only as a fail-closed reconciliation fence: exact matching credentials are accepted, but a missing or different identity/key blocks mutation rather than silently overwriting, importing or deleting either side.
+
+Legacy/non-persistent Desktop runtimes continue to use `secrets/tunnel-config.json` in the local application-data directory:
 
 - macOS: `~/Library/Application Support/dev.webcodex.desktop/secrets/tunnel-config.json`.
 - Windows: `%LOCALAPPDATA%\dev.webcodex.desktop\secrets\tunnel-config.json`.
 
-macOS/Unix writes are owner-only (`0600`); Windows inherits access permissions from the current user's local application data directory. Saves use atomic replacement without retaining old secret backups. The `secrets` directory is excluded by WebCodex’s existing sensitive-path policy. Ordinary `desktop-state.json` remains non-secret runtime state.
+macOS/Unix writes are owner-only (`0600`); Windows inherits current-user application-data permissions. Saves use guarded atomic replacement and retain no old secret backup. Invalid, unreadable, symlinked or oversized files fail closed.
 
-**Clear saved configuration and use environment** clears the saved pair and restores environment fallback; the file records `null`. Invalid or unreadable saved configuration does not fall back automatically. Repair it by saving again in the UI or explicitly clear it. Manual file edits require restarting Desktop; in-app saves do not.
+### Optional: continue using environment variables in legacy mode
 
-### Optional: continue using environment variables
-
-Without saved configuration, Desktop uses its inherited process environment:
+Without saved legacy/non-persistent configuration, Desktop can use its inherited process environment:
 
 ```text
 CONTROL_PLANE_TUNNEL_ID
 CONTROL_PLANE_API_KEY
 ```
 
-No additional `OPENAI_ADMIN_KEY` or `OPENAI_API_KEY` is needed. OpenAI Secure Tunnel uses the built-in native Rust client, so there is no separate `tunnel-client` download or installation. If startup fails, check the connection health and control-plane route; if WebCodex reports unconfirmed prior work, resolve that state before restarting the same Tunnel identity.
+No additional `OPENAI_ADMIN_KEY` or `OPENAI_API_KEY` is needed. Environment variables are not a persistent multi-profile format and are never merged field-by-field with saved data. OpenAI Secure Tunnel uses the built-in native Rust client, so there is no separate `tunnel-client` download or installation. If startup fails, check connection health and the control-plane route; if WebCodex reports unconfirmed prior work, resolve that state before restarting the same Tunnel identity.
 
 Windows users can set persistent variables for the current user. On macOS, Finder / Dock launches do not read `~/.zshrc`; launch from a Terminal that has loaded the variables or configure the login session environment. After changing variables through this advanced path, use **Quit WebCodex** in the tray and launch it again. Closing the window only hides it and cannot refresh its process environment. **Recheck configuration** neither executes shell startup scripts nor reloads manually edited configuration files.
 

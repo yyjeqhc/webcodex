@@ -1,9 +1,11 @@
 # Desktop Connections and MCP Providers (0.4.2 development)
 
-Desktop owns the user's persistent **desired configuration**. Processes and
-`runner.toml` are runtime materializations, not the durable source of those settings.
-This development work does not change the repository release version or publish a
-release.
+Desktop is a control surface for the user's persistent **desired configuration**.
+For a persistent Environment, `EnvironmentStore` owns Tunnel profiles; Desktop and
+CLI project and mutate that same authority. Legacy/non-persistent Desktop runtimes
+continue to use their private local profile file. Processes and `runner.toml` are
+runtime materializations, not durable configuration authorities. This development
+work does not change the repository release version or publish a release.
 
 ## Runtime folders and everyday service controls
 
@@ -33,38 +35,50 @@ system/user-service environments retain their installer-based update path.
 ```text
 Desktop
   ├─ one local Server ── http://127.0.0.1:<server-port>/mcp
+  │    └─ recommended: Server-owned Tunnel profiles A, B, ...
   ├─ one local Runner ── projects / instructions / skills / MCP providers
   └─ Connections
-       ├─ ChatGPT Personal ── owned native Tunnel A ── same /mcp
-       ├─ ChatGPT Work     ── owned native Tunnel B ── same /mcp
+       ├─ ChatGPT Personal ── Server-owned or separate Tunnel A ── same /mcp
+       ├─ ChatGPT Work     ── Server-owned or separate Tunnel B ── same /mcp
        └─ ...
 ```
 
 A connection profile has a stable opaque ID, a user-visible name, an independent
-Tunnel ID/API Key pair, enabled/autostart intent, and a revision. It is not a second
-Server or a second Runner. Reusing a Tunnel ID in another profile is rejected.
-Names do not identify processes: renaming an active profile leaves its PID intact.
+Tunnel ID/API Key pair, autostart intent, host ownership, and a revision. It is not
+a second Server or a second Runner. Reusing a Tunnel ID in another profile is
+rejected. Names do not identify owners or processes.
 
-`ProcessKey::RegularTunnel(TunnelProfileId)` gives every owned CLI/native Tunnel
-process tree its own supervisor entry. Server, Runner and Quick Share retain their
-singleton identities. Supervisor generations fence late monitors so an old child
-cannot overwrite or kill a replacement. Shutdown visits every owned exposure
-before stopping the shared Runner and Server; graceful stdin EOF remains the first
-stop mechanism. Platform process-group / Windows Job Object ownership remains in
-force.
+In a persistent local Environment, **Run with WebCodex Server (recommended)** writes
+an embedded record into `EnvironmentStore`; the Server loads all selected profiles
+at startup and supervises them with its own lifecycle. **Separate Tunnel service
+(advanced)** retains one independently managed service per profile. Saving a
+Server-owned profile never installs a standalone service and never restarts a
+working Server. Desktop shows one explicit **Restart Server** action when any saved
+runtime revision is not yet applied, so several profiles can be configured before
+one restart.
 
-Every tunnel launch uses a UUID runtime directory and an owned native Rust task.
-Credentials are injected in memory; health is reported through machine events.
-No per-profile MCP Server, health port or database is allocated. Managed starts do not
-race to overwrite the clipboard; **Copy ID** is explicit in each card.
+Legacy/non-persistent Desktop runtimes keep the previous process model:
+`ProcessKey::RegularTunnel(TunnelProfileId)` gives every Desktop-owned CLI/native
+Tunnel process tree its own supervisor entry. Server, Runner and Quick Share retain
+their singleton identities. Supervisor generations fence late monitors so an old
+child cannot overwrite or kill a replacement. Platform process-group / Windows Job
+Object ownership remains in force.
+
+Every Tunnel uses the same native Rust implementation and the same authenticated
+local `/mcp` endpoint. Credentials are injected from the selected private binding;
+no per-profile MCP Server, health port or database is allocated. Managed starts do
+not race to overwrite the clipboard; **Copy ID** is explicit in each card.
 
 ### Lifecycle and health
 
-Connections supports Add, Edit, Rename, Start, Stop, Restart and Delete. API actions
-identify exactly one profile. Credential edits replace only that active connection;
-MCP edits never restart a connection. Project selection restarts neither connections
-nor Runner. Delete stops the owned process before deleting its credential; a failed
-stop retains the profile for recovery.
+Connections supports Add, Edit, Rename and Delete for every profile. Separate
+services also expose profile-scoped Start, Stop and Restart. Server-owned profiles
+use only the explicit Server lifecycle action; Desktop never maps a profile action
+to an implicit Server restart. Credential or autostart changes are revision-fenced
+and become active after the indicated owner lifecycle action. Project selection
+restarts neither connections nor Runner. Deleting a live Server-owned profile
+requires a clean Server stop; ambiguous ownership retains the catalog and private
+binding for recovery.
 
 Starting a profile publishes `starting` immediately. Its observer independently
 waits for a bounded ready event, then consumes health observations. The CLI probes
@@ -83,10 +97,11 @@ observations remain a separate signal. The WebUI continues to observe its own
 shared Server/Runner workspace; Desktop connection failures do not alter Server
 runtime readiness or expose configuration mutation through the WebUI.
 
-Autostart is replayed by backend reconciliation, not by frontend polling. Enabled
-profiles with **Start automatically** selected are started after runtime restoration.
-Stop persists disabled intent. First-run's explicit default connection also records
-its autostart choice; deleting the default does not resurrect environment fallback.
+Autostart is applied by the owning backend, not by frontend polling. The Server
+selects embedded profiles once at startup; separate services keep their own saved
+lifecycle. Legacy Desktop-owned profiles retain the previous enabled/autostart
+reconciliation. First-run records the selected ownership and autostart choice;
+deleting the default does not resurrect environment fallback.
 
 ### Tunnel startup and proxy recovery
 
@@ -109,26 +124,32 @@ are applied on subsequent starts, not by silently restarting healthy peers.
 
 For support, retain the selected proxy mode, effective source, and the connection's
 safe `failure_stage` / `reason_code` shown under Advanced. Do not post API keys,
-authorization files or credential-bearing proxy URLs. Server and Runner need not
-be restarted merely to retry one tunnel.
+authorization files or credential-bearing proxy URLs. Retrying a separate Tunnel
+does not require restarting Server or Runner; applying changed Server-owned profile
+runtime state requires the one explicit Server restart shown by Desktop.
 
 ### Credential migration and public state
 
-The existing private `secrets/tunnel-config.json` is migrated in place to a versioned
-profile collection. A valid old pair becomes profile `default`, named `ChatGPT`;
-the old connection preference supplies initial autostart intent. A write is staged,
-flushed and atomically replaced with an original-content check. Interrupted migration
-keeps the previous valid file and fails closed; no environment identity is silently
-substituted. Invalid/symlink/oversized files are not implicitly overwritten.
+For a persistent Environment, `tunnel.json` plus
+`server/tunnels/<profile>/webcodex.env` is the canonical catalog and private binding.
+CLI-created profiles are immediately visible to Desktop, and Desktop writes use the
+same authority. A historical `secrets/tunnel-config.json` is never treated as a
+second writable catalog in this mode. It is read only as a reconciliation fence:
+exact matching credential claims are accepted, extra Environment profiles are
+allowed, and missing/different claims fail closed. Desktop does not silently import,
+overwrite, or delete either side.
 
-`CONTROL_PLANE_TUNNEL_ID` / `CONTROL_PLANE_API_KEY` remain legacy/default fallback,
-not a multi-profile format. An explicitly empty collection is authoritative.
+For legacy/non-persistent Desktop runtimes, `secrets/tunnel-config.json` retains its
+versioned profile collection and in-place singleton migration. A valid old pair
+becomes profile `default`, named `ChatGPT`; an interrupted guarded write keeps the
+previous valid file. `CONTROL_PLANE_TUNNEL_ID` / `CONTROL_PLANE_API_KEY` remain only
+a legacy/default fallback, not a persistent Environment multi-profile format.
 
 API keys never appear in public snapshots, activity, safe connection events, command
-arguments, or UI form prefills. The private store is not Debug-printable. Credential
-inputs are write-only; a blank key retains only the selected profile's saved value.
-Per-profile `tunnel_profile_id` is attached by the supervisor, not trusted from child
-output. Revision checks and guarded writes reject stale editors.
+arguments, logs, errors, or UI form prefills. Private stores are not Debug-printable.
+Credential inputs are write-only; a blank key retains only the selected profile's
+saved value. Profile revisions fence stale editors and credential rotation; runtime
+revisions separately report whether the owning Server has applied the saved state.
 
 ## Persistent MCP Providers
 

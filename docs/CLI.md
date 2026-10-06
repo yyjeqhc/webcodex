@@ -26,11 +26,14 @@ For everyday development, follow the [Full Setup guide](PERSONAL_SETUP.md) and u
 ### Environment configuration
 
 For a new personal machine: `webcodex environment configure --create --runner --scope user`,
-then `webcodex environment configure-tunnel default` and `webcodex environment status`.
-Local user/Runner credentials are created internally; no pairing input is needed.
-Linux user services depend on linger for post-logout persistence; macOS LaunchAgents
-and Windows interactive tasks require a signed-in owner. Scope changes do not adopt
-existing services. [Lifecycle and compatibility details](implementation/personal-environment-lifecycle.md).
+then `webcodex environment configure-tunnel default --host embedded` and
+`webcodex environment status`. Embedded is the recommended persistent ownership:
+the Server loads the profile at startup, while configuration never installs a
+standalone Tunnel service or restarts a running Server implicitly. Local user/Runner
+credentials are created internally; no pairing input is needed. Linux user services
+depend on linger for post-logout persistence; macOS LaunchAgents and Windows
+interactive tasks require a signed-in owner. Scope changes do not adopt existing
+services. [Lifecycle and compatibility details](implementation/personal-environment-lifecycle.md).
 
 `webcodex environment` and Desktop call the same setup core. This namespace configures the machine's persistent environment; the existing project-level `webcodex setup` command keeps its original meaning. Installer availability and native acceptance are tracked in [Unified installation](unified-installation.md) and [Deployment validation](unified-deployment-validation.md).
 
@@ -44,7 +47,10 @@ existing services. [Lifecycle and compatibility details](implementation/personal
 | `invite` | Create a short-lived Runner invitation on the environment's local Server; the displayed code is sensitive. |
 | `add-project PATH` | Reuse the existing Runner identity; a viewer must complete Runner enrollment first. |
 | `status --json` / `doctor --json` | Inspect saved configuration, Server reachability, Runner/project readiness, and structured diagnostics. |
-| `start COMPONENT` / `stop COMPONENT` / `restart COMPONENT` | Explicitly manage an environment-owned `server`, `runner`, or `tunnel`. |
+| `start COMPONENT` / `stop COMPONENT` / `restart COMPONENT` | Explicitly manage an environment-owned `server`, `runner`, or standalone `tunnel`; use `--profile NAME` for a named standalone Tunnel. |
+| `configure-tunnel [PROFILE] --host embedded\|standalone [--credentials-file PATH]` | Create a named profile directly under the Server lifecycle or as a separate service. Credentials come only from hidden input or a protected file. |
+| `tunnel-status [PROFILE]` | Inspect the exact profile identity, owner, readiness and whether an explicit Server restart is required. |
+| `tunnel-host PROFILE --host embedded\|standalone` | Transfer an existing profile only after the previous owner is cleanly stopped and, for standalone, uninstalled. |
 | `repair-user-credential [--token-file PATH]` | Verify and replace the saved user credential without pairing or changing service state. |
 | `repair-credential runner` | Repair Windows SCM account credentials through hidden input. |
 

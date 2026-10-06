@@ -284,7 +284,16 @@ beforeEach(() => {
 
   it.each([false, true])("recreated UI restores state and pending page without resuming (runtime autostart=%s)", async (runtimeAutostart) => {
     api.shellRestoreOnly.mockResolvedValue(true);
-    api.getState.mockResolvedValue({ ...readyState, runtime_autostart: runtimeAutostart });
+    api.getState.mockResolvedValue({
+      ...readyState,
+      runtime_autostart: runtimeAutostart,
+      // Exercise the original connection-autostart eligibility, not a profile
+      // already marked started by the default fixture.
+      connections: connectionSnapshot(connectionFixture({
+        lifecycle: "stopped", ready: false, pid: null, health: "unknown",
+        process_started: false, process_ready: false, tunnel_ready: false,
+      })),
+    });
     api.readDesktopNavigation.mockResolvedValueOnce({ sequence: 8, target: "settings" });
     renderApp();
     await waitFor(() => expect(api.acknowledgeDesktopNavigation).toHaveBeenCalledWith(8));

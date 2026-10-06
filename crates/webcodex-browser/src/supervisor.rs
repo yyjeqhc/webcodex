@@ -203,12 +203,12 @@ impl BrowserSupervisor {
         Ok(summary)
     }
 
-    /// Runner-only handoff. The process identity never becomes a model argument
-    /// or result; keep the Browser operation lock held through native resolution.
-    pub fn with_native_process<T>(
+    /// Runner-only handoff. Native process/window identity never becomes a model
+    /// argument or result; keep the Browser operation lock held through resolution.
+    pub fn with_native_window<T>(
         &self,
         browser_id: &str,
-        resolve: impl FnOnce(u32) -> BrowserResult<T>,
+        resolve: impl FnOnce(crate::BrowserWindowHint) -> BrowserResult<T>,
     ) -> BrowserResult<T> {
         self.touch_current(browser_id)?;
         let mut state = self.operation_state()?;
@@ -216,7 +216,7 @@ impl BrowserSupervisor {
             .browsers
             .get_mut(browser_id)
             .ok_or_else(|| stale_browser(browser_id))?;
-        resolve(runtime.backend.live_process_id()?)
+        resolve(runtime.backend.live_window_hint()?)
     }
 
     pub fn pages(&self, browser_id: &str, limit: usize) -> BrowserResult<Vec<PageSummary>> {

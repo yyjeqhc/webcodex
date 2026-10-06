@@ -134,6 +134,14 @@ async function control(message, epoch) {
     }
     return tabs;
   }
+  if (method === 'window_bounds') {
+    const tab = await chrome.tabs.get(lease.originalTab);
+    requireLease(lease);
+    const browserWindow = await chrome.windows.get(tab.windowId);
+    const {left: x, top: y, width, height} = browserWindow;
+    if (![x, y, width, height].every(Number.isInteger) || width <= 0 || height <= 0) throw new Error('window_bounds_unavailable');
+    return {x, y, width, height};
+  }
   if (method === 'new_page') {
     if (lease.tabs.size >= MAX_TABS || request.params?.url !== 'about:blank') throw new Error('page_limit_or_url');
     const original = await chrome.tabs.get(message.tab);

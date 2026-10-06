@@ -50,6 +50,12 @@ pub(crate) trait BrowserBackend: Send {
             "This Browser has no verified native process binding",
         ))
     }
+    fn live_window_hint(&mut self) -> BrowserResult<crate::BrowserWindowHint> {
+        Ok(crate::BrowserWindowHint {
+            process_id: self.live_process_id()?,
+            bounds: None,
+        })
+    }
     fn pages(&mut self) -> BrowserResult<Vec<BackendPage>>;
     fn new_page(&mut self) -> BrowserResult<String>;
     fn snapshot(&mut self, target_id: &str, max_depth: u32) -> BrowserResult<BackendSnapshot>;
@@ -893,6 +899,15 @@ impl BrowserBackend for CdpBackend {
                 Ok(child.id())
             }
             CdpOwner::External(lease) => lease.live_process_id(),
+        }
+    }
+    fn live_window_hint(&mut self) -> BrowserResult<crate::BrowserWindowHint> {
+        match &mut self.owner {
+            CdpOwner::Owned { .. } => Ok(crate::BrowserWindowHint {
+                process_id: self.live_process_id()?,
+                bounds: None,
+            }),
+            CdpOwner::External(lease) => lease.live_window_hint(),
         }
     }
 

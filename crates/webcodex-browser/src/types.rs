@@ -172,6 +172,21 @@ pub enum BrowserOwnership {
     AttachedExternal,
 }
 
+/// Runner-internal native window correlation. This is never model-visible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BrowserWindowBounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BrowserWindowHint {
+    pub process_id: u32,
+    pub bounds: Option<BrowserWindowBounds>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BrowserSummary {
     pub browser_id: String,

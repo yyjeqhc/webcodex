@@ -311,9 +311,12 @@ pub(crate) fn handle_browser_operation(
                         "Browser and Computer belong to different native sessions",
                     ));
                 }
-                supervisor.with_native_process(&request.browser_id, |pid| {
+                supervisor.with_native_window(&request.browser_id, |hint| {
+                    let bounds = hint
+                        .bounds
+                        .map(|bounds| (bounds.x, bounds.y, bounds.width, bounds.height));
                     super::computer::computer_runtime()
-                        .surface_for_process(pid)
+                        .surface_for_process_window(hint.process_id, bounds)
                         .map_err(|message| {
                             BrowserError::not_started("browser_surface_unavailable", message)
                         })

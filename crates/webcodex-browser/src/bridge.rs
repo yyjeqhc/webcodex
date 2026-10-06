@@ -6,7 +6,9 @@ mod protocol;
 #[cfg(test)]
 mod tests;
 
-use crate::{profiles, BrowserError, BrowserResult};
+use crate::{
+    profiles, BrowserError, BrowserResult, BrowserWindowBounds, BrowserWindowHint, REQUEST_TIMEOUT,
+};
 use fs2::FileExt;
 use protocol::{FrameReader, EXTENSION_ID, MAX_COMMAND, MAX_RESPONSE, VERSION};
 use serde::{Deserialize, Serialize};
@@ -536,6 +538,37 @@ impl ExternalLease {
             .get(&self.0.peer)
             .map(|peer| peer.parent_pid)
             .ok_or_else(stale)
+    }
+    pub(crate) fn live_window_hint(&self) -> BrowserResult<BrowserWindowHint> {
+        let process_id = self.live_process_id()?;
+        let value = self.control(
+            "window_bounds",
+            json!({}),
+            false,
+            Instant::now() + REQUEST_TIMEOUT,
+        )?;
+        let integer = |name: &str| -> BrowserResult<i32> {
+            value[name]
+                .as_i64()
+                .and_then(|value| i32::try_from(value).ok())
+                .ok_or_else(stale)
+        };
+        let dimension = |name: &str| -> BrowserResult<u32> {
+            value[name]
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .filter(|value| *value > 0)
+                .ok_or_else(stale)
+        };
+        Ok(BrowserWindowHint {
+            process_id,
+            bounds: Some(BrowserWindowBounds {
+                x: integer("x")?,
+                y: integer("y")?,
+                width: dimension("width")?,
+                height: dimension("height")?,
+            }),
+        })
     }
     pub(crate) fn socket(&self, target: Option<&str>) -> BrowserResult<BridgeSocket> {
         self.live()?;

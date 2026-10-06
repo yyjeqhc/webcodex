@@ -899,8 +899,16 @@ impl ComputerRuntime {
     /// process owner while this method resolves a fresh native window inventory.
     /// Process IDs are never accepted by the model-facing Computer tools.
     pub fn surface_for_process(&self, pid: u32) -> Result<Value, String> {
+        self.surface_for_process_window(pid, None)
+    }
+
+    pub fn surface_for_process_window(
+        &self,
+        pid: u32,
+        bounds: Option<(i32, i32, u32, u32)>,
+    ) -> Result<Value, String> {
         let candidates = platform::list_windows(MAX_WINDOWS + 1)?;
-        let candidate = exact_process_window(candidates, pid)?;
+        let candidate = exact_process_window_with_bounds(candidates, pid, bounds)?;
         let mut surfaces = self
             .surfaces
             .lock()
@@ -2972,23 +2980,49 @@ mod clipboard_contract_tests {
     }
 }
 
+#[cfg(test)]
 fn exact_process_window(
     candidates: Vec<PlatformWindow>,
     pid: u32,
+) -> Result<PlatformWindow, String> {
+    exact_process_window_with_bounds(candidates, pid, None)
+}
+
+fn exact_process_window_with_bounds(
+    candidates: Vec<PlatformWindow>,
+    pid: u32,
+    bounds: Option<(i32, i32, u32, u32)>,
 ) -> Result<PlatformWindow, String> {
     if pid == 0 || candidates.len() > MAX_WINDOWS {
         return Err(
             "surface_ambiguous: a complete bounded native window inventory is required".into(),
         );
     }
-    let mut exact = candidates
-        .into_iter()
-        .filter(|candidate| candidate.pid == pid);
+    let mut exact = candidates.into_iter().filter(|candidate| {
+        candidate.pid == pid
+            && bounds.is_none_or(|(x, y, width, height)| {
+                candidate.x == x
+                    && candidate.y == y
+                    && candidate.width == width
+                    && candidate.height == height
+            })
+    });
     let candidate = exact.next().ok_or_else(|| {
-        "surface_unavailable: no window belongs to the exact Browser process".to_string()
+        if bounds.is_some() {
+            "surface_unavailable: no window matches the exact Browser process and native bounds"
+                .to_string()
+        } else {
+            "surface_unavailable: no window belongs to the exact Browser process".to_string()
+        }
     })?;
     if exact.next().is_some() {
-        return Err("surface_ambiguous: the exact Browser process owns multiple windows; no title-based selection is allowed".into());
+        return Err(if bounds.is_some() {
+            "surface_ambiguous: multiple windows match the exact Browser process and native bounds"
+                .into()
+        } else {
+            "surface_ambiguous: the exact Browser process owns multiple windows; no title-based selection is allowed"
+                .into()
+        });
     }
     Ok(candidate)
 }
@@ -3001,6 +3035,8 @@ mod browser_handoff_tests;
 struct PlatformWindow {
     native_id: u32,
     pid: u32,
+    x: i32,
+    y: i32,
     identity_hash: [u8; 32],
     application: String,
     title: String,

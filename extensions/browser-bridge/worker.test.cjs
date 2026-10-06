@@ -52,6 +52,7 @@ function fixture() {
   const port = {onMessage:event(), onDisconnect:event(), postMessage(value) { sent.push(value); }, disconnect() { calls.push(['disconnect']); }};
   const chrome = {
     runtime:{id:ID, onMessage:event(), connectNative(host) { assert.equal(host, 'com.webcodex.browser_bridge'); queueMicrotask(() => port.onMessage.emit({kind:'ready',version:1})); return port; }},
+    windows:{async get(id) { assert.equal(id,9); return {id, left:40, top:60, width:800, height:600}; }},
     tabs:{onRemoved:event(), async query() { return [tabs.get(7)]; }, async get(id) { if(getHook) await getHook(); if (!tabs.has(id)) throw Error('missing'); return tabs.get(id); },
       async create(options) { const tab={id:nextTab++,windowId:options.windowId,url:options.url,title:'New'};tabs.set(tab.id,tab);calls.push(['create',tab.id]);return tab; },
       async remove(id) { calls.push(['remove',id]);tabs.delete(id);chrome.tabs.onRemoved.emit(id); }},
@@ -81,6 +82,8 @@ test('sharing requires explicit attach; detach leaves the external tab and login
     assert.equal((await f.share()).ok,true);
     assert.equal(f.sent[0].kind,'offer');assert.equal(f.calls.length,0);
     await f.command('attach');assert.deepEqual(f.calls,[['attach',7]]);
+    await f.command('window_bounds');
+    assert.equal(JSON.stringify(f.sent.at(-1).message.result),JSON.stringify({x:40,y:60,width:800,height:600}));
     await f.command('Page.getFrameTree',{},'cdp','tab_7');
     assert.deepEqual(f.calls[1],['cdp',7,'Page.getFrameTree']);
     await f.command('detach');

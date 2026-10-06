@@ -211,3 +211,7 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
         _ => {}
     }
 }
+
+#[cfg(all(test, windows, desktop_native_smoke))]
+#[path = "desktop_shell/native_smoke.rs"]
+mod desktop_native_smoke;

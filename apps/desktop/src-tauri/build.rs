@@ -1,4 +1,6 @@
 fn main() {
+    // Opt-in real WebView test host; never part of normal unit-test or app builds.
+    println!("cargo:rustc-check-cfg=cfg(desktop_native_smoke)");
     // Direct Cargo production builds also embed dist. The Tauri CLI hook alone
     // does not run for that entry point; never compile new native code against
     // a previously built UI tree.

@@ -39,7 +39,7 @@ The repository contains only fictional example data. Copy `profile.example.json`
 
 By default the Plugin reads `profile.json` from the provider's configured `cwd`. An explicit `WEBCODEX_CAMPUS_APPLICATION_PROFILE` environment variable may instead point to another profile file.
 
-The structured profile covers identity/contact data, common Chinese campus-recruiting personal fields (gender, birth date, identification, ethnicity, political status, native place, household registration, and marital status), links, repeated education/experience/projects/campus experience, skills/languages, job preferences, application text, and attachments.
+The structured profile covers identity/contact data, common Chinese campus-recruiting personal fields (gender, birth date, identification, ethnicity, political status, health status, native place, household registration, student origin, fresh-graduate status, and marital status), split province/city location fields, links, repeated education/experience/projects/campus experience, skills/languages, job preferences, application text, and attachments. Native place and student-origin/Gaokao-origin are intentionally distinct fields.
 
 `attachments.resume_path` is passed to the later Browser `upload_file` action. It must be valid relative to the WebCodex project that the caller authorizes for upload; it is not resolved relative to the Plugin profile directory.
 
@@ -67,13 +67,15 @@ webcodex plugin describe --runner <runner> --plugin campus-application --tool pl
 
 Invocation remains on the canonical `plugin_tool describe -> call` path.
 
-For real ATS controls whose Browser semantic snapshot has no usable label, `analyze_form` and `plan_fill` return a stable `mapping_id`. Callers can teach the structure with `mapping_hints` using a label or explicit canonical field/resume path. Explicit teaching is kept in a site-scoped in-process cache and also persisted in the provider-private `mapping-memory.json` (override with `WEBCODEX_CAMPUS_APPLICATION_MAPPING_MEMORY`), keyed by site identity plus structure signature, so it survives Plugin reloads.
+For real ATS controls whose Browser semantic snapshot has no usable label, `analyze_form` and `plan_fill` return a stable `mapping_id`. Callers can teach the structure with `mapping_hints` using a label or explicit canonical field/resume path; radio/checkbox hints may also carry `choice_value` so unlabeled choices can be taught once as values such as male/female or yes/no. Explicit teaching is kept in a site-scoped in-process cache and also persisted in the provider-private `mapping-memory.json` (override with `WEBCODEX_CAMPUS_APPLICATION_MAPPING_MEMORY`), keyed by site identity plus structure signature, so it survives Plugin reloads.
 
 ## Tools
 
 `profile_get` returns the configured structured resume resource plus the bounded canonical fill view.
 
 `analyze_form` consumes a bounded Browser semantic snapshot and reports mapped controls, indexed resume paths, blockers, site classification, and the stable form-structure signature.
+
+Both analysis/planning outputs also include `missing_profile_fields`, a deduplicated list of known mappings whose local profile value is missing or empty, and `unmapped_candidates`, actionable controls that still need teaching. This gives the caller a compact fallback path instead of requiring it to reinterpret a large blocker list.
 
 `plan_fill` returns the next safe planning phase:
 

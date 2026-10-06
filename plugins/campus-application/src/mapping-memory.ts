@@ -8,6 +8,7 @@ type PersistedMappingHint = {
   canonical_field: CanonicalField;
   resume_path: string;
   label?: string;
+  choice_value?: string;
   updated_at: number;
 };
 
@@ -28,6 +29,7 @@ export type PersistableMappingHint = {
   canonicalField: CanonicalField;
   resumePath: string;
   label?: string | undefined;
+  choiceValue?: string | undefined;
 };
 
 const MAX_MEMORY_ENTRIES = 256;
@@ -126,6 +128,7 @@ export function loadPersistentMappingHints(
       canonicalField: hint.canonical_field,
       resumePath: hint.resume_path,
       ...(hint.label === undefined ? {} : { label: hint.label }),
+      ...(hint.choice_value === undefined ? {} : { choiceValue: hint.choice_value }),
     }));
   return {
     hit: hints.length > 0,
@@ -160,6 +163,7 @@ export function rememberPersistentMappingHints(
       canonical_field: hint.canonicalField,
       resume_path: hint.resumePath,
       ...(hint.label === undefined ? {} : { label: hint.label }),
+      ...(hint.choiceValue === undefined ? {} : { choice_value: hint.choiceValue }),
       updated_at: now,
     });
   }

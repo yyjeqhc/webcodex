@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   formStructureSignature,
   isResumeUpload,
+  matchField,
   resolveFormMappings,
 } from "../dist/form-cache.js";
 
@@ -216,6 +217,18 @@ test("unnumbered repeated groups use stable document-order indexes", () => {
   assert.equal(byElement.get("element_school_b")?.resumePath, "education[1].school");
 });
 
+test("Chinese campus location fields keep native place and student origin distinct", () => {
+  assert.equal(matchField("籍贯")?.canonicalField, "native_place");
+  assert.equal(matchField("生源地")?.canonicalField, "student_origin");
+  assert.equal(matchField("高考生源地")?.canonicalField, "student_origin");
+  assert.equal(matchField("籍贯省份")?.canonicalField, "native_place_province");
+  assert.equal(matchField("生源地市")?.canonicalField, "student_origin_city");
+  assert.equal(matchField("就读院校所在城市")?.canonicalField, "education_city");
+  assert.equal(matchField("现居住城市")?.canonicalField, "city");
+  assert.equal(matchField("健康状况")?.canonicalField, "health_status");
+  assert.equal(matchField("是否为应届毕业生")?.canonicalField, "is_fresh_graduate");
+});
+
 test("resume upload detection requires real upload semantics and explicit resume context", () => {
   assert.equal(
     isResumeUpload({
@@ -313,6 +326,39 @@ test("mapping cache scopes identical unlabeled structures by site", () => {
   const otherSite = resolveFormMappings(nodes, [], "site-b.example");
   assert.equal(otherSite.cacheHit, false);
   assert.equal(otherSite.nodes[0]?.mapping, undefined);
+});
+
+test("stable mapping hints can preserve a learned choice value for unlabeled radios", () => {
+  const first = resolveFormMappings([
+    {
+      role: "radio",
+      name: "",
+      element_id: "element_gender_male_a",
+      actionable: true,
+      actions: ["click"],
+    },
+  ]);
+  const mappingId = first.nodes[0]?.mapping_id;
+  assert.ok(mappingId);
+
+  const taught = resolveFormMappings(
+    [
+      {
+        role: "radio",
+        name: "",
+        element_id: "element_gender_male_b",
+        actionable: true,
+        actions: ["click"],
+      },
+    ],
+    [{
+      mapping_id: mappingId,
+      canonicalField: "gender",
+      choiceValue: "男",
+    }],
+  );
+  assert.equal(taught.nodes[0]?.mapping?.canonicalField, "gender");
+  assert.equal(taught.nodes[0]?.mapping?.choiceValue, "男");
 });
 
 test("unlabeled upload controls can be taught safely without pretending every file picker is a resume", () => {

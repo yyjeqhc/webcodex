@@ -62,6 +62,7 @@ const mappingHintSchema = schema.object({
   label: schema.optional(schema.string({ maxLength: 1200 })),
   canonical_field: schema.optional(schema.string({ enum: canonicalFields })),
   resume_path: schema.optional(schema.string({ maxLength: 300 })),
+  choice_value: schema.optional(schema.string({ maxLength: 500 })),
 });
 
 const recognizedSchema = schema.object({
@@ -85,6 +86,21 @@ const blockerSchema = schema.object({
   role: schema.string({ maxLength: 80 }),
   element_id: schema.string({ maxLength: 160 }),
   reason: schema.string({ maxLength: 500 }),
+});
+
+const missingProfileFieldSchema = schema.object({
+  canonical_field: schema.string({ enum: canonicalFields }),
+  resume_path: schema.string({ maxLength: 300 }),
+  occurrences: schema.integer(),
+  mapping_ids: schema.array(schema.string({ maxLength: 24 }), { maxItems: 16 }),
+});
+
+const unmappedCandidateSchema = schema.object({
+  mapping_id: schema.string({ maxLength: 24 }),
+  label: schema.string({ maxLength: 1200 }),
+  role: schema.string({ maxLength: 80 }),
+  element_id: schema.string({ maxLength: 160 }),
+  actions: schema.array(schema.string({ maxLength: 80 }), { maxItems: 16 }),
 });
 
 const actionSchema = schema.object({
@@ -202,6 +218,19 @@ function analyzeNodes(
     element_id: string;
     reason: string;
   }> = [];
+  const missingProfileFields = new Map<string, {
+    canonical_field: CanonicalField;
+    resume_path: string;
+    occurrences: number;
+    mapping_ids: string[];
+  }>();
+  const unmappedCandidates: Array<{
+    mapping_id: string;
+    label: string;
+    role: string;
+    element_id: string;
+    actions: string[];
+  }> = [];
   const structureSignature = formStructureSignature(nodes);
   const persistent = loadPersistentMappingHints(url, structureSignature);
   const mergedHints = new Map<string, FormMappingHint>();
@@ -224,6 +253,7 @@ function analyzeNodes(
         canonicalField: mapping!.canonicalField,
         resumePath: mapping!.resumePath,
         label: hints.find((hint) => hint.mapping_id === mapping_id)?.label,
+        choiceValue: mapping!.choiceValue,
       }));
     mappingMemoryEntries = rememberPersistentMappingHints(
       url,
@@ -239,30 +269,46 @@ function analyzeNodes(
       ? resolveResumeValue(resume, mapping.resumePath)
       : { found: false, value: "" };
 
-    if (mapping && !resolvedValue.found) {
+    if (mapping && (!resolvedValue.found || resolvedValue.value.trim().length === 0)) {
+      const existing = missingProfileFields.get(mapping.resumePath);
+      if (existing) {
+        existing.occurrences += 1;
+        if (existing.mapping_ids.length < 16 && !existing.mapping_ids.includes(mapping_id)) {
+          existing.mapping_ids.push(mapping_id);
+        }
+      } else {
+        missingProfileFields.set(mapping.resumePath, {
+          canonical_field: mapping.canonicalField,
+          resume_path: mapping.resumePath,
+          occurrences: 1,
+          mapping_ids: [mapping_id],
+        });
+      }
       blockers.push({
         mapping_id,
         label,
         role: node.role,
         element_id: node.element_id ?? "",
-        reason: `Mapped resume path ${mapping.resumePath} is unavailable in the structured resume resource.`,
+        reason: resolvedValue.found
+          ? `Mapped resume path ${mapping.resumePath} is empty in the structured resume resource.`
+          : `Mapped resume path ${mapping.resumePath} is unavailable in the structured resume resource.`,
       });
       continue;
     }
 
     if (
       mapping?.source === "group" &&
-      (role === "radio" || role === "checkbox") &&
-      node.group_label
+      (role === "radio" || role === "checkbox")
     ) {
       const desired = resolvedValue.value;
-      if (choiceMatches(node.name, desired)) {
+      const observedChoice = mapping.choiceValue ?? node.name;
+      if (choiceMatches(observedChoice, desired)) {
         const checked = node.checked === "true" || node.selected === true;
         recognized.push({
           mapping_id,
           canonical_field: mapping.canonicalField,
           resume_path: mapping.resumePath,
-          label: node.group_label,
+          label: node.group_label || label || observedChoice,
           role: node.role,
           element_id: node.element_id ?? "",
           current_value: checked ? desired : "",
@@ -317,6 +363,13 @@ function analyzeNodes(
 
     if (!mapping) {
       const unmappedUpload = node.actions?.includes("upload_file") === true;
+      unmappedCandidates.push({
+        mapping_id,
+        label,
+        role: node.role,
+        element_id: node.element_id ?? "",
+        actions: node.actions ?? [],
+      });
       if (
         unmappedUpload ||
         !["button", "link", "option", "radio", "checkbox"].includes(role)
@@ -361,6 +414,8 @@ function analyzeNodes(
   return {
     recognized,
     blockers,
+    missing_profile_fields: [...missingProfileFields.values()],
+    unmapped_candidates: unmappedCandidates,
     structure_signature: resolved.signature,
     mapping_cache_hit: resolved.cacheHit,
     mapping_cache_entries: resolved.cacheEntries,
@@ -400,6 +455,8 @@ const analyzeForm = defineTool({
     site_kind: schema.string({ enum: ["greenhouse-like", "lever-like", "campus-cn-like", "generic"] as const }),
     recognized: schema.array(recognizedSchema, { maxItems: 256 }),
     blockers: schema.array(blockerSchema, { maxItems: 256 }),
+    missing_profile_fields: schema.array(missingProfileFieldSchema, { maxItems: 128 }),
+    unmapped_candidates: schema.array(unmappedCandidateSchema, { maxItems: 256 }),
     structure_signature: schema.string({ maxLength: 64 }),
     mapping_cache_hit: schema.boolean(),
     mapping_cache_entries: schema.integer(),
@@ -414,11 +471,12 @@ const analyzeForm = defineTool({
       label: hint.label,
       canonicalField: hint.canonical_field,
       resumePath: hint.resume_path,
+      choiceValue: hint.choice_value,
     }));
     const analysis = analyzeNodes(nodes, resume, url, hints);
     const site_kind = classifySite(title, url, nodes);
     return textResult(
-      `Detected ${site_kind}: ${analysis.recognized.length} mapped controls, ${analysis.blockers.length} blockers; mapping cache ${analysis.mapping_cache_hit ? "hit" : "miss"}, persistent memory ${analysis.mapping_memory_hit ? "hit" : "miss"}.`,
+      `Detected ${site_kind}: ${analysis.recognized.length} mapped controls, ${analysis.blockers.length} blockers, ${analysis.missing_profile_fields.length} missing profile fields, ${analysis.unmapped_candidates.length} teachable unmapped controls; mapping cache ${analysis.mapping_cache_hit ? "hit" : "miss"}, persistent memory ${analysis.mapping_memory_hit ? "hit" : "miss"}.`,
       { site_kind, ...analysis },
     );
   },
@@ -444,6 +502,8 @@ const planFill = defineTool({
     actions: schema.array(actionSchema, { maxItems: 256 }),
     blockers: schema.array(blockerSchema, { maxItems: 256 }),
     blocker_count: schema.integer(),
+    missing_profile_fields: schema.array(missingProfileFieldSchema, { maxItems: 128 }),
+    unmapped_candidates: schema.array(unmappedCandidateSchema, { maxItems: 256 }),
     structure_signature: schema.string({ maxLength: 64 }),
     mapping_cache_hit: schema.boolean(),
     mapping_cache_entries: schema.integer(),
@@ -458,6 +518,7 @@ const planFill = defineTool({
       label: hint.label,
       canonicalField: hint.canonical_field,
       resumePath: hint.resume_path,
+      choiceValue: hint.choice_value,
     }));
     const analysis = analyzeNodes(nodes, resume, url, hints);
     const site_kind = classifySite(title, url, nodes);
@@ -481,6 +542,8 @@ const planFill = defineTool({
           actions: [] as never[],
           blockers: [] as Array<{ mapping_id: string; label: string; role: string; element_id: string; reason: string }>,
           blocker_count: 0,
+          missing_profile_fields: analysis.missing_profile_fields,
+          unmapped_candidates: analysis.unmapped_candidates,
           structure_signature: analysis.structure_signature,
           mapping_cache_hit: analysis.mapping_cache_hit,
           mapping_cache_entries: analysis.mapping_cache_entries,
@@ -541,6 +604,8 @@ const planFill = defineTool({
             actions: [] as never[],
             blockers: [] as Array<{ mapping_id: string; label: string; role: string; element_id: string; reason: string }>,
             blocker_count: 0,
+            missing_profile_fields: analysis.missing_profile_fields,
+            unmapped_candidates: analysis.unmapped_candidates,
             structure_signature: analysis.structure_signature,
             mapping_cache_hit: analysis.mapping_cache_hit,
             mapping_cache_entries: analysis.mapping_cache_entries,
@@ -563,6 +628,8 @@ const planFill = defineTool({
             actions: [] as never[],
             blockers: [] as Array<{ mapping_id: string; label: string; role: string; element_id: string; reason: string }>,
             blocker_count: 0,
+            missing_profile_fields: analysis.missing_profile_fields,
+            unmapped_candidates: analysis.unmapped_candidates,
             structure_signature: analysis.structure_signature,
             mapping_cache_hit: analysis.mapping_cache_hit,
             mapping_cache_entries: analysis.mapping_cache_entries,
@@ -574,7 +641,7 @@ const planFill = defineTool({
     }
 
     return textResult(
-      `Prepared ${actions.length} proposed actions for ${site_kind}; ${analysis.blockers.length} blockers remain; mapping cache ${analysis.mapping_cache_hit ? "hit" : "miss"}, persistent memory ${analysis.mapping_memory_hit ? "hit" : "miss"}.`,
+      `Prepared ${actions.length} proposed actions for ${site_kind}; ${analysis.blockers.length} blockers, ${analysis.missing_profile_fields.length} missing profile fields, ${analysis.unmapped_candidates.length} teachable unmapped controls remain; mapping cache ${analysis.mapping_cache_hit ? "hit" : "miss"}, persistent memory ${analysis.mapping_memory_hit ? "hit" : "miss"}.`,
       {
         site_kind,
         phase: "fill_fields",
@@ -586,6 +653,8 @@ const planFill = defineTool({
         actions,
         blockers: analysis.blockers,
         blocker_count: analysis.blockers.length,
+        missing_profile_fields: analysis.missing_profile_fields,
+        unmapped_candidates: analysis.unmapped_candidates,
         structure_signature: analysis.structure_signature,
         mapping_cache_hit: analysis.mapping_cache_hit,
         mapping_cache_entries: analysis.mapping_cache_entries,

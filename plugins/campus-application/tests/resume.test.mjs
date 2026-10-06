@@ -34,6 +34,13 @@ test("structured resume projects a stable canonical fill view", () => {
   assert.equal(profile.experience_location, "Shanghai");
   assert.equal(profile.project_name, "Campus Apply Lab");
   assert.equal(profile.project_technologies, "Rust, TypeScript, Browser CDP");
+  assert.equal(profile.health_status, "健康");
+  assert.equal(profile.student_origin, "示例省示例市");
+  assert.equal(profile.student_origin_province, "示例省");
+  assert.equal(profile.student_origin_city, "示例市");
+  assert.equal(profile.current_residence_province, "Shanghai");
+  assert.equal(profile.education_city, "Shanghai");
+  assert.equal(profile.is_fresh_graduate, "是");
 });
 
 test("indexed resume paths resolve repeated structured entries", () => {

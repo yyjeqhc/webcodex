@@ -29,7 +29,7 @@ npm test
 
 `profile.json` 已被 Git ignore。默认情况下 Plugin 从 provider 配置的 `cwd` 读取它；也可以通过 `WEBCODEX_CAMPUS_APPLICATION_PROFILE` 显式指定其它 profile 文件。
 
-结构化 profile 覆盖身份/联系方式、中国校招常见个人字段（性别、生日、证件、民族、政治面貌、籍贯、户籍、婚姻状态）、个人链接、多段教育/实习/项目/校园经历、技能/语言、求职偏好、申请文案和附件。
+结构化 profile 覆盖身份/联系方式、中国校招常见个人字段（性别、生日、证件、民族、政治面貌、健康状况、籍贯、户籍、生源地、应届状态、婚姻状态）、省/市拆分位置字段、个人链接、多段教育/实习/项目/校园经历、技能/语言、求职偏好、申请文案和附件。`籍贯` 与 `生源地/高考生源地` 是独立字段，不会互相复用。
 
 `attachments.resume_path` 最终会交给 Browser `upload_file`，它必须相对于 caller 为上传授权的 WebCodex Project 有效，而不是相对于 Plugin profile 目录解析。
 
@@ -69,11 +69,13 @@ Plugin provider 是 Runner 管理的常驻子进程，因此 **TS/JS 代码改�
 
 整个过程不需要重启 Runner。`profile.json` 则在每次 tool execute 时重新读取，因此只改结构化个人资料时**不需要 build、check 或 reload**。
 
-对于真实 ATS 中 semantic snapshot 无 label 的控件，`analyze_form` / `plan_fill` 会返回稳定的 `mapping_id`。caller 可以传 `mapping_hints`（label 或 canonical field + resume path）教会当前结构；hint 不依赖易变的 Browser `element_id`。学习结果同时进入站点隔离的进程内 cache，并持久化到 provider 私有目录的 `mapping-memory.json`（可用 `WEBCODEX_CAMPUS_APPLICATION_MAPPING_MEMORY` 改路径），键为 `site + structure_signature`，因此 Plugin reload 后仍可复用。
+对于真实 ATS 中 semantic snapshot 无 label 的控件，`analyze_form` / `plan_fill` 会返回稳定的 `mapping_id`。caller 可以传 `mapping_hints`（label 或 canonical field + resume path）教会当前结构；radio/checkbox 还可以附带 `choice_value`，把无文本的选项一次教学为“男/女”“是/否”等实际语义。hint 不依赖易变的 Browser `element_id`。学习结果同时进入站点隔离的进程内 cache，并持久化到 provider 私有目录的 `mapping-memory.json`（可用 `WEBCODEX_CAMPUS_APPLICATION_MAPPING_MEMORY` 改路径），键为 `site + structure_signature`，因此 Plugin reload 后仍可复用。
 
 ## 工具与流程
 
 `profile_get` 返回配置的结构化 Resume Resource 和当前 bounded canonical view；`analyze_form` 返回字段映射、indexed resume path、blocker 和 form-structure signature；`plan_fill` 返回下一步安全 phase：
+
+`analyze_form` / `plan_fill` 还会把失败原因压缩成两个可直接处理的集合：`missing_profile_fields` 去重列出“映射已经确定但本地资料缺失/为空”的 profile path；`unmapped_candidates` 列出仍需要教学的可操作控件（含 `mapping_id`、role、actions）。这样 caller 不需要从大量 blocker 文本中重新推断下一步。
 
 - `expand_sections`：只返回一个“新增经历” click，之后必须重新 snapshot；
 - `fill_fields`：返回 `input_text`、`select_option`、`set_value`、`upload_file` 或 grouped `click`；

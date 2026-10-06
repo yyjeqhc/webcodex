@@ -17,7 +17,8 @@
 - Project: `agent:mini:webcodex`
 - Branch: `fix/campus-application-live-form-context`
 - Base / origin/main at branch creation: `676aeb13`
-- 当前改动尚未提交。
+- 已提交并 rebase 的上一轮 commit：`8d0447fb feat(campus-application): persist live form mappings`
+- 本交接所述第二轮已经提交；随后再次 `git fetch origin main && git rebase origin/main`，当前 `origin/main=25af63a9`，分支已是 up to date。最终第二轮 commit 以 branch HEAD 为准。
 - 修改范围：
   - `plugins/campus-application/src/form-cache.ts`
   - `plugins/campus-application/src/mapping-memory.ts`
@@ -37,7 +38,7 @@ npm run typecheck
 npm test
 git diff --check
 
-24 tests passed
+26 tests passed
 0 failed
 ```
 
@@ -291,6 +292,24 @@ blockers: 96
 
 因此 stable mapping / persistence 这一层已经闭环。下一步应优先把用户已确认的 personal private profile 接上，再验证这些字段能进入 `recognized/plan_fill`。
 
+#### 2026-10-06 下一轮：真实页面 fallback / 中国字段语义
+
+这一轮继续以同一中国电信页面验证，未保存、未提交申请。
+
+实现与验证：
+
+- 修正了一个会真实填错的语义：`籍贯` 与 `生源地/高考生源地` 不再共用 `native_place`；新增独立 `student_origin`。
+- 增加健康状况、应届状态，以及籍贯/户籍/生源地/现居地/院校所在地的省市拆分 canonical field。
+- `mapping_hints` 增加 `choice_value`，用于无 label radio/checkbox 的一次教学；该值也进入持久 mapping memory。
+- `analyze_form` / `plan_fill` 新增 `missing_profile_fields` 与 `unmapped_candidates`，把“资料缺失”和“仍需教学”直接分开返回。
+- 在截图确认后，真实教学了：
+  - `性别-男` -> `gender`, `choice_value=男`, `mapping_id=8dbcda7e9b5d4ac3f26f0377`
+  - `性别-女` -> `gender`, `choice_value=女`, `mapping_id=2f2c06e0d6ce9cde89275274`
+  - `健康状况` -> `health_status`, `mapping_id=79d1456a5200dafb1eaf181d`
+- 再次 `plugin reload` 后，不传 hints：`mapping_cache_hit=false`、`mapping_memory_hit=true`，以上 mapping 均自动恢复。
+- live 输出现在把缺失资料去重为 5 项：`id_type`、`gender`、`ethnicity`、`political_status`、`health_status`；性别的两个 radio 合并为同一个 profile requirement。
+- 搜索了现有 private profile、`jianli` 本地资料以及 WebCodex 本地配置，没有找到这些字段的已确认真实值，因此没有猜测或写入任何个人事实。
+
 ### 当前产品优先级（用户确认）
 
 第一原则是 **准确，其次是快速**；隐私最小化不是当前优化目标。后续设计取舍按：
@@ -303,18 +322,21 @@ accuracy > speed > privacy minimization
 
 ### P0：把 personal private profile 接上
 
-把用户已确认的中国电信个人数据写进 private profile 的 `personal`：
+把用户已确认的中国电信个人数据写进 private profile 的 `personal`。当前优先缺口已经可以直接从 `missing_profile_fields` 读取；已确认需要补的至少有：
 
 - 性别
-- 出生日期
 - 证件类型/号码
 - 民族
 - 政治面貌
-- 籍贯
+- 健康状况
+- 出生日期
+- 籍贯（与生源地分开）
 - 户籍
-- 婚姻状况
+- 高考生源地
+- 是否应届毕业生
+- 现居住地 / 院校所在地等页面要求的位置字段
 
-敏感值不要写到测试 fixture、commit、日志或交接文档。
+本机现有资料没有找到这些字段的可靠值；在用户或其它权威本地资料确认前不要猜。真实值只写 private profile，不写测试 fixture、commit、日志或交接文档。
 
 ### P1：增强 Browser semantic label provenance
 

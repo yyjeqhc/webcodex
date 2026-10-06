@@ -27,6 +27,7 @@ export type CachedFieldMapping = {
   resumePath: string;
   confidence: number;
   source: "name" | "group" | "resume_upload" | "section";
+  choiceValue?: string | undefined;
 };
 
 export type ResolvedStructureNode = {
@@ -41,6 +42,7 @@ export type FormMappingHint = {
   label?: string | undefined;
   canonicalField?: CanonicalField | undefined;
   resumePath?: string | undefined;
+  choiceValue?: string | undefined;
 };
 
 const MAX_STRUCTURE_NODES = 256;
@@ -172,14 +174,26 @@ const fieldKeywords: ReadonlyArray<{
   { field: "id_number", exact: ["idnumber", "identificationnumber", "身份证号", "身份证号码", "证件号码", "证件号"], contains: ["idnumber", "身份证号", "证件号码", "证件号"] },
   { field: "ethnicity", exact: ["ethnicity", "nationalityethnicity", "民族"], contains: ["ethnicity", "民族"] },
   { field: "political_status", exact: ["politicalstatus", "政治面貌"], contains: ["politicalstatus", "政治面貌"] },
-  { field: "native_place", exact: ["nativeplace", "籍贯", "生源地"], contains: ["nativeplace", "籍贯", "生源地"] },
+  { field: "health_status", exact: ["healthstatus", "健康状况", "健康状态"], contains: ["healthstatus", "健康状况"] },
+  { field: "native_place_province", exact: ["nativeplaceprovince", "籍贯省", "籍贯省份"], contains: ["nativeplaceprovince", "籍贯省"] },
+  { field: "native_place_city", exact: ["nativeplacecity", "籍贯市", "籍贯城市"], contains: ["nativeplacecity", "籍贯市", "籍贯城市"] },
+  { field: "native_place", exact: ["nativeplace", "籍贯"], contains: ["nativeplace", "籍贯"] },
+  { field: "household_registration_province", exact: ["householdregistrationprovince", "hukouprovince", "户籍省", "户籍省份", "户口省份"], contains: ["householdregistrationprovince", "hukouprovince", "户籍省", "户口省"] },
+  { field: "household_registration_city", exact: ["householdregistrationcity", "hukoucity", "户籍市", "户籍城市", "户口城市"], contains: ["householdregistrationcity", "hukoucity", "户籍市", "户口城市"] },
   { field: "household_registration", exact: ["householdregistration", "hukou", "户籍所在地", "户口所在地", "户籍"], contains: ["householdregistration", "hukou", "户籍", "户口"] },
+  { field: "student_origin_province", exact: ["studentoriginprovince", "生源地省", "生源省份", "高考生源地省", "高考生源省份"], contains: ["studentoriginprovince", "生源地省", "生源省", "高考生源省"] },
+  { field: "student_origin_city", exact: ["studentorigincity", "生源地市", "生源城市", "高考生源地市", "高考生源城市"], contains: ["studentorigincity", "生源地市", "生源城市", "高考生源城市"] },
+  { field: "student_origin", exact: ["studentorigin", "sourceplace", "生源地", "生源所在地", "生源地区", "高考生源地"], contains: ["studentorigin", "sourceplace", "生源地", "生源所在", "高考生源"] },
+  { field: "is_fresh_graduate", exact: ["isfreshgraduate", "freshgraduate", "是否为应届毕业生", "是否应届毕业生", "应届毕业生"], contains: ["freshgraduate", "应届毕业生"] },
   { field: "marital_status", exact: ["maritalstatus", "婚姻状况", "婚姻状态"], contains: ["maritalstatus", "婚姻"] },
   { field: "full_name", exact: ["name", "fullname", "姓名"], contains: ["fullname", "candidatename"] },
   { field: "email", exact: ["email", "emailaddress", "邮箱", "电子邮箱"], contains: ["email"] },
   { field: "phone", exact: ["phone", "phonenumber", "mobile", "mobilenumber", "手机号", "手机号码", "联系电话", "电话"], contains: ["phone", "mobile", "手机号", "联系电话"] },
-  { field: "city", exact: ["city", "location", "currentlocation", "所在城市", "当前城市", "城市"], contains: ["currentlocation", "所在城市", "当前城市"] },
+  { field: "current_residence_province", exact: ["currentresidenceprovince", "现居住省份", "现居省份", "当前居住省份"], contains: ["currentresidenceprovince", "现居住省", "当前居住省"] },
+  { field: "city", exact: ["city", "location", "currentlocation", "所在城市", "当前城市", "现居住城市", "现居城市", "城市"], contains: ["currentlocation", "现居住城市", "现居城市", "当前城市"] },
   { field: "address", exact: ["address", "mailingaddress", "地址", "通讯地址"], contains: ["address", "通讯地址"] },
+  { field: "education_province", exact: ["educationprovince", "schoolprovince", "院校所在省份", "学校所在省份", "就读院校所在省份"], contains: ["educationprovince", "schoolprovince", "院校所在省", "学校所在省"] },
+  { field: "education_city", exact: ["educationcity", "schoolcity", "院校所在城市", "学校所在城市", "就读院校所在城市"], contains: ["educationcity", "schoolcity", "院校所在城市", "学校所在城市"] },
   { field: "university", exact: ["school", "university", "college", "学校", "院校", "毕业院校"], contains: ["school", "university", "college", "毕业院校"] },
   { field: "degree", exact: ["degree", "educationlevel", "学历", "学位"], contains: ["degree", "educationlevel", "学历", "学位"] },
   { field: "major", exact: ["discipline", "major", "fieldofstudy", "专业"], contains: ["discipline", "major", "fieldofstudy", "专业"] },
@@ -435,6 +449,7 @@ export function resolveFormMappings(
         hint.resumePath ?? resumePathForCanonicalField(matched.canonicalField),
       confidence: matched.confidence,
       source: "group",
+      ...(hint.choiceValue === undefined ? {} : { choiceValue: hint.choiceValue }),
     });
   }
   remember(cacheKey, mappings);

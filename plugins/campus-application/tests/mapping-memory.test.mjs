@@ -24,6 +24,7 @@ test("persistent mapping memory is scoped by site and structure", () => {
           canonicalField: "ethnicity",
           resumePath: "personal.ethnicity",
           label: "民族",
+          choiceValue: "汉族",
         },
       ],
       path,
@@ -39,6 +40,7 @@ test("persistent mapping memory is scoped by site and structure", () => {
     assert.equal(same.hints.length, 1);
     assert.equal(same.hints[0]?.canonicalField, "ethnicity");
     assert.equal(same.hints[0]?.resumePath, "personal.ethnicity");
+    assert.equal(same.hints[0]?.choiceValue, "汉族");
 
     const otherSite = loadPersistentMappingHints(
       "https://example.com/form",

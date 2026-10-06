@@ -1,5 +1,6 @@
 // Private values appear only in write-only requests, never in public snapshots.
 export type ConnectionLifecycle = "stopped" | "starting" | "running" | "stopping" | "error";
+export type TunnelHostMode = "standalone" | "embedded";
 export type ConnectionError = "start_failed" | "startup_timeout" | "process_exited" | "protocol_invalid" | "health_stale" | "tunnel_unavailable" | "local_mcp_unavailable" | "stop_failed";
 export interface TunnelConnection {
   id: string;
@@ -10,6 +11,8 @@ export interface TunnelConnection {
   autostart: boolean;
   revision: number;
   source: "file" | "environment" | "invalid";
+  host_mode: TunnelHostMode;
+  server_restart_required: boolean;
   lifecycle: ConnectionLifecycle;
   pid: number | null;
   health: "unknown" | "healthy" | "degraded";
@@ -31,6 +34,7 @@ export interface ConnectionsSnapshot {
   running: number;
   needs_attention: number;
   config_error: boolean;
+  server_restart_required: boolean;
 }
 export interface TunnelProfileRequest {
   id: string | null;
@@ -38,6 +42,7 @@ export interface TunnelProfileRequest {
   tunnel_id: string;
   api_key: string | null;
   autostart: boolean;
+  host_mode: TunnelHostMode;
   expected_revision: number | null;
 }
 export type TunnelProfileAction = "start" | "stop" | "restart" | "delete";
@@ -68,7 +73,7 @@ export interface McpProviderRequest {
   enabled: boolean;
   env: Record<string, string | null>;
 }
-export const EMPTY_CONNECTIONS: ConnectionsSnapshot = { profiles: [], running: 0, needs_attention: 0, config_error: false };
+export const EMPTY_CONNECTIONS: ConnectionsSnapshot = { profiles: [], running: 0, needs_attention: 0, config_error: false, server_restart_required: false };
 export const EMPTY_MCP_PROVIDERS: McpProvidersSnapshot = { revision: 0, profiles: [], restart_required: false, config_error: false, max_enabled: 8 };
 export function connectionActive(profile: TunnelConnection): boolean {
   return profile.lifecycle === "starting" || profile.lifecycle === "running" || profile.lifecycle === "stopping" || (profile.lifecycle === "error" && profile.pid !== null);

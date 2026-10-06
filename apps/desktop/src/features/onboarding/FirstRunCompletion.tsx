@@ -66,6 +66,6 @@ export function FirstRunCompletion({ state, onState, onComplete, onProjects, onC
     </section>
     <FirstReadGuide state={state} onProjects={onProjects} />
     <div className="setup-actions"><button type="button" className="primary-button" disabled={busy} onClick={onComplete}>{t(create && !connected ? "completion.later" : "completion.overview")}</button></div>
-    {create && editor && <ConnectionEditor profile={null} onState={onState} onClose={() => setEditor(false)} />}
+    {create && editor && <ConnectionEditor profile={null} persistentLocal={Boolean(state.persistent_environment)} onState={onState} onClose={() => setEditor(false)} />}
   </section>;
 }

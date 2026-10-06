@@ -9,17 +9,50 @@ const manifest = JSON.parse(readFileSync(path.join(__dirname, 'manifest.json'), 
 const source = readFileSync(path.join(__dirname, 'worker.js'), 'utf8');
 const ID = 'pjhnlafbcbgcgjpkfiomhjnhpnaohgcg';
 const LEASE = 'a'.repeat(32);
+for (const revoke of [true, false]) {
+  test(`consent loss during tab lookup prevents debugger attach (${revoke ? 'revoke' : 'disconnect'})`,async()=>{
+    const f=fixture();try {
+      await f.share();let release;f.setGetHook(()=>new Promise(resolve=>{release=resolve;}));
+      const attaching=f.command('attach');
+      for(let n=0;n<10&&!release;n++) await Promise.resolve();
+      assert(release);
+      if(revoke) await f.revoke(); else await f.cleanup();
+      release();await attaching;
+      assert(!f.calls.some(call=>call[0]==='attach'),'revoked lookup must not dispatch an attach');
+    } finally {await f.cleanup();}
+  });
+}
+test('revocation during pending debugger attach detaches its late completion',async()=>{
+  const f=fixture();try {
+    await f.share();let release;f.setAttachHook(()=>new Promise(resolve=>{release=resolve;}));
+    const attaching=f.command('attach');
+    for(let n=0;n<10&&!release;n++) await Promise.resolve();
+    assert(release);await f.revoke();release();await attaching;
+    assert(f.calls.some(call=>call[0]==='detach'));
+    assert.equal(vm.runInContext('leases.size',f.context),0);
+  } finally {await f.cleanup();}
+});
+test('disconnect during new-page lookup cannot create a later unowned tab',async()=>{
+  const f=fixture();try {
+    await f.share();await f.command('attach');
+    let release;f.setGetHook(()=>new Promise(resolve=>{release=resolve;}));
+    const creating=f.command('new_page',{url:'about:blank'});
+    for(let n=0;n<10&&!release;n++) await Promise.resolve();
+    assert(release);await f.cleanup();release();await creating;
+    assert(!f.calls.some(call=>call[0]==='create'));
+  } finally {await f.cleanup();}
+});
 function event() {
   const listeners = [];
   return {addListener(fn) { listeners.push(fn); }, emit(...args) { for (const fn of listeners) fn(...args); }, listeners};
 }
 function fixture() {
   const calls = [], sent = [], tabs = new Map([[7, {id:7, windowId:9, title:'Signed in', url:'https://example.test/account'}]]);
-  let nextTab = 8, attachHook = null;
+  let nextTab = 8, attachHook = null, getHook = null;
   const port = {onMessage:event(), onDisconnect:event(), postMessage(value) { sent.push(value); }, disconnect() { calls.push(['disconnect']); }};
   const chrome = {
     runtime:{id:ID, onMessage:event(), connectNative(host) { assert.equal(host, 'com.webcodex.browser_bridge'); queueMicrotask(() => port.onMessage.emit({kind:'ready',version:1})); return port; }},
-    tabs:{onRemoved:event(), async query() { return [tabs.get(7)]; }, async get(id) { if (!tabs.has(id)) throw Error('missing'); return tabs.get(id); },
+    tabs:{onRemoved:event(), async query() { return [tabs.get(7)]; }, async get(id) { if(getHook) await getHook(); if (!tabs.has(id)) throw Error('missing'); return tabs.get(id); },
       async create(options) { const tab={id:nextTab++,windowId:options.windowId,url:options.url,title:'New'};tabs.set(tab.id,tab);calls.push(['create',tab.id]);return tab; },
       async remove(id) { calls.push(['remove',id]);tabs.delete(id);chrome.tabs.onRemoved.emit(id); }},
     debugger:{onEvent:event(),onDetach:event(),async attach(debuggee) { calls.push(['attach',debuggee.tabId]);if(attachHook) await attachHook(); },
@@ -32,8 +65,9 @@ function fixture() {
     context.message={kind,channel:1,lease:LEASE,tab:7,target,request:{id:1,method,params}};
     return vm.runInContext('command(message)',context);
   };
-  const share=() => new Promise(resolve => chrome.runtime.onMessage.listeners[0]({action:'share'},{id:ID},resolve));
-  return {calls,sent,tabs,chrome,port,context,command,share,setAttachHook(fn){attachHook=fn;},async cleanup(){await vm.runInContext('disconnect()',context);}};
+  const request=action => new Promise(resolve => chrome.runtime.onMessage.listeners[0]({action},{id:ID},resolve));
+  const share=() => request('share');
+  return {calls,sent,tabs,chrome,port,context,command,share,revoke:()=>request('revoke'),setGetHook(fn){getHook=fn;},setAttachHook(fn){attachHook=fn;},async cleanup(){await vm.runInContext('disconnect()',context);}};
 }
 test('manifest public key fixes the exact native caller identity',()=>{
   const digest=createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest('hex').slice(0,32);

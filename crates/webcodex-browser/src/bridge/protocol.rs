@@ -69,6 +69,10 @@ impl FrameReader {
         }
     }
     pub(crate) fn poll(&mut self, reader: &mut impl Read) -> io::Result<Option<Value>> {
+        // Socket timeouts bound a single read, not a succession of short reads.
+        // Yield after four reads so the owner can check its absolute handshake
+        // deadline and shutdown flag even when a peer trickles bytes forever.
+        let mut reads = 0;
         loop {
             if self.bytes.len() >= 4 {
                 let size = u32::from_le_bytes(self.bytes[..4].try_into().unwrap()) as usize;
@@ -85,6 +89,10 @@ impl FrameReader {
                     return Ok(Some(value));
                 }
             }
+            if reads == 4 {
+                return Ok(None);
+            }
+            reads += 1;
             let mut chunk = [0; 4096];
             let count = chunk.len().min(self.max + 4 - self.bytes.len());
             match reader.read(&mut chunk[..count]) {
@@ -124,6 +132,46 @@ mod tests {
             true
         );
     }
+    #[test]
+    fn continuous_short_reads_yield_to_owner_deadlines_and_shutdown() {
+        struct Trickle {
+            bytes: std::io::Cursor<Vec<u8>>,
+            reads: usize,
+        }
+        impl Read for Trickle {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                self.reads += 1;
+                let n = bytes.len().min(1);
+                self.bytes.read(&mut bytes[..n])
+            }
+        }
+        let mut encoded = Vec::new();
+        write_frame(
+            &mut encoded,
+            &serde_json::json!({"data":"x".repeat(100)}),
+            200,
+            false,
+        )
+        .unwrap();
+        let mut input = Trickle {
+            bytes: std::io::Cursor::new(encoded),
+            reads: 0,
+        };
+        let mut reader = FrameReader::new(200);
+        assert!(reader.poll(&mut input).unwrap().is_none());
+        assert!(
+            input.reads <= 4,
+            "partial reads must yield to the owner, not renew its deadline"
+        );
+        for _ in 0..200 {
+            if let Some(value) = reader.poll(&mut input).unwrap() {
+                assert_eq!(value["data"], "x".repeat(100));
+                return;
+            }
+        }
+        panic!("yielding reader lost the partial frame");
+    }
+
     #[test]
     fn partial_frames_survive_intermediate_would_block() {
         struct Fragment {

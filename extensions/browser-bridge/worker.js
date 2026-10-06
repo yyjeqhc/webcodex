@@ -10,6 +10,7 @@ const MAX_EVENT_BYTES = 64 * 1024;
 const allowedDomains = new Set(['Accessibility', 'DOM', 'DOMSnapshot', 'Input', 'Log', 'Network', 'Page', 'Runtime']);
 let native = null;
 let connecting = null;
+let generation = 0;
 const offers = new Map();
 const leases = new Map();
 const tabLease = new Map();
@@ -35,6 +36,7 @@ async function disconnect() {
   const current = native;
   native = null;
   connecting = null;
+  generation += 1;
   offers.clear();
   await Promise.all([...leases.keys()].map(detachLease));
   try { current?.disconnect(); } catch { /* Already disconnected. */ }
@@ -66,9 +68,11 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
     if (!tab?.id) throw new Error('no_active_tab');
     if (message.action === 'revoke') {
-      const lease = tabLease.get(tab.id);
-      if (lease) await detachLease(lease);
+      // Invalidate consent before awaiting cleanup, including attach operations
+      // that have reserved a lease but have not obtained the debugger yet.
       offers.delete(tab.id);
+      const revoked = [...leases.values()].filter(lease => lease.originalTab === tab.id || lease.tabs.has(tab.id));
+      await Promise.all(revoked.map(lease => detachLease(lease.id)));
       if (native) send({kind: 'revoke', tab: tab.id});
       return {ok: true, message: 'Tab revoked. Chrome and its login data remain unchanged.'};
     }
@@ -81,19 +85,24 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   return true;
 });
 
+function requireLease(lease) {
+  if (!native || lease.generation !== generation || leases.get(lease.id) !== lease) throw new Error('lease_lost');
+}
 async function attachTab(lease, tab) {
+  requireLease(lease);
   if (tabLease.has(tab)) throw new Error('tab_already_attached');
   await chrome.debugger.attach({tabId: tab}, '1.3');
   // The connection may disappear while attach was in flight. Do not retain an
   // unowned debugger after disconnect or reattach on a replacement native port.
-  if (!native || !leases.has(lease.id)) {
+  if (!native || lease.generation !== generation || leases.get(lease.id) !== lease) {
     try { await chrome.debugger.detach({tabId: tab}); } catch { /* Detached already. */ }
     throw new Error('lease_lost');
   }
   lease.tabs.add(tab);
   tabLease.set(tab, lease.id);
 }
-async function control(message) {
+async function control(message, epoch) {
+  if (!native || epoch !== generation) throw new Error('connection_lost');
   const request = message.request;
   const method = request.method;
   const id = message.lease;
@@ -101,8 +110,10 @@ async function control(message) {
     const offer = offers.get(message.tab);
     if (!offer || offer.expires < Date.now() || leases.has(id) || leases.size >= MAX_LEASES) throw new Error('consent_missing');
     const tab = await chrome.tabs.get(message.tab);
+    if (!native || epoch !== generation || offers.get(message.tab) !== offer || offer.expires < Date.now()
+        || leases.has(id) || leases.size >= MAX_LEASES) throw new Error('consent_missing');
     if (tab.windowId !== offer.window || !/^https?:\/\//i.test(tab.url ?? '')) throw new Error('tab_changed');
-    const lease = {id, tabs: new Set()};
+    const lease = {id, originalTab: tab.id, generation: epoch, tabs: new Set()};
     leases.set(id, lease);
     try { await attachTab(lease, tab.id); } catch (error) { await detachLease(id); throw error; }
     return {};
@@ -126,6 +137,7 @@ async function control(message) {
   if (method === 'new_page') {
     if (lease.tabs.size >= MAX_TABS || request.params?.url !== 'about:blank') throw new Error('page_limit_or_url');
     const original = await chrome.tabs.get(message.tab);
+    requireLease(lease);
     const tab = await chrome.tabs.create({windowId: original.windowId, url: 'about:blank', active: false});
     await attachTab(lease, tab.id);
     return {targetId: `tab_${tab.id}`};
@@ -146,6 +158,7 @@ function parseTarget(target) {
 }
 async function command(message) {
   const port = native;
+  const epoch = generation;
   if (!message || size(message) > MAX_COMMAND_BYTES || !['control', 'cdp'].includes(message.kind)
       || typeof message.lease !== 'string' || !/^[a-f0-9]{32}$/.test(message.lease)
       || !Number.isSafeInteger(message.channel) || !Number.isSafeInteger(message.request?.id)) {
@@ -156,7 +169,7 @@ async function command(message) {
   let response;
   try {
     if (message.kind === 'control') {
-      response = {id: message.request.id, result: await control(message)};
+      response = {id: message.request.id, result: await control(message, epoch)};
     } else {
       const tab = parseTarget(message.target);
       if (!leases.get(message.lease)?.tabs.has(tab) || tabLease.get(tab) !== message.lease) throw new Error('stale_target');
@@ -169,7 +182,7 @@ async function command(message) {
     // as bridge diagnostics; the Runner preserves post-dispatch uncertainty.
     response = {id: message.request.id, error: {code: 'external_operation_failed'}};
   } finally { admitted -= 1; }
-  if (native !== port) return;
+  if (native !== port || epoch !== generation) return;
   try { send({kind: 'message', channel: message.channel, lease: message.lease, message: response}); }
   catch { await disconnect(); }
 }

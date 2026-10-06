@@ -22,7 +22,11 @@ fn write_candidate(root: &Path) -> UpgradeCandidate {
             format!("artifacts/bin/{name}{}", std::env::consts::EXE_SUFFIX)
         };
         let path = root.join(&relative);
-        ensure_private_directory(path.parent().unwrap()).unwrap();
+        // This fixture validates candidate identity/relocation, not storage ACL
+        // hardening. The candidate root above is already private; creating nested
+        // disposable artifact directories directly avoids coupling these tests to
+        // platform-specific ACL mutation on every intermediate directory.
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, format!("disposable {name} bytes")).unwrap();
         #[cfg(unix)]
         {

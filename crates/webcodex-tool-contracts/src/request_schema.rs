@@ -251,6 +251,10 @@ fn normalize_closed_object_union(object: &mut Map<String, Value>) {
 }
 
 #[cfg(test)]
+#[path = "tests/registration_consistency.rs"]
+mod registration_consistency;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

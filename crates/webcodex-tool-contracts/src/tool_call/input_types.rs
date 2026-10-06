@@ -309,7 +309,11 @@ pub struct ReadFilesItem {
     /// or manually transfer this value: Runtime places it in parser-ready read_files suggested_call
     /// items when a partial range must continue. If supplied, Runtime rejects the item when that
     /// snapshot is no longer current.
-    #[serde(default, deserialize_with = "deserialize_optional_read_revision")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_read_revision",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub expected_read_revision: Option<u64>,
 }
 

@@ -236,6 +236,11 @@ jobs:
         run: |
           python3 scripts/tests/test_runner_observability_contract.py
           cargo test --locked -p webcodex-tool-contracts --all-features --lib
+          # Name/Serde/schema identity must also hold when either optional surface
+          # is absent. The all-features run above covers their joint presence.
+          cargo test --locked -p webcodex-tool-contracts --no-default-features --lib registration_consistency
+          cargo test --locked -p webcodex-tool-contracts --no-default-features --features workspace-checkpoints --lib registration_consistency
+          cargo test --locked -p webcodex-tool-contracts --no-default-features --features experimental-code-mode --lib registration_consistency
 
   mcp-conformance:
     # Dated MCP wire evidence is independent from ordinary unit/integration tests.

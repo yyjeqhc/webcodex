@@ -225,8 +225,17 @@ fn generate_field(
             "agent_id" | "assignee_agent_id" => Some(json!("wc_dagent_qqqqqqqqqqqqqqqq")),
             "agent_ids" => Some(json!(["wc_dagent_qqqqqqqqqqqqqqqq"])),
             "task_id" => Some(json!("wc_agent_task_ERERERERERERERER")),
+            "wait_id" if schema["pattern"] == "^wc_job_wait_[A-Za-z0-9_-]{16}$" => {
+                Some(json!("wc_job_wait_ZmZmZmZmZmZmZmZm"))
+            }
             "wait_id" => Some(json!("wc_agent_wait_ZmZmZmZmZmZmZmZm")),
             "goal_id" => Some(json!("wc_goal_AAAAAAAAAAAAAAAA")),
+            "attempt_id" if schema["pattern"] == "^wc_wake_attempt_[A-Za-z0-9_-]{16}$" => {
+                Some(json!("wc_wake_attempt_IiIiIiIiIiIiIiIi"))
+            }
+            "attempt_id" if schema["pattern"] == "^wc_job_delivery_[A-Za-z0-9_-]{16}$" => {
+                Some(json!("wc_job_delivery_IiIiIiIiIiIiIiIi"))
+            }
             "attempt_id" => Some(json!("wc_agent_task_attempt_IiIiIiIiIiIiIiIi")),
             "attempt_fence" => Some(json!("wc_agent_task_fence_MzMzMzMzMzMzMzMzMzMzMw")),
             "endpoint_id" => Some(json!("wc_endpoint_u7u7u7u7u7u7u7u7")),
@@ -236,6 +245,16 @@ fn generate_field(
             "consume_token" => Some(json!("wc_wake_consume______________________w")),
             "run_id" => Some(json!("wc_agent_run_sample_1234")),
             "skill_id" => Some(json!("wc_skill_EREREREREREREREREREREQ")),
+            // App-only and operator-only identities need fixtures too. These
+            // values are test data, not live bindings or an admission registry.
+            "binding_id" => Some(json!(format!("wc_host_binding_{}A", "a".repeat(21)))),
+            "skill_key" => Some(json!("sample-skill")),
+            "package_revision" => Some(json!(format!("wc_skillpkg_{}", "a".repeat(43)))),
+            "expected_state_revision" => Some(json!(format!("wc_skillstate_{}", "a".repeat(43)))),
+            "sha256" | "expected_artifact_sha256" | "adapter_id" | "event_id" => {
+                Some(json!("a".repeat(64)))
+            }
+            "observed_tool" => Some(json!("sample_tool")),
             "expected_definition_revision" => Some(json!("a".repeat(64))),
             "expected_revision"
                 if schema.get("type").and_then(Value::as_str) == Some("string")

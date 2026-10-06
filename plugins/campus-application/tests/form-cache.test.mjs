@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   formStructureSignature,
+  isResumeUpload,
   resolveFormMappings,
 } from "../dist/form-cache.js";
 
@@ -213,4 +214,135 @@ test("unnumbered repeated groups use stable document-order indexes", () => {
   assert.equal(byElement.get("element_school_a")?.resumePath, "education[0].school");
   assert.equal(byElement.get("element_major_a")?.resumePath, "education[0].major");
   assert.equal(byElement.get("element_school_b")?.resumePath, "education[1].school");
+});
+
+test("resume upload detection requires real upload semantics and explicit resume context", () => {
+  assert.equal(
+    isResumeUpload({
+      role: "button",
+      name: "本人同意针对相关工作机会提供简历及后续招聘进程中所需的个人信息",
+      actionable: true,
+      actions: ["click"],
+    }),
+    false,
+  );
+  assert.equal(
+    isResumeUpload({
+      role: "link",
+      name: "增加更多 简历",
+      actionable: true,
+      actions: ["click"],
+    }),
+    false,
+  );
+  assert.equal(
+    isResumeUpload({
+      role: "button",
+      name: "选择文件",
+      group_label: "简历",
+      value: "未选择任何文件",
+      actionable: true,
+      actions: ["upload_file"],
+    }),
+    true,
+  );
+});
+
+test("stable mapping hints teach unlabeled controls across volatile element ids", () => {
+  const first = resolveFormMappings([
+    {
+      role: "textbox",
+      name: "",
+      element_id: "element_unlabeled_a",
+      actionable: true,
+      actions: ["input_text"],
+    },
+  ]);
+  const mappingId = first.nodes[0]?.mapping_id;
+  assert.ok(mappingId);
+  assert.equal(first.nodes[0]?.mapping, undefined);
+
+  const taught = resolveFormMappings(
+    [
+      {
+        role: "textbox",
+        name: "",
+        element_id: "element_unlabeled_b",
+        actionable: true,
+        actions: ["input_text"],
+      },
+    ],
+    [{ mapping_id: mappingId, label: "姓名" }],
+  );
+  assert.equal(taught.nodes[0]?.mapping?.canonicalField, "full_name");
+
+  const reused = resolveFormMappings([
+    {
+      role: "textbox",
+      name: "",
+      element_id: "element_unlabeled_c",
+      actionable: true,
+      actions: ["input_text"],
+    },
+  ]);
+  assert.equal(reused.cacheHit, true);
+  assert.equal(reused.nodes[0]?.mapping?.canonicalField, "full_name");
+});
+
+test("mapping cache scopes identical unlabeled structures by site", () => {
+  const nodes = [
+    {
+      role: "textbox",
+      name: "",
+      element_id: "element_scoped_a",
+      actionable: true,
+      actions: ["input_text"],
+    },
+  ];
+  const first = resolveFormMappings(nodes, [], "site-a.example");
+  const mappingId = first.nodes[0]?.mapping_id;
+  assert.ok(mappingId);
+
+  const taught = resolveFormMappings(
+    nodes,
+    [{ mapping_id: mappingId, canonicalField: "full_name" }],
+    "site-a.example",
+  );
+  assert.equal(taught.nodes[0]?.mapping?.canonicalField, "full_name");
+
+  const otherSite = resolveFormMappings(nodes, [], "site-b.example");
+  assert.equal(otherSite.cacheHit, false);
+  assert.equal(otherSite.nodes[0]?.mapping, undefined);
+});
+
+test("unlabeled upload controls can be taught safely without pretending every file picker is a resume", () => {
+  const first = resolveFormMappings([
+    {
+      role: "button",
+      name: "选择文件",
+      value: "未选择任何文件",
+      element_id: "element_upload_a",
+      actionable: true,
+      actions: ["upload_file"],
+    },
+  ]);
+  const mappingId = first.nodes[0]?.mapping_id;
+  assert.ok(mappingId);
+  assert.equal(first.nodes[0]?.mapping, undefined);
+
+  const taught = resolveFormMappings(
+    [
+      {
+        role: "button",
+        name: "选择文件",
+        value: "未选择任何文件",
+        element_id: "element_upload_b",
+        actionable: true,
+        actions: ["upload_file"],
+      },
+    ],
+    [{ mapping_id: mappingId, canonicalField: "resume_path" }],
+  );
+  assert.equal(taught.nodes[0]?.mapping?.canonicalField, "resume_path");
+  assert.equal(taught.nodes[0]?.mapping?.resumePath, "attachments.resume_path");
 });

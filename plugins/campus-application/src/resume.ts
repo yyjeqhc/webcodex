@@ -6,6 +6,15 @@ export const canonicalFields = [
   "full_name",
   "first_name",
   "last_name",
+  "gender",
+  "birth_date",
+  "id_type",
+  "id_number",
+  "ethnicity",
+  "political_status",
+  "native_place",
+  "household_registration",
+  "marital_status",
   "email",
   "phone",
   "city",
@@ -44,6 +53,15 @@ const canonicalResumePaths: Record<CanonicalField, string> = {
   full_name: "identity.full_name",
   first_name: "identity.first_name",
   last_name: "identity.last_name",
+  gender: "personal.gender",
+  birth_date: "personal.birth_date",
+  id_type: "personal.id_type",
+  id_number: "personal.id_number",
+  ethnicity: "personal.ethnicity",
+  political_status: "personal.political_status",
+  native_place: "personal.native_place",
+  household_registration: "personal.household_registration",
+  marital_status: "personal.marital_status",
   email: "contact.email",
   phone: "contact.phone",
   city: "contact.city",
@@ -81,6 +99,17 @@ export type ResumeProfile = {
     full_name: string;
     first_name: string;
     last_name: string;
+  };
+  personal?: {
+    gender: string;
+    birth_date: string;
+    id_type: string;
+    id_number: string;
+    ethnicity: string;
+    political_status: string;
+    native_place: string;
+    household_registration: string;
+    marital_status: string;
   };
   contact: {
     email: string;
@@ -201,6 +230,17 @@ export const resumeProfileSchema = schema.object({
     first_name: schema.string({ maxLength: 100 }),
     last_name: schema.string({ maxLength: 100 }),
   }),
+  personal: schema.optional(schema.object({
+    gender: schema.string({ maxLength: 100 }),
+    birth_date: schema.string({ maxLength: 100 }),
+    id_type: schema.string({ maxLength: 100 }),
+    id_number: schema.string({ maxLength: 200 }),
+    ethnicity: schema.string({ maxLength: 100 }),
+    political_status: schema.string({ maxLength: 100 }),
+    native_place: schema.string({ maxLength: 300 }),
+    household_registration: schema.string({ maxLength: 300 }),
+    marital_status: schema.string({ maxLength: 100 }),
+  })),
   contact: schema.object({
     email: schema.string({ maxLength: 320 }),
     phone: schema.string({ maxLength: 100 }),
@@ -237,6 +277,15 @@ export const canonicalProfileSchema = schema.object({
   full_name: schema.string({ maxLength: 200 }),
   first_name: schema.string({ maxLength: 100 }),
   last_name: schema.string({ maxLength: 100 }),
+  gender: schema.string({ maxLength: 100 }),
+  birth_date: schema.string({ maxLength: 100 }),
+  id_type: schema.string({ maxLength: 100 }),
+  id_number: schema.string({ maxLength: 200 }),
+  ethnicity: schema.string({ maxLength: 100 }),
+  political_status: schema.string({ maxLength: 100 }),
+  native_place: schema.string({ maxLength: 300 }),
+  household_registration: schema.string({ maxLength: 300 }),
+  marital_status: schema.string({ maxLength: 100 }),
   email: schema.string({ maxLength: 320 }),
   phone: schema.string({ maxLength: 100 }),
   city: schema.string({ maxLength: 200 }),

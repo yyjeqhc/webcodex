@@ -18,6 +18,7 @@ export type SnapshotNode = {
   disabled?: boolean;
   read_only?: boolean;
   element_id?: string;
+  actions?: string[];
   actionable: boolean;
 };
 
@@ -31,7 +32,15 @@ export type CachedFieldMapping = {
 export type ResolvedStructureNode = {
   node: SnapshotNode;
   key: string;
+  mapping_id: string;
   mapping?: CachedFieldMapping;
+};
+
+export type FormMappingHint = {
+  mapping_id: string;
+  label?: string | undefined;
+  canonicalField?: CanonicalField | undefined;
+  resumePath?: string | undefined;
 };
 
 const MAX_STRUCTURE_NODES = 256;
@@ -157,6 +166,15 @@ const fieldKeywords: ReadonlyArray<{
 }> = [
   { field: "first_name", exact: ["firstname", "givenname", "名"], contains: ["firstname", "givenname"] },
   { field: "last_name", exact: ["lastname", "surname", "familyname", "姓"], contains: ["lastname", "surname", "familyname"] },
+  { field: "gender", exact: ["gender", "sex", "性别"], contains: ["gender", "性别"] },
+  { field: "birth_date", exact: ["dateofbirth", "birthdate", "birthday", "出生日期", "出生年月", "生日"], contains: ["dateofbirth", "birthdate", "出生日期", "出生年月"] },
+  { field: "id_type", exact: ["idtype", "identificationtype", "证件类型"], contains: ["idtype", "证件类型"] },
+  { field: "id_number", exact: ["idnumber", "identificationnumber", "身份证号", "身份证号码", "证件号码", "证件号"], contains: ["idnumber", "身份证号", "证件号码", "证件号"] },
+  { field: "ethnicity", exact: ["ethnicity", "nationalityethnicity", "民族"], contains: ["ethnicity", "民族"] },
+  { field: "political_status", exact: ["politicalstatus", "政治面貌"], contains: ["politicalstatus", "政治面貌"] },
+  { field: "native_place", exact: ["nativeplace", "籍贯", "生源地"], contains: ["nativeplace", "籍贯", "生源地"] },
+  { field: "household_registration", exact: ["householdregistration", "hukou", "户籍所在地", "户口所在地", "户籍"], contains: ["householdregistration", "hukou", "户籍", "户口"] },
+  { field: "marital_status", exact: ["maritalstatus", "婚姻状况", "婚姻状态"], contains: ["maritalstatus", "婚姻"] },
   { field: "full_name", exact: ["name", "fullname", "姓名"], contains: ["fullname", "candidatename"] },
   { field: "email", exact: ["email", "emailaddress", "邮箱", "电子邮箱"], contains: ["email"] },
   { field: "phone", exact: ["phone", "phonenumber", "mobile", "mobilenumber", "手机号", "手机号码", "联系电话", "电话"], contains: ["phone", "mobile", "手机号", "联系电话"] },
@@ -194,13 +212,24 @@ export function matchField(
   return undefined;
 }
 
+export function isUploadControl(node: SnapshotNode): boolean {
+  const role = node.role.toLowerCase();
+  return (
+    node.actions?.includes("upload_file") === true ||
+    (role === "button" && normalizeLabel(node.value ?? "").includes("未选择任何文件"))
+  );
+}
+
 export function isResumeUpload(node: SnapshotNode): boolean {
-  const label = normalizeLabel(node.name);
+  if (!isUploadControl(node)) return false;
+
+  const label = normalizeLabel(
+    [node.name, node.description ?? "", node.group_label ?? ""].join(" "),
+  );
   return (
     label.includes("resume") ||
     label.includes("cv") ||
-    label.includes("简历") ||
-    label.includes("附件")
+    label.includes("简历")
   );
 }
 
@@ -222,7 +251,7 @@ export function choiceMatches(option: string, desired: string): boolean {
 
 function isStructureNode(node: SnapshotNode): boolean {
   const role = node.role.toLowerCase();
-  if (node.actionable && isResumeUpload(node)) return true;
+  if (node.actionable && isUploadControl(node)) return true;
   return [
     "textbox",
     "searchbox",
@@ -248,15 +277,22 @@ function structuralBase(node: SnapshotNode): string {
   ]);
 }
 
-function structuralEntries(nodes: readonly SnapshotNode[]): Array<{ node: SnapshotNode; key: string }> {
+function mappingIdForKey(key: string): string {
+  return createHash("sha256").update(key).digest("hex").slice(0, 24);
+}
+
+function structuralEntries(
+  nodes: readonly SnapshotNode[],
+): Array<{ node: SnapshotNode; key: string; mapping_id: string }> {
   const counts = new Map<string, number>();
-  const entries: Array<{ node: SnapshotNode; key: string }> = [];
+  const entries: Array<{ node: SnapshotNode; key: string; mapping_id: string }> = [];
   for (const node of nodes.slice(0, MAX_STRUCTURE_NODES)) {
     if (!isStructureNode(node)) continue;
     const base = structuralBase(node);
     const occurrence = counts.get(base) ?? 0;
     counts.set(base, occurrence + 1);
-    entries.push({ node, key: `${base}#${occurrence}` });
+    const key = `${base}#${occurrence}`;
+    entries.push({ node, key, mapping_id: mappingIdForKey(key) });
   }
   return entries;
 }
@@ -270,7 +306,7 @@ export function formStructureSignature(nodes: readonly SnapshotNode[]): string {
 }
 
 function deriveMappings(
-  entries: ReadonlyArray<{ node: SnapshotNode; key: string }>,
+  entries: ReadonlyArray<{ node: SnapshotNode; key: string; mapping_id: string }>,
 ): Map<string, CachedFieldMapping> {
   const mappings = new Map<string, CachedFieldMapping>();
   const groupIndexes = new Map<string, number>();
@@ -332,23 +368,30 @@ function deriveMappings(
       continue;
     }
 
-    const match = matchField(node.name);
-    if (match) {
+    const evidenceLabels = [node.name, node.description ?? "", node.group_label ?? ""];
+    for (const label of evidenceLabels) {
+      const match = matchField(label);
+      if (!match) continue;
       mappings.set(key, {
         ...match,
         resumePath: resumePathForCanonicalField(match.canonicalField),
-        source: "name",
+        source: label === node.name ? "name" : "group",
       });
+      break;
     }
   }
   return mappings;
 }
 
-function remember(signature: string, mappings: Map<string, CachedFieldMapping>): void {
-  if (mappingCache.has(signature)) {
-    mappingCache.delete(signature);
+function cacheKeyFor(scope: string, signature: string): string {
+  return scope.length > 0 ? `${scope}\u0000${signature}` : signature;
+}
+
+function remember(cacheKey: string, mappings: Map<string, CachedFieldMapping>): void {
+  if (mappingCache.has(cacheKey)) {
+    mappingCache.delete(cacheKey);
   }
-  mappingCache.set(signature, mappings);
+  mappingCache.set(cacheKey, mappings);
   while (mappingCache.size > MAX_MAPPING_CACHE_ENTRIES) {
     const oldest = mappingCache.keys().next().value as string | undefined;
     if (oldest === undefined) break;
@@ -356,7 +399,11 @@ function remember(signature: string, mappings: Map<string, CachedFieldMapping>):
   }
 }
 
-export function resolveFormMappings(nodes: readonly SnapshotNode[]): {
+export function resolveFormMappings(
+  nodes: readonly SnapshotNode[],
+  hints: readonly FormMappingHint[] = [],
+  cacheScope = "",
+): {
   signature: string;
   cacheHit: boolean;
   cacheEntries: number;
@@ -367,17 +414,40 @@ export function resolveFormMappings(nodes: readonly SnapshotNode[]): {
     .update(JSON.stringify(entries.map(({ key }) => key)))
     .digest("hex")
     .slice(0, 24);
-  const cached = mappingCache.get(signature);
+  const cacheKey = cacheKeyFor(cacheScope, signature);
+  const cached = mappingCache.get(cacheKey);
   const cacheHit = cached !== undefined;
-  const mappings = cached ?? deriveMappings(entries);
-  remember(signature, mappings);
+  const mappings = new Map(cached ?? deriveMappings(entries));
+
+  const entryByMappingId = new Map(entries.map((entry) => [entry.mapping_id, entry]));
+  for (const hint of hints) {
+    const entry = entryByMappingId.get(hint.mapping_id);
+    if (!entry) continue;
+    const matched = hint.canonicalField
+      ? { canonicalField: hint.canonicalField, confidence: 1 }
+      : hint.label
+        ? matchField(hint.label)
+        : undefined;
+    if (!matched) continue;
+    mappings.set(entry.key, {
+      canonicalField: matched.canonicalField,
+      resumePath:
+        hint.resumePath ?? resumePathForCanonicalField(matched.canonicalField),
+      confidence: matched.confidence,
+      source: "group",
+    });
+  }
+  remember(cacheKey, mappings);
+
   return {
     signature,
     cacheHit,
     cacheEntries: mappingCache.size,
-    nodes: entries.map(({ node, key }) => {
+    nodes: entries.map(({ node, key, mapping_id }) => {
       const mapping = mappings.get(key);
-      return mapping === undefined ? { node, key } : { node, key, mapping };
+      return mapping === undefined
+        ? { node, key, mapping_id }
+        : { node, key, mapping_id, mapping };
     }),
   };
 }

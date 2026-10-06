@@ -5,6 +5,17 @@
     "first_name": "Ming",
     "last_name": "Li"
   },
+  "personal": {
+    "gender": "男",
+    "birth_date": "2000-01-01",
+    "id_type": "身份证",
+    "id_number": "000000200001010000",
+    "ethnicity": "汉族",
+    "political_status": "群众",
+    "native_place": "示例省示例市",
+    "household_registration": "示例省示例市",
+    "marital_status": "未婚"
+  },
   "contact": {
     "email": "candidate@example.test",
     "phone": "+86 138 0000 0000",

@@ -39,7 +39,7 @@ The repository contains only fictional example data. Copy `profile.example.json`
 
 By default the Plugin reads `profile.json` from the provider's configured `cwd`. An explicit `WEBCODEX_CAMPUS_APPLICATION_PROFILE` environment variable may instead point to another profile file.
 
-The structured profile covers identity/contact data, links, repeated education/experience/projects/campus experience, skills/languages, job preferences, application text, and attachments.
+The structured profile covers identity/contact data, common Chinese campus-recruiting personal fields (gender, birth date, identification, ethnicity, political status, native place, household registration, and marital status), links, repeated education/experience/projects/campus experience, skills/languages, job preferences, application text, and attachments.
 
 `attachments.resume_path` is passed to the later Browser `upload_file` action. It must be valid relative to the WebCodex project that the caller authorizes for upload; it is not resolved relative to the Plugin profile directory.
 
@@ -67,6 +67,8 @@ webcodex plugin describe --runner <runner> --plugin campus-application --tool pl
 
 Invocation remains on the canonical `plugin_tool describe -> call` path.
 
+For real ATS controls whose Browser semantic snapshot has no usable label, `analyze_form` and `plan_fill` return a stable `mapping_id`. Callers can teach the structure with `mapping_hints` using a label or explicit canonical field/resume path. Explicit teaching is kept in a site-scoped in-process cache and also persisted in the provider-private `mapping-memory.json` (override with `WEBCODEX_CAMPUS_APPLICATION_MAPPING_MEMORY`), keyed by site identity plus structure signature, so it survives Plugin reloads.
+
 ## Tools
 
 `profile_get` returns the configured structured resume resource plus the bounded canonical fill view.
@@ -82,7 +84,7 @@ Invocation remains on the canonical `plugin_tool describe -> call` path.
 
 Repeated controls map to exact source paths such as `education[1].school`, `experience[1].start_date`, or `projects[1].technologies`.
 
-The Plugin keeps a bounded 64-entry in-process mapping cache keyed by a 24-hex-character structure signature. The signature excludes volatile element/group identities, current values, checked state, passive AX text, submit buttons, and native picker affordances. Cache state is discarded when the Plugin process reloads.
+The Plugin keeps a bounded 64-entry, site-scoped in-process mapping cache and up to 256 persistent mapping-memory entries. The 24-hex-character structure signature excludes volatile element/group identities, current values, checked state, passive AX text, submit buttons, and native picker affordances. Explicitly taught mappings are restored from the private `mapping-memory.json` after Plugin reload.
 
 ## Local fixtures
 

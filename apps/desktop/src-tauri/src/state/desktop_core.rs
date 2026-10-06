@@ -57,7 +57,11 @@ impl DesktopCore {
                 },
             );
         }
-        apply_openai_tunnel_configuration(&mut snapshot, &tunnel_config);
+        apply_openai_tunnel_configuration(
+            &mut snapshot,
+            &tunnel_config,
+            config.persistent_environment.is_some(),
+        );
         snapshot.regular_tunnel_available = true;
         snapshot.powershell_runtime = crate::platform::powershell_runtime_snapshot();
         apply_config_projection(&mut snapshot, &config);
@@ -87,7 +91,7 @@ impl DesktopCore {
             .unwrap_or_else(|| resource_dir.join("webcodex-runtime"));
         let mut adapter = WebCodexAdapter::new(Some(runtime_directory));
         adapter.set_runtime_source(config.runtime_binary_source.clone());
-        Ok(Self {
+        let mut core = Self {
             data_dir,
             config_path,
             config,
@@ -108,7 +112,9 @@ impl DesktopCore {
             supervisor,
             activity,
             published,
-        })
+        };
+        core.publish_snapshot();
+        Ok(core)
     }
 
     pub async fn get_state(&mut self) -> DesktopResult<DesktopStateSnapshot> {
@@ -287,7 +293,11 @@ impl DesktopCore {
         self.project_connections();
         self.snapshot.current_operation = None;
         self.snapshot.activity_sequence = self.activity.latest_sequence();
-        apply_openai_tunnel_configuration(&mut self.snapshot, &self.tunnel_config);
+        apply_openai_tunnel_configuration(
+            &mut self.snapshot,
+            &self.tunnel_config,
+            self.config.persistent_environment.is_some(),
+        );
         self.snapshot.regular_tunnel_available = true;
         self.snapshot.powershell_runtime = crate::platform::powershell_runtime_snapshot();
         apply_config_projection(&mut self.snapshot, &self.config);

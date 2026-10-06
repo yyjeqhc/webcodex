@@ -805,11 +805,12 @@ impl DesktopCore {
             tunnel_profiles: if request.local_server() {
                 let mut profiles = Vec::new();
                 for profile in self.tunnel_config.profiles() {
+                    let id = crate::connection_id::TunnelProfileId::try_from(profile.id.clone())
+                        .map_err(|_| migration_target_conflict())?;
                     profiles.push(LegacyTunnelProfile {
-                        profile_id: profile.id.to_string(),
+                        profile_id: profile.id,
                         start: process_is_active(
-                            self.process_snapshot(ProcessKey::RegularTunnel(profile.id))
-                                .await,
+                            self.process_snapshot(ProcessKey::RegularTunnel(id)).await,
                         ),
                     });
                 }

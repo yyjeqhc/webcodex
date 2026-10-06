@@ -42,7 +42,7 @@ struct StoredProfiles {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TunnelProfileConfigSnapshot {
-    pub id: TunnelProfileId,
+    pub id: String,
     pub name: String,
     pub tunnel_id: Option<String>,
     pub credential_present: bool,
@@ -50,6 +50,8 @@ pub struct TunnelProfileConfigSnapshot {
     pub autostart: bool,
     pub revision: u64,
     pub source: TunnelConfigSource,
+    pub host_mode: webcodex_environment::TunnelHostMode,
+    pub server_restart_required: bool,
 }
 
 #[derive(Clone)]
@@ -76,11 +78,13 @@ impl Default for TunnelConfig {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TunnelProfileRequest {
-    pub id: Option<TunnelProfileId>,
+    pub id: Option<String>,
     pub name: String,
     pub tunnel_id: String,
     pub api_key: Option<String>,
     pub autostart: bool,
+    #[serde(default)]
+    pub host_mode: webcodex_environment::TunnelHostMode,
     pub expected_revision: Option<u64>,
 }
 
@@ -225,7 +229,7 @@ impl TunnelConfig {
                     return None;
                 }
                 Some(TunnelProfileConfigSnapshot {
-                    id: profile.id,
+                    id: profile.id.to_string(),
                     name: profile.name.clone(),
                     tunnel_id: safe.effective_tunnel_id,
                     credential_present: safe.api_key_present,
@@ -233,6 +237,8 @@ impl TunnelConfig {
                     autostart: profile.autostart,
                     revision: profile.revision,
                     source: safe.source,
+                    host_mode: webcodex_environment::TunnelHostMode::Standalone,
+                    server_restart_required: false,
                 })
             })
             .collect()
@@ -275,9 +281,20 @@ impl TunnelConfig {
         if self.invalid {
             return Err(invalid());
         }
-        let id = request.id.unwrap_or_else(TunnelProfileId::new);
+        if request.host_mode != webcodex_environment::TunnelHostMode::Standalone {
+            return Err(DesktopError::new(
+                "tunnel_host_unsupported",
+                "Server-owned profiles require a persistent Environment",
+                "Configure a persistent local Server or choose a separate Tunnel service.",
+            ));
+        }
+        let requested_id = request.id.as_deref();
+        let id = match requested_id {
+            Some(value) => TunnelProfileId::try_from(value.to_owned()).map_err(|_| invalid())?,
+            None => TunnelProfileId::new(),
+        };
         let previous = self.stored.profiles.iter().find(|p| p.id == id);
-        if request.id.is_some() && previous.is_none() && id != TunnelProfileId::DEFAULT {
+        if requested_id.is_some() && previous.is_none() && id != TunnelProfileId::DEFAULT {
             return Err(missing());
         }
         if let Some(expected) = request.expected_revision {
@@ -307,7 +324,7 @@ impl TunnelConfig {
         if self
             .profiles()
             .iter()
-            .any(|p| p.id != id && p.tunnel_id.as_deref() == Some(tunnel_id.as_str()))
+            .any(|p| p.id != id.to_string() && p.tunnel_id.as_deref() == Some(tunnel_id.as_str()))
         {
             return Err(DesktopError::new(
                 "tunnel_profile_duplicate",
@@ -405,11 +422,12 @@ impl TunnelConfig {
                 self.update_profile(
                     path,
                     TunnelProfileRequest {
-                        id: Some(TunnelProfileId::DEFAULT),
+                        id: Some(TunnelProfileId::DEFAULT.to_string()),
                         name,
                         tunnel_id,
                         api_key,
                         autostart,
+                        host_mode: webcodex_environment::TunnelHostMode::Standalone,
                         expected_revision: None,
                     },
                 )?;
@@ -437,6 +455,68 @@ impl TunnelConfig {
                 self.persist(path, next)
             }
         }
+    }
+
+    /// A persistent Environment owns its Tunnel catalog. A historical Desktop
+    /// file is therefore read only as a conflict fence: exact matching claims
+    /// are accepted, missing or different credentials fail closed, and extra
+    /// Environment profiles (including CLI-created readable IDs) are allowed.
+    pub(crate) fn ensure_persistent_catalog_compatible(
+        &self,
+        store: &webcodex_environment::EnvironmentStore,
+    ) -> DesktopResult<()> {
+        if self.invalid {
+            return Err(persistent_catalog_conflict());
+        }
+        if self.original.is_none() {
+            return Ok(());
+        }
+        let snapshots = webcodex_environment::tunnel_profile_snapshots(store)
+            .map_err(|_| persistent_catalog_conflict())?;
+        for profile in &self.stored.profiles {
+            let credentials = match &profile.credentials {
+                Some(pair) => Some(pair.clone()),
+                None if profile.id == TunnelProfileId::DEFAULT => {
+                    let tunnel_id = std::env::var("CONTROL_PLANE_TUNNEL_ID")
+                        .unwrap_or_default()
+                        .trim()
+                        .to_owned();
+                    let api_key = std::env::var("CONTROL_PLANE_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .to_owned();
+                    valid_id(&tunnel_id)
+                        .then_some(())
+                        .filter(|_| valid_key(&api_key))
+                        .map(|_| Credentials { tunnel_id, api_key })
+                }
+                None => None,
+            };
+            let Some(credentials) = credentials else {
+                continue;
+            };
+            let id = profile.id.to_string();
+            let Some(snapshot) = snapshots.iter().find(|candidate| candidate.profile_id == id)
+            else {
+                return Err(persistent_catalog_conflict());
+            };
+            if snapshot.tunnel_id != credentials.tunnel_id {
+                return Err(persistent_catalog_conflict());
+            }
+            let saved = webcodex_environment::tunnel_profile_credentials(store, &id)
+                .map_err(|_| persistent_catalog_conflict())?;
+            if saved.tunnel_id.expose() != credentials.tunnel_id
+                || saved.api_key.expose() != credentials.api_key
+            {
+                return Err(persistent_catalog_conflict());
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn persisted_file_present(&self) -> bool {
+        self.original.is_some()
     }
 
     pub fn apply_to_command(&self, command: &mut Command) -> DesktopResult<()> {
@@ -475,7 +555,7 @@ impl TunnelConfig {
         if self
             .profiles()
             .iter()
-            .any(|p| p.id != id && p.tunnel_id.as_deref() == Some(&credentials.tunnel_id))
+            .any(|p| p.id != id.to_string() && p.tunnel_id.as_deref() == Some(&credentials.tunnel_id))
         {
             return Err(invalid());
         }
@@ -639,6 +719,13 @@ fn write_guarded(path: &Path, bytes: &[u8], expected: Option<&[u8]>) -> DesktopR
 }
 fn invalid() -> DesktopError {
     DesktopError::new("tunnel_config_invalid", "Connection settings are invalid or unavailable", "Check the connection name, Tunnel ID and credential. Invalid saved files are never replaced implicitly.")
+}
+fn persistent_catalog_conflict() -> DesktopError {
+    DesktopError::new(
+        "tunnel_catalog_conflict",
+        "Desktop and the persistent Environment contain conflicting Tunnel profiles",
+        "Inspect both catalogs and reconcile the exact owner and credential manually. No profile was overwritten or deleted.",
+    )
 }
 fn missing() -> DesktopError {
     DesktopError::new(

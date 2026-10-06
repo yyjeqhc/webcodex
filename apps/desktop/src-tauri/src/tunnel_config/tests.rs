@@ -25,6 +25,7 @@ fn create(name: &str, tunnel_id: &str, key: &str) -> TunnelProfileRequest {
         tunnel_id: tunnel_id.into(),
         api_key: Some(key.into()),
         autostart: true,
+        host_mode: webcodex_environment::TunnelHostMode::Standalone,
         expected_revision: None,
     }
 }
@@ -35,11 +36,12 @@ fn edit(
     key: Option<&str>,
 ) -> TunnelProfileRequest {
     TunnelProfileRequest {
-        id: Some(id),
+        id: Some(id.to_string()),
         name: name.into(),
         tunnel_id: tunnel_id.into(),
         api_key: key.map(str::to_owned),
         autostart: true,
+        host_mode: webcodex_environment::TunnelHostMode::Standalone,
         expected_revision: None,
     }
 }
@@ -67,7 +69,7 @@ fn singleton_migrates_atomically_to_default_and_preserves_autostart_intent() {
         assert!(!config.invalid);
         let profiles = config.profiles();
         assert_eq!(profiles.len(), 1);
-        assert_eq!(profiles[0].id, TunnelProfileId::DEFAULT);
+        assert_eq!(profiles[0].id, TunnelProfileId::DEFAULT.to_string());
         assert_eq!(profiles[0].name, "ChatGPT");
         assert_eq!(profiles[0].autostart, autostart);
         assert_eq!(profiles[0].enabled, autostart);
@@ -242,7 +244,7 @@ fn stopped_and_non_autostart_profiles_keep_their_desired_state() {
         !reloaded
             .profiles()
             .iter()
-            .find(|p| p.id == a)
+            .find(|p| p.id == a.to_string())
             .unwrap()
             .enabled
     );
@@ -250,7 +252,7 @@ fn stopped_and_non_autostart_profiles_keep_their_desired_state() {
         !reloaded
             .profiles()
             .iter()
-            .find(|p| p.id == b)
+            .find(|p| p.id == b.to_string())
             .unwrap()
             .autostart
     );
@@ -408,4 +410,180 @@ async fn desktop_restart_and_activity_never_project_stored_keys() {
             .as_deref(),
         Some("tunnel_persisted")
     );
+}
+
+
+#[cfg(unix)]
+fn write_environment_profile_fixture(
+    root: &Path,
+    profiles: &[(&str, &str, &str)],
+) -> webcodex_environment::EnvironmentStore {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
+    fn private_write(path: &Path, bytes: &[u8]) {
+        let parent = path.parent().unwrap();
+        let mut directories = fs::DirBuilder::new();
+        directories.recursive(true).mode(0o700);
+        directories.create(parent).unwrap();
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)
+            .unwrap();
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .unwrap();
+        file.write_all(bytes).unwrap();
+        file.sync_all().unwrap();
+    }
+
+    let store = webcodex_environment::EnvironmentStore::open(root.to_path_buf()).unwrap();
+    let records = profiles
+        .iter()
+        .map(|(profile_id, _, _)| webcodex_environment::TunnelRecord {
+            profile_id: (*profile_id).to_owned(),
+            name: format!("Profile {profile_id}"),
+            host_mode: webcodex_environment::TunnelHostMode::Standalone,
+            autostart: true,
+            revision: 1,
+            runtime_revision: 1,
+            installed: false,
+            started: false,
+        })
+        .collect::<Vec<_>>();
+    private_write(
+        &root.join("tunnel.json"),
+        &serde_json::to_vec_pretty(&records).unwrap(),
+    );
+    for (profile_id, tunnel_id, api_key) in profiles {
+        private_write(
+            &root
+                .join("server/tunnels")
+                .join(profile_id)
+                .join("webcodex.env"),
+            format!(
+                "WEBCODEX_ADDR=127.0.0.1:62645\nWEBCODEX_TOKEN=local-fixture\nCONTROL_PLANE_TUNNEL_ID={tunnel_id}\nCONTROL_PLANE_API_KEY={api_key}\nWEBCODEX_TUNNEL_PROFILE_ID={profile_id}\n"
+            )
+            .as_bytes(),
+        );
+    }
+    store
+}
+
+#[cfg(unix)]
+#[test]
+fn persistent_environment_accepts_cli_profiles_when_no_desktop_catalog_exists() {
+    let fixture = Fixture::new();
+    let local = TunnelConfig::load(&fixture.path(), false);
+    assert!(!local.persisted_file_present());
+    let store = write_environment_profile_fixture(
+        &fixture.0.join("environment-no-local"),
+        &[("work", "tunnel_work", "work-private-key")],
+    );
+
+    local.ensure_persistent_catalog_compatible(&store).unwrap();
+    let profiles = webcodex_environment::tunnel_profile_snapshots(&store).unwrap();
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0].profile_id, "work");
+    assert_eq!(profiles[0].tunnel_id, "tunnel_work");
+    let public = serde_json::to_string(&profiles).unwrap();
+    assert!(!public.contains("work-private-key"));
+    assert!(!fixture.path().exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn persistent_environment_reconciles_exact_legacy_claims_and_fails_closed_on_conflict() {
+    let fixture = Fixture::new();
+    let mut local = TunnelConfig::load(&fixture.path(), false);
+    local
+        .update_profile(
+            &fixture.path(),
+            TunnelProfileRequest {
+                id: Some(TunnelProfileId::DEFAULT.to_string()),
+                name: "ChatGPT".into(),
+                tunnel_id: "tunnel_default".into(),
+                api_key: Some("default-private-key".into()),
+                autostart: true,
+                host_mode: webcodex_environment::TunnelHostMode::Standalone,
+                expected_revision: None,
+            },
+        )
+        .unwrap();
+    assert!(local.persisted_file_present());
+    let store = write_environment_profile_fixture(
+        &fixture.0.join("environment-exact"),
+        &[
+            ("default", "tunnel_default", "default-private-key"),
+            ("work", "tunnel_work", "work-private-key"),
+        ],
+    );
+    let local_before = fs::read(fixture.path()).unwrap();
+    let catalog_before = fs::read(store.root().join("tunnel.json")).unwrap();
+    local.ensure_persistent_catalog_compatible(&store).unwrap();
+    assert_eq!(fs::read(fixture.path()).unwrap(), local_before);
+    assert_eq!(fs::read(store.root().join("tunnel.json")).unwrap(), catalog_before);
+
+    let binding = store
+        .root()
+        .join("server/tunnels/default/webcodex.env");
+    let conflicting = fs::read_to_string(&binding)
+        .unwrap()
+        .replace("default-private-key", "different-private-key");
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut file = fs::OpenOptions::new()
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(&binding)
+        .unwrap();
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .unwrap();
+    file.write_all(conflicting.as_bytes()).unwrap();
+    file.sync_all().unwrap();
+    let binding_before = fs::read(&binding).unwrap();
+
+    let error = local
+        .ensure_persistent_catalog_compatible(&store)
+        .unwrap_err();
+    assert_eq!(error.code, "tunnel_catalog_conflict");
+    assert_eq!(fs::read(fixture.path()).unwrap(), local_before);
+    assert_eq!(fs::read(store.root().join("tunnel.json")).unwrap(), catalog_before);
+    assert_eq!(fs::read(binding).unwrap(), binding_before);
+    let encoded = serde_json::to_string(&error).unwrap();
+    assert!(!encoded.contains("default-private-key"));
+    assert!(!encoded.contains("different-private-key"));
+}
+
+#[cfg(unix)]
+#[test]
+fn persistent_environment_rejects_a_missing_legacy_profile_without_deleting_either_catalog() {
+    let fixture = Fixture::new();
+    let mut local = TunnelConfig::default();
+    local
+        .update_profile(
+            &fixture.path(),
+            create("Legacy", "tunnel_legacy", "legacy-private-key"),
+        )
+        .unwrap();
+    let local_before = fs::read(fixture.path()).unwrap();
+    let store = write_environment_profile_fixture(
+        &fixture.0.join("environment-missing"),
+        &[("work", "tunnel_work", "work-private-key")],
+    );
+    let catalog_before = fs::read(store.root().join("tunnel.json")).unwrap();
+
+    assert_eq!(
+        local
+            .ensure_persistent_catalog_compatible(&store)
+            .unwrap_err()
+            .code,
+        "tunnel_catalog_conflict"
+    );
+    assert_eq!(fs::read(fixture.path()).unwrap(), local_before);
+    assert_eq!(fs::read(store.root().join("tunnel.json")).unwrap(), catalog_before);
 }

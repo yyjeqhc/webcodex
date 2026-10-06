@@ -78,7 +78,10 @@ impl AppState {
         snapshot.current_operation = self.operations.current();
         snapshot.environment_setup = environment_invitation::setup_snapshot(&snapshot);
         snapshot.activity_sequence = self.activity.latest_sequence();
-        if snapshot.openai_tunnel_config.source == crate::models::TunnelConfigSource::Environment {
+        if snapshot.persistent_environment.is_none()
+            && snapshot.openai_tunnel_config.source
+                == crate::models::TunnelConfigSource::Environment
+        {
             snapshot.openai_tunnel_config = crate::tunnel_config::environment_snapshot();
             snapshot.openai_tunnel_configured = snapshot.openai_tunnel_config.is_configured();
         }

@@ -365,17 +365,19 @@ async fn tunnel_configuration_edit_does_not_change_runner_generation_or_mcp_desi
             tunnel_id: format!("tunnel_{}", uuid::Uuid::new_v4().simple()),
             api_key: Some("independent-tunnel-fixture".into()),
             autostart: true,
+            host_mode: webcodex_environment::TunnelHostMode::Standalone,
             expected_revision: None,
         })
         .await
         .unwrap();
     let connection = &state.connections.profiles[0].config;
     app.save_tunnel_profile(crate::tunnel_config::TunnelProfileRequest {
-        id: Some(connection.id),
+        id: Some(connection.id.clone()),
         name: "Work".into(),
         tunnel_id: connection.tunnel_id.clone().unwrap(),
         api_key: Some("replacement-tunnel-fixture".into()),
         autostart: true,
+        host_mode: webcodex_environment::TunnelHostMode::Standalone,
         expected_revision: Some(connection.revision),
     })
     .await

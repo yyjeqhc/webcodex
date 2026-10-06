@@ -10,7 +10,7 @@ use std::process::Command;
 
 fn config(id: TunnelProfileId) -> TunnelProfileConfigSnapshot {
     TunnelProfileConfigSnapshot {
-        id,
+        id: id.to_string(),
         name: id.to_string(),
         tunnel_id: Some(format!("tunnel_{}", id)),
         credential_present: true,
@@ -18,6 +18,8 @@ fn config(id: TunnelProfileId) -> TunnelProfileConfigSnapshot {
         autostart: true,
         revision: 1,
         source: TunnelConfigSource::File,
+        host_mode: webcodex_environment::TunnelHostMode::Standalone,
+        server_restart_required: false,
     }
 }
 fn snapshot(ids: &[TunnelProfileId]) -> ConnectionsSnapshot {

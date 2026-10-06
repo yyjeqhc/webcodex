@@ -29,7 +29,7 @@ fn native_connection_observations_survive_desktop_state_reads() {
     published.persistent_environment = Some("fixture-environment".into());
     published.connections.profiles = vec![TunnelConnectionSnapshot {
         config: TunnelProfileConfigSnapshot {
-            id: TunnelProfileId::new(),
+            id: TunnelProfileId::new().to_string(),
             name: "ChatGPT".into(),
             tunnel_id: Some("fixture".into()),
             credential_present: true,
@@ -37,6 +37,8 @@ fn native_connection_observations_survive_desktop_state_reads() {
             autostart: true,
             revision: 1,
             source: crate::models::TunnelConfigSource::File,
+            host_mode: webcodex_environment::TunnelHostMode::Standalone,
+            server_restart_required: false,
         },
         runtime: ConnectionRuntimeSnapshot {
             lifecycle: ConnectionLifecycle::Running,
@@ -65,6 +67,7 @@ async fn connection_resume_uses_current_profile_preferences_without_enabling_sto
         let mut slot = app.core.lock().await;
         let core = slot.as_mut().unwrap();
         core.config.persistent_environment = None;
+        core.tunnel_config = TunnelConfig::default();
         core.config.runtime_autostart = Some(false);
         core.config.topology = Some(RuntimeTopology {
             experience: Experience::Full,
@@ -86,6 +89,7 @@ async fn connection_resume_uses_current_profile_preferences_without_enabling_sto
                         tunnel_id: format!("fixture-{autostart}"),
                         api_key: Some("fixture-key".into()),
                         autostart,
+                        host_mode: webcodex_environment::TunnelHostMode::Standalone,
                         expected_revision: None,
                     },
                 )
@@ -119,4 +123,98 @@ async fn connection_resume_uses_current_profile_preferences_without_enabling_sto
         .await
         .snapshot(ProcessKey::LocalRunner)
         .is_none());
+}
+
+
+fn service_status(running: bool) -> webcodex_environment::service::ServiceStatus {
+    webcodex_environment::service::ServiceStatus {
+        id: "webcodex".into(),
+        ownership: webcodex_environment::service::Ownership::Owned,
+        installed: true,
+        enabled: Some(true),
+        running: Some(running),
+        detail: None,
+    }
+}
+
+fn environment_profile(
+    host_mode: webcodex_environment::TunnelHostMode,
+    autostart: bool,
+) -> webcodex_environment::TunnelProfileSnapshot {
+    webcodex_environment::TunnelProfileSnapshot {
+        profile_id: "work".into(),
+        name: "Work".into(),
+        tunnel_id: "tunnel_work".into(),
+        credential_present: true,
+        host_mode,
+        autostart,
+        revision: 3,
+        installed: host_mode == webcodex_environment::TunnelHostMode::Standalone,
+        started: false,
+    }
+}
+
+#[test]
+fn persistent_projection_preserves_cli_identity_and_surfaces_one_explicit_server_restart() {
+    let profile = environment_profile(webcodex_environment::TunnelHostMode::Embedded, true);
+    let pending = webcodex_environment::TunnelRuntimeObservation {
+        service_status: service_status(true),
+        host_mode: webcodex_environment::TunnelHostMode::Embedded,
+        ready: false,
+        tunnel_ready: false,
+        local_mcp_ready: false,
+        configured_revision: 3,
+        applied_revision: Some(2),
+        server_restart_required: true,
+    };
+    let projected = persistent_connection_projection(profile.clone(), Ok(pending));
+    assert_eq!(projected.config.id, "work");
+    assert_eq!(
+        projected.config.source,
+        crate::models::TunnelConfigSource::Environment
+    );
+    assert_eq!(
+        projected.config.host_mode,
+        webcodex_environment::TunnelHostMode::Embedded
+    );
+    assert!(projected.config.server_restart_required);
+    assert_eq!(projected.runtime.lifecycle, ConnectionLifecycle::Stopped);
+    assert!(projected.runtime.last_error.is_none());
+    assert!(!projected.runtime.process_started);
+
+    let applied = webcodex_environment::TunnelRuntimeObservation {
+        service_status: service_status(true),
+        host_mode: webcodex_environment::TunnelHostMode::Embedded,
+        ready: true,
+        tunnel_ready: true,
+        local_mcp_ready: true,
+        configured_revision: 3,
+        applied_revision: Some(3),
+        server_restart_required: false,
+    };
+    let running = persistent_connection_projection(profile, Ok(applied));
+    assert!(!running.config.server_restart_required);
+    assert_eq!(running.runtime.lifecycle, ConnectionLifecycle::Running);
+    assert_eq!(running.runtime.health, ConnectionHealth::Healthy);
+    assert!(running.runtime.ready);
+}
+
+#[test]
+fn disabled_server_owned_profile_is_not_misreported_as_failed_while_server_runs() {
+    let profile = environment_profile(webcodex_environment::TunnelHostMode::Embedded, false);
+    let observation = webcodex_environment::TunnelRuntimeObservation {
+        service_status: service_status(true),
+        host_mode: webcodex_environment::TunnelHostMode::Embedded,
+        ready: false,
+        tunnel_ready: false,
+        local_mcp_ready: false,
+        configured_revision: 3,
+        applied_revision: Some(3),
+        server_restart_required: false,
+    };
+    let projected = persistent_connection_projection(profile, Ok(observation));
+    assert!(!projected.config.enabled);
+    assert_eq!(projected.runtime.lifecycle, ConnectionLifecycle::Stopped);
+    assert!(projected.runtime.last_error.is_none());
+    assert_eq!(projected.runtime.tunnel_ready, None);
 }

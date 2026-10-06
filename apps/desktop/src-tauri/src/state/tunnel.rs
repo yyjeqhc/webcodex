@@ -157,10 +157,48 @@ fn apply_config_projection(snapshot: &mut DesktopStateSnapshot, config: &StoredD
     };
 }
 
-fn apply_openai_tunnel_configuration(snapshot: &mut DesktopStateSnapshot, config: &TunnelConfig) {
-    let configuration = config.snapshot();
+fn apply_openai_tunnel_configuration(
+    snapshot: &mut DesktopStateSnapshot,
+    config: &TunnelConfig,
+    persistent_environment: bool,
+) {
+    let configuration = if persistent_environment {
+        persistent_default_tunnel_snapshot(config)
+    } else {
+        config.snapshot()
+    };
     snapshot.openai_tunnel_configured = configuration.is_configured();
     snapshot.openai_tunnel_config = configuration;
+}
+
+fn persistent_default_tunnel_snapshot(
+    legacy: &TunnelConfig,
+) -> crate::models::OpenAiTunnelConfigSnapshot {
+    let result = (|| -> DesktopResult<crate::models::OpenAiTunnelConfigSnapshot> {
+        let store = environment::store()?;
+        legacy.ensure_persistent_catalog_compatible(&store)?;
+        let profile = webcodex_environment::tunnel_profile_snapshots(&store)
+            .map_err(environment::desktop_error)?
+            .into_iter()
+            .find(|profile| profile.profile_id == "default");
+        Ok(match profile {
+            Some(profile) => crate::models::OpenAiTunnelConfigSnapshot {
+                tunnel_id_present: true,
+                api_key_present: profile.credential_present,
+                source: crate::models::TunnelConfigSource::Environment,
+                saved_tunnel_id: Some(profile.tunnel_id.clone()),
+                effective_tunnel_id: Some(profile.tunnel_id),
+            },
+            None => crate::models::OpenAiTunnelConfigSnapshot {
+                source: crate::models::TunnelConfigSource::Environment,
+                ..Default::default()
+            },
+        })
+    })();
+    result.unwrap_or_else(|_| crate::models::OpenAiTunnelConfigSnapshot {
+        source: crate::models::TunnelConfigSource::Invalid,
+        ..Default::default()
+    })
 }
 
 fn same_server(left: &str, right: &str) -> bool {

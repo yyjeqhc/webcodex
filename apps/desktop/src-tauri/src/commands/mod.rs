@@ -114,7 +114,7 @@ pub async fn save_tunnel_profile(
 pub async fn tunnel_profile_action(
     app: AppHandle,
     state: State<'_, AppState>,
-    profile_id: crate::connection_id::TunnelProfileId,
+    profile_id: String,
     action: crate::state::ConnectionAction,
 ) -> DesktopResult<DesktopStateSnapshot> {
     project_state_result(&app, state.tunnel_profile_action(profile_id, action).await)

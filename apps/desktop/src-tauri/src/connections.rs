@@ -86,6 +86,7 @@ pub struct ConnectionsSnapshot {
     pub running: usize,
     pub needs_attention: usize,
     pub config_error: bool,
+    pub server_restart_required: bool,
 }
 impl ConnectionsSnapshot {
     pub fn recount(&mut self) {
@@ -95,6 +96,10 @@ impl ConnectionsSnapshot {
             .iter()
             .filter(|p| p.runtime.last_error.is_some())
             .count();
+        self.server_restart_required = self
+            .profiles
+            .iter()
+            .any(|profile| profile.config.server_restart_required);
     }
     pub fn any_active(&self) -> bool {
         self.profiles.iter().any(|p| {
@@ -120,9 +125,10 @@ impl ConnectionRuntimes {
     pub fn project(&self, snapshot: &mut ConnectionsSnapshot, runtime_ready: bool) {
         let entries = self.0.lock().unwrap_or_else(|e| e.into_inner());
         for profile in &mut snapshot.profiles {
-            profile.runtime = entries
-                .get(&profile.config.id)
-                .map(|e| e.state.clone())
+            profile.runtime = TunnelProfileId::try_from(profile.config.id.clone())
+                .ok()
+                .and_then(|id| entries.get(&id))
+                .map(|entry| entry.state.clone())
                 .unwrap_or_default();
             if !runtime_ready && profile.runtime.lifecycle == ConnectionLifecycle::Running {
                 profile.runtime.ready = false;

@@ -59,6 +59,17 @@ Inspect setup state with `webcodex environment status --json` or `webcodex envir
 
 Passing `--token-file` to ordinary `resume` supplies the credential needed to continue setup; it does not rotate a saved user credential. To replace a lost or invalid saved Server user credential, use `webcodex environment repair-user-credential [--token-file PATH]`. Without `--token-file`, the CLI requests it through hidden terminal input.
 
+## Upgrade from v0.4.6
+
+v0.4.6 already includes Environment. Keep its existing Environment directory,
+service owner/scope, Runtime selection, private credentials and recovery records;
+ordinary upgrades do not require deleting configuration or re-pairing Runners.
+After moving to v0.5, refresh the MCP connection's tool schema and reopen old App
+readers so they use the new canonical tools. See the
+[compatibility policy](compatibility-policy.md) for the published-data boundaries,
+older installation paths, and explicit reconciliation of a Desktop Tunnel profile
+that was saved but never configured in Environment.
+
 ## Migrate an existing Linux CLI service
 
 Linux provides explicit migration commands for the supported legacy CLI templates. They preserve the existing identity and do not issue a new pairing code. Source review is complete, but these commands have not passed native package/service acceptance. Do not treat M2f migration as natively accepted for these paths.

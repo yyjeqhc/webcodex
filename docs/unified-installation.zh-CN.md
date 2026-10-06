@@ -59,6 +59,15 @@ pairing code 从 stdin 读取，不能放进命令行参数。由中心 Server �
 
 普通 `resume` 使用 `--token-file` 是为了继续配置，不会轮换已保存的用户凭据。若已保存的 Server 用户凭据丢失或失效，请运行 `webcodex environment repair-user-credential [--token-file PATH]`；不提供 `--token-file` 时，CLI 会通过隐藏终端输入安全读取凭据。
 
+## 从 v0.4.6 升级
+
+v0.4.6 已经包含 Environment。请保留原 Environment 目录、服务所有者和 scope、
+Runtime 选择、私有凭据以及恢复记录；普通升级不需要删除配置或重新配对 Runner。
+升级到 v0.5 后，刷新 MCP 连接的工具 schema，并重新打开旧 App 阅读器，以使用新的
+规范工具名称。具体保留边界、旧安装迁移，以及“Desktop 已保存但 Environment 尚未
+配置”的 Tunnel profile 如何显式补齐，见[兼容性政策](compatibility-policy.md)。
+该 CLI 补齐路径会安装并启动 standalone 服务，不是仅保存配置的导入操作。
+
 ## 迁移现有 Linux CLI 服务
 
 Linux 为受支持的旧 CLI 服务提供显式迁移命令。迁移会保留既有身份，不会签发新的配对码。源码审查已完成，但这些命令尚未通过原生安装包/服务验收；不要将这些路径视为已完成 M2f 原生验收。

@@ -1,5 +1,10 @@
 # v0.5 pruning: compact names and one current contract
 
+> This is the historical pruning report. The current
+> [compatibility policy](../compatibility-policy.md) uses the published v0.4.6
+> baseline, distinguishes existing Environment installations from older migration
+> sources, and records the subsequent removal of the unreleased PDF reader alias.
+
 This pass follows `082dddd2` on the same unreleased v0.5 branch. It does not
 publish, deploy, alter stored credentials, bump package versions or change the
 parallel v0.4.4 release. No old tool name becomes an alias.

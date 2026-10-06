@@ -5,7 +5,7 @@ use crate::service::{Component, Ownership, ServiceAccount, ServiceManager, Servi
 use crate::storage::{atomic_private_write, ensure_private_directory};
 use crate::*;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug)]
 pub struct TunnelCredentials {
@@ -20,14 +20,78 @@ pub enum TunnelHostMode {
     Embedded,
 }
 
+fn default_true() -> bool {
+    true
+}
+fn default_revision() -> u64 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TunnelRecord {
     pub profile_id: String,
     #[serde(default)]
+    pub name: String,
+    #[serde(default)]
     pub host_mode: TunnelHostMode,
+    #[serde(default = "default_true")]
+    pub autostart: bool,
+    #[serde(default = "default_revision")]
+    pub revision: u64,
+    /// Revision of fields consumed only when an owner starts. Older records use
+    /// the catalog revision; display-name-only edits do not force a Server restart.
+    #[serde(default)]
+    pub runtime_revision: u64,
     pub installed: bool,
     pub started: bool,
 }
+impl TunnelRecord {
+    pub fn display_name(&self) -> &str {
+        if self.name.trim().is_empty() {
+            &self.profile_id
+        } else {
+            &self.name
+        }
+    }
+    pub fn effective_runtime_revision(&self) -> u64 {
+        if self.runtime_revision == 0 {
+            self.revision.max(1)
+        } else {
+            self.runtime_revision
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TunnelProfileSnapshot {
+    pub profile_id: String,
+    pub name: String,
+    pub tunnel_id: String,
+    pub credential_present: bool,
+    pub host_mode: TunnelHostMode,
+    pub autostart: bool,
+    pub revision: u64,
+    pub installed: bool,
+    pub started: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelConfigurationNextAction {
+    None,
+    StartServer,
+    RestartServer,
+    StartStandalone,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelConfigurationResult {
+    pub profile: TunnelProfileSnapshot,
+    pub owner_status: service::ServiceStatus,
+    pub server_restart_required: bool,
+    pub next_action: TunnelConfigurationNextAction,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TunnelRuntimeObservation {
     pub service_status: service::ServiceStatus,
@@ -36,6 +100,17 @@ pub struct TunnelRuntimeObservation {
     pub ready: bool,
     pub tunnel_ready: bool,
     pub local_mcp_ready: bool,
+    pub configured_revision: u64,
+    pub applied_revision: Option<u64>,
+    pub server_restart_required: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct TunnelProfileBinding {
+    pub tunnel_id: Secret,
+    pub api_key: Secret,
+    pub local_token: Secret,
+    pub proxy: Option<Secret>,
 }
 fn diagnostic(code: &str, message: &str) -> SetupDiagnostic {
     SetupDiagnostic::new(code, message, "Inspect the saved Tunnel profile and its system service; keep its original Tunnel ID and API credential")
@@ -119,11 +194,314 @@ pub fn tunnel_service_spec(
         linux_socket: None,
     })
 }
+fn profile_directory(store: &EnvironmentStore, profile_id: &str) -> std::path::PathBuf {
+    store.root().join("server/tunnels").join(profile_id)
+}
+
+fn validate_name(name: &str) -> SetupResultValue<String> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 160 || name.chars().any(|value| value.is_control()) {
+        return Err(diagnostic(
+            "tunnel_profile_name",
+            "Tunnel profile name is invalid",
+        ));
+    }
+    Ok(name.to_owned())
+}
+
+fn validate_credentials(credentials: &TunnelCredentials) -> SetupResultValue<()> {
+    let id = credentials.tunnel_id.expose();
+    let api = credentials.api_key.expose();
+    if id.is_empty()
+        || id.len() > 256
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        || api.is_empty()
+        || api.len() > 8192
+        || !api.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        return Err(diagnostic(
+            "tunnel_credentials",
+            "Tunnel credentials are invalid",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn unique_env_value(content: &str, key: &str) -> SetupResultValue<Option<String>> {
+    if content
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .filter(|(name, _)| name.trim() == key)
+        .count()
+        > 1
+    {
+        return Err(diagnostic(
+            "tunnel_profile_configuration",
+            "Tunnel profile configuration is incomplete or ambiguous",
+        ));
+    }
+    Ok(env_value(content, key))
+}
+
+fn required_env_value(content: &str, key: &str) -> SetupResultValue<String> {
+    unique_env_value(content, key)?
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            diagnostic(
+                "tunnel_profile_configuration",
+                "Tunnel profile configuration is incomplete or ambiguous",
+            )
+        })
+}
+
+pub(crate) fn tunnel_profile_binding(
+    store: &EnvironmentStore,
+    profile_id: &str,
+) -> SetupResultValue<TunnelProfileBinding> {
+    validate_id(profile_id)?;
+    let path = profile_directory(store, profile_id).join("webcodex.env");
+    let source = read_secret(&path)?;
+    if source.expose().len() > 32 * 1024 {
+        return Err(diagnostic(
+            "tunnel_profile_configuration",
+            "Tunnel profile configuration is too large",
+        ));
+    }
+    if required_env_value(source.expose(), "WEBCODEX_TUNNEL_PROFILE_ID")? != profile_id {
+        return Err(diagnostic(
+            "tunnel_profile_configuration",
+            "Tunnel profile identity does not match its private binding",
+        ));
+    }
+    Ok(TunnelProfileBinding {
+        tunnel_id: Secret::new(required_env_value(
+            source.expose(),
+            "CONTROL_PLANE_TUNNEL_ID",
+        )?),
+        api_key: Secret::new(required_env_value(
+            source.expose(),
+            "CONTROL_PLANE_API_KEY",
+        )?),
+        local_token: Secret::new(required_env_value(source.expose(), "WEBCODEX_TOKEN")?),
+        proxy: unique_env_value(source.expose(), "WEBCODEX_TUNNEL_PROXY")?.map(Secret::new),
+    })
+}
+
+pub fn tunnel_profile_credentials(
+    store: &EnvironmentStore,
+    profile_id: &str,
+) -> SetupResultValue<TunnelCredentials> {
+    let binding = tunnel_profile_binding(store, profile_id)?;
+    Ok(TunnelCredentials {
+        tunnel_id: binding.tunnel_id,
+        api_key: binding.api_key,
+    })
+}
+
+fn snapshot(record: &TunnelRecord, binding: &TunnelProfileBinding) -> TunnelProfileSnapshot {
+    TunnelProfileSnapshot {
+        profile_id: record.profile_id.clone(),
+        name: record.display_name().to_owned(),
+        tunnel_id: binding.tunnel_id.expose().to_owned(),
+        credential_present: !binding.api_key.expose().is_empty(),
+        host_mode: record.host_mode,
+        autostart: record.autostart,
+        revision: record.revision.max(1),
+        installed: record.installed,
+        started: record.started,
+    }
+}
+
+pub(crate) fn validate_catalog(profiles: &[TunnelRecord]) -> SetupResultValue<()> {
+    if profiles.len() > 64 {
+        return Err(diagnostic(
+            "tunnel_profile_capacity",
+            "Tunnel profile catalog exceeds its bounded capacity",
+        ));
+    }
+    let mut names = BTreeSet::new();
+    let mut embedded = 0usize;
+    for profile in profiles {
+        validate_id(&profile.profile_id)?;
+        if !profile.name.is_empty() {
+            validate_name(&profile.name)?;
+        }
+        if !names.insert(profile.profile_id.as_str()) {
+            return Err(diagnostic(
+                "tunnel_profile_duplicate",
+                "Tunnel profile identifiers must be unique",
+            ));
+        }
+        if profile.host_mode == TunnelHostMode::Embedded {
+            embedded += 1;
+            if profile.installed || profile.started {
+                return Err(diagnostic(
+                    "tunnel_owner_conflict",
+                    "An embedded profile still claims standalone lifecycle state",
+                ));
+            }
+        }
+    }
+    if embedded > 16 {
+        return Err(diagnostic(
+            "tunnel_profile_capacity",
+            "At most 16 Server-owned Tunnel profiles are supported",
+        ));
+    }
+    Ok(())
+}
+
+pub fn tunnel_profile_snapshots(
+    store: &EnvironmentStore,
+) -> SetupResultValue<Vec<TunnelProfileSnapshot>> {
+    let profiles = tunnel_profiles(store)?;
+    validate_catalog(&profiles)?;
+    let mut identities = BTreeSet::new();
+    let mut result = Vec::with_capacity(profiles.len());
+    for profile in &profiles {
+        let binding = tunnel_profile_binding(store, &profile.profile_id)?;
+        if !identities.insert(binding.tunnel_id.expose().to_owned()) {
+            return Err(diagnostic(
+                "tunnel_identity_duplicate",
+                "A Tunnel identity is bound to more than one profile",
+            ));
+        }
+        result.push(snapshot(profile, &binding));
+    }
+    Ok(result)
+}
+
+fn ensure_unique_tunnel_identity(
+    store: &EnvironmentStore,
+    profiles: &[TunnelRecord],
+    profile_id: &str,
+    tunnel_id: &str,
+) -> SetupResultValue<()> {
+    for profile in profiles {
+        if profile.profile_id == profile_id {
+            continue;
+        }
+        let binding = tunnel_profile_binding(store, &profile.profile_id)?;
+        if binding.tunnel_id.expose() == tunnel_id {
+            return Err(diagnostic(
+                "tunnel_identity_duplicate",
+                "A Tunnel identity is already bound to another profile",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure_server_tunnel_environment(store: &EnvironmentStore) -> SetupResultValue<()> {
+    let path = store.root().join("server/webcodex.env");
+    let source = read_secret(&path)?;
+    let root = store.root().to_str().ok_or_else(|| {
+        diagnostic(
+            "tunnel_profile_configuration",
+            "Environment path cannot be represented safely",
+        )
+    })?;
+    if root.contains(['\n', '\r', '"']) {
+        return Err(diagnostic(
+            "tunnel_profile_configuration",
+            "Environment path cannot be represented safely",
+        ));
+    }
+    let existing = unique_env_value(source.expose(), "WEBCODEX_TUNNEL_ENVIRONMENT")?;
+    if existing.as_deref().is_some_and(|value| value != root) {
+        return Err(diagnostic(
+            "tunnel_environment_conflict",
+            "The Server is already bound to another Tunnel environment",
+        ));
+    }
+    if existing.is_none() {
+        let content = format!(
+            "{}\nWEBCODEX_TUNNEL_ENVIRONMENT=\"{root}\"\n",
+            source.expose()
+        );
+        atomic_private_write(&path, content.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn write_profile_binding(
+    store: &EnvironmentStore,
+    profile_id: &str,
+    credentials: &TunnelCredentials,
+) -> SetupResultValue<()> {
+    validate_credentials(credentials)?;
+    let directory = profile_directory(store, profile_id);
+    ensure_private_directory(&directory)?;
+    let server = read_secret(&store.root().join("server/webcodex.env"))?;
+    let address = env_value(server.expose(), "WEBCODEX_ADDR").ok_or_else(|| {
+        diagnostic(
+            "server_configuration",
+            "Server listening address is unavailable",
+        )
+    })?;
+    let content = Secret::new(format!(
+        "WEBCODEX_ADDR={address}\nWEBCODEX_TOKEN={}\nCONTROL_PLANE_TUNNEL_ID={}\nCONTROL_PLANE_API_KEY={}\nWEBCODEX_TUNNEL_PROFILE_ID={profile_id}\n",
+        bootstrap_token(store)?.expose(),
+        credentials.tunnel_id.expose(),
+        credentials.api_key.expose()
+    ));
+    atomic_private_write(&directory.join("webcodex.env"), content.expose().as_bytes())?;
+    Ok(())
+}
+
+pub(crate) fn next_revision(value: u64) -> SetupResultValue<u64> {
+    value.max(1).checked_add(1).ok_or_else(|| {
+        diagnostic(
+            "tunnel_revision",
+            "Tunnel profile revision cannot advance safely",
+        )
+    })
+}
+
+fn validate_expected_revision(
+    existing: Option<&TunnelRecord>,
+    expected_revision: Option<u64>,
+) -> SetupResultValue<()> {
+    match (existing, expected_revision) {
+        (Some(profile), Some(expected)) if expected != profile.revision.max(1) => Err(diagnostic(
+            "tunnel_revision_stale",
+            "Tunnel profile changed after it was opened",
+        )),
+        (None, Some(_)) => Err(diagnostic(
+            "tunnel_revision_stale",
+            "Tunnel profile no longer exists",
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn embedded_next_action(
+    server: &service::ServiceStatus,
+    configured_revision: u64,
+    applied_revision: Option<u64>,
+    runtime_changed: bool,
+) -> (bool, TunnelConfigurationNextAction) {
+    let owner_running = server.ownership == Ownership::Owned && server.running == Some(true);
+    let restart_required =
+        owner_running && (runtime_changed || applied_revision != Some(configured_revision));
+    let next_action = if restart_required {
+        TunnelConfigurationNextAction::RestartServer
+    } else if !owner_running {
+        TunnelConfigurationNextAction::StartServer
+    } else {
+        TunnelConfigurationNextAction::None
+    };
+    (restart_required, next_action)
+}
+
 pub fn tunnel_profiles(store: &EnvironmentStore) -> SetupResultValue<Vec<TunnelRecord>> {
     store
         .read_json("tunnel.json")
         .map(|value| value.unwrap_or_default())
 }
+
 impl NativeEnvironment {
     pub async fn configure_tunnel(
         &self,
@@ -131,21 +509,88 @@ impl NativeEnvironment {
         profile_id: &str,
         credentials: Option<&TunnelCredentials>,
     ) -> SetupResultValue<service::ServiceStatus> {
+        Ok(self
+            .configure_tunnel_profile(
+                store,
+                profile_id,
+                None,
+                TunnelHostMode::Standalone,
+                None,
+                None,
+                credentials,
+                true,
+            )
+            .await?
+            .owner_status)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn configure_tunnel_profile(
+        &self,
+        store: &EnvironmentStore,
+        profile_id: &str,
+        name: Option<&str>,
+        host_mode: TunnelHostMode,
+        autostart: Option<bool>,
+        expected_revision: Option<u64>,
+        credentials: Option<&TunnelCredentials>,
+        start_standalone: bool,
+    ) -> SetupResultValue<TunnelConfigurationResult> {
         let lock = store.lock()?;
         crate::ensure_upgrade_idle_under_lock(store)?;
-        self.configure_tunnel_under_lock(store, &lock, profile_id, credentials, true)
-            .await
+        self.configure_tunnel_profile_under_lock(
+            store,
+            &lock,
+            profile_id,
+            name,
+            host_mode,
+            autostart,
+            expected_revision,
+            credentials,
+            start_standalone,
+        )
+        .await
     }
+
     pub(crate) async fn configure_tunnel_under_lock(
         &self,
         store: &EnvironmentStore,
-        _lock: &crate::storage::EnvironmentLock,
+        lock: &crate::storage::EnvironmentLock,
         profile_id: &str,
         credentials: Option<&TunnelCredentials>,
         start: bool,
     ) -> SetupResultValue<service::ServiceStatus> {
-        require_standalone(store, profile_id)?;
-        let record = store
+        Ok(self
+            .configure_tunnel_profile_under_lock(
+                store,
+                lock,
+                profile_id,
+                None,
+                TunnelHostMode::Standalone,
+                None,
+                None,
+                credentials,
+                start,
+            )
+            .await?
+            .owner_status)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn configure_tunnel_profile_under_lock(
+        &self,
+        store: &EnvironmentStore,
+        _lock: &crate::storage::EnvironmentLock,
+        profile_id: &str,
+        name: Option<&str>,
+        host_mode: TunnelHostMode,
+        autostart: Option<bool>,
+        expected_revision: Option<u64>,
+        credentials: Option<&TunnelCredentials>,
+        start_standalone: bool,
+    ) -> SetupResultValue<TunnelConfigurationResult> {
+        validate_id(profile_id)?;
+        let environment = store
             .load_environment()?
             .or_else(|| {
                 store
@@ -157,152 +602,315 @@ impl NativeEnvironment {
             .ok_or_else(|| {
                 diagnostic("not_configured", "Configure the Server environment first")
             })?;
-        let spec = tunnel_service_spec(store, &record, profile_id)?;
-        ServiceManager::preflight(&spec).map_err(service_error)?;
-        let path = spec.env_file.as_ref().unwrap();
-        if !path.exists() {
-            let credentials = credentials.ok_or_else(|| {
-                diagnostic(
+        if !environment.request.local_server() {
+            return Err(diagnostic(
+                "tunnel_local_server",
+                "A Tunnel can only be hosted by the Server machine",
+            ));
+        }
+        if cfg!(windows)
+            && environment.request.service_scope.is_system()
+            && host_mode == TunnelHostMode::Embedded
+        {
+            return Err(SetupDiagnostic::new(
+                "tunnel_host_unsupported",
+                "Embedded Tunnel setup currently requires a user-owned Server on Windows",
+                "Keep the standalone managed service for this system-scope environment",
+            ));
+        }
+
+        let mut profiles = tunnel_profiles(store)?;
+        validate_catalog(&profiles)?;
+        let existing_index = profiles
+            .iter()
+            .position(|profile| profile.profile_id == profile_id);
+        validate_expected_revision(
+            existing_index.map(|index| &profiles[index]),
+            expected_revision,
+        )?;
+        if let Some(index) = existing_index {
+            let existing = &profiles[index];
+            if existing.host_mode != host_mode {
+                return Err(SetupDiagnostic::new(
+                    "tunnel_host_transfer_required",
+                    "An existing Tunnel profile cannot change owners during configuration",
+                    "Stop and uninstall the previous owner, then use the explicit tunnel-host operation",
+                ));
+            }
+        }
+        if existing_index.is_none()
+            && host_mode == TunnelHostMode::Embedded
+            && profiles
+                .iter()
+                .filter(|profile| profile.host_mode == TunnelHostMode::Embedded)
+                .count()
+                == 16
+        {
+            return Err(diagnostic(
+                "tunnel_profile_capacity",
+                "At most 16 Server-owned Tunnel profiles are supported",
+            ));
+        }
+
+        let standalone_spec = tunnel_service_spec(store, &environment, profile_id)?;
+        let standalone_before = ServiceManager::inspect(&standalone_spec).map_err(service_error)?;
+        let server_before = if host_mode == TunnelHostMode::Embedded {
+            Some(
+                ServiceManager::inspect(&crate::service_spec(
+                    store,
+                    &environment,
+                    Component::Server,
+                )?)
+                .map_err(service_error)?,
+            )
+        } else {
+            None
+        };
+        if host_mode == TunnelHostMode::Embedded {
+            if standalone_before.ownership != Ownership::Absent {
+                return Err(SetupDiagnostic::new(
+                    "tunnel_host_busy",
+                    "A standalone Tunnel service still owns this profile",
+                    "Stop it cleanly and uninstall the exact service before transferring ownership",
+                ));
+            }
+            if matches!(
+                server_before
+                    .as_ref()
+                    .expect("embedded Server observation")
+                    .ownership,
+                Ownership::Foreign | Ownership::Unknown
+            ) {
+                return Err(diagnostic(
+                    "tunnel_owner",
+                    "The owning Server service cannot be verified",
+                ));
+            }
+        } else {
+            ServiceManager::preflight(&standalone_spec).map_err(service_error)?;
+        }
+
+        let env_path = profile_directory(store, profile_id).join("webcodex.env");
+        let existing_binding = env_path
+            .exists()
+            .then(|| tunnel_profile_binding(store, profile_id))
+            .transpose()?;
+        let tunnel_id = match (&existing_binding, credentials) {
+            (Some(saved), Some(candidate)) => {
+                validate_credentials(candidate)?;
+                if saved.tunnel_id.expose() != candidate.tunnel_id.expose()
+                    || saved.api_key.expose() != candidate.api_key.expose()
+                {
+                    return Err(diagnostic(
+                        "tunnel_binding_conflict",
+                        "This profile already contains another Tunnel identity or credential",
+                    ));
+                }
+                saved.tunnel_id.expose().to_owned()
+            }
+            (Some(saved), None) => saved.tunnel_id.expose().to_owned(),
+            (None, Some(candidate)) => {
+                validate_credentials(candidate)?;
+                candidate.tunnel_id.expose().to_owned()
+            }
+            (None, None) => {
+                return Err(diagnostic(
                     "tunnel_credentials",
                     "The original Tunnel credentials are required for the first configuration",
-                )
-            })?;
-            let id = credentials.tunnel_id.expose();
-            let api = credentials.api_key.expose();
-            if !id.strip_prefix("tunnel_").is_some_and(|suffix| {
-                suffix.len() == 32
-                    && suffix
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            }) || api.is_empty()
-                || api.len() > 8192
-                || api.contains(['\n', '\r', '\0', '"', '\''])
-            {
-                return Err(diagnostic(
-                    "tunnel_credentials",
-                    "Tunnel credentials are invalid",
-                ));
+                ))
             }
-            ensure_private_directory(&spec.working_directory)?;
-            let server = read_secret(&store.root().join("server/webcodex.env"))?;
-            let address = env_value(server.expose(), "WEBCODEX_ADDR").ok_or_else(|| {
-                diagnostic(
-                    "server_configuration",
-                    "Server listening address is unavailable",
-                )
-            })?;
-            let content = Secret::new(format!("WEBCODEX_ADDR={address}\nWEBCODEX_TOKEN={}\nCONTROL_PLANE_TUNNEL_ID={id}\nCONTROL_PLANE_API_KEY={api}\nWEBCODEX_TUNNEL_PROFILE_ID={profile_id}\n", bootstrap_token(store)?.expose()));
-            atomic_private_write(path, content.expose().as_bytes())?;
-        } else if let Some(credentials) = credentials {
-            let saved = read_secret(path)?;
-            if env_value(saved.expose(), "CONTROL_PLANE_TUNNEL_ID").as_deref()
-                != Some(credentials.tunnel_id.expose())
-                || env_value(saved.expose(), "CONTROL_PLANE_API_KEY").as_deref()
-                    != Some(credentials.api_key.expose())
-            {
-                return Err(diagnostic(
-                    "tunnel_binding_conflict",
-                    "This profile already contains another Tunnel identity or credential",
-                ));
+        };
+        ensure_unique_tunnel_identity(store, &profiles, profile_id, &tunnel_id)?;
+
+        let desired_name = match name {
+            Some(value) => validate_name(value)?,
+            None => existing_index
+                .map(|index| profiles[index].display_name().to_owned())
+                .unwrap_or_else(|| profile_id.to_owned()),
+        };
+        let desired_autostart = autostart.unwrap_or_else(|| {
+            existing_index
+                .map(|index| profiles[index].autostart)
+                .unwrap_or(true)
+        });
+
+        if host_mode == TunnelHostMode::Embedded {
+            ensure_server_tunnel_environment(store)?;
+        }
+        if existing_binding.is_none() {
+            write_profile_binding(
+                store,
+                profile_id,
+                credentials.expect("validated new binding"),
+            )?;
+        }
+        let health_path = profile_directory(store, profile_id).join("readiness.json");
+        if !health_path.exists() {
+            atomic_private_write(&health_path, b"{}")?;
+        }
+
+        let runtime_changed;
+        let index = if let Some(index) = existing_index {
+            let profile = &mut profiles[index];
+            let previous_runtime_revision = profile.effective_runtime_revision();
+            let name_changed = profile.display_name() != desired_name;
+            runtime_changed = profile.autostart != desired_autostart;
+            if name_changed || runtime_changed {
+                profile.revision = next_revision(profile.revision)?;
+            } else {
+                profile.revision = profile.revision.max(1);
             }
-        }
-        let health = spec.working_directory.join("readiness.json");
-        if !health.exists() {
-            atomic_private_write(&health, b"{}")?;
-        }
-        let mut profiles = tunnel_profiles(store)?;
-        if !profiles
-            .iter()
-            .any(|profile| profile.profile_id == profile_id)
-        {
+            profile.runtime_revision = if runtime_changed {
+                next_revision(previous_runtime_revision)?
+            } else {
+                previous_runtime_revision
+            };
+            profile.name = desired_name;
+            profile.autostart = desired_autostart;
+            if host_mode == TunnelHostMode::Embedded {
+                profile.installed = false;
+                profile.started = false;
+            }
+            index
+        } else {
+            runtime_changed = true;
             profiles.push(TunnelRecord {
-                profile_id: profile_id.into(),
-                host_mode: TunnelHostMode::Standalone,
+                profile_id: profile_id.to_owned(),
+                name: desired_name,
+                host_mode,
+                autostart: desired_autostart,
+                revision: 1,
+                runtime_revision: 1,
                 installed: false,
                 started: false,
             });
-        }
+            profiles.len() - 1
+        };
+        validate_catalog(&profiles)?;
         store.write_json("tunnel.json", &profiles)?;
-        // A saved inactive profile has no enabled boot service. Installation
-        // occurs only when the user explicitly starts this profile.
-        if !start {
-            return ServiceManager::inspect(&spec).map_err(service_error);
+
+        if host_mode == TunnelHostMode::Embedded {
+            let health = read_tunnel_health(&health_path).ok();
+            let configured_revision = profiles[index].effective_runtime_revision();
+            let applied_revision = health.as_ref().and_then(|value| value.profile_revision);
+            let server_before = server_before.expect("embedded Server observation");
+            let (server_restart_required, next_action) = embedded_next_action(
+                &server_before,
+                configured_revision,
+                applied_revision,
+                runtime_changed,
+            );
+            let binding = tunnel_profile_binding(store, profile_id)?;
+            return Ok(TunnelConfigurationResult {
+                profile: snapshot(&profiles[index], &binding),
+                owner_status: server_before,
+                server_restart_required,
+                next_action,
+            });
         }
-        let current = ServiceManager::inspect(&spec).map_err(service_error)?;
-        // Reconfiguring an already running profile must not re-enter Install:
-        // on Windows that path grants the virtual account access to private
-        // state and is deliberately invalid against a live service.
-        if tunnel_install_required(&current)? {
+
+        if !start_standalone {
+            let owner_status = ServiceManager::inspect(&standalone_spec).map_err(service_error)?;
+            let next_action = if owner_status.running == Some(true) {
+                TunnelConfigurationNextAction::None
+            } else {
+                TunnelConfigurationNextAction::StartStandalone
+            };
+            let binding = tunnel_profile_binding(store, profile_id)?;
+            return Ok(TunnelConfigurationResult {
+                profile: snapshot(&profiles[index], &binding),
+                owner_status,
+                server_restart_required: false,
+                next_action,
+            });
+        }
+
+        if tunnel_install_required(&standalone_before)? {
             crate::privilege::service_operation_spec(
                 store,
-                &record,
-                spec.clone(),
+                &environment,
+                standalone_spec.clone(),
                 ServiceOperation::Install,
                 None,
             )
             .await?;
         }
-        profiles
-            .iter_mut()
-            .find(|profile| profile.profile_id == profile_id)
-            .unwrap()
-            .installed = true;
+        profiles[index].installed = true;
         store.write_json("tunnel.json", &profiles)?;
-        if ServiceManager::inspect(&spec)
+        if ServiceManager::inspect(&standalone_spec)
             .map_err(service_error)?
             .running
             != Some(true)
         {
-            write_tunnel_health(&health, false, false)?;
+            write_tunnel_health(&health_path, false, false)?;
         }
-        let status = crate::privilege::service_operation_spec(
+        let owner_status = crate::privilege::service_operation_spec(
             store,
-            &record,
-            spec.clone(),
+            &environment,
+            standalone_spec.clone(),
             ServiceOperation::Start,
             None,
         )
         .await?;
-        wait_tunnel_readiness(&spec).await?;
-        profiles
-            .iter_mut()
-            .find(|profile| profile.profile_id == profile_id)
-            .unwrap()
-            .started = status.running == Some(true);
+        wait_tunnel_readiness(&standalone_spec).await?;
+        profiles[index].started = owner_status.running == Some(true);
         store.write_json("tunnel.json", &profiles)?;
-        Ok(status)
+        let binding = tunnel_profile_binding(store, profile_id)?;
+        Ok(TunnelConfigurationResult {
+            profile: snapshot(&profiles[index], &binding),
+            owner_status,
+            server_restart_required: false,
+            next_action: TunnelConfigurationNextAction::None,
+        })
     }
+
     pub fn tunnel_status(
         &self,
         store: &EnvironmentStore,
         profile_id: &str,
     ) -> SetupResultValue<TunnelRuntimeObservation> {
-        let record = store
+        let environment = store
             .load_environment()?
             .ok_or_else(|| diagnostic("not_configured", "Configure this environment first"))?;
-        let spec = tunnel_service_spec(store, &record, profile_id)?;
-        let host_mode = profile_host_mode(store, profile_id)?;
-        let owner_spec = if host_mode == TunnelHostMode::Embedded {
-            crate::service_spec(store, &record, Component::Server)?
+        let profile = tunnel_profiles(store)?
+            .into_iter()
+            .find(|profile| profile.profile_id == profile_id)
+            .ok_or_else(|| diagnostic("tunnel_profile", "Tunnel profile does not exist"))?;
+        let spec = tunnel_service_spec(store, &environment, profile_id)?;
+        let owner_spec = if profile.host_mode == TunnelHostMode::Embedded {
+            crate::service_spec(store, &environment, Component::Server)?
         } else {
             spec.clone()
         };
         let service_status = ServiceManager::inspect(&owner_spec).map_err(service_error)?;
-        let (tunnel_ready, local_mcp_ready) = if service_status.ownership == Ownership::Owned
-            && service_status.running == Some(true)
-        {
-            read_health(&spec.working_directory.join("readiness.json")).unwrap_or((false, false))
+        let health = read_tunnel_health(&spec.working_directory.join("readiness.json")).ok();
+        let owner_running =
+            service_status.ownership == Ownership::Owned && service_status.running == Some(true);
+        let configured_revision = profile.effective_runtime_revision();
+        let applied_revision = health.as_ref().and_then(|value| value.profile_revision);
+        let server_restart_required = profile.host_mode == TunnelHostMode::Embedded
+            && owner_running
+            && applied_revision != Some(configured_revision);
+        let (tunnel_ready, local_mcp_ready) = if owner_running && !server_restart_required {
+            health
+                .as_ref()
+                .map(|value| (value.tunnel_ready, value.local_mcp_ready))
+                .unwrap_or((false, false))
         } else {
             (false, false)
         };
         Ok(TunnelRuntimeObservation {
             service_status,
-            host_mode,
+            host_mode: profile.host_mode,
             ready: tunnel_ready && local_mcp_ready,
             tunnel_ready,
             local_mcp_ready,
+            configured_revision,
+            applied_revision,
+            server_restart_required,
         })
     }
+
     pub async fn remove_tunnel(
         &self,
         store: &EnvironmentStore,
@@ -310,48 +918,76 @@ impl NativeEnvironment {
     ) -> SetupResultValue<()> {
         let _lock = store.lock()?;
         crate::ensure_upgrade_idle_under_lock(store)?;
-        require_standalone(store, profile_id)?;
-        let record = store
+        let environment = store
             .load_environment()?
             .ok_or_else(|| diagnostic("not_configured", "Configure this environment first"))?;
-        let spec = tunnel_service_spec(store, &record, profile_id)?;
-        let status = ServiceManager::inspect(&spec).map_err(service_error)?;
-        match status.ownership {
-            Ownership::Owned => {
-                crate::privilege::service_operation_spec(
-                    store,
-                    &record,
-                    spec.clone(),
-                    ServiceOperation::Stop,
-                    None,
-                )
-                .await?;
-                let removed = crate::privilege::service_operation_spec(
-                    store,
-                    &record,
-                    spec.clone(),
-                    ServiceOperation::Uninstall,
-                    None,
-                )
-                .await?;
-                if removed.ownership != Ownership::Absent {
+        let mut profiles = tunnel_profiles(store)?;
+        let profile = profiles
+            .iter()
+            .find(|profile| profile.profile_id == profile_id)
+            .cloned()
+            .ok_or_else(|| diagnostic("tunnel_profile", "Tunnel profile does not exist"))?;
+        let spec = tunnel_service_spec(store, &environment, profile_id)?;
+        let standalone = ServiceManager::inspect(&spec).map_err(service_error)?;
+        if profile.host_mode == TunnelHostMode::Embedded {
+            let server = ServiceManager::inspect(&crate::service_spec(
+                store,
+                &environment,
+                Component::Server,
+            )?)
+            .map_err(service_error)?;
+            if (server.ownership == Ownership::Owned && server.running != Some(false))
+                || matches!(server.ownership, Ownership::Foreign | Ownership::Unknown)
+            {
+                return Err(SetupDiagnostic::new(
+                    "tunnel_host_busy",
+                    "Stop the owning Server before deleting an embedded Tunnel profile",
+                    "Observe a clean Server stop; do not delete credentials from a live owner",
+                ));
+            }
+            if standalone.ownership != Ownership::Absent {
+                return Err(SetupDiagnostic::new(
+                    "tunnel_owner",
+                    "A standalone service still claims this embedded profile",
+                    "Inspect and remove only the exact foreign or stale service before retrying",
+                ));
+            }
+        } else {
+            match standalone.ownership {
+                Ownership::Owned => {
+                    crate::privilege::service_operation_spec(
+                        store,
+                        &environment,
+                        spec.clone(),
+                        ServiceOperation::Stop,
+                        None,
+                    )
+                    .await?;
+                    let removed = crate::privilege::service_operation_spec(
+                        store,
+                        &environment,
+                        spec.clone(),
+                        ServiceOperation::Uninstall,
+                        None,
+                    )
+                    .await?;
+                    if removed.ownership != Ownership::Absent {
+                        return Err(diagnostic(
+                            "tunnel_remove_uncertain",
+                            "Tunnel service removal has not been confirmed",
+                        ));
+                    }
+                }
+                Ownership::Absent => {}
+                _ => {
                     return Err(diagnostic(
-                        "tunnel_remove_uncertain",
-                        "Tunnel service removal has not been confirmed",
-                    ));
+                        "tunnel_owner",
+                        "The saved Tunnel service owner cannot be verified",
+                    ))
                 }
             }
-            Ownership::Absent => {}
-            _ => {
-                return Err(diagnostic(
-                    "tunnel_owner",
-                    "The saved Tunnel service owner cannot be verified",
-                ))
-            }
         }
-        // Keep runtime logs for diagnosis. Remove only the exact saved credential
-        // after the service is absent, so no live process loses its unique key.
-        let env = spec.env_file.as_ref().unwrap();
+        let env = spec.env_file.as_ref().expect("Tunnel service env");
         if env.exists() {
             std::fs::remove_file(env).map_err(|_| SetupDiagnostic::io())?;
         }
@@ -359,10 +995,10 @@ impl NativeEnvironment {
         if health.exists() {
             std::fs::remove_file(health).map_err(|_| SetupDiagnostic::io())?;
         }
-        let mut profiles = tunnel_profiles(store)?;
         profiles.retain(|profile| profile.profile_id != profile_id);
         store.write_json("tunnel.json", &profiles)
     }
+
     pub async fn control_tunnel(
         &self,
         store: &EnvironmentStore,
@@ -372,10 +1008,10 @@ impl NativeEnvironment {
         let _lock = store.lock()?;
         crate::ensure_upgrade_idle_under_lock(store)?;
         require_standalone(store, profile_id)?;
-        let record = store.load_environment()?.ok_or_else(|| {
+        let environment = store.load_environment()?.ok_or_else(|| {
             diagnostic("not_configured", "Configure the Server environment first")
         })?;
-        let spec = tunnel_service_spec(store, &record, profile_id)?;
+        let spec = tunnel_service_spec(store, &environment, profile_id)?;
         let status = ServiceManager::inspect(&spec).map_err(service_error)?;
         if status.ownership != Ownership::Owned {
             return Err(diagnostic(
@@ -388,9 +1024,14 @@ impl NativeEnvironment {
         {
             write_tunnel_health(&spec.working_directory.join("readiness.json"), false, false)?;
         }
-        let result =
-            crate::privilege::service_operation_spec(store, &record, spec.clone(), operation, None)
-                .await?;
+        let result = crate::privilege::service_operation_spec(
+            store,
+            &environment,
+            spec.clone(),
+            operation,
+            None,
+        )
+        .await?;
         if matches!(
             operation,
             ServiceOperation::Start | ServiceOperation::Restart
@@ -438,6 +1079,32 @@ pub fn write_tunnel_health(
     tunnel_ready: bool,
     local_mcp_ready: bool,
 ) -> SetupResultValue<()> {
+    write_tunnel_health_inner(path, None, tunnel_ready, local_mcp_ready)
+}
+
+/// Embedded owners bind their heartbeat to the exact startup configuration
+/// revision. This is safe metadata and lets Desktop distinguish "restart needed"
+/// from an ordinary readiness failure without inspecting process command lines.
+pub fn write_embedded_tunnel_health(
+    path: &std::path::Path,
+    profile_revision: u64,
+    tunnel_ready: bool,
+    local_mcp_ready: bool,
+) -> SetupResultValue<()> {
+    write_tunnel_health_inner(
+        path,
+        Some(profile_revision.max(1)),
+        tunnel_ready,
+        local_mcp_ready,
+    )
+}
+
+fn write_tunnel_health_inner(
+    path: &std::path::Path,
+    profile_revision: Option<u64>,
+    tunnel_ready: bool,
+    local_mcp_ready: bool,
+) -> SetupResultValue<()> {
     use std::io::Write;
     let metadata = std::fs::symlink_metadata(path).map_err(|_| SetupDiagnostic::io())?;
     if !metadata.is_file() || metadata.is_symlink() {
@@ -465,7 +1132,14 @@ pub fn write_tunnel_health(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| SetupDiagnostic::io())?
         .as_millis();
-    let value = serde_json::json!({"schema_version":1,"observed_at_ms":now,"service_pid":std::process::id(),"tunnel_ready":tunnel_ready,"local_mcp_ready":local_mcp_ready});
+    let value = serde_json::json!({
+        "schema_version": 1,
+        "observed_at_ms": now,
+        "service_pid": std::process::id(),
+        "profile_revision": profile_revision,
+        "tunnel_ready": tunnel_ready,
+        "local_mcp_ready": local_mcp_ready
+    });
     file.set_len(0)
         .and_then(|_| file.write_all(value.to_string().as_bytes()))
         .and_then(|_| file.sync_all())
@@ -498,7 +1172,21 @@ pub(crate) async fn wait_tunnel_readiness(spec: &ServiceSpec) -> SetupResultValu
         .await;
     }
 }
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TunnelHealthObservation {
+    pub tunnel_ready: bool,
+    pub local_mcp_ready: bool,
+    pub profile_revision: Option<u64>,
+}
+
 pub(crate) fn read_health(path: &std::path::Path) -> SetupResultValue<(bool, bool)> {
+    let value = read_tunnel_health(path)?;
+    Ok((value.tunnel_ready, value.local_mcp_ready))
+}
+
+pub(crate) fn read_tunnel_health(
+    path: &std::path::Path,
+) -> SetupResultValue<TunnelHealthObservation> {
     use std::io::Read;
     let meta = std::fs::symlink_metadata(path).map_err(|_| SetupDiagnostic::io())?;
     if !meta.is_file() || meta.is_symlink() || meta.len() > 4096 {
@@ -523,23 +1211,90 @@ pub(crate) fn read_health(path: &std::path::Path) -> SetupResultValue<(bool, boo
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0) as u128;
     let fresh = time <= now && now.saturating_sub(time) < 7000;
-    Ok((
-        fresh
+    Ok(TunnelHealthObservation {
+        tunnel_ready: fresh
             && value
                 .get("tunnel_ready")
                 .and_then(serde_json::Value::as_bool)
                 == Some(true),
-        fresh
+        local_mcp_ready: fresh
             && value
                 .get("local_mcp_ready")
                 .and_then(serde_json::Value::as_bool)
                 == Some(true),
-    ))
+        profile_revision: value
+            .get("profile_revision")
+            .and_then(serde_json::Value::as_u64),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn status(ownership: Ownership, running: Option<bool>) -> service::ServiceStatus {
+        service::ServiceStatus {
+            id: "webcodex".into(),
+            ownership,
+            installed: ownership != Ownership::Absent,
+            enabled: None,
+            running,
+            detail: None,
+        }
+    }
+
+    fn record(revision: u64) -> TunnelRecord {
+        TunnelRecord {
+            profile_id: "work".into(),
+            name: "Work".into(),
+            host_mode: TunnelHostMode::Embedded,
+            autostart: true,
+            revision,
+            runtime_revision: revision,
+            installed: false,
+            started: false,
+        }
+    }
+
+    #[test]
+    fn revision_fence_rejects_stale_and_deleted_profiles() {
+        let profile = record(7);
+        assert!(validate_expected_revision(Some(&profile), Some(7)).is_ok());
+        assert_eq!(
+            validate_expected_revision(Some(&profile), Some(6))
+                .unwrap_err()
+                .code,
+            "tunnel_revision_stale"
+        );
+        assert_eq!(
+            validate_expected_revision(None, Some(7)).unwrap_err().code,
+            "tunnel_revision_stale"
+        );
+        assert!(validate_expected_revision(None, None).is_ok());
+    }
+
+    #[test]
+    fn embedded_result_requires_only_one_explicit_server_lifecycle_action() {
+        let running = status(Ownership::Owned, Some(true));
+        assert_eq!(
+            embedded_next_action(&running, 3, Some(2), true),
+            (true, TunnelConfigurationNextAction::RestartServer)
+        );
+        assert_eq!(
+            embedded_next_action(&running, 3, Some(3), false),
+            (false, TunnelConfigurationNextAction::None)
+        );
+        let stopped = status(Ownership::Owned, Some(false));
+        assert_eq!(
+            embedded_next_action(&stopped, 3, None, true),
+            (false, TunnelConfigurationNextAction::StartServer)
+        );
+        let absent = status(Ownership::Absent, None);
+        assert_eq!(
+            embedded_next_action(&absent, 3, None, true),
+            (false, TunnelConfigurationNextAction::StartServer)
+        );
+    }
 
     #[test]
     fn running_owned_tunnel_skips_reinstall_and_ambiguous_state_fails_closed() {

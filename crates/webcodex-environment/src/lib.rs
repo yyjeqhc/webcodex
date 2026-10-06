@@ -82,6 +82,8 @@ pub use upgrade::{
 };
 
 pub use tunnel::{
-    tunnel_profiles, tunnel_service_spec, write_tunnel_health, TunnelCredentials, TunnelHostMode,
+    tunnel_profile_credentials, tunnel_profile_snapshots, tunnel_profiles, tunnel_service_spec,
+    write_embedded_tunnel_health, write_tunnel_health, TunnelConfigurationNextAction,
+    TunnelConfigurationResult, TunnelCredentials, TunnelHostMode, TunnelProfileSnapshot,
     TunnelRecord, TunnelRuntimeObservation,
 };

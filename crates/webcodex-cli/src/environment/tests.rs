@@ -141,6 +141,18 @@ fn tunnel_and_upgrade_inputs_never_take_literal_credentials() {
     ])
     .unwrap();
     assert_eq!(tunnel.operand.as_deref(), Some("work"));
+    let embedded = input(&[
+        "configure-tunnel",
+        "work",
+        "--host",
+        "embedded",
+        "--credentials-file",
+        "private.json",
+    ])
+    .unwrap();
+    assert_eq!(embedded.tunnel_host, Some(TunnelHostMode::Embedded));
+    assert!(input(&["status", "--host", "embedded"]).is_err());
+    assert!(input(&["configure-tunnel", "--host", "other"]).is_err());
     assert!(input(&["configure-tunnel", "--api-key", "secret"]).is_err());
     assert!(input(&["status", "--credentials-file", "private.json"]).is_err());
     let upgrade = input(&[

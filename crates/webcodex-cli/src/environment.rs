@@ -5,7 +5,7 @@ use webcodex_environment::*;
 
 mod update;
 
-const USAGE: &str = "webcodex environment <COMMAND>\\n\\nconfigure [--create | --join URL] [--runner] [--runner-name NAME] [--project PATH | --no-project]\\n          [--scope user|system]\\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\\ninvite\\nadd-project PATH [--code-stdin] [--new-pairing-code]\\nremove-project PROJECT_ID\\nstatus|doctor\\npaths|backup-manifest (read-only metadata; no files or restore)\\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\\nrepair-credential runner\\nrepair-user-credential [--token-file PATH]\\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\\nconfigure-tunnel [PROFILE] [--credentials-file PATH]\\ntunnel-status [PROFILE]\\ntunnel-host PROFILE --host embedded|standalone\\nremove-tunnel [PROFILE]\\nupdate status|check|download|apply|resume|rollback (use update --help)\\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\\nupgrade-finish|upgrade-rollback\\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\\ninstaller-apply --upgrade-receipt PATH --candidate-dir PATH --installer-file PATH --installer-target TARGET (OS authorization required)\\ninstaller-verify --candidate-dir PATH\\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\\ninstaller-classify --expected-runtime-dir PATH (Windows)\\npackage-upgrade-preflight|package-upgrade-prepare|package-upgrade-verify --candidate-dir PATH --expected-runtime-dir PATH (Windows)\\npackage-upgrade-finish|package-upgrade-rollback --expected-runtime-dir PATH (Windows)\\ninstaller-finish|installer-cancel\\n\\nPublic environment commands accept --json and --environment-dir PATH.\\nInstaller finalization uses only the fixed owner authorization.\\nAdvanced: --bin-dir PATH (configure and explicit migration).\\n--runner enables local work without requiring an initial project.\\nNew environments default to user services; saved environments retain their manager.\\nUser scope: Linux systemd user manager (linger-dependent), macOS login LaunchAgent, Windows signed-in user task.\\nSystem scope: boot services with explicit OS authorization; no automatic fallback.\\nSame-machine creation issues separate local credentials automatically, without pairing input.\\nViewer-only uses a user credential; pairing codes are only for Runner machines.\\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\\n";
+const USAGE: &str = "webcodex environment <COMMAND>\\n\\nconfigure [--create | --join URL] [--runner] [--runner-name NAME] [--project PATH | --no-project]\\n          [--scope user|system]\\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\\ninvite\\nadd-project PATH [--code-stdin] [--new-pairing-code]\\nremove-project PROJECT_ID\\nstatus|doctor\\npaths|backup-manifest (read-only metadata; no files or restore)\\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\\nrepair-credential runner\\nrepair-user-credential [--token-file PATH]\\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\\nconfigure-tunnel [PROFILE] [--host embedded|standalone] [--credentials-file PATH]\\ntunnel-status [PROFILE]\\ntunnel-host PROFILE --host embedded|standalone\\nremove-tunnel [PROFILE]\\nupdate status|check|download|apply|resume|rollback (use update --help)\\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\\nupgrade-finish|upgrade-rollback\\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\\ninstaller-apply --upgrade-receipt PATH --candidate-dir PATH --installer-file PATH --installer-target TARGET (OS authorization required)\\ninstaller-verify --candidate-dir PATH\\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\\ninstaller-classify --expected-runtime-dir PATH (Windows)\\npackage-upgrade-preflight|package-upgrade-prepare|package-upgrade-verify --candidate-dir PATH --expected-runtime-dir PATH (Windows)\\npackage-upgrade-finish|package-upgrade-rollback --expected-runtime-dir PATH (Windows)\\ninstaller-finish|installer-cancel\\n\\nPublic environment commands accept --json and --environment-dir PATH.\\nInstaller finalization uses only the fixed owner authorization.\\nAdvanced: --bin-dir PATH (configure and explicit migration).\\n--runner enables local work without requiring an initial project.\\nNew environments default to user services; saved environments retain their manager.\\nUser scope: Linux systemd user manager (linger-dependent), macOS login LaunchAgent, Windows signed-in user task.\\nSystem scope: boot services with explicit OS authorization; no automatic fallback.\\nSame-machine creation issues separate local credentials automatically, without pairing input.\\nViewer-only uses a user credential; pairing codes are only for Runner machines.\\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\\n";
 #[derive(Default)]
 struct Input {
     command: String,
@@ -137,8 +137,10 @@ fn parse(args: &[String]) -> Result<Input, String> {
     if input.installer_file.is_some() && input.command != "installer-apply" {
         return Err("--installer-file applies only to verified unified installer handoff".into());
     }
-    if input.tunnel_host.is_some() && input.command != "tunnel-host" {
-        return Err("--host applies only to the explicit tunnel-host command".into());
+    if input.tunnel_host.is_some()
+        && !matches!(input.command.as_str(), "configure-tunnel" | "tunnel-host")
+    {
+        return Err("--host applies only to configure-tunnel or tunnel-host".into());
     }
     if input.credentials_file.is_some() && input.command != "configure-tunnel" {
         return Err("--credentials-file applies only to configure-tunnel".into());
@@ -964,16 +966,47 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                     "Supply the protected --credentials-file for this Tunnel profile".into(),
                 );
             };
-            let status = core
+            let host_mode = input.tunnel_host.unwrap_or(TunnelHostMode::Standalone);
+            let result = core
                 .backend
-                .configure_tunnel(&store, profile, credentials.as_ref())
+                .configure_tunnel_profile(
+                    &store,
+                    profile,
+                    None,
+                    host_mode,
+                    None,
+                    None,
+                    credentials.as_ref(),
+                    host_mode == TunnelHostMode::Standalone,
+                )
                 .await
                 .map_err(|e| e.to_string())?;
             if input.json {
-                serde_json::to_string_pretty(&status)
+                serde_json::to_string_pretty(&result)
                     .map_err(|_| "Could not encode Tunnel status".into())
             } else {
-                Ok(format!("{}: Tunnel and local MCP are ready", status.id))
+                Ok(match result.next_action {
+                    TunnelConfigurationNextAction::None
+                        if result.profile.host_mode == TunnelHostMode::Embedded =>
+                    {
+                        format!(
+                            "{profile}: saved for WebCodex Server; no Server restart is required"
+                        )
+                    }
+                    TunnelConfigurationNextAction::None => format!(
+                        "{}: Tunnel and local MCP are ready",
+                        result.owner_status.id
+                    ),
+                    TunnelConfigurationNextAction::StartServer => format!(
+                        "{profile}: saved for WebCodex Server; start the Server to supervise it"
+                    ),
+                    TunnelConfigurationNextAction::RestartServer => format!(
+                        "{profile}: saved for WebCodex Server; restart the Server once after configuring all profiles"
+                    ),
+                    TunnelConfigurationNextAction::StartStandalone => format!(
+                        "{profile}: saved; start the separate Tunnel service explicitly"
+                    ),
+                })
             }
         }
         "tunnel-host" => {
@@ -1005,12 +1038,13 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                     .map_err(|_| "Could not encode Tunnel status".into())
             } else {
                 Ok(format!(
-                    "{}: host={:?}, running={:?}, Tunnel ready={}, local MCP ready={}",
+                    "{}: host={:?}, running={:?}, Tunnel ready={}, local MCP ready={}, Server restart required={}",
                     status.service_status.id,
                     status.host_mode,
                     status.service_status.running,
                     status.tunnel_ready,
-                    status.local_mcp_ready
+                    status.local_mcp_ready,
+                    status.server_restart_required
                 ))
             }
         }

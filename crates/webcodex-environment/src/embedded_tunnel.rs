@@ -1,7 +1,6 @@
 //! Explicit, per-profile bindings for a Server-owned Tunnel. No credential lookup
 //! in process environment, no global environment mutation, and no service adoption.
-use crate::native::{env_value, service_error};
-use crate::storage::{atomic_private_write, read_private};
+use crate::native::service_error;
 use crate::*;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -9,6 +8,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 pub struct EmbeddedTunnelProfile {
     pub profile_id: String,
+    pub autostart: bool,
+    pub runtime_revision: u64,
     pub credentials: TunnelCredentials,
     pub local_token: Secret,
     pub proxy: Option<Secret>,
@@ -19,67 +20,47 @@ fn invalid() -> SetupDiagnostic {
     SetupDiagnostic::new("tunnel_profile_configuration", "Embedded Tunnel configuration is incomplete or ambiguous", "Verify each private profile file independently; inherited process credentials are never used")
 }
 
-fn unique_value(content: &str, key: &str) -> SetupResultValue<Option<String>> {
-    if content
-        .lines()
-        .filter_map(|line| line.split_once('='))
-        .filter(|(name, _)| name.trim() == key)
-        .count()
-        > 1
-    {
-        return Err(invalid());
-    }
-    Ok(env_value(content, key))
-}
-
 /// Load only explicitly embedded records from an operator-selected Environment.
 /// Standalone profiles and existing installations are not migrated implicitly.
 pub fn embedded_tunnel_profiles(root: &Path) -> SetupResultValue<Vec<EmbeddedTunnelProfile>> {
     let store = EnvironmentStore::open(root.to_path_buf())?;
     let profiles = tunnel_profiles(&store)?;
-    if profiles.len() > 64 {
-        return Err(invalid());
-    }
-    let mut names = BTreeSet::new();
+    crate::tunnel::validate_catalog(&profiles)?;
     let mut identities = BTreeSet::new();
     let mut output = Vec::new();
     for profile in profiles {
-        crate::tunnel::validate_id(&profile.profile_id)?;
-        if !names.insert(profile.profile_id.clone()) {
+        let directory = root.join("server/tunnels").join(&profile.profile_id);
+        let binding_path = directory.join("webcodex.env");
+        let binding_present = match std::fs::symlink_metadata(&binding_path) {
+            Ok(_) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(_) => return Err(invalid()),
+        };
+        // Old standalone catalog records could predate per-profile bindings and
+        // remain irrelevant to Server startup. Any binding that does exist is
+        // authoritative, however, so its Tunnel identity participates in the
+        // same duplicate fence as every Server-owned profile.
+        if profile.host_mode != TunnelHostMode::Embedded && !binding_present {
+            continue;
+        }
+        let binding = crate::tunnel::tunnel_profile_binding(&store, &profile.profile_id)?;
+        if !identities.insert(binding.tunnel_id.expose().to_owned()) {
             return Err(invalid());
         }
         if profile.host_mode != TunnelHostMode::Embedded {
             continue;
         }
-        if output.len() == 16 || profile.installed || profile.started {
-            return Err(invalid());
-        }
-        let directory = root.join("server/tunnels").join(&profile.profile_id);
-        let bytes = read_private(&directory.join("webcodex.env"))?;
-        if bytes.len() > 32768 {
-            return Err(invalid());
-        }
-        let content = std::str::from_utf8(&bytes).map_err(|_| invalid())?;
-        let required = |key| {
-            unique_value(content, key)?
-                .filter(|value| !value.is_empty())
-                .ok_or_else(invalid)
-        };
-        if required("WEBCODEX_TUNNEL_PROFILE_ID")? != profile.profile_id {
-            return Err(invalid());
-        }
-        let tunnel_id = required("CONTROL_PLANE_TUNNEL_ID")?;
-        if !identities.insert(tunnel_id.clone()) {
-            return Err(invalid());
-        }
+        let runtime_revision = profile.effective_runtime_revision();
         output.push(EmbeddedTunnelProfile {
             profile_id: profile.profile_id,
+            autostart: profile.autostart,
+            runtime_revision,
             credentials: TunnelCredentials {
-                tunnel_id: Secret::new(tunnel_id),
-                api_key: Secret::new(required("CONTROL_PLANE_API_KEY")?),
+                tunnel_id: binding.tunnel_id,
+                api_key: binding.api_key,
             },
-            local_token: Secret::new(required("WEBCODEX_TOKEN")?),
-            proxy: unique_value(content, "WEBCODEX_TUNNEL_PROXY")?.map(Secret::new),
+            local_token: binding.local_token,
+            proxy: binding.proxy,
             readiness_path: directory.join("readiness.json"),
         });
     }
@@ -116,13 +97,31 @@ impl NativeEnvironment {
             ));
         }
         let mut profiles = tunnel_profiles(store)?;
-        let profile = profiles
-            .iter_mut()
-            .find(|p| p.profile_id == profile_id)
+        crate::tunnel::validate_catalog(&profiles)?;
+        // Validate every private binding and Tunnel identity before an ownership
+        // transfer. A pre-existing ambiguity must never become Server-owned.
+        let _ = tunnel_profile_snapshots(store)?;
+        let profile_index = profiles
+            .iter()
+            .position(|profile| profile.profile_id == profile_id)
             .ok_or_else(invalid)?;
-        if profile.host_mode == mode {
+        if profiles[profile_index].host_mode == mode {
             return Ok(());
         }
+        if mode == TunnelHostMode::Embedded
+            && profiles
+                .iter()
+                .filter(|profile| profile.host_mode == TunnelHostMode::Embedded)
+                .count()
+                >= 16
+        {
+            return Err(SetupDiagnostic::new(
+                "tunnel_profile_capacity",
+                "At most 16 Server-owned Tunnel profiles are supported",
+                "Keep this profile standalone or remove another Server-owned profile first",
+            ));
+        }
+        let profile = &mut profiles[profile_index];
         if profile.host_mode == TunnelHostMode::Embedded {
             let server = service::ServiceManager::inspect(&service_spec(
                 store,
@@ -145,27 +144,15 @@ impl NativeEnvironment {
             return Err(SetupDiagnostic::new("tunnel_host_busy", "Uninstall the standalone Tunnel service before changing its host", "Stop it cleanly and uninstall only the exact named Tunnel service; credentials are retained"));
         }
         if mode == TunnelHostMode::Embedded {
-            let path = store.root().join("server/webcodex.env");
-            let source = read_secret(&path)?;
-            let root = store.root().to_str().ok_or_else(invalid)?;
-            if root.contains(['\n', '\r', '"']) {
-                return Err(invalid());
-            }
-            let existing = unique_value(source.expose(), "WEBCODEX_TUNNEL_ENVIRONMENT")?;
-            if existing.as_deref().is_some_and(|value| value != root) {
-                return Err(invalid());
-            }
-            if existing.is_none() {
-                let content = format!(
-                    "{}\nWEBCODEX_TUNNEL_ENVIRONMENT=\"{root}\"\n",
-                    source.expose()
-                );
-                atomic_private_write(&path, content.as_bytes())?;
-            }
+            crate::tunnel::ensure_server_tunnel_environment(store)?;
         }
+        let previous_runtime_revision = profile.effective_runtime_revision();
         profile.host_mode = mode;
+        profile.revision = crate::tunnel::next_revision(profile.revision)?;
+        profile.runtime_revision = crate::tunnel::next_revision(previous_runtime_revision)?;
         profile.installed = false;
         profile.started = false;
+        crate::tunnel::validate_catalog(&profiles)?;
         store.write_json("tunnel.json", &profiles)
     }
 }

@@ -13,7 +13,9 @@ use tokio::{
     sync::watch,
     time::{Instant, MissedTickBehavior},
 };
-use webcodex_environment::{embedded_tunnel_profiles, write_tunnel_health, EmbeddedTunnelProfile};
+use webcodex_environment::{
+    embedded_tunnel_profiles, write_embedded_tunnel_health, EmbeddedTunnelProfile,
+};
 use webcodex_openai_tunnel::ControlPlaneProxy;
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -86,7 +88,11 @@ impl TunnelSupervisor {
                 .map(|profile| ProfileStatus {
                     profile_id: profile.profile_id.clone(),
                     host_mode: "embedded",
-                    state: TunnelState::Starting,
+                    state: if profile.autostart {
+                        TunnelState::Starting
+                    } else {
+                        TunnelState::Stopped
+                    },
                     tunnel_ready: false,
                     local_mcp_ready: false,
                     shutdown_outcome: None,
@@ -109,13 +115,27 @@ impl TunnelSupervisor {
     pub(crate) async fn run(self, stop: watch::Receiver<bool>) {
         let mut profiles = FuturesUnordered::new();
         for (index, profile) in self.profiles.into_iter().enumerate() {
-            profiles.push(run_profile(
-                index,
-                profile,
-                self.mcp_url.clone(),
-                self.status.clone(),
-                stop.clone(),
-            ));
+            if profile.autostart {
+                profiles.push(run_profile(
+                    index,
+                    profile,
+                    self.mcp_url.clone(),
+                    self.status.clone(),
+                    stop.clone(),
+                ));
+            } else if write_embedded_tunnel_health(
+                &profile.readiness_path,
+                profile.runtime_revision,
+                false,
+                false,
+            )
+            .is_err()
+            {
+                self.status.update(index, |state| {
+                    state.state = TunnelState::Failed;
+                    state.diagnostic = Some("tunnel_health_unavailable".into());
+                });
+            }
         }
         while profiles.next().await.is_some() {}
     }
@@ -139,13 +159,32 @@ async fn run_profile(
     status: TunnelStatus,
     mut stop: watch::Receiver<bool>,
 ) {
+    if write_embedded_tunnel_health(
+        &profile.readiness_path,
+        profile.runtime_revision,
+        false,
+        false,
+    )
+    .is_err()
+    {
+        status.update(index, |state| {
+            state.state = TunnelState::Failed;
+            state.diagnostic = Some("tunnel_health_unavailable".into());
+        });
+        return;
+    }
     let failed = |code: &str| {
         status.update(index, |state| {
             state.state = TunnelState::Failed;
             state.tunnel_ready = false;
             state.diagnostic = Some(code.to_string());
         });
-        let _ = write_tunnel_health(&profile.readiness_path, false, false);
+        let _ = write_embedded_tunnel_health(
+            &profile.readiness_path,
+            profile.runtime_revision,
+            false,
+            false,
+        );
     };
     let proxy = match profile.proxy.as_ref() {
         Some(proxy) => ControlPlaneProxy::Explicit(proxy.expose().to_string()),
@@ -181,7 +220,12 @@ async fn run_profile(
             biased;
             _ = stopped(&mut stop) => {
                 status.update(index, |state| { state.state = TunnelState::Stopped; state.shutdown_outcome = Some("clean"); });
-                let _ = write_tunnel_health(&profile.readiness_path, false, false);
+                let _ = write_embedded_tunnel_health(
+                    &profile.readiness_path,
+                    profile.runtime_revision,
+                    false,
+                    false,
+                );
                 return;
             }
             ready = probe_local_mcp(&probe, &mcp_url, profile.local_token.expose()) => if ready { break; },
@@ -225,7 +269,14 @@ async fn run_profile(
                     state.state = if reached_ready { TunnelState::Running } else { TunnelState::Starting };
                     state.tunnel_ready = ready; state.local_mcp_ready = local;
                 });
-                if write_tunnel_health(&profile.readiness_path, ready, local).is_err() {
+                if write_embedded_tunnel_health(
+                    &profile.readiness_path,
+                    profile.runtime_revision,
+                    ready,
+                    local,
+                )
+                .is_err()
+                {
                     break Some("tunnel_health_unavailable".into());
                 }
             }
@@ -235,7 +286,12 @@ async fn run_profile(
         state.state = TunnelState::Draining;
         state.tunnel_ready = false;
     });
-    let _ = write_tunnel_health(&profile.readiness_path, false, false);
+    let _ = write_embedded_tunnel_health(
+        &profile.readiness_path,
+        profile.runtime_revision,
+        false,
+        false,
+    );
     let clean = tunnel.stop_with_outcome().await.is_ok();
     status.update(index, |state| {
         state.state = if clean && outcome.is_none() {

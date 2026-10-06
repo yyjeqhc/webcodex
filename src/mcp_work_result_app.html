@@ -3264,19 +3264,28 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   };
   el("workspacePin").onclick = async () => {
     if (tornDown || !hostInitialized || !identity) return;
-    workspaceFollowing = !workspaceFollowing;
+    if (!workspaceFollowing) {
+      workspaceFollowing = true;
+      workspaceFollowPromise = null;
+      renderWorkspaceTracking();
+      void refreshFollowingWorkspace();
+      return;
+    }
     // Do not let a capture started under Follow overwrite a later explicit pin.
     workspaceFollowPromise = null;
-    renderWorkspaceTracking();
-    if (workspaceFollowing) { void refreshFollowingWorkspace(); return; }
     const epoch = workspaceEpoch;
     try {
       await ensureWorkspaceSnapshot();
-      if (!tornDown && !workspaceFollowing && epoch === workspaceEpoch) {
+      if (!tornDown && workspaceFollowing && epoch === workspaceEpoch && workspaceSnapshot) {
+        workspaceFollowing = false;
+        renderWorkspaceTracking();
         renderWorkspaceRows(); el("workspaceReload").hidden = false;
       }
     } catch (_) {
-      if (!tornDown && !workspaceFollowing && epoch === workspaceEpoch) el("workspaceMeta").textContent = "Snapshot unavailable · refresh files to retry.";
+      if (!tornDown && workspaceFollowing && epoch === workspaceEpoch) {
+        renderWorkspaceTracking();
+        el("workspaceMeta").textContent = "Snapshot unavailable · still following changes. Refresh files to retry.";
+      }
     }
   };
   el("historyOlder").onclick = () => { if (conversationPage?.next_before) void loadConversation(conversationPage.next_before); };

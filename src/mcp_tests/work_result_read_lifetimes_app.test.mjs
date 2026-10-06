@@ -213,6 +213,21 @@ test("pin before the first diff captures code without being retargeted by a newe
   assert.equal(files(view).length, 1);
 });
 
+test("failed pin before the first diff remains in Follow mode", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: baseState }); await view.initialize();
+  const pin = view.nodes.workspacePin.onclick(); await flush();
+  const capture = files(view)[0];
+  assert.equal(view.nodes.workspacePin.getAttribute("aria-pressed"), "false");
+  assert.equal(view.nodes.workspacePin.textContent, "Pin snapshot for review");
+  assert.match(view.nodes.workspaceTracking.textContent, /Following changes/);
+  await view.reply(capture, { structuredContent: { success: false, output: {} } }); await pin;
+  assert.equal(view.nodes.workspacePin.getAttribute("aria-pressed"), "false");
+  assert.equal(view.nodes.workspacePin.textContent, "Pin snapshot for review");
+  assert.match(view.nodes.workspaceTracking.textContent, /Following changes/);
+  assert.match(view.nodes.workspaceMeta.textContent, /still following changes/);
+});
+
 test("following working changes leaves a sealed Full text preview and its pending read intact", async () => {
   const { view, row: finalRow } = await pendingDiff(true);
   const controls = finalRow.children[1].children[2];

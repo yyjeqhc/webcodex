@@ -296,14 +296,10 @@ fn npm_cafile_is_bounded_and_errors_do_not_expose_paths_or_ca_content() {
 async fn npm_config_query_uses_fixed_argv_and_normalizes_null() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = crate::test_support::executable_tempdir();
-    let npm = temp.path().join("fake-npm");
-    fs::write(
-        &npm,
-        b"#!/bin/sh\n[ \"$1\" = config ] && [ \"$2\" = get ] || exit 9\ncase \"$3\" in\n  proxy) printf '%s\\n' 'http://query-proxy.test:8080' ;;\n  ca) printf '%s\\n' null ;;\n  *) exit 8 ;;\nesac\n",
-    )
-    .unwrap();
-    fs::set_permissions(&npm, fs::Permissions::from_mode(0o700)).unwrap();
+    // Never write the executable in this process: parallel forks can retain a
+    // writer until exec and make a freshly written fixture fail with ETXTBSY.
+    let npm = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/npm-config.sh");
+    assert_ne!(fs::metadata(&npm).unwrap().permissions().mode() & 0o111, 0);
 
     assert_eq!(
         query_npm_config_value_with(npm.as_os_str(), "proxy").await,
@@ -311,6 +307,10 @@ async fn npm_config_query_uses_fixed_argv_and_normalizes_null() {
     );
     assert_eq!(
         query_npm_config_value_with(npm.as_os_str(), "ca").await,
+        None
+    );
+    assert_eq!(
+        query_npm_config_value_with(npm.as_os_str(), "failed").await,
         None
     );
 }

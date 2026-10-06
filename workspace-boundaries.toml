@@ -74,7 +74,7 @@ test_support = []
 [packages.webcodex-browser]
 layer = "domain"
 role = "First-class bounded CDP browser runtime built on process lifecycle primitives."
-normal = ["webcodex-process"]
+normal = ["webcodex-process", "webcodex-runner-config"]
 dev = []
 build = []
 test_support = []

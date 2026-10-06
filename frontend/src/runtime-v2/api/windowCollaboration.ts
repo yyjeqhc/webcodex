@@ -33,6 +33,8 @@ export type WindowCollaborationTranscript = {
   can_send: boolean;
   messages: WindowCollaborationMessage[];
   truncated: boolean;
+  next_before?: string | null;
+  history_scope?: string;
 };
 export type WindowCollaborationPost = {
   client_window_key: string;
@@ -54,7 +56,9 @@ export type WindowCollaborationPostResult = {
     retry_same_delivery?: boolean;
   };
 };
-export const fetchWindowCollaboration = (client: RuntimeV2Client, key: string, signal?: AbortSignal) =>
-  client.post<WindowCollaborationTranscript>("window-collaboration", { client_window_key: key, limit: 50 }, signal);
+export const fetchWindowCollaboration = (client: RuntimeV2Client, key: string, signal?: AbortSignal, before?: string) =>
+  client.post<WindowCollaborationTranscript>("window-collaboration", {
+    client_window_key: key, limit: 50, ...(before ? { before_message_id: before } : {}),
+  }, signal);
 export const postWindowCollaboration = (client: RuntimeV2Client, payload: WindowCollaborationPost) =>
   client.post<WindowCollaborationPostResult>("window-collaboration-post", payload);

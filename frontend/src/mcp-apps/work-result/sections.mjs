@@ -4,6 +4,7 @@ import { renderWindowCurrentActivity, renderActivityDetail } from "./activity.mj
 // Async owners are separate exports; synchronous renderers below still get no RPC.
 export { createReadCache } from "./read-cache.mjs";
 export { createActivityDetails } from "./activity-details.mjs";
+export { createCollaborationRenderer } from "./collaboration.mjs";
 
 
 // Static bundled composition, not a third-party UI sandbox. The mounted App

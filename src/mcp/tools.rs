@@ -47,7 +47,7 @@ fn work_result_thread_entrypoint_tool_spec() -> ToolSpec {
         .expect("Work Result state App tool must exist");
     ToolSpec {
         name: WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME.to_string(),
-        description: "User-opened conversation thread panel for the Work Result already presented in this exact Host Window. The Host invokes this entrypoint with an empty object; WebCodex resolves only a prior successful present_work_result binding from the same authenticated Window and then reuses the normal work_result_state authorization and projection path.".to_string(),
+        description: "Host UI entrypoint only; models should use present_work_result, not call this tool. Opens the Work Result already presented in this exact Host Window. The Host invokes this entrypoint with an empty object; WebCodex resolves only a prior successful present_work_result binding from the same authenticated Window and then reuses the normal work_result_state authorization and projection path.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {},
@@ -830,7 +830,7 @@ fn attach_openai_thread_entrypoint(value: &mut Value) {
     };
     object.insert(
         "title".to_string(),
-        Value::String("WebCodex review".to_string()),
+        Value::String("WebCodex Work Result".to_string()),
     );
     let Some(meta) = tool_meta_object(value) else {
         return;

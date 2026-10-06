@@ -1,5 +1,5 @@
 import { Bot, CheckCircle2, MessageSquare, Send, UserRound } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RuntimeV2Client } from "../api/client.js";
 import type {
   WindowCollaborationKind,
@@ -64,10 +64,23 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
   const followLatest = useRef(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const threadRef = useRef<HTMLDivElement | null>(null);
+  const historyAnchor = useRef<{ height: number; top: number } | null>(null);
   const state = useWindowCollaboration(client, windowKey, onUnauthorized, active);
   const sending = state.sendState === "sending";
   const uncertain = state.sendState === "uncertain";
   const messages = state.transcript?.messages || [];
+  const byId = new Map(messages.map(row => [row.message_id, row]));
+  const answered = new Set(messages.map(row => row.reply_to_message_id).filter(Boolean));
+  useLayoutEffect(() => {
+    const node = threadRef.current, anchor = historyAnchor.current;
+    if (node && anchor) {
+      node.scrollTop = anchor.top + Math.max(0, node.scrollHeight - anchor.height);
+      historyAnchor.current = null;
+    }
+  }, [messages]);
+  useEffect(() => {
+    setMessage(""); followLatest.current = true; setHasNewMessages(false); historyAnchor.current = null;
+  }, [client, windowKey]);
   const sendError = state.sendError === "conflict"
     ? t("Message could not be sent. Send it again.")
     : state.sendError === "context"
@@ -81,9 +94,10 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
   useEffect(() => {
     const node = threadRef.current;
     if (!node) return;
+    if (state.browsingHistory) return;
     if (followLatest.current) node.scrollTop = node.scrollHeight;
     else setHasNewMessages(true);
-  }, [messages.at(-1)?.message_id]);
+  }, [messages.length, messages.at(-1)?.message_id]);
 
   const submit = () => {
     const text = message.trim();
@@ -140,14 +154,30 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
           </div>
         )}
 
-        {messages.map(row => {
+        <div className="window-collaboration-history-note">
+          {state.transcript?.truncated && <button type="button" className="text-button" disabled={state.loadingHistory} onClick={() => {
+            const node = threadRef.current;
+            if (node) historyAnchor.current = { height: node.scrollHeight, top: node.scrollTop };
+            followLatest.current = false;
+            void state.loadOlder();
+          }}>{state.loadingHistory ? t("Loading history…") : t("Load earlier messages")}</button>}
+          {state.browsingHistory && <button type="button" className="text-button" onClick={() => {
+            historyAnchor.current = null; followLatest.current = true; setHasNewMessages(false); state.latest();
+          }}>{t("Return to latest messages")}</button>}
+        </div>
+        {messages.map((row, index) => {
           const status = deliveryLabel(row, t);
           const outgoing =
             row.source === "operator" || (row.source === "peer" && row.direction === "outbound");
+          const date = new Date(row.created_at_ms);
+          const previousDate = index > 0 ? new Date(messages[index - 1].created_at_ms).toDateString() : null;
+          const reply = row.reply_to_message_id ? byId.get(row.reply_to_message_id) : null;
           return (
+            <Fragment key={row.message_id}>
+            {date.toDateString() !== previousDate && <div className="window-collaboration-history-note"><time dateTime={date.toISOString()}>{date.toLocaleDateString(language)}</time></div>}
             <article
               className={"window-collaboration-message " + (outgoing ? "outgoing" : "incoming")}
-              key={row.message_id}
+              data-message-id={row.message_id}
             >
               <span className="window-collaboration-avatar" aria-hidden="true">
                 {row.source === "operator" ? <UserRound size={15} /> : <Bot size={15} />}
@@ -155,11 +185,15 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
               <div className="window-collaboration-bubble">
                 <header>
                   <strong title={row.peer_id || undefined}>{participantLabel(row, t)}</strong>
-                  <time>{clockTime(row.created_at_ms)}</time>
+                  <time dateTime={date.toISOString()} title={date.toLocaleString(language)}>{clockTime(row.created_at_ms)}</time>
                 </header>
+                {row.reply_to_message_id && <blockquote className="window-collaboration-reply">
+                  <strong>{t("Reply to")}</strong>{" "}{reply ? reply.message.slice(0, 180) : t("Earlier message")}
+                </blockquote>}
                 <p>{row.message}</p>
                 <footer>
                   <span className="window-collaboration-meta-chip">{kindLabel(row.kind, t)}</span>
+                  {answered.has(row.message_id) && <span className="window-collaboration-meta-chip">{t("Reply received")}</span>}
                   {row.priority !== "normal" && (
                     <span className={"window-collaboration-meta-chip priority-" + row.priority}>
                       {priorityLabel(row.priority, t)}
@@ -183,6 +217,7 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
                 </footer>
               </div>
             </article>
+            </Fragment>
           );
         })}
 
@@ -193,11 +228,7 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
             <small>{t("Send a note or instruction to this Window.")}</small>
           </div>
         )}
-        {state.transcript?.truncated && (
-          <div className="window-collaboration-history-note">
-            {t("Showing recent messages")}
-          </div>
-        )}
+        {state.browsingHistory && <p className="window-collaboration-history-note">{t("Reading saved history. New messages do not replace this page.")}</p>}
       </div>
 
       <form
@@ -207,6 +238,9 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
           submit();
         }}
       >
+        <details className="window-collaboration-semantics"><summary>{t("Delivery states")}</summary>
+          <p>{t("Saved messages remain in history. ACK confirms model context, not acceptance or completion. A reply is shown separately.")}</p>
+        </details>
         <div className="window-collaboration-compose-box">
           <div className="window-collaboration-compose-options">
             <label>

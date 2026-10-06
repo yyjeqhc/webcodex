@@ -4,21 +4,28 @@ This guide defines two bounded multi-window collaboration layers: lightweight **
 
 ## Operator messages and Window transcripts
 
-Runtime WebUI and Work Result App v8 use the exact Window as the collaboration
+Runtime WebUI and the Work Result App use the exact Window as the collaboration
 target. A Project is optional work-location context; an optional exact Workflow
 Session identifies related work and must be visible and explicitly linked to
 that Window. Neither context changes the recipient or creates a Session.
 
 Operator messages use the independent durable `window_operator_messages` store,
-with exact recipient-principal isolation, 512 retained messages per principal, and a
-principal-scoped delivery key. Within retention, exact retries return the same
-message ID; changing recipient, context, or content with the same key conflicts.
+with exact recipient-principal isolation and a principal-scoped delivery key.
+Operator bodies and model replies are kept as durable history rather than deleted
+when new messages arrive. Only the latest 512 Operator messages per principal are
+eligible for bounded model attention; older history does not become pending work.
+Exact retries return the same message ID; changing recipient, context, or content
+with the same key conflicts.
 An uncertain write must retain the complete payload and key when retried.
 
 `POST /api/runtime-console/window-collaboration` accepts `client_window_key` and
-optional `limit` (1–100). The read-only transcript merges inbound Operator,
-inbound peer, and outbound peer messages, oldest first within the latest bounded
-slice. `POST /api/runtime-console/window-collaboration-post` accepts that exact
+optional `limit` (1–100) and `before_message_id`. The read-only transcript merges
+Operator messages, model replies and both peer directions in one database snapshot.
+It returns an indexed keyset page, oldest first within that page. `next_before`
+loads an earlier page; `history_scope` is an opaque cache namespace, not authority.
+No cursor changes the recipient Window or principal. The Work Result App requests
+the same history through `get_work_result_state(collaboration={...})`, without a
+workspace refresh or requiring a still-live Workflow Session. `POST /api/runtime-console/window-collaboration-post` accepts that exact
 Window key, `message`, `delivery_key`, and optional `context_session_id`. Both
 require `runtime:read`, `session:collaborate`, and an exact Window currently
 visible through the caller's Runtime Console Project authority. The Console resolves
@@ -48,6 +55,12 @@ slow refresh cannot delay draft completion or postpone the new read until pollin
 
 The WebUI follows new messages while the reader is near the end of the thread.
 Reading earlier messages keeps the scroll position and offers **View new messages**.
+Both surfaces offer **Load earlier messages** and **Return to latest messages**.
+The DOM keeps at most 200 messages while the database retains earlier history.
+New head slices do not delete previously displayed messages; explicit older-page
+navigation is not overwritten by polling. Reply quotations use exact message IDs,
+not text/title matching. Message kind and ACK are conversational semantics, not
+execution approval. Already-deleted records cannot be reconstructed by this upgrade.
 Ctrl/Command + Enter does not submit while an input method is composing. The card
 keeps unchanged message nodes across activity refreshes and respects reduced-motion
 preferences. Missing or malformed send receipts preserve the exact retry payload
@@ -79,7 +92,7 @@ Delivery is model-facing and intentionally lightweight:
 - `requires_ack=false`: WebCodex durably records the message and attempts to piggyback it once in `peer_messages` on the recipient window's next normal model-facing tool result. The persisted first/last projection timestamps and projection count describe a Server projection attempt, not a delivery/read receipt. There is no retry obligation if the model or transport never acts on it.
 - `requires_ack=true`: the message is eligible for the same bounded piggyback on later calls whenever the current request omits its id. Echoing the id in `ack_session_message_ids` suppresses it for that one request/response and records the first observed ACK time. Compact Session `ack_ref` does not apply to Peer messages. ACK proves neither acceptance nor execution, never resolves the message, and never requires a reply.
 
-Peer transport is deliberately bounded rather than a permanent task queue. Old retained Peer messages and discovery edges may be pruned; `requires_ack` therefore means repeat while retained, not indefinite durable work. ActionAudit activity is discovery input only and never establishes a communication route by itself: a peer route exists only while retained Peer discovery/message state can still resolve it. Use Workflow Session todos and assignment fencing for durable work commitments.
+Peer transport is deliberately bounded rather than a permanent task queue. Before the 512-row delivery queue evicts Peer messages, their transcript bodies and final observed receipts move atomically to `window_peer_message_history`. The archive is read-only conversation history and never participates in route discovery, projection, ACK or delivery-key replay. Old delivery rows and discovery edges may be pruned; `requires_ack` therefore means repeat while retained, not indefinite durable work. ActionAudit activity is discovery input only and never establishes a communication route by itself: a peer route exists only while retained Peer discovery/message state can still resolve it. Use Workflow Session todos and assignment fencing for durable work commitments.
 
 The sender's current Workflow Session and Project may be persisted as analysis context when they are already trusted runtime facts, but they are not part of the recipient projection and never become routing authority. Peer ids are resolved only inside the same authenticated principal; knowing another principal's `wc_peer_*` value does not cross that boundary.
 

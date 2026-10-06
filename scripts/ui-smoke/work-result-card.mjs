@@ -61,7 +61,7 @@ try {
               project: state.project, snapshot_id, offset: 0, files_total: 1, source_truncated: false, next_offset: null,
               files: [{ path: 'src/a.rs', kind: 'modified', additions: 4, deletions: 1 }],
             };
-            reply({ structuredContent: { success: true, output: args.files ? { work_result_files: files } : { work_result: window.fixtureState } } });
+            reply({ structuredContent: { success: true, output: args.files ? { work_result_files: files } : args.collaboration ? { work_result_collaboration: window.fixtureState.collaboration } : { work_result: window.fixtureState } } });
           }
           if (request.params.name === 'read_changed_file_diff') {
             window.frozenReads.push(request.params.arguments);
@@ -140,11 +140,13 @@ try {
       assert.equal(await page.evaluate(() => window.frozenReads.length), 0);
       assert(await card.locator('#panelResults').evaluate(node => {
         const top = id => node.querySelector('#' + id).getBoundingClientRect().top;
-        return top('workspaceChangesSection') < top('resultChecks') && top('resultChecks') < top('finalChanges');
+        // The shipped thread overview (also covered in work_result_app.test.mjs)
+        // puts Checks first, then quoted context, workspace and final changes.
+        return top('resultChecks') < top('workspaceChangesSection') && top('workspaceChangesSection') < top('finalChanges');
       }));
       await card.locator('#frozenFiles .file-toggle').click();
-      await card.locator('#frozenFiles .diff').filter({ hasText: '+final' }).waitFor();
-      const frozen = await card.locator('#frozenFiles .diff').innerText();
+      await card.locator('#frozenFiles .diff:not(.full-text)').filter({ hasText: '+final' }).waitFor();
+      const frozen = await card.locator('#frozenFiles .diff:not(.full-text)').innerText();
       await page.evaluate(() => {
         window.fixtureState.state_version = 'wr2_' + 'e'.repeat(64);
         window.fixtureState.workspace = { ...window.fixtureState.workspace, additions: 6,
@@ -152,7 +154,7 @@ try {
       });
       await card.locator('#refresh').click();
       await card.getByRole('button', { name: 'Refresh', exact: true }).waitFor();
-      assert.equal(await card.locator('#frozenFiles .diff').innerText(), frozen);
+      assert.equal(await card.locator('#frozenFiles .diff:not(.full-text)').innerText(), frozen);
       assert.equal(await page.evaluate(() => window.frozenReads.length), 1);
     }
     await page.screenshot({ path: fileURLToPath(new URL(`work-result-${surface}-files-${width}.png`, output)), fullPage: true });

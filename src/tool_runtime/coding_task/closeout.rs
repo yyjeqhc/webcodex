@@ -88,7 +88,7 @@ impl ToolRuntime {
         });
         let reusable_snapshot = if summary_only {
             review_caller_fingerprint(auth).ok().and_then(|caller| {
-                self.latest_workspace_review_snapshot(
+                self.presentation.latest_workspace_review_snapshot(
                     &caller,
                     &resolved.resolved_id,
                     Some(&session_id),

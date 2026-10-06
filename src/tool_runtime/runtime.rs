@@ -130,14 +130,10 @@ pub struct ToolRuntime {
     /// Clones share the registry; a Server runtime restart creates a new epoch.
     pub(crate) read_revisions: Arc<super::read_revisions::ReadRevisionRegistry>,
     pub(crate) read_cache: Arc<super::read_cache::ReadCache>,
-    /// Runtime-owned presentation snapshots. Clones share retention; independent
-    /// runtimes do not. Neither registry survives a runtime restart.
-    pub(super) review_snapshots:
-        Arc<std::sync::Mutex<super::git_review_snapshot::GitReviewSnapshotRegistry>>,
-    pub(super) changes_snapshots: Arc<std::sync::Mutex<super::changes::ChangesSnapshotRegistry>>,
+    /// Non-authoritative presentation retention. Clones share this service;
+    /// independent runtimes and restarts start with empty caches.
+    pub(super) presentation: Arc<super::presentation::PresentationRuntime>,
     pub(crate) validation_sources: Arc<super::validation_source::ValidationSourceRegistry>,
-    pub(crate) work_result_workspace_cache:
-        Arc<super::work_result_workspace::WorkResultWorkspaceCache>,
     /// Process-local Project mutation serialization used only by orchestration
     /// frontends. Direct first-class mutations deliberately bypass this registry.
     #[cfg(feature = "experimental-code-mode")]
@@ -249,8 +245,7 @@ impl ToolRuntime {
                 super::coding_task::DEFAULT_REPOSITORY_OVERVIEW_PROBE_TIMEOUT,
             read_revisions: Arc::new(super::read_revisions::ReadRevisionRegistry::new()),
             read_cache: Arc::new(super::read_cache::ReadCache::default()),
-            review_snapshots: Arc::default(),
-            changes_snapshots: Arc::default(),
+            presentation: Arc::default(),
             validation_sources: Arc::new(
                 super::validation_source::ValidationSourceRegistry::default(),
             ),
@@ -258,7 +253,6 @@ impl ToolRuntime {
             orchestration_mutation_fences: Arc::new(
                 super::orchestration_host::OrchestrationMutationFenceRegistry::default(),
             ),
-            work_result_workspace_cache: Arc::default(),
             read_files_deadline: super::read_files::DEFAULT_READ_FILES_DEADLINE,
             search_project_texts_deadline:
                 super::search_project_texts::DEFAULT_SEARCH_PROJECT_TEXTS_DEADLINE,

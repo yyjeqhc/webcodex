@@ -201,7 +201,7 @@ impl ToolRuntime {
             let Some((snapshot_id, inner)) = decode_review_continuation(&continuation) else {
                 return review_changes_failure(&project, "invalid_continuation");
             };
-            let Some(snapshot) = self.review_snapshot(
+            let Some(snapshot) = self.presentation.review_snapshot(
                 snapshot_id,
                 &caller,
                 &resolved_project,
@@ -426,18 +426,20 @@ impl ToolRuntime {
                 )
             }
         };
-        let snapshot = self.insert_review_snapshot(GitReviewSnapshot::new(
-            caller,
-            resolved_project,
-            session_id.clone(),
-            source,
-            projection.clone(),
-            summary.clone(),
-            signals.clone(),
-            diff.clone(),
-            coverage_partial,
-            metadata_complete,
-        ));
+        let snapshot = self
+            .presentation
+            .insert_review_snapshot(GitReviewSnapshot::new(
+                caller,
+                resolved_project,
+                session_id.clone(),
+                source,
+                projection.clone(),
+                summary.clone(),
+                signals.clone(),
+                diff.clone(),
+                coverage_partial,
+                metadata_complete,
+            ));
         let next = preferred_diff_continuation(&diff)
             .and_then(|inner| encode_review_continuation(&snapshot.snapshot_id, inner));
         let mut output = json!({

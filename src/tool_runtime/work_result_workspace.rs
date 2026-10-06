@@ -149,7 +149,7 @@ impl ToolRuntime {
         let before = self.work_result_observation_stamp(project, auth).await;
         if automatic {
             if let (Some(key), Some(stamp)) = (&key, &before) {
-                if let Some(result) = self.work_result_workspace_cache.get(key, stamp) {
+                if let Some(result) = self.presentation.workspace_cache().get(key, stamp) {
                     tracing::debug!(target: "webcodex::phase", phase="workspace_reuse", outcome="hit", "reused presentation snapshot");
                     return (result, true);
                 }
@@ -158,7 +158,7 @@ impl ToolRuntime {
         // Remove even on probe failure/cancellation so an older success cannot
         // be revived after an explicit refresh or a crossed source/target fence.
         if let Some(key) = &key {
-            self.work_result_workspace_cache.remove(key);
+            self.presentation.workspace_cache().remove(key);
         }
         let observed = Instant::now();
         let result = self
@@ -181,7 +181,8 @@ impl ToolRuntime {
 
         if let (Some(key), Some(before), Some(after)) = (key, before, after) {
             if before == after {
-                self.work_result_workspace_cache
+                self.presentation
+                    .workspace_cache()
                     .put(key, after, observed, &result);
             }
         }

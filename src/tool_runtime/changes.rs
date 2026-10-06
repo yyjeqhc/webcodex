@@ -91,7 +91,7 @@ impl SnapshotRetention {
 }
 
 #[derive(Debug, Clone)]
-struct ChangesSnapshot {
+pub(super) struct ChangesSnapshot {
     retention: SnapshotRetention,
     snapshot_id: String,
     caller_fingerprint: String,
@@ -152,7 +152,7 @@ impl ChangesSnapshotRegistry {
         self.snapshots.retain(|snapshot| snapshot.expires_at > now);
     }
 
-    fn get_for_attempt(
+    pub(super) fn get_for_attempt(
         &mut self,
         caller_fingerprint: &str,
         project: &str,
@@ -168,7 +168,7 @@ impl ChangesSnapshotRegistry {
             .cloned()
     }
 
-    fn insert_or_get(&mut self, snapshot: ChangesSnapshot) -> ChangesSnapshot {
+    pub(super) fn insert_or_get(&mut self, snapshot: ChangesSnapshot) -> ChangesSnapshot {
         let now = Instant::now();
         self.prune(now);
         let retention = snapshot.retention;
@@ -232,7 +232,7 @@ impl ChangesSnapshotRegistry {
         let _ = self.insert_or_get(snapshot);
     }
 
-    fn get(&mut self, snapshot_id: &str) -> Option<ChangesSnapshot> {
+    pub(super) fn get(&mut self, snapshot_id: &str) -> Option<ChangesSnapshot> {
         self.prune(Instant::now());
         self.snapshots
             .iter()
@@ -482,10 +482,8 @@ exit 0
         let caller_fingerprint = workflow_session_authority_fingerprint(auth)
             .map_err(|_| changes_identity_error("session_authority_denied"))?;
         Ok(self
-            .changes_snapshots
-            .lock()
-            .expect("Changes snapshot registry mutex poisoned")
-            .get_for_attempt(
+            .presentation
+            .changes_for_attempt(
                 &caller_fingerprint,
                 project,
                 &summary.session_id,
@@ -516,17 +514,12 @@ exit 0
         }
         let caller_fingerprint = workflow_session_authority_fingerprint(auth)
             .map_err(|_| changes_identity_error("session_authority_denied"))?;
-        if let Some(snapshot) = self
-            .changes_snapshots
-            .lock()
-            .expect("Changes snapshot registry mutex poisoned")
-            .get_for_attempt(
-                &caller_fingerprint,
-                project,
-                &summary.session_id,
-                attempt_key,
-            )
-        {
+        if let Some(snapshot) = self.presentation.changes_for_attempt(
+            &caller_fingerprint,
+            project,
+            &summary.session_id,
+            attempt_key,
+        ) {
             return Ok(Some(snapshot.presentation_value()));
         }
         let final_tree = self.freeze_final_workspace_tree(project).await?;
@@ -562,11 +555,7 @@ exit 0
             files_truncated,
             expires_at: Instant::now() + CHANGES_SNAPSHOT_TTL,
         };
-        let snapshot = self
-            .changes_snapshots
-            .lock()
-            .expect("Changes snapshot registry mutex poisoned")
-            .insert_or_get(snapshot);
+        let snapshot = self.presentation.insert_changes_snapshot(snapshot);
 
         Ok(Some(snapshot.presentation_value()))
     }
@@ -614,11 +603,7 @@ exit 0
             }
         }
         let snapshot = if let Some(id) = request.snapshot_id {
-            let found = self
-                .changes_snapshots
-                .lock()
-                .expect("Changes registry")
-                .get(&id);
+            let found = self.presentation.changes_snapshot(&id);
             match found {
                 Some(snapshot)
                     if snapshot.matches_context(&caller, &project, session_id.as_deref()) =>
@@ -684,10 +669,7 @@ exit 0
                 files_truncated,
                 expires_at: Instant::now() + CHANGES_SNAPSHOT_TTL,
             };
-            self.changes_snapshots
-                .lock()
-                .expect("Changes registry")
-                .insert_or_get(snapshot)
+            self.presentation.insert_changes_snapshot(snapshot)
         };
         if let Some(path) = request.path {
             let Some(file) = snapshot.files.iter().find(|file| file.path == path) else {
@@ -752,11 +734,7 @@ exit 0
             return changes_identity_error("changes_snapshot_path_invalid");
         }
 
-        let snapshot = self
-            .changes_snapshots
-            .lock()
-            .expect("Changes snapshot registry mutex poisoned")
-            .get(&snapshot_id);
+        let snapshot = self.presentation.changes_snapshot(&snapshot_id);
         let Some(snapshot) = snapshot else {
             return changes_identity_error("changes_snapshot_unavailable");
         };
@@ -1489,36 +1467,26 @@ mod tests {
         let clone = runtime.clone();
         let independent = ToolRuntime::new_for_tests();
         runtime
-            .changes_snapshots
-            .lock()
-            .unwrap()
-            .insert(snapshot_fixture("runtime-only", "caller"));
+            .presentation
+            .insert_changes_snapshot(snapshot_fixture("runtime-only", "caller"));
         assert!(clone
-            .changes_snapshots
-            .lock()
-            .unwrap()
-            .get("runtime-only")
+            .presentation
+            .changes_snapshot("runtime-only")
             .is_some());
         assert!(independent
-            .changes_snapshots
-            .lock()
-            .unwrap()
-            .get("runtime-only")
+            .presentation
+            .changes_snapshot("runtime-only")
             .is_none());
         for index in 0..MAX_CHANGES_SNAPSHOTS * 2 {
             independent
-                .changes_snapshots
-                .lock()
-                .unwrap()
-                .insert(snapshot_fixture(&format!("other-{index}"), "caller"));
+                .presentation
+                .insert_changes_snapshot(snapshot_fixture(&format!("other-{index}"), "caller"));
         }
         assert!(clone
-            .changes_snapshots
-            .lock()
-            .unwrap()
-            .get("runtime-only")
+            .presentation
+            .changes_snapshot("runtime-only")
             .is_some());
-        let weak = std::sync::Arc::downgrade(&runtime.changes_snapshots);
+        let weak = std::sync::Arc::downgrade(&runtime.presentation);
         drop(runtime);
         assert!(weak.upgrade().is_some());
         drop(clone);

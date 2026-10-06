@@ -140,15 +140,9 @@ impl AuthContext {
         self.is_shared_key() || self.is_open_anonymous()
     }
 
-    /// True when the caller may manage any user (bootstrap token, `admin`
-    /// role, or the `admin` scope). Shared by the user/token/pairing HTTP
-    /// handlers; kept distinct from [`AuthContext::is_admin`] because some
-    /// callers historically also treat an explicit `admin` role as
-    /// authoritative.
+    /// Credential-level admin authority. User role is legacy identity metadata.
     pub fn is_admin_caller(&self) -> bool {
-        self.is_bootstrap
-            || self.role.as_deref() == Some("admin")
-            || self.scopes.iter().any(|s| s == SCOPE_ADMIN)
+        self.is_admin()
     }
 
     /// Resolve the authenticated caller's username, if any. Bootstrap callers
@@ -193,5 +187,26 @@ mod tests {
             auth.token_kind = token_kind.map(str::to_string);
             assert_eq!(auth.principal_kind(), expected, "kind: {kind:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod credential_authority_tests {
+    use super::*;
+
+    #[test]
+    fn admin_is_credential_authority_only() {
+        let mut auth = AuthContext::new(AuthKind::ApiToken);
+        auth.role = Some("admin".into());
+        auth.scopes = vec!["account:manage".into()];
+        assert!(!auth.is_admin_caller());
+        assert!(!auth.has_scope(SCOPE_ADMIN));
+        auth.role = Some("user".into());
+        auth.scopes = vec![SCOPE_ADMIN.into()];
+        assert!(auth.is_admin_caller());
+        assert!(auth.has_scope("project:write"));
+        let bootstrap = super::super::bootstrap_context();
+        assert!(bootstrap.is_admin_caller());
+        assert!(bootstrap.has_scope("account:manage"));
     }
 }

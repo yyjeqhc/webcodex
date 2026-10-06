@@ -802,3 +802,58 @@ async fn http_unauthorized_responses_are_json() {
         );
     }
 }
+
+#[tokio::test]
+async fn admin_authority_follows_credential_not_legacy_role() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    seed_user(&db, "legacy-admin", "admin");
+    seed_user(&db, "ordinary-user", "user");
+    let service = Service::new(build_router(config, db));
+    for (username, scopes, admin) in [
+        (
+            "legacy-admin",
+            vec!["account:manage", "runtime:read"],
+            false,
+        ),
+        ("ordinary-user", vec!["admin"], true),
+    ] {
+        let mut resp = TestClient::post("http://localhost/api/tokens/create")
+            .bearer_auth("secret")
+            .json(&json!({"username": username, "scopes": scopes}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        let token = body["token"].as_str().unwrap();
+        let resp = TestClient::post("http://localhost/api/users/list")
+            .bearer_auth(token)
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(
+            effective_status(&resp),
+            if admin {
+                StatusCode::OK
+            } else {
+                StatusCode::FORBIDDEN
+            }
+        );
+        for target in [username, "ordinary-user"] {
+            let resp = TestClient::post("http://localhost/api/tokens/create")
+                .bearer_auth(token)
+                .json(&json!({"username": target, "scopes": ["admin"]}))
+                .send(&service)
+                .await;
+            assert_eq!(
+                effective_status(&resp),
+                if admin {
+                    StatusCode::OK
+                } else {
+                    StatusCode::FORBIDDEN
+                }
+            );
+        }
+    }
+}

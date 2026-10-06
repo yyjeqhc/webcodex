@@ -350,17 +350,8 @@ fn apply_text_edits_model_projection(result: &mut ToolResult, change_count: usiz
     }
     // The mutation handler has already validated the Runner protocol and consumed
     // hashes for revisions. Only a proven actual completion can omit effect echoes.
+    let compact = super::edit_outcome::can_compact_edit_success(result, change_count, dry_run);
     let output = &mut result.output;
-    let compact = !dry_run
-        && output.get("dry_run").and_then(Value::as_bool) == Some(false)
-        && output.get("execution_state").and_then(Value::as_str) == Some("completed")
-        && output.get("changed").and_then(Value::as_bool).is_some()
-        && output.get("state_changed") == output.get("changed")
-        && output.get("would_change") == output.get("changed")
-        && output.get("applied_count").and_then(Value::as_u64) == Some(change_count as u64)
-        && output
-            .get("planned_count")
-            .is_none_or(|count| count.as_u64() == Some(change_count as u64));
     let Some(files) = output.get_mut("files").and_then(Value::as_array_mut) else {
         return;
     };

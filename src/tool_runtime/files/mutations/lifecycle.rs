@@ -2,6 +2,7 @@
 
 use super::preflight::recoverable_write_rejection;
 use super::*;
+use crate::tool_runtime::edit_outcome::EditOutcomeFacts;
 
 fn compact_model_edit_surface(tool_name: &str) -> bool {
     matches!(tool_name, "edit_project_files" | "write_project_file")
@@ -168,17 +169,9 @@ pub(super) fn transactional_edit_agent_stdout_result(
         }
     };
     if let Some(error) = obj.get("error").and_then(Value::as_str).map(str::to_string) {
-        let rollback_complete = obj.get("rollback_complete").and_then(Value::as_bool);
-        let changed = obj.get("changed").and_then(Value::as_bool);
-        let state_changed = obj.get("state_changed").and_then(Value::as_bool);
-        let uncertain = rollback_complete == Some(false)
-            || changed == Some(true)
-            || state_changed == Some(true);
-        let no_effect_proven = !uncertain
-            && (rollback_complete == Some(true)
-                || changed == Some(false)
-                || state_changed == Some(false));
-        if !no_effect_proven {
+        let facts = EditOutcomeFacts::from_output(&obj);
+        let rollback_complete = facts.rollback_complete();
+        if !facts.proves_no_effect_failure() {
             return structured_edit_outcome_unknown_result(tool_name, error, obj);
         }
         obj["changed"] = json!(false);
@@ -199,36 +192,18 @@ pub(super) fn transactional_edit_agent_stdout_result(
         return ToolResult::err_with_output(message, obj);
     }
 
-    let dry_run = obj.get("dry_run").and_then(Value::as_bool);
-    let applied_count = obj.get("applied_count").and_then(Value::as_u64);
-    let changed = obj.get("changed").and_then(Value::as_bool);
-    let would_change = obj.get("would_change").and_then(Value::as_bool);
-    let expected_applied = if tool_name == "edit_project_files"
-        && expected_dry_run
-        && obj.get("planned_count").is_some()
-    {
-        0
-    } else {
-        expected_change_count as u64
-    };
-    let valid = dry_run == Some(expected_dry_run)
-        && applied_count == Some(expected_applied)
-        && (tool_name != "edit_project_files"
-            || obj.get("planned_count").is_none()
-            || obj.get("planned_count").and_then(Value::as_u64)
-                == Some(expected_change_count as u64))
-        && changed.is_some()
-        && would_change.is_some()
-        && !(expected_dry_run && changed == Some(true))
-        && (expected_dry_run || changed == would_change);
-    if !valid {
+    let Some(changed) = EditOutcomeFacts::from_output(&obj).confirmed_runner_change(
+        tool_name,
+        expected_change_count,
+        expected_dry_run,
+    ) else {
         return structured_edit_outcome_unknown_result(
             tool_name,
             "the Runner success payload omitted or contradicted authoritative edit-effect fields",
             obj,
         );
-    }
-    obj["state_changed"] = json!(changed.expect("validated changed field"));
+    };
+    obj["state_changed"] = json!(changed);
     obj["execution_state"] = json!("completed");
     ToolResult::ok(obj)
 }

@@ -362,13 +362,19 @@ fn seed_oauth_access_token(
     let now = chrono::Utc::now().timestamp();
     let plaintext = crate::auth::generate_oauth_access_token();
     let record = crate::models::OAuthAccessTokenRecord {
+        // Fixture input describes effective authority; public storage excludes admin.
+        admin_authority: scopes.split_whitespace().any(|scope| scope == "admin"),
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: crate::auth::hash_token(&plaintext),
         client_id: client.client_id.clone(),
         subject_kind: "managed_user".to_string(),
         subject_id: user.id.clone(),
         user_id: Some(user.id.clone()),
-        scopes: scopes.to_string(),
+        scopes: scopes
+            .split_whitespace()
+            .filter(|scope| *scope != "admin")
+            .collect::<Vec<_>>()
+            .join(" "),
         resource: None,
         shared_key_hash: None,
         created_at: now,

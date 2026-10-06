@@ -156,7 +156,7 @@ fn auth_can_manage_managed_oauth_client(
     client: &crate::models::OAuthClientRecord,
 ) -> bool {
     client.is_managed_user_owned()
-        && (auth.is_bootstrap() || auth.user_id.as_deref() == client.owner_user_id.as_deref())
+        && (auth.is_admin() || auth.user_id.as_deref() == client.owner_user_id.as_deref())
 }
 
 #[handler]
@@ -171,10 +171,12 @@ pub(crate) async fn oauth_clients_create(req: &mut Request, depot: &mut Depot, r
     // Double-check first-party identity. The route policy + AuthMiddleware
     // already block OAuth2Token/AgentToken/AccountCredential, but we defend
     // in depth here too.
-    if !is_authorize_identity_allowed(auth) {
+    if !is_authorize_identity_allowed(auth)
+        || !auth.has_scope(webcodex_core::authority::SCOPE_ACCOUNT_MANAGE)
+    {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(serde_json::json!({
-            "error": "OAuth2 access tokens cannot manage OAuth clients"
+            "error": "first-party account:manage authority required"
         })));
         return;
     }
@@ -319,10 +321,12 @@ pub(crate) async fn oauth_clients_list(depot: &mut Depot, res: &mut Response) {
         ));
         return;
     };
-    if !is_authorize_identity_allowed(auth) {
+    if !is_authorize_identity_allowed(auth)
+        || !auth.has_scope(webcodex_core::authority::SCOPE_ACCOUNT_MANAGE)
+    {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(serde_json::json!({
-            "error": "OAuth2 access tokens cannot manage OAuth clients"
+            "error": "first-party account:manage authority required"
         })));
         return;
     }
@@ -394,10 +398,12 @@ async fn oauth_clients_update_redirect_uri(
         ));
         return;
     };
-    if !is_authorize_identity_allowed(auth) {
+    if !is_authorize_identity_allowed(auth)
+        || !auth.has_scope(webcodex_core::authority::SCOPE_ACCOUNT_MANAGE)
+    {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(
-            serde_json::json!({"error": "OAuth2 access tokens cannot manage OAuth clients"}),
+            serde_json::json!({"error": "first-party account:manage authority required"}),
         ));
         return;
     }
@@ -505,10 +511,12 @@ pub(crate) async fn oauth_clients_update_scopes(
         ));
         return;
     };
-    if !is_authorize_identity_allowed(auth) {
+    if !is_authorize_identity_allowed(auth)
+        || !auth.has_scope(webcodex_core::authority::SCOPE_ACCOUNT_MANAGE)
+    {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(serde_json::json!({
-            "error": "OAuth2 access tokens cannot manage OAuth clients"
+            "error": "first-party account:manage authority required"
         })));
         return;
     }
@@ -634,10 +642,12 @@ pub(crate) async fn oauth_clients_revoke(req: &mut Request, depot: &mut Depot, r
         ));
         return;
     };
-    if !is_authorize_identity_allowed(auth) {
+    if !is_authorize_identity_allowed(auth)
+        || !auth.has_scope(webcodex_core::authority::SCOPE_ACCOUNT_MANAGE)
+    {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(serde_json::json!({
-            "error": "OAuth2 access tokens cannot manage OAuth clients"
+            "error": "first-party account:manage authority required"
         })));
         return;
     }

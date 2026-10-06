@@ -141,7 +141,9 @@ pub(crate) fn required_oauth_scope_for_path_method(
     path: &str,
 ) -> Option<&'static str> {
     match oauth_route_scope_policy_for_path_method(method, path) {
-        OAuthRouteScopePolicy::Require(scope) => Some(scope),
+        OAuthRouteScopePolicy::Require(scope) | OAuthRouteScopePolicy::FirstPartyRequire(scope) => {
+            Some(scope)
+        }
         _ => None,
     }
 }
@@ -151,7 +153,8 @@ pub(crate) fn enforce_route_scope(
     method: &str,
     path: &str,
 ) -> Result<(), (Option<&'static str>, String)> {
-    match oauth_route_scope_policy_for_path_method(method, path) {
+    let policy = oauth_route_scope_policy_for_path_method(method, path);
+    match policy {
         OAuthRouteScopePolicy::Public | OAuthRouteScopePolicy::BodyAware(_) => Ok(()),
         OAuthRouteScopePolicy::Require(scope) => {
             if ctx.has_scope(scope) {
@@ -167,11 +170,16 @@ pub(crate) fn enforce_route_scope(
                 Err((None, "route requires bootstrap authority".to_string()))
             }
         }
-        OAuthRouteScopePolicy::FirstPartyOnly => {
+        OAuthRouteScopePolicy::FirstPartyOnly | OAuthRouteScopePolicy::FirstPartyRequire(_) => {
             if matches!(
                 ctx.kind,
                 super::context::AuthKind::Bootstrap | super::context::AuthKind::ApiToken
             ) {
+                if let OAuthRouteScopePolicy::FirstPartyRequire(scope) = policy {
+                    if !ctx.has_scope(scope) {
+                        return Err((Some(scope), format!("missing required scope: {}", scope)));
+                    }
+                }
                 Ok(())
             } else {
                 Err((
@@ -276,10 +284,13 @@ mod tests {
         ] {
             assert_eq!(
                 oauth_route_scope_policy_for_path_method("POST", path),
-                OAuthRouteScopePolicy::FirstPartyOnly,
+                OAuthRouteScopePolicy::FirstPartyRequire(SCOPE_ACCOUNT_MANAGE),
                 "POST {path}"
             );
-            assert_eq!(required_oauth_scope_for_path_method("POST", path), None);
+            assert_eq!(
+                required_oauth_scope_for_path_method("POST", path),
+                Some(SCOPE_ACCOUNT_MANAGE)
+            );
         }
     }
 
@@ -422,10 +433,16 @@ mod tests {
             enforce_route_scope(&shared, "POST", "/api/runtime-console/projects").is_ok(),
             "direct shared key should retain its existing project:read Runtime Console access"
         );
-        assert!(
-            enforce_route_scope(&pat, "POST", "/api/oauth/clients/list").is_ok(),
-            "PAT remains an allowed first-party identity"
+        assert_eq!(
+            enforce_route_scope(&pat, "POST", "/api/oauth/clients/list")
+                .unwrap_err()
+                .0,
+            Some(SCOPE_ACCOUNT_MANAGE),
+            "PAT identity alone must not grant client management"
         );
+        let mut account_pat = pat.clone();
+        account_pat.scopes.push(SCOPE_ACCOUNT_MANAGE.to_string());
+        assert!(enforce_route_scope(&account_pat, "POST", "/api/oauth/clients/list").is_ok());
         assert!(
             enforce_route_scope(&oauth, "POST", "/api/oauth/clients/list").is_err(),
             "OAuth delegation cannot become first-party client management"

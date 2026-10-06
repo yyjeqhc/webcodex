@@ -372,8 +372,8 @@ impl Database {
             "INSERT INTO oauth_authorization_codes (
                 id, code_hash, client_id, subject_kind, subject_id, user_id,
                 redirect_uri, scopes, code_challenge, code_challenge_method,
-                resource, shared_key_hash, created_at, expires_at, used_at, revoked_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                resource, shared_key_hash, created_at, expires_at, used_at, revoked_at, admin_authority
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 record.id,
                 code_hash,
@@ -391,6 +391,7 @@ impl Database {
                 record.expires_at,
                 record.used_at,
                 record.revoked_at,
+                record.admin_authority,
             ],
         )?;
         Ok(())
@@ -404,7 +405,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, code_hash, client_id, subject_kind, subject_id, user_id,
                     redirect_uri, scopes, code_challenge, code_challenge_method,
-                    resource, shared_key_hash, created_at, expires_at, used_at, revoked_at
+                    resource, shared_key_hash, created_at, expires_at, used_at, revoked_at, admin_authority
              FROM oauth_authorization_codes
              WHERE code_hash = ?1 AND revoked_at IS NULL",
         )?;
@@ -463,7 +464,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, code_hash, client_id, subject_kind, subject_id, user_id,
                     redirect_uri, scopes, code_challenge, code_challenge_method,
-                    resource, shared_key_hash, created_at, expires_at, used_at, revoked_at
+                    resource, shared_key_hash, created_at, expires_at, used_at, revoked_at, admin_authority
              FROM oauth_authorization_codes
              WHERE code_hash = ?1",
         )?;
@@ -541,7 +542,7 @@ impl Database {
                 let mut stmt = tx.prepare(
                     "SELECT id, code_hash, client_id, subject_kind, subject_id, user_id,
                             redirect_uri, scopes, code_challenge, code_challenge_method,
-                            resource, shared_key_hash, created_at, expires_at, used_at, revoked_at
+                            resource, shared_key_hash, created_at, expires_at, used_at, revoked_at, admin_authority
                      FROM oauth_authorization_codes
                      WHERE code_hash = ?1",
                 )?;
@@ -553,6 +554,11 @@ impl Database {
                 }
             };
             validate_oauth_authorization_code_subject(&code_record)?;
+            if access_token_record.admin_authority != code_record.admin_authority
+                || refresh_token_record.admin_authority != code_record.admin_authority
+            {
+                anyhow::bail!("OAuth exchange authority mismatch");
+            }
             validate_oauth_subjects_match(
                 &code_record.subject_kind,
                 &code_record.subject_id,
@@ -565,8 +571,8 @@ impl Database {
                 "INSERT INTO oauth_access_tokens (
                     id, token_hash, client_id, subject_kind, subject_id, user_id,
                     scopes, resource, shared_key_hash, created_at, expires_at,
-                    revoked_at, last_used_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    revoked_at, last_used_at, admin_authority
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     access_token_record.id,
                     access_token_record.token_hash,
@@ -581,6 +587,7 @@ impl Database {
                     access_token_record.expires_at,
                     access_token_record.revoked_at,
                     access_token_record.last_used_at,
+                    access_token_record.admin_authority,
                 ],
             )?;
 
@@ -589,8 +596,8 @@ impl Database {
                 "INSERT INTO oauth_refresh_tokens (
                     id, token_hash, client_id, subject_kind, subject_id, user_id,
                     scopes, resource, shared_key_hash, created_at, expires_at,
-                    revoked_at, last_used_at, rotated_from_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    revoked_at, last_used_at, rotated_from_id, admin_authority
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     refresh_token_record.id,
                     refresh_token_record.token_hash,
@@ -606,6 +613,7 @@ impl Database {
                     refresh_token_record.revoked_at,
                     refresh_token_record.last_used_at,
                     refresh_token_record.rotated_from_id,
+                    refresh_token_record.admin_authority,
                 ],
             )?;
 
@@ -625,8 +633,8 @@ impl Database {
             "INSERT INTO oauth_access_tokens (
                 id, token_hash, client_id, subject_kind, subject_id, user_id,
                 scopes, resource, shared_key_hash, created_at, expires_at,
-                revoked_at, last_used_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                revoked_at, last_used_at, admin_authority
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 record.id,
                 record.token_hash,
@@ -641,6 +649,7 @@ impl Database {
                 record.expires_at,
                 record.revoked_at,
                 record.last_used_at,
+                record.admin_authority,
             ],
         )?;
         Ok(())
@@ -654,7 +663,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, token_hash, client_id, subject_kind, subject_id, user_id,
                     scopes, resource, shared_key_hash, created_at, expires_at,
-                    revoked_at, last_used_at
+                    revoked_at, last_used_at, admin_authority
              FROM oauth_access_tokens
              WHERE token_hash = ?1 AND revoked_at IS NULL",
         )?;
@@ -715,8 +724,8 @@ impl Database {
             "INSERT INTO oauth_refresh_tokens (
                 id, token_hash, client_id, subject_kind, subject_id, user_id,
                 scopes, resource, shared_key_hash, created_at, expires_at,
-                revoked_at, last_used_at, rotated_from_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                revoked_at, last_used_at, rotated_from_id, admin_authority
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 record.id,
                 record.token_hash,
@@ -732,6 +741,7 @@ impl Database {
                 record.revoked_at,
                 record.last_used_at,
                 record.rotated_from_id,
+                record.admin_authority,
             ],
         )?;
         Ok(())
@@ -745,7 +755,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, token_hash, client_id, subject_kind, subject_id, user_id,
                     scopes, resource, shared_key_hash, created_at, expires_at,
-                    revoked_at, last_used_at, rotated_from_id
+                    revoked_at, last_used_at, rotated_from_id, admin_authority
              FROM oauth_refresh_tokens
              WHERE token_hash = ?1 AND revoked_at IS NULL",
         )?;
@@ -806,7 +816,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, token_hash, client_id, subject_kind, subject_id, user_id,
                     scopes, resource, shared_key_hash, created_at, expires_at,
-                    revoked_at, last_used_at, rotated_from_id
+                    revoked_at, last_used_at, rotated_from_id, admin_authority
              FROM oauth_refresh_tokens
              WHERE token_hash = ?1",
         )?;
@@ -861,7 +871,7 @@ impl Database {
                 let mut stmt = tx.prepare(
                     "SELECT id, token_hash, client_id, subject_kind, subject_id, user_id,
                             scopes, resource, shared_key_hash, created_at, expires_at,
-                            revoked_at, last_used_at, rotated_from_id
+                            revoked_at, last_used_at, rotated_from_id, admin_authority
                      FROM oauth_refresh_tokens
                      WHERE token_hash = ?1",
                 )?;
@@ -889,6 +899,11 @@ impl Database {
             }
 
             validate_oauth_refresh_token_subject(&old)?;
+            if access_token_record.admin_authority != old.admin_authority
+                || new_refresh_token_record.admin_authority != old.admin_authority
+            {
+                anyhow::bail!("OAuth rotation authority mismatch");
+            }
             validate_oauth_subjects_match(
                 &old.subject_kind,
                 &old.subject_id,
@@ -914,8 +929,8 @@ impl Database {
                 "INSERT INTO oauth_access_tokens (
                     id, token_hash, client_id, subject_kind, subject_id, user_id,
                     scopes, resource, shared_key_hash, created_at, expires_at,
-                    revoked_at, last_used_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    revoked_at, last_used_at, admin_authority
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     access_token_record.id,
                     access_token_record.token_hash,
@@ -930,6 +945,7 @@ impl Database {
                     access_token_record.expires_at,
                     access_token_record.revoked_at,
                     access_token_record.last_used_at,
+                    access_token_record.admin_authority,
                 ],
             )?;
 
@@ -938,8 +954,8 @@ impl Database {
                 "INSERT INTO oauth_refresh_tokens (
                     id, token_hash, client_id, subject_kind, subject_id, user_id,
                     scopes, resource, shared_key_hash, created_at, expires_at,
-                    revoked_at, last_used_at, rotated_from_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    revoked_at, last_used_at, rotated_from_id, admin_authority
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     new_refresh_token_record.id,
                     new_refresh_token_record.token_hash,
@@ -955,6 +971,7 @@ impl Database {
                     new_refresh_token_record.revoked_at,
                     new_refresh_token_record.last_used_at,
                     new_refresh_token_record.rotated_from_id,
+                    new_refresh_token_record.admin_authority,
                 ],
             )?;
 
@@ -1007,6 +1024,7 @@ fn row_to_oauth_authorization_code(
     row: &rusqlite::Row,
 ) -> rusqlite::Result<OAuthAuthorizationCodeRecord> {
     Ok(OAuthAuthorizationCodeRecord {
+        admin_authority: row.get(16)?,
         id: row.get(0)?,
         code_hash: row.get(1)?,
         client_id: row.get(2)?,
@@ -1028,6 +1046,7 @@ fn row_to_oauth_authorization_code(
 
 fn row_to_oauth_access_token(row: &rusqlite::Row) -> rusqlite::Result<OAuthAccessTokenRecord> {
     Ok(OAuthAccessTokenRecord {
+        admin_authority: row.get(13)?,
         id: row.get(0)?,
         token_hash: row.get(1)?,
         client_id: row.get(2)?,
@@ -1046,6 +1065,7 @@ fn row_to_oauth_access_token(row: &rusqlite::Row) -> rusqlite::Result<OAuthAcces
 
 fn row_to_oauth_refresh_token(row: &rusqlite::Row) -> rusqlite::Result<OAuthRefreshTokenRecord> {
     Ok(OAuthRefreshTokenRecord {
+        admin_authority: row.get(14)?,
         id: row.get(0)?,
         token_hash: row.get(1)?,
         client_id: row.get(2)?,

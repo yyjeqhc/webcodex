@@ -77,7 +77,7 @@ Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS
 
 Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时显式指定 `--oauth-browser-permissions`，仅追加 `browser:read`、`browser:control`、`browser:launch`。默认 baseline 不包含 Browser scope；Browser 与 `--oauth-computer-permissions` 相互独立，也不使用 Computer consent checkbox。已有 client 不会自动扩权，历史窄权限仅追加显式选择的类别。scope ceiling 变化会撤销旧 grants 并要求重新授权；复用已启用 Browser 的 profile 时必须继续携带该 flag。
 
-Operator/admin diagnostics（如 `read_tool_trace`）不属于普通 OAuth delegation。`admin` 不在 OAuth supported scopes 或 shared-key bridge ceiling 中。Manifest discovery 同时检查 caller authority 和 protocol capability；即使硬编码调用，权限拒绝也不会发出暗示可通过 OAuth reconnect 获得 `admin` 的 challenge。Browser 等可委托 scope 缺失时仍返回标准 `WWW-Authenticate: Bearer error="insufficient_scope"`。
+Managed OAuth client 的创建、列举、修改和撤销要求 PAT 持有 `account:manage`（或 super-scope `admin`）；普通 account manager 仍只能管理自己的 client。OAuth access token 不能执行这些 first-party 管理操作。授权范围不得超过 PAT authority；`offline_access` 是 refresh capability，不是 runtime permission。需要 admin diagnostics 时，使用 admin PAT 授权自己拥有的 managed client。升级前的 connection 需要重新授权一次，此后 refresh 保留 grant authority。shared-key `connect --auth oauth` 不授予 admin。参见[认证模型](AUTH_MODEL.zh-CN.md#oauth2)。
 
 高级 managed identity 流程仍保留为 `--auth managed-oauth --oauth-redirect-uri <精确回调地址>`，它才要求先 `webcodex login`；`--user` 也只用于该模式。
 

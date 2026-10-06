@@ -396,6 +396,7 @@ fn purge_stale_auth_rows_removes_dead_material_keeps_live() {
 
     // Live access token + expired + revoked.
     db.insert_oauth_access_token(&OAuthAccessTokenRecord {
+        admin_authority: false,
         id: "at-live".to_string(),
         token_hash: "ath-live".to_string(),
         client_id: client.client_id.clone(),
@@ -412,6 +413,7 @@ fn purge_stale_auth_rows_removes_dead_material_keeps_live() {
     })
     .unwrap();
     db.insert_oauth_access_token(&OAuthAccessTokenRecord {
+        admin_authority: false,
         id: "at-exp".to_string(),
         token_hash: "ath-exp".to_string(),
         client_id: client.client_id.clone(),
@@ -428,6 +430,7 @@ fn purge_stale_auth_rows_removes_dead_material_keeps_live() {
     })
     .unwrap();
     db.insert_oauth_access_token(&OAuthAccessTokenRecord {
+        admin_authority: false,
         id: "at-rev".to_string(),
         token_hash: "ath-rev".to_string(),
         client_id: client.client_id.clone(),
@@ -447,6 +450,7 @@ fn purge_stale_auth_rows_removes_dead_material_keeps_live() {
     // Used authorization code should be purged.
     db.insert_oauth_authorization_code(
         &OAuthAuthorizationCodeRecord {
+            admin_authority: false,
             id: "ac-used".to_string(),
             code_hash: "ach-used".to_string(),
             client_id: client.client_id.clone(),
@@ -1192,6 +1196,7 @@ fn can_insert_and_get_authorization_code_by_hash() {
     let code_hash = oauth_fixture_hash(&plaintext_code);
     let now = chrono::Utc::now().timestamp();
     let record = OAuthAuthorizationCodeRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         code_hash: code_hash.clone(),
         client_id: client.client_id.clone(),
@@ -1242,6 +1247,7 @@ fn can_insert_and_get_access_token_by_hash() {
     let token_hash = oauth_fixture_hash(&plaintext_token);
     let now = chrono::Utc::now().timestamp();
     let record = OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: token_hash.clone(),
         client_id: client.client_id.clone(),
@@ -1284,6 +1290,7 @@ fn can_update_access_token_last_used() {
     let token_hash = oauth_fixture_hash(&plaintext_token);
     let now = chrono::Utc::now().timestamp();
     let record = OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: token_hash.clone(),
         client_id: client.client_id.clone(),
@@ -1320,6 +1327,7 @@ fn can_revoke_access_token() {
     let token_hash = oauth_fixture_hash(&plaintext_token);
     let now = chrono::Utc::now().timestamp();
     let record = OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: token_hash.clone(),
         client_id: client.client_id.clone(),
@@ -1355,6 +1363,7 @@ fn can_insert_and_get_refresh_token_by_hash() {
     let token_hash = oauth_fixture_hash(&plaintext_token);
     let now = chrono::Utc::now().timestamp();
     let record = OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: token_hash.clone(),
         client_id: client.client_id.clone(),
@@ -1396,6 +1405,7 @@ fn oauth_shared_key_subject_records_round_trip() {
 
     let plaintext_ac = oauth_fixture_plaintext("authorization_code");
     let auth_code = OAuthAuthorizationCodeRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         code_hash: oauth_fixture_hash(&plaintext_ac),
         client_id: client.client_id.clone(),
@@ -1426,6 +1436,7 @@ fn oauth_shared_key_subject_records_round_trip() {
 
     let plaintext_at = oauth_fixture_plaintext("access_token");
     let access = OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: oauth_fixture_hash(&plaintext_at),
         client_id: client.client_id.clone(),
@@ -1452,6 +1463,7 @@ fn oauth_shared_key_subject_records_round_trip() {
 
     let plaintext_rt = oauth_fixture_plaintext("refresh_token");
     let refresh = OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: oauth_fixture_hash(&plaintext_rt),
         client_id: client.client_id.clone(),
@@ -1487,6 +1499,7 @@ fn oauth_subject_validation_rejects_invalid_combinations() {
     let now = chrono::Utc::now().timestamp();
 
     let valid = OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: "hash-valid".to_string(),
         client_id: client.client_id.clone(),
@@ -1550,6 +1563,7 @@ fn can_revoke_refresh_token() {
     let token_hash = oauth_fixture_hash(&plaintext_token);
     let now = chrono::Utc::now().timestamp();
     let record = OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: token_hash.clone(),
         client_id: client.client_id.clone(),
@@ -1601,6 +1615,7 @@ fn oauth_plaintext_tokens_are_never_stored() {
     let at_hash = oauth_fixture_hash(&plaintext_at);
     let now = chrono::Utc::now().timestamp();
     let at_record = OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: at_hash.clone(),
         client_id: client.client_id.clone(),
@@ -1632,6 +1647,7 @@ fn oauth_plaintext_tokens_are_never_stored() {
     let plaintext_rt = oauth_fixture_plaintext("refresh_token");
     let rt_hash = oauth_fixture_hash(&plaintext_rt);
     let rt_record = OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: rt_hash.clone(),
         client_id: client.client_id.clone(),
@@ -1664,6 +1680,7 @@ fn oauth_plaintext_tokens_are_never_stored() {
     let plaintext_ac = oauth_fixture_plaintext("authorization_code");
     let ac_hash = oauth_fixture_hash(&plaintext_ac);
     let ac_record = OAuthAuthorizationCodeRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         code_hash: ac_hash.clone(),
         client_id: client.client_id.clone(),
@@ -1729,6 +1746,7 @@ fn seed_consumable_code() -> (
     let code_hash = oauth_fixture_hash(&plaintext_code);
     let now = chrono::Utc::now().timestamp();
     let record = OAuthAuthorizationCodeRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         code_hash: code_hash.clone(),
         client_id: client.client_id.clone(),
@@ -1812,6 +1830,7 @@ fn exchange_authorization_code_rejects_subject_mismatch_with_consumed_code() {
     let now = chrono::Utc::now().timestamp();
     let code_hash = "code-hash-subject-mismatch".to_string();
     let code = OAuthAuthorizationCodeRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         code_hash: code_hash.clone(),
         client_id: client.client_id.clone(),
@@ -1833,6 +1852,7 @@ fn exchange_authorization_code_rejects_subject_mismatch_with_consumed_code() {
         .unwrap();
 
     let access = OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: "access-hash-mismatch".to_string(),
         client_id: client.client_id.clone(),
@@ -1848,6 +1868,7 @@ fn exchange_authorization_code_rejects_subject_mismatch_with_consumed_code() {
         last_used_at: None,
     };
     let refresh = OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: "refresh-hash-mismatch".to_string(),
         client_id: client.client_id.clone(),
@@ -1895,6 +1916,7 @@ fn rotate_refresh_token_rejects_subject_mismatch_with_old_refresh() {
     let (client, _) = oauth_seed_client(&db, &user, "Test App");
     let now = chrono::Utc::now().timestamp();
     let old = OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: "old-refresh-hash".to_string(),
         client_id: client.client_id.clone(),
@@ -1913,6 +1935,7 @@ fn rotate_refresh_token_rejects_subject_mismatch_with_old_refresh() {
     db.insert_oauth_refresh_token(&old).unwrap();
 
     let access = OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: "new-access-hash".to_string(),
         client_id: client.client_id.clone(),
@@ -1928,6 +1951,7 @@ fn rotate_refresh_token_rejects_subject_mismatch_with_old_refresh() {
         last_used_at: None,
     };
     let refresh = OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: "new-refresh-hash".to_string(),
         client_id: client.client_id.clone(),
@@ -1969,4 +1993,82 @@ fn rotate_refresh_token_rejects_subject_mismatch_with_old_refresh() {
         )
         .unwrap();
     assert_eq!(access_count, 0);
+}
+
+#[test]
+fn oauth_admin_authority_migration_is_additive_idempotent_and_fail_closed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("oauth-authority.db");
+    let db = Database::open(&path).unwrap();
+    let user = oauth_seed_user(&db, "legacy-admin");
+    let (client, _) = oauth_seed_client(&db, &user, "legacy");
+    {
+        let conn = db.conn_for_tests();
+        conn.execute(
+            "UPDATE users SET role = 'admin' WHERE id = ?1",
+            rusqlite::params![user.id],
+        )
+        .unwrap();
+        for table in [
+            "oauth_authorization_codes",
+            "oauth_access_tokens",
+            "oauth_refresh_tokens",
+        ] {
+            // Simulate a pre-upgrade database, including an existing row whose
+            // authorizing credential cannot be inferred from its user role.
+            conn.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN admin_authority"))
+                .unwrap();
+            let extra = if table == "oauth_authorization_codes" {
+                ", redirect_uri"
+            } else {
+                ""
+            };
+            let value = if table == "oauth_authorization_codes" {
+                ", 'https://example.com/callback'"
+            } else {
+                ""
+            };
+            let hash = if table == "oauth_authorization_codes" {
+                "code_hash"
+            } else {
+                "token_hash"
+            };
+            conn.execute(&format!("INSERT INTO {table} (id, {hash}, client_id, subject_kind, subject_id, user_id, created_at, expires_at{extra}) VALUES ('legacy', 'legacy-hash', ?1, 'managed_user', ?2, ?2, 1, 9999999999{value})"), rusqlite::params![client.client_id, user.id]).unwrap();
+        }
+    }
+    drop(db);
+    for _ in 0..2 {
+        let db = Database::open(&path).unwrap();
+        assert!(
+            !db.get_oauth_authorization_code_by_hash("legacy-hash")
+                .unwrap()
+                .unwrap()
+                .admin_authority
+        );
+        assert!(
+            !db.get_oauth_access_token_by_hash("legacy-hash")
+                .unwrap()
+                .unwrap()
+                .admin_authority
+        );
+        assert!(
+            !db.get_oauth_refresh_token_by_hash("legacy-hash")
+                .unwrap()
+                .unwrap()
+                .admin_authority
+        );
+        let conn = db.conn_for_tests();
+        for table in [
+            "oauth_authorization_codes",
+            "oauth_access_tokens",
+            "oauth_refresh_tokens",
+        ] {
+            assert!(conn
+                .execute(&format!("UPDATE {table} SET admin_authority = 2"), [])
+                .is_err());
+            assert!(conn
+                .execute(&format!("UPDATE {table} SET admin_authority = NULL"), [])
+                .is_err());
+        }
+    }
 }

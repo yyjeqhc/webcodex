@@ -211,6 +211,7 @@ fn gate_seed_oauth_access_token_with_shared_key_hash(
     let plaintext = generate_oauth_access_token();
     let token_hash = hash_token(&plaintext);
     let record = crate::models::OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash,
         client_id: client.client_id.clone(),
@@ -239,6 +240,7 @@ fn gate_seed_shared_key_oauth_access_token(
     let plaintext = generate_oauth_access_token();
     let token_hash = hash_token(&plaintext);
     let record = crate::models::OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash,
         client_id: client.client_id.clone(),
@@ -920,6 +922,7 @@ async fn oauth2_verifier_rejects_invalid_access_token_state_matrix() {
                 let now = chrono::Utc::now().timestamp();
                 let plaintext = generate_oauth_access_token();
                 db.insert_oauth_access_token(&crate::models::OAuthAccessTokenRecord {
+                    admin_authority: false,
                     id: uuid::Uuid::new_v4().to_string(),
                     token_hash: hash_token(&plaintext),
                     client_id: client.client_id,
@@ -979,6 +982,7 @@ async fn oauth2_verifier_ignores_non_access_oauth_credential_kinds() {
     let now = chrono::Utc::now().timestamp();
     let refresh = generate_oauth_refresh_token();
     db.insert_oauth_refresh_token(&crate::models::OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: hash_token(&refresh),
         client_id: client.client_id.clone(),
@@ -1094,6 +1098,7 @@ async fn oauth2_verifier_accepts_current_project_share_and_preserves_project_ide
     let plaintext = generate_oauth_access_token();
     let now = chrono::Utc::now().timestamp();
     db.insert_oauth_access_token(&crate::models::OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: hash_token(&plaintext),
         client_id: client.client_id.clone(),
@@ -1159,6 +1164,7 @@ async fn oauth2_verifier_rejects_stale_project_share_session() {
     let plaintext = generate_oauth_access_token();
     let now = chrono::Utc::now().timestamp();
     db.insert_oauth_access_token(&crate::models::OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: hash_token(&plaintext),
         client_id: client.client_id,
@@ -1949,6 +1955,7 @@ async fn auth_middleware_rejects_refresh_token_as_bearer() {
     let plaintext = generate_oauth_refresh_token();
     let token_hash = hash_token(&plaintext);
     let record = crate::models::OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash,
         client_id: client.client_id.clone(),

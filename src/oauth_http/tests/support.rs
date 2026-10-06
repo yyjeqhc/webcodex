@@ -221,6 +221,18 @@ pub(super) fn seed_project_share_client(
 }
 
 pub(super) fn seed_user_token(db: &crate::Database, user: &UserRecord) -> String {
+    seed_user_token_with_scopes(
+        db,
+        user,
+        "runtime:read project:read project:write job:run account:manage",
+    )
+}
+
+pub(super) fn seed_user_token_with_scopes(
+    db: &crate::Database,
+    user: &UserRecord,
+    scopes: &str,
+) -> String {
     let plaintext = generate_api_token();
     let hash = hash_token(&plaintext);
     let now = chrono::Utc::now().timestamp();
@@ -232,7 +244,7 @@ pub(super) fn seed_user_token(db: &crate::Database, user: &UserRecord) -> String
         created_at: now,
         last_used_at: None,
         revoked_at: None,
-        scopes: "runtime:read project:read project:write job:run".to_string(),
+        scopes: scopes.to_string(),
         expires_at: None,
         kind: TOKEN_KIND_USER.to_string(),
         allowed_client_id: None,
@@ -481,6 +493,7 @@ pub(super) fn seed_project_share_auth_code(
     let now = chrono::Utc::now().timestamp();
     let plaintext_code = generate_oauth_authorization_code();
     let record = OAuthAuthorizationCodeRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         code_hash: hash_token(&plaintext_code),
         client_id: client.client_id.clone(),
@@ -583,6 +596,7 @@ pub(super) fn seed_auth_code_with_resource_and_shared_key_hash(
     let plaintext_code = generate_oauth_authorization_code();
     let code_hash = hash_token(&plaintext_code);
     let record = OAuthAuthorizationCodeRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         code_hash,
         client_id: client.client_id.clone(),
@@ -660,6 +674,7 @@ pub(super) fn seed_refresh_token_with_resource_and_shared_key_hash(
     let plaintext = crate::auth::generate_oauth_refresh_token();
     let token_hash = hash_token(&plaintext);
     let record = crate::models::OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash,
         client_id: client.client_id.clone(),
@@ -696,6 +711,7 @@ pub(super) fn seed_access_token(
     let plaintext = crate::auth::generate_oauth_access_token();
     let token_hash = hash_token(&plaintext);
     let record = crate::models::OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash,
         client_id: client.client_id.clone(),

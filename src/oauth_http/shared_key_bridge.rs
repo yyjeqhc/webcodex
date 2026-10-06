@@ -636,6 +636,7 @@ fn issue_bridge_authorization_code(
     let plaintext_code = generate_oauth_authorization_code();
     let code_hash = hash_token(&plaintext_code);
     let record = OAuthAuthorizationCodeRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         code_hash,
         client_id: validated.client.client_id.clone(),

@@ -88,6 +88,8 @@ WebCodex 验证该 credential 后只在内部保留所需的非 secret authoriza
 
 ## OAuth2
 
+Authentication 确认用户身份；ownership 限制可管理谁的资源；credential scopes 承载实际 authority。`admin` 是 credential-level super-scope；`account:manage` 是受 ownership 限制的账户、token、pairing 与 OAuth client 窄管理能力，不等于 admin。Bootstrap 保持完整 authority。`user.role` 仅保留为 legacy metadata，不授予 runtime/admin authority。PAT、Runner token、OAuth、shared-key 与 Project Credential 的 kinds/audiences 继续严格隔离。
+
 OAuth 允许 MCP/GPT client 使用 authorization-code flow，而不是在 client 中长期保存 PAT。注册 client 实际要求的精确 callback URL，并按 `webcodex share --auth oauth` 或 `webcodex connect --auth oauth` 的输出完成连接。
 
 用户需要理解的 OAuth 概念只有：
@@ -104,7 +106,11 @@ WebCodex 新增 scope 时不会静默扩大已有 OAuth client 的权限上限�
 
 Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时显式指定 `--oauth-browser-permissions`，仅追加 `browser:read`、`browser:control`、`browser:launch`。默认 baseline 不包含 Browser scope；Browser 与 `--oauth-computer-permissions` 相互独立，也不使用 Computer consent checkbox。已有 client 不会自动扩权，历史窄权限仅追加显式选择的类别。scope ceiling 变化会撤销旧 grants 并要求重新授权；复用已启用 Browser 的 profile 时必须继续携带该 flag。
 
-Operator/admin diagnostics（如 `read_tool_trace`）不属于普通 OAuth delegation。`admin` 不在 OAuth supported scopes 或 shared-key bridge ceiling 中。Manifest discovery 同时检查 caller authority 和 protocol capability；即使硬编码调用，权限拒绝也不会发出暗示可通过 OAuth reconnect 获得 `admin` 的 challenge。Browser 等可委托 scope 缺失时仍返回标准 `WWW-Authenticate: Bearer error="insufficient_scope"`。
+Managed-user OAuth 在 first-party PAT 授权时快照 credential authority。普通 requested scopes 必须同时满足全局 supported scopes、client allowed scopes 和 PAT 自身 authority（`admin` 满足全部普通 scope）。`offline_access` 只是 OAuth refresh capability，不要求 PAT 自身持有。浏览器登录只保存用户身份、credential scopes 与 expiry，不保存 PAT 明文或 hash。
+
+admin PAT 授权**自己拥有的** managed-user client 时，grant 还会获得内部 admin authority；授权其他用户的 client 时只委托普通 scopes。`admin` 不可作为 requestable OAuth scope，不可进入 client `allowed_scopes`，也不出现在 token response 的公开 `scope` 中。shared-key 与 project-share OAuth 均不继承 admin authority。
+
+签发后的 grant 是独立 credential：原 PAT 被撤销、过期或修改 scopes，不改变该 grant。Code exchange 和 refresh rotation 保留内部 authority；现有 OAuth 撤销和 disabled-user 检查继续生效。升级前的 grant 未记录当初 PAT authority，因此全部默认无 admin authority，不按 role 或现有 PAT 猜测。旧 ChatGPT/NewWebCodex connection 需要**用 admin PAT 对自己拥有的 managed client 重新授权一次**才能获得 admin authority；之后 refresh 持续保留，无须再次登录，直至正常失效或撤销。
 
 Server 侧配置见[部署指南](DEPLOYMENT.zh-CN.md#oauth2)；MCP client 设置见 [MCP](MCP.zh-CN.md#oauth2)。
 

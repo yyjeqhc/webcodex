@@ -219,7 +219,7 @@ replacement Runner，也不会在 uncertain outcome 后自动 replay。Raw SSH t
 
 Browser Use 的 shared-key OAuth delegation 需要在 `connect --auth oauth` 时显式指定 `--oauth-browser-permissions`，仅追加 `browser:read`、`browser:control`、`browser:launch`。默认 baseline 不包含 Browser scope；Browser 与 `--oauth-computer-permissions` 相互独立，也不使用 Computer consent checkbox。已有 client 不会自动扩权，历史窄权限仅追加显式选择的类别。scope ceiling 变化会撤销旧 grants 并要求重新授权；复用已启用 Browser 的 profile 时必须继续携带该 flag。
 
-Operator/admin diagnostics（如 `read_tool_trace`）不属于普通 OAuth delegation。`admin` 不在 OAuth supported scopes 或 shared-key bridge ceiling 中。Manifest discovery 同时检查 caller authority 和 protocol capability；即使硬编码调用，权限拒绝也不会发出暗示可通过 OAuth reconnect 获得 `admin` 的 challenge。Browser 等可委托 scope 缺失时仍返回标准 `WWW-Authenticate: Bearer error="insufficient_scope"`。
+`read_tool_trace` 要求 credential-level admin authority 和 Stateless MCP 2026 trace-diagnostics capability。admin PAT 授权自己拥有的 managed-user client 后，OAuth connection 获得内部 admin authority；tools/list、manifest discovery、direct call 与 `call_runtime_tool` 均走同一 admin scope 检查。`admin` 仍不进入 requestable scopes 或公开 OAuth response，普通 OAuth 拒绝也不会提示申请 `admin` scope。shared-key/project-share OAuth 不具备该 authority。升级前的 ChatGPT/NewWebCodex connection 需要这样重新授权一次，此后 refresh rotation 保留 authority。参见[认证模型](AUTH_MODEL.zh-CN.md#oauth2)。
 
 Project-first `share --auth oauth` 仍绑定本次临时 share 环境。Managed-user OAuth 是另一条高级流程（`connect --auth managed-oauth`）。OAuth credential 永远不能用于 Runner transport。
 

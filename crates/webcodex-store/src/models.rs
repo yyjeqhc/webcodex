@@ -383,6 +383,9 @@ pub struct OAuthClientRecord {
 /// validation. `resource` is reserved for MCP audience binding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthAuthorizationCodeRecord {
+    /// Internal grant-time authority; never part of the public OAuth scope string.
+    #[serde(default)]
+    pub admin_authority: bool,
     pub id: String,
     /// SHA-256 hash of the code. Plaintext never stored.
     pub code_hash: String,
@@ -415,6 +418,9 @@ pub struct OAuthAuthorizationCodeRecord {
 /// stored; the plaintext is returned to the client once at creation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthAccessTokenRecord {
+    /// Internal grant-time authority; never part of the public OAuth scope string.
+    #[serde(default)]
+    pub admin_authority: bool,
     pub id: String,
     /// SHA-256 hash of the token. Plaintext never stored.
     pub token_hash: String,
@@ -442,6 +448,9 @@ pub struct OAuthAccessTokenRecord {
 /// `rotated_from_id`. Only the SHA-256 hash is stored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthRefreshTokenRecord {
+    /// Internal grant-time authority; never part of the public OAuth scope string.
+    #[serde(default)]
+    pub admin_authority: bool,
     pub id: String,
     /// SHA-256 hash of the token. Plaintext never stored.
     pub token_hash: String,

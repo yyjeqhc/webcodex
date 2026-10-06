@@ -1288,3 +1288,59 @@ async fn oauth_client_management_allows_api_token_or_bootstrap() {
     let body: serde_json::Value = resp.take_json().await.unwrap();
     assert_eq!(body["success"], true);
 }
+
+#[tokio::test]
+async fn client_management_requires_first_party_account_authority_and_ownership() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let other = seed_user(&db, "bob");
+    let (own, _) = seed_client(&db, &user, "own");
+    let (foreign, _) = seed_client(&db, &other, "foreign");
+    let service = Service::new(build_router(test_config(oauth2_enabled()), db.clone()));
+    for (scopes, has_account, admin) in [
+        ("runtime:read", false, false),
+        ("account:manage", true, false),
+        ("admin", true, true),
+    ] {
+        let token = seed_user_token_with_scopes(&db, &user, scopes);
+        for (route, body) in [
+            ("create", create_client_json("new", &["https://example.com/callback"], Some(&["runtime:read"]))),
+            ("list", "{}".to_string()),
+            ("update_scopes", serde_json::json!({"client_id": own.client_id, "allowed_scopes": ["runtime:read", "project:read"]}).to_string()),
+            ("add_redirect_uri", serde_json::json!({"client_id": own.client_id, "redirect_uri": "https://example.com/second"}).to_string()),
+            ("remove_redirect_uri", serde_json::json!({"client_id": own.client_id, "redirect_uri": "https://example.com/second"}).to_string()),
+        ] {
+            let resp = authorized_post_json(&format!("http://localhost/api/oauth/clients/{route}"), body, &token).send(&service).await;
+            assert_eq!(resp.status_code, Some(if has_account { StatusCode::OK } else { StatusCode::FORBIDDEN }), "{route}");
+        }
+        let resp = authorized_post_json("http://localhost/api/oauth/clients/update_scopes", serde_json::json!({"client_id": foreign.client_id, "allowed_scopes": ["runtime:read", "project:read"]}).to_string(), &token).send(&service).await;
+        assert_eq!(
+            resp.status_code,
+            Some(if admin {
+                StatusCode::OK
+            } else if has_account {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::FORBIDDEN
+            })
+        );
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/revoke",
+            serde_json::json!({"client_id": foreign.client_id}).to_string(),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(
+            resp.status_code,
+            Some(if admin {
+                StatusCode::OK
+            } else if has_account {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::FORBIDDEN
+            })
+        );
+    }
+}

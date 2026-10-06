@@ -92,6 +92,8 @@ After verification, WebCodex keeps the non-secret authorization metadata it need
 
 ## OAuth2
 
+Authentication identifies the user. Ownership limits whose resources may be managed. Credential scopes carry authority: `admin` is the credential-level super-scope, while `account:manage` grants narrower account, token, pairing and OAuth-client management within ownership boundaries. Bootstrap retains full authority. `user.role` remains legacy metadata and does not grant runtime/admin authority. PAT, Runner token, OAuth, shared-key and Project Credential kinds/audiences remain isolated.
+
 OAuth lets MCP/GPT clients use the authorization-code flow instead of storing a long-lived PAT in the client. Register the exact callback URL required by the client and follow the connection output from `webcodex share --auth oauth` or `webcodex connect --auth oauth`.
 
 The user-facing OAuth concepts are:
@@ -108,7 +110,11 @@ For ordinary hosted shared-key OAuth, `webcodex connect ... --auth oauth` keeps 
 
 Shared-key OAuth delegation for Browser Use requires explicit `--oauth-browser-permissions` on `connect --auth oauth`. It adds only `browser:read`, `browser:control`, and `browser:launch`. The baseline excludes Browser scopes. Browser authority is independent of `--oauth-computer-permissions` and its consent checkboxes. Existing clients never expand automatically; narrow historical profiles gain only the explicitly selected class. Scope ceiling changes revoke old grants and require reauthorization. Reusing a Browser-enabled profile requires the flag again.
 
-Operator/admin diagnostics such as `read_tool_trace` are outside ordinary OAuth delegation. Neither OAuth supported scopes nor the shared-key bridge ceiling includes `admin`. Manifest discovery checks caller authority as well as protocol capability. Hard-coded calls remain denied without a challenge suggesting OAuth reconnect can grant `admin`. Missing delegable scopes such as Browser scopes still return the standard `WWW-Authenticate: Bearer error="insufficient_scope"` challenge.
+Managed-user OAuth snapshots credential authority when a first-party PAT authorizes the grant. Ordinary requested scopes must be supported globally, allowed by the client, and held by the PAT (`admin` satisfies every ordinary scope). `offline_access` is only an OAuth refresh capability and does not need to be held by the PAT. Browser login retains only user identity, credential scopes and expiry; it never retains the PAT secret or hash.
+
+An admin PAT authorizing its **own** managed-user client also grants internal admin authority. An admin PAT authorizing another user's client delegates only ordinary scopes. `admin` is never a requestable OAuth scope, a client `allowed_scopes` entry, or part of the public token-response `scope`. Shared-key and project-share OAuth never inherit admin authority.
+
+The grant is an independent credential after issuance: revoking or expiring the PAT, or changing its scopes, does not change the grant. Code exchange and refresh rotation preserve internal authority. Existing OAuth revocation and disabled-user checks still apply. Pre-upgrade grants default to no admin authority because their authorizing PAT authority was not recorded; no role or current PAT is used to guess it. Existing ChatGPT/NewWebCodex connections need **one reauthorization using an admin PAT for its own managed client** to acquire admin authority. Subsequent refreshes preserve it without another login until normal expiry or revocation.
 
 Server configuration is in [Deployment](DEPLOYMENT.md#oauth2); MCP client setup is in [MCP](MCP.md#oauth2).
 

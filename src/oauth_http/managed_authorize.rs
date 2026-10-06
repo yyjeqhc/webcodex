@@ -352,6 +352,27 @@ pub(super) fn validate_authorize_resource(
     }
 }
 
+fn delegated_scopes_allowed(scopes: &str, authority: &[String]) -> bool {
+    scopes.split_whitespace().all(|scope| {
+        scope == super::OAUTH_OFFLINE_ACCESS_SCOPE
+            || authority
+                .iter()
+                .any(|granted| granted == scope || granted == crate::auth::SCOPE_ADMIN)
+    })
+}
+
+fn managed_admin_authority(
+    client: &crate::models::OAuthClientRecord,
+    user_id: &str,
+    authority: &[String],
+) -> bool {
+    client.is_managed_user_owned()
+        && client.owner_user_id.as_deref() == Some(user_id)
+        && authority
+            .iter()
+            .any(|scope| scope == crate::auth::SCOPE_ADMIN)
+}
+
 /// Cookie name carrying the opaque authorize session id.
 pub(super) const AUTHORIZE_SESSION_COOKIE: &str = "webcodex_authorize_session";
 
@@ -371,6 +392,7 @@ pub(crate) struct AuthorizeSessionStore {
 #[derive(Clone)]
 struct AuthorizeSession {
     user_id: String,
+    scopes: Vec<String>,
     expires_at: i64,
 }
 
@@ -381,11 +403,12 @@ impl AuthorizeSessionStore {
 
     /// Create a new session and return the opaque plaintext session id. Only
     /// the SHA-256 hash of the id is stored in the map. PAT/bootstrap
-    /// plaintext is never stored — only the resolved user identity.
-    fn create_session(&self, user_id: String) -> String {
+    /// plaintext/hash is never stored — only identity and credential scopes.
+    fn create_session(&self, user_id: String, scopes: Vec<String>) -> String {
         let now = chrono::Utc::now().timestamp();
         let session = AuthorizeSession {
             user_id,
+            scopes,
             expires_at: now + AUTHORIZE_SESSION_TTL_SECS,
         };
         let id = generate_authorize_session_id();
@@ -625,7 +648,7 @@ pub(crate) async fn oauth_authorize_login(
         return;
     };
 
-    let session_id = session_store.create_session(user_id);
+    let session_id = session_store.create_session(user_id, ctx.scopes.clone());
     let secure = is_secure_authorize(&config);
     res.headers_mut().append(
         salvo::http::header::SET_COOKIE,
@@ -791,6 +814,31 @@ pub(crate) async fn oauth_authorize_consent(
             return;
         }
     };
+    if !client.is_managed_user_owned()
+        || db
+            .get_user_by_id(&session.user_id)
+            .ok()
+            .flatten()
+            .is_none_or(|user| user.is_disabled())
+    {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::FORBIDDEN,
+            "access_denied",
+            "invalid managed authorization subject",
+        );
+        return;
+    }
+    if !delegated_scopes_allowed(&scopes, &session.scopes) {
+        redirect_with_oauth_error(
+            res,
+            &config,
+            &parsed.redirect_uri,
+            "invalid_scope",
+            parsed.state.as_deref(),
+        );
+        return;
+    }
     let resource = match validate_authorize_resource(parsed.resource.as_deref(), &config) {
         Ok(resource) => resource,
         Err(_) => {
@@ -810,6 +858,7 @@ pub(crate) async fn oauth_authorize_consent(
     let plaintext_code = generate_oauth_authorization_code();
     let code_hash = hash_token(&plaintext_code);
     let record = OAuthAuthorizationCodeRecord {
+        admin_authority: managed_admin_authority(&client, &session.user_id, &session.scopes),
         id: uuid::Uuid::new_v4().to_string(),
         code_hash,
         client_id: client.client_id.clone(),
@@ -979,7 +1028,8 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
         match crate::auth::authenticate(&config, Some(&db), &token).await {
             Ok(Some(ctx)) if is_authorize_identity_allowed(&ctx) && ctx.user_id.is_some() => {
                 let user_id = ctx.user_id.clone().unwrap();
-                authorize_issue_with_context(res, &config, &db, &user_id, &query).await;
+                authorize_issue_with_context(res, &config, &db, &user_id, &ctx.scopes, &query)
+                    .await;
                 return;
             }
             Ok(Some(_)) => {
@@ -1033,6 +1083,7 @@ async fn authorize_issue_with_context(
     config: &crate::Config,
     db: &crate::Database,
     user_id: &str,
+    authority_scopes: &[String],
     query: &str,
 ) {
     let parsed = parse_authorize_query(query);
@@ -1234,6 +1285,31 @@ async fn authorize_issue_with_context(
         }
     };
 
+    if !client.is_managed_user_owned()
+        || db
+            .get_user_by_id(user_id)
+            .ok()
+            .flatten()
+            .is_none_or(|user| user.is_disabled())
+    {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::FORBIDDEN,
+            "access_denied",
+            "invalid managed authorization subject",
+        );
+        return;
+    }
+    if !delegated_scopes_allowed(&scopes, authority_scopes) {
+        redirect_with_oauth_error(
+            res,
+            config,
+            &parsed.redirect_uri,
+            "invalid_scope",
+            parsed.state.as_deref(),
+        );
+        return;
+    }
     let resource = match validate_authorize_resource(parsed.resource.as_deref(), config) {
         Ok(resource) => resource,
         Err(_) => {
@@ -1252,6 +1328,7 @@ async fn authorize_issue_with_context(
     let plaintext_code = generate_oauth_authorization_code();
     let code_hash = hash_token(&plaintext_code);
     let record = OAuthAuthorizationCodeRecord {
+        admin_authority: managed_admin_authority(&client, user_id, authority_scopes),
         id: uuid::Uuid::new_v4().to_string(),
         code_hash,
         client_id: client.client_id.clone(),
@@ -1377,4 +1454,35 @@ fn authorize_render_consent(
     );
     res.status_code(StatusCode::OK);
     res.render(Text::Html(html));
+}
+
+#[cfg(test)]
+mod authority_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn authorize_session_retains_only_identity_scopes_and_expiry() {
+        let store = AuthorizeSessionStore::new();
+        let scopes = vec![crate::auth::SCOPE_ADMIN.to_string()];
+        let before = chrono::Utc::now().timestamp();
+        // No credential secret, hash or credential ID enters the session API.
+        let id = store.create_session("user-id".into(), scopes.clone());
+        let AuthorizeSession {
+            user_id,
+            scopes: stored,
+            expires_at,
+        } = store.get_session(&id).unwrap();
+        assert_eq!(user_id, "user-id");
+        assert_eq!(stored, scopes);
+        assert!(expires_at >= before + AUTHORIZE_SESSION_TTL_SECS);
+        assert!(!store.inner.lock().unwrap().contains_key(&id));
+        store
+            .inner
+            .lock()
+            .unwrap()
+            .get_mut(&hash_token(&id))
+            .unwrap()
+            .expires_at = before - 1;
+        assert!(store.get_session(&id).is_none());
+    }
 }

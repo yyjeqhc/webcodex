@@ -41,6 +41,19 @@ async fn project_share_authorization_code_exchanges_to_project_bound_tokens() {
     let json: serde_json::Value = resp.take_json().await.unwrap();
     let access_token = json["access_token"].as_str().unwrap();
     let refresh_token = json["refresh_token"].as_str().unwrap();
+    assert!(!auth_code_by_plaintext(&db, &code).admin_authority);
+    assert!(
+        !db.get_oauth_access_token_by_hash(&hash_token(access_token))
+            .unwrap()
+            .unwrap()
+            .admin_authority
+    );
+    assert!(
+        !db.get_oauth_refresh_token_by_hash(&hash_token(refresh_token))
+            .unwrap()
+            .unwrap()
+            .admin_authority
+    );
     let expected_subject = format!(
         "{}|{}",
         TEST_PROJECT_GRANT_ID, TEST_PROJECT_SHARE_SESSION_ID
@@ -132,6 +145,7 @@ async fn stale_project_share_refresh_token_cannot_cross_share_session() {
     let plaintext = crate::auth::generate_oauth_refresh_token();
     let now = chrono::Utc::now().timestamp();
     db.insert_oauth_refresh_token(&crate::models::OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: hash_token(&plaintext),
         client_id: client.client_id.clone(),
@@ -832,6 +846,7 @@ async fn expired_code_returns_invalid_grant() {
     let plaintext_code = generate_oauth_authorization_code();
     let code_hash = hash_token(&plaintext_code);
     let record = OAuthAuthorizationCodeRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         code_hash,
         client_id: client.client_id.clone(),
@@ -1856,6 +1871,7 @@ async fn expired_refresh_token_returns_invalid_grant() {
     let plaintext = crate::auth::generate_oauth_refresh_token();
     let token_hash = hash_token(&plaintext);
     let record = crate::models::OAuthRefreshTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash,
         client_id: client.client_id.clone(),

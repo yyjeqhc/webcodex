@@ -234,6 +234,7 @@ fn issue_project_share_authorization_code(
     let plaintext_code = crate::auth::generate_oauth_authorization_code();
     let code_hash = crate::auth::hash_token(&plaintext_code);
     let record = OAuthAuthorizationCodeRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         code_hash,
         client_id: validated.client.client_id.clone(),

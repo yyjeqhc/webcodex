@@ -151,6 +151,7 @@ pub const KNOWN_SCOPES: &[&str] = &[
 pub enum OAuthRouteScopePolicy {
     Public,
     FirstPartyOnly,
+    FirstPartyRequire(&'static str),
     BootstrapOnly,
     AgentSurface,
     Require(&'static str),

@@ -1727,6 +1727,8 @@ async fn bridge_authorize_code_exchanges_to_shared_key_tokens_and_verifies() {
         parsed.query_pairs().into_owned().collect();
     let code = params.get("code").expect("code").clone();
 
+    assert!(!auth_code_by_plaintext(&db, &code).admin_authority);
+
     let exchange_body = form_body(&[
         ("grant_type", "authorization_code"),
         ("code", &code),
@@ -1743,6 +1745,18 @@ async fn bridge_authorize_code_exchanges_to_shared_key_tokens_and_verifies() {
     let access_token = json["access_token"].as_str().unwrap();
     let refresh_token = json["refresh_token"].as_str().unwrap();
     assert_eq!(json["scope"], "runtime:read");
+    assert!(
+        !db.get_oauth_access_token_by_hash(&hash_token(access_token))
+            .unwrap()
+            .unwrap()
+            .admin_authority
+    );
+    assert!(
+        !db.get_oauth_refresh_token_by_hash(&hash_token(refresh_token))
+            .unwrap()
+            .unwrap()
+            .admin_authority
+    );
     assert_eq!(
         access_token_subject_by_plaintext(&db, access_token),
         (

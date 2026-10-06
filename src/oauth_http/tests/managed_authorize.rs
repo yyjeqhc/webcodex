@@ -558,3 +558,73 @@ async fn oauth_authorize_return_to_rejects_absolute_url() {
         .await;
     assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
 }
+
+#[tokio::test]
+async fn browser_authority_snapshot_bounds_consent_after_pat_revocation() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
+    for admin in [false, true] {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token =
+            seed_user_token_with_scopes(&db, &user, if admin { "admin" } else { "runtime:read" });
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read project:write",
+        );
+        let sessions = Arc::new(AuthorizeSessionStore::new());
+        let service = Service::new(build_router_with_session_and_registry(
+            config,
+            db.clone(),
+            sessions.clone(),
+            Arc::new(crate::RunnerRegistry::default()),
+        ));
+        let resp = post_form(
+            "http://localhost/oauth/authorize/login",
+            form_body(&[
+                (
+                    "return_to",
+                    &return_to_for(&client, "https://example.com/callback"),
+                ),
+                ("token", &token),
+            ]),
+        )
+        .send(&service)
+        .await;
+        let cookie_val = set_cookie_value(&resp, AUTHORIZE_SESSION_COOKIE).unwrap();
+        let cookie = format!("{}={}", AUTHORIZE_SESSION_COOKIE, cookie_val);
+        let key = db
+            .get_api_key_by_hash(&hash_token(&token))
+            .unwrap()
+            .unwrap();
+        db.revoke_api_key(&key.id, chrono::Utc::now().timestamp())
+            .unwrap();
+        for scope in ["project:write", "runtime:read offline_access"] {
+            let body = consent_form_body(&client, "https://example.com/callback", "allow").replace(
+                "scope=runtime%3Aread",
+                &format!("scope={}", urlencoding::encode(scope)),
+            );
+            let resp =
+                post_form_with_cookie("http://localhost/oauth/authorize/consent", body, &cookie)
+                    .send(&service)
+                    .await;
+            let location = location_header(&resp).unwrap();
+            if !admin && scope == "project:write" {
+                assert!(location.contains("error=invalid_scope"));
+            } else {
+                let url = url::Url::parse(&location).unwrap();
+                let code = url
+                    .query_pairs()
+                    .find(|(k, _)| k == "code")
+                    .unwrap()
+                    .1
+                    .into_owned();
+                let record = auth_code_by_plaintext(&db, &code);
+                assert_eq!(record.admin_authority, admin);
+                assert_eq!(record.scopes, scope);
+            }
+        }
+    }
+}

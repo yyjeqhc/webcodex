@@ -265,6 +265,7 @@ impl Database {
                 ON oauth_clients(owner_shared_key_hash);
 
             CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+                admin_authority INTEGER NOT NULL DEFAULT 0 CHECK(admin_authority IN (0, 1)),
                 id TEXT PRIMARY KEY,
                 code_hash TEXT NOT NULL UNIQUE,
                 client_id TEXT NOT NULL,
@@ -288,6 +289,7 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_authorization_codes(client_id);
 
             CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+                admin_authority INTEGER NOT NULL DEFAULT 0 CHECK(admin_authority IN (0, 1)),
                 id TEXT PRIMARY KEY,
                 token_hash TEXT NOT NULL UNIQUE,
                 client_id TEXT NOT NULL,
@@ -309,6 +311,7 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_user ON oauth_access_tokens(user_id);
 
             CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+                admin_authority INTEGER NOT NULL DEFAULT 0 CHECK(admin_authority IN (0, 1)),
                 id TEXT PRIMARY KEY,
                 token_hash TEXT NOT NULL UNIQUE,
                 client_id TEXT NOT NULL,
@@ -399,10 +402,22 @@ impl Database {
         // table and its indices remain unchanged.
         Self::ensure_model_reference_schema(&mut conn)?;
 
-        // Preserve the authority of previously issued enrollment codes. Only a
-        // newly issued explicit admin grant adds ACP/SSH scopes; old codes stay 0.
+        // Add authority fields without inferring authority for historical grants
+        // or enrollment codes. Missing evidence always defaults to false.
         {
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            for table in [
+                "oauth_authorization_codes",
+                "oauth_access_tokens",
+                "oauth_refresh_tokens",
+            ] {
+                if !table_columns(&tx, table)?
+                    .iter()
+                    .any(|name| name == "admin_authority")
+                {
+                    tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN admin_authority INTEGER NOT NULL DEFAULT 0 CHECK(admin_authority IN (0, 1));"))?;
+                }
+            }
             if !table_columns(&tx, "pairing_codes")?
                 .iter()
                 .any(|column| column == "runner_capabilities")

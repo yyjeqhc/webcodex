@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+mod authority;
 mod authorize;
 mod clients;
 mod managed_authorize;

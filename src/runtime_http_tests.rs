@@ -126,6 +126,7 @@ fn seed_oauth_access_token_with_shared_key_hash(
         ),
     };
     let record = crate::models::OAuthAccessTokenRecord {
+        admin_authority: false,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: crate::auth::hash_token(&plaintext),
         client_id: client.client_id.clone(),

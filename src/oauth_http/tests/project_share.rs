@@ -100,3 +100,69 @@ async fn project_share_authorize_rejects_managed_or_wrong_project_clients() {
         assert_eq!(body["error"], "invalid_request");
     }
 }
+
+#[tokio::test]
+async fn project_share_authorization_never_inherits_admin_authority() {
+    let mut env = crate::test_support::TestEnvGuard::new();
+    let (tmp, db) = test_db();
+    let credential = format!("webcodex_{}", "a".repeat(64));
+    let agent = crate::auth::generate_agent_token();
+    let credential_path = tmp.path().join("project-credential");
+    let agent_path = tmp.path().join("agent-token");
+    for (path, value) in [(&credential_path, &credential), (&agent_path, &agent)] {
+        std::fs::write(path, value).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+    env.set("WEBCODEX_PROJECT_GRANT_ID", TEST_PROJECT_GRANT_ID);
+    env.set(
+        "WEBCODEX_PROJECT_CREDENTIAL_FILE",
+        credential_path.to_str().unwrap(),
+    );
+    env.set(
+        "WEBCODEX_PROJECT_AGENT_TOKEN_FILE",
+        agent_path.to_str().unwrap(),
+    );
+    env.set("WEBCODEX_PROJECT_RUNNER_CLIENT_ID", "test-runner");
+    let auth = Arc::new(crate::auth::ProjectAuthState::from_env().unwrap());
+    let config = test_config(oauth2_enabled_project_share(TEST_PROJECT_SHARE_SESSION_ID));
+    let (client, _) = seed_project_share_client(
+        &db,
+        TEST_PROJECT_GRANT_ID,
+        "https://client.example/callback",
+    );
+    let service = Service::new(
+        build_router(config, db.clone()).hoop(salvo::prelude::affix_state::inject(auth)),
+    );
+    let resp = post_form(
+        "http://localhost/oauth/authorize/project",
+        form_body(&[
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", "https://client.example/callback"),
+            ("scope", "runtime:read"),
+            ("code_challenge", "challenge"),
+            ("code_challenge_method", "S256"),
+            ("project_credential", &credential),
+        ]),
+    )
+    .send(&service)
+    .await;
+    assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+    let location = url::Url::parse(&location_header(&resp).unwrap()).unwrap();
+    let code = location
+        .query_pairs()
+        .find(|(key, _)| key == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    let record = auth_code_by_plaintext(&db, &code);
+    assert!(!record.admin_authority);
+    assert_eq!(
+        record.subject_kind,
+        crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND
+    );
+}

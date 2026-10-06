@@ -489,6 +489,7 @@ async fn handle_authorization_code_grant(
     let rt_expires_at = now + config.oauth2.refresh_token_ttl_secs;
 
     let at_record = OAuthAccessTokenRecord {
+        admin_authority: code_record.admin_authority,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: at_hash,
         client_id: client.client_id.clone(),
@@ -505,6 +506,7 @@ async fn handle_authorization_code_grant(
     };
 
     let rt_record = OAuthRefreshTokenRecord {
+        admin_authority: code_record.admin_authority,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: rt_hash,
         client_id: client.client_id.clone(),
@@ -704,6 +706,7 @@ async fn handle_refresh_token_grant(
     };
 
     let at_record = OAuthAccessTokenRecord {
+        admin_authority: old_rt_metadata.admin_authority,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: new_at_hash,
         client_id: client.client_id.clone(),
@@ -720,6 +723,7 @@ async fn handle_refresh_token_grant(
     };
 
     let new_rt_record = OAuthRefreshTokenRecord {
+        admin_authority: old_rt_metadata.admin_authority,
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: new_rt_hash,
         client_id: client.client_id.clone(),

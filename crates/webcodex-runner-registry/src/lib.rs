@@ -154,4 +154,4 @@ pub(crate) use registry::{
 pub use requests::{EnqueueLspError, EnqueueRunnerSkillError};
 pub use state::{JobRecoveryPhase, JobRecoveryReason};
 pub use state::{RunnerSemanticView, ShellJobVisibility};
-pub use telemetry::{NoopRunnerRegistryTelemetry, RunnerRegistryTelemetry};
+pub use telemetry::{NoopRunnerRegistryTelemetry, RunnerRegistryTelemetry, ValidatedMcpToolResult};

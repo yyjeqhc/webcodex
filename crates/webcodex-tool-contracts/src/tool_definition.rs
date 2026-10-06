@@ -19,6 +19,7 @@ mod computer;
 mod diagnostics;
 mod discovery;
 mod documents;
+mod docx;
 mod edits;
 mod files;
 mod git;
@@ -1334,6 +1335,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     patches::DEFINITIONS,
     hygiene::CLEANUP_DEFINITIONS,
     artifacts::DEFINITIONS,
+    docx::DEFINITIONS,
     edits::DEFINITIONS,
 ];
 

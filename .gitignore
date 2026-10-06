@@ -56,10 +56,12 @@ __pycache__/
 # Regenerable isolated UI verification output; curated screenshots live in docs/ux/.
 /artifacts/issue470-ui/
 /artifacts/liquid-glass-ui/
+/artifacts/docx-viewer/
 /artifacts/desktop-workflow/
 /artifacts/desktop-runtime-probe/
 /artifacts/desktop-runtime-simple/
 /artifacts/desktop-clarity/
 /artifacts/projects-runtime/
+/artifacts/pdf-reader/
 /artifacts/runtime-call-stream/
 /scripts/ui-smoke/node_modules/

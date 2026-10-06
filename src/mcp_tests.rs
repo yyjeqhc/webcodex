@@ -499,3 +499,6 @@ async fn handle_with_app_policy(
     )
     .await
 }
+
+#[path = "mcp_tests/docx_document_app.rs"]
+mod docx_document_app;

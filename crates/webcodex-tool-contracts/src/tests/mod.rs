@@ -76,3 +76,5 @@ mod tool_call_test_support;
 mod typed_output_schemas;
 
 mod schema_samples;
+
+mod docx_schemas;

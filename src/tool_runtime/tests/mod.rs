@@ -88,3 +88,5 @@ mod work_result;
 mod write_project_file;
 
 mod external_observations;
+
+mod docx_document;

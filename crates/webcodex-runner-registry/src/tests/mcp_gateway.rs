@@ -1,4 +1,7 @@
 use super::*;
+
+#[path = "mcp_gateway/validated_results.rs"]
+mod validated_results;
 use crate::mcp_gateway::{
     McpGatewayDispatchState, McpGatewayProvider, McpGatewayRequest, McpGatewayResponse,
     McpGatewayResponsePayload,

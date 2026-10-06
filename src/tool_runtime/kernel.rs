@@ -91,8 +91,8 @@ pub(crate) struct ToolProtocolCapabilities {
     /// lazy diff reads. Exact Project and optional Session context are checked per call;
     /// lazy reads additionally fence caller, snapshot, and advertised path.
     pub(crate) work_result_app: bool,
-    /// Dedicated PDF App reads; never supplies Project authority.
-    pub(crate) pdf_app: bool,
+    /// Adapter admission for ModelHidden presentation-artifact reads; never supplies Project authority.
+    pub(crate) artifact_app: bool,
     /// Protocol-surface support for ModelHidden MCP App Host-continuation
     /// coordination. Canonical communication authorization and exact
     /// process-local Host binding validation remain mandatory in the runtime.
@@ -352,7 +352,7 @@ impl ToolRuntime {
                 trace_diagnostics: false,
                 goal_plan_app: false,
                 work_result_app: false,
-                pdf_app: false,
+                artifact_app: false,
                 agent_continuation_app: false,
             },
         )
@@ -557,13 +557,14 @@ impl ToolRuntime {
         if matches!(
             request.tool_name.as_str(),
             "read_pdf_chunk" | "read_app_artifact_chunk"
-        ) && !capabilities.pdf_app
+        ) && !capabilities.artifact_app
         {
             return ToolCallOutcome {
                 success: false,
                 result: None,
                 error_status: Some(ToolCallErrorStatus::InvalidArguments {
-                    message: "PDF reads require the dedicated MCP App capability".to_string(),
+                    message: "Presentation artifact reads require the dedicated MCP App capability"
+                        .to_string(),
                 }),
                 project: None,
                 model_ergonomics: None,

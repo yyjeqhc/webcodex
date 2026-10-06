@@ -176,6 +176,14 @@ pub enum ToolCall {
         include_validation_summary: Option<bool>,
     },
 
+    /// Select one authorized DOCX version for a dedicated read-only reader.
+    PresentDocx {
+        #[schemars(length(min = 1, max = 512))]
+        project: String,
+        /// Project-relative .docx file; no Git or Session required.
+        #[schemars(length(min = 1, max = 512))]
+        path: String,
+    },
     /// Open one project PDF in a dedicated reader, independently of Git or a Session.
     PresentPdf {
         #[schemars(length(min = 1, max = 512))]

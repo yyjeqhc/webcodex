@@ -101,8 +101,8 @@ pub fn goal_plan_app_tool_specs() -> Vec<ToolSpec> {
     )]
 }
 
-/// Dedicated PDF App read; canonical definition stays ModelHidden.
-pub fn pdf_app_tool_specs() -> Vec<ToolSpec> {
+/// Presentation App artifact reads; canonical definitions stay ModelHidden.
+pub fn artifact_app_tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "read_app_artifact_chunk",

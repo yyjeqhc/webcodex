@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node smoke.mjs && node desktop-long-activity.mjs",
+    "test:pdf": "node pdf-document-reader.mjs",
     "serve": "node server.mjs"
   },
   "devDependencies": {

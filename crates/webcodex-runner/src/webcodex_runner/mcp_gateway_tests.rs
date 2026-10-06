@@ -175,6 +175,35 @@ impl Fixture {
     }
 }
 
+#[test]
+fn request_id_exhaustion_retires_connection_without_dispatch_or_replay() {
+    let fixture = Fixture::new("normal", 2);
+    let provider = fixture.provider();
+    assert!(fixture.list(&provider).error.is_none());
+    let entry = {
+        let state = fixture.manager.state.read().unwrap();
+        Arc::clone(state.providers.get("fake").unwrap())
+    };
+    entry.session.lock().unwrap().as_mut().unwrap().next_id = u64::MAX;
+
+    let failed = fixture.call(&provider);
+    assert_eq!(failed.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(failed.error.unwrap().code, "provider_request_id_exhausted");
+    assert_eq!(fixture.marker_count("call"), 0);
+    assert_eq!(fixture.marker_count("start"), 1);
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::ConnectionRetired
+    );
+
+    // Only this new explicit request reconnects. Logical provider identity
+    // remains stable; the exhausted attempt must never be replayed.
+    assert_eq!(fixture.provider(), provider);
+    assert!(fixture.call(&provider).error.is_none());
+    assert_eq!(fixture.marker_count("start"), 2);
+    assert_eq!(fixture.marker_count("call"), 1);
+}
+
 fn provider_state(response: McpGatewayResponse) -> McpGatewayProviderState {
     let Some(McpGatewayResponsePayload::ProviderStatus { state }) = response.payload else {
         panic!("provider status payload missing: {:?}", response.error);

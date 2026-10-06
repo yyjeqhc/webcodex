@@ -19,6 +19,26 @@ The script checks 1440, 1280, 1024, 768, and 390-pixel viewports in light and da
 
 Screenshots and `report.json` are regenerated in `artifacts/liquid-glass-ui/` (ignored by Git). The report explicitly says `fixture: true` and `nativeBackend: false`. Browser errors fail the run; the browser and server close in `finally`.
 
+For the dedicated PDF reader, run `npm --prefix scripts/ui-smoke run test:pdf`
+after `node frontend/scripts/build-pdf-document.mjs`. This uses the shipped HTML
+and actual PDF.js Worker with original, deterministic PDF fixtures; it needs no
+WebCodex backend or frontend app build. Install Chromium with
+`npm --prefix scripts/ui-smoke exec -- playwright install chromium`, or set
+`WEBCODEX_SMOKE_BROWSER` to an installed Chrome/Chromium executable. It covers
+800/390-pixel layouts, mixed page sizes, rotation, text-layer alignment, embedded
+Chinese Type3 glyphs/selection/search, scan image pixel colors, rapid zoom and
+resize, reading-position preservation, 32-page lazy loading and scroll-back,
+the total canvas budget at DPR 2,
+repeated delivery, version changes, parse errors, cancellation of pending transfers
+on replacement/invalid selection, and transfer/Worker teardown (including removal
+of Host request timers and rejection of late replies).
+The Chinese sample tests an embedded font and Unicode text mapping, not every
+external CMap or OpenType font. Expected pixel colors and glyph/geometry assertions
+are portable test oracles; screenshots are review evidence rather than unchecked
+golden images. Errors and external PDF fetches fail the run. Outputs are ignored
+under `artifacts/pdf-reader/`. To check a prior HTML build without replacing the
+checkout, use `node scripts/ui-smoke/pdf-document-reader.mjs --html PATH`.
+
 For interactive Browser Use, run `npm --prefix scripts/ui-smoke run serve` and use the printed loopback URL. Routes are `/runtime/`, `/desktop/`, `/admin/`, `/desktop/?state=disconnected`, and `/desktop/?permissions`. The server expires after 30 minutes. Stop only its exact owned process when finished.
 
 This is not a substitute for native permission, installer, real Tunnel, or Windows platform testing. Native Rust tests independently cover configuration preservation, stale-target rejection, process ownership, project inventory, and Server/Runner PID preservation on failed Tunnel replacement.

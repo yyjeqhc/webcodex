@@ -184,7 +184,9 @@ fn private_file(path: &Path, bytes: &[u8]) {
             .expect("fixture environment root");
         let reference = root.join("environment.json");
         if path.parent() != Some(root) {
-            copy_windows_private_security(&reference, path.parent().unwrap());
+            // Keep directory inheritance so existing children remain accessible
+            // while their private owner and file ACL are installed below.
+            copy_windows_private_security(root, path.parent().unwrap());
         }
         copy_windows_private_security(&reference, path);
     }
@@ -200,6 +202,45 @@ fn private_file(path: &Path, bytes: &[u8]) {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn private_fixture_directory_keeps_private_inheritance_for_sibling_files() {
+    let temp = tempfile::Builder::new()
+        .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
+        .unwrap();
+    let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+    store
+        .save_environment(&record(store.root(), "http://127.0.0.1:8787".into(), true))
+        .unwrap();
+    let first = store.root().join("server/webcodex.env");
+    private_file(&first, b"fixture environment bytes");
+    let sibling = store.root().join("server/server.db");
+    std::fs::write(&sibling, b"fixture database bytes").unwrap();
+    webcodex_environment::runtime_entry::validate_windows_env_acl(&sibling).unwrap();
+    private_file(&sibling, b"updated fixture database bytes");
+    for path in [&first, &sibling] {
+        webcodex_environment::runtime_entry::validate_service_env_file(path).unwrap();
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn fixture_snapshot_preserves_an_active_empty_setup_fence() {
+    let temp = tempfile::Builder::new()
+        .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
+        .unwrap();
+    let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+    drop(store.lock().unwrap());
+    let before = files(store.root());
+    assert_eq!(before.get("setup.lock"), Some(&Vec::new()));
+    let lock = store.lock().unwrap();
+    assert_eq!(files(store.root()), before);
+    assert!(matches!(store.lock(), Err(error) if error.code == "setup_busy"));
+    drop(lock);
+    assert_eq!(files(store.root()), before);
+    drop(store.lock().unwrap());
+}
+
 fn files(root: &Path) -> BTreeMap<String, Vec<u8>> {
     fn visit(root: &Path, path: &Path, result: &mut BTreeMap<String, Vec<u8>>) {
         for entry in std::fs::read_dir(path).unwrap() {
@@ -207,12 +248,20 @@ fn files(root: &Path) -> BTreeMap<String, Vec<u8>> {
             if path.is_dir() {
                 visit(root, &path, result);
             } else {
+                let bytes = if path == root.join("setup.lock") {
+                    // This empty fence has no fixture payload. Windows forbids
+                    // reading its locked byte range during an active invitation.
+                    assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+                    Vec::new()
+                } else {
+                    std::fs::read(&path).unwrap()
+                };
                 result.insert(
                     path.strip_prefix(root)
                         .unwrap()
                         .to_string_lossy()
                         .into_owned(),
-                    std::fs::read(path).unwrap(),
+                    bytes,
                 );
             }
         }

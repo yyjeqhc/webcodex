@@ -12,7 +12,8 @@ use webcodex_core::coding_agent::{
     CodingAgentResponse,
 };
 use webcodex_core::mcp_gateway::{
-    validate_response as validate_mcp_gateway_response, McpGatewayDispatchState, McpGatewayResponse,
+    validate_response as validate_mcp_gateway_response, McpGatewayDispatchState, McpGatewayRequest,
+    McpGatewayResponse, McpGatewayResponsePayload,
 };
 use webcodex_core::plugin::{
     validate_response_for_request as validate_plugin_gateway_response, PluginDispatchState,
@@ -879,6 +880,42 @@ impl RunnerRegistry {
                     },
                 ),
             };
+            if pending.dispatched {
+                if let (
+                    RunnerOperation::McpGateway(McpGatewayRequest::ToolsCall {
+                        provider_id,
+                        provider_instance_id,
+                        name,
+                        ..
+                    }),
+                    Some(McpGatewayResponsePayload::ToolResult { result }),
+                    Some(runner_instance_id),
+                    Some(expected_provider_id),
+                    Some(expected_provider_instance_id),
+                ) = (
+                    &pending.operation,
+                    response.payload.as_ref(),
+                    pending.expected_mcp_gateway_runner_instance_id.as_deref(),
+                    pending.expected_mcp_gateway_provider_id.as_deref(),
+                    pending.expected_mcp_gateway_provider_instance_id.as_deref(),
+                ) {
+                    if runner_instance_id == body.runner_instance_id
+                        && provider_id == expected_provider_id
+                        && provider_instance_id == expected_provider_instance_id
+                    {
+                        self.telemetry
+                            .mcp_tool_result_validated(crate::ValidatedMcpToolResult {
+                                request_id: &trace_request_id,
+                                client_id: &pending.request.client_id,
+                                runner_instance_id,
+                                provider_id,
+                                provider_instance_id,
+                                tool_name: name,
+                                result,
+                            });
+                    }
+                }
+            }
             let waiter = inner.mcp_gateway_waiters.remove(&body.request_id);
             if let Some(waiter) = waiter {
                 let _ = waiter.send(response);

@@ -117,6 +117,7 @@ impl ToolRuntime {
             | ToolCall::SessionDiscussionSummary { .. }
             | ToolCall::WorkOnProject { .. }
             | ToolCall::FinishCodingTask { .. }
+            | ToolCall::PresentDocx { .. }
             | ToolCall::PresentWorkResult { .. }
             | ToolCall::PresentPdf { .. }
             | ToolCall::ReadPdfChunk { .. }

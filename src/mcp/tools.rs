@@ -359,7 +359,7 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
             crate::tool_runtime::goal_plan_app_tool_specs()
                 .into_iter()
                 .chain(crate::tool_runtime::work_result_app_tool_specs())
-                .chain(crate::tool_runtime::pdf_app_tool_specs())
+                .chain(crate::tool_runtime::artifact_app_tool_specs())
                 .chain(crate::tool_runtime::agent_continuation_app_tool_specs())
                 .chain(crate::tool_runtime::job_terminal_continuation_app_tool_specs())
                 .collect(),
@@ -2820,7 +2820,7 @@ pub(super) async fn handle_call(
             None => json!({"project": binding.project}),
         };
     }
-    let app_only_pdf_chunk = server_mcp_apps_enabled
+    let app_only_artifact_read = server_mcp_apps_enabled
         && stateless_2026
         && matches!(
             params.name.as_str(),
@@ -2852,9 +2852,9 @@ pub(super) async fn handle_call(
                 | "open_webcodex_workbench"
         );
     let direct_denied = !workbench_view_call
+        && !app_only_artifact_read
         && !app_only_goal_plan_sync
         && !app_only_work_result_state
-        && !app_only_pdf_chunk
         && !app_only_work_result_activity_detail
         && !app_only_work_result_send_message
         && !app_only_changes_file_diff
@@ -3007,7 +3007,7 @@ pub(super) async fn handle_call(
                 trace_diagnostics: trace_diagnostics_capable,
                 goal_plan_app: goal_plan_app_capable,
                 work_result_app: work_result_app_capable,
-                pdf_app: server_mcp_apps_enabled && stateless_2026,
+                artifact_app: server_mcp_apps_enabled && stateless_2026,
                 agent_continuation_app: agent_continuation_app_capable,
             },
         )
@@ -3109,9 +3109,9 @@ pub(super) async fn handle_call(
             result["_meta"]["webcodex/spreadsheetSource"] = structured;
         }
     }
-    if workbench_view_call
+    if app_only_artifact_read
+        || workbench_view_call
         || (app_only_work_result_state && !work_result_thread_panel)
-        || app_only_pdf_chunk
         || app_only_work_result_activity_detail
         || app_only_work_result_send_message
         || app_only_changes_file_diff
@@ -3125,6 +3125,16 @@ pub(super) async fn handle_call(
         // These tools are ModelHidden/app-visible only, so ordinary model tool
         // results retain the compact text fallback.
         attach_app_tool_content_fallback(&mut result);
+    }
+    if app_enabled && params.name == "present_docx" {
+        if let Some(structured) = result.get("structuredContent").cloned() {
+            let meta = result
+                .as_object_mut()
+                .unwrap()
+                .entry("_meta")
+                .or_insert_with(|| json!({}));
+            meta["webcodex/docxDocument"] = structured;
+        }
     }
     if app_enabled && params.name == "present_pdf" {
         if let Some(structured) = result.get("structuredContent").cloned() {

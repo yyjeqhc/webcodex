@@ -14,6 +14,7 @@ mod common;
 mod communication;
 mod computer;
 mod discovery;
+mod docx;
 mod edits;
 mod files;
 mod git;
@@ -36,6 +37,9 @@ pub use common::{
 };
 
 fn base_output_schema_for_tool(name: &str) -> Value {
+    if let Some(schema) = docx::output_schema_for_tool(name) {
+        return schema;
+    }
     if name == "read_app_artifact_chunk" {
         let payload = json!({
             "type":"object", "additionalProperties":false,

@@ -925,7 +925,12 @@ impl ProviderConnection {
         }
 
         let id = self.next_id;
-        self.next_id = self.next_id.saturating_add(1);
+        self.next_id = id.checked_add(1).ok_or_else(|| {
+            // Reusing a saturated ID would lose request-response correlation.
+            // Retire this connection before writing; only a later explicit
+            // request may reconnect, never replay the exhausted request.
+            ProviderFailure::before_send("provider_request_id_exhausted")
+        })?;
         let message = json!({
             "jsonrpc": "2.0",
             "id": id,

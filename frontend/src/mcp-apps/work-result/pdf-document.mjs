@@ -3,20 +3,32 @@ import { privateToolMetadata, readPdfDocument } from "./pdf-document-reader.mjs"
 
 const el = id => document.getElementById(id);
 let disposed = false, epoch = 0, identity = null, preview = null, nextId = 1;
+let transferController = null;
 const pending = new Map();
-function send(method, params, timeoutMs = 20_000) {
-  if (disposed) return Promise.reject(new Error("PDF reader closed"));
+function send(method, params, timeoutMs = 20_000, signal = null) {
+  if (disposed || signal?.aborted) return Promise.reject(new Error("PDF reader closed"));
   const id = nextId++;
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error("Host request timed out")); }, timeoutMs);
-    pending.set(id, { resolve, reject, timer });
+    let timer;
+    const finish = (callback, value) => {
+      if (!pending.delete(id)) return;
+      clearTimeout(timer); signal?.removeEventListener("abort", abort);
+      callback(value);
+    };
+    const abort = () => finish(reject, new Error("PDF preview closed"));
+    pending.set(id, { resolve: value => finish(resolve, value), reject: error => finish(reject, error) });
+    timer = setTimeout(() => finish(reject, new Error("Host request timed out")), timeoutMs);
+    signal?.addEventListener("abort", abort, { once: true });
     parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
   });
 }
-function stop() { epoch++; preview?.destroy(); preview = null; }
+function stop() {
+  epoch++; transferController?.abort(); transferController = null;
+  preview?.destroy(); preview = null;
+}
 function close() {
   stop(); disposed = true;
-  for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error("PDF reader closed")); }
+  for (const entry of pending.values()) entry.reject(new Error("PDF reader closed"));
   pending.clear();
 }
 function envelope(result) {
@@ -52,6 +64,7 @@ function invalidDocumentField(value) {
 }
 async function open() {
   stop(); const selected = identity, generation = epoch;
+  const controller = new AbortController(); transferController = controller;
   const current = () => !disposed && generation === epoch;
   el("retry").hidden = true; el("empty").hidden = true;
   preview = createPreview(el("reader"), {
@@ -60,7 +73,7 @@ async function open() {
     request: async (offset, remaining) => {
       const result = await send("tools/call", { name: "read_app_artifact_chunk", arguments: {
         project: selected.project, path: selected.path, sha256: selected.sha256, bytes: selected.bytes, byte_offset: offset,
-      } }, remaining);
+      } }, remaining, controller.signal);
       const value = envelope(result);
       if (!value?.success) {
         if (value?.output?.error_kind === "snapshot_changed") throw new Error("PDF version changed · reopen the document");
@@ -85,7 +98,7 @@ addEventListener("message", event => {
   if (event.source !== parent || event.data?.jsonrpc !== "2.0") return;
   const message = event.data;
   if (pending.has(message.id)) {
-    const entry = pending.get(message.id); pending.delete(message.id); clearTimeout(entry.timer);
+    const entry = pending.get(message.id);
     message.error ? entry.reject(new Error("Host request failed")) : entry.resolve(message.result); return;
   }
   if (message.method === "ui/resource-teardown") {
@@ -115,7 +128,7 @@ addEventListener("message", event => {
 el("retry").onclick = () => { if (identity && !disposed) void open(); };
 addEventListener("pagehide", close, { once: true });
 addEventListener("beforeunload", close, { once: true });
-send("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "webcodex-pdf", title: "PDF", version: "2.0.0" }, appCapabilities: {} })
+send("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "webcodex-pdf", title: "PDF", version: "2.1.2" }, appCapabilities: {} })
   .then(result => {
     if (disposed) return; theme(result?.hostContext);
     parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");

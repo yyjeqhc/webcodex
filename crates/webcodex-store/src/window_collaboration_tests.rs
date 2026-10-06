@@ -72,6 +72,37 @@ fn window_history_encoded_pages_are_bounded_without_cutting_message_bodies() {
 }
 
 #[test]
+fn window_history_attention_query_bounds_the_source_before_window_filtering() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("plan.db")).unwrap();
+    let conn = db.conn_for_tests();
+    let mut statement = conn
+        .prepare(&format!(
+            "EXPLAIN QUERY PLAN {}",
+            include_str!("window_operator_attention.sql")
+        ))
+        .unwrap();
+    let plan = statement
+        .query_map(
+            rusqlite::params!["managed_user", "alice", "a".repeat(64), 4],
+            |row| row.get::<_, String>(3),
+        )
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+        .join("\n");
+    assert!(plan.contains("idx_operator_attention_recent"), "{plan}");
+    assert!(
+        !plan.contains("idx_operator_transcript_page"),
+        "must not scan permanent Window history: {plan}"
+    );
+    assert!(
+        plan.contains("recent_operator_messages"),
+        "the bounded source must precede Window filtering: {plan}"
+    );
+}
+
+#[test]
 fn window_history_does_not_turn_old_transcripts_into_an_unbounded_attention_queue() {
     let temp = tempfile::tempdir().unwrap();
     let db = Database::open(&temp.path().join("history.db")).unwrap();

@@ -381,15 +381,7 @@ impl Database {
             }
         }
         {
-            let mut stmt = tx.prepare(&format!(
-                "{OPERATOR_SELECT} WHERE principal_kind=?1 AND principal_id=?2
-                AND recipient_window_key=?3 AND first_ack_observed_at_ms IS NULL
-                AND (first_projected_at_ms IS NULL OR requires_ack=1)
-                AND message_id IN (SELECT message_id FROM window_operator_messages
-                    WHERE principal_kind=?1 AND principal_id=?2
-                    ORDER BY created_at_ms DESC, message_id DESC LIMIT 512)
-                ORDER BY (first_projected_at_ms IS NULL) DESC, created_at_ms, message_id LIMIT ?4"
-            ))?;
+            let mut stmt = tx.prepare(include_str!("window_operator_attention.sql"))?;
             batch.messages = stmt
                 .query_map(
                     params![kind, principal, window, limit.clamp(1, 8) as i64],

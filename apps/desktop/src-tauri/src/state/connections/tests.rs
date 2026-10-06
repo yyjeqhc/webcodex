@@ -125,7 +125,6 @@ async fn connection_resume_uses_current_profile_preferences_without_enabling_sto
         .is_none());
 }
 
-
 fn service_status(running: bool) -> webcodex_environment::service::ServiceStatus {
     webcodex_environment::service::ServiceStatus {
         id: "webcodex".into(),
@@ -223,7 +222,10 @@ fn persistent_projection_fails_closed_when_runtime_identity_differs_from_catalog
     };
     let projected = persistent_connection_projection(profile, Ok(observation));
     assert_eq!(projected.runtime.lifecycle, ConnectionLifecycle::Error);
-    assert_eq!(projected.runtime.last_error, Some(ConnectionError::StartFailed));
+    assert_eq!(
+        projected.runtime.last_error,
+        Some(ConnectionError::StartFailed)
+    );
     assert!(!projected.runtime.ready);
 }
 

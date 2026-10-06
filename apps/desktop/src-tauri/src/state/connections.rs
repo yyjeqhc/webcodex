@@ -212,14 +212,15 @@ impl DesktopCore {
             None => Some(webcodex_environment::TunnelCredentials {
                 tunnel_id: webcodex_environment::Secret::new(tunnel_id.to_owned()),
                 api_key: webcodex_environment::Secret::new(
-                    api_key.ok_or_else(|| {
-                        DesktopError::new(
-                            "tunnel_credentials",
-                            "A Tunnel API key is required for a new connection",
-                            "Enter the protected credential issued for this Tunnel.",
-                        )
-                    })?
-                    .to_owned(),
+                    api_key
+                        .ok_or_else(|| {
+                            DesktopError::new(
+                                "tunnel_credentials",
+                                "A Tunnel API key is required for a new connection",
+                                "Enter the protected credential issued for this Tunnel.",
+                            )
+                        })?
+                        .to_owned(),
                 ),
             }),
         };
@@ -295,11 +296,7 @@ impl DesktopCore {
             ConnectionAction::Restart => match ownership {
                 webcodex_environment::service::Ownership::Owned => {
                     native
-                        .control_tunnel(
-                            &store,
-                            id,
-                            webcodex_environment::ServiceOperation::Restart,
-                        )
+                        .control_tunnel(&store, id, webcodex_environment::ServiceOperation::Restart)
                         .await
                         .map_err(super::environment::desktop_error)?;
                 }
@@ -326,11 +323,7 @@ impl DesktopCore {
             ConnectionAction::Stop => match ownership {
                 webcodex_environment::service::Ownership::Owned => {
                     native
-                        .control_tunnel(
-                            &store,
-                            id,
-                            webcodex_environment::ServiceOperation::Stop,
-                        )
+                        .control_tunnel(&store, id, webcodex_environment::ServiceOperation::Stop)
                         .await
                         .map_err(super::environment::desktop_error)?;
                 }
@@ -707,12 +700,9 @@ fn persistent_runtime_projection(
         };
     }
     let owner_running = status.service_status.running == Some(true);
-    let selected_at_startup = profile.host_mode
-        == webcodex_environment::TunnelHostMode::Standalone
-        || profile.autostart;
-    let process_started = owner_running
-        && selected_at_startup
-        && !status.server_restart_required;
+    let selected_at_startup =
+        profile.host_mode == webcodex_environment::TunnelHostMode::Standalone || profile.autostart;
+    let process_started = owner_running && selected_at_startup && !status.server_restart_required;
     let ready = process_started && status.ready;
     let lifecycle = if process_started {
         ConnectionLifecycle::Running

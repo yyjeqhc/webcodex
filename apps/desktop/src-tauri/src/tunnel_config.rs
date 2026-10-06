@@ -496,7 +496,9 @@ impl TunnelConfig {
                 continue;
             };
             let id = profile.id.to_string();
-            let Some(snapshot) = snapshots.iter().find(|candidate| candidate.profile_id == id)
+            let Some(snapshot) = snapshots
+                .iter()
+                .find(|candidate| candidate.profile_id == id)
             else {
                 return Err(persistent_catalog_conflict());
             };
@@ -552,11 +554,9 @@ impl TunnelConfig {
             None => return Err(invalid()),
         };
         validate_pair(&credentials.tunnel_id, &credentials.api_key)?;
-        if self
-            .profiles()
-            .iter()
-            .any(|p| p.id != id.to_string() && p.tunnel_id.as_deref() == Some(&credentials.tunnel_id))
-        {
+        if self.profiles().iter().any(|p| {
+            p.id != id.to_string() && p.tunnel_id.as_deref() == Some(&credentials.tunnel_id)
+        }) {
             return Err(invalid());
         }
         command

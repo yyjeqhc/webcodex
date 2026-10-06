@@ -412,7 +412,6 @@ async fn desktop_restart_and_activity_never_project_stored_keys() {
     );
 }
 
-
 #[cfg(unix)]
 fn write_environment_profile_fixture(
     root: &Path,
@@ -525,11 +524,12 @@ fn persistent_environment_reconciles_exact_legacy_claims_and_fails_closed_on_con
     let catalog_before = fs::read(store.root().join("tunnel.json")).unwrap();
     local.ensure_persistent_catalog_compatible(&store).unwrap();
     assert_eq!(fs::read(fixture.path()).unwrap(), local_before);
-    assert_eq!(fs::read(store.root().join("tunnel.json")).unwrap(), catalog_before);
+    assert_eq!(
+        fs::read(store.root().join("tunnel.json")).unwrap(),
+        catalog_before
+    );
 
-    let binding = store
-        .root()
-        .join("server/tunnels/default/webcodex.env");
+    let binding = store.root().join("server/tunnels/default/webcodex.env");
     let conflicting = fs::read_to_string(&binding)
         .unwrap()
         .replace("default-private-key", "different-private-key");
@@ -552,7 +552,10 @@ fn persistent_environment_reconciles_exact_legacy_claims_and_fails_closed_on_con
         .unwrap_err();
     assert_eq!(error.code, "tunnel_catalog_conflict");
     assert_eq!(fs::read(fixture.path()).unwrap(), local_before);
-    assert_eq!(fs::read(store.root().join("tunnel.json")).unwrap(), catalog_before);
+    assert_eq!(
+        fs::read(store.root().join("tunnel.json")).unwrap(),
+        catalog_before
+    );
     assert_eq!(fs::read(binding).unwrap(), binding_before);
     let encoded = serde_json::to_string(&error).unwrap();
     assert!(!encoded.contains("default-private-key"));
@@ -585,5 +588,8 @@ fn persistent_environment_rejects_a_missing_legacy_profile_without_deleting_eith
         "tunnel_catalog_conflict"
     );
     assert_eq!(fs::read(fixture.path()).unwrap(), local_before);
-    assert_eq!(fs::read(store.root().join("tunnel.json")).unwrap(), catalog_before);
+    assert_eq!(
+        fs::read(store.root().join("tunnel.json")).unwrap(),
+        catalog_before
+    );
 }

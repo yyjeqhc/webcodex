@@ -159,38 +159,21 @@ impl MutationObservationGuard {
     pub(crate) fn finish(mut self, result: &super::ToolResult) {
         // Returning a Job, losing delivery, or lacking mutation truth cannot
         // prove that the potential writer stopped. Keep this epoch uncertain.
-        let output = &result.output;
-        if output["execution_state"] != "outcome_unknown"
-            && output["failure_kind"] != "outcome_unknown"
-        {
-            self.presentation_job = output
-                .get("job_id")
-                .and_then(serde_json::Value::as_str)
+        let facts = super::execution_outcome::ExecutionOutcomeFacts::from_result(result);
+        if !facts.is_outcome_unknown() {
+            self.presentation_job = facts
+                .job_id()
                 .filter(|id| webcodex_core::workflow_session_contract::is_safe_job_id(id))
                 .map(str::to_owned);
         }
 
-        self.completed = output
-            .get("execution_state")
-            .and_then(serde_json::Value::as_str)
-            != Some("outcome_unknown")
-            && output
-                .get("failure_kind")
-                .and_then(serde_json::Value::as_str)
-                != Some("outcome_unknown")
-            && output.get("job_id").filter(|id| !id.is_null()).is_none()
-            && (output
-                .get("state_changed")
-                .and_then(serde_json::Value::as_bool)
-                .is_some()
-                || output
-                    .get("command_completed")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(true)
-                || output
-                    .get("command_started")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(false));
+        // No success requirement and no broad is_pending classification here:
+        // these are the existing proof conditions for a potential writer stopping.
+        self.completed = !facts.is_outcome_unknown()
+            && !facts.has_job_marker()
+            && (facts.state_changed().is_some()
+                || facts.command_completed() == Some(true)
+                || facts.command_started() == Some(false));
     }
 }
 

@@ -362,8 +362,9 @@ impl OrchestrationEffectAccumulator {
         canonical_state_changed: Option<bool>,
     ) {
         let output = &result.output;
-        let execution_state = output.get("execution_state").and_then(Value::as_str);
-        let failure_kind = output.get("failure_kind").and_then(Value::as_str);
+        use super::execution_outcome::{ExecutionOutcomeFacts, ExecutionState};
+        let facts = ExecutionOutcomeFacts::from_result(result);
+        let execution_state = facts.execution_state();
         if let Some(child) = self.children.get_mut(&ordinal) {
             if is_code_mode_validation_child(child.tool.as_str()) {
                 child.source_state = Some(
@@ -375,7 +376,7 @@ impl OrchestrationEffectAccumulator {
                 );
             }
         }
-        if execution_state == Some("outcome_unknown") || failure_kind == Some("outcome_unknown") {
+        if facts.is_outcome_unknown() {
             if let Some(child) = self.children.get_mut(&ordinal) {
                 child.outcome = ConsequentialChildOutcome::OutcomeUnknown;
                 child.state_changed = None;
@@ -389,16 +390,12 @@ impl OrchestrationEffectAccumulator {
             .filter(|value| value["tool"].as_str() == Some("observe_jobs"));
         let continuation_job_id =
             continuation.and_then(|value| value["arguments"]["items"][0]["job_id"].as_str());
-        if execution_state == Some("pending")
-            || output.get("terminal").and_then(Value::as_bool) == Some(false)
-        {
-            if let (Some(job_id), Some(continuation)) = (
-                output
-                    .get("job_id")
-                    .and_then(Value::as_str)
-                    .or(continuation_job_id),
-                continuation,
-            ) {
+        // Receipt handoff is intentionally narrower than facts.is_pending():
+        // queued/running/started/promoted alone do not enter this lane.
+        if execution_state == Some(ExecutionState::Pending) || facts.terminal() == Some(false) {
+            if let (Some(job_id), Some(continuation)) =
+                (facts.job_id_text().or(continuation_job_id), continuation)
+            {
                 if let Some(child) = self.children.get_mut(&ordinal) {
                     child.outcome = ConsequentialChildOutcome::JobHandoff;
                     child.state_changed = None;
@@ -408,8 +405,8 @@ impl OrchestrationEffectAccumulator {
                 return;
             }
         }
-        if execution_state == Some("not_started")
-            || output.get("command_started").and_then(Value::as_bool) == Some(false)
+        if execution_state == Some(ExecutionState::NotStarted)
+            || facts.command_started() == Some(false)
         {
             self.children.remove(&ordinal);
             return;
@@ -936,6 +933,97 @@ impl CanonicalOrchestrationHost {
 #[cfg(test)]
 mod receipt_tests {
     use super::*;
+
+    #[test]
+    fn handoff_receipts_keep_narrow_state_and_identity_fallback_precedence() {
+        for state in ["pending", "queued", "running", "started", "completed"] {
+            for terminal in [None, Some(false), Some(true)] {
+                for success in [false, true] {
+                    let mut output = serde_json::json!({"execution_state":state,
+                        "promoted_to_job":true, "continuation":{"tool":"observe_jobs",
+                        "arguments":{"items":[{"job_id":"continuation-job"}]}}});
+                    if let Some(terminal) = terminal {
+                        output["terminal"] = serde_json::json!(terminal);
+                    }
+                    let mut effects = OrchestrationEffectAccumulator::default();
+                    effects.begin_if_consequential(1, "run_process");
+                    effects.finish(
+                        1,
+                        &super::super::ToolResult {
+                            success,
+                            output,
+                            error: None,
+                        },
+                        None,
+                    );
+                    let receipt = effects.receipt();
+                    let handoff = state == "pending" || terminal == Some(false);
+                    assert_eq!(
+                        receipt.job_handoffs,
+                        usize::from(handoff),
+                        "{state} {terminal:?} {success}"
+                    );
+                    assert_eq!(receipt.known_results, usize::from(!handoff));
+                }
+            }
+        }
+        for (top, expected) in [
+            (None, "fallback"),
+            (Some(Value::Null), "fallback"),
+            (Some(serde_json::json!(9)), "fallback"),
+            (Some(serde_json::json!("")), ""),
+            (Some(serde_json::json!("top")), "top"),
+        ] {
+            let mut output = serde_json::json!({"execution_state":"pending",
+                "continuation":{"tool":"observe_jobs","arguments":{"items":[{"job_id":"fallback"}]}}});
+            if let Some(top) = top {
+                output["job_id"] = top;
+            }
+            let mut effects = OrchestrationEffectAccumulator::default();
+            effects.begin_if_consequential(1, "run_process");
+            effects.finish(1, &super::super::ToolResult::ok(output), None);
+            assert_eq!(
+                effects.receipt().children[0].job_id.as_deref(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn receipt_uncertainty_and_prestart_rules_do_not_widen_to_other_markers() {
+        for (output, count, unknown) in [
+            (
+                serde_json::json!({"execution_state":"outcome_unknown","command_started":false}),
+                1,
+                1,
+            ),
+            (
+                serde_json::json!({"failure_kind":"outcome_unknown","execution_state":"pending","terminal":false}),
+                1,
+                1,
+            ),
+            (serde_json::json!({"execution_state":"not_started"}), 0, 0),
+            (serde_json::json!({"command_started":false}), 0, 0),
+            (serde_json::json!({"error_kind":"permission_denied"}), 1, 0),
+            (
+                serde_json::json!({"dispatch_certainty":"not_started"}),
+                1,
+                0,
+            ),
+            (serde_json::json!({"error_kind":"outcome_unknown"}), 1, 0),
+        ] {
+            let mut effects = OrchestrationEffectAccumulator::default();
+            effects.begin_if_consequential(1, "run_process");
+            effects.finish(
+                1,
+                &super::super::ToolResult::err_with_output("failed", output),
+                None,
+            );
+            let receipt = effects.receipt();
+            assert_eq!(receipt.consequential_calls, count);
+            assert_eq!(receipt.outcome_unknown, unknown);
+        }
+    }
 
     #[test]
     fn mutation_result_uses_preprojection_state_changed_truth() {

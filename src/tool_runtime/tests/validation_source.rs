@@ -73,6 +73,67 @@ fn presentation_completion_does_not_manufacture_validation_quiescence() {
     assert!(registry.capture_presentation("p").is_none());
 }
 
+#[test]
+fn completion_proof_preserves_nonnull_job_markers_and_ignores_business_success() {
+    use serde_json::{json, Value};
+    for success in [false, true] {
+        for job in [
+            None,
+            Some(Value::Null),
+            Some(json!("")),
+            Some(json!(false)),
+            Some(json!(7)),
+            Some(json!({})),
+            Some(json!("wc_job_0123456789abcdef")),
+        ] {
+            for (proof, known) in [
+                (json!({"state_changed":false}), true),
+                (json!({"command_completed":true}), true),
+                (json!({"command_started":false}), true),
+                (json!({"state_changed":null}), false),
+                (json!({"execution_state":"completed"}), false),
+                (
+                    json!({"execution_state":"outcome_unknown","state_changed":false}),
+                    false,
+                ),
+                (
+                    json!({"failure_kind":"outcome_unknown","state_changed":false}),
+                    false,
+                ),
+                // Not additional completion restrictions in this domain.
+                (
+                    json!({"execution_state":"pending","state_changed":false}),
+                    true,
+                ),
+                (
+                    json!({"error_kind":"outcome_unknown","state_changed":false}),
+                    true,
+                ),
+            ] {
+                let mut output = proof;
+                if let Some(job) = &job {
+                    output["job_id"] = job.clone();
+                }
+                let expected = known && job.as_ref().is_none_or(Value::is_null);
+                let registry = ValidationSourceRegistry::default();
+                registry
+                    .begin("p")
+                    .unwrap()
+                    .finish(&crate::tool_runtime::ToolResult {
+                        success,
+                        output: output.clone(),
+                        error: None,
+                    });
+                assert_eq!(
+                    registry.capture("p").unwrap().quiescent,
+                    expected,
+                    "success={success}: {output}"
+                );
+            }
+        }
+    }
+}
+
 fn noop() -> crate::tool_runtime::ToolResult {
     crate::tool_runtime::ToolResult::ok(serde_json::json!({"state_changed": false}))
 }

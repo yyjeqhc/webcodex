@@ -108,24 +108,6 @@ fn browser_act_policy(call: &BrowserActToolCall) -> SpecializedOperationPolicy {
     }
 }
 
-fn browser_specialized_terminal(result: &ToolResult) -> (&str, Option<&str>) {
-    let dispatch_certainty = result
-        .output
-        .get("execution_state")
-        .and_then(Value::as_str)
-        .unwrap_or(if result.success {
-            "completed"
-        } else {
-            "not_started"
-        });
-    let failure_kind = result
-        .output
-        .get("failure_kind")
-        .or_else(|| result.output.get("error_kind"))
-        .and_then(Value::as_str);
-    (dispatch_certainty, failure_kind)
-}
-
 impl ToolRuntime {
     pub(crate) async fn invoke_browser_observe_gateway(
         &self,
@@ -149,7 +131,7 @@ impl ToolRuntime {
         let result = self
             .dispatch_browser_tool(ToolCall::BrowserObserve(call), auth)
             .await;
-        let (dispatch_certainty, failure_kind) = browser_specialized_terminal(&result);
+        let (dispatch_certainty, failure_kind) = super::specialized::specialized_terminal(&result);
         self.finish_specialized_invocation(
             permit,
             result.success,
@@ -181,7 +163,7 @@ impl ToolRuntime {
         let result = self
             .dispatch_browser_tool(ToolCall::BrowserAct(call), auth)
             .await;
-        let (dispatch_certainty, failure_kind) = browser_specialized_terminal(&result);
+        let (dispatch_certainty, failure_kind) = super::specialized::specialized_terminal(&result);
         self.finish_specialized_invocation(
             permit,
             result.success,

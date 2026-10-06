@@ -58,8 +58,24 @@ impl<'a> ExecutionOutcomeFacts<'a> {
         self.output.and_then(|output| output.get(key))
     }
 
+    /// Preserve producer vocabulary for diagnostic-only adapters, including
+    /// states not in the closed execution classification below.
+    pub(crate) fn execution_state_name(self) -> Option<&'a str> {
+        self.value("execution_state").and_then(Value::as_str)
+    }
+
     pub(crate) fn execution_state(self) -> Option<ExecutionState> {
-        ExecutionState::parse(self.value("execution_state").and_then(Value::as_str))
+        ExecutionState::parse(self.execution_state_name())
+    }
+
+    pub(crate) fn state_changed(self) -> Option<bool> {
+        self.value("state_changed").and_then(Value::as_bool)
+    }
+
+    /// Any non-null Job marker prevents proof of synchronous completion, even
+    /// when malformed. This is deliberately not a validated Job identity.
+    pub(crate) fn has_job_marker(self) -> bool {
+        !self.is_absent_or_null("job_id")
     }
 
     pub(crate) fn command_started(self) -> Option<bool> {
@@ -82,10 +98,14 @@ impl<'a> ExecutionOutcomeFacts<'a> {
         self.value("promoted_to_job").and_then(Value::as_bool)
     }
 
+    /// Raw string receipt, including empty text. Consumers with established
+    /// fallback precedence must not silently substitute another Job identity.
+    pub(crate) fn job_id_text(self) -> Option<&'a str> {
+        self.value("job_id").and_then(Value::as_str)
+    }
+
     pub(crate) fn job_id(self) -> Option<&'a str> {
-        self.value("job_id")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
+        self.job_id_text().filter(|value| !value.is_empty())
     }
 
     pub(crate) fn observation_token(self) -> Option<&'a str> {
@@ -94,6 +114,15 @@ impl<'a> ExecutionOutcomeFacts<'a> {
 
     pub(crate) fn failure_kind(self) -> Option<&'a str> {
         self.value("failure_kind").and_then(Value::as_str)
+    }
+
+    /// Specialized diagnostics prefer a present failure_kind field over
+    /// error_kind before decoding. A present null/malformed value does not fall
+    /// back; changing that precedence would change existing audit semantics.
+    pub(crate) fn preferred_failure_kind(self) -> Option<&'a str> {
+        self.value("failure_kind")
+            .or_else(|| self.value("error_kind"))
+            .and_then(Value::as_str)
     }
 
     pub(crate) fn error_kind(self) -> Option<&'a str> {

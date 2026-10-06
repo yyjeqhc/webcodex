@@ -73,23 +73,6 @@ pub(super) fn computer_control_policy(
     }
 }
 
-fn computer_specialized_terminal(result: &ToolResult) -> (&str, Option<&str>) {
-    let dispatch_certainty = result
-        .output
-        .get("execution_state")
-        .and_then(Value::as_str)
-        .unwrap_or(if result.success {
-            "completed"
-        } else {
-            "not_started"
-        });
-    let failure_kind = result
-        .output
-        .get("failure_kind")
-        .or_else(|| result.output.get("error_kind"))
-        .and_then(Value::as_str);
-    (dispatch_certainty, failure_kind)
-}
 impl ToolRuntime {
     pub(crate) async fn invoke_computer_observe_gateway(
         &self,
@@ -113,7 +96,8 @@ impl ToolRuntime {
         let result = self
             .dispatch_computer_tool(ToolCall::ComputerObserve(call), auth)
             .await;
-        let (dispatch_certainty, failure_kind) = computer_specialized_terminal(&result);
+        let (dispatch_certainty, failure_kind) =
+            crate::tool_runtime::specialized::specialized_terminal(&result);
         self.finish_specialized_invocation(
             permit,
             result.success,
@@ -145,7 +129,8 @@ impl ToolRuntime {
         let result = self
             .dispatch_computer_tool(ToolCall::ComputerControl(call), auth)
             .await;
-        let (dispatch_certainty, failure_kind) = computer_specialized_terminal(&result);
+        let (dispatch_certainty, failure_kind) =
+            crate::tool_runtime::specialized::specialized_terminal(&result);
         self.finish_specialized_invocation(
             permit,
             result.success,

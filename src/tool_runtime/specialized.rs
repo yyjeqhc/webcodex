@@ -18,6 +18,24 @@ use super::sessions::{
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 
+/// Shared Browser/Computer terminal diagnostics. Missing state keeps the
+/// established success-dependent default; it is not a general retry proof.
+pub(super) fn specialized_terminal(result: &ToolResult) -> (&str, Option<&str>) {
+    let facts = super::execution_outcome::ExecutionOutcomeFacts::from_result(result);
+    (
+        facts.execution_state_name().unwrap_or(if result.success {
+            "completed"
+        } else {
+            "not_started"
+        }),
+        facts.preferred_failure_kind(),
+    )
+}
+
+#[cfg(test)]
+#[path = "tests/specialized_terminal.rs"]
+mod terminal_tests;
+
 /// The closed heterogeneous gateway boundary. `None` leaves ordinary tools
 /// untouched for the kernel's generic lifecycle. Recognized gateways never fall
 /// through, including on parse or governance denial.

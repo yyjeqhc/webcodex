@@ -58,16 +58,6 @@ impl ToolRuntime {
             }
 
             ToolCall::PresentDocx { project, path } => self.present_docx(project, path, auth).await,
-            ToolCall::ReadDocxChunk {
-                project,
-                path,
-                sha256,
-                bytes,
-                byte_offset,
-            } => {
-                self.read_docx_chunk(project, path, sha256, bytes, byte_offset, auth)
-                    .await
-            }
 
             ToolCall::PresentPdf { project, path } => self.present_pdf(project, path, auth).await,
             ToolCall::ReadPdfChunk {

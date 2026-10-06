@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn docx_document_app_has_a_distinct_direct_binding_and_private_read_tool() {
+fn docx_document_app_binds_to_the_generic_private_artifact_reader() {
     let payload =
         super::super::tools::mcp_tools_list_payload_with_features_for_auth(false, true, true, None);
     let tools = payload["tools"].as_array().unwrap();
@@ -11,17 +11,18 @@ fn docx_document_app_has_a_distinct_direct_binding_and_private_read_tool() {
         .unwrap();
     assert_eq!(
         present["_meta"]["ui"]["resourceUri"],
-        "ui://webcodex/docx/v4"
+        "ui://webcodex/docx/v1"
     );
+    assert!(tools.iter().all(|tool| tool["name"] != "read_docx_chunk"));
     let read = tools
         .iter()
-        .find(|tool| tool["name"] == "read_docx_chunk")
+        .find(|tool| tool["name"] == "read_app_artifact_chunk")
         .unwrap();
     assert_eq!(read["_meta"]["ui"]["visibility"], json!(["app"]));
     assert!(read["_meta"]["ui"].get("resourceUri").is_none());
     assert!(
         !super::super::tools::adaptive_runtime_gateway_target_admitted_for_test(
-            "read_docx_chunk",
+            "read_app_artifact_chunk",
             true
         )
     );
@@ -29,17 +30,17 @@ fn docx_document_app_has_a_distinct_direct_binding_and_private_read_tool() {
 }
 
 #[test]
-fn docx_document_bytes_never_enter_public_mcp_content() {
+fn common_app_artifact_bytes_never_enter_public_mcp_content() {
     let encoded = "UEsDBFByaXZhdGVCeXRlcw==";
     let value = mcp_runtime_tool_result(
-        "read_docx_chunk",
+        "read_app_artifact_chunk",
         false,
         ToolResult::ok(
-            json!({"docx_chunk": {"project":"agent:docx:demo", "path":"report.docx", "content_base64": encoded}}),
+            json!({"artifact_chunk": {"project":"agent:docx:demo", "path":"report.docx", "content_base64": encoded}}),
         ),
     );
     assert_eq!(
-        value["_meta"]["webcodex/docxChunk"]["content_base64"],
+        value["_meta"]["webcodex/artifactChunk"]["content_base64"],
         encoded
     );
     assert!(!value["structuredContent"].to_string().contains(encoded));

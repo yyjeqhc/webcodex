@@ -3,7 +3,7 @@
 `present_docx(project, path)` is a model-visible, read-only presentation tool for
 one authorized project-relative `.docx`, including unchanged or untracked files.
 It does not require Git or a Workflow Session, edit the file, or create a Session.
-An MCP Apps Host mounts `ui://webcodex/docx/v4`; other clients retain the selected
+An MCP Apps Host mounts `ui://webcodex/docx/v1`; other clients retain the selected
 file metadata. A presentation result selects exact size/SHA-256, not a live path.
 The resource URI advances when HTML changes so Hosts invalidate their cached
 reader. Retired URIs never alias the current template.
@@ -13,13 +13,19 @@ reader. Retired URIs never alias the current template.
 The canonical ToolDefinition requires Project read scope, Runner ownership and
 file-read capability. Existing artifact metadata/chunk primitives preserve path,
 sensitive-file, mixed-version Runner capability and full-file digest checks.
-The ModelHidden `read_docx_chunk` is independently admitted only by the Stateless
-MCP 2026 Apps adapter. Generic model dispatch and ordinary Runtime API calls
-cannot admit it. Each read reauthorizes the Project; a digest is not authority.
+The View reuses the ModelHidden, format-neutral `read_app_artifact_chunk` bridge
+already used by PDF and spreadsheets; no DOCX-specific binary transport or
+parallel authority path is added. Generic model dispatch and ordinary Runtime
+API calls cannot admit the hidden reader. Each read reauthorizes the Project; a
+digest is not authority.
 
-The View fetches 128 KiB segments under one 120-second deadline, validates every
-identity/continuation, then verifies the complete SHA-256. MCP removes bytes from
-both structuredContent and text before returning them in widget-only `_meta`.
+The View fetches 512 KiB Host-facing segments under the generic scaled transfer
+deadline (minimum 120 seconds, 60 seconds plus 20 seconds per segment, capped at
+15 minutes), validates every identity/continuation, then verifies the complete
+SHA-256. MCP removes bytes from both structuredContent and text before returning
+them in private `_meta["webcodex/artifactChunk"]`. The App normalizes the Host
+wrapper aliases observed by the PDF/spreadsheet readers (`result`,
+`result.result`, `toolResult`, `tool_result`, and `_meta`/`meta`).
 Changed content fails closed. Retry retains the selected version; a fresh
 `present_docx` explicitly selects a new one. No immutable file cache is implied.
 Repeated Host delivery of the same result does not start another transfer.

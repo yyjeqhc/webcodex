@@ -184,21 +184,6 @@ pub enum ToolCall {
         #[schemars(length(min = 1, max = 512))]
         path: String,
     },
-    /// App-only read of the exact DOCX size/SHA selected by present_docx.
-    ReadDocxChunk {
-        #[schemars(length(min = 1, max = 512))]
-        project: String,
-        #[schemars(length(min = 1, max = 512))]
-        path: String,
-        #[schemars(regex(pattern = "^[0-9a-f]{64}$"))]
-        sha256: String,
-        #[schemars(range(min = 4, max = 10485760))]
-        bytes: usize,
-        /// Offset into the selected file; each read returns at most 128 KiB.
-        #[schemars(range(max = 10485759))]
-        byte_offset: usize,
-    },
-
     /// Open one project PDF in a dedicated reader, independently of Git or a Session.
     PresentPdf {
         #[schemars(length(min = 1, max = 512))]

@@ -118,7 +118,6 @@ impl ToolRuntime {
             | ToolCall::WorkOnProject { .. }
             | ToolCall::FinishCodingTask { .. }
             | ToolCall::PresentDocx { .. }
-            | ToolCall::ReadDocxChunk { .. }
             | ToolCall::PresentWorkResult { .. }
             | ToolCall::PresentPdf { .. }
             | ToolCall::ReadPdfChunk { .. }

@@ -120,7 +120,7 @@ The reader offers fit width, zoom, optional fullscreen and original DOCX downloa
 Common document styles are supported; layout/pagination may differ from Word.
 Legacy `.doc`, encrypted packages and editing are unsupported. A changed file
 requires explicit reopening; repeated presentation may create another Host card.
-The hidden `read_docx_chunk` cannot be admitted by generic model dispatch.
+The reader reuses the hidden format-neutral `read_app_artifact_chunk` bridge; no DOCX-specific binary transport is added.
 See [DOCX architecture and bounds](architecture/docx-document-viewer.md).
 
 ### Live Work Result card

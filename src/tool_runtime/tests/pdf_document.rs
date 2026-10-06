@@ -248,7 +248,7 @@ async fn pdf_document_app_capability_never_replaces_project_read_scope() {
         tool_name: "read_pdf_chunk".into(), arguments: json!({"project":project,"path":"report.pdf","sha256":"a".repeat(64),"bytes":10,"byte_offset":0}),
     }, ToolCallContext { transport:ToolTransport::Mcp, session_id:None, auth:Some(&auth), window:None,
         record_oauth_scope_denials:false, host_file_import_trust:HostFileImportTrust::Untrusted },
-        ToolInvocationMetadata::default(), ToolProtocolCapabilities {pdf_app:true,..Default::default()}).await;
+        ToolInvocationMetadata::default(), ToolProtocolCapabilities {artifact_app:true,..Default::default()}).await;
     assert!(!outcome.success);
     assert!(matches!(
         outcome.error_status,

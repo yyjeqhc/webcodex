@@ -359,8 +359,7 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
             crate::tool_runtime::goal_plan_app_tool_specs()
                 .into_iter()
                 .chain(crate::tool_runtime::work_result_app_tool_specs())
-                .chain(crate::tool_runtime::docx_app_tool_specs())
-                .chain(crate::tool_runtime::pdf_app_tool_specs())
+                .chain(crate::tool_runtime::artifact_app_tool_specs())
                 .chain(crate::tool_runtime::agent_continuation_app_tool_specs())
                 .chain(crate::tool_runtime::job_terminal_continuation_app_tool_specs())
                 .collect(),
@@ -752,7 +751,6 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
                 "sync_goal_plan"
                     | "read_pdf_chunk"
                     | "get_work_result_state"
-                    | "read_docx_chunk"
                     | "read_changed_file_diff"
                     | "search_mentions"
             )
@@ -2021,7 +2019,6 @@ fn mcp_invocation_envelope_supported_fields(tool: &str) -> Vec<&'static str> {
         tool,
         "sync_goal_plan"
             | "get_work_result_state"
-            | "read_docx_chunk"
             | "read_pdf_chunk"
             | "read_app_artifact_chunk"
             | "read_changed_file_diff"
@@ -2823,9 +2820,7 @@ pub(super) async fn handle_call(
             None => json!({"project": binding.project}),
         };
     }
-    let app_only_docx_read =
-        server_mcp_apps_enabled && stateless_2026 && params.name == "read_docx_chunk";
-    let app_only_pdf_chunk = server_mcp_apps_enabled
+    let app_only_artifact_read = server_mcp_apps_enabled
         && stateless_2026
         && matches!(
             params.name.as_str(),
@@ -2857,10 +2852,9 @@ pub(super) async fn handle_call(
                 | "open_webcodex_workbench"
         );
     let direct_denied = !workbench_view_call
-        && !app_only_docx_read
+        && !app_only_artifact_read
         && !app_only_goal_plan_sync
         && !app_only_work_result_state
-        && !app_only_pdf_chunk
         && !app_only_work_result_activity_detail
         && !app_only_work_result_send_message
         && !app_only_changes_file_diff
@@ -3013,8 +3007,7 @@ pub(super) async fn handle_call(
                 trace_diagnostics: trace_diagnostics_capable,
                 goal_plan_app: goal_plan_app_capable,
                 work_result_app: work_result_app_capable,
-                docx_app: server_mcp_apps_enabled && stateless_2026,
-                pdf_app: server_mcp_apps_enabled && stateless_2026,
+                artifact_app: server_mcp_apps_enabled && stateless_2026,
                 agent_continuation_app: agent_continuation_app_capable,
             },
         )
@@ -3116,10 +3109,9 @@ pub(super) async fn handle_call(
             result["_meta"]["webcodex/spreadsheetSource"] = structured;
         }
     }
-    if app_only_docx_read
+    if app_only_artifact_read
         || workbench_view_call
         || (app_only_work_result_state && !work_result_thread_panel)
-        || app_only_pdf_chunk
         || app_only_work_result_activity_detail
         || app_only_work_result_send_message
         || app_only_changes_file_diff

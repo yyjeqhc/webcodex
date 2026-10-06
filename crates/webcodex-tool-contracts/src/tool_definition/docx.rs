@@ -10,7 +10,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         158,
         ToolDirectReason::Presentation,
     ),
-    docx_read_definition("read_docx_chunk", ToolVisibility::ModelHidden, ToolIdempotency::PureRead),
 ];
 
 const DOCX_AUDIT_FIELDS: &[ToolAuditResultField] = &[ToolAuditResultField::value("error_kind")];

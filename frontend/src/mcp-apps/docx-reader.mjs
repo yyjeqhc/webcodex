@@ -1,5 +1,15 @@
 export const MAX_DOCX_BYTES = 10 * 1024 * 1024;
-export const DOCX_CHUNK_BYTES = 128 * 1024;
+export const DOCX_CHUNK_BYTES = 512 * 1024;
+const MIN_TRANSFER_DEADLINE_MS = 120_000;
+const TRANSFER_BASE_MS = 60_000;
+const TRANSFER_PER_CHUNK_MS = 20_000;
+const MAX_TRANSFER_DEADLINE_MS = 15 * 60_000;
+
+export function docxDocumentTransferDeadlineMs(bytes) {
+  const chunks = Math.ceil(bytes / DOCX_CHUNK_BYTES);
+  return Math.min(MAX_TRANSFER_DEADLINE_MS,
+    Math.max(MIN_TRANSFER_DEADLINE_MS, TRANSFER_BASE_MS + chunks * TRANSFER_PER_CHUNK_MS));
+}
 
 export function validDocxIdentity(value) {
   return value && typeof value.project === "string" && value.project.length > 0 && value.project.length <= 512
@@ -9,10 +19,9 @@ export function validDocxIdentity(value) {
     && /^[0-9a-f]{64}$/.test(value.sha256) && Number.isSafeInteger(value.bytes) && value.bytes >= 4 && value.bytes <= MAX_DOCX_BYTES;
 }
 
-// Only View-originated RPCs read bytes. One deadline owns the whole transfer.
 export async function readDocxDocument({ identity, request, current, progress = () => {}, now = () => performance.now() }) {
   if (!validDocxIdentity(identity)) throw new Error("Invalid DOCX identity");
-  const deadline = now() + 120_000;
+  const deadline = now() + docxDocumentTransferDeadlineMs(identity.bytes);
   const bytes = new Uint8Array(identity.bytes);
   let offset = 0;
   while (offset < bytes.length) {

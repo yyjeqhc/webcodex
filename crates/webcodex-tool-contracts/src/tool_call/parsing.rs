@@ -423,7 +423,6 @@ impl ToolCall {
             Self::WorkOnProject { .. } => "work_on_project",
             Self::FinishCodingTask { .. } => "finish_coding_task",
             Self::PresentDocx { .. } => "present_docx",
-            Self::ReadDocxChunk { .. } => "read_docx_chunk",
             Self::PresentPdf { .. } => "present_pdf",
             Self::ReadPdfChunk { .. } => "read_pdf_chunk",
             Self::ReadAppArtifactChunk { .. } => "read_app_artifact_chunk",
@@ -870,7 +869,6 @@ impl ToolCall {
             }
             Self::FinishCodingTask { project, .. }
             | Self::PresentDocx { project, .. }
-            | Self::ReadDocxChunk { project, .. }
             | Self::PresentPdf { project, .. }
             | Self::ReadPdfChunk { project, .. }
             | Self::ReadAppArtifactChunk { project, .. }

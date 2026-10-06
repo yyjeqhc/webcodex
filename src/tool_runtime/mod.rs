@@ -200,8 +200,8 @@ pub(crate) use model_references::SessionSelectorError;
 pub(crate) use project_resolution::ProjectResolverErrorKind;
 pub(crate) use project_resolution::{runner_project_runtime_id, ProjectResolverError};
 pub(crate) use registry::{
-    agent_continuation_app_tool_specs, docx_app_tool_specs, goal_plan_app_tool_specs,
-    job_terminal_continuation_app_tool_specs, pdf_app_tool_specs, registered_tool_specs,
+    agent_continuation_app_tool_specs, artifact_app_tool_specs, goal_plan_app_tool_specs,
+    job_terminal_continuation_app_tool_specs, registered_tool_specs,
     stateless_operator_extension_tool_specs, work_result_app_tool_specs,
 };
 #[cfg(test)]

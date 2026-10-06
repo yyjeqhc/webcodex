@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
-import { readDocxDocument, DOCX_CHUNK_BYTES, validDocxIdentity } from "../src/mcp-apps/docx-reader.mjs";
+import { docxDocumentTransferDeadlineMs, readDocxDocument, DOCX_CHUNK_BYTES, validDocxIdentity } from "../src/mcp-apps/docx-reader.mjs";
 import { docxFixture } from "./fixtures/docx.mjs";
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 async function identityFor(data) {
@@ -29,11 +29,17 @@ test("DOCX transfer rejects stale identities, incomplete segments and wrong dige
 test("DOCX teardown and the original deadline stop transfer without another request", async () => {
   const data = await docxFixture(), identity = await identityFor(data); let calls = 0;
   await assert.rejects(readDocxDocument({ identity, current: () => false, request: async () => { calls++; } }), /closed/); assert.equal(calls, 0);
-  let now = 0;
-  await assert.rejects(readDocxDocument({ identity, current: () => true, now: () => now, request: async offset => { now = 120001; calls++; return segment(identity, data, offset); } }), /timed out/); assert.equal(calls, 1);
+  let now = 0, deadline = docxDocumentTransferDeadlineMs(identity.bytes);
+  await assert.rejects(readDocxDocument({ identity, current: () => true, now: () => now, request: async offset => { now = deadline + 1; calls++; return segment(identity, data, offset); } }), /timed out/); assert.equal(calls, 1);
 });
 test("DOCX identity rejects unsupported size, paths and file formats", () => {
   const base = { project: "~p1", path: "a.docx", name: "a.docx", bytes: 100, sha256: "a".repeat(64) };
   assert.ok(validDocxIdentity(base));
   for (const patch of [{ bytes: 10485761 }, { bytes: 0 }, { path: "../a.docx" }, { path: "C:/a.docx" }, { path: "a.doc" }, { sha256: "bad" }]) assert.ok(!validDocxIdentity({ ...base, ...patch }));
+});
+
+test("DOCX transfer budget scales with generic 512 KiB Host round trips", () => {
+  assert.equal(DOCX_CHUNK_BYTES, 512 * 1024);
+  assert.equal(docxDocumentTransferDeadlineMs(1), 120_000);
+  assert.equal(docxDocumentTransferDeadlineMs(10 * 1024 * 1024), 460_000);
 });

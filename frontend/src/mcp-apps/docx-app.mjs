@@ -19,10 +19,26 @@ export function mountDocxApp(win = window, doc = document) {
     for (const [id, item] of pending) { if (item.method === "tools/call") { win.clearTimeout(item.timer); item.reject(new Error("DOCX reader closed")); pending.delete(id); } }
   }
   function close() { stop(); disposed = true; resizeObserver.disconnect(); for (const item of pending.values()) { win.clearTimeout(item.timer); item.reject(new Error("DOCX reader closed")); } pending.clear(); win.removeEventListener("message", onMessage); }
-  function envelope(result) {
-    if (result?.structuredContent) return result.structuredContent;
-    if (result?._meta?.["webcodex/docxDocument"]) return result._meta["webcodex/docxDocument"];
-    for (const block of result?.content || []) { if (block.type === "text") { try { const value = JSON.parse(block.text); if (typeof value.success === "boolean") return value; } catch {} } }
+  function privateMetadata(result, key) {
+    for (const candidate of [result, result?.result, result?.toolResult, result?.tool_result]) {
+      const metadata = candidate?._meta?.[key] ?? candidate?.meta?.[key];
+      if (metadata && typeof metadata === "object") return metadata;
+    }
+    return null;
+  }
+  function envelope(result, privateKey) {
+    for (const candidate of [result, result?.result, result?.toolResult, result?.tool_result]) {
+      if (!candidate || typeof candidate !== "object") continue;
+      if (typeof candidate.success === "boolean") return candidate;
+      const structured = candidate.structuredContent ?? candidate.structured_content;
+      if (structured && typeof structured === "object") return structured;
+      const privateResult = privateKey && privateMetadata(candidate, privateKey);
+      if (privateResult) return privateResult;
+      for (const block of candidate.content || []) {
+        if (block.type !== "text" || typeof block.text !== "string" || block.text.length > 400_000) continue;
+        try { const value = JSON.parse(block.text); if (typeof value?.success === "boolean") return value; } catch {}
+      }
+    }
     return null;
   }
   function scale(value) { zoom = Math.max(0.25, Math.min(2, value)); el("stage").style.zoom = String(zoom); el("zoom").textContent = `${Math.round(zoom * 100)}%`; }
@@ -62,13 +78,14 @@ export function mountDocxApp(win = window, doc = document) {
       const bytes = await readDocxDocument({ identity: selected, current,
         progress: (loaded, total) => { if (current()) el("status").textContent = `Loading document… ${Math.round(loaded / total * 100)}%`; },
         request: async (offset, remaining) => {
-          const result = await send("tools/call", { name: "read_docx_chunk", arguments: {
+          const result = await send("tools/call", { name: "read_app_artifact_chunk", arguments: {
             project: selected.project, path: selected.path, sha256: selected.sha256, bytes: selected.bytes, byte_offset: offset,
-          } }, Math.min(remaining, 65_000));
+          } }, remaining);
           const value = envelope(result);
           if (!value?.success) throw new Error(value?.output?.error_kind === "snapshot_changed"
             ? "Document changed. Reopen it to view the new version." : "Document read unavailable. Retry this version.");
-          return { page: value.output?.docx_chunk, encoded: result._meta?.["webcodex/docxChunk"]?.content_base64 };
+          return { page: value.output?.artifact_chunk,
+            encoded: privateMetadata(result, "webcodex/artifactChunk")?.content_base64 };
         },
       });
       if (!current()) return;
@@ -105,7 +122,7 @@ export function mountDocxApp(win = window, doc = document) {
     if (disposed) return;
     if (message.method === "ui/notifications/host-context-changed") applyHostContext(message.params);
     if (message.method === "ui/notifications/tool-result") {
-      const value = envelope(message.params), selected = value?.output?.docx_document;
+      const value = envelope(message.params, "webcodex/docxDocument"), selected = value?.output?.docx_document;
       if (!value?.success || !validDocxIdentity(selected)) {
         stop(); identity = null; el("retry").hidden = true; el("status").hidden = false;
         el("status").textContent = "DOCX unavailable. Open an authorized project document."; return;

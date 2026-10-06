@@ -2126,15 +2126,6 @@ impl ToolCallAuditProjection for ToolCall {
             Self::PresentDocx { project, path } => {
                 serde_json::json!({"project": project, "path": path})
             }
-            Self::ReadDocxChunk {
-                project,
-                path,
-                sha256,
-                bytes,
-                byte_offset,
-            } => serde_json::json!({
-                "project": project, "path": path, "sha256": sha256, "bytes": bytes, "byte_offset": byte_offset,
-            }),
             Self::PresentPdf { project, path }
             | Self::ReadPdfChunk { project, path, .. }
             | Self::ReadAppArtifactChunk { project, path, .. } => {

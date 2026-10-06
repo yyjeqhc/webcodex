@@ -2550,7 +2550,7 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                 } else {
                     0
                 };
-                let count_budget = max_tools + if app_enabled { 23 } else { 0 } + feature_tools;
+                let count_budget = max_tools + if app_enabled { 22 } else { 0 } + feature_tools;
                 let model_count_budget =
                     max_tools + if app_enabled { 1 } else { 0 } + feature_tools;
                 let model_byte_budget =

@@ -36,6 +36,7 @@ pub(crate) struct ListRunnersOptions {
 /// see that the public URL has not been configured.
 #[derive(Debug, Clone)]
 pub struct RuntimeInfo {
+    pub(crate) tunnels: crate::server_tunnels::TunnelStatus,
     pub auth_enabled: bool,
     /// Raw base flag (`WEBCODEX_SHARED_KEY_ENABLED`) captured at Runtime
     /// construction, before the remote-boundary policy is applied.
@@ -84,6 +85,7 @@ impl RuntimeInfo {
             .filter(|s| !s.is_empty());
         Self {
             auth_enabled,
+            tunnels: Default::default(),
             shared_key_configured: crate::auth::shared_key_enabled(),
             shared_key_enabled: crate::auth::direct_shared_key_enabled_with_quic(config, quic_cfg),
             shared_key_remote_enabled: crate::auth::shared_key_remote_enabled(),
@@ -543,6 +545,10 @@ impl ToolRuntime {
             permissions::authority_profile_payload(),
         );
         output.insert("session_store".to_string(), json!(self.sessions.status()));
+        let tunnels = self.runtime_info.tunnels.snapshot();
+        if !tunnels.is_empty() {
+            output.insert("tunnels".into(), json!(tunnels));
+        }
         if let Some(quic) = quic {
             output.insert("quic".to_string(), quic);
         }
@@ -1709,6 +1715,7 @@ impl Default for RuntimeInfo {
     fn default() -> Self {
         Self {
             auth_enabled: false,
+            tunnels: Default::default(),
             shared_key_configured: false,
             shared_key_enabled: false,
             shared_key_remote_enabled: false,

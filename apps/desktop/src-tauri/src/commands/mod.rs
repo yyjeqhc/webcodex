@@ -643,6 +643,29 @@ pub async fn export_support_bundle(path: String, state: State<'_, AppState>) -> 
 }
 
 #[tauri::command]
+pub async fn get_path_inventory(
+    state: State<'_, AppState>,
+) -> DesktopResult<webcodex_environment::inventory::PathInventory> {
+    state.path_inventory().await
+}
+
+#[tauri::command]
+pub async fn open_inventory_location(
+    request: crate::state::OpenInventoryRequest,
+    state: State<'_, AppState>,
+) -> DesktopResult<()> {
+    state.open_inventory_location(request).await
+}
+
+#[tauri::command]
+pub async fn export_inventory_document(
+    request: crate::state::ExportInventoryRequest,
+    state: State<'_, AppState>,
+) -> DesktopResult<()> {
+    state.export_inventory_document(request).await
+}
+
+#[tauri::command]
 pub async fn check_for_updates(
     manual: bool,
     state: State<'_, AppState>,
@@ -652,6 +675,14 @@ pub async fn check_for_updates(
 #[tauri::command]
 pub fn get_update_download_state(state: State<'_, AppState>) -> crate::updates::DownloadStatus {
     state.get_update_download_state()
+}
+
+#[tauri::command]
+pub async fn get_local_update_status(
+    inspect_files: bool,
+    state: State<'_, AppState>,
+) -> DesktopResult<crate::state::updates::LocalUpdateStatus> {
+    state.local_update_status(inspect_files).await
 }
 
 #[tauri::command]
@@ -679,10 +710,14 @@ pub async fn set_automatic_update_download(
 pub async fn install_verified_update(
     version: String,
     confirmed: bool,
+    confirmation: crate::state::updates::UpdateConfirmation,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> DesktopResult<()> {
-    if state.install_verified_update(&version, confirmed).await? {
+    if state
+        .install_verified_update(&version, confirmed, confirmation)
+        .await?
+    {
         // Only the explicit Install confirmation authorizes this exit. The
         // normal exit path closes Desktop-owned processes, not persistent services.
         app.exit(0);

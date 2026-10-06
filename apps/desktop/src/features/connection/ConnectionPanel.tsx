@@ -9,8 +9,9 @@ import { useShellText } from "../../i18n/runtime-shell";
 import { EMPTY_CONNECTIONS, type TunnelConnection, type TunnelProfileAction } from "../../models/connections-tools";
 import { useProduct } from "../../i18n/product";
 import { useConnectionsTools } from "../../i18n/connections-tools";
-import { ChatgptObservation, desktopStatusPresentation } from "../workspace/WorkspaceStatus";
+import { desktopStatusPresentation } from "../workspace/WorkspaceStatus";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
+import { FirstReadGuide } from "../onboarding/FirstRunCompletion";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { ConnectionCard } from "./ConnectionCard";
 
@@ -53,7 +54,7 @@ export function ConnectionPanel({ state, onState, onSettings }: { state: Desktop
       onCopy={() => { if (profile.tunnel_id) void writeText(profile.tunnel_id).then(() => setCopiedId(profile.id)).catch(value => setFailed(normalizeDesktopError(value))); }} />)}</div>
     {state.connections && !profiles.profiles.length && !profiles.config_error && state.topology?.experience !== "quick_share" && <p className="workspace-empty">{presentation.connectionText}</p>}
     {state.topology?.experience === "quick_share" && state.quick_share && <button className="secondary-button" disabled={disabled} onClick={() => { void desktopApi.stopQuickShare().then(onState).catch(value => setFailed(normalizeDesktopError(value))); }}>{p("stop")} Quick Share</button>}
-    <section className="workspace-section connection-chatgpt"><h2>ChatGPT</h2><ChatgptObservation state={state} /></section>
+    <FirstReadGuide state={state} />
     {editor && <ConnectionEditor profile={editor.profile} onState={next => { onState(next); setSaved(true); }} onClose={() => setEditor(null)} />}
     {deleting && <WorkspaceDialog title={c("delete") + " " + deleting.name} onClose={() => setDeleting(null)} busy={busyId !== null}>
       <p>{c("deleteConnectionHelp")}</p>

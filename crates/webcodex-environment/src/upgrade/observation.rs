@@ -35,6 +35,14 @@ pub fn upgrade_observation(
     store: &EnvironmentStore,
 ) -> SetupResultValue<Option<UpgradeObservation>> {
     let _lock = store.lock()?;
+    upgrade_observation_under_lock(store)
+}
+
+/// Internal readers that hold the existing setup fence can recheck identity
+/// without creating a lock or attempting to acquire it recursively.
+pub(crate) fn upgrade_observation_under_lock(
+    store: &EnvironmentStore,
+) -> SetupResultValue<Option<UpgradeObservation>> {
     let Some(journal): Option<UpgradeJournal> = store.read_json("upgrade.json")? else {
         return Ok(None);
     };

@@ -8,12 +8,14 @@ mod health;
 mod mcp_http;
 pub mod policy;
 mod poller;
+mod proxy;
 mod response;
 pub mod wire;
 
 pub use error::Error;
 pub use health::{Health, HealthSnapshot};
 use policy::{DeadlinePolicy, Limits};
+pub use proxy::ControlPlaneProxy;
 use reqwest::{
     header::{HeaderValue, AUTHORIZATION},
     Client, Url,
@@ -123,6 +125,17 @@ impl TunnelClient {
         policy: DeadlinePolicy,
         limits: Limits,
     ) -> Result<Self, Error> {
+        Self::new_with_proxy(cp, target, policy, limits, ControlPlaneProxy::System)
+    }
+
+    /// Construct an immutable profile without changing process-global proxy configuration.
+    pub fn new_with_proxy(
+        cp: ControlPlaneIdentity,
+        target: FixedMcpTarget,
+        policy: DeadlinePolicy,
+        limits: Limits,
+        proxy: ControlPlaneProxy,
+    ) -> Result<Self, Error> {
         limits.validate()?;
         if matches!(policy, DeadlinePolicy::RequireFinite { max_duration } if max_duration.is_zero() || max_duration > Duration::from_secs(86400))
         {
@@ -157,7 +170,8 @@ impl TunnelClient {
             HeaderValue::from_str(&uuid::Uuid::new_v4().to_string())
                 .map_err(|_| Error::Configuration)?,
         );
-        let control = builder()
+        let control = proxy
+            .apply(builder())?
             .default_headers(headers)
             .build()
             .map_err(|_| Error::Configuration)?;
@@ -179,9 +193,23 @@ impl TunnelClient {
     pub fn health(&self) -> Health {
         self.health.clone()
     }
-    /// Stops admission and drops/joins all owned work on cancellation. Cancellation
-    /// cannot undo an MCP effect; an uncertain shutdown returns `Error::Uncertain`.
+    /// Stop ingress, then allow admitted work ten seconds to settle, including response
+    /// delivery. Dropping this future is abrupt owner loss, not a clean shutdown.
     pub async fn run(self, stop: impl Future<Output = ()>) -> Result<(), Error> {
-        self.poller(stop).await
+        self.run_with_drain(stop, Duration::from_secs(10)).await
+    }
+
+    /// The drain bound is independent of wire command deadlines. Original command
+    /// deadlines still apply; a deadline, lost delivery, or drain timeout never permits
+    /// local replay. The host must retain its restart fence on an uncertain result.
+    pub async fn run_with_drain(
+        self,
+        stop: impl Future<Output = ()>,
+        drain_timeout: Duration,
+    ) -> Result<(), Error> {
+        if drain_timeout.is_zero() || drain_timeout > Duration::from_secs(120) {
+            return Err(Error::Configuration);
+        }
+        self.poller(stop, drain_timeout).await
     }
 }

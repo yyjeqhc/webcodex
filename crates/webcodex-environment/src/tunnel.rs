@@ -12,15 +12,27 @@ pub struct TunnelCredentials {
     pub tunnel_id: Secret,
     pub api_key: Secret,
 }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelHostMode {
+    #[default]
+    Standalone,
+    Embedded,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TunnelRecord {
     pub profile_id: String,
+    #[serde(default)]
+    pub host_mode: TunnelHostMode,
     pub installed: bool,
     pub started: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TunnelRuntimeObservation {
     pub service_status: service::ServiceStatus,
+    #[serde(default)]
+    pub host_mode: TunnelHostMode,
     pub ready: bool,
     pub tunnel_ready: bool,
     pub local_mcp_ready: bool,
@@ -28,7 +40,7 @@ pub struct TunnelRuntimeObservation {
 fn diagnostic(code: &str, message: &str) -> SetupDiagnostic {
     SetupDiagnostic::new(code, message, "Inspect the saved Tunnel profile and its system service; keep its original Tunnel ID and API credential")
 }
-fn validate_id(id: &str) -> SetupResultValue<()> {
+pub(crate) fn validate_id(id: &str) -> SetupResultValue<()> {
     if id.is_empty()
         || id.len() > 64
         || !id
@@ -132,6 +144,7 @@ impl NativeEnvironment {
         credentials: Option<&TunnelCredentials>,
         start: bool,
     ) -> SetupResultValue<service::ServiceStatus> {
+        require_standalone(store, profile_id)?;
         let record = store
             .load_environment()?
             .or_else(|| {
@@ -204,6 +217,7 @@ impl NativeEnvironment {
         {
             profiles.push(TunnelRecord {
                 profile_id: profile_id.into(),
+                host_mode: TunnelHostMode::Standalone,
                 installed: false,
                 started: false,
             });
@@ -267,7 +281,13 @@ impl NativeEnvironment {
             .load_environment()?
             .ok_or_else(|| diagnostic("not_configured", "Configure this environment first"))?;
         let spec = tunnel_service_spec(store, &record, profile_id)?;
-        let service_status = ServiceManager::inspect(&spec).map_err(service_error)?;
+        let host_mode = profile_host_mode(store, profile_id)?;
+        let owner_spec = if host_mode == TunnelHostMode::Embedded {
+            crate::service_spec(store, &record, Component::Server)?
+        } else {
+            spec.clone()
+        };
+        let service_status = ServiceManager::inspect(&owner_spec).map_err(service_error)?;
         let (tunnel_ready, local_mcp_ready) = if service_status.ownership == Ownership::Owned
             && service_status.running == Some(true)
         {
@@ -277,6 +297,7 @@ impl NativeEnvironment {
         };
         Ok(TunnelRuntimeObservation {
             service_status,
+            host_mode,
             ready: tunnel_ready && local_mcp_ready,
             tunnel_ready,
             local_mcp_ready,
@@ -289,6 +310,7 @@ impl NativeEnvironment {
     ) -> SetupResultValue<()> {
         let _lock = store.lock()?;
         crate::ensure_upgrade_idle_under_lock(store)?;
+        require_standalone(store, profile_id)?;
         let record = store
             .load_environment()?
             .ok_or_else(|| diagnostic("not_configured", "Configure this environment first"))?;
@@ -349,6 +371,7 @@ impl NativeEnvironment {
     ) -> SetupResultValue<service::ServiceStatus> {
         let _lock = store.lock()?;
         crate::ensure_upgrade_idle_under_lock(store)?;
+        require_standalone(store, profile_id)?;
         let record = store.load_environment()?.ok_or_else(|| {
             diagnostic("not_configured", "Configure the Server environment first")
         })?;
@@ -376,6 +399,25 @@ impl NativeEnvironment {
         }
         Ok(result)
     }
+}
+
+pub(crate) fn profile_host_mode(
+    store: &EnvironmentStore,
+    profile_id: &str,
+) -> SetupResultValue<TunnelHostMode> {
+    validate_id(profile_id)?;
+    Ok(tunnel_profiles(store)?
+        .into_iter()
+        .find(|p| p.profile_id == profile_id)
+        .map(|p| p.host_mode)
+        .unwrap_or_default())
+}
+
+fn require_standalone(store: &EnvironmentStore, profile_id: &str) -> SetupResultValue<()> {
+    if profile_host_mode(store, profile_id)? == TunnelHostMode::Embedded {
+        return Err(SetupDiagnostic::new("tunnel_server_owned", "This Tunnel lifecycle belongs to the Server", "Control the owning Server; change the host explicitly after a clean stop before removing or starting a standalone service"));
+    }
+    Ok(())
 }
 
 fn tunnel_install_required(status: &service::ServiceStatus) -> SetupResultValue<bool> {

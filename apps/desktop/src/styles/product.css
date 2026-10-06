@@ -509,3 +509,21 @@
   .sidebar nav button { padding-block: 0; }
 }
 .sidebar .nav-label, .settings-navigation > button, .extensions-navigation > button { hyphens: auto; }
+
+.configuration-data, .configuration-location, .configuration-location .detail-list > div { min-width: 0; }
+.configuration-location { padding-block: 1rem; border-bottom: 1px solid var(--ui-border-subtle); }
+.configuration-location h4, .configuration-location dd, .configuration-location code { overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
+.configuration-location .shell-actions, .configuration-data > .shell-actions { flex-wrap: wrap; }
+.configuration-status { font-weight: 600; }
+@media (max-width: 480px) {
+  .configuration-location .detail-list > div { display: block; }
+  .configuration-location dd { margin-left: 0; }
+}
+.update-components { min-width: 0; max-width: 100%; }
+.update-components table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px; }
+.update-components caption { text-align: start; font-weight: 600; margin: 12px 0; }
+.update-components th, .update-components td { text-align: start; vertical-align: top; padding: 10px 6px; border-bottom: 1px solid var(--ui-border); overflow-wrap: anywhere; }
+.update-components td > span, .update-components td > code { display: block; }
+.update-components code { font-size: 12px; overflow-wrap: anywhere; }
+.update-confirmation { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .update-components th, .update-components td { padding: 8px 3px; font-size: 12px; } }

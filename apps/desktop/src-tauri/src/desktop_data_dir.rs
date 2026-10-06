@@ -1,7 +1,9 @@
 use crate::error::{DesktopError, DesktopResult};
-use std::path::{Path, PathBuf};
+#[cfg(all(test, windows))]
+use std::path::Path;
+use std::path::PathBuf;
 
-pub const DESKTOP_DATA_DIR_ENV: &str = "WEBCODEX_DESKTOP_DATA_DIR";
+pub use webcodex_environment::unified_update::DESKTOP_DATA_DIR_ENV;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopDataDirSource {
@@ -33,165 +35,44 @@ fn resolve_with_override(
     default: PathBuf,
     override_value: Option<std::ffi::OsString>,
 ) -> DesktopResult<DesktopDataDir> {
-    let (logical, source) = match override_value {
-        Some(value) => {
-            let path = PathBuf::from(value);
-            if !path.is_absolute() {
-                return Err(DesktopError::new(
-                    "desktop_data_dir_invalid",
-                    format!("{DESKTOP_DATA_DIR_ENV} must be an absolute path"),
-                    "Set the override to an absolute filesystem path or remove it.",
-                ));
-            }
-            (path, DesktopDataDirSource::Environment)
-        }
-        None => (default, DesktopDataDirSource::Tauri),
-    };
-
-    let effective = resolve_physical_path(&logical)?;
-    let physical_resolution_changed =
-        !webcodex_runner_config::paths::paths_equal(&logical, &effective);
+    let resolved =
+        webcodex_environment::unified_update::desktop_data_dir::resolve_with_override_detailed(
+            default,
+            override_value,
+        )
+        .map_err(project_data_dir_error)?;
     Ok(DesktopDataDir {
-        effective,
-        source,
-        physical_resolution_changed,
+        effective: resolved.effective,
+        source: match resolved.source {
+            webcodex_environment::unified_update::desktop_data_dir::DesktopDataDirSource::Tauri => DesktopDataDirSource::Tauri,
+            webcodex_environment::unified_update::desktop_data_dir::DesktopDataDirSource::Environment => DesktopDataDirSource::Environment,
+        },
+        physical_resolution_changed: resolved.physical_resolution_changed,
     })
 }
-#[cfg(windows)]
-fn resolve_physical_path(path: &Path) -> DesktopResult<PathBuf> {
-    if !path.is_absolute() {
-        return Err(invalid_data_dir(
-            path,
-            "Desktop data directory is not absolute",
-        ));
-    }
 
-    // Resolve only ancestors, not the final Desktop-owned directory itself.
-    // This is the important security boundary: a redirected Windows profile or
-    // LocalAppData ancestor may legitimately be a Junction, but an existing
-    // WebCodex data root that was replaced with a Junction/symlink must remain
-    // visible to the credential-path safety checks instead of being
-    // canonicalized away here.
-    let leaf = path.file_name().ok_or_else(|| {
-        invalid_data_dir(
-            path,
-            "Desktop data directory must have an application-owned final component",
+fn project_data_dir_error(
+    error: webcodex_environment::unified_update::desktop_data_dir::DesktopDataDirError,
+) -> DesktopError {
+    use webcodex_environment::unified_update::desktop_data_dir::DesktopDataDirError;
+    match error {
+        DesktopDataDirError::RelativeOverride => DesktopError::new(
+            "desktop_data_dir_invalid",
+            format!("{DESKTOP_DATA_DIR_ENV} must be an absolute path"),
+            "Set the override to an absolute filesystem path or remove it.",
+        ),
+        DesktopDataDirError::Unavailable { reason, path_kind } => DesktopError::new(
+            "desktop_data_dir_unavailable",
+            reason.message(),
+            "Check the Desktop app-data location and local filesystem permissions, then retry.",
         )
-    })?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| invalid_data_dir(path, "Desktop data directory has no parent directory"))?;
-
-    let mut resolved_parent = resolve_existing_ancestor(parent, path)?;
-    resolved_parent.push(leaf);
-    validate_effective_root(&resolved_parent, path)?;
-    Ok(resolved_parent)
-}
-
-#[cfg(windows)]
-fn resolve_existing_ancestor(path: &Path, original: &Path) -> DesktopResult<PathBuf> {
-    let mut existing = path.to_path_buf();
-    let mut tail = Vec::new();
-    loop {
-        match std::fs::symlink_metadata(&existing) {
-            Ok(_) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let name = existing.file_name().ok_or_else(|| {
-                    invalid_data_dir(original, "Desktop data directory has no existing ancestor")
-                })?;
-                tail.push(name.to_os_string());
-                if !existing.pop() {
-                    return Err(invalid_data_dir(
-                        original,
-                        "Desktop data directory has no existing ancestor",
-                    ));
-                }
-            }
-            Err(_) => {
-                return Err(invalid_data_dir(
-                    original,
-                    "Desktop cannot inspect its app-data directory",
-                ))
-            }
-        }
-    }
-
-    let metadata = std::fs::metadata(&existing)
-        .map_err(|_| invalid_data_dir(original, "Desktop cannot inspect its app-data directory"))?;
-    if !metadata.is_dir() {
-        return Err(invalid_data_dir(
-            original,
-            "Desktop data directory resolves through a non-directory ancestor",
-        ));
-    }
-
-    let mut resolved = std::fs::canonicalize(&existing)
-        .map_err(|_| invalid_data_dir(original, "Desktop cannot resolve its app-data directory"))?;
-    resolved = normalize_windows_canonical_path(resolved);
-    for component in tail.iter().rev() {
-        resolved.push(component);
-    }
-    Ok(resolved)
-}
-
-#[cfg(windows)]
-fn validate_effective_root(path: &Path, original: &Path) -> DesktopResult<()> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_symlink() => Err(invalid_data_dir(
-            original,
-            "Desktop data directory itself is a reparse point",
-        )),
-        Ok(metadata) if metadata.is_dir() => Ok(()),
-        Ok(_) => Err(invalid_data_dir(
-            original,
-            "Desktop data directory is not a directory",
-        )),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(invalid_data_dir(
-            original,
-            "Desktop cannot inspect its app-data directory",
-        )),
+        .with_details(serde_json::json!({ "path_kind": path_kind.label() })),
     }
 }
-#[cfg(not(windows))]
+
+#[cfg(all(test, windows))]
 fn resolve_physical_path(path: &Path) -> DesktopResult<PathBuf> {
-    if !path.is_absolute() {
-        return Err(invalid_data_dir(
-            path,
-            "Desktop data directory is not absolute",
-        ));
-    }
-    Ok(path.to_path_buf())
-}
-
-#[cfg(windows)]
-fn normalize_windows_canonical_path(path: PathBuf) -> PathBuf {
-    let value = path.to_string_lossy();
-    if let Some(rest) = value.strip_prefix(r"\?\UNC\") {
-        return PathBuf::from(format!(r"\\{rest}"));
-    }
-    if let Some(rest) = value.strip_prefix(r"\?\") {
-        let bytes = rest.as_bytes();
-        if bytes.len() >= 3
-            && bytes[0].is_ascii_alphabetic()
-            && bytes[1] == b':'
-            && matches!(bytes[2], b'\\' | b'/')
-        {
-            return PathBuf::from(rest);
-        }
-    }
-    path
-}
-
-fn invalid_data_dir(path: &Path, message: &'static str) -> DesktopError {
-    DesktopError::new(
-        "desktop_data_dir_unavailable",
-        message,
-        "Check the Desktop app-data location and local filesystem permissions, then retry.",
-    )
-    .with_details(serde_json::json!({
-        "path_kind": if path.is_absolute() { "absolute" } else { "relative" }
-    }))
+    resolve_with_override(path.to_path_buf(), None).map(|d| d.effective)
 }
 
 #[cfg(all(test, windows))]
@@ -218,8 +99,7 @@ mod tests {
         let resolved =
             resolve_with_override(default, Some(override_path.clone().into_os_string())).unwrap();
         assert_eq!(resolved.source, DesktopDataDirSource::Environment);
-        let expected =
-            normalize_windows_canonical_path(temp.path().canonicalize().unwrap()).join("override");
+        let expected = temp.path().canonicalize().unwrap().join("override");
         assert!(webcodex_runner_config::paths::paths_equal(
             &resolved.effective,
             &expected
@@ -253,7 +133,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let logical = temp.path().join("missing").join("nested");
         let resolved = resolve_physical_path(&logical).unwrap();
-        let expected = normalize_windows_canonical_path(temp.path().canonicalize().unwrap())
+        let expected = temp
+            .path()
+            .canonicalize()
+            .unwrap()
             .join("missing")
             .join("nested");
         assert!(webcodex_runner_config::paths::paths_equal(
@@ -271,7 +154,9 @@ mod tests {
 
         let logical = logical_root.join("AppData").join("Local").join("WebCodex");
         let resolved = resolve_physical_path(&logical).unwrap();
-        let expected = normalize_windows_canonical_path(physical.canonicalize().unwrap())
+        let expected = physical
+            .canonicalize()
+            .unwrap()
             .join("AppData")
             .join("Local")
             .join("WebCodex");
@@ -314,7 +199,9 @@ mod tests {
             .join("Local")
             .join("WebCodex");
         let resolved = resolve_physical_path(&logical).unwrap();
-        let expected = normalize_windows_canonical_path(second_target.canonicalize().unwrap())
+        let expected = second_target
+            .canonicalize()
+            .unwrap()
             .join("AppData")
             .join("Local")
             .join("WebCodex");
@@ -342,5 +229,99 @@ mod tests {
             &server_data,
             &expected_runtime_root.join("data")
         ));
+    }
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    use webcodex_environment::unified_update::desktop_data_dir::{
+        DesktopDataDirError, DesktopDataDirFailureReason as Reason, DesktopDataDirPathKind,
+    };
+
+    #[test]
+    fn relative_override_and_default_keep_distinct_desktop_errors() {
+        let relative = PathBuf::from("private-relative-root");
+        let error =
+            resolve_with_override(relative.clone(), Some(relative.clone().into_os_string()))
+                .unwrap_err();
+        assert_eq!(error.code, "desktop_data_dir_invalid");
+        assert_eq!(
+            error.message,
+            format!("{DESKTOP_DATA_DIR_ENV} must be an absolute path")
+        );
+        assert_eq!(
+            error.next_action,
+            "Set the override to an absolute filesystem path or remove it."
+        );
+        assert_eq!(error.details, None);
+
+        let error = resolve_with_override(relative, None).unwrap_err();
+        assert_eq!(error.code, "desktop_data_dir_unavailable");
+        assert_eq!(error.message, "Desktop data directory is not absolute");
+        assert_eq!(
+            error.details,
+            Some(serde_json::json!({ "path_kind": "relative" }))
+        );
+        assert!(!serde_json::to_string(&error)
+            .unwrap()
+            .contains("private-relative-root"));
+    }
+
+    #[test]
+    fn unavailable_projection_preserves_each_fixed_reason_and_bounded_details() {
+        for (reason, expected) in [
+            (
+                Reason::NotAbsolute,
+                "Desktop data directory is not absolute",
+            ),
+            (
+                Reason::MissingFinalComponent,
+                "Desktop data directory must have an application-owned final component",
+            ),
+            (
+                Reason::MissingParent,
+                "Desktop data directory has no parent directory",
+            ),
+            (
+                Reason::NoExistingAncestor,
+                "Desktop data directory has no existing ancestor",
+            ),
+            (
+                Reason::CannotInspect,
+                "Desktop cannot inspect its app-data directory",
+            ),
+            (
+                Reason::NonDirectoryAncestor,
+                "Desktop data directory resolves through a non-directory ancestor",
+            ),
+            (
+                Reason::CannotResolve,
+                "Desktop cannot resolve its app-data directory",
+            ),
+            (
+                Reason::RootReparsePoint,
+                "Desktop data directory itself is a reparse point",
+            ),
+            (
+                Reason::RootNotDirectory,
+                "Desktop data directory is not a directory",
+            ),
+        ] {
+            for path_kind in [
+                DesktopDataDirPathKind::Absolute,
+                DesktopDataDirPathKind::Relative,
+            ] {
+                let error =
+                    project_data_dir_error(DesktopDataDirError::Unavailable { reason, path_kind });
+                assert_eq!(error.code, "desktop_data_dir_unavailable");
+                assert_eq!(error.message, expected);
+                assert_eq!(error.next_action, "Check the Desktop app-data location and local filesystem permissions, then retry.");
+                assert_eq!(
+                    error.details,
+                    Some(serde_json::json!({ "path_kind": path_kind.label() }))
+                );
+            }
+        }
     }
 }

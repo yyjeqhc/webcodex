@@ -4,11 +4,16 @@ use std::{
     collections::{HashSet, VecDeque},
     future::Future,
     sync::atomic::Ordering,
+    time::Duration,
 };
 use tokio::time::{sleep_until, Instant};
 
 impl TunnelClient {
-    pub(crate) async fn poller(&self, stop: impl Future<Output = ()>) -> Result<(), Error> {
+    pub(crate) async fn poller(
+        &self,
+        stop: impl Future<Output = ()>,
+        drain_timeout: Duration,
+    ) -> Result<(), Error> {
         struct ReadinessGuard(crate::Health);
         impl Drop for ReadinessGuard {
             fn drop(&mut self) {
@@ -24,7 +29,7 @@ impl TunnelClient {
         let mut failures = 0u32;
         // Keep a poll future alive while workers complete: dropping it on each
         // completion could lose commands already removed from the server queue.
-        let result = 'run: loop {
+        let mut result = 'run: loop {
             while work.len() < self.limits.concurrency {
                 let Some((command, received)) = queue.pop_front() else {
                     break;
@@ -86,9 +91,34 @@ impl TunnelClient {
                 }
             }
         };
-        // Futures are owned here, never detached Tokio tasks. Drop closes HTTP work.
-        drop(work);
+        // No more control-plane admission. Keep the same workers and original
+        // receive timestamps while settling both queued and dispatched commands.
+        // In particular, stopping ingress does not cancel response delivery.
         self.health.ready(false);
+        let drain = async {
+            loop {
+                while work.len() < self.limits.concurrency {
+                    let Some((command, received)) = queue.pop_front() else {
+                        break;
+                    };
+                    work.push(self.execute(command, received));
+                }
+                let Some(completed) = work.next().await else {
+                    break;
+                };
+                if result.is_ok() {
+                    result = completed;
+                }
+            }
+        };
+        if tokio::time::timeout(drain_timeout, drain).await.is_err() {
+            // Even unpolled admitted work is not proof of confirmed delivery.
+            // Hosts must use this outcome as well as the health counter.
+            result = Err(Error::Uncertain);
+        }
+        // Futures are owned here, never detached Tokio tasks. A timeout closes
+        // local I/O but cannot undo an effect or clear an uncertainty counter.
+        drop(work);
         if result.is_ok() && self.health.has_uncertain_work() {
             Err(Error::Uncertain)
         } else {

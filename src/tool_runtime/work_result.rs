@@ -185,12 +185,85 @@ impl ToolRuntime {
         ToolResult::ok(json!({"activity_detail": detail}))
     }
 
+    pub(crate) async fn work_result_collaboration_page(
+        &self,
+        project: String,
+        session_id: Option<String>,
+        history: super::tool_call::WorkResultCollaborationRequest,
+        auth: Option<&AuthContext>,
+        window: Option<&ClientWindow>,
+    ) -> ToolResult {
+        if let Err(result) = self.authorize_work_result_project(&project, auth).await {
+            return result;
+        }
+        if let Some(session) = session_id.as_deref() {
+            if let Err(result) = self
+                .authorize_work_result_target(&project, session, "get_work_result_state", auth)
+                .await
+            {
+                return result;
+            }
+        }
+        let Some(window) = window else {
+            return ToolResult::err("stable Window identity required");
+        };
+        if !auth.is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_SESSION_COLLABORATE)) {
+            return ToolResult::err("collaboration scope required");
+        }
+        if history
+            .limit
+            .is_some_and(|limit| !(1..=100).contains(&limit))
+            || history.before_message_id.as_deref().is_some_and(|id| {
+                !webcodex_core::workflow_session_contract::is_valid_session_message_id(id)
+            })
+        {
+            return ToolResult::err("invalid collaboration history page");
+        }
+        let Ok((kind, principal)) = super::runtime_observation_principal(auth) else {
+            return ToolResult::err("collaboration principal unavailable");
+        };
+        let page = self.window_collaboration_page_for_principal(
+            window.key(),
+            &kind,
+            &principal,
+            history.limit.unwrap_or(50),
+            history.before_message_id.as_deref(),
+        );
+        if page["available"] != true {
+            return ToolResult::err_with_output("Collaboration history unavailable", page);
+        }
+        ToolResult::ok(json!({"work_result_collaboration":page}))
+    }
+
+    #[cfg(test)]
     pub(crate) async fn work_result_send_message(
         &self,
         project: String,
         session_id: Option<String>,
         message: String,
         delivery_key: String,
+        auth: Option<&AuthContext>,
+        window: Option<&ClientWindow>,
+    ) -> ToolResult {
+        self.work_result_send_message_with_kind(
+            project,
+            session_id,
+            message,
+            delivery_key,
+            "guidance",
+            auth,
+            window,
+        )
+        .await
+    }
+
+    pub(crate) async fn work_result_send_message_with_kind(
+        &self,
+        project: String,
+        session_id: Option<String>,
+        message: String,
+        delivery_key: String,
+        kind: &str,
         auth: Option<&AuthContext>,
         window: Option<&ClientWindow>,
     ) -> ToolResult {
@@ -201,10 +274,13 @@ impl ToolRuntime {
         let Some(window) = window else {
             return ToolResult::err("stable Window identity required");
         };
-        self.post_window_operator_message(
+        self.post_window_operator_message_with_options(
             window.key(),
             session_id.as_deref(),
             Some(&project),
+            kind,
+            "normal",
+            true,
             message,
             delivery_key,
             auth,

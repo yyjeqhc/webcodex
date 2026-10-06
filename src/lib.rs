@@ -53,6 +53,7 @@ mod upgrade_maintenance_store;
 pub(crate) use webcodex_store::ServerInstanceGuard;
 mod server_listener;
 mod server_shutdown;
+mod server_tunnels;
 mod ssh_resource_gateway;
 mod startup;
 #[cfg(test)]
@@ -276,6 +277,7 @@ pub async fn run_server_with_shutdown(
     let (acceptor, listener_mode, listener_addr) = server_listener::server_acceptor(&config.addr)
         .await
         .map_err(std::io::Error::other)?;
+    let tunnels = server_tunnels::TunnelSupervisor::from_env(listener_addr)?;
     let console_asset_source = Arc::new(
         console_web::ConsoleAssetSource::from_env(&config.addr).map_err(std::io::Error::other)?,
     );
@@ -367,9 +369,10 @@ explicitly allow remote shared-key auth."
     let shutdown_coordinator = Arc::new(server_shutdown::ShutdownCoordinator::default());
     let quic_cfg = config::QuicServerConfig::from_env();
     let project_auth = Arc::new(auth::ProjectAuthState::from_env().map_err(std::io::Error::other)?);
-    let runtime_info = Arc::new(tool_runtime::RuntimeInfo::from_config_with_quic_config(
-        &config, &quic_cfg,
-    ));
+    let mut runtime_info =
+        tool_runtime::RuntimeInfo::from_config_with_quic_config(&config, &quic_cfg);
+    runtime_info.tunnels = tunnels.status();
+    let runtime_info = Arc::new(runtime_info);
     let runtime_state_dir = config.runtime_state_dir();
     let mut tool_runtime_builder =
         tool_runtime::ToolRuntime::new(runner_registry.clone(), runtime_info.clone())
@@ -841,6 +844,7 @@ explicitly allow remote shared-key auth."
         std::time::Duration::from_secs(SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECS),
         stop_on_stdin_eof,
         service_stop,
+        tunnels,
     )
     .await?;
     #[cfg(target_os = "macos")]

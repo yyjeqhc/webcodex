@@ -7,6 +7,8 @@ pub use environment_invitation::{InvitationRequest, InvitationResponse};
 mod managed_instructions;
 mod mcp_providers;
 mod operation_completion;
+mod path_inventory;
+pub use path_inventory::{ExportInventoryRequest, OpenInventoryRequest};
 #[cfg(test)]
 mod projectless_tests;
 #[cfg(test)]
@@ -14,7 +16,7 @@ mod reconfiguration_tests;
 mod runner_capability_grant;
 mod runtime_shell;
 mod ssh_resources;
-mod updates;
+pub(crate) mod updates;
 mod workspace;
 mod workspace_settings;
 use crate::activity::{ActivityEventKind, ActivityLevel, ActivityLog};

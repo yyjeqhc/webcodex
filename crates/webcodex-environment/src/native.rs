@@ -1118,7 +1118,7 @@ impl NativeEnvironment {
                 token_file: None,
                 client_id: enrollment.client_id.clone(),
                 owner: enrollment.username.clone(),
-                display_name: None,
+                display_name: record.request.runner_display_name.clone(),
                 transport: "auto".into(),
                 poll_interval_ms: 1000,
                 project_registry_dir: registry,
@@ -1937,6 +1937,22 @@ pub(crate) fn validate_request_with_preserved_listen(
     request: &SetupRequest,
     preserve: bool,
 ) -> SetupResultValue<()> {
+    webcodex_core::runner_protocol::validate_optional_runner_field(
+        &request.runner_display_name,
+        "display_name",
+    )
+    .map_err(|_| {
+        diagnostic(
+            "runner_display_name",
+            "Runner name must be at most 200 characters and contain no NUL",
+        )
+    })?;
+    if request.runner_display_name.is_some() && !request.local_runner() {
+        return Err(diagnostic(
+            "runner_display_name",
+            "A Runner name requires a local Runner",
+        ));
+    }
     if canonical_server_url(&request.server_url)? != request.server_url {
         return Err(diagnostic("server_url", "Use the canonical Server address"));
     }

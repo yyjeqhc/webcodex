@@ -303,6 +303,7 @@ impl AppState {
         project_path: &str,
     ) -> DesktopResult<DesktopStateSnapshot> {
         self.configure_environment(crate::models::EnvironmentInput {
+            runner_display_name: None,
             service_scope: None,
             mode: "join".into(),
             server_url: Some(server_url.to_owned()),

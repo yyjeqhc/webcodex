@@ -4,12 +4,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use webcodex_environment::unified_update::{InstallerTarget, PackageFormat, UpdateError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum LaunchOutcome {
-    Started,
-    NotStarted(UpdateError),
-    Unknown,
-}
+use webcodex_environment::unified_update::LaunchOutcome;
 
 pub(super) fn supported(target: InstallerTarget) -> bool {
     if !target.valid() {
@@ -185,6 +180,7 @@ pub(super) async fn launch_unix(
     _: &Path,
     _: &str,
     _: &str,
+    _: InstallerTarget,
 ) -> LaunchOutcome {
     LaunchOutcome::NotStarted(UpdateError::UnsupportedPlatform)
 }
@@ -368,11 +364,21 @@ mod macos {
     }
 }
 
+#[cfg(any(windows, test))]
+fn windows_arguments(environment_dir: &Path, request_path: &Path) -> [OsString; 2] {
+    let mut environment = OsString::from("/ENVIRONMENTDIR=");
+    environment.push(environment_dir.as_os_str());
+    let mut selected = OsString::from("/UPGRADETARGET=");
+    selected.push(request_path.as_os_str());
+    [environment, selected]
+}
+
 #[cfg(windows)]
-pub(super) fn launch_windows(
+pub(super) async fn launch_windows(
     installer: &Path,
     expected_sha256: &str,
     environment_dir: &Path,
+    handoff: &webcodex_environment::unified_update::WindowsHandoff,
 ) -> LaunchOutcome {
     use sha2::{Digest, Sha256};
     use std::io::Read;
@@ -407,18 +413,42 @@ pub(super) fn launch_windows(
     if count == 0 || format!("{:x}", hash.finalize()) != expected_sha256 {
         return LaunchOutcome::NotStarted(UpdateError::ChecksumMismatch);
     }
-    let mut environment = OsString::from("/ENVIRONMENTDIR=");
-    environment.push(environment_dir.as_os_str());
-    match std::process::Command::new(installer)
-        .arg(environment)
+    let request_path = match handoff.request_path() {
+        Ok(path) => path,
+        Err(error) => return LaunchOutcome::NotStarted(error),
+    };
+    let mut child = match std::process::Command::new(installer)
+        .args(windows_arguments(environment_dir, &request_path))
         .creation_flags(0x0000_0200 | 0x0000_0008)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
     {
-        Ok(_) => LaunchOutcome::Started,
-        Err(_) => LaunchOutcome::NotStarted(UpdateError::InstallerLaunchFailed),
+        Ok(child) => child,
+        Err(_) => return LaunchOutcome::NotStarted(UpdateError::InstallerLaunchFailed),
+    };
+    // This only consumes an ephemeral reply for this exact launch. The engine
+    // must save its operation before acknowledging permission to replace files.
+    let acknowledgement = tokio::time::timeout(std::time::Duration::from_secs(600), async {
+        loop {
+            if let Some(operation) = handoff.prepared_operation()? {
+                return Ok(operation);
+            }
+            if child
+                .try_wait()
+                .map_err(|_| UpdateError::RecoveryRequired)?
+                .is_some()
+            {
+                return Err(UpdateError::RecoveryRequired);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    match acknowledgement {
+        Ok(Ok(operation)) => LaunchOutcome::StartedWithOperation(operation),
+        _ => LaunchOutcome::Unknown,
     }
 }
 
@@ -478,4 +508,16 @@ mod tests {
             LaunchOutcome::NotStarted(UpdateError::AuthorizationRequired)
         );
     }
+}
+
+#[cfg(test)]
+#[test]
+fn windows_handoff_paths_remain_exact_literal_arguments() {
+    let environment = Path::new("C:/owner space/environment");
+    let request =
+        Path::new("C:/cache & quoted/handoff-0123456789abcdef0123456789abcdef/request.json");
+    assert_eq!(windows_arguments(environment, request), [
+        OsString::from("/ENVIRONMENTDIR=C:/owner space/environment"),
+        OsString::from("/UPGRADETARGET=C:/cache & quoted/handoff-0123456789abcdef0123456789abcdef/request.json"),
+    ]);
 }

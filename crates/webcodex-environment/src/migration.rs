@@ -1158,6 +1158,7 @@ mod tests {
                 operation_id: "scope-test".into(),
                 phase: MigrationPhase::Prepared,
                 request: SetupRequest {
+                    runner_display_name: None,
                     service_scope: scope,
                     mode: EnvironmentMode::Join,
                     server_url: "https://server.example".into(),
@@ -1266,6 +1267,7 @@ mod tests {
             format!("server_url = 'https://server.example'\nclient_id = 'existing-runner'\nowner = 'alice'\ntoken = 'wc_agent_existing'\nproject_registry_dir = '{}'\n", source_registry.display()).as_bytes()).unwrap();
         let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
         let request = SetupRequest {
+            runner_display_name: None,
             service_scope: crate::service::ServiceScope::System,
             mode: EnvironmentMode::Join,
             server_url: "https://server.example".into(),

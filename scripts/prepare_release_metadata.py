@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import tarfile
 from pathlib import Path
 
@@ -219,9 +220,13 @@ def main() -> int:
     present_installers = {target for target, path in installer_paths.items() if path.exists()}
     present_sources = {platform for platform, path in source_paths.items() if path.exists()}
     expected_installer_names = {path.name for path in installer_paths.values()}
+    expected_windows_evidence = {
+        name for platform in RUNTIME_PLATFORMS if platform.startswith("win32-")
+        for name in (f"webcodex-unified-v{version}-{platform}.exe.provenance.json", f"webcodex-unified-v{version}-{platform}.source-manifest.json", f"webcodex-unified-v{version}-{platform}.candidate-SHA256SUMS")
+    }
     unexpected_installers = {
         path.name for path in args.artifact_dir.glob(f"webcodex-unified-v{version}-*")
-        if path.is_file() and not path.name.endswith(".sha256") and path.name not in expected_installer_names
+        if path.is_file() and not path.name.endswith(".sha256") and path.name not in expected_installer_names | expected_windows_evidence
     }
     if unexpected_installers:
         raise SystemExit(f"unexpected unified installers: {', '.join(sorted(unexpected_installers))}")
@@ -237,9 +242,10 @@ def main() -> int:
         raise SystemExit(f"incomplete source manifest set; missing: {', '.join(missing)}")
     installers: dict[str, dict[str, str]] = {}
     source_digests: dict[str, str] = {}
+    source_manifests: dict[str, dict] = {}
     if present_installers:
         for platform, source_path in source_paths.items():
-            validate_source_manifest(source_path, version, platform, args.source_sha, args.workflow_run_id, args.workflow_ref)
+            source_manifests[platform] = validate_source_manifest(source_path, version, platform, args.source_sha, args.workflow_run_id, args.workflow_ref)
             source_digest = sha256(source_path)
             source_digests[platform] = source_digest
             checksum_lines.append(f"{source_digest}  {source_path.name}")
@@ -252,6 +258,33 @@ def main() -> int:
             digest = sha256(path)
             checksum_lines.append(f"{digest}  {filename}")
             source_path = source_paths[platform]
+            sidecar = path.with_suffix(path.suffix + ".provenance.json")
+            source_info = source_manifests[platform]["artifacts"]["webcodex"]["build_info"]
+            marker_present = "windows_guarded_bootstrap_contract" in source_info
+            source_marker = source_info.get("windows_guarded_bootstrap_contract")
+            if marker_present and (package_format != "exe" or type(source_marker) is not int or source_marker != 1):
+                raise SystemExit("invalid Windows guarded bootstrap source attestation")
+            if marker_present:
+                cli_record = source_manifests[platform]["artifacts"]["webcodex"]
+                raw_digest = hashlib.sha256(json.dumps(cli_record["build_info"], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+                if cli_record.get("build_info_sha256") != raw_digest:
+                    raise SystemExit("Windows guarded bootstrap raw CLI attestation hash is invalid")
+            if marker_present and not sidecar.is_file():
+                raise SystemExit("Windows guarded source requires matching outer bootstrap provenance")
+            if package_format == "exe" and sidecar.is_file():
+                evidence = json.loads(sidecar.read_text(encoding="utf-8"))
+                if marker_present or "guarded_handoff_version" in evidence:
+                    expected_fields = {"schema_version", "guarded_handoff_version", "platform", "version", "source_sha", "workflow_run_id", "workflow_ref", "candidate_manifest_sha256", "inner_installer_sha256", "installer_sha256"}
+                    if set(evidence) != expected_fields or type(evidence["guarded_handoff_version"]) is not int or evidence["guarded_handoff_version"] != 1 or source_marker != 1:
+                        raise SystemExit("invalid Windows guarded handoff provenance")
+                    if (evidence["schema_version"], evidence["platform"], evidence["version"], evidence["source_sha"], evidence["workflow_run_id"], evidence["workflow_ref"], evidence["installer_sha256"]) != (1, platform, version, args.source_sha, args.workflow_run_id, args.workflow_ref, digest):
+                        raise SystemExit("Windows guarded handoff provenance does not bind this artifact")
+                    if any(not isinstance(evidence[key], str) or not re.fullmatch(r"[0-9a-f]{64}", evidence[key]) for key in ("candidate_manifest_sha256", "inner_installer_sha256")):
+                        raise SystemExit("invalid Windows guarded handoff candidate provenance")
+                    candidate_manifest = args.artifact_dir / f"webcodex-unified-v{version}-{platform}.source-manifest.json"
+                    if not candidate_manifest.is_file() or sha256(candidate_manifest) != evidence["candidate_manifest_sha256"] or evidence["candidate_manifest_sha256"] != source_digests[platform]:
+                        raise SystemExit("Windows guarded handoff source and candidate manifest are missing or changed")
+                    validate_source_manifest(candidate_manifest, version, platform, args.source_sha, args.workflow_run_id, args.workflow_ref)
             installers[target] = {
                 "platform": platform,
                 "format": package_format,

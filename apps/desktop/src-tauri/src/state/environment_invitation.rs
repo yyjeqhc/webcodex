@@ -57,6 +57,7 @@ fn setup_snapshot_in(
         return Ok(None);
     }
     Ok(Some(EnvironmentSetupSnapshot {
+        runner_display_name: record.request.runner_display_name.clone(),
         environment_id: record.environment_id,
         mode: if record.request.local_server() {
             "create"

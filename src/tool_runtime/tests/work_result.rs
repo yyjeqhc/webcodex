@@ -504,6 +504,7 @@ async fn refresh_once(
             runtime
                 .dispatch_with_auth(
                     ToolCall::WorkResultState {
+                        collaboration: None,
                         automatic: false,
                         files: None,
                         project,
@@ -706,6 +707,7 @@ async fn work_result_state_reauthorizes_exact_identity_and_refresh_does_not_reco
     let dispatched_alias = runtime
         .dispatch_with_auth(
             ToolCall::WorkResultState {
+                collaboration: None,
                 automatic: false,
                 files: None,
                 project: "demo".to_string(),
@@ -732,6 +734,7 @@ async fn work_result_state_reauthorizes_exact_identity_and_refresh_does_not_reco
     assert_eq!(after.updated_at, before.updated_at);
     assert_eq!(
         ToolCall::WorkResultState {
+            collaboration: None,
             automatic: false,
             files: None,
             project: project.clone(),

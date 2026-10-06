@@ -30,6 +30,13 @@ fn input(args: &[&str]) -> Result<Input, String> {
     )
 }
 
+#[tokio::test]
+async fn update_command_dispatches_to_the_terminal_adapter() {
+    let args = ["update", "--help"].map(str::to_owned);
+    let output = run(&args).await.unwrap();
+    assert!(output.starts_with("webcodex environment update <COMMAND>"));
+}
+
 #[test]
 fn business_choices_and_resume_are_unambiguous() {
     let create = input(&["configure", "--create", "--no-project"]).unwrap();
@@ -80,6 +87,28 @@ fn projectless_runner_is_explicit_and_does_not_change_legacy_viewer_defaults() {
     ])
     .unwrap();
     assert!(remote.runner && remote.project.is_none() && remote.code_stdin);
+    let named = input(&[
+        "configure",
+        "--create",
+        "--runner",
+        "--runner-name",
+        "My laptop",
+    ])
+    .unwrap();
+    assert_eq!(named.runner_name.as_deref(), Some("My laptop"));
+    let named_project = input(&[
+        "configure",
+        "--join",
+        "https://server.example",
+        "--project",
+        "project",
+        "--runner-name",
+        "Build runner",
+    ])
+    .unwrap();
+    assert_eq!(named_project.runner_name.as_deref(), Some("Build runner"));
+    assert!(input(&["configure", "--create", "--runner-name", "orphan"]).is_err());
+    assert!(input(&["status", "--runner-name", "orphan"]).is_err());
     assert!(
         !input(&["configure", "--create", "--no-project"])
             .unwrap()
@@ -215,4 +244,128 @@ fn legacy_server_network_inputs_are_explicit_and_scoped() {
     assert_eq!(legacy.listen.as_deref(), Some("0.0.0.0:8080"));
     assert_eq!(legacy.username.as_deref(), Some("alice"));
     assert!(input(&["configure", "--create", "--listen", "0.0.0.0:8080"]).is_err());
+}
+
+#[test]
+fn guarded_installer_options_never_fall_back_to_unbound_commands() {
+    let target = [
+        "--environment-dir",
+        "/selected",
+        "--upgrade-target-file",
+        "/private/request.json",
+    ];
+    let mut prepare = vec!["upgrade-prepare", "--candidate-dir", "/candidate"];
+    prepare.extend(target);
+    prepare.push("--operation-id-output");
+    assert!(input(&prepare).is_ok());
+    for bad in ["--json", "--development-build"] {
+        let mut arguments = prepare.clone();
+        arguments.push(bad);
+        assert!(input(&arguments).is_err());
+    }
+    for command in ["upgrade-finish", "upgrade-rollback", "installer-verify"] {
+        let mut arguments = vec![command];
+        arguments.extend(target);
+        assert!(input(&arguments).is_err());
+        arguments.extend(["--operation-id", "e6a04341-9bf3-4021-9c19-7df4742b6799"]);
+        assert!(input(&arguments).is_ok());
+        arguments.push("--operation-id-output");
+        assert!(input(&arguments).is_err());
+    }
+    for command in ["configure", "package-upgrade-prepare", "upgrade-preflight"] {
+        let mut arguments = vec![command];
+        arguments.extend(target);
+        assert!(input(&arguments).is_err());
+    }
+    assert!(input(&[
+        "upgrade-finish",
+        "--operation-id",
+        "e6a04341-9bf3-4021-9c19-7df4742b6799"
+    ])
+    .is_err());
+    assert!(input(&[
+        "upgrade-prepare",
+        "--upgrade-target-file",
+        "/private/request.json",
+        "--operation-id-output"
+    ])
+    .is_err());
+}
+
+#[tokio::test]
+async fn guarded_handoff_rejects_missing_owner_and_unacknowledged_followups_without_creation() {
+    use webcodex_environment::unified_update::PrivateUpdateCache;
+    let directory = tempfile::tempdir().unwrap();
+    let nonce = "a".repeat(32);
+    let cache =
+        PrivateUpdateCache::open(directory.path().join(format!("handoff-{nonce}"))).unwrap();
+    let envelope = serde_json::json!({"schema_version":1,"launch_nonce":nonce,"target":{
+        "environment_id":"selected","manifest_sha256":"b".repeat(64),"operation_id":null}});
+    cache
+        .write("request.json", &serde_json::to_vec(&envelope).unwrap())
+        .unwrap();
+    let root = directory.path().join("absent-environment");
+    let request = cache.file("request.json").unwrap();
+    let mut prepare = vec![
+        "upgrade-prepare".to_owned(),
+        "--environment-dir".into(),
+        root.to_string_lossy().into(),
+        "--upgrade-target-file".into(),
+        request.to_string_lossy().into(),
+        "--candidate-dir".into(),
+        directory
+            .path()
+            .join("absent-candidate")
+            .to_string_lossy()
+            .into(),
+        "--operation-id-output".into(),
+    ];
+    assert_eq!(
+        run(&prepare).await.unwrap_err(),
+        "Selected Environment is no longer available"
+    );
+    assert!(!root.exists());
+    prepare[0] = "upgrade-finish".into();
+    prepare.truncate(5);
+    prepare.extend([
+        "--operation-id".into(),
+        "e6a04341-9bf3-4021-9c19-7df4742b6799".into(),
+    ]);
+    assert_eq!(
+        run(&prepare).await.unwrap_err(),
+        "Guarded installer follow-up does not match the acknowledged operation"
+    );
+    assert!(!root.exists());
+}
+
+#[tokio::test]
+async fn path_commands_are_read_only_and_manifest_is_explicitly_metadata_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("absent-environment");
+    for command in ["paths", "backup-manifest"] {
+        let args = vec![
+            command.to_string(),
+            "--environment-dir".into(),
+            directory.display().to_string(),
+            "--json".into(),
+        ];
+        let result = run(&args).await.unwrap();
+        let json: serde_json::Value = serde_json::from_str(&result).unwrap();
+        if command == "paths" {
+            assert_eq!(json["roots"][0]["status"], "missing");
+        } else {
+            assert_eq!(json["kind"], "manifest_only");
+            assert_eq!(json["cannot_restore"], true);
+        }
+        assert!(!directory.exists());
+    }
+    let args = vec![
+        "paths".into(),
+        "--environment-dir".into(),
+        directory.display().to_string(),
+        "--token-file".into(),
+        "private-unreadable-input".into(),
+    ];
+    assert!(run(&args).await.is_err());
+    assert!(!directory.exists());
 }

@@ -754,3 +754,29 @@ mod tests {
         }
     }
 }
+
+/// Derive the native manager reference without inspection, processes or mutation.
+pub(crate) fn diagnostic_service_name(spec: &ServiceSpec) -> String {
+    #[cfg(target_os = "linux")]
+    {
+        linux::unit_name(spec)
+    }
+    #[cfg(windows)]
+    {
+        if spec.scope == ServiceScope::User {
+            let identity = match &spec.account {
+                ServiceAccount::SystemUser {
+                    expected_identity, ..
+                } => expected_identity.as_str(),
+                _ => return spec.id.clone(),
+            };
+            windows_user::task_name(spec, identity)
+        } else {
+            spec.id.clone()
+        }
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        spec.id.clone()
+    }
+}

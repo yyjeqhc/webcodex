@@ -20,7 +20,16 @@ impl RunnerRuntimeState {
         let persistent_shells = PersistentShellManager::new(&cfg.shell, jobs.ssh_pool().clone());
         Self {
             lsp: LspSupervisor::default(),
-            browser: BrowserSupervisor::new(),
+            browser: {
+                #[cfg(test)]
+                {
+                    BrowserSupervisor::new()
+                }
+                #[cfg(not(test))]
+                {
+                    BrowserSupervisor::new_with_extension_bridge()
+                }
+            },
             config: Arc::new(ReloadableRunnerConfig::new(cfg.clone(), path)),
             jobs,
             persistent_shells,

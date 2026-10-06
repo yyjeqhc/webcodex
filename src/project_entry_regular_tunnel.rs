@@ -110,8 +110,8 @@ async fn run_regular_server_tunnel_inner(
     if let Some(path) = service_readiness {
         let _ = webcodex_environment::write_tunnel_health(&path, false, false);
     }
-    tunnel.stop().await;
-    outcome
+    let stopped = tunnel.stop_with_outcome().await;
+    outcome.and(stopped)
 }
 
 /// A running daemon is not sufficient proof of a usable local MCP endpoint.
@@ -150,7 +150,7 @@ async fn report_regular_tunnel_health(
     }
 }
 
-pub(super) async fn probe_local_mcp(
+pub(crate) async fn probe_local_mcp(
     client: &reqwest::Client,
     local_mcp_url: &str,
     bootstrap: &str,

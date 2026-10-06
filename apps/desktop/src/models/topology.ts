@@ -206,6 +206,7 @@ export interface DesktopState {
     mode: "create" | "join";
     server_url: string;
     runner: boolean;
+    runner_display_name?: string | null;
     project_path: string | null;
     service_scope: "user" | "system";
     configured: boolean;

@@ -53,6 +53,7 @@ async fn poll(
         runtime_for_task
             .dispatch_with_auth(
                 ToolCall::WorkResultState {
+                    collaboration: None,
                     project,
                     session_id: Some(session),
                     files: None,

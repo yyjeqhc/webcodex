@@ -1,4 +1,5 @@
-import type { MachineBuildInfo, RuntimeSettings, RuntimeSource, RuntimeSwitchRequest, RuntimeSwitchResult, DiagnosticSnapshot, DiagnosticResource, TraceUpdate, TraceSettings, UpdateStatus, UpdateDownloadStatus } from "../models/runtime-shell";
+import type { PathInventory, InventoryDocumentKind } from "../models/path-inventory";
+import type { LocalUpdateStatus, UpdateConfirmation } from "../models/runtime-shell";import type { MachineBuildInfo, RuntimeSettings, RuntimeSource, RuntimeSwitchRequest, RuntimeSwitchResult, DiagnosticSnapshot, DiagnosticResource, TraceUpdate, TraceSettings, UpdateStatus, UpdateDownloadStatus } from "../models/runtime-shell";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ActivityEntry,
@@ -28,6 +29,9 @@ export const desktopApi = {
   probeRuntime: (source: RuntimeSource) => invoke<RuntimeSettings>("probe_runtime", { source }),
   recheckRuntime: () => invoke<RuntimeSettings>("recheck_runtime"),
   switchRuntime: (request: RuntimeSwitchRequest) => invoke<RuntimeSwitchResult>("switch_runtime", { request }),
+  pathInventory: () => invoke<PathInventory>("get_path_inventory"),
+  openInventoryLocation: (entryId: string, expectedRevision: string) => invoke<void>("open_inventory_location", { request: { entry_id: entryId, expected_revision: expectedRevision } }),
+  exportInventoryDocument: (kind: InventoryDocumentKind, path: string, expectedRevision: string) => invoke<void>("export_inventory_document", { request: { kind, path, expected_revision: expectedRevision } }),
   diagnostics: () => invoke<DiagnosticSnapshot>("get_diagnostics"),
   setToolRequestTracing: (request: TraceUpdate) => invoke<TraceSettings>("set_tool_request_tracing", { request }),
   openDiagnosticResource: (kind: DiagnosticResource) => invoke<void>("open_diagnostic_resource", { kind }),
@@ -36,11 +40,12 @@ export const desktopApi = {
   exportSupportBundle: (path: string) => invoke<void>("export_support_bundle", { path }),
   restorePreviousConfiguration: (expectedPrimarySha256: string) => invoke<DesktopState>("restore_previous_configuration", { expectedPrimarySha256 }),
   checkForUpdates: (manual = false) => invoke<UpdateStatus>("check_for_updates", { manual }),
+  localUpdateStatus: (inspectFiles = false) => invoke<LocalUpdateStatus>("get_local_update_status", { inspectFiles }),
   updateDownloadState: () => invoke<UpdateDownloadStatus>("get_update_download_state"),
   downloadUpdate: (version: string) => invoke<UpdateStatus>("download_update", { version }),
   cancelUpdateDownload: () => invoke<UpdateDownloadStatus>("cancel_update_download"),
   setAutomaticUpdateDownload: (enabled: boolean) => invoke<UpdateStatus>("set_automatic_update_download", { enabled }),
-  installVerifiedUpdate: (version: string, confirmed: boolean) => invoke<void>("install_verified_update", { version, confirmed }),
+  installVerifiedUpdate: (version: string, confirmed: boolean, confirmation: UpdateConfirmation) => invoke<void>("install_verified_update", { version, confirmed, confirmation }),
   remindUpdateLater: () => invoke<UpdateStatus>("remind_update_later"),
   openLatestRelease: () => invoke<void>("open_latest_release"),
   saveCodingAgent: (request: CodingAgentRequest) => invoke<DesktopState>("save_coding_agent", { request }),
@@ -98,6 +103,7 @@ export const desktopApi = {
     serverUrl?: string | null;
     projectPath?: string | null;
     runner?: boolean;
+    runnerDisplayName?: string | null;
     pairingCode?: string | null;
     userToken?: string | null;
     replacePairingCode?: boolean;

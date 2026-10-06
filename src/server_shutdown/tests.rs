@@ -112,6 +112,72 @@ async fn no_signal_keeps_server_running() {
     assert_eq!(coordinator.state(), ShutdownState::Stopped);
 }
 
+#[tokio::test]
+async fn tunnel_ingress_stops_and_settles_while_local_http_remains_available() {
+    let acceptor = TcpListener::new("127.0.0.1:0").bind().await;
+    let address = acceptor.holdings()[0]
+        .local_addr
+        .clone()
+        .into_std()
+        .unwrap();
+    let coordinator = Arc::new(ShutdownCoordinator::default());
+    let router = Router::new()
+        .hoop(DrainAdmission::new(coordinator.clone()))
+        .get(hello);
+    let (signal, signalled) = oneshot::channel();
+    let (draining, drain_observed) = oneshot::channel();
+    let (finish, finished) = oneshot::channel();
+    let observed = coordinator.clone();
+    let task = tokio::spawn(serve_with_ingress(
+        Server::new(acceptor),
+        router,
+        coordinator,
+        async {
+            signalled.await.unwrap();
+            ShutdownReason::ServiceStop
+        },
+        Duration::from_millis(250),
+        |mut stop| async move {
+            stop.wait_for(|stopped| *stopped).await.unwrap();
+            draining.send(()).unwrap();
+            finished.await.unwrap();
+        },
+    ));
+    signal.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), drain_observed)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed.state(), ShutdownState::Running);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    assert_eq!(
+        client
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "hello"
+    );
+    assert!(
+        !task.is_finished(),
+        "HTTP must outlive admitted Tunnel work"
+    );
+    finish.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed.state(), ShutdownState::Stopped);
+}
+
 #[test]
 fn shutdown_state_transition_is_authoritative_once() {
     let coordinator = ShutdownCoordinator::default();

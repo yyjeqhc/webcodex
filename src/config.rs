@@ -200,33 +200,7 @@ pub(crate) struct EnvFileLoad {
     pub(crate) loaded_count: usize,
 }
 
-pub(crate) fn parse_env_file_line(line: &str) -> Option<Result<(String, String), String>> {
-    let line = line.trim();
-    if line.is_empty() || line.starts_with('#') {
-        return None;
-    }
-    let line = line.strip_prefix("export ").unwrap_or(line).trim();
-    let Some((key, value)) = line.split_once('=') else {
-        return Some(Err("missing '='".to_string()));
-    };
-    let key = key.trim();
-    if key.is_empty()
-        || !key
-            .chars()
-            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
-    {
-        return Some(Err(format!("invalid env key '{}'", key)));
-    }
-    let value = value.trim();
-    let value = if (value.starts_with('"') && value.ends_with('"'))
-        || (value.starts_with('\'') && value.ends_with('\''))
-    {
-        value[1..value.len() - 1].to_string()
-    } else {
-        value.to_string()
-    };
-    Some(Ok((key.to_string(), value)))
-}
+pub(crate) use webcodex_core::server_environment::parse_env_file_line;
 
 pub(crate) fn load_env_file(path: &Path) -> Result<EnvFileLoad, String> {
     let content = std::fs::read_to_string(path)

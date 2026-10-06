@@ -1541,7 +1541,7 @@ jobs:
                   if platform.startswith("win32-"):
                       evidence_path = source / f"{filename}.provenance.json"
                       evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-                      if set(evidence) != {"schema_version", "platform", "version", "source_sha", "workflow_run_id", "workflow_ref", "candidate_manifest_sha256", "inner_installer_sha256", "installer_sha256"}:
+                      if set(evidence) != {"schema_version", "guarded_handoff_version", "platform", "version", "source_sha", "workflow_run_id", "workflow_ref", "candidate_manifest_sha256", "inner_installer_sha256", "installer_sha256"}:
                           raise SystemExit(f"unexpected Windows bootstrap provenance schema: {platform}")
                       if (evidence["schema_version"], evidence["platform"], evidence["version"], evidence["source_sha"], evidence["workflow_run_id"], evidence["workflow_ref"]) != (1, platform, os.environ["VERSION"], os.environ["SOURCE_SHA"], int(os.environ["GITHUB_RUN_ID"]), os.environ["GITHUB_WORKFLOW_REF"]):
                           raise SystemExit(f"Windows bootstrap provenance identity mismatch: {platform}")
@@ -1557,6 +1557,11 @@ jobs:
                           raise SystemExit(f"Windows candidate SHA256SUMS does not bind its manifest: {platform}")
                       if evidence["installer_sha256"] != installer_record["sha256"] or not re.fullmatch(r"[0-9a-f]{64}", evidence["inner_installer_sha256"]):
                           raise SystemExit(f"Windows bootstrap inner/outer digest mismatch: {platform}")
+                      if type(evidence["guarded_handoff_version"]) is not int or evidence["guarded_handoff_version"] != 1:
+                          raise SystemExit(f"Windows guarded handoff capability mismatch: {platform}")
+                      marker = candidate["artifacts"]["webcodex"]["build_info"].get("windows_guarded_bootstrap_contract")
+                      if type(marker) is not int or marker != evidence["guarded_handoff_version"] or evidence["candidate_manifest_sha256"] != installer_record["source_manifest_sha256"]:
+                          raise SystemExit(f"Windows outer bootstrap and raw CLI contract are not bound to the same source bytes: {platform}")
                       installer_record["inner_sha256"] = evidence["inner_installer_sha256"]
                       installer_record["candidate_manifest_sha256"] = evidence["candidate_manifest_sha256"]
                   installer_artifacts[target] = installer_record

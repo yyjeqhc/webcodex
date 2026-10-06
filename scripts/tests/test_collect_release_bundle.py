@@ -31,7 +31,7 @@ def _archive_bytes(platform: str) -> bytes:
     return output.getvalue()
 
 
-def _write_bundle(root: Path, tag: str, build_kind: str, *, unified: bool = False) -> tuple[str, dict[str, str]]:
+def _write_bundle(root: Path, tag: str, build_kind: str, *, unified: bool = False, guarded: bool = False) -> tuple[str, dict[str, str]]:
     stem = (
         f"webcodex-v{VERSION}"
         if build_kind == "release"
@@ -69,12 +69,14 @@ def _write_bundle(root: Path, tag: str, build_kind: str, *, unified: bool = Fals
         source_records = {}
         for platform in collector.PLATFORMS:
             source_name = f"webcodex-source-v{VERSION}-{platform}.json"
+            guarded_cli_info = {"schema_version": 1, "binary": "webcodex", "version": VERSION, "git_commit": SOURCE_SHA, "git_dirty": False, "windows_guarded_bootstrap_contract": 1}
             source_payload = json.dumps({
                 "schema_version": 1,
                 "version": VERSION,
                 "source_sha": SOURCE_SHA,
                 "source_workflow_run_id": RUN_ID,
-                "source_workflow_ref": "test/.github/workflows/release-build.yml@refs/tags/v0.4.3",
+                "source_workflow_ref": f"{collector.DEFAULT_REPO}/.github/workflows/release-build.yml@refs/tags/v{VERSION}" if guarded else "test/.github/workflows/release-build.yml@refs/tags/v0.4.3",
+                **({"artifacts": {"webcodex": {"build_info": guarded_cli_info, "build_info_sha256": hashlib.sha256(json.dumps(guarded_cli_info, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}}} if guarded and platform.startswith("win32-") else {}),
                 "platform": platform,
             }).encode()
             (root / source_name).write_bytes(source_payload)
@@ -101,7 +103,7 @@ def _write_bundle(root: Path, tag: str, build_kind: str, *, unified: bool = Fals
                 "source_manifest_sha256": source_digest,
                 **({
                     "inner_sha256": hashlib.sha256(b"inner payload").hexdigest(),
-                    "candidate_manifest_sha256": hashlib.sha256(b"candidate manifest").hexdigest(),
+                    "candidate_manifest_sha256": source_digest if guarded else hashlib.sha256(b"candidate manifest").hexdigest(),
                 } if platform.startswith("win32-") else {}),
             }
             installer_manifest[target] = {
@@ -298,6 +300,20 @@ class BundleTests(unittest.TestCase):
                     expected_tag=f"v{VERSION}",
                     artifact_name=f"{stem}-bundle",
                 )
+
+    def test_guarded_capability_must_match_same_built_outer_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stem, _ = _write_bundle(root, f"v{VERSION}", "release", unified=True, guarded=True)
+            kwargs = dict(repo=collector.DEFAULT_REPO, run_id=RUN_ID, expected_source_sha=SOURCE_SHA,
+                expected_tag=f"v{VERSION}", artifact_name=f"{stem}-bundle")
+            summary = collector.verify_bundle_directory(root, **kwargs)
+            self.assertNotIn("guarded_handoff_version", summary["installer_artifacts"]["win32-x64-exe"])
+            build = json.loads((root / "release-build.json").read_text())
+            build["installer_artifacts"]["win32-x64-exe"]["candidate_manifest_sha256"] = "c" * 64
+            (root / "release-build.json").write_text(json.dumps(build))
+            with self.assertRaisesRegex(collector.CollectionError, "capability does not match"):
+                collector.verify_bundle_directory(root, **kwargs)
 
     def test_release_bundle_rejects_tampered_public_source_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

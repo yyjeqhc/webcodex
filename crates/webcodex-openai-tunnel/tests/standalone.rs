@@ -74,7 +74,9 @@ async fn launch(command: &mut Command) -> (Child, String) {
 }
 async fn shutdown(mut child: Child) -> std::process::Output {
     drop(child.stdin.take());
-    tokio::time::timeout(Duration::from_secs(5), child.wait_with_output())
+    // The CLI now grants admitted work a ten-second graceful drain budget.
+    // Keep a bounded outer deadline above it, including process reaping.
+    tokio::time::timeout(Duration::from_secs(15), child.wait_with_output())
         .await
         .unwrap()
         .unwrap()

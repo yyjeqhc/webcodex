@@ -6,7 +6,7 @@ use super::tool_call::{BrowserActToolCall, BrowserBatchOperation, BrowserObserve
 use super::{SuggestedToolCall, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::{
     AuthContext, SCOPE_BROWSER_CONTROL, SCOPE_BROWSER_LAUNCH, SCOPE_BROWSER_READ,
-    SCOPE_PROJECT_READ,
+    SCOPE_COMPUTER_READ, SCOPE_PROJECT_READ,
 };
 use crate::runner_http::RunnerFeature;
 use serde_json::{json, Value};
@@ -59,6 +59,13 @@ fn browser_diagnostics_payload(
 }
 
 fn browser_observe_policy(call: &BrowserObserveToolCall) -> SpecializedOperationPolicy {
+    if matches!(call, BrowserObserveToolCall::Surface { .. }) {
+        return SpecializedOperationPolicy::read_all(
+            SpecializedSource::Browser,
+            call.action_name(),
+            &[SCOPE_BROWSER_READ, SCOPE_COMPUTER_READ],
+        );
+    }
     SpecializedOperationPolicy::read(
         SpecializedSource::Browser,
         call.action_name(),
@@ -192,6 +199,31 @@ impl ToolRuntime {
         match call {
             ToolCall::BrowserObserve(BrowserObserveToolCall::Targets) => {
                 self.browser_list_targets(auth).await
+            }
+            ToolCall::BrowserObserve(BrowserObserveToolCall::Discover { client_id }) => {
+                self.dispatch_browser_request(
+                    &client_id,
+                    "browser_discover",
+                    json!({}),
+                    auth,
+                    false,
+                    BrowserRecoveryContext::browsers(&client_id),
+                )
+                .await
+            }
+            ToolCall::BrowserObserve(BrowserObserveToolCall::Surface {
+                client_id,
+                browser_id,
+            }) => {
+                self.dispatch_browser_request(
+                    &client_id,
+                    "browser_surface",
+                    json!({"browser_id": browser_id}),
+                    auth,
+                    false,
+                    BrowserRecoveryContext::browsers(&client_id),
+                )
+                .await
             }
             ToolCall::BrowserObserve(BrowserObserveToolCall::Browsers { client_id }) => {
                 self.dispatch_browser_request(
@@ -360,11 +392,37 @@ impl ToolRuntime {
                     json!({"browser_id": browser_id, "page_id": page_id, "operations": payload_operations}),
                     auth, true, BrowserRecoveryContext::snapshot(&client_id, &browser_id, &page_id)).await
             }
-            ToolCall::BrowserAct(BrowserActToolCall::Launch { client_id }) => {
+            ToolCall::BrowserAct(BrowserActToolCall::Attach {
+                client_id,
+                attachment_id,
+            }) => {
                 self.dispatch_browser_request(
                     &client_id,
-                    "browser_launch",
-                    json!({}),
+                    "browser_attach",
+                    json!({"attachment_id": attachment_id}),
+                    auth,
+                    true,
+                    BrowserRecoveryContext::browsers(&client_id),
+                )
+                .await
+            }
+            ToolCall::BrowserAct(BrowserActToolCall::Launch {
+                client_id,
+                mode,
+                profile,
+            }) => {
+                let managed = mode.is_some_and(|mode| mode.as_str() == "managed");
+                if managed != profile.is_some() {
+                    return browser_error("invalid_request", "managed mode requires a profile name; ephemeral mode does not accept a profile", "not_started", false, None);
+                }
+                self.dispatch_browser_request(
+                    &client_id,
+                    if managed {
+                        "browser_launch_managed"
+                    } else {
+                        "browser_launch"
+                    },
+                    profile.map_or_else(|| json!({}), |profile| json!({"profile": profile})),
                     auth,
                     true,
                     BrowserRecoveryContext::browsers(&client_id),
@@ -637,6 +695,9 @@ impl ToolRuntime {
                 client.supports(RunnerFeature::BrowserElementActionAdmission);
             let browser_launch = client.supports(RunnerFeature::BrowserLaunch);
             let browser_batch = client.supports(RunnerFeature::BrowserBatch);
+            let browser_managed_profile = client.supports(RunnerFeature::BrowserManagedProfile);
+            let browser_extension_bridge = client.supports(RunnerFeature::BrowserExtensionBridge);
+            let browser_surface_handoff = client.supports(RunnerFeature::BrowserSurfaceHandoff);
             if !browser_observe && !browser_control && !browser_launch {
                 continue;
             }
@@ -654,6 +715,9 @@ impl ToolRuntime {
                     "browser_control": browser_control,
                     "browser_element_action_admission": browser_element_action_admission,
                     "browser_batch": browser_batch,
+                    "browser_managed_profile": browser_managed_profile,
+                    "browser_extension_bridge": browser_extension_bridge,
+                    "browser_surface_handoff": browser_surface_handoff,
                     "browser_launch": browser_launch,
                 }
             }));
@@ -706,6 +770,9 @@ impl ToolRuntime {
             | "browser_network"
             | "browser_diagnostics" => RunnerFeature::BrowserObserve,
             "browser_launch" => RunnerFeature::BrowserLaunch,
+            "browser_launch_managed" => RunnerFeature::BrowserManagedProfile,
+            "browser_discover" | "browser_attach" => RunnerFeature::BrowserExtensionBridge,
+            "browser_surface" => RunnerFeature::BrowserSurfaceHandoff,
             "browser_new_page"
             | "browser_navigate"
             | "browser_reload"
@@ -755,6 +822,15 @@ impl ToolRuntime {
                     "target Runner does not advertise {}",
                     required_feature.as_wire_name()
                 ),
+                "not_started",
+                false,
+                None,
+            );
+        }
+        if kind == "browser_surface" && !client.supports(RunnerFeature::ComputerObserve) {
+            return browser_error(
+                "capability_unavailable",
+                "target Runner does not advertise computer_observe",
                 "not_started",
                 false,
                 None,
@@ -1221,8 +1297,29 @@ mod tests {
         assert!(!observe.write_like);
         assert!(!observe.shell_like);
 
+        let surface = browser_observe_policy(&BrowserObserveToolCall::Surface {
+            client_id: "mini".into(),
+            browser_id: "browser_fixture".into(),
+        });
+        assert_eq!(
+            surface.authority,
+            SpecializedAuthorityRequirement::All(&[SCOPE_BROWSER_READ, SCOPE_COMPUTER_READ])
+        );
+        assert_eq!(surface.effect, SpecializedEffect::Read);
+        let attach = browser_act_policy(&BrowserActToolCall::Attach {
+            client_id: "mini".into(),
+            attachment_id: "attachment_fixture".into(),
+        });
+        assert_eq!(
+            attach.authority,
+            SpecializedAuthorityRequirement::Scope(SCOPE_BROWSER_CONTROL)
+        );
+        assert!(attach.write_like);
+
         let launch = browser_act_policy(&BrowserActToolCall::Launch {
             client_id: "msi".to_string(),
+            mode: None,
+            profile: None,
         });
         assert_eq!(
             launch.authority,

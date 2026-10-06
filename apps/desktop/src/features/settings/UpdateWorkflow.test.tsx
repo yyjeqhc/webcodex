@@ -1,8 +1,8 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeUpdates } from "../../hooks/useRuntimeUpdates";
 import { useRuntimeUpdates } from "../../hooks/useRuntimeUpdates";
-import type { MachineBuildInfo, RuntimeSettings, UpdateDownloadStatus, UpdateStatus } from "../../models/runtime-shell";
+import type { LocalUpdateStatus, UpdateConfirmation, MachineBuildInfo, RuntimeSettings, UpdateDownloadStatus, UpdateStatus } from "../../models/runtime-shell";
 import type { DesktopState } from "../../models/topology";
 import { PRODUCT_LOCALES, productText } from "../../i18n/product";
 import { LocaleProvider } from "../../i18n/locale";
@@ -10,7 +10,7 @@ import { AboutPanel, UpdateBanner } from "./AboutPanel";
 import { UpdateWorkflow } from "./UpdateWorkflow";
 
 const api = vi.hoisted(() => ({
-  checkForUpdates: vi.fn(), updateDownloadState: vi.fn(), downloadUpdate: vi.fn(), cancelUpdateDownload: vi.fn(),
+  localUpdateStatus: vi.fn(), checkForUpdates: vi.fn(), updateDownloadState: vi.fn(), downloadUpdate: vi.fn(), cancelUpdateDownload: vi.fn(),
   setAutomaticUpdateDownload: vi.fn(), installVerifiedUpdate: vi.fn(), remindUpdateLater: vi.fn(), openLatestRelease: vi.fn(),
   desktopBuildInfo: vi.fn(), runtimeSettings: vi.fn(), recheckRuntime: vi.fn(), openDiagnosticResource: vi.fn(),
 }));
@@ -26,8 +26,12 @@ function status(value = download()): UpdateStatus {
     update_available: true, show_banner: true, cached: false, last_check_at_ms: 100, manual_error: null,
     automatic_download: true, download: value };
 }
+const confirmation: UpdateConfirmation = { services: [], service_inventory_complete: true, candidate: { version: "0.5.0", target: { platform: "darwin-arm64", format: "pkg" }, source_sha: "a".repeat(40), manifest_sha256: "b".repeat(64), installer_sha256: "c".repeat(64) }, target: { environment_id: "local-env", manifest_sha256: "b".repeat(64), operation_id: null }, selection_revision: 1 };
+function local(value = download()): LocalUpdateStatus {
+  return { environment_id: "local-env", selection_revision: 1, installed_observed: false, installed_checked_at_ms: null, observation_error: false, confirmation: value.can_install ? confirmation : null, running: [], view: { schema_version: 1, download: value, installed: [], candidate: confirmation.candidate, candidate_components: [], upgrade: null, blockers: [], restart_required: false } };
+}
 function updates(value = download()): RuntimeUpdates {
-  return { status: status(value), checking: false, manualError: false, actionBusy: false, actionError: false,
+  return { status: status(value), local: local(value), localError: false, refreshLocal: vi.fn().mockResolvedValue(undefined), checking: false, manualError: false, actionBusy: false, actionError: false,
     check: vi.fn().mockResolvedValue(undefined), download: vi.fn().mockResolvedValue(undefined),
     cancelDownload: vi.fn().mockResolvedValue(undefined), setAutomaticDownload: vi.fn().mockResolvedValue(undefined),
     install: vi.fn().mockResolvedValue(undefined), remindLater: vi.fn().mockResolvedValue(undefined) };
@@ -37,7 +41,7 @@ const wrap = (value: React.ReactNode) => <LocaleProvider>{value}</LocaleProvider
 beforeEach(() => {
   vi.resetAllMocks(); localStorage.setItem("webcodex.desktop.locale", "en-US");
   api.openLatestRelease.mockResolvedValue(undefined); api.installVerifiedUpdate.mockResolvedValue(undefined);
-  api.desktopBuildInfo.mockResolvedValue(null); api.runtimeSettings.mockResolvedValue(null);
+  api.desktopBuildInfo.mockResolvedValue(null); api.runtimeSettings.mockResolvedValue(null); api.localUpdateStatus.mockImplementation(async () => local((await api.updateDownloadState()) ?? download()));
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
@@ -65,11 +69,11 @@ describe("verified update presentation", () => {
     expect(screen.getByText("Downloaded and verified")).toBeInTheDocument();
     expect(value.install).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Install update" }));
-    const confirmation = screen.getByRole("alertdialog");
-    expect(within(confirmation).getByText(/Local services may stop/)).toBeInTheDocument();
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByText(/Local services may stop/)).toBeInTheDocument();
     expect(value.install).not.toHaveBeenCalled();
-    fireEvent.click(within(confirmation).getByRole("button", { name: "Install and close WebCodex" }));
-    expect(value.install).toHaveBeenCalledExactlyOnceWith("0.5.0");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Install and close WebCodex" }));
+    expect(value.install).toHaveBeenCalledExactlyOnceWith(confirmation);
   });
 
   it("Later and dismissed confirmation never install or cancel a verified download", () => {
@@ -127,7 +131,7 @@ describe("verified update presentation", () => {
     const value = updates(download({ phase: "installing_or_handed_off", pending_install: true }));
     value.status!.show_banner = false;
     render(wrap(<UpdateBanner updates={value} />));
-    expect(screen.getByText("The system installer is running. Installation is not yet confirmed.")).toBeInTheDocument();
+    expect(screen.getByText("Installer handoff is recorded. Completion and executor activity are unconfirmed.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Install update" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     expect(screen.queryByText(/installed successfully/i)).not.toBeInTheDocument();
@@ -176,7 +180,7 @@ it("background discovery and verified progress never invoke the installer; only 
   fireEvent.click(screen.getByRole("button", { name: "Install update" }));
   expect(api.installVerifiedUpdate).not.toHaveBeenCalled();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Install and close WebCodex" })); });
-  expect(api.installVerifiedUpdate).toHaveBeenCalledExactlyOnceWith("0.5.0", true);
+  expect(api.installVerifiedUpdate).toHaveBeenCalledExactlyOnceWith("0.5.0", true, confirmation);
 });
 
 it("reports a failed preference save when no newer release is available", async () => {
@@ -328,4 +332,185 @@ describe("About build, stable release and local Runtime identity", () => {
     expect(screen.getByText(productText(locale, "noNewerStableRelease"))).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: productText(locale, "recheckLocalRuntime") })).toBeEnabled());
   });
+});
+
+describe("local updater fences and durable outcomes", () => {
+  it.each(["prepared", "stopping", "stopped", "snapshot_ready", "verifying", "committed", "restoring", "rolled_back", "recovery_required"] as const)("keeps %s visible after cache clearing", phase => {
+    const value = updates(download({ phase: "idle", version: null })); value.status = { ...value.status!, latest: null, update_available: false, show_banner: false }; value.local!.view.candidate = null;
+    value.local!.view.upgrade = { schema_version: 1, environment_id: "local-env", operation_id: "exact-operation", version: "0.5.0", source_sha: "a".repeat(40), manifest_sha256: "b".repeat(64), phase, files: ["cli", "server", "runner", "desktop"], services: [], service_inventory_complete: true };
+    render(wrap(<UpdateBanner updates={value} />));
+    expect(screen.getByRole("button", { name: "Refresh local update status" })).toBeInTheDocument(); expect(screen.queryByRole("button", { name: "Install update" })).not.toBeInTheDocument(); expect(screen.queryByRole("button", { name: "Download update" })).not.toBeInTheDocument();
+    if (phase === "restoring") expect(screen.getByText(/Its executor is not confirmed/)).toBeInTheDocument(); expect(value.install).not.toHaveBeenCalled();
+  });
+  it("shows restart after completed update with an older Desktop process", () => {
+    const value = updates(download({ phase: "idle", version: null })); value.local!.view.restart_required = true; render(wrap(<UpdateWorkflow updates={value} />)); expect(screen.getByText("Update completed. Restart Desktop to use the installed version.")).toBeInTheDocument(); expect(screen.queryByText(/Manual recovery/)).not.toBeInTheDocument();
+  });
+  it("invalidates same-version confirmation after identity changes", () => {
+    const value = updates(download({ phase: "ready_to_install", can_install: true })); const view = render(wrap(<UpdateWorkflow updates={value} />)); fireEvent.click(screen.getByRole("button", { name: "Install update" }));
+    value.local = { ...value.local!, confirmation: { ...confirmation, target: { ...confirmation.target, environment_id: "changed-env", operation_id: "changed-operation" }, candidate: { ...confirmation.candidate, manifest_sha256: "d".repeat(64) }, selection_revision: 2 } }; view.rerender(wrap(<UpdateWorkflow updates={value} />));
+    const install = screen.getByRole("button", { name: "Install and close WebCodex" }); expect(install).toBeDisabled(); fireEvent.click(install); expect(value.install).not.toHaveBeenCalled();
+  });
+  it("restores focus after Escape and confines keyboard navigation", () => {
+    render(wrap(<UpdateWorkflow updates={updates(download({ phase: "ready_to_install", can_install: true }))} />)); const opener = screen.getByRole("button", { name: "Install update" }); fireEvent.click(opener); const first = screen.getByRole("button", { name: "Install and close WebCodex" }); const last = screen.getByRole("button", { name: "Not now" }); expect(first).toHaveFocus(); fireEvent.keyDown(first, { key: "Tab", shiftKey: true }); expect(last).toHaveFocus(); fireEvent.keyDown(last, { key: "Tab" }); expect(first).toHaveFocus(); fireEvent.keyDown(first, { key: "Escape" }); expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(); expect(opener).toHaveFocus();
+  });
+  it("refreshes blockers without automatically retrying installation", () => {
+    const value = updates(download({ phase: "ready_to_install", can_install: false })); value.local!.view.blockers = ["active_tasks"]; render(wrap(<UpdateWorkflow updates={value} />)); expect(screen.getByText("Waiting for active tasks to finish. Refresh status when ready.")).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "Refresh local update status" })); expect(value.refreshLocal).toHaveBeenCalledOnce(); expect(value.install).not.toHaveBeenCalled(); expect(value.download).not.toHaveBeenCalled();
+  });
+  it("keeps all four installed, running and candidate identities separate", async () => {
+    const value = updates(); const sha = "e".repeat(64); value.local!.view.installed = [{ binary: "webcodex-desktop", build: { ...desktopBuild, version: "0.5.0", git_commit: sha } }]; value.local!.running = [{ binary: "webcodex-desktop", version: "0.4.0", git_commit: "old-process", git_dirty: false, state: "observed" }, { binary: "webcodex-server", version: null, git_commit: null, git_dirty: null, state: "not_local" }]; value.local!.view.candidate_components = [{ binary: "webcodex-desktop", build: { ...desktopBuild, version: "0.6.0", git_dirty: false } }]; render(wrap(<AboutPanel state={aboutState} updates={value} />)); const table = screen.getByRole("table"); expect(within(table).getAllByRole("row")).toHaveLength(5); const row = within(table).getByRole("row", { name: /desktop 0.5.0/ }); expect(row).toHaveTextContent(sha); expect(row).toHaveTextContent("0.4.0"); expect(row).toHaveTextContent("0.6.0"); expect(within(table).getByText("Not local")).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "Inspect installed files" })); expect(value.refreshLocal).toHaveBeenCalledWith(true); await act(async () => {});
+  });
+});
+
+function deferredLocalStatus() {
+  let resolve!: (value: LocalUpdateStatus) => void;
+  const promise = new Promise<LocalUpdateStatus>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+function inspectedLocalStatus(version: string, checkedAt: number, restartRequired: boolean): LocalUpdateStatus {
+  const value = local();
+  return { ...value, installed_observed: true, installed_checked_at_ms: checkedAt, view: {
+    ...value.view, installed: [{ binary: "webcodex-desktop", build: { ...desktopBuild, version } }], restart_required: restartRequired,
+    upgrade: { schema_version: 1, environment_id: "local-env", operation_id: "same-operation", version: "0.6.0", source_sha: "a".repeat(40), manifest_sha256: "b".repeat(64), phase: "committed", files: ["desktop"], services: [], service_inventory_complete: true },
+  } };
+}
+
+it("retains newer installed identities, inspection time and restart state after an older inspection returns", async () => {
+  const older = deferredLocalStatus(); const newer = deferredLocalStatus();
+  const latest = inspectedLocalStatus("0.6.0", 2000, true);
+  api.localUpdateStatus.mockResolvedValueOnce(local()).mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+  const { result } = renderHook(() => useRuntimeUpdates(true));
+  await waitFor(() => expect(result.current.local?.environment_id).toBe("local-env"));
+  act(() => { void result.current.refreshLocal(true); void result.current.refreshLocal(true); });
+  await act(async () => newer.resolve(latest));
+  expect(result.current.local?.installed_checked_at_ms).toBe(2000);
+  expect(result.current.local?.view.installed).toEqual(latest.view.installed);
+  expect(result.current.local?.view.restart_required).toBe(true);
+  await act(async () => older.resolve(inspectedLocalStatus("0.5.0", 1000, false)));
+  expect(result.current.local?.installed_checked_at_ms).toBe(2000);
+  expect(result.current.local?.view.installed).toEqual(latest.view.installed);
+  expect(result.current.local?.view.restart_required).toBe(true);
+});
+
+it("merges a current explicit inspection after a faster ordinary status poll", async () => {
+  const inspection = deferredLocalStatus(); const installed = inspectedLocalStatus("0.6.0", 2000, true);
+  const poll = { ...installed, installed_observed: false, installed_checked_at_ms: null, view: { ...installed.view, installed: [], restart_required: false } };
+  api.localUpdateStatus.mockResolvedValueOnce(local()).mockReturnValueOnce(inspection.promise).mockResolvedValue(poll);
+  const { result } = renderHook(() => useRuntimeUpdates(true));
+  await waitFor(() => expect(result.current.local?.environment_id).toBe("local-env"));
+  act(() => { void result.current.refreshLocal(true); });
+  await act(async () => { await result.current.refreshLocal(); });
+  expect(result.current.local?.installed_observed).toBe(false);
+  await act(async () => inspection.resolve(installed));
+  expect(result.current.local?.installed_checked_at_ms).toBe(2000);
+  expect(result.current.local?.view.installed).toEqual(installed.view.installed);
+  expect(result.current.local?.view.restart_required).toBe(true);
+  await act(async () => { await result.current.refreshLocal(); });
+  expect(result.current.local?.installed_checked_at_ms).toBe(2000);
+  expect(result.current.local?.view.installed).toEqual(installed.view.installed);
+  expect(result.current.local?.view.restart_required).toBe(true);
+});
+
+it("does not accept an inspection returned after unmount", async () => {
+  const inspection = deferredLocalStatus();
+  api.localUpdateStatus.mockResolvedValueOnce(local()).mockReturnValueOnce(inspection.promise);
+  const { result, unmount } = renderHook(() => useRuntimeUpdates(true));
+  await waitFor(() => expect(result.current.local?.environment_id).toBe("local-env"));
+  let response!: Promise<LocalUpdateStatus | undefined>;
+  act(() => { response = result.current.refreshLocal(true); });
+  const previous = result.current.local;
+  unmount();
+  await act(async () => inspection.resolve(inspectedLocalStatus("0.6.0", 2000, true)));
+  expect(await response).toBeUndefined();
+  expect(result.current.local).toBe(previous);
+});
+
+it("drops installed-file observations returned after the selected environment changes", async () => {
+  let resolve!: (value: LocalUpdateStatus) => void;
+  const old = local(); const next = { ...local(), environment_id: "new-env", selection_revision: 2 };
+  api.checkForUpdates.mockResolvedValue(status());
+  api.localUpdateStatus.mockResolvedValueOnce(old).mockImplementationOnce(() => new Promise<LocalUpdateStatus>(done => { resolve = done; })).mockResolvedValue(next);
+  function Harness() { const value = useRuntimeUpdates(true); return <><output>{value.local?.environment_id}</output><button onClick={() => void value.refreshLocal(true)}>Inspect</button><button onClick={() => void value.refreshLocal()}>Refresh observation</button></>; }
+  render(wrap(<Harness />)); await screen.findByText("local-env");
+  fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh observation" })));
+  expect(screen.getByText("new-env")).toBeInTheDocument();
+  await act(async () => resolve({ ...old, installed_observed: true }));
+  expect(screen.getByText("new-env")).toBeInTheDocument(); expect(screen.queryByText("local-env")).not.toBeInTheDocument();
+});
+
+it.each([
+  ["en-US", "Install update", "Install and close WebCodex"],
+  ["zh-CN", "安装更新", "安装并退出 WebCodex"],
+  ["zh-TW", "安裝更新", "安裝並退出 WebCodex"],
+  ["de-DE", "Update installieren", "Installieren und WebCodex schließen"],
+  ["fr-FR", "Installer la mise à jour", "Installer et fermer WebCodex"],
+  ["ja-JP", "アップデートをインストール", "インストールして WebCodex を閉じる"],
+  ["ko-KR", "업데이트 설치", "설치 후 WebCodex 종료"],
+])("localizes the exact installation confirmation in %s", (locale, action, confirmAction) => {
+  localStorage.setItem("webcodex.desktop.locale", locale); const value = updates(download({ phase: "ready_to_install", can_install: true }));
+  render(wrap(<UpdateWorkflow updates={value} />)); fireEvent.click(screen.getByRole("button", { name: action }));
+  expect(screen.getByRole("button", { name: confirmAction })).toBeInTheDocument(); expect(value.install).not.toHaveBeenCalled();
+});
+
+it("allows discovery download for a newer release while retaining a terminal prior upgrade", () => {
+  const value = updates(); value.status!.latest!.version = "0.6.0"; value.local!.view.candidate = null;
+  value.local!.view.upgrade = { schema_version: 1, environment_id: "local-env", operation_id: "old-op", version: "0.5.0", source_sha: "a".repeat(40), manifest_sha256: "b".repeat(64), phase: "committed", files: ["desktop"], services: [], service_inventory_complete: true };
+  render(wrap(<UpdateWorkflow updates={value} />)); expect(screen.getByRole("button", { name: "Download update" })).toBeInTheDocument(); expect(screen.getByText("Recorded upgrade · WebCodex 0.5.0")).toBeInTheDocument(); expect(value.install).not.toHaveBeenCalled();
+});
+
+it("requires explicit successful status review before repeating a restored candidate", async () => {
+  const value = updates(download({ phase: "ready_to_install", can_install: true }));
+  value.local!.view.upgrade = { schema_version: 1, environment_id: "local-env", operation_id: "restored-op", version: "0.5.0", source_sha: "a".repeat(40), manifest_sha256: "b".repeat(64), phase: "rolled_back", files: ["desktop"], services: [], service_inventory_complete: true };
+  value.refreshLocal = vi.fn().mockResolvedValue(value.local);
+  render(wrap(<UpdateWorkflow updates={value} />)); expect(screen.queryByRole("button", { name: "Install update" })).not.toBeInTheDocument();
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh local update status" })));
+  expect(screen.getByRole("button", { name: "Install update" })).toBeInTheDocument(); expect(value.install).not.toHaveBeenCalled(); expect(value.download).not.toHaveBeenCalled();
+});
+
+it("does not hide an unknown installer handoff behind the saved snapshot stage", () => {
+  const value = updates(download({ phase: "installing_or_handed_off", pending_install: true }));
+  value.local!.view.upgrade = { schema_version: 1, environment_id: "local-env", operation_id: "op", version: "0.5.0", source_sha: "a".repeat(40), manifest_sha256: "b".repeat(64), phase: "snapshot_ready", files: ["desktop"], services: [], service_inventory_complete: true };
+  render(wrap(<UpdateWorkflow updates={value} />)); expect(screen.getByText("Installer handoff is recorded. Completion and executor activity are unconfirmed.")).toBeInTheDocument(); expect(screen.queryByText("Upgrade snapshot is recorded. Installer handoff is unconfirmed.")).not.toBeInTheDocument(); expect(screen.queryByRole("button", { name: "Install update" })).not.toBeInTheDocument();
+});
+
+it("presents a saved preparation as a record instead of claiming an active executor", () => {
+  const value = updates(download({ phase: "idle", version: null }));
+  value.local!.view.upgrade = { schema_version: 1, environment_id: "local-env", operation_id: "op", version: "0.5.0", source_sha: "a".repeat(40), manifest_sha256: "b".repeat(64), phase: "prepared", files: ["desktop"], services: [], service_inventory_complete: true };
+  render(wrap(<UpdateWorkflow updates={value} />)); expect(screen.getByText("Upgrade preparation is recorded. Executor activity is unconfirmed.")).toBeInTheDocument(); expect(screen.queryByText("Preparing local services for replacement…")).not.toBeInTheDocument();
+});
+
+it("shows the exact local service categories and user/system scopes in confirmation", () => {
+  const value = updates(download({ phase: "ready_to_install", can_install: true })); value.local!.confirmation = { ...confirmation, services: [{ component: "server", scope: "system" }, { component: "runner", scope: "user" }, { component: "tunnel", scope: "system" }] };
+  render(wrap(<UpdateWorkflow updates={value} />)); fireEvent.click(screen.getByRole("button", { name: "Install update" })); const dialog = screen.getByRole("alertdialog"); expect(within(dialog).getByText("Server · System service scope")).toBeInTheDocument(); expect(within(dialog).getByText("Runner · User service scope")).toBeInTheDocument(); expect(within(dialog).getByText("Tunnel · System service scope")).toBeInTheDocument(); expect(value.install).not.toHaveBeenCalled();
+});
+
+it("keeps unknown service inventory unknown and prevents confirmation", () => {
+  const value = updates(download({ phase: "ready_to_install", can_install: true })); value.local!.confirmation = { ...confirmation, service_inventory_complete: false };
+  render(wrap(<UpdateWorkflow updates={value} />)); fireEvent.click(screen.getByRole("button", { name: "Install update" })); expect(screen.getByText("Local service scope is unconfirmed.")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Install and close WebCodex" })).toBeDisabled();
+});
+
+it("labels installed identities as the last explicit inspection", async () => {
+  const value = updates(); value.local!.installed_observed = true; value.local!.installed_checked_at_ms = 1000;
+  render(wrap(<AboutPanel state={aboutState} updates={value} />)); expect(screen.getByText("Installed file identities come from the last explicit inspection.", { exact: false })).toBeInTheDocument(); expect(document.querySelector("time")).toHaveAttribute("datetime", "1970-01-01T00:00:01.000Z"); await act(async () => {});
+});
+
+it.each(["available", "ready_to_install"] as const)("keeps a verified legacy release manual when handoff support is unavailable in %s", phase => {
+  const value = updates(download({ phase, can_install: true, error_kind: null }));
+  value.local!.view.blockers = ["guarded_handoff_unavailable"];
+  render(wrap(<UpdateWorkflow updates={value} />));
+  expect(screen.getByText("This release requires manual installation. Use the release instructions; automatic installation is unavailable.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Install update" })).not.toBeInTheDocument();
+  const release = screen.getByRole("button", { name: "View release" }); fireEvent.click(release); expect(api.openLatestRelease).toHaveBeenCalledOnce();
+  if (phase === "available") { fireEvent.click(screen.getByRole("button", { name: "Download update" })); expect(value.download).toHaveBeenCalledOnce(); }
+  else expect(screen.getByText("Downloaded and verified")).toBeInTheDocument();
+  expect(value.install).not.toHaveBeenCalled();
+});
+
+it.each(PRODUCT_LOCALES)("localizes unavailable automatic installation in %s", async locale => {
+  const { UPDATE_TEXT } = await import("../../i18n/update-text");
+  const message = "This release requires manual installation. Use the release instructions; automatic installation is unavailable.";
+  localStorage.setItem("webcodex.desktop.locale", locale);
+  const value = updates(download({ phase: "ready_to_install", can_install: false, error_kind: "guarded_handoff_unavailable" }));
+  render(wrap(<UpdateWorkflow updates={value} />)); expect(screen.getByText(UPDATE_TEXT[locale][message])).toBeInTheDocument(); expect(value.install).not.toHaveBeenCalled();
 });

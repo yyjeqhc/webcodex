@@ -12,6 +12,22 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct PrivateUpdateCache {
     root: PathBuf,
+    readonly: bool,
+    existing_only: bool,
+}
+
+/// The operation scope owns the advisory fence even if a concurrent process
+/// spawn temporarily inherits its close-on-exec descriptor.
+pub struct PrivateUpdateLock {
+    file: File,
+}
+
+impl Drop for PrivateUpdateLock {
+    fn drop(&mut self) {
+        // Closing only our descriptor can leave flock held by an inherited
+        // open-file description. Release the fence before closing the handle.
+        let _ = FileExt::unlock(&self.file);
+    }
 }
 
 fn failed<T>(_: T) -> UpdateError {
@@ -44,7 +60,44 @@ impl PrivateUpdateCache {
             return Err(UpdateError::CacheUnavailable);
         }
         ensure_private_directory(&root).map_err(failed)?;
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            readonly: false,
+            existing_only: false,
+        })
+    }
+    /// Read-only admission: missing cache stays missing and no lock is created.
+    pub fn open_existing(root: PathBuf) -> UpdateResult<Option<Self>> {
+        let store = crate::EnvironmentStore::open_existing(root.clone()).map_err(failed)?;
+        Ok(store.map(|_| Self {
+            root,
+            readonly: true,
+            existing_only: true,
+        }))
+    }
+    /// Explicit reconciliation may update admitted existing state, but cannot
+    /// provision a missing cache root or candidate directory.
+    pub(super) fn open_existing_for_update(root: PathBuf) -> UpdateResult<Option<Self>> {
+        Ok(Self::open_existing(root)?.map(|mut cache| {
+            cache.readonly = false;
+            cache
+        }))
+    }
+    pub(super) fn lock_existing_exclusive(&self) -> UpdateResult<PrivateUpdateLock> {
+        let file = open_existing_private(&self.file("update.lock")?, true).map_err(failed)?;
+        file.try_lock_exclusive().map_err(failed)?;
+        Ok(PrivateUpdateLock { file })
+    }
+    pub fn existing_child(&self, name: &str) -> UpdateResult<Option<Self>> {
+        if !leaf(name) {
+            return Err(UpdateError::CacheUnavailable);
+        }
+        Self::open_existing(self.root.join(name))
+    }
+    pub fn lock_existing(&self) -> UpdateResult<PrivateUpdateLock> {
+        let file = open_existing_private(&self.root.join("update.lock"), false).map_err(failed)?;
+        file.try_lock_shared().map_err(failed)?;
+        Ok(PrivateUpdateLock { file })
     }
     pub fn root(&self) -> &Path {
         &self.root
@@ -53,13 +106,35 @@ impl PrivateUpdateCache {
         if !leaf(name) {
             return Err(UpdateError::CacheUnavailable);
         }
-        ensure_private_directory(&self.root).map_err(failed)?;
+        if self.existing_only {
+            if crate::EnvironmentStore::open_existing(self.root.clone())
+                .map_err(failed)?
+                .is_none()
+            {
+                return Err(UpdateError::CacheUnavailable);
+            }
+        } else {
+            ensure_private_directory(&self.root).map_err(failed)?;
+        }
         Ok(self.root.join(name))
     }
     pub fn child(&self, name: &str) -> UpdateResult<Self> {
+        if self.existing_only {
+            let mut child = self
+                .existing_child(name)?
+                .ok_or(UpdateError::CacheUnavailable)?;
+            child.readonly = self.readonly;
+            return Ok(child);
+        }
         Self::open(self.file(name)?)
     }
-    pub fn lock(&self) -> UpdateResult<File> {
+    pub fn lock(&self) -> UpdateResult<PrivateUpdateLock> {
+        if self.readonly {
+            return Err(UpdateError::CacheUnavailable);
+        }
+        if self.existing_only {
+            return self.lock_existing_exclusive();
+        }
         let path = self.file("update.lock")?;
         let file = if path.exists() {
             open_existing_private(&path, true)
@@ -68,7 +143,7 @@ impl PrivateUpdateCache {
         }
         .map_err(failed)?;
         file.try_lock_exclusive().map_err(failed)?;
-        Ok(file)
+        Ok(PrivateUpdateLock { file })
     }
     pub fn read(&self, name: &str, limit: u64) -> UpdateResult<Option<Vec<u8>>> {
         let path = self.file(name)?;
@@ -90,6 +165,9 @@ impl PrivateUpdateCache {
         Ok(Some(bytes))
     }
     pub fn write(&self, name: &str, bytes: &[u8]) -> UpdateResult<()> {
+        if self.readonly {
+            return Err(UpdateError::CacheUnavailable);
+        }
         if bytes.len() > 1024 * 1024 {
             return Err(UpdateError::CacheUnavailable);
         }
@@ -99,9 +177,15 @@ impl PrivateUpdateCache {
         open_existing_private(&self.file(name)?, false).map_err(failed)
     }
     pub fn create_file(&self, name: &str) -> UpdateResult<File> {
+        if self.readonly {
+            return Err(UpdateError::CacheUnavailable);
+        }
         open_private(&self.file(name)?, true).map_err(failed)
     }
     pub fn remove_file(&self, name: &str) -> UpdateResult<()> {
+        if self.readonly {
+            return Err(UpdateError::CacheUnavailable);
+        }
         let path = self.file(name)?;
         match std::fs::symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -118,6 +202,9 @@ impl PrivateUpdateCache {
     /// Caller streamed and hashed the private part. No final name is visible
     /// until the bytes and containing directory are durably committed.
     pub fn commit(&self, partial: &str, final_name: &str) -> UpdateResult<()> {
+        if self.readonly {
+            return Err(UpdateError::CacheUnavailable);
+        }
         let part = self.file(partial)?;
         let target = self.file(final_name)?;
         if target.try_exists().map_err(failed)? {
@@ -140,7 +227,14 @@ impl PrivateUpdateCache {
     /// Root entries outside our canonical version/temporary namespace are not
     /// touched. Recursion never follows links, and work is bounded.
     pub fn retain_version(&self, keep: Option<&str>) -> UpdateResult<()> {
-        ensure_private_directory(&self.root).map_err(failed)?;
+        if self.readonly {
+            return Err(UpdateError::CacheUnavailable);
+        }
+        if self.existing_only {
+            self.file("update-state.json")?;
+        } else {
+            ensure_private_directory(&self.root).map_err(failed)?;
+        }
         if keep.is_some_and(|value| !stable_version(value)) {
             return Err(UpdateError::CacheUnavailable);
         }
@@ -166,6 +260,9 @@ impl PrivateUpdateCache {
         Ok(())
     }
     pub fn remove_child_tree(&self, name: &str) -> UpdateResult<()> {
+        if self.readonly {
+            return Err(UpdateError::CacheUnavailable);
+        }
         let path = self.file(name)?;
         if std::fs::symlink_metadata(&path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
         {
@@ -206,6 +303,60 @@ mod tests {
     use super::*;
     use std::io::Write;
     #[test]
+    fn existing_update_cache_never_provisions_roots_children_or_fences() {
+        let temp = crate::test_tempdir().unwrap();
+        let root = temp.path().join("existing-update");
+        assert!(PrivateUpdateCache::open_existing_for_update(root.clone())
+            .unwrap()
+            .is_none());
+        assert!(!root.exists());
+        PrivateUpdateCache::open(root.clone()).unwrap();
+        let update = PrivateUpdateCache::open_existing_for_update(root.clone())
+            .unwrap()
+            .unwrap();
+        assert!(update.lock().is_err());
+        assert!(!root.join("update.lock").exists());
+        assert!(update.child("1.2.3").is_err());
+        assert!(!root.join("1.2.3").exists());
+        std::fs::remove_dir(&root).unwrap();
+        assert!(update.write("update-state.json", b"state").is_err());
+        assert!(update.retain_version(None).is_err());
+        assert!(!root.exists());
+    }
+    #[test]
+    fn readonly_cache_never_creates_missing_paths_or_recreates_removed_root() {
+        let temp = crate::test_tempdir().unwrap();
+        let root = temp.path().join("readonly");
+        assert!(PrivateUpdateCache::open_existing(root.clone())
+            .unwrap()
+            .is_none());
+        assert!(!root.exists());
+        let cache = PrivateUpdateCache::open(root.clone()).unwrap();
+        cache.write("fixture", b"value").unwrap();
+        let readonly = PrivateUpdateCache::open_existing(root.clone())
+            .unwrap()
+            .unwrap();
+        assert!(readonly.existing_child("missing").unwrap().is_none());
+        assert!(readonly.write("new", b"no").is_err());
+        assert!(!root.join("new").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let before = std::fs::metadata(&root).unwrap();
+            assert_eq!(readonly.read("fixture", 16).unwrap().unwrap(), b"value");
+            let after = std::fs::metadata(&root).unwrap();
+            assert_eq!(before.mode(), after.mode());
+            assert_eq!(
+                (before.ctime(), before.ctime_nsec()),
+                (after.ctime(), after.ctime_nsec())
+            );
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(readonly.read("fixture", 16).is_err());
+        assert!(!root.exists());
+    }
+
+    #[test]
     fn parts_are_private_atomic_and_cleanup_is_scoped() {
         let temp = crate::test_tempdir().unwrap();
         let cache = PrivateUpdateCache::open(temp.path().join("updates")).unwrap();
@@ -235,6 +386,30 @@ mod tests {
         assert!(cache.lock().is_err());
         drop(lock);
         assert!(cache.lock().is_ok());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn cache_attempt_lock_release_does_not_wait_for_an_inherited_handle() {
+        for mode in ["new_exclusive", "existing_exclusive", "existing_shared"] {
+            let temp = crate::test_tempdir().unwrap();
+            let cache = PrivateUpdateCache::open(temp.path().join("updates")).unwrap();
+            drop(cache.lock().unwrap());
+            let existing = PrivateUpdateCache::open_existing_for_update(cache.root.clone())
+                .unwrap()
+                .unwrap();
+            let lock = match mode {
+                "new_exclusive" => cache.lock().unwrap(),
+                "existing_exclusive" => existing.lock_existing_exclusive().unwrap(),
+                _ => existing.lock_existing().unwrap(),
+            };
+            assert!(existing.lock_existing_exclusive().is_err(), "{mode}");
+            // dup and fork share the same open-file description. A concurrent
+            // process spawn can retain this descriptor until its close-on-exec.
+            let inherited = lock.file.try_clone().unwrap();
+            drop(lock);
+            assert!(existing.lock_existing_exclusive().is_ok(), "{mode}");
+            drop(inherited);
+        }
     }
     #[cfg(unix)]
     #[test]

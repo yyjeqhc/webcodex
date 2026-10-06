@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ComponentObservation {
     pub component: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_mode: Option<TunnelHostMode>,
     pub profile: Option<String>,
     pub service: Option<ServiceStatus>,
     pub diagnostic: Option<SetupDiagnostic>,
@@ -67,17 +69,23 @@ pub(crate) fn collect(
             Ok(profiles) => {
                 result.profiles_truncated = profiles.len() > 16;
                 for profile in profiles.into_iter().take(16) {
-                    let spec = crate::tunnel_service_spec(store, record, &profile.profile_id);
+                    let spec = if profile.host_mode == TunnelHostMode::Embedded {
+                        service_spec(store, record, Component::Server)
+                    } else {
+                        crate::tunnel_service_spec(store, record, &profile.profile_id)
+                    };
+                    let health_path = store
+                        .root()
+                        .join("server/tunnels")
+                        .join(&profile.profile_id)
+                        .join("readiness.json");
                     let state = spec.as_ref().map_err(Clone::clone).and_then(|spec| {
                         ServiceManager::inspect(spec).map_err(crate::native::service_error)
                     });
                     let mut row = observation("tunnel", Some(profile.profile_id), state);
+                    row.host_mode = Some(profile.host_mode);
                     if row.service.as_ref().is_some_and(running_owned) {
-                        match spec.and_then(|spec| {
-                            crate::tunnel::read_health(
-                                &spec.working_directory.join("readiness.json"),
-                            )
-                        }) {
+                        match crate::tunnel::read_health(&health_path) {
                             Ok((tunnel, local)) => {
                                 row.tunnel_ready = Some(tunnel);
                                 row.local_mcp_ready = Some(local);
@@ -114,6 +122,7 @@ fn observation(
     };
     ComponentObservation {
         component: component.into(),
+        host_mode: None,
         profile,
         service,
         diagnostic,

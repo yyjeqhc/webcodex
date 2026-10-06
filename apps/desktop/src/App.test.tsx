@@ -662,11 +662,13 @@ beforeEach(() => {
   it("does not start a duplicate Tunnel when local setup runs while one is already active", async () => {
     const tunneledState: DesktopState = {
       ...readyState,
+      persistent_environment: "saved-environment",
       topology: { ...readyState.topology!, exposure: { kind: "open_ai_tunnel" } },
       connections: connectionSnapshot(connectionFixture()),
       preferred_connection: "open_ai_tunnel",
     };
     api.getState.mockResolvedValue(tunneledState);
+    api.refresh.mockResolvedValue(tunneledState);
     api.observeChatgptActivity.mockResolvedValue(tunneledState);
     api.configureEnvironment.mockResolvedValue(tunneledState);
 
@@ -679,6 +681,8 @@ beforeEach(() => {
 
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({ mode: "create", runner: true })));
     expect(api.startRegularTunnel).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { level: 1, name: "完成 ChatGPT 连接" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name:"打开概览"}));
     expect(await screen.findByRole("heading", { level: 1, name: "工作概览" })).toBeInTheDocument();
   });
 
@@ -818,14 +822,34 @@ beforeEach(() => {
     await waitFor(() => expect(launchAtLogin).toBeChecked());
   });
 
-  it("bootstraps a fresh Desktop with the transient local Runtime and no persistent services", async () => {
+  it("shows Create and Join on fresh launch without setup or service effects", async () => {
     api.getState.mockResolvedValue(firstRunState); renderApp();
-    expect(await screen.findByRole("heading", { level: 1, name: "工作概览" })).toBeInTheDocument();
-    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", {name:/创建主节点/})).toBeInTheDocument();
+    expect(screen.getByRole("button", {name:/加入主节点/})).toBeInTheDocument();
+    expect(api.configureLocal).not.toHaveBeenCalled();
     expect(api.configureEnvironment).not.toHaveBeenCalled();
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: /创建主节点/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /加入主节点/ })).not.toBeInTheDocument();
+    expect(api.resumeSavedConnections).not.toHaveBeenCalled();
+    expect(api.startRegularTunnel).not.toHaveBeenCalled();
+    expect(api.startQuickShare).not.toHaveBeenCalled();
+  });
+
+  it.each(["create", "join"] as const)("continues fresh %s setup to role-specific connection guidance", async mode => {
+    api.getState.mockResolvedValue(firstRunState);
+    const configured = {...projectlessReadyState,persistent_environment:"fresh-env",topology:{...projectlessReadyState.topology!,server: mode === "create" ? {kind:"local" as const} : {kind:"remote" as const,url:"https://main.example"}}};
+    api.configureEnvironment.mockResolvedValue(configured);
+    renderApp();
+    fireEvent.click(await screen.findByRole("button",{name:mode === "create" ? /创建主节点/ : /加入主节点/}));
+    if (mode === "join") {
+      fireEvent.change(screen.getByLabelText("Server URL"),{target:{value:"https://main.example"}});
+      fireEvent.change(screen.getByLabelText("一次性配对码"),{target:{value:"one-time-code"}});
+    }
+    fireEvent.click(screen.getByRole("button",{name:mode === "create" ? "配置 WebCodex" : "连接电脑"}));
+    expect(await screen.findByRole("heading",{level:1,name:"完成 ChatGPT 连接"})).toBeInTheDocument();
+    expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({mode,runner:true,projectPath:null}));
+    expect(api.configureLocal).not.toHaveBeenCalled();
+    if (mode === "create") expect(screen.getByRole("button",{name:"添加 ChatGPT Tunnel"})).toBeInTheDocument();
+    else expect(screen.queryByRole("button",{name:"添加 ChatGPT Tunnel"})).toBeNull();
   });
 
   it("keeps PowerShell 7 guidance available in manual local recovery without requiring a project", async () => {
@@ -867,7 +891,7 @@ beforeEach(() => {
     expect(api.activateLocalProject).not.toHaveBeenCalled();
   });
 
-  it("shows an initial status failure and retries the complete fresh-start bootstrap", async () => {
+  it("shows an initial status failure and retries the first-run state read", async () => {
     const retryState = deferred<DesktopState>();
     api.getState
       .mockRejectedValueOnce({
@@ -891,8 +915,8 @@ beforeEach(() => {
     await waitFor(() => expect(api.getState).toHaveBeenCalledTimes(2));
 
     await act(async () => { retryState.resolve(firstRunState); });
-    expect(await screen.findByRole("heading", { level: 1, name: "工作概览" })).toBeInTheDocument();
-    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: /创建主节点/ })).toBeInTheDocument();
+    expect(api.configureLocal).not.toHaveBeenCalled();
     expect(api.configureEnvironment).not.toHaveBeenCalled();
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();

@@ -341,6 +341,7 @@ mod tests {
         assert_eq!(work_on_project.project(), Some("~p7"));
 
         let mut work_result = ToolCall::WorkResultState {
+            collaboration: None,
             automatic: false,
             files: None,
             project: "demo".to_string(),

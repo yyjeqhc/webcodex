@@ -129,7 +129,9 @@ async fn execute() -> Result<(), &'static str> {
         }
     };
     report("stopped", &health.snapshot(), config.json);
-    guard.finish(health.has_uncertain_work())?;
+    guard.finish(
+        health.has_uncertain_work() || result == Err(webcodex_openai_tunnel::Error::Uncertain),
+    )?;
     if health_failed {
         return Err("health listener stopped unexpectedly");
     }

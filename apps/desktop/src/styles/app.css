@@ -67,3 +67,21 @@ input:not([type="radio"]):not([type="checkbox"]), select { width: 100%; height: 
     backdrop-filter: none;
   }
 }
+
+.first-run-completion { display: grid; gap: 20px; }
+.first-run-completion h1:focus { outline-offset: 6px; }
+.first-run-completion .workspace-status-strip { flex-wrap: wrap; }
+.completion-identities { display: grid; gap: 12px; margin: 0; }
+.completion-identities dd { margin: 4px 0 0; }
+.completion-identities code, .completion-prompt { overflow-wrap: anywhere; }
+.first-read-guide { display: grid; gap: 14px; min-width: 0; }
+.first-read-guide h2, .first-read-guide p { margin: 0; }
+@media (max-width: 600px) {
+  .first-run-completion .setup-actions { align-items: stretch; flex-direction: column; }
+  .completion-identities code { white-space: normal; }
+}
+
+.setup-route { display: flex; gap: 24px; flex-wrap: wrap; padding-inline-start: 24px; }
+.setup-route li { padding-inline-end: 8px; }
+.setup-route [aria-current="step"] { font-weight: 700; }
+.setup-shell h1:focus, .first-run h1:focus { outline-offset: 6px; }

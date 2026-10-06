@@ -302,7 +302,7 @@ test("missing initial machine result recovers once through app-only content fall
     content: [{ type: "text", text: "WebCodex tool completed successfully." }],
   });
   await flush();
-  assert.notEqual(view.nodes.status.textContent, "This task card is unavailable");
+  assert.notEqual(view.nodes.status.textContent, "This Work Result card is unavailable");
   assert.equal(view.calls("get_work_result_state").length, 1);
   await view.reply(view.calls("get_work_result_state")[0], contentOnly(toolResult({ work_result: baseState })));
   assert.equal(view.nodes.taskTitle.textContent, "Work Result test");
@@ -321,7 +321,7 @@ test("Activity stays focused while Results exposes live files", async () => {
   assert.equal(view.nodes.windowActivity.children.length, 2);
   assert.equal(view.nodes.panelResults.hidden, true);
   assert.match(view.nodes.workspaceFiles.children[0].children[0].textContent, /src\/a.rs/);
-  assert.equal(view.nodes.collaborationMeta.textContent, "");
+  assert.equal(view.nodes.collaborationMeta.textContent, "0 loaded");
 });
 
 test("recent inactive work keeps the lightweight last-active state before the idle threshold", async () => {
@@ -436,14 +436,16 @@ test("Window messages render sender delivery state but not inbound peer delivery
   view.toolResult({ work_result: messageState });
   await view.initialize();
   const rows = view.nodes.messages.children;
-  const lastMeta = row => row.children[1].children.at(-1).textContent;
-  assert.equal(lastMeta(rows[0]), "Saved");
-  assert.equal(lastMeta(rows[1]), "Included in tool result");
-  assert.equal(lastMeta(rows[2]), "Acknowledged");
-  assert.doesNotMatch(lastMeta(rows[3]), /Saved|Included in tool result|Acknowledged/);
-  assert.equal(rows[3].children[1].children[0].textContent, "This Window");
-  assert.doesNotMatch(lastMeta(rows[4]), /Saved|Included in tool result|Acknowledged/);
-  assert.equal(lastMeta(rows[5]), "Included in tool result");
+  const metadata = row => row.children.at(-1).children.map(child => child.textContent).join(' ');
+  assert.match(metadata(rows[0]), /Saved/);
+  assert.match(metadata(rows[1]), /Included in tool result/);
+  assert.match(metadata(rows[2]), /Acknowledged/);
+  assert.match(metadata(rows[2]), /Reply received/);
+  assert.doesNotMatch(metadata(rows[3]), /Saved|Included in tool result|Acknowledged/);
+  assert.equal(rows[3].children[0].children[0].textContent, "This Window → You");
+  assert.match(rows[3].children[1].textContent, /Reply to · acknowledged/);
+  assert.doesNotMatch(metadata(rows[4]), /Saved|Included in tool result|Acknowledged/);
+  assert.match(metadata(rows[5]), /Included in tool result/);
 });
 
 test("card composer retries uncertain delivery with the same payload across context changes", async () => {
@@ -480,7 +482,9 @@ test("card composer retries uncertain delivery with the same payload across cont
     replayed: true,
     state_changed: false,
   })));
-  assert.equal(view.calls("get_work_result_state").length, 1);
+  const historyRead = view.calls("get_work_result_state").find(call => call.params.arguments.collaboration);
+  assert.ok(historyRead, "receipt must refresh history even while an earlier activity read is pending");
+  assert.equal(view.nodes.sendMessage.textContent, "Send", "composer does not wait for the history read");
   const refreshed = {
     ...baseState,
     state_version: `wr2_${"e".repeat(64)}`,
@@ -492,9 +496,9 @@ test("card composer retries uncertain delivery with the same payload across cont
       ],
     },
   };
-  await view.reply(view.calls("get_work_result_state")[0], contentOnly(toolResult({ work_result: refreshed })));
+  await view.reply(historyRead, contentOnly(toolResult({ work_result_collaboration: refreshed.collaboration })));
   assert.equal(view.nodes.messageInput.value, "");
-  assert.equal(view.nodes.messages.children[0].children[1].children.at(-1).textContent, "Saved");
+  assert.equal(view.nodes.messages.children[0].children.at(-1).children.at(-1).textContent, "Saved");
 });
 
 test("card conflict is deterministic and the next explicit send gets a new delivery key", async () => {
@@ -759,7 +763,7 @@ for (const first of ["input", "result"]) {
     else view.toolInput(foreign);
     await flush();
     assert.equal(view.calls("get_work_result_state").length, 0);
-    assert.equal(view.nodes.status.textContent, "This task card is unavailable");
+    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable");
     assert.equal(view.nodes.refresh.disabled, true);
     assert.equal(view.timers.size, 0);
   });
@@ -773,7 +777,7 @@ test("malformed authoritative Refresh state fails closed", async () => {
   view.nodes.refresh.onclick();
   await flush();
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: { ...baseState, state_version: "bad" } }));
-  assert.equal(view.nodes.status.textContent, "This task card is unavailable");
+  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable");
   assert.equal(view.nodes.refresh.disabled, true);
 });
 
@@ -801,7 +805,7 @@ test("collaboration context_project rejects controls and unbounded identities", 
       },
     } });
     await view.initialize();
-    assert.equal(view.nodes.status.textContent, "This task card is unavailable");
+    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable");
     assert.equal(view.nodes.refresh.disabled, true);
   }
 });
@@ -849,7 +853,7 @@ test("invalid Project input never refreshes", async () => {
     view.toolInput(bad);
     await flush();
     assert.equal(view.calls("get_work_result_state").length, 0);
-    assert.equal(view.nodes.status.textContent, "This task card is unavailable");
+    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable");
     assert.equal(view.nodes.refresh.disabled, true);
     assert.equal(view.timers.size, 0);
   }
@@ -1047,7 +1051,7 @@ test("a file page cannot replace its Project and sealed changes cannot retarget 
   assert.equal(view.calls("get_work_result_state").length, 1);
   view.toolResult({ work_result: { ...frozenWork(), session_id: `wc_sess_${"3".repeat(32)}` } });
   await flush();
-  assert.equal(view.nodes.status.textContent, "This task card is unavailable");
+  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable");
   assert.equal(view.nodes.refresh.disabled, true);
   assert.equal(view.calls("read_changed_file_diff").length, 0);
 });
@@ -1151,7 +1155,7 @@ for (const change of [
     const view = await frozenView();
     frozenNodes(view).button.onclick(); await flush();
     await view.reply(view.calls("read_changed_file_diff")[0], frozenDiff(change));
-    assert.match(view.nodes.status.textContent, /task card is unavailable/);
+    assert.match(view.nodes.status.textContent, /Work Result card is unavailable/);
     assert.equal(view.nodes.finalChanges.hidden, true);
     assert.equal(view.nodes.frozenFiles.children.length, 0);
     assert.equal(view.nodes.refresh.disabled, true);
@@ -1172,7 +1176,7 @@ for (const change of [
     const view = await frozenView("input", frozenWork(change));
     assert.equal(view.calls("read_changed_file_diff").length, 0);
     assert.equal(view.nodes.refresh.disabled, true);
-    assert.match(view.nodes.status.textContent, /task card is unavailable/);
+    assert.match(view.nodes.status.textContent, /Work Result card is unavailable/);
   });
 }
 
@@ -1205,7 +1209,7 @@ for (const via of ["initial", "refresh"]) {
 test("same snapshot id cannot smuggle a changed advertised path list", async () => {
   const view = await frozenView();
   view.toolResult({ work_result: frozenWork({ files: finalChanges.files.map((file, index) => index ? file : { ...file, path: "src/other.rs" }) }) });
-  assert.match(view.nodes.status.textContent, /task card is unavailable/);
+  assert.match(view.nodes.status.textContent, /Work Result card is unavailable/);
   assert.equal(view.nodes.finalChanges.hidden, true);
 });
 
@@ -1213,7 +1217,7 @@ test("cached legacy Changes resource payload is not promoted into authoritative 
   const view = app("mcp_work_result_app.html");
   view.toolInput(input); await view.initialize();
   view.toolResult({ changes: { version: 3, project, session_id, ...finalChanges } });
-  assert.match(view.nodes.status.textContent, /task card is unavailable/);
+  assert.match(view.nodes.status.textContent, /Work Result card is unavailable/);
   assert.equal(view.calls("get_work_result_state").length, 0);
   assert.equal(view.calls("read_changed_file_diff").length, 0);
 });

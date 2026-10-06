@@ -2,12 +2,12 @@
 //! it never invokes Installer, administrator authorization, launchctl, or an
 //! installed Environment. The fixture is intentionally not executable provenance.
 use super::*;
-use crate::operation::CancellationSignal;
-use crate::updates::download::{stream_installer, verify_file};
+use crate::unified_update::download::{stream_installer, verify_file};
+use crate::unified_update::CancellationSignal;
+use crate::unified_update::{sha256, verify_source_manifest, RuntimePlatform};
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use webcodex_environment::unified_update::{sha256, verify_source_manifest, RuntimePlatform};
 
 fn source(platform: RuntimePlatform) -> Vec<u8> {
     let mut components = serde_json::Map::new();
@@ -181,6 +181,6 @@ async fn desktop_real_process_macos_verified_update_package_fixture() {
     );
     // A parsed source document alone cannot grant prepare/install authority.
     // The existing Core verifier refuses absent executable/sidecar payloads.
-    assert!(webcodex_environment::verify_upgrade_candidate(&candidate).is_err());
+    assert!(crate::verify_upgrade_candidate(&candidate).is_err());
     eprintln!("NATIVE_UPDATER_FIXTURE platform={} bytes={} private_download=true sha256=true source_manifest=true native_pkg_expansion=true core_rejected_incomplete_candidate=true privileged_handoff=false", platform.as_str(), downloaded);
 }

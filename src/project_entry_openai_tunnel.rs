@@ -10,56 +10,166 @@ use std::{
 use tokio::{sync::oneshot, task::JoinHandle};
 use webcodex_openai_tunnel::{
     policy::{DeadlinePolicy, Limits},
-    ControlPlaneIdentity, Credential, Error, FixedMcpTarget, Health, TunnelClient,
+    ControlPlaneIdentity, ControlPlaneProxy, Credential, Error, FixedMcpTarget, Health,
+    TunnelClient,
 };
 
 const CONTROL_PLANE: &str = "https://api.openai.com";
 
-pub(super) struct OpenAiTunnelPrerequisites {
+pub(crate) struct OpenAiTunnelPrerequisites {
     pub(super) tunnel_id: String,
     credential: String,
+    proxy: ControlPlaneProxy,
+}
+impl OpenAiTunnelPrerequisites {
+    /// One explicit identity/key pair. Embedded callers never consult CONTROL_PLANE_*
+    /// or inherit proxy policy from another profile's process environment.
+    pub(crate) fn bound(
+        tunnel_id: String,
+        credential: String,
+        proxy: ControlPlaneProxy,
+    ) -> Result<Self, ProductError> {
+        if !valid_tunnel_id(&tunnel_id) {
+            return Err(missing_configuration());
+        }
+        Credential::bearer(&credential).map_err(|_| missing_configuration())?;
+        Ok(Self {
+            tunnel_id,
+            credential,
+            proxy,
+        })
+    }
 }
 
-pub(super) struct OpenAiTunnel {
+pub(crate) struct OpenAiTunnel {
     task: Option<JoinHandle<Result<(), Error>>>,
     stop: Option<oneshot::Sender<()>>,
     health: Health,
     guard: PathBuf,
+    terminal: Option<Result<(), Error>>,
 }
 impl OpenAiTunnel {
-    pub(super) fn health(&self) -> Health {
+    pub(crate) fn health(&self) -> Health {
         self.health.clone()
     }
-    pub(super) async fn wait_for_exit(&mut self) -> Result<(), ProductError> {
+
+    /// The caller must first prove its fixed local MCP endpoint ready. This owner
+    /// retains the task until it observes completion, or aborts it on abrupt Drop.
+    pub(crate) fn launch(
+        prerequisites: &OpenAiTunnelPrerequisites,
+        mcp_url: &str,
+        local_token: &str,
+    ) -> Result<Self, ProductError> {
+        let mcp_url = local_mcp_url(mcp_url)?;
+        let client = TunnelClient::new_with_proxy(
+            ControlPlaneIdentity::new(
+                CONTROL_PLANE,
+                &prerequisites.tunnel_id,
+                Credential::bearer(&prerequisites.credential).map_err(tunnel_error)?,
+            )
+            .map_err(tunnel_error)?,
+            FixedMcpTarget::new(
+                &mcp_url,
+                Credential::bearer(local_token).map_err(tunnel_error)?,
+            )
+            .map_err(tunnel_error)?,
+            DeadlinePolicy::RequireFinite {
+                max_duration: Duration::from_secs(120),
+            },
+            Limits::default(),
+            prerequisites.proxy.clone(),
+        )
+        .map_err(tunnel_error)?;
+        let guard = acquire_guard(&guard_root()?, &prerequisites.tunnel_id)?;
+        let health = client.health();
+        let (stop, rx) = oneshot::channel();
+        let task = tokio::spawn(client.run(async {
+            let _ = rx.await;
+        }));
+        Ok(Self {
+            task: Some(task),
+            stop: Some(stop),
+            health,
+            guard,
+            terminal: None,
+        })
+    }
+
+    fn completed(
+        &mut self,
+        joined: Result<Result<(), Error>, tokio::task::JoinError>,
+    ) -> Result<(), Error> {
+        self.task = None;
+        let mut result = joined.unwrap_or(Err(Error::Uncertain));
+        if self.health.has_uncertain_work() {
+            result = Err(Error::Uncertain);
+        }
+        if result.is_ok() {
+            if std::fs::remove_file(&self.guard).is_err() {
+                result = Err(Error::Uncertain);
+            } else {
+                #[cfg(unix)]
+                if std::fs::File::open(self.guard.parent().expect("guard parent"))
+                    .and_then(|file| file.sync_all())
+                    .is_err()
+                {
+                    // Preserve a visible fence when the unlink's durability could
+                    // not be confirmed. Do not report uncertainty with no latch.
+                    let _ = write_new_private(&self.guard, b"native-tunnel-run-v1\n");
+                    result = Err(Error::Uncertain);
+                }
+            }
+        }
+        self.terminal = Some(result);
+        result
+    }
+
+    pub(crate) async fn wait_for_exit(&mut self) -> Result<(), ProductError> {
         let result = match self.task.as_mut() {
             Some(task) => task.await,
-            None => return Err(tunnel_error(Error::Uncertain)),
+            None => {
+                return Err(tunnel_error(
+                    self.terminal
+                        .unwrap_or(Err(Error::Uncertain))
+                        .err()
+                        .unwrap_or(Error::Transport),
+                ))
+            }
         };
-        self.task = None;
-        if result.is_ok() && !self.health.has_uncertain_work() {
-            let _ = std::fs::remove_file(&self.guard);
-        }
+        // An unsolicited exit is observable failure, even if the task returned Ok.
         Err(tunnel_error(
-            result
-                .unwrap_or(Err(Error::Uncertain))
-                .err()
-                .unwrap_or(Error::Transport),
+            self.completed(result).err().unwrap_or(Error::Transport),
         ))
     }
-    pub(super) async fn stop(&mut self) {
+
+    pub(crate) async fn stop_with_outcome(&mut self) -> Result<(), ProductError> {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
         if let Some(task) = self.task.as_mut() {
-            // Retain ownership while awaiting: cancellation of stop must leave
-            // Drop able to abort the task rather than silently detaching it.
-            let result = task.await;
-            self.task = None;
-            if result.is_ok() && !self.health.has_uncertain_work() {
-                let _ = std::fs::remove_file(&self.guard);
-            } else {
-                eprintln!("WebCodex Tunnel stopped with unconfirmed work; automatic restart is blocked. Resolve the previous effects and pending Tunnel work before clearing its run marker, or use a new Tunnel identity.");
-            }
+            // Retain ownership while awaiting: cancelling this method must not
+            // detach the task. Library drain is bounded at ten seconds.
+            let joined = match tokio::time::timeout(Duration::from_secs(12), task).await {
+                Ok(joined) => joined,
+                Err(_) => {
+                    if let Some(task) = self.task.as_ref() {
+                        task.abort();
+                    }
+                    self.terminal = Some(Err(Error::Uncertain));
+                    return Err(tunnel_error(Error::Uncertain));
+                }
+            };
+            self.completed(joined).map_err(tunnel_error)
+        } else {
+            self.terminal
+                .unwrap_or(Err(Error::Uncertain))
+                .map_err(tunnel_error)
+        }
+    }
+
+    pub(super) async fn stop(&mut self) {
+        if self.stop_with_outcome().await.is_err() {
+            eprintln!("WebCodex Tunnel shutdown was not confirmed clean; its restart fence must be inspected before reuse.");
         }
     }
 }
@@ -76,17 +186,30 @@ impl Drop for OpenAiTunnel {
 }
 
 pub(super) async fn prepare_openai_tunnel() -> Result<OpenAiTunnelPrerequisites, ProductError> {
-    let tunnel_id =
-        std::env::var("CONTROL_PLANE_TUNNEL_ID").map_err(|_| missing_configuration())?;
-    if !valid_tunnel_id(&tunnel_id) {
-        return Err(missing_configuration());
+    OpenAiTunnelPrerequisites::bound(
+        std::env::var("CONTROL_PLANE_TUNNEL_ID").map_err(|_| missing_configuration())?,
+        std::env::var("CONTROL_PLANE_API_KEY").map_err(|_| missing_configuration())?,
+        ControlPlaneProxy::System,
+    )
+}
+
+fn local_mcp_url(value: &str) -> Result<String, ProductError> {
+    let mut url = url::Url::parse(value).map_err(|_| tunnel_error(Error::Configuration))?;
+    if url.host_str() == Some("localhost") {
+        url.set_host(Some("127.0.0.1"))
+            .map_err(|_| tunnel_error(Error::Configuration))?;
     }
-    let credential = std::env::var("CONTROL_PLANE_API_KEY").map_err(|_| missing_configuration())?;
-    Credential::bearer(&credential).map_err(|_| missing_configuration())?;
-    Ok(OpenAiTunnelPrerequisites {
-        tunnel_id,
-        credential,
-    })
+    if url.scheme() != "http"
+        || !matches!(url.host_str(), Some("127.0.0.1" | "[::1]"))
+        || url.path() != "/mcp"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(tunnel_error(Error::Configuration));
+    }
+    Ok(url.to_string())
 }
 
 pub(super) async fn start_openai_tunnel(
@@ -95,39 +218,7 @@ pub(super) async fn start_openai_tunnel(
     local_token: &str,
     deadline: Instant,
 ) -> Result<OpenAiTunnel, ProductError> {
-    // The adapter only exposes the owned loopback MCP endpoint. The independent
-    // library may be used with an explicitly configured HTTPS target.
-    let mut url = url::Url::parse(mcp_url).map_err(|_| tunnel_error(Error::Configuration))?;
-    if url.host_str() == Some("localhost") {
-        url.set_host(Some("127.0.0.1"))
-            .map_err(|_| tunnel_error(Error::Configuration))?;
-    }
-    let mcp_url = url.as_str();
-    if url.scheme() != "http"
-        || !matches!(url.host_str(), Some("127.0.0.1" | "[::1]"))
-        || url.path() != "/mcp"
-        || url.query().is_some()
-    {
-        return Err(tunnel_error(Error::Configuration));
-    }
-    let client = TunnelClient::new(
-        ControlPlaneIdentity::new(
-            CONTROL_PLANE,
-            &prerequisites.tunnel_id,
-            Credential::bearer(&prerequisites.credential).map_err(tunnel_error)?,
-        )
-        .map_err(tunnel_error)?,
-        FixedMcpTarget::new(
-            mcp_url,
-            Credential::bearer(local_token).map_err(tunnel_error)?,
-        )
-        .map_err(tunnel_error)?,
-        DeadlinePolicy::RequireFinite {
-            max_duration: Duration::from_secs(120),
-        },
-        Limits::default(),
-    )
-    .map_err(tunnel_error)?;
+    let mcp_url = local_mcp_url(mcp_url)?;
     let probe = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -137,7 +228,7 @@ pub(super) async fn start_openai_tunnel(
         .map_err(|_| tunnel_error(Error::Configuration))?;
     let local_ready = tokio::time::timeout_at(
         deadline.into(),
-        super::regular_tunnel_service::probe_local_mcp(&probe, mcp_url, local_token),
+        super::regular_tunnel_service::probe_local_mcp(&probe, &mcp_url, local_token),
     )
     .await
     .unwrap_or(false);
@@ -148,19 +239,7 @@ pub(super) async fn start_openai_tunnel(
             Some("Start the local WebCodex Server and verify its credential."),
         ));
     }
-    let root = guard_root()?;
-    let guard = acquire_guard(&root, &prerequisites.tunnel_id)?;
-    let health = client.health();
-    let (stop, rx) = oneshot::channel();
-    let task = tokio::spawn(client.run(async {
-        let _ = rx.await;
-    }));
-    let mut tunnel = OpenAiTunnel {
-        task: Some(task),
-        stop: Some(stop),
-        health,
-        guard,
-    };
+    let mut tunnel = OpenAiTunnel::launch(prerequisites, &mcp_url, local_token)?;
     let ready = async {
         loop {
             if tunnel.health.is_ready() {
@@ -182,7 +261,6 @@ pub(super) async fn start_openai_tunnel(
         }
     }
 }
-
 fn valid_tunnel_id(value: &str) -> bool {
     value.strip_prefix("tunnel_").is_some_and(|suffix| {
         suffix.len() == 32

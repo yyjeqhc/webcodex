@@ -44,6 +44,13 @@ class BuildDownloadPageTests(unittest.TestCase):
         self.assertEqual(json.loads((output / "manifest.json").read_text()), self.manifest)
         self.assertTrue(all((output / name).is_file() for name in ("index.html", "styles.css", "app.js")))
 
+    def test_legacy_installer_schema_remains_strict_without_bootstrap_capability_fields(self):
+        item = self.manifest["installers"]["win32-x64-exe"]
+        self.assertEqual(len(item), 7)
+        self.assertEqual(validate_manifest(self.manifest), self.manifest)
+        item["guarded_handoff_version"] = 1
+        with self.assertRaises(ValueError): validate_manifest(self.manifest)
+
     def test_rejects_incomplete_or_external_installer_manifest(self):
         target = next(reversed(INSTALLER_TARGETS))
         platform, package_format = INSTALLER_TARGETS[target]

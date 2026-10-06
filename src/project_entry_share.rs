@@ -839,14 +839,18 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
         task.abort();
         let _ = task.await;
     }
-    runtime.stop().await;
+    // Keep the owned local MCP server available until Tunnel response delivery
+    // has settled. Closing HTTP first turns otherwise clean stops into uncertainty.
+    let stopped = if let Some(tunnel) = openai_tunnel.as_mut() {
+        tunnel.stop_with_outcome().await
+    } else {
+        Ok(())
+    };
     if let Some(tunnel) = cloudflare_tunnel.as_mut() {
         tunnel.stop().await;
     }
-    if let Some(tunnel) = openai_tunnel.as_mut() {
-        tunnel.stop().await;
-    }
-    outcome
+    runtime.stop().await;
+    outcome.and(stopped)
 }
 
 async fn wait_for_share_stop_signal(stop_on_stdin_eof: bool) {

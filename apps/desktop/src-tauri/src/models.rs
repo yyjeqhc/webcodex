@@ -573,6 +573,8 @@ pub struct EnvironmentSetupSnapshot {
     pub mode: String,
     pub server_url: String,
     pub runner: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_display_name: Option<String>,
     pub project_path: Option<String>,
     pub service_scope: webcodex_environment::service::ServiceScope,
     pub configured: bool,
@@ -589,6 +591,7 @@ pub struct EnvironmentInput {
     pub project_path: Option<String>,
     /// Missing preserves older callers; normal Desktop setup explicitly enables work.
     pub runner: Option<bool>,
+    pub runner_display_name: Option<String>,
     pub pairing_code: Option<String>,
     pub user_token: Option<String>,
     #[serde(default)]

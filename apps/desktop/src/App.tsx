@@ -15,6 +15,7 @@ import { useShellText } from "./i18n/runtime-shell";
 import type {
   DesktopError,
 } from "./models/topology";
+import { FirstRunCompletion } from "./features/onboarding/FirstRunCompletion";
 import { FirstRun } from "./features/onboarding/FirstRun";
 import { Dashboard } from "./features/dashboard/Dashboard";
 import { ProjectsPanel } from "./features/projects/ProjectsPanel";
@@ -32,6 +33,7 @@ export default function App() {
 function DesktopApp() {
   const { t } = useLocale();
   const s = useShellText();
+  const [completionEnvironment, setCompletionEnvironment] = useState<string | null>(null);
   const [extensionTab, setExtensionTab] = useState<ExtensionTab>();
   const [settingsSection, setSettingsSection] = useState<"diagnostics" | "runtime" | "network" | "access" | undefined>();
   const { state, activity, navigation, setNavigation, refreshing, preserveWorkspacePollDeadline, error, setError, cancelSubmittingId, showSetup, setShowSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation } = useDesktopWorkspace();
@@ -114,12 +116,16 @@ function DesktopApp() {
         {navigation !== "settings" && <ComputerPermissions welcome />}
         {navigation === "home" && <UpdateBanner updates={updates} />}
         {navigation === "home" && (state.topology || state.configuration_issue || state.runtime_error) && <ReadinessBanner state={state} onState={commitState} onDiagnostics={() => openSettings("diagnostics")} onRuntime={() => openSettings("runtime")} onConnection={() => setNavigation("connection")} onProviders={kind => { setExtensionTab(kind === "mcp" ? "mcpProviders" : "codingAgents"); setNavigation("extensions"); }} />}
-        {navigation === "home" && !state.configuration_issue && (needsSetup ? (
+        {navigation === "home" && !state.configuration_issue && (!needsSetup && completionEnvironment !== null && completionEnvironment === (state.environment_setup?.environment_id ?? state.persistent_environment) && state.topology?.experience === "full" ? (
+          <FirstRunCompletion state={state} onState={commitState} onComplete={() => setCompletionEnvironment(null)}
+            onProjects={() => { setCompletionEnvironment(null); setNavigation("projects"); }}
+            onConnection={() => { setCompletionEnvironment(null); setNavigation("connection"); }} />
+        ) : needsSetup ? (
           <FirstRun
             state={state}
             onState={commitState}
             chooseModeFirst={showSetup}
-            onComplete={() => setShowSetup(false)}
+            onComplete={next => { setShowSetup(false); setCompletionEnvironment(next?.environment_setup?.environment_id ?? next?.persistent_environment ?? null); }}
           />
         ) : (
           <Dashboard

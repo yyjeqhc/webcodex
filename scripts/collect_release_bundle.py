@@ -801,6 +801,19 @@ def verify_bundle_directory(
         actual = sha256_file(root / filename)
         if actual != source_manifest_hashes[platform] or sums.get(filename) != actual:
             raise CollectionError(f"source manifest SHA-256 mismatch: {platform}")
+        source = _read_json(root / filename, MAX_MANIFEST_BYTES)
+        cli = source.get("artifacts", {}).get("webcodex", {})
+        info = cli.get("build_info", {})
+        if "windows_guarded_bootstrap_contract" in info:
+            marker = info["windows_guarded_bootstrap_contract"]
+            if not platform.startswith("win32-") or type(marker) is not int or marker != 1:
+                raise CollectionError("invalid Windows guarded bootstrap source attestation")
+            raw_digest = hashlib.sha256(json.dumps(info, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+            if cli.get("build_info_sha256") != raw_digest or (info.get("binary"), info.get("version"), info.get("git_commit"), info.get("git_dirty")) != ("webcodex", version, expected_source_sha, False):
+                raise CollectionError("Windows guarded bootstrap raw CLI attestation hash or identity is invalid")
+            record = installer_artifacts[f"{platform}-exe"]
+            if record["candidate_manifest_sha256"] != actual or (source.get("schema_version"), source.get("version"), source.get("platform"), source.get("source_sha"), source.get("source_workflow_run_id"), source.get("source_workflow_ref")) != (1, version, platform, expected_source_sha, run_id, f"{repo}/.github/workflows/release-build.yml@refs/tags/v{version}"):
+                raise CollectionError("Windows guarded bootstrap capability does not match its same-source outer provenance")
 
     for platform in desktop_platforms:
         filename = desktop_files[platform]

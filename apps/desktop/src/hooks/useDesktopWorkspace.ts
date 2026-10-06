@@ -124,30 +124,10 @@ export function useDesktopWorkspace() {
           return;
         }
 
-        // Fresh local Desktop is a zero-configuration runtime bootstrap, not a
-        // persistent-service setup flow. Start the Desktop-owned Server/Runner
-        // immediately; persistent user/system services remain an explicit
-        // advanced choice in Runtime settings.
-        if (!initial.topology) {
-          setRefreshing(true);
-          try {
-            const next = await desktopApi.configureLocal();
-            if (!cancelled) {
-              commitState(next);
-              setShowSetup(false);
-            }
-          } catch (value) {
-            if (!cancelled) {
-              commitState(initial);
-              setError(normalizeDesktopError(value));
-            }
-          } finally {
-            if (!cancelled) setRefreshing(false);
-          }
-          return;
-        }
-
+        // Fresh setup starts with an explicit Create/Join choice. Reading state
+        // must never enroll a Runner or install/start services on mount.
         commitState(initial);
+        if (!initial.topology) return;
         if (initial.persistent_environment) {
           // System services own persistence. Opening Desktop only observes them;
           // it must not restart a service the user explicitly stopped.

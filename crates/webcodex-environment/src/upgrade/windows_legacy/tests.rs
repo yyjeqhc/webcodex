@@ -206,6 +206,7 @@ async fn environment_owner_path_is_preserved_and_package_coordinator_cannot_adop
         schema_version: 1,
         environment_id: "original-environment".into(),
         request: SetupRequest {
+            runner_display_name: None,
             service_scope: crate::service::ServiceScope::User,
             mode: EnvironmentMode::Join,
             server_url: "https://fixture.invalid".into(),

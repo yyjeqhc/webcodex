@@ -3,8 +3,9 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use webcodex_environment::*;
 
-const USAGE: &str = "webcodex environment <COMMAND>\n\nconfigure [--create | --join URL] [--runner] [--project PATH | --no-project]\n          [--scope user|system]\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\ninvite\nadd-project PATH [--code-stdin] [--new-pairing-code]\nremove-project PROJECT_ID\nstatus|doctor\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\nrepair-credential runner\nrepair-user-credential [--token-file PATH]\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\nconfigure-tunnel [PROFILE] [--credentials-file PATH]\ntunnel-status [PROFILE]\nremove-tunnel [PROFILE]\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\nupgrade-finish|upgrade-rollback\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\ninstaller-apply --upgrade-receipt PATH --candidate-dir PATH --installer-file PATH --installer-target TARGET (OS authorization required)\ninstaller-verify --candidate-dir PATH\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\ninstaller-classify --expected-runtime-dir PATH (Windows)\npackage-upgrade-preflight|package-upgrade-prepare|package-upgrade-verify --candidate-dir PATH --expected-runtime-dir PATH (Windows)\npackage-upgrade-finish|package-upgrade-rollback --expected-runtime-dir PATH (Windows)\ninstaller-finish|installer-cancel\n\nPublic environment commands accept --json and --environment-dir PATH.\nInstaller finalization uses only the fixed owner authorization.\nAdvanced: --bin-dir PATH (configure and explicit migration).\n--runner enables local work without requiring an initial project.\nNew environments default to user services; saved environments retain their manager.\nUser scope: Linux systemd user manager (linger-dependent), macOS login LaunchAgent, Windows signed-in user task.\nSystem scope: boot services with explicit OS authorization; no automatic fallback.\nSame-machine creation issues separate local credentials automatically, without pairing input.\nViewer-only uses a user credential; pairing codes are only for Runner machines.\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\n";
+mod update;
 
+const USAGE: &str = "webcodex environment <COMMAND>\\n\\nconfigure [--create | --join URL] [--runner] [--runner-name NAME] [--project PATH | --no-project]\\n          [--scope user|system]\\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\\ninvite\\nadd-project PATH [--code-stdin] [--new-pairing-code]\\nremove-project PROJECT_ID\\nstatus|doctor\\npaths|backup-manifest (read-only metadata; no files or restore)\\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\\nrepair-credential runner\\nrepair-user-credential [--token-file PATH]\\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\\nconfigure-tunnel [PROFILE] [--credentials-file PATH]\\ntunnel-status [PROFILE]\\ntunnel-host PROFILE --host embedded|standalone\\nremove-tunnel [PROFILE]\\nupdate status|check|download|apply|resume|rollback (use update --help)\\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\\nupgrade-finish|upgrade-rollback\\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\\ninstaller-apply --upgrade-receipt PATH --candidate-dir PATH --installer-file PATH --installer-target TARGET (OS authorization required)\\ninstaller-verify --candidate-dir PATH\\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\\ninstaller-classify --expected-runtime-dir PATH (Windows)\\npackage-upgrade-preflight|package-upgrade-prepare|package-upgrade-verify --candidate-dir PATH --expected-runtime-dir PATH (Windows)\\npackage-upgrade-finish|package-upgrade-rollback --expected-runtime-dir PATH (Windows)\\ninstaller-finish|installer-cancel\\n\\nPublic environment commands accept --json and --environment-dir PATH.\\nInstaller finalization uses only the fixed owner authorization.\\nAdvanced: --bin-dir PATH (configure and explicit migration).\\n--runner enables local work without requiring an initial project.\\nNew environments default to user services; saved environments retain their manager.\\nUser scope: Linux systemd user manager (linger-dependent), macOS login LaunchAgent, Windows signed-in user task.\\nSystem scope: boot services with explicit OS authorization; no automatic fallback.\\nSame-machine creation issues separate local credentials automatically, without pairing input.\\nViewer-only uses a user credential; pairing codes are only for Runner machines.\\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\\n";
 #[derive(Default)]
 struct Input {
     command: String,
@@ -13,6 +14,7 @@ struct Input {
     project: Option<PathBuf>,
     no_project: bool,
     runner: bool,
+    runner_name: Option<String>,
     scope: Option<service::ServiceScope>,
     directory: Option<PathBuf>,
     bin_dir: Option<PathBuf>,
@@ -25,10 +27,14 @@ struct Input {
     development_build: bool,
     credentials_file: Option<PathBuf>,
     profile: Option<String>,
+    tunnel_host: Option<TunnelHostMode>,
     upgrade_receipt: Option<PathBuf>,
     installer_file: Option<PathBuf>,
     installer_target: Option<String>,
     expected_runtime_dir: Option<PathBuf>,
+    upgrade_target_file: Option<PathBuf>,
+    operation_id: Option<String>,
+    operation_id_output: bool,
     username: Option<String>,
     listen: Option<String>,
     server_url: Option<String>,
@@ -60,6 +66,7 @@ fn parse(args: &[String]) -> Result<Input, String> {
             "--project" => input.project = Some(PathBuf::from(value(&mut iter)?)),
             "--no-project" => input.no_project = true,
             "--runner" => input.runner = true,
+            "--runner-name" => input.runner_name = Some(value(&mut iter)?),
             "--scope" => input.scope = Some(value(&mut iter)?.parse()?),
             "--environment-dir" => input.directory = Some(PathBuf::from(value(&mut iter)?)),
             "--bin-dir" => input.bin_dir = Some(PathBuf::from(value(&mut iter)?)),
@@ -67,6 +74,18 @@ fn parse(args: &[String]) -> Result<Input, String> {
             "--token-file" => input.token_file = Some(PathBuf::from(value(&mut iter)?)),
             "--credentials-file" => input.credentials_file = Some(PathBuf::from(value(&mut iter)?)),
             "--profile" => input.profile = Some(value(&mut iter)?),
+            "--host" => {
+                input.tunnel_host = Some(match value(&mut iter)?.as_str() {
+                    "embedded" => TunnelHostMode::Embedded,
+                    "standalone" => TunnelHostMode::Standalone,
+                    _ => return Err("--host must be embedded or standalone".into()),
+                })
+            }
+            "--upgrade-target-file" => {
+                input.upgrade_target_file = Some(PathBuf::from(value(&mut iter)?))
+            }
+            "--operation-id" => input.operation_id = Some(value(&mut iter)?),
+            "--operation-id-output" => input.operation_id_output = true,
             "--upgrade-receipt" => input.upgrade_receipt = Some(PathBuf::from(value(&mut iter)?)),
             "--installer-file" => input.installer_file = Some(PathBuf::from(value(&mut iter)?)),
             "--installer-target" => input.installer_target = Some(value(&mut iter)?),
@@ -101,6 +120,12 @@ fn parse(args: &[String]) -> Result<Input, String> {
     if input.runner && input.command != "configure" {
         return Err("--runner applies only to environment configure".into());
     }
+    if input.runner_name.is_some() && input.command != "configure" {
+        return Err("--runner-name applies only to environment configure".into());
+    }
+    if input.runner_name.is_some() && !input.runner && input.project.is_none() {
+        return Err("--runner-name requires --runner or --project PATH".into());
+    }
     if input.development_build
         && !matches!(
             input.command.as_str(),
@@ -112,6 +137,9 @@ fn parse(args: &[String]) -> Result<Input, String> {
     if input.installer_file.is_some() && input.command != "installer-apply" {
         return Err("--installer-file applies only to verified unified installer handoff".into());
     }
+    if input.tunnel_host.is_some() && input.command != "tunnel-host" {
+        return Err("--host applies only to the explicit tunnel-host command".into());
+    }
     if input.credentials_file.is_some() && input.command != "configure-tunnel" {
         return Err("--credentials-file applies only to configure-tunnel".into());
     }
@@ -122,6 +150,43 @@ fn parse(args: &[String]) -> Result<Input, String> {
             "--user, --listen and --server-url apply only to explicit legacy Server migration"
                 .into(),
         );
+    }
+    if input.upgrade_target_file.is_some() {
+        if !matches!(
+            input.command.as_str(),
+            "upgrade-prepare"
+                | "upgrade-finish"
+                | "upgrade-rollback"
+                | "installer-verify"
+                | "installer-classify"
+        ) || input.directory.is_none()
+            || input.development_build
+            || input.upgrade_receipt.is_some()
+        {
+            return Err("Guarded installer handoff requires an explicit Environment and a supported command".into());
+        }
+        if input.operation_id_output != (input.command == "upgrade-prepare")
+            || input.operation_id.is_some()
+                != matches!(
+                    input.command.as_str(),
+                    "upgrade-finish" | "upgrade-rollback" | "installer-verify"
+                )
+            || input.operation_id_output && input.json
+        {
+            return Err(
+                "Guarded installer handoff requires an exact operation for follow-up commands"
+                    .into(),
+            );
+        }
+        if input
+            .operation_id
+            .as_ref()
+            .is_some_and(|id| !uuid::Uuid::parse_str(id).is_ok_and(|uuid| uuid.to_string() == *id))
+        {
+            return Err("Invalid guarded installer operation".into());
+        }
+    } else if input.operation_id.is_some() || input.operation_id_output {
+        return Err("Guarded installer operation options require --upgrade-target-file".into());
     }
     Ok(input)
 }
@@ -139,6 +204,9 @@ pub(crate) async fn run(args: &[String]) -> Result<String, String> {
 }
 
 async fn run_inner(args: &[String]) -> Result<String, String> {
+    if args.first().map(String::as_str) == Some("update") {
+        return update::run(&args[1..]).await;
+    }
     #[cfg(unix)]
     if args.first().map(String::as_str) == Some("__installer-child") {
         if args.len() != 4
@@ -168,6 +236,94 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
         return Ok(USAGE.into());
     }
     let mut input = parse(args)?;
+    if matches!(input.command.as_str(), "paths" | "backup-manifest") {
+        let mut options = args.iter().skip(1);
+        while let Some(option) = options.next() {
+            match option.as_str() {
+                "--json" => {}
+                "--environment-dir" => {
+                    options.next().ok_or("Missing environment directory")?;
+                }
+                _ => {
+                    return Err(
+                        "paths and backup-manifest accept only --environment-dir and --json".into(),
+                    )
+                }
+            }
+        }
+        let root = match input.directory.as_deref() {
+            Some(path) => absolute(path)?,
+            None => default_environment_dir().map_err(|e| e.to_string())?,
+        };
+        let mut inventory = inspect_environment_paths(&root, None);
+        let mut build = webcodex_build_info::machine_build_info("webcodex");
+        build.version = env!("CARGO_PKG_VERSION").into();
+        inventory.builds.push(BuildObservation {
+            source: BuildSource::EntryPoint,
+            build: safe_build(&build),
+        });
+        recompute_revision(&mut inventory);
+        if input.command == "backup-manifest" {
+            return serde_json::to_string_pretty(&build_backup_manifest(&inventory))
+                .map_err(|_| "Could not serialize backup manifest".into());
+        }
+        if input.json {
+            return serde_json::to_string_pretty(&inventory)
+                .map_err(|_| "Could not serialize path inventory".into());
+        }
+        let mut lines = vec![
+            "WebCodex locations (configured metadata; running-effective locations are unconfirmed)"
+                .to_string(),
+        ];
+        for entry in inventory.roots.iter().chain(&inventory.entries) {
+            let status = serde_json::to_value(entry.status)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_else(|| "unconfirmed".into());
+            let location = entry
+                .configured_path
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "no local path".into());
+            lines.push(format!("{}: {} ({})", entry.id, location, status));
+        }
+        for issue in &inventory.issues {
+            lines.push(format!("Issue: {}", issue.code));
+        }
+        return Ok(lines.join("\n"));
+    }
+    let guarded_handoff = input
+        .upgrade_target_file
+        .as_deref()
+        .map(|path| {
+            webcodex_environment::unified_update::WindowsHandoff::from_request_file(path)
+                .map_err(|_| "Invalid guarded installer handoff".to_owned())
+        })
+        .transpose()?;
+    if let (Some(handoff), Some(operation)) = (&guarded_handoff, &input.operation_id) {
+        if handoff
+            .prepared_operation()
+            .map_err(|_| "Invalid guarded installer acknowledgement")?
+            .as_deref()
+            != Some(operation)
+            || handoff
+                .accepted_operation()
+                .map_err(|_| "Invalid guarded installer acknowledgement")?
+                .as_deref()
+                != Some(operation)
+        {
+            return Err(
+                "Guarded installer follow-up does not match the acknowledged operation".into(),
+            );
+        }
+    }
+    let guarded_target = guarded_handoff.as_ref().map(|handoff| {
+        let mut target = handoff.selected_target().clone();
+        if let Some(operation) = &input.operation_id {
+            target.operation_id = Some(operation.clone());
+        }
+        target
+    });
     if input.command == "installer-apply" {
         #[cfg(unix)]
         {
@@ -314,6 +470,16 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
             verify_prepared_installation(&root.join("upgrade-prepared.json"), &candidate).await
         }
         .map_err(|error| error.to_string())?;
+        if let Some(target) = &guarded_target {
+            if receipt.environment_id != target.environment_id
+                || receipt.manifest_sha256 != target.manifest_sha256
+                || Some(receipt.operation_id.as_str()) != target.operation_id.as_deref()
+            {
+                return Err(
+                    "Guarded installer receipt does not match the selected operation".into(),
+                );
+            }
+        }
         if let Some(directory) = input.expected_runtime_dir.as_deref() {
             verify_installer_targets(&receipt, &absolute(directory)?)
                 .map_err(|error| error.to_string())?;
@@ -327,7 +493,13 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
         .map(Ok)
         .unwrap_or_else(default_environment_dir)
         .map_err(|e| e.to_string())?;
-    let store = EnvironmentStore::open(absolute(&root)?).map_err(|e| e.to_string())?;
+    let store = if guarded_target.is_some() {
+        EnvironmentStore::open_existing(absolute(&root)?)
+            .map_err(|e| e.to_string())?
+            .ok_or("Selected Environment is no longer available")?
+    } else {
+        EnvironmentStore::open(absolute(&root)?).map_err(|e| e.to_string())?
+    };
     if input.command == "installer-classify" || input.command.starts_with("package-upgrade-") {
         let runtime = absolute(
             input
@@ -384,6 +556,33 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
     match input.command.as_str() {
         "upgrade-preflight" | "upgrade-prepare" => {
             let candidate = input.candidate_dir.ok_or("Specify --candidate-dir PATH")?;
+            if let (Some(handoff), Some(target)) = (&guarded_handoff, &guarded_target) {
+                let (result, receipt) = core
+                    .backend
+                    .upgrade_prepare_guarded_with_receipt(&store, &candidate, target)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let mut exact = target.clone();
+                exact.operation_id = Some(receipt.operation_id.clone());
+                if handoff.report_prepared(&receipt).is_err()
+                    || handoff
+                        .wait_for_acceptance(&receipt.operation_id)
+                        .await
+                        .is_err()
+                {
+                    // This preparing process owns the operation. The launching
+                    // adapter never races an unknown outer installer with rollback.
+                    core.backend
+                        .upgrade_rollback_guarded(&store, &exact)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    return Err("Guarded installer handoff was not acknowledged".into());
+                }
+                if !result.ready {
+                    return Err("Guarded installer preparation was rejected".into());
+                }
+                return Ok(receipt.operation_id);
+            }
             let result = match (input.command.as_str(), input.development_build) {
                 ("upgrade-preflight", false) => {
                     core.backend.upgrade_preflight(&store, &candidate).await
@@ -410,7 +609,13 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
             }
         }
         "upgrade-finish" | "upgrade-rollback" => {
-            if input.command == "upgrade-finish" {
+            if let Some(target) = &guarded_target {
+                if input.command == "upgrade-finish" {
+                    core.backend.upgrade_finish_guarded(&store, target).await
+                } else {
+                    core.backend.upgrade_rollback_guarded(&store, target).await
+                }
+            } else if input.command == "upgrade-finish" {
                 core.backend.upgrade_finish(&store).await
             } else {
                 core.backend.upgrade_rollback(&store).await
@@ -449,6 +654,7 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
             };
             let default_url = format!("http://{reachable}");
             let request = SetupRequest {
+                runner_display_name: None,
                 service_scope: service::ServiceScope::System,
                 mode: EnvironmentMode::Create {
                     listen: listen.into(),
@@ -488,6 +694,7 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                 return Err("Legacy migration preserves the original Runner and requires --join URL --project PATH --token-file PATH".into());
             }
             let request = SetupRequest {
+                runner_display_name: None,
                 service_scope: service::ServiceScope::System,
                 mode: EnvironmentMode::Join,
                 server_url: canonical_server_url(
@@ -607,6 +814,7 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                         .map_err(|e| e.to_string())?;
                 let binaries = discover_binaries(input.bin_dir.as_deref())?;
                 SetupRequest {
+                    runner_display_name: input.runner_name.clone(),
                     service_scope: resolve_service_scope(&store, input.scope)
                         .map_err(|e| e.to_string())?,
                     mode: if input.create {
@@ -768,6 +976,25 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                 Ok(format!("{}: Tunnel and local MCP are ready", status.id))
             }
         }
+        "tunnel-host" => {
+            let profile = input
+                .operand
+                .as_deref()
+                .ok_or("Specify an exact Tunnel profile")?;
+            let mode = input
+                .tunnel_host
+                .ok_or("Specify --host embedded or standalone")?;
+            core.backend
+                .set_tunnel_host(&store, profile, mode)
+                .map_err(|error| error.to_string())?;
+            if input.json {
+                Ok(serde_json::json!({"profile_id":profile,"host_mode":mode,"restart_required":true}).to_string())
+            } else {
+                Ok(format!(
+                    "{profile}: host={mode:?}; start the selected owner explicitly"
+                ))
+            }
+        }
         "tunnel-status" => {
             let status = core
                 .backend
@@ -778,8 +1005,9 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                     .map_err(|_| "Could not encode Tunnel status".into())
             } else {
                 Ok(format!(
-                    "{}: running={:?}, Tunnel ready={}, local MCP ready={}",
+                    "{}: host={:?}, running={:?}, Tunnel ready={}, local MCP ready={}",
                     status.service_status.id,
+                    status.host_mode,
                     status.service_status.running,
                     status.tunnel_ready,
                     status.local_mcp_ready

@@ -93,8 +93,17 @@ impl ToolRuntime {
                 session_id,
                 files,
                 automatic,
+                collaboration,
             } => {
-                if let Some(files) = files {
+                if files.is_some() && collaboration.is_some() {
+                    return ToolResult::err(
+                        "files and collaboration history are mutually exclusive",
+                    );
+                }
+                if let Some(history) = collaboration {
+                    self.work_result_collaboration_page(project, session_id, history, auth, window)
+                        .await
+                } else if let Some(files) = files {
                     self.work_result_files(project, session_id, files, auth)
                         .await
                 } else {
@@ -118,12 +127,14 @@ impl ToolRuntime {
                 session_id,
                 message,
                 delivery_key,
+                kind,
             } => {
-                self.work_result_send_message(
+                self.work_result_send_message_with_kind(
                     project,
                     session_id,
                     message,
                     delivery_key,
+                    kind.map(|kind| kind.as_str()).unwrap_or("guidance"),
                     auth,
                     window,
                 )

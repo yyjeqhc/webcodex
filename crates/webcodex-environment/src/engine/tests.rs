@@ -57,6 +57,7 @@ impl EnvironmentBackend for Host {
 }
 fn request(create: bool, project: bool) -> SetupRequest {
     SetupRequest {
+        runner_display_name: None,
         service_scope: service::ServiceScope::System,
         mode: if create {
             EnvironmentMode::Create {
@@ -342,6 +343,56 @@ async fn another_target_or_account_cannot_rebind_saved_setup() {
         );
     }
     assert_eq!(store.load_environment().unwrap().unwrap().request, original);
+}
+
+#[tokio::test]
+async fn runner_name_is_preserved_on_recovery_without_replaying_setup_effects() {
+    let dir = crate::test_tempdir().unwrap();
+    let store = EnvironmentStore::open(dir.path().join("environment")).unwrap();
+    let mut setup = EnvironmentSetup::new(Host::default());
+    let mut original = request(false, false);
+    original.runner = Some(true);
+    original.runner_display_name = Some("My laptop".into());
+    setup
+        .configure(&store, original.clone(), &SetupSecrets::default(), |_| {})
+        .await
+        .unwrap();
+    let saved = store.load_environment().unwrap().unwrap();
+    let before = setup.backend.effects.len();
+    setup
+        .configure(
+            &store,
+            saved.request.clone(),
+            &SetupSecrets::default(),
+            |_| {},
+        )
+        .await
+        .unwrap();
+    assert_eq!(setup.backend.effects.len(), before);
+    assert_eq!(
+        store.load_environment().unwrap().unwrap().runner_client_id,
+        saved.runner_client_id
+    );
+    assert_eq!(
+        store
+            .load_environment()
+            .unwrap()
+            .unwrap()
+            .request
+            .runner_display_name,
+        original.runner_display_name
+    );
+    let mut changed = original;
+    changed.runner_display_name = Some("Replacement".into());
+    assert_eq!(
+        setup
+            .configure(&store, changed, &SetupSecrets::default(), |_| {})
+            .await
+            .unwrap_err()
+            .code,
+        "environment_conflict"
+    );
+    assert_eq!(setup.backend.effects.len(), before);
 }
 
 #[test]

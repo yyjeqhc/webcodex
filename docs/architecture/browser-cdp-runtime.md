@@ -1,9 +1,14 @@
 # Browser/CDP runtime architecture
 
-Status: Phase 1 implementation contract. This document describes the first-class
+Status: Browser runtime implementation contract. This document describes the first-class
 Browser domain and the boundaries that later Browser work must preserve. Browser
 is not part of Computer Use: Computer owns OS/window/accessibility/pointer/keyboard
 semantics, while Browser owns page/navigation/DOM-or-AX/CDP semantics.
+
+Persistent profiles, external extension attachment, ownership-specific cleanup,
+and exact Browser/Computer handoff are specified in
+[Browser session continuity](browser-session-continuity.md). The CDP/identity,
+request bounds and action-admission rules below apply to both transports.
 
 ## Shape of the runtime
 
@@ -21,8 +26,8 @@ observe_browser / control_browser
 ```
 
 `observe_browser` is guaranteed read-only and has the closed actions `targets`,
-`browsers`, `pages`, `snapshot`, `screenshot`, `console`, `network`, and `diagnostics`.
-`control_browser` has the closed actions `launch`, `new_page`, `navigate`, `reload`,
+`discover`, `browsers`, `pages`, `surface`, `snapshot`, `screenshot`, `console`, `network`, and `diagnostics`.
+`control_browser` has the closed actions `launch`, `attach`, `new_page`, `navigate`, `reload`,
 `click`, `input_text`, `select_option`, `set_value`, `upload_file`, `batch`, `key`,
 `clear_diagnostics`, `close_page`, and `close_browser`. The model surface does not expose one MCP tool
 per CDP primitive, and it does not accept arbitrary protocol methods, scripts,
@@ -112,16 +117,18 @@ native executable path remains Runner-private.
 
 `BrowserSupervisor` is Runner-owned process state rather than a global singleton.
 It bounds browsers, pages, request time, semantic snapshot nodes/bytes, image
-bytes, input text, idle time, and absolute runtime lifetime. Every launched browser
-uses a WebCodex-owned temporary profile. It never attaches the user's normal
-Chrome/Edge profile or logged-in session. The CDP endpoint is bound to loopback and
-its port, target IDs, session IDs, websocket URL, profile path, process IDs, and
-native node identities remain private to the Runner/runtime.
+bytes, input text, idle time, and absolute runtime lifetime. Default launch uses a
+WebCodex-owned temporary profile; managed launch uses a private persistent named
+profile. Existing user Chrome tabs require explicit extension consent and native
+attachment, never profile adoption. Owned CDP endpoints are loopback-only; bridge
+endpoints are authenticated and lease-scoped. Ports, target/session IDs, websocket
+URLs, profile paths, PIDs and native node identities remain Runner-private.
 
 The owned Chromium process tree is spawned through `webcodex-process::ManagedChild`.
-Manual close, idle/lifetime reaping, and Runner shutdown all use bounded process-tree
-termination/reaping. Runner restart intentionally invalidates all ephemeral Browser
-identities; Phase 1 does not persist or recover Browser sessions.
+Manual close, idle/lifetime reaping, and Runner shutdown use bounded process-tree
+termination/reaping only for owned instances; external attachments only detach.
+Runner restart invalidates all opaque Browser identities. Managed profile data
+survives, but no old Browser/page/element identity is recovered or reused.
 
 ## Identity, stale fencing, and semantic snapshots
 

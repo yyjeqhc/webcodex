@@ -290,3 +290,57 @@ fn source_verification_binds_all_four_native_components_not_just_a_checksum() {
         );
     }
 }
+
+#[test]
+fn guarded_windows_capability_is_raw_hash_bound_and_keeps_legacy_wire() {
+    let platform = RuntimePlatform::Win32X64;
+    let mut value = source(platform);
+    let verify = |value: &Value| {
+        verify_source_manifest(&serde_json::to_vec(value).unwrap(), "1.2.3", platform)
+    };
+    assert!(!verify(&value).unwrap().supports_guarded_windows_handoff());
+    let field = WINDOWS_GUARDED_BOOTSTRAP_BUILD_INFO_FIELD;
+    value["artifacts"]["webcodex"]["build_info"][field] = json!(1);
+    // An unhashed claim cannot affect admission.
+    assert!(verify(&value).is_err());
+    let info = value["artifacts"]["webcodex"]["build_info"].clone();
+    value["artifacts"]["webcodex"]["build_info_sha256"] =
+        sha256(&serde_json::to_vec(&info).unwrap()).into();
+    assert!(verify(&value).unwrap().supports_guarded_windows_handoff());
+    // Old MachineBuildInfo readers already accept additive fields; the marker
+    // is absent from their typed serialization and from installer entries.
+    let old: webcodex_core::desktop_runtime_contract::MachineBuildInfo =
+        serde_json::from_value(info).unwrap();
+    old.validate("webcodex").unwrap();
+    assert!(serde_json::to_value(old).unwrap().get(field).is_none());
+    let installer = manifest();
+    assert!(parse(&installer).is_ok());
+    for entry in installer["installers"].as_object().unwrap().values() {
+        assert_eq!(entry.as_object().unwrap().len(), 7);
+        assert!(entry.get("guarded_handoff_version").is_none());
+    }
+    let mut changed = installer;
+    changed["installers"]["win32-x64-exe"]["guarded_handoff_version"] = json!(1);
+    assert!(parse(&changed).is_err());
+    value["artifacts"]["webcodex"]["build_info"][field] = json!(2);
+    value["artifacts"]["webcodex"]["build_info_sha256"] =
+        sha256(&serde_json::to_vec(&value["artifacts"]["webcodex"]["build_info"]).unwrap()).into();
+    assert!(!verify(&value).unwrap().supports_guarded_windows_handoff());
+    for invalid in [json!(0), json!(true), json!("1"), json!(65536), json!(null)] {
+        value["artifacts"]["webcodex"]["build_info"][field] = invalid;
+        value["artifacts"]["webcodex"]["build_info_sha256"] =
+            sha256(&serde_json::to_vec(&value["artifacts"]["webcodex"]["build_info"]).unwrap())
+                .into();
+        assert!(verify(&value).is_err());
+    }
+    let mut linux = source(RuntimePlatform::LinuxX64);
+    linux["artifacts"]["webcodex"]["build_info"][field] = json!(1);
+    linux["artifacts"]["webcodex"]["build_info_sha256"] =
+        sha256(&serde_json::to_vec(&linux["artifacts"]["webcodex"]["build_info"]).unwrap()).into();
+    assert!(verify_source_manifest(
+        &serde_json::to_vec(&linux).unwrap(),
+        "1.2.3",
+        RuntimePlatform::LinuxX64
+    )
+    .is_err());
+}

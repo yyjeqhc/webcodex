@@ -59,6 +59,7 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
                 "git_dirty": False, "built_at": str(100 + index), "target": "x86_64-pc-windows-msvc",
                 "architecture": "x86_64", "desktop_runtime_contract": CONTRACT, "environment_data_format": 1,
             }
+            if name == "webcodex": info["windows_guarded_bootstrap_contract"] = 1
             infos[name] = info
             path = bin_dir / f"{name}.exe"
             path.write_bytes(pe(0x8664))
@@ -157,6 +158,17 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
             self.assertIn("StrCpy $WebCodexExisting 1", section)
             self.assertIn("SetRegView 64", function_bodies)
             self.assertIn("/ENVIRONMENTDIR=", function_bodies)
+            self.assertIn("/UPGRADETARGET=", function_bodies)
+            self.assertIn("  ${AndIf} $1 != '{\"kind\":\"environment\"}'", section)
+            self.assertIn('--upgrade-target-file "$WebCodexUpgradeTargetFile" --operation-id-output', section)
+            self.assertIn('Pop $WebCodexBoundOperation', section)
+            for command in ("installer-verify", "upgrade-finish", "upgrade-rollback"):
+                guarded = [line for line in script.splitlines() if "environment " + command + " " in line and "--upgrade-target-file" in line]
+                self.assertEqual(len(guarded), 1)
+                self.assertIn('"$WebCodexTrustedCLI"', guarded[0])
+                self.assertIn('--operation-id "$WebCodexBoundOperation"', guarded[0])
+            self.assertLess(section.index('Guarded installation cannot fall back'), section.index('StrCpy $WebCodexPackageUpgrade 1'))
+            self.assertIn('${If} $WebCodexUpgradeTargetFile == ""\n    StrCpy $WebCodexTrustedCLI', section)
             self.assertIn("installer-verify", section)
             self.assertIn("installer-verify-same", section)
             self.assertIn("Goto webcodex_bootstrap_done", section)
@@ -192,7 +204,40 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
             self.assertIn("-EncodedCommand", section)
             self.assertIn("manifest-bound SHA-256 check", section)
             self.assertIn('"$WebCodexTrustedCLI" environment installer-verify-same', section)
-            self.assertNotIn("File ", function_bodies)
+            self.assertFalse(any(line.strip().startswith("File ") for line in function_bodies.splitlines()))
+            depth = 0
+            for line in script.splitlines():
+                token = line.strip().split(" ", 1)[0]
+                if token == "${If}": depth += 1
+                elif token == "${EndIf}": depth -= 1
+                self.assertGreaterEqual(depth, 0, line)
+                if token in ("SectionEnd", "FunctionEnd"): self.assertEqual(depth, 0, line)
+            self.assertEqual(depth, 0)
+            self.assertNotIn("the previous environment was restored", script)
+
+    def test_guarded_outer_requires_explicit_same_source_cli_attestation(self):
+        for marker in (None, True, "1", 0, 2):
+            with self.subTest(marker=marker):
+                info = {} if marker is None else {"windows_guarded_bootstrap_contract": marker}
+                with self.assertRaisesRegex(ValueError, "same-source CLI"):
+                    nsis.require_guarded_bootstrap_contract({"artifacts": {"webcodex": {"build_info": info}}})
+        nsis.require_guarded_bootstrap_contract({"artifacts": {"webcodex": {"build_info": {"windows_guarded_bootstrap_contract": 1}}}})
+        # Build-info can stay additive, but missing support may never render or
+        # advertise a new guarded outer executable around an older candidate.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "candidate"
+            infos = self.fixture(root)
+            del infos["webcodex"]["windows_guarded_bootstrap_contract"]
+            manifest = json.loads((root / "source-manifest.json").read_text())
+            manifest["artifacts"]["webcodex"]["build_info"] = infos["webcodex"]
+            manifest["artifacts"]["webcodex"]["build_info_sha256"] = nsis.collector.package.canonical_digest(infos["webcodex"])
+            raw = json.dumps(manifest).encode(); (root / "source-manifest.json").write_bytes(raw)
+            sums = nsis.parse_sums(root / "SHA256SUMS"); sums["source-manifest.json"] = hashlib.sha256(raw).hexdigest()
+            (root / "SHA256SUMS").write_text("".join(f"{digest}  {name}\n" for name, digest in sorted(sums.items())))
+            inner = Path(temp) / "inner.exe"; inner.write_bytes(pe(0x8664))
+            with mock.patch.object(nsis.collector, "probe", side_effect=lambda path, name: infos[name]):
+                with self.assertRaisesRegex(ValueError, "same-source CLI"):
+                    bootstrap.render(root, inner, Path(temp) / "outer.exe", "win32-x64")
 
     def test_candidate_hash_check_quotes_the_digest_and_keeps_paths_out_of_source(self):
         expected = "a" * 64

@@ -23,6 +23,7 @@ impl Fixture {
             schema_version: 1,
             environment_id: "fixture-environment".into(),
             request: SetupRequest {
+                runner_display_name: None,
                 service_scope: ServiceScope::User,
                 mode: EnvironmentMode::Create {
                     listen: "127.0.0.1:1".into(),

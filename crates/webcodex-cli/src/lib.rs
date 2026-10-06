@@ -310,6 +310,34 @@ fn path_is_inside_git_checkout(path: &Path) -> bool {
     })
 }
 
+fn management_build_info_json() -> String {
+    let info = build_info::machine_build_info("webcodex");
+    management_build_info_json_for_platform(&info, cfg!(windows))
+}
+fn management_build_info_json_for_platform(
+    info: &webcodex_core::desktop_runtime_contract::MachineBuildInfo,
+    windows: bool,
+) -> String {
+    if !windows {
+        return format!(
+            "{}\n",
+            serde_json::to_string(info).expect("Machine build identity is serializable")
+        );
+    }
+    let mut raw = serde_json::to_value(info).expect("Machine build identity is serializable");
+    if windows {
+        // This compiled CLI attests the guarded CLI + outer NSIS protocol from
+        // its own source. The official native workflow requires the outer
+        // builder to consume the same CLI/source/run and attest the same bit.
+        raw[webcodex_environment::unified_update::WINDOWS_GUARDED_BOOTSTRAP_BUILD_INFO_FIELD] =
+            webcodex_environment::unified_update::WINDOWS_GUARDED_HANDOFF_VERSION.into();
+    }
+    format!(
+        "{}\n",
+        serde_json::to_string(&raw).expect("Machine build identity is serializable")
+    )
+}
+
 fn cli_action<I, S>(args: I) -> CliAction
 where
     I: IntoIterator<Item = S>,
@@ -331,7 +359,7 @@ where
             stderr: String::new(),
         },
         "--build-info-json" if args.len() == 1 => CliAction::Exit {
-            code: 0, stdout: build_info::build_info_json("webcodex"), stderr: String::new(),
+            code: 0, stdout: management_build_info_json(), stderr: String::new(),
         },
         "--version" | "-V" => CliAction::Exit {
             code: 0,
@@ -2708,7 +2736,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
             Err(error) => {
-                eprintln!("{error}");
+                if args.first().map(String::as_str) == Some("update")
+                    && args.iter().any(|arg| arg == "--json")
+                {
+                    // Public headless status has one bounded JSON document on
+                    // stdout; sudo and authorization prompts use the terminal.
+                    println!("{error}");
+                } else {
+                    eprintln!("{error}");
+                }
                 std::process::exit(1);
             }
         },

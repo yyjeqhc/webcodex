@@ -85,7 +85,12 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
     assert_eq!(present["inputSchema"]["required"], json!(["project"]));
     let thread =
         tool(&ui["result"], "work_result_thread_panel").expect("Work Result thread entrypoint");
-    assert_eq!(thread["title"], "WebCodex review");
+    assert_eq!(thread["title"], "WebCodex Work Result");
+    assert_eq!(present["title"], thread["title"]);
+    assert!(thread["description"]
+        .as_str()
+        .unwrap()
+        .contains("models should use present_work_result"));
     assert!(thread.pointer("/_meta/ui/visibility").is_none());
     assert_eq!(
         thread.pointer("/_meta/ui/resourceUri"),

@@ -750,3 +750,26 @@ fn login_print_mcp_config_and_json_are_mutually_exclusive() {
         other => panic!("expected Login dispatch, got {other:?}"),
     }
 }
+
+#[test]
+fn guarded_windows_build_info_attestation_is_additive_and_other_platform_bytes_unchanged() {
+    let info = build_info::machine_build_info("webcodex");
+    let legacy = build_info::build_info_json("webcodex");
+    assert_eq!(
+        management_build_info_json_for_platform(&info, false),
+        legacy
+    );
+    let current = management_build_info_json_for_platform(&info, true);
+    let raw: Value = serde_json::from_str(&current).unwrap();
+    assert_eq!(
+        raw[webcodex_environment::unified_update::WINDOWS_GUARDED_BOOTSTRAP_BUILD_INFO_FIELD],
+        json!(1)
+    );
+    let old: webcodex_core::desktop_runtime_contract::MachineBuildInfo =
+        serde_json::from_str(&current).unwrap();
+    assert_eq!(old, info);
+    assert_eq!(
+        management_build_info_json(),
+        management_build_info_json_for_platform(&info, cfg!(windows))
+    );
+}

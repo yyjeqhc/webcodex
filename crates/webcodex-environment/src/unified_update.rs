@@ -1,6 +1,40 @@
-//! The existing six-platform release/download manifest, shared by Desktop and
-//! the privileged unified-installer handoff. No Desktop-only update authority.
+//! Stable release discovery, verified private downloads, update observation and
+//! installer admission shared by Desktop and CLI. Native launch UI lives in host
+//! adapters; the privileged handoff and Core transaction retain their authority.
 mod cache;
+mod cancellation;
+#[path = "unified_update/data_dir.rs"]
+pub mod desktop_data_dir;
+pub mod discovery;
+mod download;
+mod install;
+mod view;
+mod windows_handoff;
+pub use cancellation::CancellationSignal;
+pub use desktop_data_dir::{default_desktop_data_dir, DESKTOP_DATA_DIR_ENV};
+pub use discovery::{
+    fetch_latest, is_newer_stable, valid_notice, ReleaseNotice, UpdateCompatibility,
+};
+pub use download::{DownloadPhase, DownloadStatus, InstallationKind, UpdateManager};
+pub use install::context::{
+    assess_headless_installation, installed_desktop_path, probe_installed_build,
+};
+pub use install::{
+    assess_installation, detected_installer_target, InstallContext, InstalledBinaries,
+    LaunchAdapter, LaunchOutcome, LaunchRequest,
+};
+pub use view::*;
+pub use windows_handoff::{WindowsHandoff, WINDOWS_GUARDED_HANDOFF_VERSION};
+/// Raw, additive CLI build-info attestation for its same-source Windows outer bootstrap.
+pub const WINDOWS_GUARDED_BOOTSTRAP_BUILD_INFO_FIELD: &str = "windows_guarded_bootstrap_contract";
+pub const CHECK_INTERVAL_MS: u64 = 24 * 60 * 60 * 1000;
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
+}
 #[cfg(unix)]
 mod installer;
 mod network;
@@ -42,6 +76,7 @@ pub enum UpdateError {
     UpgradePreflightFailed,
     AuthorizationRequired,
     InstallerLaunchFailed,
+    GuardedHandoffUnavailable,
     UpgradeRolledBack,
     RecoveryRequired,
 }

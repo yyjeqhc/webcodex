@@ -14,6 +14,25 @@ For local Full Runtime, ChatGPT/model-driven calls supply the concrete workspace
 
 The Runner filesystem policy remains the authority boundary. A fresh Desktop local Runner uses the normal Runner policy defaults; an empty `allowed_roots` resolves to the user's home directory. Explicit Runner policy can narrow that scope. This is Runner-level authority, separate from Runtime Project identity: a Project on one drive or root does not authorize another drive or unrelated path unless that target is also inside `allowed_roots`. Project registration never expands this scope.
 
+## Configuration and data
+
+Open **Settings → Configuration and data** to see the current Environment root,
+the actual Desktop app-data root, and saved Server, Runner, Tunnel, credential,
+data and log locations. These remain separate authorities. Locations come from
+saved configuration; they do not confirm a running process's effective settings.
+Unknown, missing, remote and unconfigured locations have distinct states. Open
+is available only for a native-confirmed local directory. Journal/system log
+entries explain their existing viewing method; Desktop Activity/output is in
+memory.
+
+Refresh, path copy and JSON export are explicit actions. Exports contain private
+local paths and identity metadata, so review them before sharing and choose a
+private destination. The default **backup manifest** describes safe projections,
+excluded contents and missing recovery materials; it contains no configuration,
+credential, database, log or project files and cannot restore an Environment.
+Incomplete inventories cannot be exported. Full secret backup and restore require
+a separate design. See the [schema and validation report](implementation/configuration-inventory-backup-manifest.md).
+
 ## Windows startup and upgrades
 
 **After sign-in (recommended)** uses user-session Task Scheduler tasks. This is the ordinary Desktop path and does not require an administrator account or a service password. Server, Runner and Tunnel use the signed-in user's identity. Closing Desktop does not stop these tasks; signing out ends the user-session path.

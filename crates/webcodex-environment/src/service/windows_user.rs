@@ -31,15 +31,19 @@ fn task_request(spec: &ServiceSpec, operation: &str) -> Result<Value, ServiceErr
         out.push('"');
         out
     };
-    let identity = format!("{sid}:{}", spec.config_identity);
-    let suffix = format!("{:x}", Sha256::digest(identity.as_bytes()));
-    Ok(
-        json!({"operation":operation, "name":format!("WebCodex-user-{}-{}", &suffix[..16], spec.id),
+    let name = task_name(spec, sid);
+    Ok(json!({"operation":operation, "name":name,
         "description":format!("{} scope=user", ownership_marker(spec)), "sid":sid,
         "program":spec.program.to_str().ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidSpec,"Task executable must be UTF-8"))?,
         "arguments":spec.args.iter().map(|value| quote(value)).collect::<Vec<_>>().join(" "),
-        "directory":spec.working_directory.to_str().ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidSpec,"Task working directory must be UTF-8"))?}),
-    )
+        "directory":spec.working_directory.to_str().ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidSpec,"Task working directory must be UTF-8"))?}))
+}
+
+/// Pure saved task identity, also used by read-only diagnostic references.
+pub(super) fn task_name(spec: &ServiceSpec, sid: &str) -> String {
+    let identity = format!("{sid}:{}", spec.config_identity);
+    let suffix = format!("{:x}", Sha256::digest(identity.as_bytes()));
+    format!("WebCodex-user-{}-{}", &suffix[..16], spec.id)
 }
 
 fn decode_status(spec: &ServiceSpec, value: Value) -> Result<ServiceStatus, ServiceError> {

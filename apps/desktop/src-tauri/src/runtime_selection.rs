@@ -234,7 +234,7 @@ fn host_compatible(info: &MachineBuildInfo) -> bool {
     info.architecture == arch && os_matches
 }
 
-async fn probe_binary(
+pub(crate) async fn probe_binary(
     path: &Path,
     name: &str,
     cancellation: &CancellationContext,

@@ -23,9 +23,21 @@ pub(super) fn browser_act_audit_projection(call: &BrowserActToolCall) -> Value {
             "page_id": page_id,
             "operation_count": operations.len(),
         }),
-        BrowserActToolCall::Launch { client_id } => serde_json::json!({
+        BrowserActToolCall::Attach {
+            client_id,
+            attachment_id,
+        } => serde_json::json!({
+            "action": "attach", "client_id": client_id, "attachment_id": attachment_id,
+        }),
+        BrowserActToolCall::Launch {
+            client_id,
+            mode,
+            profile,
+        } => serde_json::json!({
             "action": "launch",
             "client_id": client_id,
+            "mode": mode,
+            "profile_present": profile.is_some(),
         }),
         BrowserActToolCall::NewPage {
             client_id,

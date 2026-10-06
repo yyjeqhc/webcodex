@@ -34,6 +34,7 @@ pub struct BrowserSupervisor {
     inner: Arc<Mutex<SupervisorState>>,
     factory: Arc<dyn BackendFactory>,
     shutting_down: Arc<AtomicBool>,
+    bridge: Option<Arc<crate::bridge::BridgeServer>>,
 }
 
 struct SupervisorState {
@@ -85,6 +86,49 @@ impl BrowserSupervisor {
         Self::with_factory(Arc::new(ChromiumFactory))
     }
 
+    /// Runner startup entry. Bridge state is bound once to this process; ordinary
+    /// observations never start a listener or acquire another Runner's lease.
+    pub fn new_with_extension_bridge() -> Self {
+        let mut supervisor = Self::new();
+        supervisor.bridge = crate::bridge::BridgeServer::start().ok().map(Arc::new);
+        supervisor
+    }
+
+    pub fn discover_external(&self) -> BrowserResult<Vec<crate::AttachmentSummary>> {
+        self.reject_if_shutting_down()?;
+        self.bridge.as_ref().map(|bridge| bridge.discover()).ok_or_else(|| BrowserError::not_started(
+            "browser_bridge_unavailable", "The Runner does not own an extension bridge; check its private state and native host installation"))
+    }
+
+    pub fn attach_external(&self, attachment_id: &str) -> BrowserResult<BrowserSummary> {
+        self.reject_if_shutting_down()?;
+        self.reap_expired();
+        let mut state = self.operation_state()?;
+        if state.browsers.len() >= MAX_BROWSERS {
+            return Err(BrowserError::not_started(
+                "browser_limit",
+                "Maximum Browser runtimes reached",
+            ));
+        }
+        let bridge = self.bridge.as_ref().ok_or_else(|| {
+            BrowserError::not_started(
+                "browser_bridge_unavailable",
+                "This Runner has no extension bridge owner",
+            )
+        })?;
+        let lease = bridge.attach(attachment_id, Instant::now() + crate::REQUEST_TIMEOUT)?;
+        let browser_id = opaque_id("browser");
+        let runtime = BrowserRuntime::new(crate::cdp::attach_external(lease));
+        let summary = BrowserSummary {
+            browser_id: browser_id.clone(),
+            ownership: runtime.backend.ownership(),
+            profile: None,
+            page_count: 1,
+        };
+        state.browsers.insert(browser_id, runtime);
+        Ok(summary)
+    }
+
     fn with_factory(factory: Arc<dyn BackendFactory>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(SupervisorState {
@@ -92,6 +136,7 @@ impl BrowserSupervisor {
             })),
             factory,
             shutting_down: Arc::new(AtomicBool::new(false)),
+            bridge: None,
         }
     }
 
@@ -114,12 +159,23 @@ impl BrowserSupervisor {
             .take(MAX_BROWSERS)
             .map(|(id, runtime)| BrowserSummary {
                 browser_id: id.clone(),
+                ownership: runtime.backend.ownership(),
+                profile: runtime.backend.profile_name().map(str::to_owned),
                 page_count: runtime.page_count(),
             })
             .collect()
     }
 
     pub fn launch(&self) -> BrowserResult<BrowserSummary> {
+        self.launch_mode(None)
+    }
+
+    pub fn launch_managed(&self, profile: &str) -> BrowserResult<BrowserSummary> {
+        crate::profiles::validate_profile_id(profile)?;
+        self.launch_mode(Some(profile))
+    }
+
+    fn launch_mode(&self, profile: Option<&str>) -> BrowserResult<BrowserSummary> {
         self.reject_if_shutting_down()?;
         self.reap_expired();
         let mut state = self.operation_state()?;
@@ -129,17 +185,38 @@ impl BrowserSupervisor {
                 "maximum owned Browser runtimes reached",
             ));
         }
-        let backend = self.factory.launch()?;
+        let backend = match profile {
+            Some(profile) => self.factory.launch_managed(profile)?,
+            None => self.factory.launch()?,
+        };
         let browser_id = opaque_id("browser");
         let runtime = BrowserRuntime::new(backend);
         let summary = BrowserSummary {
             browser_id: browser_id.clone(),
+            ownership: runtime.backend.ownership(),
+            profile: runtime.backend.profile_name().map(str::to_owned),
             // Chromium is launched with one explicit about:blank target. Keep a
             // conservative count floor until pages observation assigns opaque IDs.
             page_count: runtime.page_count(),
         };
         state.browsers.insert(browser_id, runtime);
         Ok(summary)
+    }
+
+    /// Runner-only handoff. Native process/window identity never becomes a model
+    /// argument or result; keep the Browser operation lock held through resolution.
+    pub fn with_native_window<T>(
+        &self,
+        browser_id: &str,
+        resolve: impl FnOnce(crate::BrowserWindowHint) -> BrowserResult<T>,
+    ) -> BrowserResult<T> {
+        self.touch_current(browser_id)?;
+        let mut state = self.operation_state()?;
+        let runtime = state
+            .browsers
+            .get_mut(browser_id)
+            .ok_or_else(|| stale_browser(browser_id))?;
+        resolve(runtime.backend.live_window_hint()?)
     }
 
     pub fn pages(&self, browser_id: &str, limit: usize) -> BrowserResult<Vec<PageSummary>> {

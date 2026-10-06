@@ -2,44 +2,11 @@ use crate::activity::{ActivityEventKind, ActivityLevel, ActivityLog};
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::{DesktopOperationKind, DesktopOperationPhase, DesktopOperationSnapshot};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::watch;
 use tokio::time::Instant;
 
-#[derive(Clone)]
-pub(crate) struct CancellationSignal {
-    sender: Arc<watch::Sender<bool>>,
-}
-
-impl CancellationSignal {
-    pub(crate) fn new() -> Self {
-        let (sender, _receiver) = watch::channel(false);
-        Self {
-            sender: Arc::new(sender),
-        }
-    }
-
-    pub(crate) fn cancel(&self) {
-        self.sender.send_replace(true);
-    }
-
-    pub(crate) fn is_cancelled(&self) -> bool {
-        *self.sender.borrow()
-    }
-
-    pub(crate) async fn cancelled(&self) {
-        let mut receiver = self.sender.subscribe();
-        if *receiver.borrow() {
-            return;
-        }
-        while receiver.changed().await.is_ok() {
-            if *receiver.borrow() {
-                return;
-            }
-        }
-    }
-}
+pub(crate) use webcodex_environment::unified_update::CancellationSignal;
 
 #[derive(Clone)]
 pub(crate) struct CancellationContext {

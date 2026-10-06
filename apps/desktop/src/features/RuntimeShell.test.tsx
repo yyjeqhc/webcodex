@@ -18,7 +18,7 @@ import type { DesktopState } from "../models/topology";
 import type { DiagnosticSnapshot, RuntimeSettings, RuntimeCandidate } from "../models/runtime-shell";
 import type { WindowDetail } from "../models/workspace";
 
-const api = vi.hoisted(() => ({ updateTunnelProxy: vi.fn(), runnerSettings: vi.fn(), runtimeSettings: vi.fn(), probeRuntime: vi.fn(), recheckRuntime: vi.fn(), switchRuntime: vi.fn(), getState: vi.fn(), diagnostics: vi.fn(), setToolRequestTracing: vi.fn(), copyDiagnosticReport: vi.fn(), copyRuntimeConsoleCredential: vi.fn(), exportSupportBundle: vi.fn(), openDiagnosticResource: vi.fn(), restorePreviousConfiguration: vi.fn(), environmentServiceAction: vi.fn(), repairEnvironmentUserCredential: vi.fn(), computerPermissions: vi.fn(), desktopBuildInfo: vi.fn(), getLaunchAtLogin: vi.fn(), setLaunchAtLogin: vi.fn(), checkForUpdates: vi.fn(), remindUpdateLater: vi.fn(), openLatestRelease: vi.fn() }));
+const api = vi.hoisted(() => ({ pathInventory: vi.fn(), updateTunnelProxy: vi.fn(), runnerSettings: vi.fn(), runtimeSettings: vi.fn(), probeRuntime: vi.fn(), recheckRuntime: vi.fn(), switchRuntime: vi.fn(), getState: vi.fn(), diagnostics: vi.fn(), setToolRequestTracing: vi.fn(), copyDiagnosticReport: vi.fn(), copyRuntimeConsoleCredential: vi.fn(), exportSupportBundle: vi.fn(), openDiagnosticResource: vi.fn(), restorePreviousConfiguration: vi.fn(), environmentServiceAction: vi.fn(), repairEnvironmentUserCredential: vi.fn(), computerPermissions: vi.fn(), desktopBuildInfo: vi.fn(), getLaunchAtLogin: vi.fn(), setLaunchAtLogin: vi.fn(), checkForUpdates: vi.fn(), remindUpdateLater: vi.fn(), openLatestRelease: vi.fn() }));
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }));
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-dialog", () => dialog);
@@ -39,6 +39,7 @@ const diagnostic = { schema_version: 1, observed_at_ms: Date.now(), trace: { con
 function wrap(child: React.ReactNode) { return <LocaleProvider><DesktopMantineProvider>{child}</DesktopMantineProvider></LocaleProvider>; }
 beforeEach(() => {
   vi.resetAllMocks(); localStorage.clear(); localStorage.setItem("webcodex.desktop.locale", "en-US");
+  api.pathInventory.mockResolvedValue({ schema_version: 1, observed_at_ms: 1, environment_id: null, local_server: true, local_runner: true, service_scope: null, revision: "fixture", roots: [], entries: [], issues: [], builds: [] });
   api.runnerSettings.mockResolvedValue({ target: { client_id: "fixture", config_path: "/fixture/runner.toml", server_url: "http://127.0.0.1:1" }, paths: { instruction_files: [], skill_roots: [] }, file_access: { configured_roots: [], effective_roots: ["/Users/fixture"], using_default_roots: true, allow_cwd_anywhere: false }, plugin_ids: [], can_restart: true });
   api.runtimeSettings.mockResolvedValue(structuredClone(settings)); api.getState.mockResolvedValue(state);
   api.probeRuntime.mockResolvedValue({ ...settings, candidate }); api.recheckRuntime.mockResolvedValue(settings);
@@ -401,6 +402,12 @@ it("opens requested recovery categories and supports keyboard category navigatio
   view.rerender(wrap(<SettingsPanel state={state} onState={vi.fn()} initialSection="runtime" />));
   const runtimeTab = screen.getByRole("tab", { name: "Runtime & services" });
   expect(runtimeTab).toHaveAttribute("aria-selected", "true");
+  fireEvent.keyDown(runtimeTab, { key: "ArrowDown" });
+  const configurationTab = screen.getByRole("tab", { name: "Configuration & data" });
+  expect(configurationTab).toHaveFocus();
+  await screen.findByRole("button", { name: "Export path inventory" });
+  fireEvent.keyDown(configurationTab, { key: "ArrowDown" });
+  expect(screen.getByRole("tab", { name: "Troubleshooting" })).toHaveFocus();
   fireEvent.keyDown(runtimeTab, { key: "Home" });
   expect(screen.getByRole("tab", { name: "General" })).toHaveFocus();
   fireEvent.keyDown(screen.getByRole("tab", { name: "General" }), { key: "ArrowDown" });

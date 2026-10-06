@@ -22,6 +22,8 @@ pub(super) struct SetupRequestWire {
     project: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     runner: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    runner_display_name: Option<String>,
     account: LocalAccount,
     binaries: RuntimeBinaries,
 }
@@ -33,6 +35,7 @@ impl From<SetupRequest> for SetupRequestWire {
             server_url,
             project,
             runner,
+            runner_display_name,
             account,
             binaries,
         } = request;
@@ -52,6 +55,7 @@ impl From<SetupRequest> for SetupRequestWire {
             server_url,
             project,
             runner,
+            runner_display_name,
             account,
             binaries,
         }
@@ -66,6 +70,7 @@ impl TryFrom<SetupRequestWire> for SetupRequest {
             server_url,
             project,
             runner,
+            runner_display_name,
             account,
             binaries,
         } = wire;
@@ -91,6 +96,7 @@ impl TryFrom<SetupRequestWire> for SetupRequest {
             server_url,
             project,
             runner,
+            runner_display_name,
             account,
             binaries,
         })
@@ -102,6 +108,7 @@ mod tests {
     use super::*;
     fn fixture(scope: ServiceScope, mode: EnvironmentMode) -> SetupRequest {
         SetupRequest {
+            runner_display_name: None,
             service_scope: scope,
             mode,
             server_url: "http://127.0.0.1:18880".into(),
@@ -118,6 +125,24 @@ mod tests {
                 runner: "/app/runner".into(),
             },
         }
+    }
+    #[test]
+    fn runner_name_round_trips_and_old_records_default_to_none() {
+        let mut request = fixture(ServiceScope::User, EnvironmentMode::Join);
+        let old = serde_json::to_value(&request).unwrap();
+        assert!(old.get("runner_display_name").is_none());
+        assert_eq!(
+            serde_json::from_value::<SetupRequest>(old)
+                .unwrap()
+                .runner_display_name,
+            None
+        );
+        request.runner_display_name = Some("My laptop".into());
+        assert_eq!(
+            serde_json::from_value::<SetupRequest>(serde_json::to_value(&request).unwrap())
+                .unwrap(),
+            request
+        );
     }
     #[test]
     fn user_request_cannot_be_decoded_as_a_legacy_system_mode() {

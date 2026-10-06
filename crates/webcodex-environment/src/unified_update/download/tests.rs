@@ -1,5 +1,5 @@
 use super::*;
-use crate::updates::{UpdateCache, UpdateCompatibility};
+use crate::unified_update::UpdateCompatibility;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::TcpListener;
 
@@ -201,23 +201,6 @@ fn target_record() -> UpdateRecord {
 }
 
 #[test]
-fn old_preferences_default_enabled_and_runtime_version_cannot_hide_desktop_release() {
-    let cache: UpdateCache = serde_json::from_str(r#"{"last_check_at_ms":null,"last_success_at_ms":null,"latest":null,"remind_after_ms":null}"#).unwrap();
-    assert!(cache.automatic_download);
-    let cache = UpdateCache {
-        latest: Some(ReleaseNotice {
-            version: "0.5.0".into(),
-            runtime_version: "0.4.9".into(),
-            release_url: "https://github.com/yyjeqhc/webcodex/releases/tag/v0.5.0".into(),
-            compatibility: UpdateCompatibility::RuntimeCompatible,
-        }),
-        ..UpdateCache::default()
-    };
-    assert!(cache.status("0.4.9", 100, true, None).update_available);
-    assert!(!cache.status("0.5.0", 100, true, None).update_available);
-}
-
-#[test]
 fn retry_download_cadence_is_separate_from_discovery_and_cancel_is_sticky() {
     let mut record = target_record();
     record.next_retry_at_ms = Some(1000);
@@ -247,6 +230,99 @@ fn restart_does_not_trust_a_ready_bit_and_removes_abandoned_partial() {
     assert!(!restarted.snapshot().can_install);
     assert!(!target.file("installer.part").unwrap().exists());
     assert!(target.file("installer.pkg").unwrap().exists()); // rehashed/reused later, not downloaded again blindly
+}
+
+#[tokio::test]
+async fn loaded_manager_download_preserves_externally_pending_handoff() {
+    let temp = crate::test_tempdir().unwrap();
+    let manager = UpdateManager::with_environment_root(
+        temp.path().join("desktop"),
+        temp.path().join("absent-environment"),
+    );
+    manager
+        .download_now(
+            None,
+            false,
+            true,
+            InstallationKind::SourceBuild,
+            None,
+            &CancellationSignal::new(),
+        )
+        .await
+        .unwrap();
+
+    let other = PrivateUpdateCache::open(manager.root.clone()).unwrap();
+    let mut pending = target_record();
+    pending.phase = DownloadPhase::InstallingOrHandedOff;
+    pending.pending = Some(PendingInstall {
+        environment_id: "other-environment".into(),
+        operation_id: Some(uuid::Uuid::new_v4().to_string()),
+        started_at_ms: super::super::now_ms(),
+    });
+    {
+        let _lock = other.lock().unwrap();
+        other
+            .write(STATE_FILE, &serde_json::to_vec(&pending).unwrap())
+            .unwrap();
+        other
+            .child("99.0.0")
+            .unwrap()
+            .write("installer-sentinel", b"pending installer")
+            .unwrap();
+    }
+    let result = manager
+        .download_now(
+            None,
+            false,
+            true,
+            InstallationKind::SourceBuild,
+            None,
+            &CancellationSignal::new(),
+        )
+        .await;
+    assert!(manager.root.join("99.0.0/installer-sentinel").is_file());
+    assert_eq!(result.unwrap_err(), UpdateError::RecoveryRequired);
+    let saved: UpdateRecord =
+        serde_json::from_slice(&other.read(STATE_FILE, STATE_BYTES).unwrap().unwrap()).unwrap();
+    assert_eq!(saved.pending, pending.pending);
+    assert_eq!(saved.version, pending.version);
+    assert_eq!(saved.target, pending.target);
+    assert_eq!(saved.source_manifest_sha256, pending.source_manifest_sha256);
+    assert_eq!(saved.source_sha, pending.source_sha);
+    assert_eq!(saved.sha256, pending.sha256);
+}
+
+#[test]
+fn loaded_manager_reuses_own_ready_state_but_revalidates_external_ready_state() {
+    let temp = crate::test_tempdir().unwrap();
+    let manager = UpdateManager::new(temp.path().canonicalize().unwrap());
+    let cache = PrivateUpdateCache::open(manager.root.clone()).unwrap();
+    let _lock = cache.lock().unwrap();
+    manager.load(&cache).unwrap();
+    let mut ready = target_record();
+    ready.cancelled = true;
+    ready.next_retry_at_ms = Some(1000);
+    manager.change(|record| *record = ready.clone());
+    manager.persist(&cache).unwrap();
+    manager.load(&cache).unwrap();
+    assert_eq!(manager.current(), ready);
+
+    let mut external = ready;
+    external.source_manifest_sha256 = Some("c".repeat(64));
+    cache
+        .write(STATE_FILE, &serde_json::to_vec(&external).unwrap())
+        .unwrap();
+    manager.load(&cache).unwrap();
+    let observed = manager.current();
+    assert_eq!(
+        observed.source_manifest_sha256,
+        external.source_manifest_sha256
+    );
+    assert_eq!(observed.phase, DownloadPhase::Available);
+    assert_eq!(observed.downloaded_bytes, 0);
+    assert_eq!(observed.total_bytes, None);
+    assert!(observed.cancelled);
+    assert!(!manager.snapshot().can_install);
 }
 
 #[test]

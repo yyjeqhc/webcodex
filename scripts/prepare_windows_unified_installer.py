@@ -155,6 +155,17 @@ def validate_candidate(candidate_dir: Path, platform: str) -> tuple[dict, dict[s
     return manifest, resolved
 
 
+# Additive raw build-info is intentionally outside schema-1 installer entries.
+# Existing typed build-info readers ignore this field; the native collector
+# hashes the full original object and probes the exact same candidate CLI.
+GUARDED_BOOTSTRAP_FIELD = "windows_guarded_bootstrap_contract"
+GUARDED_BOOTSTRAP_VERSION = 1
+
+def require_guarded_bootstrap_contract(manifest: dict) -> None:
+    marker = manifest["artifacts"]["webcodex"]["build_info"].get(GUARDED_BOOTSTRAP_FIELD)
+    if type(marker) is not int or marker != GUARDED_BOOTSTRAP_VERSION:
+        raise ValueError("Windows outer bootstrap requires its same-source CLI guarded contract attestation")
+
 def prepare(candidate_dir: Path, output_dir: Path, platform_name: str) -> dict:
     manifest, artifacts = validate_candidate(candidate_dir, platform_name)
     if output_dir.exists():

@@ -14,6 +14,12 @@ Desktop 负责启动和维护本机 WebCodex Runtime；用户只需要在 ChatGP
 
 Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runner 使用 Runner 的正常默认策略；`allowed_roots` 为空时，其有效范围默认是当前用户的 home 目录。显式 Runner policy 可以进一步收窄范围。这个范围是 Runner 级授权，与 Runtime Project identity 分开：例如 E 盘中的 Project 不会因此获得 F 盘访问权，只有 F 盘目标路径也落在 `allowed_roots` 内时，Runtime 才能在那里解析或注册 Project。Project 注册本身不会扩大这个权限范围。
 
+## 配置与数据
+
+打开**设置 → 配置与数据**，查看当前 Environment root、Desktop 实际 app-data root，以及保存的 Server、Runner、Tunnel、凭据、数据和日志位置。各领域仍保留原有权威存储。页面投影保存的配置，不确认正在运行进程的有效位置；未知、缺失、远程和尚未配置分别显示。只有 Native 确认的本机目录提供打开入口。journal 或系统日志显示已有查看方式，Desktop 活动和进程输出明确标为内存内容。
+
+刷新、复制路径和 JSON 导出都由用户明确触发。导出包含私有本机路径和身份元数据，请选择自己控制的私有目录，并在分享前检查。默认**备份清单**说明安全投影、排除内容及恢复缺项，不包含配置、凭据、数据库、日志或项目文件，不能恢复环境。不完整的路径清单禁止导出。完整秘密备份和恢复需另行设计。详见[格式与实际验证报告](implementation/configuration-inventory-backup-manifest.md)。
+
 ## Windows 启动与升级
 
 **登录后启动（推荐）**使用用户会话内的 Task Scheduler 计划任务，是普通 Desktop 的默认路径，不需要管理员账户或服务密码。Server、Runner 和 Tunnel 使用已登录用户的身份。关闭 Desktop 不会停止这些任务；退出 Windows 登录后，用户会话路径结束。

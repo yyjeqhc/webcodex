@@ -1,8 +1,10 @@
+mod view;
 use super::*;
 use crate::runtime_selection;
 use crate::updates::{
     self, DownloadStatus, InstallContext, InstallationKind, UpdateCache, UpdateStatus,
 };
+pub use view::{LocalUpdateStatus, UpdateConfirmation};
 use webcodex_environment::unified_update::UpdateError;
 
 const DESKTOP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -197,6 +199,7 @@ impl AppState {
         &self,
         version: &str,
         confirmed: bool,
+        confirmation: UpdateConfirmation,
     ) -> DesktopResult<bool> {
         if !confirmed {
             return Err(action_error());
@@ -210,9 +213,29 @@ impl AppState {
             core.config.runtime_binary_source.clone(),
             core.config.persistent_environment.clone(),
         );
+        if !view::confirmation_matches(
+            &confirmation,
+            core.config.persistent_environment.as_deref(),
+            core.config.runtime_selection_revision,
+            version,
+        ) {
+            let _ = self
+                .finish_operation(operation, cancellation, core, baseline, Err(action_error()))
+                .await;
+            return Err(action_error());
+        }
         self.updates.set_installation(kind);
         let result = match context {
-            Some(context) => self.updates.install(&context, version, confirmed).await,
+            Some(context) => {
+                self.updates
+                    .install_checked(
+                        &context,
+                        &confirmation.candidate,
+                        &confirmation.target,
+                        confirmed,
+                    )
+                    .await
+            }
             None => Err(UpdateError::UpgradePreflightFailed),
         };
         if let Err(error) = result {

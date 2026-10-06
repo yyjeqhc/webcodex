@@ -80,6 +80,35 @@ class PrepareReleaseMetadataInstallerTests(unittest.TestCase):
         self.assertEqual(len(manifest["installers"]), 8)
         self.assertEqual(len(manifest["artifacts"]), 6)
 
+    def test_guarded_raw_cli_contract_requires_same_source_outer_provenance_and_preserves_old_entries(self):
+        self.write_installers()
+        platform = "win32-x64"
+        installer = self.artifacts / metadata.installer_filename("0.3.0", "win32-x64-exe")
+        candidate = self.artifacts / "webcodex-unified-v0.3.0-win32-x64.source-manifest.json"
+        source_path = self.artifacts / metadata.source_manifest_filename("0.3.0", platform)
+        source = json.loads(source_path.read_text())
+        record = source["artifacts"]["webcodex"]
+        record["build_info"]["windows_guarded_bootstrap_contract"] = 1
+        record["build_info_sha256"] = __import__("hashlib").sha256(json.dumps(record["build_info"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        source_path.write_text(json.dumps(source))
+        candidate.write_bytes(source_path.read_bytes())
+        evidence = {"schema_version": 1, "guarded_handoff_version": 1, "platform": platform, "version": "0.3.0", "source_sha": "a" * 40,
+            "workflow_run_id": 123, "workflow_ref": "repo/.github/workflows/release-build.yml@refs/tags/v0.3.0",
+            "candidate_manifest_sha256": metadata.sha256(candidate), "inner_installer_sha256": "b" * 64, "installer_sha256": metadata.sha256(installer)}
+        sidecar = installer.with_suffix(installer.suffix + ".provenance.json")
+        sidecar.write_text(json.dumps(evidence))
+        result = self.prepare(); self.assertEqual(result.returncode, 0, result.stderr)
+        entries = json.loads((self.output / "manifest.json").read_text())["installers"]
+        for entry in entries.values():
+            self.assertEqual(set(entry), {"platform", "format", "filename", "url", "sha256", "source_manifest_url", "source_manifest_sha256"})
+        self.assertEqual(entries["win32-x64-exe"]["source_manifest_sha256"], metadata.sha256(source_path))
+        sidecar.unlink()
+        self.assertNotEqual(self.prepare().returncode, 0, "capability cannot outlive its outer provenance")
+        for field in ("installer_sha256", "candidate_manifest_sha256", "source_sha", "platform", "guarded_handoff_version"):
+            changed = dict(evidence); changed[field] = 2 if field == "guarded_handoff_version" else "mismatch"
+            sidecar.write_text(json.dumps(changed))
+            self.assertNotEqual(self.prepare().returncode, 0, field)
+
     def test_strict_requirement_rejects_total_absence_but_legacy_remains_valid(self):
         for platform in metadata.PLATFORMS:
             (self.artifacts / metadata.source_manifest_filename("0.3.0", platform)).unlink()

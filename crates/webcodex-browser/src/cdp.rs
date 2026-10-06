@@ -1,8 +1,11 @@
+use crate::bridge::ExternalLease;
+use crate::profiles::{ManagedProfile, OwnedProfile};
 use crate::types::{
     clip_bytes, BrowserError, BrowserKey, BrowserResult, BrowserStability, ControlCapability,
     LAUNCH_TIMEOUT, MAX_NODE_TEXT_BYTES, MAX_PAGES_PER_BROWSER, MAX_SNAPSHOT_BYTES,
     MAX_SNAPSHOT_NODES, REQUEST_TIMEOUT,
 };
+use crate::BrowserOwnership;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Read;
@@ -10,8 +13,9 @@ use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-use tempfile::TempDir;
-use tungstenite::{client::client_with_config, protocol::WebSocketConfig, Message, WebSocket};
+mod socket;
+use socket::CdpSocket;
+use tungstenite::{client::client_with_config, protocol::WebSocketConfig, Message};
 use url::Url;
 use webcodex_process::ManagedChild;
 
@@ -25,9 +29,33 @@ use frames::{frame_documents, frame_fence};
 pub(crate) trait BackendFactory: Send + Sync {
     fn available(&self) -> bool;
     fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>>;
+    fn launch_managed(&self, _profile: &str) -> BrowserResult<Box<dyn BrowserBackend>> {
+        Err(BrowserError::not_started(
+            "managed_browser_unavailable",
+            "Managed Browser launch is unavailable",
+        ))
+    }
 }
 
 pub(crate) trait BrowserBackend: Send {
+    fn ownership(&self) -> BrowserOwnership {
+        BrowserOwnership::OwnedEphemeral
+    }
+    fn profile_name(&self) -> Option<&str> {
+        None
+    }
+    fn live_process_id(&mut self) -> BrowserResult<u32> {
+        Err(BrowserError::not_started(
+            "browser_surface_unavailable",
+            "This Browser has no verified native process binding",
+        ))
+    }
+    fn live_window_hint(&mut self) -> BrowserResult<crate::BrowserWindowHint> {
+        Ok(crate::BrowserWindowHint {
+            process_id: self.live_process_id()?,
+            bounds: None,
+        })
+    }
     fn pages(&mut self) -> BrowserResult<Vec<BackendPage>>;
     fn new_page(&mut self) -> BrowserResult<String>;
     fn snapshot(&mut self, target_id: &str, max_depth: u32) -> BrowserResult<BackendSnapshot>;
@@ -262,7 +290,7 @@ impl CdpEventBuffer {
 }
 
 struct CdpEventCollector {
-    websocket: WebSocket<TcpStream>,
+    websocket: CdpSocket,
     events: CdpEventBuffer,
 }
 
@@ -281,6 +309,18 @@ impl BackendFactory for ChromiumFactory {
             )
         })?;
         CdpBackend::launch(&executable).map(|backend| Box::new(backend) as Box<dyn BrowserBackend>)
+    }
+
+    fn launch_managed(&self, profile: &str) -> BrowserResult<Box<dyn BrowserBackend>> {
+        let executable = discover_chromium_executable().ok_or_else(|| {
+            BrowserError::not_started(
+                "browser_unavailable",
+                "No supported Chromium browser is installed",
+            )
+        })?;
+        let profile = ManagedProfile::acquire(&crate::profiles::state_root()?, profile)?;
+        CdpBackend::launch_profile(&executable, OwnedProfile::Managed(profile), false)
+            .map(|backend| Box::new(backend) as Box<dyn BrowserBackend>)
     }
 }
 
@@ -407,12 +447,25 @@ fn cleanup_failed_launch(child: &mut ManagedChild) {
     let _ = child.try_wait();
 }
 
+enum CdpOwner {
+    Owned {
+        child: ManagedChild,
+        profile: OwnedProfile,
+        endpoint: Url,
+    },
+    External(ExternalLease),
+}
 struct CdpBackend {
-    child: ManagedChild,
-    _profile: TempDir,
-    endpoint: Url,
+    owner: CdpOwner,
     next_id: u64,
     collectors: HashMap<String, CdpEventCollector>,
+}
+pub(crate) fn attach_external(lease: ExternalLease) -> Box<dyn BrowserBackend> {
+    Box::new(CdpBackend {
+        owner: CdpOwner::External(lease),
+        next_id: 1,
+        collectors: HashMap::new(),
+    })
 }
 
 impl CdpBackend {
@@ -426,9 +479,19 @@ impl CdpBackend {
                     format!("could not create ephemeral Browser profile: {error}"),
                 )
             })?;
+        Self::launch_profile(executable, OwnedProfile::Ephemeral(profile), true)
+    }
+
+    fn launch_profile(
+        executable: &Path,
+        profile: OwnedProfile,
+        headless: bool,
+    ) -> BrowserResult<Self> {
         let mut command = Command::new(executable);
+        if headless {
+            command.arg("--headless=new");
+        }
         command
-            .arg("--headless=new")
             .arg("--window-size=1440,900")
             .arg("--remote-debugging-address=127.0.0.1")
             .arg("--remote-debugging-port=0")
@@ -449,17 +512,28 @@ impl CdpBackend {
         let active_port = profile.path().join("DevToolsActivePort");
         let deadline = Instant::now() + LAUNCH_TIMEOUT;
         let (port, websocket_path) = loop {
-            if let Ok(contents) = std::fs::read_to_string(&active_port) {
-                if let Some(endpoint) = parse_devtools_active_port(&contents) {
-                    break endpoint;
-                }
-            }
-            if child.try_wait().ok().flatten().is_some() {
+            // Observe the exact new child before reading a rendezvous file; never
+            // adopt another process via a stale DevToolsActivePort.
+            if child
+                .try_wait()
+                .map_err(|_| {
+                    BrowserError::not_started(
+                        "launch_failed",
+                        "Could not verify the owned Chrome child",
+                    )
+                })?
+                .is_some()
+            {
                 cleanup_failed_launch(&mut child);
                 return Err(BrowserError::not_started(
                     "launch_failed",
                     "Browser exited before loopback CDP became ready",
                 ));
+            }
+            if let Ok(contents) = std::fs::read_to_string(&active_port) {
+                if let Some(endpoint) = parse_devtools_active_port(&contents) {
+                    break endpoint;
+                }
             }
             if Instant::now() >= deadline {
                 cleanup_failed_launch(&mut child);
@@ -488,9 +562,11 @@ impl CdpBackend {
             ));
         }
         Ok(Self {
-            child,
-            _profile: profile,
-            endpoint,
+            owner: CdpOwner::Owned {
+                child,
+                profile,
+                endpoint,
+            },
             next_id: 1,
             collectors: HashMap::new(),
         })
@@ -508,18 +584,38 @@ impl CdpBackend {
         effect: bool,
         deadline: Instant,
     ) -> BrowserResult<Value> {
-        cdp_call_until(
-            &self.endpoint,
-            &mut self.next_id,
-            method,
-            params,
-            effect,
-            deadline,
-        )
+        match &self.owner {
+            CdpOwner::Owned { endpoint, .. } => cdp_call_until(
+                endpoint,
+                &mut self.next_id,
+                method,
+                params,
+                effect,
+                deadline,
+            ),
+            CdpOwner::External(lease) => lease.browser_call(method, params, effect, deadline),
+        }
     }
 
     fn page_descriptors_until(&self, deadline: Instant) -> BrowserResult<Vec<Value>> {
-        fetch_page_descriptors(self.endpoint.port().unwrap_or_default(), deadline)
+        match &self.owner {
+            CdpOwner::Owned { endpoint, .. } => {
+                fetch_page_descriptors(endpoint.port().unwrap_or_default(), deadline)
+            }
+            CdpOwner::External(lease) => lease.targets(deadline),
+        }
+    }
+
+    fn page_socket_until(&self, target_id: &str, deadline: Instant) -> BrowserResult<CdpSocket> {
+        remaining_before_dispatch(deadline)?;
+        match &self.owner {
+            CdpOwner::Owned { .. } => {
+                open_loopback_websocket(&self.page_endpoint_until(target_id, deadline)?, deadline)
+            }
+            CdpOwner::External(lease) => lease
+                .socket(Some(target_id))
+                .map(|socket| CdpSocket::Bridge(Box::new(socket))),
+        }
     }
 
     fn page_endpoint_until(&self, target_id: &str, deadline: Instant) -> BrowserResult<Url> {
@@ -560,8 +656,8 @@ impl CdpBackend {
         effect: bool,
         deadline: Instant,
     ) -> BrowserResult<Value> {
-        let endpoint = self
-            .page_endpoint_until(target_id, deadline)
+        let mut socket = self
+            .page_socket_until(target_id, deadline)
             .map_err(|error| {
                 if effect {
                     pre_dispatch_error(error)
@@ -569,8 +665,8 @@ impl CdpBackend {
                     error
                 }
             })?;
-        cdp_call_until(
-            &endpoint,
+        cdp_call_on_websocket_until(
+            &mut socket,
             &mut self.next_id,
             method,
             params,
@@ -584,8 +680,7 @@ impl CdpBackend {
             return Ok(());
         }
         let deadline = Instant::now() + REQUEST_TIMEOUT;
-        let endpoint = self.page_endpoint_until(target_id, deadline)?;
-        let mut websocket = open_loopback_websocket(&endpoint, deadline)?;
+        let mut websocket = self.page_socket_until(target_id, deadline)?;
         for method in ["Runtime.enable", "Log.enable", "Network.enable"] {
             cdp_call_on_websocket_until(
                 &mut websocket,
@@ -665,11 +760,9 @@ impl CdpBackend {
     ) -> BrowserResult<()> {
         // Remote object ids are scoped to the DevTools session that created
         // them. Keep resolveNode and callFunctionOn on one page websocket.
-        let endpoint = self
-            .page_endpoint_until(target_id, deadline)
+        let mut websocket = self
+            .page_socket_until(target_id, deadline)
             .map_err(pre_dispatch_error)?;
-        let mut websocket =
-            open_loopback_websocket(&endpoint, deadline).map_err(pre_dispatch_error)?;
         let resolved = cdp_call_on_websocket_until(
             &mut websocket,
             &mut self.next_id,
@@ -770,6 +863,54 @@ impl CdpBackend {
 }
 
 impl BrowserBackend for CdpBackend {
+    fn ownership(&self) -> BrowserOwnership {
+        match &self.owner {
+            CdpOwner::Owned { profile, .. } if profile.name().is_some() => {
+                BrowserOwnership::OwnedManagedPersistent
+            }
+            CdpOwner::Owned { .. } => BrowserOwnership::OwnedEphemeral,
+            CdpOwner::External(_) => BrowserOwnership::AttachedExternal,
+        }
+    }
+    fn profile_name(&self) -> Option<&str> {
+        match &self.owner {
+            CdpOwner::Owned { profile, .. } => profile.name(),
+            CdpOwner::External(_) => None,
+        }
+    }
+    fn live_process_id(&mut self) -> BrowserResult<u32> {
+        match &mut self.owner {
+            CdpOwner::Owned { child, .. } => {
+                if child
+                    .try_wait()
+                    .map_err(|_| {
+                        BrowserError::not_started(
+                            "browser_surface_unavailable",
+                            "Cannot verify the Browser process",
+                        )
+                    })?
+                    .is_some()
+                {
+                    return Err(BrowserError::not_started(
+                        "stale_browser",
+                        "The exact owned Chrome process has exited",
+                    ));
+                }
+                Ok(child.id())
+            }
+            CdpOwner::External(lease) => lease.live_process_id(),
+        }
+    }
+    fn live_window_hint(&mut self) -> BrowserResult<crate::BrowserWindowHint> {
+        match &mut self.owner {
+            CdpOwner::Owned { .. } => Ok(crate::BrowserWindowHint {
+                process_id: self.live_process_id()?,
+                bounds: None,
+            }),
+            CdpOwner::External(lease) => lease.live_window_hint(),
+        }
+    }
+
     fn pages(&mut self) -> BrowserResult<Vec<BackendPage>> {
         let deadline = Instant::now() + REQUEST_TIMEOUT;
         let mut pages = self.page_list_until(deadline)?;
@@ -813,8 +954,7 @@ impl BrowserBackend for CdpBackend {
 
     fn snapshot(&mut self, target_id: &str, max_depth: u32) -> BrowserResult<BackendSnapshot> {
         let deadline = Instant::now() + REQUEST_TIMEOUT;
-        let endpoint = self.page_endpoint_until(target_id, deadline)?;
-        let mut websocket = open_loopback_websocket(&endpoint, deadline)?;
+        let mut websocket = self.page_socket_until(target_id, deadline)?;
         let frame_tree = cdp_call_on_websocket_until(
             &mut websocket,
             &mut self.next_id,
@@ -920,8 +1060,7 @@ impl BrowserBackend for CdpBackend {
 
     fn validate_frame_fence(&mut self, target_id: &str, fence: &str) -> BrowserResult<()> {
         let deadline = Instant::now() + REQUEST_TIMEOUT;
-        let endpoint = self.page_endpoint_until(target_id, deadline)?;
-        let mut websocket = open_loopback_websocket(&endpoint, deadline)?;
+        let mut websocket = self.page_socket_until(target_id, deadline)?;
         if read_frame_fence(&mut websocket, &mut self.next_id, deadline)? != fence {
             let mut error = BrowserError::not_started(
                 "stale_element",
@@ -1476,14 +1615,21 @@ impl BrowserBackend for CdpBackend {
     }
 
     fn shutdown(&mut self, timeout: Duration) -> BrowserResult<()> {
+        self.collectors.clear();
+        if let CdpOwner::External(lease) = &self.owner {
+            return lease.detach(timeout);
+        }
         let deadline = Instant::now() + timeout;
         if !timeout.is_zero() {
             let _ = self.browser_call_until("Browser.close", json!({}), true, deadline);
         }
+        let CdpOwner::Owned { child, .. } = &mut self.owner else {
+            unreachable!("external handled above")
+        };
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let graceful = self.child.wait_tree_exit(remaining).unwrap_or(false);
+        let graceful = child.wait_tree_exit(remaining).unwrap_or(false);
         if !graceful {
-            self.child.terminate_tree().map_err(|error| {
+            child.terminate_tree().map_err(|error| {
                 BrowserError::uncertain(
                     "browser_shutdown_failed",
                     format!("could not terminate owned Browser process tree: {error}"),
@@ -1493,9 +1639,9 @@ impl BrowserBackend for CdpBackend {
             let remaining = deadline
                 .saturating_duration_since(Instant::now())
                 .min(Duration::from_secs(1));
-            let _ = self.child.wait_tree_exit(remaining);
+            let _ = child.wait_tree_exit(remaining);
         }
-        let _ = self.child.try_wait();
+        let _ = child.try_wait();
         Ok(())
     }
 }
@@ -1531,7 +1677,7 @@ fn viewport_dimension(metrics: &Value, pointer: &str) -> u32 {
 }
 
 fn read_frame_fence(
-    websocket: &mut WebSocket<TcpStream>,
+    websocket: &mut CdpSocket,
     next_id: &mut u64,
     deadline: Instant,
 ) -> BrowserResult<String> {
@@ -2229,35 +2375,11 @@ fn remaining_before_dispatch(deadline: Instant) -> BrowserResult<Duration> {
     }
 }
 
-fn configure_socket_timeout(
-    websocket: &mut WebSocket<TcpStream>,
-    timeout: Duration,
-) -> BrowserResult<()> {
-    websocket
-        .get_mut()
-        .set_read_timeout(Some(timeout))
-        .map_err(|error| {
-            BrowserError::not_started(
-                "cdp_timeout_config_failed",
-                format!("could not bound CDP read timeout: {error}"),
-            )
-        })?;
-    websocket
-        .get_mut()
-        .set_write_timeout(Some(timeout))
-        .map_err(|error| {
-            BrowserError::not_started(
-                "cdp_timeout_config_failed",
-                format!("could not bound CDP write timeout: {error}"),
-            )
-        })?;
-    Ok(())
+fn configure_socket_timeout(websocket: &mut CdpSocket, timeout: Duration) -> BrowserResult<()> {
+    websocket.timeout(timeout)
 }
 
-fn open_loopback_websocket(
-    endpoint: &Url,
-    deadline: Instant,
-) -> BrowserResult<WebSocket<TcpStream>> {
+fn open_loopback_websocket(endpoint: &Url, deadline: Instant) -> BrowserResult<CdpSocket> {
     if !matches!(endpoint.host_str(), Some("127.0.0.1") | Some("localhost"))
         || endpoint.scheme() != "ws"
     {
@@ -2294,13 +2416,14 @@ fn open_loopback_websocket(
     let config = WebSocketConfig::default()
         .max_message_size(Some(MAX_CDP_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_CDP_MESSAGE_BYTES));
-    let (mut websocket, _) =
+    let (websocket, _) =
         client_with_config(endpoint.as_str(), stream, Some(config)).map_err(|error| {
             BrowserError::not_started(
                 "cdp_connect_failed",
                 format!("could not complete loopback CDP handshake: {error}"),
             )
         })?;
+    let mut websocket = CdpSocket::Loopback(Box::new(websocket));
     configure_socket_timeout(&mut websocket, remaining_before_dispatch(deadline)?)?;
     Ok(websocket)
 }
@@ -2545,7 +2668,7 @@ fn cdp_call_until(
 }
 
 fn cdp_call_on_websocket_until(
-    websocket: &mut WebSocket<TcpStream>,
+    websocket: &mut CdpSocket,
     next_id: &mut u64,
     method: &str,
     params: Value,

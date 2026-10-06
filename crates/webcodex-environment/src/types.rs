@@ -43,6 +43,9 @@ pub struct SetupRequest {
     /// Older journals infer the role from `project`; absence preserves that intent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<bool>,
+    /// Optional Runner label; identity remains the generated client ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_display_name: Option<String>,
     pub account: LocalAccount,
     pub binaries: RuntimeBinaries,
 }

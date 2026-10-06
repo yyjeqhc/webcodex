@@ -13,6 +13,7 @@ async fn cancelled_stop_retains_the_owned_task_for_drop_cleanup() {
         stop: Some(stop),
         health: Health::default(),
         guard: guard.clone(),
+        terminal: None,
     };
     tokio::select! {
         biased;
@@ -107,6 +108,7 @@ async fn idle_tunnel(root: &Path) -> OpenAiTunnel {
         stop: Some(tx),
         health,
         guard,
+        terminal: None,
     };
     let observed = tokio::time::timeout(Duration::from_secs(5), async {
         let (mut socket, _) = listener.accept().await.unwrap();
@@ -138,6 +140,32 @@ async fn observed_idle_shutdown_clears_restart_marker() {
     assert!(!marker.exists());
     assert!(!tunnel.health.is_ready());
 }
+#[tokio::test]
+async fn observed_task_error_is_not_a_clean_join_and_keeps_restart_fence() {
+    let temp = tempfile::tempdir().unwrap();
+    let guard = acquire_guard(temp.path(), "failed-fixture").unwrap();
+    let task = tokio::spawn(async { Err(Error::Protocol) });
+    let mut tunnel = OpenAiTunnel {
+        task: Some(task),
+        stop: None,
+        health: Health::default(),
+        guard: guard.clone(),
+        terminal: None,
+    };
+    assert!(tunnel.wait_for_exit().await.is_err());
+    assert!(tunnel.stop_with_outcome().await.is_err());
+    assert!(guard.exists(), "Ok(Err(...)) is not a clean task result");
+}
+
+#[tokio::test]
+async fn clean_owner_stop_allows_reacquiring_the_same_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut tunnel = idle_tunnel(temp.path()).await;
+    assert!(tunnel.stop_with_outcome().await.is_ok());
+    assert!(tunnel.stop_with_outcome().await.is_ok());
+    assert!(acquire_guard(temp.path(), "fixture").is_ok());
+}
+
 #[tokio::test]
 async fn dropping_owner_retains_restart_marker() {
     let temp = tempfile::tempdir().unwrap();

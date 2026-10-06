@@ -50,6 +50,52 @@ existing services. [Lifecycle and compatibility details](implementation/personal
 
 Use `webcodex environment --help` for the complete namespace, including Tunnel profiles, explicit legacy migrations, and installer upgrade/recovery commands. Public environment commands support `--json` and `--environment-dir PATH`. Do not put tokens, pairing codes, or service passwords in command arguments. When pairing redemption is uncertain, read the recovery diagnostic before explicitly supplying a replacement through `resume --new-pairing-code --code-stdin`; do not replay the old code automatically.
 
+### Local unified updates (Linux terminal)
+
+`webcodex environment update` uses the same official release discovery, private
+Desktop download cache, candidate verifier and Environment transaction as Desktop.
+It updates the local official unified package, including its installed Desktop,
+CLI, Server and Runner files; it never updates remote Runner installations.
+An additional Runner uses this entry without opening a Desktop window. It must
+still have the existing official unified package installed.
+
+| Command | Effects |
+| --- | --- |
+| `environment update status` | Inspect the local installation, cached candidate and recorded transaction. Does not discover a new release or create an unconfigured Environment. |
+| `environment update check` | Discover the latest official stable release; does not download or install. The release notice is advisory until candidate validation. |
+| `environment update download --version VERSION` | Download and validate that stable version into the existing private cache. Does not prepare services or install. |
+| `environment update apply --version VERSION --yes` | Revalidate the exact cached candidate and Environment, check tasks, prepare owned services and dispatch the existing installer helper. |
+| `environment update resume --operation-id ID --yes` | Retry the existing completion mechanism only when Core proves the recorded operation can be safely continued. Never dispatches another installer. |
+| `environment update rollback --operation-id ID --yes` | Restore only when Core proves replacement has not begun, or release maintenance for an already restored operation. Ambiguous/later phases require the existing explicit recovery procedure. |
+
+All commands accept `--environment-dir PATH` and `--json`. JSON stdout is a single
+schema-1 document capped at 64 KiB; action failure returns a nonzero exit status.
+It contains fixed component identities, known phases and static error kinds;
+it excludes raw configuration, owner receipts, service arguments, credentials
+and arbitrary installer output. System authorization prompts use the terminal.
+
+Linux application, continuation and restoration require stdin to be a terminal
+(for SSH, allocate a TTY), explicit `--yes`, and normal system sudo authorization.
+The Environment owner stays unprivileged; only the verified installed installer
+helper is elevated with literal arguments. Non-TTY sessions can inspect, check
+and download, but are rejected before any service-changing operation. A missing
+or ambiguous package format or missing trusted package tools blocks application;
+the updater does not switch between DEB and RPM.
+
+macOS and Windows do not gain a headless application adapter here. Their CLI
+queries and downloads remain available, while application uses the existing
+native Desktop/manual route. Bare Runner, npm, source/dirty builds, custom Runtime,
+missing managed Desktop files and unknown ownership retain their installation
+type and use the documented manual release path.
+
+Installer acknowledgement is distinct from completed replacement and service
+recovery. An uncertain result is not permission to retry installation or race a
+rollback. Inspect the operation with `environment update status --json` and use
+[the existing upgrade/recovery procedure](unified-installation.md). Interrupting
+a download cancels only the download; interrupting after dispatch does not claim
+that installation was canceled. Original service state, configuration, identities,
+projects and Tunnel credentials remain governed by the existing Core transaction.
+
 ### Project / local workflow
 
 These commands work on the current Git project.

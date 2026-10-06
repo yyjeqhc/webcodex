@@ -26880,6 +26880,14 @@ function jL(e, i) {
   return r < 0 ? void 0 : DL[e]?.[r];
 }
 var yn = {
+  "Load earlier messages": "加载更早的消息",
+  "Return to latest messages": "回到最新消息",
+  "Reply to": "回复",
+  "Earlier message": "更早的消息",
+  "Reply received": "已收到回复",
+  "Delivery states": "消息状态说明",
+  "Reading saved history. New messages do not replace this page.": "正在阅读历史记录，新消息不会覆盖当前页面。",
+  "Saved messages remain in history. ACK confirms model context, not acceptance or completion. A reply is shown separately.": "消息保存后会保留在历史记录中。ACK 仅表示模型上下文已确认，不代表接受任务或完成工作；实际回复会单独展示。",
   "Expected result": "符合预期",
   "Expectation not met": "不符合预期",
   Version: "版本",

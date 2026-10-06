@@ -34,6 +34,27 @@ beforeEach(() => {
 });
 
 describe("explicit environment setup", () => {
+  it("passes an optional Runner name without changing identity or enabling a project", async () => {
+    const {container}=mount(); action(container,"choose-local-setup");
+    fireEvent.change(screen.getByLabelText("Runner name (optional)"), {target:{value:" My laptop "}});
+    action(container,"configure-local");
+    await waitFor(()=>expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({runnerDisplayName:"My laptop",runner:true,projectPath:null})));
+  });
+  it("blocks an invalid Runner name before configuring", () => {
+    const {container}=mount(); action(container,"choose-local-setup");
+    fireEvent.change(screen.getByLabelText("Runner name (optional)"), {target:{value:"😀".repeat(201)}});
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    fireEvent.submit(container.querySelector("form")!);
+    expect(api.configureEnvironment).not.toHaveBeenCalled();
+  });
+  it("never submits a replacement name on reopening a saved Runner", async () => {
+    const saved={...remote(true),environment_setup:{environment_id:"saved",mode:"join",server_url:"https://server.example",runner:true,runner_display_name:"Saved laptop",project_path:null,service_scope:"user",configured:true}} as DesktopState;
+    const {container}=mount(saved,false);
+    expect(screen.queryByLabelText("Runner name (optional)")).toBeNull();
+    action(container,"configure-remote");
+    await waitFor(()=>expect(api.configureEnvironment).toHaveBeenCalledTimes(1));
+    expect(api.configureEnvironment.mock.calls[0][0]).not.toHaveProperty("runnerDisplayName");
+  });
   it("shows Create main node and Join main node as the two ordinary entries", () => {
     mount();
     expect(screen.getByRole("button", { name: /Create main node/ })).toBeInTheDocument();

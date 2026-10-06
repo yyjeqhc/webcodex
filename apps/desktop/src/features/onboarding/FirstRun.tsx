@@ -41,7 +41,7 @@ interface FirstRunProps {
   state: DesktopState;
   onState: (state: DesktopState) => void;
   chooseModeFirst?: boolean;
-  onComplete?: () => void;
+  onComplete?: (state?: DesktopState) => void;
 }
 
 export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }: FirstRunProps) {
@@ -55,11 +55,14 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   const savedProject = setup ? setup.project_path : (!state.persistent_environment && savedMode ? state.project?.path ?? null : null);
   const pending = Boolean(setup && !setup.configured);
   const contextKey = JSON.stringify([setup ?? null, savedMode, savedRunner, savedServer, savedProject, state.persistent_environment]);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [activeContext, setActiveContext] = useState(contextKey);
   const [serviceScope, setServiceScope] = useState<"user" | "system">(setup?.service_scope ?? "user");
   const [mode, setMode] = useState<SetupMode | null>(chooseModeFirst ? null : savedMode);
+  useEffect(() => { headingRef.current?.focus(); }, [mode]);
   const [runner, setRunner] = useState(savedRunner);
   const [serverUrl, setServerUrl] = useState(savedServer);
+  const [runnerName, setRunnerName] = useState(setup?.runner_display_name ?? "");
   const [projectPath, setProjectPath] = useState<string | null>(savedProject);
   const [advanced, setAdvanced] = useState(Boolean(savedMode && !savedRunner));
   const [pairingCode, setPairingCode] = useState("");
@@ -74,7 +77,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   useEffect(() => {
     if (activeContext === contextKey) return;
     setActiveContext(contextKey); setMode(chooseModeFirst && !pending && !busy ? null : savedMode);
-    setRunner(savedRunner); setServerUrl(savedServer); setProjectPath(savedProject);
+    setRunner(savedRunner); setServerUrl(savedServer); setProjectPath(savedProject); setRunnerName(setup?.runner_display_name ?? "");
     setServiceScope(setup?.service_scope ?? "user"); setAdvanced(Boolean(savedMode && !savedRunner));
     setPairingCode(""); setUserToken(""); setReplacePairingCode(false); setError(null);
   }, [activeContext, contextKey, chooseModeFirst, savedMode, savedRunner, savedServer, savedProject, setup?.service_scope, pending, busy]);
@@ -91,7 +94,9 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   const needsToken = mode === "join" && !runner && !reuseViewer;
   const address = runnerServerAddress(serverUrl);
   const addressIssue = mode === "join" && !advanced && !savedMode ? address.issue : null;
-  const canSubmit = !mutationBusy && !addressIssue && (mode === "create" || mode === "join" && origin !== null
+  const canChooseName = !pending && !savedMode && !state.persistent_environment;
+  const nameInvalid = Array.from(runnerName).length > 200 || runnerName.includes("\0");
+  const canSubmit = !(runner && canChooseName && nameInvalid) && !mutationBusy && !addressIssue && (mode === "create" || mode === "join" && origin !== null
     && (!needsCode || Boolean(pairingCode.trim())) && (!needsToken || Boolean(userToken.trim())));
 
   const clearInputs = () => {
@@ -141,21 +146,22 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
         mode, serverUrl: mode === "join" ? origin : null,
         projectPath: runner ? projectPath : null,
         runner,
+        ...(runner && canChooseName && runnerName.trim() ? { runnerDisplayName: runnerName.trim() } : {}),
         pairingCode: needsCode ? code : null,
         userToken: needsToken ? credential : null,
         replacePairingCode,
       });
-      if (stillCurrent()) { setReplacePairingCode(false); onState(next); onComplete?.(); }
+      if (stillCurrent()) { setReplacePairingCode(false); onState(next); onComplete?.(next); }
     } catch (value) { if (stillCurrent()) setError(normalizeDesktopError(value)); }
     finally { setBusy(false); }
   };
 
   if (mode === "share") return <QuickShareSetup state={state} onState={onState}
-    onBack={() => chooseMode(null)} onComplete={onComplete} />;
+    onBack={() => chooseMode(null)} onComplete={() => onComplete?.()} />;
 
   if (!mode) return <section className="first-run" aria-labelledby="first-run-title" data-webcodex-page="first-run">
     <div className="eyebrow">{t("first.welcome")}</div>
-    <h1 id="first-run-title">{t("first.title")}</h1>
+    <h1 id="first-run-title" tabIndex={-1} ref={headingRef}>{t("first.title")}</h1>
     <p className="lede">{t("first.description")}</p>
     <div className="entry-grid">
       <button className="entry-card recommended" disabled={mutationBusy || Boolean((state.persistent_environment || setup?.configured || pending) && savedMode === "join")}
@@ -196,8 +202,11 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
       data-webcodex-page="setup" onSubmit={event => { event.preventDefault(); void run(); }}>
       <button type="button" className="back-button" disabled={mutationBusy} onClick={() => chooseMode(null)}
         data-webcodex-action="show-setup-options">{t("setup.back")}</button>
+      <ol className="setup-route" aria-label={t("completion.title")}>
+        <li aria-current="step">{t("completion.role")}</li><li>{t("completion.connection")}</li><li>{t("completion.read")}</li>
+      </ol>
       <div className="eyebrow">{mode === "create" ? t("setup.localLabel") : t("setup.remoteLabel")}</div>
-      <h1 id="setup-title">{mode === "create" ? t("setup.localTitle") : t("setup.remoteTitle")}</h1>
+      <h1 id="setup-title" tabIndex={-1} ref={headingRef}>{mode === "create" ? t("setup.localTitle") : t("setup.remoteTitle")}</h1>
       <p className="lede">{mode === "create" ? t(runner ? "setup.localDescription" : "setup.serverOnly") : t(runner ? "setup.remoteDescription" : "setup.viewerOnly")}</p>
       {savedMode && !state.persistent_environment && <p className="workspace-notice" role="note">{scopeText("migrationHelp")}</p>}
       <div className="form-card">
@@ -209,6 +218,12 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
             onChange={event => { clearInputs(); setRunner(event.target.checked); }} />{t("setup.localRunner")}</label>
         </details>
       </div>
+      {runner && canChooseName && <div className="form-card field-group">
+        <label htmlFor="setup-runner-name">{t("setup.runnerName")}</label>
+        <input id="setup-runner-name" value={runnerName} disabled={mutationBusy} onChange={event => setRunnerName(event.target.value)} aria-describedby="setup-runner-name-help" />
+        <span id="setup-runner-name-help" className="field-help">{t("setup.runnerNameHelp")}</span>
+        {nameInvalid && <span role="alert" className="field-help">{t("setup.runnerNameInvalid")}</span>}
+      </div>}
       {runner && canChooseProject && <div className="project-picker-card">
         <div>
           <strong>{t("setup.initialProject")}</strong>

@@ -165,7 +165,7 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
         .get("ui/resourceUri")
         .is_none());
     let thread_panel = tool(&ui_tools["result"], "work_result_thread_panel");
-    assert_eq!(thread_panel["title"], "WebCodex review");
+    assert_eq!(thread_panel["title"], "WebCodex Work Result");
     assert_eq!(
         thread_panel["_meta"]["ui"]["resourceUri"],
         MCP_WORK_RESULT_UI_RESOURCE_URI

@@ -74,6 +74,8 @@ pub(super) fn list_windows(limit: usize) -> Result<Vec<PlatformWindow>, String> 
         }
         let width = window.width().map_err(map_error)?;
         let height = window.height().map_err(map_error)?;
+        let x = window.x().map_err(map_error)?;
+        let y = window.y().map_err(map_error)?;
         if width == 0 || height == 0 {
             continue;
         }
@@ -84,6 +86,8 @@ pub(super) fn list_windows(limit: usize) -> Result<Vec<PlatformWindow>, String> 
         output.push(PlatformWindow {
             native_id: window.id().map_err(map_error)?,
             pid: window.pid().map_err(map_error)?,
+            x,
+            y,
             identity_hash,
             application,
             title,

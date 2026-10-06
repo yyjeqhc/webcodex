@@ -83,7 +83,7 @@ pub(super) fn grant_service_directory(spec: &ServiceSpec, path: &Path) -> Result
     Ok(())
 }
 
-fn unit_name(spec: &ServiceSpec) -> String {
+pub(super) fn unit_name(spec: &ServiceSpec) -> String {
     format!("{}.service", spec.id)
 }
 fn unit_path(spec: &ServiceSpec) -> Result<PathBuf, ServiceError> {

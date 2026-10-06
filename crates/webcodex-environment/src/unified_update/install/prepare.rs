@@ -1,11 +1,16 @@
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use crate::unified_update::{InstallerTarget, PackageFormat, PrivateUpdateCache};
+use crate::unified_update::{UpdateError, UpdateResult};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::process::Stdio;
-use webcodex_environment::unified_update::{
-    InstallerTarget, PackageFormat, PrivateUpdateCache, UpdateError, UpdateResult,
-};
 
 const MAX_EXPANDED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+#[cfg(target_os = "linux")]
 const MAX_RPM_INVENTORY_BYTES: u64 = 4 * 1024 * 1024;
+#[cfg(target_os = "linux")]
 const RPM_CANDIDATE_ROOT: &str = "/usr/share/webcodex/upgrade-candidate";
 
 #[cfg(unix)]
@@ -360,7 +365,8 @@ mod native_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use webcodex_environment::unified_update::RuntimePlatform;
+    #[cfg(unix)]
+    use crate::unified_update::RuntimePlatform;
     #[cfg(unix)]
     #[test]
     fn extraction_uses_only_package_metadata_not_installation_commands() {

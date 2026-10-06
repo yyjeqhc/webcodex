@@ -11,8 +11,22 @@ pub struct UpdateSource {
     pub platform: RuntimePlatform,
     pub manifest_sha256: String,
     components: BTreeMap<String, Component>,
+    windows_guarded_bootstrap_contract: Option<u16>,
 }
 impl UpdateSource {
+    /// Capability belongs to the verified raw CLI metadata from the official
+    /// same-source bootstrap build, not to the generic MachineBuildInfo wire.
+    pub fn supports_guarded_windows_handoff(&self) -> bool {
+        matches!(
+            self.platform,
+            RuntimePlatform::Win32X64 | RuntimePlatform::Win32Arm64
+        ) && self.windows_guarded_bootstrap_contract == Some(WINDOWS_GUARDED_HANDOFF_VERSION)
+    }
+    pub fn component_build(&self, name: &str) -> Option<&MachineBuildInfo> {
+        self.components
+            .get(name)
+            .map(|component| &component.build_info)
+    }
     pub fn component_sha256(&self, name: &str) -> Option<&str> {
         self.components
             .get(name)
@@ -99,6 +113,7 @@ pub fn verify_source_manifest(
     {
         return Err(bad);
     }
+    let mut windows_guarded_bootstrap_contract = None;
     let mut data_format = None;
     let mut runner_generation = None;
     for name in [
@@ -131,6 +146,24 @@ pub fn verify_source_manifest(
             || info.environment_data_format.is_none_or(|v| v == 0)
         {
             return Err(bad);
+        }
+        if let Some(marker) =
+            raw["artifacts"][name]["build_info"].get(WINDOWS_GUARDED_BOOTSTRAP_BUILD_INFO_FIELD)
+        {
+            if name != "webcodex"
+                || !matches!(
+                    platform,
+                    RuntimePlatform::Win32X64 | RuntimePlatform::Win32Arm64
+                )
+            {
+                return Err(bad);
+            }
+            windows_guarded_bootstrap_contract = Some(
+                marker
+                    .as_u64()
+                    .filter(|value| *value > 0 && *value <= u16::MAX as u64)
+                    .ok_or(bad)? as u16,
+            );
         }
         if data_format.is_some_and(|v| Some(v) != info.environment_data_format) {
             return Err(bad);
@@ -213,5 +246,6 @@ pub fn verify_source_manifest(
         platform,
         manifest_sha256: sha256(bytes),
         components: source.artifacts,
+        windows_guarded_bootstrap_contract,
     })
 }

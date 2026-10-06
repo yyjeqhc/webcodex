@@ -156,6 +156,7 @@ fn record(
         schema_version: ENVIRONMENT_SCHEMA,
         environment_id: "fixture-environment".into(),
         request: SetupRequest {
+            runner_display_name: None,
             service_scope: service::ServiceScope::System,
             mode,
             server_url,
@@ -217,6 +218,7 @@ async fn projectless_runner_keeps_bounded_default_policy_and_an_empty_registry()
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     let mut saved = record("https://server.example".into(), None, EnvironmentMode::Join);
     saved.request.runner = Some(true);
+    saved.request.runner_display_name = Some("My laptop".into());
     saved.runner_client_id = Some("existing-runner".into());
     saved.username = Some("alice".into());
     store
@@ -240,6 +242,7 @@ async fn projectless_runner_keeps_bounded_default_policy_and_an_empty_registry()
         toml::from_str(&std::fs::read_to_string(store.root().join("runner.toml")).unwrap())
             .unwrap();
     assert_eq!(config["client_id"].as_str(), Some("existing-runner"));
+    assert_eq!(config["display_name"].as_str(), Some("My laptop"));
     assert_eq!(
         config["policy"]["allow_cwd_anywhere"].as_bool(),
         Some(false)
@@ -255,6 +258,22 @@ async fn projectless_runner_keeps_bounded_default_policy_and_an_empty_registry()
             .count(),
         0
     );
+}
+
+#[test]
+fn runner_name_validation_uses_registration_bounds_before_native_setup() {
+    let mut saved = record("https://server.example".into(), None, EnvironmentMode::Join);
+    saved.request.runner = Some(true);
+    saved.request.account.identity = "1000".into();
+    saved.request.runner_display_name = Some("😀".repeat(200));
+    validate_request(&saved.request).unwrap();
+    for value in ["😀".repeat(201), "bad\0name".into()] {
+        saved.request.runner_display_name = Some(value);
+        assert_eq!(
+            validate_request(&saved.request).unwrap_err().code,
+            "runner_display_name"
+        );
+    }
 }
 
 #[test]
@@ -1134,6 +1153,27 @@ async fn uncertain_project_addition_is_not_dispatched_again() {
         .unwrap()
         .projects
         .is_empty());
+}
+
+#[test]
+fn runner_name_requires_the_runner_role() {
+    let mut request = record(
+        "http://127.0.0.1:8080".into(),
+        None,
+        EnvironmentMode::Create {
+            listen: "127.0.0.1:8080".into(),
+        },
+    )
+    .request;
+    request.runner = Some(false);
+    request.account.identity = "1000".into();
+    request.runner_display_name = Some("orphan label".into());
+    assert_eq!(
+        validate_request(&request).unwrap_err().code,
+        "runner_display_name"
+    );
+    request.runner = Some(true);
+    assert!(validate_request(&request).is_ok());
 }
 
 #[test]

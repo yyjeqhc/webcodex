@@ -16,7 +16,7 @@ use webcodex_core::runner_protocol::shell_computer_request_payload_max_bytes;
 #[cfg(test)]
 use webcodex_core::runner_protocol::RunnerRequest;
 
-fn computer_runtime() -> &'static ComputerRuntime {
+pub(super) fn computer_runtime() -> &'static ComputerRuntime {
     static COMPUTER: OnceLock<ComputerRuntime> = OnceLock::new();
     COMPUTER.get_or_init(|| {
         ComputerRuntime::new(ComputerConfig {

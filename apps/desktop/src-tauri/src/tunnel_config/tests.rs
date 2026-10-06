@@ -530,9 +530,9 @@ fn persistent_environment_reconciles_exact_legacy_claims_and_fails_closed_on_con
     );
 
     let binding = store.root().join("server/tunnels/default/webcodex.env");
-    let conflicting = fs::read_to_string(&binding)
+    let rotated = fs::read_to_string(&binding)
         .unwrap()
-        .replace("default-private-key", "different-private-key");
+        .replace("default-private-key", "rotated-private-key");
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut file = fs::OpenOptions::new()
@@ -542,6 +542,23 @@ fn persistent_environment_reconciles_exact_legacy_claims_and_fails_closed_on_con
         .open(&binding)
         .unwrap();
     file.set_permissions(fs::Permissions::from_mode(0o600))
+        .unwrap();
+    file.write_all(rotated.as_bytes()).unwrap();
+    file.sync_all().unwrap();
+    let rotated_before = fs::read(&binding).unwrap();
+
+    local.ensure_persistent_catalog_compatible(&store).unwrap();
+    assert_eq!(fs::read(fixture.path()).unwrap(), local_before);
+    assert_eq!(fs::read(&binding).unwrap(), rotated_before);
+
+    let conflicting = fs::read_to_string(&binding)
+        .unwrap()
+        .replace("tunnel_default", "tunnel_different");
+    let mut file = fs::OpenOptions::new()
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(&binding)
         .unwrap();
     file.write_all(conflicting.as_bytes()).unwrap();
     file.sync_all().unwrap();
@@ -559,7 +576,7 @@ fn persistent_environment_reconciles_exact_legacy_claims_and_fails_closed_on_con
     assert_eq!(fs::read(binding).unwrap(), binding_before);
     let encoded = serde_json::to_string(&error).unwrap();
     assert!(!encoded.contains("default-private-key"));
-    assert!(!encoded.contains("different-private-key"));
+    assert!(!encoded.contains("rotated-private-key"));
 }
 
 #[cfg(unix)]

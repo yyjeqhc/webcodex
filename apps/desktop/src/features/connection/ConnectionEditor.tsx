@@ -36,7 +36,7 @@ export function ConnectionEditor({ profile, persistentLocal, onState, onClose }:
       name: name.trim(),
       tunnel_id: tunnelId.trim(),
       api_key: apiKey || null,
-      autostart,
+      autostart: persistentLocal && hostMode === "standalone" ? true : autostart,
       host_mode: persistentLocal ? hostMode : "standalone",
       expected_revision: profile?.revision ?? null,
     };
@@ -71,7 +71,7 @@ export function ConnectionEditor({ profile, persistentLocal, onState, onClose }:
       <TextInput className="field-group" id="connection-profile-name" label={c("name")} aria-label={c("name")} name="name" value={name} onChange={event => setName(event.currentTarget.value)} required maxLength={160} disabled={busy} autoFocus />
       <TextInput className="field-group" id="connection-profile-tunnel-id" label="Tunnel ID" aria-label="Tunnel ID" name="tunnel_id" value={tunnelId} onChange={event => setTunnelId(event.currentTarget.value)} required maxLength={256} pattern="(?:[A-Za-z0-9_]|-)+" spellCheck={false} autoCapitalize="none" disabled={busy || identityLocked} description={identityLocked ? c("tunnelIdentityLocked") : undefined} />
       <PasswordInput className="field-group" id="connection-profile-api-key" label="API Key" aria-label="API Key" name="api_key" value={apiKey} onChange={event => setApiKey(event.currentTarget.value)} required={!profile?.credential_present} maxLength={8192} autoComplete="new-password" spellCheck={false} disabled={busy} description={profile?.credential_present ? p("savedKey") : undefined} />
-      <Checkbox className="profile-checkbox" id="connection-profile-autostart" label={hostMode === "embedded" ? c("serverAutostart") : c("autostart")} checked={autostart} onChange={event => setAutostart(event.currentTarget.checked)} disabled={busy} />
+      {(!persistentLocal || hostMode === "embedded") && <Checkbox className="profile-checkbox" id="connection-profile-autostart" label={hostMode === "embedded" ? c("serverAutostart") : c("autostart")} checked={autostart} onChange={event => setAutostart(event.currentTarget.checked)} disabled={busy} />}
       {failed && <Alert color="red" role="alert">{c("operationFailed")}</Alert>}
       <div className="connection-actions"><Button type="submit" className="primary-button" disabled={busy || !name.trim() || !/^[A-Za-z0-9_-]+$/.test(tunnelId.trim()) || (!profile?.credential_present && !apiKey.trim())}>{c("saveApply")}</Button><Button type="button" className="secondary-button" variant="default" disabled={busy} onClick={onClose}>{p("cancel")}</Button></div>
     </form>

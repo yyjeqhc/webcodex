@@ -193,6 +193,13 @@ fn parse(args: &[String]) -> Result<Input, String> {
     Ok(input)
 }
 
+fn configure_tunnel_host_mode(
+    requested: Option<TunnelHostMode>,
+    existing: Option<TunnelHostMode>,
+) -> TunnelHostMode {
+    requested.or(existing).unwrap_or(TunnelHostMode::Standalone)
+}
+
 pub(crate) async fn run(args: &[String]) -> Result<String, String> {
     run_inner(args).await.map_err(|error| {
         if args.iter().any(|arg| arg == "--json")
@@ -948,13 +955,11 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
         }
         "configure-tunnel" => {
             let profile = input.operand.as_deref().unwrap_or("default");
+            let profiles = tunnel_profiles(&store).map_err(|e| e.to_string())?;
+            let existing = profiles.iter().find(|entry| entry.profile_id == profile);
             let credentials = if let Some(path) = input.credentials_file {
                 Some(read_tunnel_credentials(&absolute(&path)?)?)
-            } else if tunnel_profiles(&store)
-                .map_err(|e| e.to_string())?
-                .iter()
-                .any(|entry| entry.profile_id == profile)
-            {
+            } else if existing.is_some() {
                 None
             } else if std::io::stdin().is_terminal() {
                 Some(TunnelCredentials {
@@ -966,7 +971,10 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                     "Supply the protected --credentials-file for this Tunnel profile".into(),
                 );
             };
-            let host_mode = input.tunnel_host.unwrap_or(TunnelHostMode::Standalone);
+            let host_mode = configure_tunnel_host_mode(
+                input.tunnel_host,
+                existing.map(|entry| entry.host_mode),
+            );
             let result = core
                 .backend
                 .configure_tunnel_profile(

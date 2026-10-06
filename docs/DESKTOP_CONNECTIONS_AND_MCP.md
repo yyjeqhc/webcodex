@@ -44,9 +44,11 @@ Desktop
 ```
 
 A connection profile has a stable opaque ID, a user-visible name, an independent
-Tunnel ID/API Key pair, autostart intent, host ownership, and a revision. It is not
-a second Server or a second Runner. Reusing a Tunnel ID in another profile is
-rejected. Names do not identify owners or processes.
+Tunnel ID/API Key pair, host ownership, and a revision. Server-owned profiles also
+have per-profile startup intent. Separate managed services retain their historical
+service-manager lifecycle instead of exposing an autostart switch that the native
+owner cannot enforce. A profile is not a second Server or a second Runner. Reusing
+a Tunnel ID in another profile is rejected. Names do not identify owners or processes.
 
 In a persistent local Environment, **Run with WebCodex Server (recommended)** writes
 an embedded record into `EnvironmentStore`; the Server loads all selected profiles
@@ -74,7 +76,7 @@ not race to overwrite the clipboard; **Copy ID** is explicit in each card.
 Connections supports Add, Edit, Rename and Delete for every profile. Separate
 services also expose profile-scoped Start, Stop and Restart. Server-owned profiles
 use only the explicit Server lifecycle action; Desktop never maps a profile action
-to an implicit Server restart. Credential or autostart changes are revision-fenced
+to an implicit Server restart. Credential changes and Server-owned autostart changes are revision-fenced
 and become active after the indicated owner lifecycle action. Project selection
 restarts neither connections nor Runner. Deleting a live Server-owned profile
 requires a clean Server stop; ambiguous ownership retains the catalog and private

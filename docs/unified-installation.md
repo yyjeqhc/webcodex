@@ -92,7 +92,7 @@ For a persistent local Server, create the recommended Server-owned profile direc
 
 Use `--host standalone` when a separate per-profile service is intentionally required. Its existing `start|stop|restart tunnel --profile PROFILE` lifecycle remains unchanged. Changing the owner of an existing profile still requires the explicit `tunnel-host PROFILE --host ...` flow after a clean stop and standalone uninstall; configuration never auto-adopts a foreign or legacy service. Inspect or remove profiles with `tunnel-status PROFILE` and `remove-tunnel PROFILE`.
 
-In persistent mode, `EnvironmentStore` is the canonical profile catalog for both CLI and Desktop. The historical Desktop `secrets/tunnel-config.json` remains only for legacy/non-persistent runtimes; if it coexists with a persistent Environment it is a fail-closed credential conflict fence, not a second writable catalog. Keep credential files private and remove them after use.
+In persistent mode, `EnvironmentStore` is the canonical profile catalog for both CLI and Desktop. The historical Desktop `secrets/tunnel-config.json` remains only for legacy/non-persistent runtimes; if it coexists with a persistent Environment it is a fail-closed profile/Tunnel identity fence, not a second writable catalog. Its stale API-key bytes never override or block a revision-fenced EnvironmentStore key rotation. Keep credential files private and remove them after use.
 
 ## Services and credentials
 

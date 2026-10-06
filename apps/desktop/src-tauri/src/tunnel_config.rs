@@ -458,9 +458,12 @@ impl TunnelConfig {
     }
 
     /// A persistent Environment owns its Tunnel catalog. A historical Desktop
-    /// file is therefore read only as a conflict fence: exact matching claims
-    /// are accepted, missing or different credentials fail closed, and extra
-    /// Environment profiles (including CLI-created readable IDs) are allowed.
+    /// file is therefore read only as an identity conflict fence: matching
+    /// profile/Tunnel identities are accepted, missing or different identities
+    /// fail closed, and extra Environment profiles (including CLI-created readable
+    /// IDs) are allowed. API keys are deliberately not compared here: after the
+    /// authority transfer they may rotate only in EnvironmentStore, while this
+    /// historical file remains untouched and must never become a second authority.
     pub(crate) fn ensure_persistent_catalog_compatible(
         &self,
         store: &webcodex_environment::EnvironmentStore,
@@ -474,25 +477,17 @@ impl TunnelConfig {
         let snapshots = webcodex_environment::tunnel_profile_snapshots(store)
             .map_err(|_| persistent_catalog_conflict())?;
         for profile in &self.stored.profiles {
-            let credentials = match &profile.credentials {
-                Some(pair) => Some(pair.clone()),
+            let tunnel_id = match &profile.credentials {
+                Some(pair) => Some(pair.tunnel_id.clone()),
                 None if profile.id == TunnelProfileId::DEFAULT => {
-                    let tunnel_id = std::env::var("CONTROL_PLANE_TUNNEL_ID")
-                        .unwrap_or_default()
-                        .trim()
-                        .to_owned();
-                    let api_key = std::env::var("CONTROL_PLANE_API_KEY")
-                        .unwrap_or_default()
-                        .trim()
-                        .to_owned();
-                    valid_id(&tunnel_id)
-                        .then_some(())
-                        .filter(|_| valid_key(&api_key))
-                        .map(|_| Credentials { tunnel_id, api_key })
+                    std::env::var("CONTROL_PLANE_TUNNEL_ID")
+                        .ok()
+                        .map(|value| value.trim().to_owned())
+                        .filter(|value| valid_id(value))
                 }
                 None => None,
             };
-            let Some(credentials) = credentials else {
+            let Some(tunnel_id) = tunnel_id else {
                 continue;
             };
             let id = profile.id.to_string();
@@ -502,14 +497,7 @@ impl TunnelConfig {
             else {
                 return Err(persistent_catalog_conflict());
             };
-            if snapshot.tunnel_id != credentials.tunnel_id {
-                return Err(persistent_catalog_conflict());
-            }
-            let saved = webcodex_environment::tunnel_profile_credentials(store, &id)
-                .map_err(|_| persistent_catalog_conflict())?;
-            if saved.tunnel_id.expose() != credentials.tunnel_id
-                || saved.api_key.expose() != credentials.api_key
-            {
+            if snapshot.tunnel_id != tunnel_id {
                 return Err(persistent_catalog_conflict());
             }
         }

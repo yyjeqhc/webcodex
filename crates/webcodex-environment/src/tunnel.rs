@@ -525,6 +525,70 @@ fn write_profile_binding(
     Ok(())
 }
 
+fn remove_created_profile_binding(
+    store: &EnvironmentStore,
+    profile_id: &str,
+) -> SetupResultValue<()> {
+    let path = profile_directory(store, profile_id).join("webcodex.env");
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(SetupDiagnostic::io()),
+        Ok(metadata) if metadata.is_file() && !crate::storage::is_link(&metadata) => {
+            std::fs::remove_file(path).map_err(|_| SetupDiagnostic::io())
+        }
+        Ok(_) => Err(SetupDiagnostic::io()),
+    }
+}
+
+fn restore_profile_binding(
+    store: &EnvironmentStore,
+    profile_id: &str,
+    previous: &TunnelProfileBinding,
+) -> SetupResultValue<()> {
+    let credentials = TunnelCredentials {
+        tunnel_id: Secret::new(previous.tunnel_id.expose().to_owned()),
+        api_key: Secret::new(previous.api_key.expose().to_owned()),
+    };
+    write_profile_binding(store, profile_id, &credentials, Some(previous))
+}
+
+fn commit_profile_files(
+    store: &EnvironmentStore,
+    profile_id: &str,
+    profiles: &[TunnelRecord],
+    mutation: TunnelBindingMutation,
+    credentials: Option<&TunnelCredentials>,
+    previous: Option<&TunnelProfileBinding>,
+    commit_catalog: impl FnOnce(&[TunnelRecord]) -> SetupResultValue<()>,
+) -> SetupResultValue<()> {
+    if mutation != TunnelBindingMutation::None {
+        write_profile_binding(
+            store,
+            profile_id,
+            credentials.expect("validated binding mutation"),
+            previous,
+        )?;
+    }
+    let Err(error) = commit_catalog(profiles) else {
+        return Ok(());
+    };
+    let restored = match mutation {
+        TunnelBindingMutation::None => Ok(()),
+        TunnelBindingMutation::Create => remove_created_profile_binding(store, profile_id),
+        TunnelBindingMutation::RotateCredential => previous
+            .ok_or_else(SetupDiagnostic::io)
+            .and_then(|binding| restore_profile_binding(store, profile_id, binding)),
+    };
+    if restored.is_err() {
+        return Err(SetupDiagnostic::new(
+            "tunnel_profile_recovery_required",
+            "Tunnel profile files could not be restored after an interrupted catalog update",
+            "Inspect this profile's private binding and tunnel.json before retrying; do not restart either owner until their exact saved state is known",
+        ));
+    }
+    Err(error)
+}
+
 pub(crate) fn next_revision(value: u64) -> SetupResultValue<u64> {
     value.max(1).checked_add(1).ok_or_else(|| {
         diagnostic(
@@ -549,6 +613,26 @@ fn validate_expected_revision(
         )),
         _ => Ok(()),
     }
+}
+
+fn resolve_autostart(
+    host_mode: TunnelHostMode,
+    requested: Option<bool>,
+    existing: Option<bool>,
+) -> SetupResultValue<bool> {
+    if host_mode == TunnelHostMode::Standalone {
+        if requested == Some(false) {
+            return Err(SetupDiagnostic::new(
+                "tunnel_autostart_unsupported",
+                "Separate managed Tunnel services do not use the Server-owned autostart setting",
+                "Use the standalone service Start and Stop controls; choose Server-owned lifecycle for per-profile startup selection",
+            ));
+        }
+        // Standalone preserves the historical managed-service lifecycle: install
+        // owns boot/login enablement and explicit Start/Stop owns the current process.
+        return Ok(true);
+    }
+    Ok(requested.or(existing).unwrap_or(true))
 }
 
 fn embedded_next_action(
@@ -780,11 +864,11 @@ impl NativeEnvironment {
                 .map(|index| profiles[index].display_name().to_owned())
                 .unwrap_or_else(|| profile_id.to_owned()),
         };
-        let desired_autostart = autostart.unwrap_or_else(|| {
-            existing_index
-                .map(|index| profiles[index].autostart)
-                .unwrap_or(true)
-        });
+        let desired_autostart = resolve_autostart(
+            host_mode,
+            autostart,
+            existing_index.map(|index| profiles[index].autostart),
+        )?;
 
         if host_mode == TunnelHostMode::Embedded {
             ensure_server_tunnel_environment(store)?;
@@ -834,15 +918,15 @@ impl NativeEnvironment {
         if !health_path.exists() {
             atomic_private_write(&health_path, b"{}")?;
         }
-        if binding_plan.mutation != TunnelBindingMutation::None {
-            write_profile_binding(
-                store,
-                profile_id,
-                credentials.expect("validated binding mutation"),
-                existing_binding.as_ref(),
-            )?;
-        }
-        store.write_json("tunnel.json", &profiles)?;
+        commit_profile_files(
+            store,
+            profile_id,
+            &profiles,
+            binding_plan.mutation,
+            credentials,
+            existing_binding.as_ref(),
+            |profiles| store.write_json("tunnel.json", &profiles),
+        )?;
 
         if host_mode == TunnelHostMode::Embedded {
             let health = read_tunnel_health(&health_path).ok();
@@ -1414,6 +1498,81 @@ mod tests {
     }
 
     #[test]
+    fn failed_catalog_commit_restores_rotated_binding_and_removes_new_binding() {
+        let temp = crate::test_tempdir().unwrap();
+        let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+        let server_dir = store.root().join("server");
+        ensure_private_directory(&server_dir).unwrap();
+        atomic_private_write(
+            &server_dir.join("webcodex.env"),
+            b"WEBCODEX_ADDR=127.0.0.1:62645\nWEBCODEX_TOKEN=bootstrap-token\n",
+        )
+        .unwrap();
+        let profile_dir = server_dir.join("tunnels/work");
+        ensure_private_directory(&profile_dir).unwrap();
+        atomic_private_write(
+            &profile_dir.join("webcodex.env"),
+            b"WEBCODEX_ADDR=127.0.0.1:62645\nWEBCODEX_TOKEN=local-token\nCONTROL_PLANE_TUNNEL_ID=tunnel_work\nCONTROL_PLANE_API_KEY=old-private-key\nWEBCODEX_TUNNEL_PROFILE_ID=work\nWEBCODEX_TUNNEL_PROXY=http://proxy.example:7890\n",
+        )
+        .unwrap();
+        let previous = tunnel_profile_binding(&store, "work").unwrap();
+        let rotated = credentials("tunnel_work", "new-private-key");
+        let failure = commit_profile_files(
+            &store,
+            "work",
+            &[record(8)],
+            TunnelBindingMutation::RotateCredential,
+            Some(&rotated),
+            Some(&previous),
+            |_| {
+                Err(diagnostic(
+                    "catalog_write_failed",
+                    "fixture catalog failure",
+                ))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(failure.code, "catalog_write_failed");
+        let restored = tunnel_profile_binding(&store, "work").unwrap();
+        assert_eq!(restored.api_key.expose(), "old-private-key");
+        assert_eq!(restored.local_token.expose(), "local-token");
+        assert_eq!(
+            restored.proxy.as_ref().map(Secret::expose),
+            Some("http://proxy.example:7890")
+        );
+
+        let fresh = credentials("tunnel_new", "new-profile-key");
+        let failure = commit_profile_files(
+            &store,
+            "new-profile",
+            &[TunnelRecord {
+                profile_id: "new-profile".into(),
+                name: "New".into(),
+                host_mode: TunnelHostMode::Embedded,
+                autostart: true,
+                revision: 1,
+                runtime_revision: 1,
+                installed: false,
+                started: false,
+            }],
+            TunnelBindingMutation::Create,
+            Some(&fresh),
+            None,
+            |_| {
+                Err(diagnostic(
+                    "catalog_write_failed",
+                    "fixture catalog failure",
+                ))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(failure.code, "catalog_write_failed");
+        assert!(!profile_directory(&store, "new-profile")
+            .join("webcodex.env")
+            .exists());
+    }
+
+    #[test]
     fn first_binding_requires_credentials_and_records_creation() {
         assert_eq!(
             plan_tunnel_binding(None, None, None).unwrap_err().code,
@@ -1440,6 +1599,19 @@ mod tests {
             "tunnel_revision_stale"
         );
         assert!(validate_expected_revision(None, None).is_ok());
+    }
+
+    #[test]
+    fn standalone_profiles_reject_a_false_server_owned_autostart_setting() {
+        assert!(resolve_autostart(TunnelHostMode::Standalone, None, Some(false)).unwrap());
+        assert!(resolve_autostart(TunnelHostMode::Standalone, Some(true), None).unwrap());
+        assert_eq!(
+            resolve_autostart(TunnelHostMode::Standalone, Some(false), Some(true))
+                .unwrap_err()
+                .code,
+            "tunnel_autostart_unsupported"
+        );
+        assert!(!resolve_autostart(TunnelHostMode::Embedded, Some(false), Some(true)).unwrap());
     }
 
     #[test]

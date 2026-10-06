@@ -168,6 +168,7 @@ describe("Connections + Tools control surfaces", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Add Connection" }));
     fireEvent.click(screen.getByRole("radio", { name: /Separate Tunnel service \(advanced\)/ }));
+    expect(screen.queryByRole("checkbox", { name: "Start automatically" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Independent" } });
     fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_independent" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "write-only-separate-key" } });

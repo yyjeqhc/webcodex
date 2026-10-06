@@ -20,10 +20,12 @@ catalog authority. CLI and Desktop read and mutate the same `tunnel.json` record
 and the same private per-profile bindings. The historical Desktop
 `secrets/tunnel-config.json` remains authoritative only for legacy/non-persistent
 Desktop runtimes. If that file is present after entering persistent mode, Desktop
-uses it only as a conflict fence: exact credential claims may coexist, while a
-missing or different identity/credential fails closed. It is never silently
-copied over, overwritten, or deleted, and extra CLI-created Environment profiles
-remain visible in Desktop.
+uses it only as an identity conflict fence: matching profile/Tunnel identities may
+coexist, while a missing or different identity fails closed. API-key bytes are not
+compared after authority transfer because canonical credentials can rotate behind
+the EnvironmentStore revision fence. The historical file is never silently copied
+over, overwritten, or deleted, and extra CLI-created Environment profiles remain
+visible in Desktop.
 
 Each embedded profile uses the existing layout:
 

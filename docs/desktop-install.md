@@ -140,13 +140,13 @@ A Server-owned profile is written to the current `EnvironmentStore` and is loade
 
 Desktop never reads an API key back into the form. Leaving the key blank while editing retains the selected profile's saved key; a replacement is accepted only against the current profile revision. Keys remain unencrypted in an owner-private binding, so keep Environment data, support bundles, tickets, screenshots and backups appropriately protected.
 
-**Success looks like:** each card shows its independent name, Tunnel ID, owner, autostart and readiness. A Server-owned profile may show **Restart Server** until the one explicit restart loads all pending profiles. Saving configuration and observing a live Tunnel are separate results.
+**Success looks like:** each card shows its independent name, Tunnel ID, owner and readiness. Server-owned profiles additionally show their per-profile startup selection. A Server-owned profile may show **Restart Server** until the one explicit restart loads all pending profiles. Saving configuration and observing a live Tunnel are separate results.
 
 ### Profile authority and legacy storage
 
 For a persistent Environment, `EnvironmentStore` is canonical for both CLI and Desktop: `tunnel.json` stores the catalog and `server/tunnels/<profile>/webcodex.env` stores the private binding. A profile added by CLI appears on the Desktop Connections page, and a Desktop save is visible to CLI `tunnel-status`.
 
-A historical Desktop `secrets/tunnel-config.json` is not a second writable catalog in persistent mode. It is checked only as a fail-closed reconciliation fence: exact matching credentials are accepted, but a missing or different identity/key blocks mutation rather than silently overwriting, importing or deleting either side.
+A historical Desktop `secrets/tunnel-config.json` is not a second writable catalog in persistent mode. It is checked only as a fail-closed identity reconciliation fence: matching profile/Tunnel identities are accepted, but a missing or different identity blocks mutation rather than silently overwriting, importing or deleting either side. Historical API-key bytes are not compared after authority transfer, because key rotation belongs only to the revision-fenced EnvironmentStore binding.
 
 Legacy/non-persistent Desktop runtimes continue to use `secrets/tunnel-config.json` in the local application-data directory:
 

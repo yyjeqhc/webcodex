@@ -148,6 +148,11 @@ impl NativeEnvironment {
         }
         let previous_runtime_revision = profile.effective_runtime_revision();
         profile.host_mode = mode;
+        if mode == TunnelHostMode::Standalone {
+            // A standalone profile returns to the historical managed-service
+            // lifecycle; only Server-owned profiles have selectable autostart.
+            profile.autostart = true;
+        }
         profile.revision = crate::tunnel::next_revision(profile.revision)?;
         profile.runtime_revision = crate::tunnel::next_revision(previous_runtime_revision)?;
         profile.installed = false;

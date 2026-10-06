@@ -92,7 +92,7 @@ webcodex environment migrate-legacy-server \
 
 只有明确需要独立 per-profile 服务时才使用 `--host standalone`；原有 `start|stop|restart tunnel --profile PROFILE` 生命周期保持不变。已有 profile 改 owner 仍必须在干净停止并卸载 standalone 服务后显式执行 `tunnel-host PROFILE --host ...`；配置流程不会自动接管 foreign 或 legacy 服务。使用 `tunnel-status PROFILE` 查看状态，使用 `remove-tunnel PROFILE` 删除 profile。
 
-持久模式下，CLI 与 Desktop 都以 `EnvironmentStore` 为唯一 profile catalog。历史 Desktop `secrets/tunnel-config.json` 只服务 legacy/non-persistent runtime；若它与持久 Environment 同时存在，只作为 fail-closed credential 冲突栅栏，不再是第二套可写 catalog。请妥善保护凭据文件，并在使用后删除。
+持久模式下，CLI 与 Desktop 都以 `EnvironmentStore` 为唯一 profile catalog。历史 Desktop `secrets/tunnel-config.json` 只服务 legacy/non-persistent runtime；若它与持久 Environment 同时存在，只作为 fail-closed profile/Tunnel identity 栅栏，不再是第二套可写 catalog。历史 API-key 字节不会覆盖或阻止带 revision 栅栏的 EnvironmentStore key rotation。请妥善保护凭据文件，并在使用后删除。
 
 ## 服务与凭据
 

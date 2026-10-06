@@ -151,6 +151,16 @@ fn tunnel_and_upgrade_inputs_never_take_literal_credentials() {
     ])
     .unwrap();
     assert_eq!(embedded.tunnel_host, Some(TunnelHostMode::Embedded));
+    assert_eq!(
+        configure_tunnel_host_mode(None, Some(TunnelHostMode::Embedded)),
+        TunnelHostMode::Embedded,
+        "reconfiguring an existing profile must preserve its owner when --host is omitted"
+    );
+    assert_eq!(
+        configure_tunnel_host_mode(None, None),
+        TunnelHostMode::Standalone,
+        "new profiles keep the historical standalone default"
+    );
     assert!(input(&["status", "--host", "embedded"]).is_err());
     assert!(input(&["configure-tunnel", "--host", "other"]).is_err());
     assert!(input(&["configure-tunnel", "--api-key", "secret"]).is_err());

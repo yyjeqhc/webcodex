@@ -124,13 +124,13 @@ Server-owned profile 写入当前 `EnvironmentStore`，只在 Server 启动时�
 
 Desktop 不会把 API key 读回表单。编辑时留空表示保留该 profile 已保存的 key；替换 key 必须通过当前 profile revision 栅栏。密钥仍以未加密形式保存在 owner-private binding 中，因此必须妥善保护 Environment 数据、支持包、工单、截图和备份。
 
-**成功时：**每张卡片独立显示名称、Tunnel ID、owner、autostart 和 readiness。Server-owned profile 在完成一次显式重启前可能显示 **Restart Server**。保存配置与观察到 Tunnel 已连接是两个不同结果。
+**成功时：**每张卡片独立显示名称、Tunnel ID、owner 和 readiness；Server-owned profile 另外显示自己的随 Server 启动选择。Server-owned profile 在完成一次显式重启前可能显示 **Restart Server**。保存配置与观察到 Tunnel 已连接是两个不同结果。
 
 ### Profile authority 与 legacy 存储
 
 持久 Environment 下，CLI 与 Desktop 都以 `EnvironmentStore` 为 canonical authority：`tunnel.json` 保存 catalog，`server/tunnels/<profile>/webcodex.env` 保存私有 binding。CLI 新增的 profile 会出现在 Desktop Connections 页面；Desktop 保存后，CLI `tunnel-status` 也会看到同一份状态。
 
-历史 Desktop `secrets/tunnel-config.json` 在持久模式下不再是第二套可写 catalog，只作为 fail-closed reconciliation 栅栏：完全一致的 credential claim 可以共存；identity/key 缺失或不同会阻止 mutation，而不会静默覆盖、导入或删除任意一侧。
+历史 Desktop `secrets/tunnel-config.json` 在持久模式下不再是第二套可写 catalog，只作为 fail-closed identity reconciliation 栅栏：profile/Tunnel identity 一致即可共存；identity 缺失或不同会阻止 mutation，而不会静默覆盖、导入或删除任意一侧。authority 转移后不再比较历史 API-key 字节，因为 key rotation 只属于带 revision 栅栏的 EnvironmentStore binding。
 
 Legacy/non-persistent Desktop runtime 继续使用本机应用数据目录内的 `secrets/tunnel-config.json`：
 

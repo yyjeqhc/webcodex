@@ -7,6 +7,27 @@ use crate::tray;
 use serde::Deserialize;
 use tauri::{AppHandle, Manager, State};
 
+// UI intents are process-local and grant no execution or Runtime authority.
+#[tauri::command]
+pub fn desktop_shell_restore_only(shell: State<'_, desktop_shell::DesktopShellState>) -> bool {
+    shell.restore_only()
+}
+
+#[tauri::command]
+pub fn read_desktop_navigation(
+    shell: State<'_, desktop_shell::DesktopShellState>,
+) -> Option<desktop_shell::NavigationIntent> {
+    shell.pending_navigation()
+}
+
+#[tauri::command]
+pub fn acknowledge_desktop_navigation(
+    sequence: u32,
+    shell: State<'_, desktop_shell::DesktopShellState>,
+) {
+    shell.acknowledge_navigation(sequence);
+}
+
 #[tauri::command]
 pub fn set_desktop_locale(
     app: AppHandle,
@@ -720,7 +741,7 @@ pub async fn install_verified_update(
     {
         // Only the explicit Install confirmation authorizes this exit. The
         // normal exit path closes Desktop-owned processes, not persistent services.
-        app.exit(0);
+        desktop_shell::request_application_exit(&app);
     }
     Ok(())
 }

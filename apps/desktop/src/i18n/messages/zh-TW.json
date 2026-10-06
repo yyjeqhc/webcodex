@@ -428,6 +428,7 @@
   "tray.waitingForChatGpt": "通道：已就緒，等待 ChatGPT",
   "tray.projectUseNotObserved": "ChatGPT：尚未觀察到專案使用",
   "tray.connectionNeedsAttention": "連線：需要處理",
+  "tray.lightweight": "進入輕量模式（釋放介面）",
   "tray.open": "開啟 WebCodex",
   "tray.activity": "活動…",
   "tray.settings": "設定…",

@@ -34,7 +34,15 @@ use tauri_plugin_autostart::MacosLauncher;
 pub use commands::get_desktop_build_info as desktop_build_info;
 
 pub fn run() {
-    let app = tauri::Builder::default()
+    desktop_builder()
+        .build(tauri::generate_context!())
+        .expect("failed to build WebCodex Desktop")
+        .run(handle_run_event);
+}
+
+// Shared by the real Windows smoke: plugins, setup and IPC remain production code.
+fn desktop_builder() -> tauri::Builder<tauri::Wry> {
+    tauri::Builder::default()
         // Tauri recommends registering single-instance first so a secondary
         // process is rejected before any other plugin can initialize state.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -66,6 +74,7 @@ pub fn run() {
             app.manage(desktop_shell::DesktopShellState::default());
             app.manage(tray::TrayPresentationCache::default());
             tray::setup(app.handle())?;
+            tray::start_background_observer(app.handle());
 
             let snapshot = app.state::<AppState>().get_state();
             tray::refresh_from_snapshot(app.handle(), &snapshot);
@@ -76,6 +85,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_desktop_state,
+            commands::desktop_shell_restore_only,
+            commands::read_desktop_navigation,
+            commands::acknowledge_desktop_navigation,
             commands::set_desktop_locale,
             commands::get_runtime_settings,
             commands::get_desktop_build_info,
@@ -151,10 +163,10 @@ pub fn run() {
             commands::cancel_desktop_operation,
             commands::get_bounded_activity,
         ])
-        .build(tauri::generate_context!())
-        .expect("failed to build WebCodex Desktop");
+}
 
-    app.run(|app_handle, event| match event {
+fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
+    match event {
         tauri::RunEvent::WindowEvent {
             label,
             event: tauri::WindowEvent::CloseRequested { api, .. },
@@ -166,6 +178,13 @@ pub fn run() {
                 let _ = desktop_shell::hide_main_window(app_handle);
             }
         }
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } if label == desktop_shell::MAIN_WINDOW_LABEL => {
+            desktop_shell::main_window_destroyed(app_handle);
+        }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen {
             has_visible_windows,
@@ -175,17 +194,20 @@ pub fn run() {
                 let _ = desktop_shell::show_main_window(app_handle);
             }
         }
-        tauri::RunEvent::ExitRequested { .. } => {
-            app_handle
-                .state::<desktop_shell::DesktopShellState>()
-                .mark_exit_requested();
-            let state = app_handle.state::<AppState>();
-            tauri::async_runtime::block_on(state.shutdown());
+        tauri::RunEvent::ExitRequested { api, code, .. } => {
+            let shell = app_handle.state::<desktop_shell::DesktopShellState>();
+            if shell.prevent_implicit_exit(code) {
+                api.prevent_exit();
+            } else {
+                shell.mark_exit_requested();
+                let state = app_handle.state::<AppState>();
+                tauri::async_runtime::block_on(state.shutdown());
+            }
         }
         tauri::RunEvent::Exit => {
             let state = app_handle.state::<AppState>();
             tauri::async_runtime::block_on(state.shutdown());
         }
         _ => {}
-    });
+    }
 }

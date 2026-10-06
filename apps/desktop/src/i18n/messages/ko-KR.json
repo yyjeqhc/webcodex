@@ -428,6 +428,7 @@
   "tray.waitingForChatGpt": "터널: 준비됨, ChatGPT 대기 중",
   "tray.projectUseNotObserved": "ChatGPT: 프로젝트 사용 미확인",
   "tray.connectionNeedsAttention": "연결: 조치 필요",
+  "tray.lightweight": "경량 모드로 전환 (화면 리소스 해제)",
   "tray.open": "WebCodex 열기",
   "tray.activity": "활동…",
   "tray.settings": "설정…",

@@ -428,6 +428,7 @@
   "tray.waitingForChatGpt": "Tunnel: Ready; waiting for ChatGPT",
   "tray.projectUseNotObserved": "ChatGPT: Project use not observed",
   "tray.connectionNeedsAttention": "Connection: Needs attention",
+  "tray.lightweight": "Enter Lightweight Mode (unload UI)",
   "tray.open": "Open WebCodex",
   "tray.activity": "Activity…",
   "tray.settings": "Settings…",

@@ -18,6 +18,9 @@ import type { McpProviderRequest, TunnelProfileAction, TunnelProfileRequest } fr
 import type { CodingAgentRequest, SshRegisterRequest, SshResourcesSnapshot, SshMutationResult, RunnerCapabilityAuthorizationSnapshot } from "../models/runner-capabilities";
 
 export const desktopApi = {
+  shellRestoreOnly: () => invoke<boolean>("desktop_shell_restore_only"),
+  readDesktopNavigation: () => invoke<unknown>("read_desktop_navigation"),
+  acknowledgeDesktopNavigation: (sequence: number) => invoke<void>("acknowledge_desktop_navigation", { sequence }),
   setDesktopLocale: (locale: import("../i18n/locale").Locale) => invoke<void>("set_desktop_locale", { locale }),
   managedInstructionsRead: () => invoke<import("../models/managed-instructions").ManagedInstructionsSnapshot>("managed_instructions_read"),
   managedInstructionsSave: (expected_revision: string, content: string) => invoke<import("../models/managed-instructions").ManagedInstructionsSnapshot>("managed_instructions_save", { request: { expected_revision, content } }),

@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager};
 
 const TRAY_ID: &str = "webcodex-desktop";
 const OPEN_ID: &str = "tray.open";
+const LIGHTWEIGHT_ID: &str = "tray.lightweight";
 const ACTIVITY_ID: &str = "tray.activity";
 const SETTINGS_ID: &str = "tray.settings";
 const RESUME_RUNTIME_ID: &str = "tray.resume_runtime";
@@ -54,6 +55,7 @@ enum ConnectionAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TrayProjection {
     locale: DesktopLocale,
+    lightweight_available: bool,
     runtime_status: RuntimeStatus,
     connection_status: ConnectionStatus,
     runtime_action: Option<RuntimeAction>,
@@ -69,6 +71,13 @@ struct TrayProjection {
 pub struct TrayPresentationCache {
     projection: Mutex<Option<TrayProjection>>,
     launch_at_login: Mutex<Option<bool>>,
+}
+
+impl TrayProjection {
+    fn with_lightweight_available(mut self, available: bool) -> Self {
+        self.lightweight_available = available;
+        self
+    }
 }
 
 impl TrayProjection {
@@ -134,6 +143,7 @@ impl TrayProjection {
                 });
         Self {
             locale,
+            lightweight_available: true,
             runtime_status,
             connection_status,
             runtime_action,
@@ -159,6 +169,10 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         &snapshot,
         launch_at_login,
         app.state::<DesktopLocaleState>().get(),
+    )
+    .with_lightweight_available(
+        app.state::<desktop_shell::DesktopShellState>()
+            .can_enter_lightweight(),
     );
     let menu = build_menu(app, &projection)?;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
@@ -200,6 +214,39 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Exactly one native observer per Desktop. Loaded renderers already observe;
+/// while unloaded, refresh only existing persistent service status. This never
+/// resumes Runtime or Connections and never overlaps its own previous refresh.
+pub fn start_background_observer(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let shell = app.state::<desktop_shell::DesktopShellState>();
+            if shell.close_disposition() == desktop_shell::CloseDisposition::AllowExit {
+                break;
+            }
+            if !shell.needs_background_observation() {
+                continue;
+            }
+            let state = app.state::<AppState>();
+            let mut snapshot = state.get_state();
+            if should_refresh_persistent_status(&snapshot) {
+                if let Ok(fresh) = state.refresh_runtime_status().await {
+                    snapshot = fresh;
+                }
+            }
+            refresh_from_snapshot(&app, &snapshot);
+        }
+    });
+}
+
+fn should_refresh_persistent_status(snapshot: &DesktopStateSnapshot) -> bool {
+    snapshot.persistent_environment.is_some() && snapshot.current_operation.is_none()
+}
+
 pub fn refresh_from_snapshot(app: &AppHandle, snapshot: &DesktopStateSnapshot) {
     let cache = app.state::<TrayPresentationCache>();
     let launch_at_login = *cache
@@ -210,6 +257,10 @@ pub fn refresh_from_snapshot(app: &AppHandle, snapshot: &DesktopStateSnapshot) {
         snapshot,
         launch_at_login,
         app.state::<DesktopLocaleState>().get(),
+    )
+    .with_lightweight_available(
+        app.state::<desktop_shell::DesktopShellState>()
+            .can_enter_lightweight(),
     );
     {
         let cached = cache
@@ -277,6 +328,13 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
     )?;
     let status_separator = PredefinedMenuItem::separator(app)?;
     let open = MenuItem::with_id(app, OPEN_ID, locale.text("tray.open"), true, None::<&str>)?;
+    let lightweight = MenuItem::with_id(
+        app,
+        LIGHTWEIGHT_ID,
+        locale.text("tray.lightweight"),
+        projection.lightweight_available,
+        None::<&str>,
+    )?;
     let activity = MenuItem::with_id(
         app,
         ACTIVITY_ID,
@@ -298,6 +356,7 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
         &open,
         &activity,
         &settings,
+        &lightweight,
     ])?;
 
     let mut has_context_action = false;
@@ -372,10 +431,15 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
     Ok(menu)
 }
 
-fn handle_menu_event(app: &AppHandle, id: &str) {
+pub(crate) fn handle_menu_event(app: &AppHandle, id: &str) {
     match id {
         OPEN_ID => {
             let _ = desktop_shell::show_main_window(app);
+        }
+        LIGHTWEIGHT_ID => {
+            if let Err(error) = desktop_shell::enter_lightweight_mode(app) {
+                eprintln!("WebCodex tray action failed: {}", error.code);
+            }
         }
         ACTIVITY_ID => {
             let _ = desktop_shell::navigate(app, NavigationTarget::Activity);
@@ -469,6 +533,40 @@ mod tests {
         snapshot.openai_tunnel_configured = true;
         snapshot.regular_tunnel_available = true;
         snapshot
+    }
+
+    #[test]
+    fn background_observation_only_refreshes_existing_idle_persistent_state() {
+        let mut snapshot = local_snapshot();
+        assert!(!should_refresh_persistent_status(&snapshot));
+        snapshot.persistent_environment = Some("existing-environment".into());
+        assert!(should_refresh_persistent_status(&snapshot));
+        snapshot.current_operation = Some(DesktopOperationSnapshot {
+            id: "busy".into(),
+            kind: DesktopOperationKind::RuntimeResume,
+            phase: DesktopOperationPhase::Running,
+            started_at_ms: 1,
+            cancellable: true,
+        });
+        assert!(!should_refresh_persistent_status(&snapshot));
+        let shell = desktop_shell::DesktopShellState::default();
+        assert!(!shell.needs_background_observation());
+        shell.mark_exit_requested();
+        assert!(!shell.needs_background_observation());
+    }
+
+    #[test]
+    fn lightweight_projection_changes_only_ui_action_availability() {
+        let snapshot = local_snapshot();
+        let normal = TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::EnUs);
+        let light = normal.clone().with_lightweight_available(false);
+        assert_ne!(normal, light);
+        assert!(!light.lightweight_available);
+        assert_eq!(light.clone().with_lightweight_available(true), normal);
+        assert_eq!(light.runtime_status, normal.runtime_status);
+        assert_eq!(light.connection_status, normal.connection_status);
+        assert_eq!(light.runtime_action, normal.runtime_action);
+        assert_eq!(light.connection_action, normal.connection_action);
     }
 
     #[test]

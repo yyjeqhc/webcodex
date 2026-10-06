@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { subscribeDesktopNavigation } from "../lib/desktop-navigation";
 import { desktopApi } from "../lib/desktop-api";
 import type { ActivityEntry, DesktopError, DesktopState } from "../models/topology";
 import { normalizeDesktopError } from "../i18n/presentation";
@@ -50,25 +50,10 @@ export function useDesktopWorkspace() {
     if (window.innerWidth <= 600) window.scrollTo(0, 0);
   }, [navigation, showSetup]);
 
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void listen<unknown>("desktop:navigate", (event) => {
-      if (event.payload !== "activity" && event.payload !== "settings" && event.payload !== "connections") return;
-      setShowSetup(false);
-      setNavigation(event.payload === "connections" ? "connection" : event.payload);
-    }).then((stopListening) => {
-      if (disposed) stopListening();
-      else unlisten = stopListening;
-    }).catch(() => {
-      // Host navigation is optional. Ordinary in-window navigation remains
-      // usable if the native event subscription is unavailable.
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, []);
+  useEffect(() => subscribeDesktopNavigation((target) => {
+    setShowSetup(false);
+    setNavigation(target === "connections" ? "connection" : target);
+  }), []);
 
   useEffect(() => {
     const navigateWithKeyboard = (event: KeyboardEvent) => {
@@ -142,6 +127,10 @@ export function useDesktopWorkspace() {
           }
           return;
         }
+        // A recreated renderer observes the existing AppState; it must never
+        // replay initial-launch Runtime/Connection autostart on a new UI mount.
+        if (await desktopApi.shellRestoreOnly()) return;
+        if (cancelled) return;
         const resumeExisting = Boolean(
           initial.runtime_autostart
           && initial.topology.experience === "full",

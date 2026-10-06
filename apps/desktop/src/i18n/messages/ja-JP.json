@@ -428,6 +428,7 @@
   "tray.waitingForChatGpt": "トンネル：準備完了、ChatGPT を待機中",
   "tray.projectUseNotObserved": "ChatGPT：プロジェクトの利用は未確認",
   "tray.connectionNeedsAttention": "接続：対応が必要",
+  "tray.lightweight": "軽量モードに切り替え（画面を解放）",
   "tray.open": "WebCodex を開く",
   "tray.activity": "アクティビティ…",
   "tray.settings": "設定…",

@@ -8,6 +8,9 @@ const workspace = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: workspace.invoke, isTauri: () => false }));
 
 const api = vi.hoisted(() => ({
+  shellRestoreOnly: vi.fn(),
+  readDesktopNavigation: vi.fn(),
+  acknowledgeDesktopNavigation: vi.fn(),
   getState: vi.fn(),
   computerPermissions: vi.fn(),
   requestComputerPermission: vi.fn(),
@@ -233,6 +236,9 @@ async function editTunnel() {
 
 beforeEach(() => {
     vi.resetAllMocks();
+    api.shellRestoreOnly.mockResolvedValue(false);
+    api.readDesktopNavigation.mockResolvedValue(null);
+    api.acknowledgeDesktopNavigation.mockResolvedValue(undefined);
     window.localStorage.removeItem("webcodex.desktop.appearance.v1");
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.removeAttribute("data-appearance");
@@ -274,6 +280,18 @@ beforeEach(() => {
     api.stopRegularTunnel.mockResolvedValue(readyState);
     api.tunnelProfileAction.mockResolvedValue(readyState);
     api.saveTunnelProfile.mockResolvedValue(readyState);
+  });
+
+  it.each([false, true])("recreated UI restores state and pending page without resuming (runtime autostart=%s)", async (runtimeAutostart) => {
+    api.shellRestoreOnly.mockResolvedValue(true);
+    api.getState.mockResolvedValue({ ...readyState, runtime_autostart: runtimeAutostart });
+    api.readDesktopNavigation.mockResolvedValueOnce({ sequence: 8, target: "settings" });
+    renderApp();
+    await waitFor(() => expect(api.acknowledgeDesktopNavigation).toHaveBeenCalledWith(8));
+    expect(await screen.findByRole("heading", { level: 1, name: "Desktop 设置" })).toBeInTheDocument();
+    await waitFor(() => expect(api.shellRestoreOnly).toHaveBeenCalled());
+    expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
+    expect(api.resumeSavedConnections).not.toHaveBeenCalled();
   });
 
   it("offers explicit persistent local and remote setup from Runtime settings", async () => {
@@ -789,11 +807,13 @@ beforeEach(() => {
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
     await waitFor(() => expect(tauriEvents.handler).not.toBeNull());
 
+    api.readDesktopNavigation.mockResolvedValueOnce({ sequence: 1, target: "settings" });
     act(() => {
       tauriEvents.handler?.({ payload: "settings" });
     });
     expect(await screen.findByRole("heading", { level: 1, name: "Desktop 设置" })).toBeInTheDocument();
 
+    api.readDesktopNavigation.mockResolvedValueOnce({ sequence: 2, target: "activity" });
     act(() => {
       tauriEvents.handler?.({ payload: "activity" });
     });

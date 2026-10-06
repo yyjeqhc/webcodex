@@ -224,7 +224,7 @@ jobs:
       - name: Check test inventory contract
         run: |
           bash scripts/test_inventory.sh --self-test
-          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.tests.test_ci_rust_test
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.tests.test_ci_rust_test scripts.tests.test_ci_aggregate_cancellation
           bash scripts/test_inventory.sh
       - name: Check macOS signing setup and release evidence contracts
         # Fake signing commands and synthetic artifacts only; no Apple credentials.
@@ -371,7 +371,9 @@ jobs:
     needs: [contract, changes, test-linux-rust, test-linux-tooling]
     # Preserve the historical aggregate status check and always evaluate upstream
     # results so a failed or unexpectedly skipped Linux lane cannot disappear.
-    if: always()
+    # Workflow cancellation is distinct from needs.<lane>.result. Superseded
+    # runs stop; a required child failure/cancellation is still rejected below.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -643,7 +645,9 @@ jobs:
     needs: [contract, changes, test-macos-core, test-macos-desktop]
     # Stable aggregate context: every configured macOS sublane must either succeed
     # when required by policy or be intentionally skipped when not required.
-    if: always()
+    # Workflow cancellation is distinct from needs.<lane>.result. Superseded
+    # runs stop; a required child failure/cancellation is still rejected below.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -899,7 +903,9 @@ jobs:
     needs: [contract, changes, test-windows-core, test-windows-runner, test-windows-package, test-windows-desktop]
     # Preserve the stable Windows aggregate while allowing each heavy lane to be
     # selected independently by the deterministic path-risk classifier.
-    if: always()
+    # Workflow cancellation is distinct from needs.<lane>.result. Superseded
+    # runs stop; a required child failure/cancellation is still rejected below.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -942,7 +948,9 @@ jobs:
     needs: [contract, changes, mcp-conformance, test-docker-server, test-macos, test-windows]
     # Stable branch-protection context: daily native aggregates and the path-aware
     # Server image smoke must resolve according to classifier policy.
-    if: always()
+    # Workflow cancellation is distinct from needs.<lane>.result. Superseded
+    # runs stop; a required child failure/cancellation is still rejected below.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

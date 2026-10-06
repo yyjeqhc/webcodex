@@ -2479,42 +2479,61 @@ impl RunnerRegistry {
         timeout_secs: u64,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_id(&client_id, "client_id")?;
-        let requires_element_action_admission = matches!(
-            kind,
-            "browser_snapshot"
-                | "browser_click"
-                | "browser_input_text"
-                | "browser_select_option"
-                | "browser_set_value"
-                | "browser_upload_file"
-                | "browser_batch"
-        );
-        let required_feature = match kind {
-            "browser_list_browsers"
-            | "browser_list_pages"
-            | "browser_snapshot"
-            | "browser_screenshot"
-            | "browser_console"
-            | "browser_network"
-            | "browser_diagnostics" => RunnerFeature::BrowserObserve,
-            "browser_launch" => RunnerFeature::BrowserLaunch,
-            "browser_new_page"
-            | "browser_navigate"
-            | "browser_reload"
-            | "browser_click"
-            | "browser_input_text"
-            | "browser_select_option"
-            | "browser_set_value"
-            | "browser_upload_file"
-            | "browser_batch"
-            | "browser_key"
-            | "browser_close_page"
-            | "browser_clear_diagnostics"
-            | "browser_close" => RunnerFeature::BrowserControl,
-            _ => return Err("invalid browser request kind".to_string()),
-        };
         let operation_kind = RunnerBrowserOperationKind::from_wire(kind)
             .ok_or_else(|| "invalid browser request kind".to_string())?;
+        // Match the canonical enum exhaustively: adding a wire operation must
+        // also choose its registry admission, not silently hit a string fallback.
+        use RunnerBrowserOperationKind as BrowserKind;
+        let required_features: &[RunnerFeature] = match operation_kind {
+            BrowserKind::DiscoverExternal => &[
+                RunnerFeature::BrowserObserve,
+                RunnerFeature::BrowserExtensionBridge,
+            ],
+            BrowserKind::AttachExternal => &[
+                RunnerFeature::BrowserControl,
+                RunnerFeature::BrowserExtensionBridge,
+            ],
+            BrowserKind::LaunchManaged => &[
+                RunnerFeature::BrowserLaunch,
+                RunnerFeature::BrowserManagedProfile,
+            ],
+            BrowserKind::ResolveSurface => &[
+                RunnerFeature::BrowserObserve,
+                RunnerFeature::BrowserSurfaceHandoff,
+                RunnerFeature::ComputerObserve,
+            ],
+            BrowserKind::ListBrowsers
+            | BrowserKind::ListPages
+            | BrowserKind::Screenshot
+            | BrowserKind::Console
+            | BrowserKind::Network
+            | BrowserKind::Diagnostics => &[RunnerFeature::BrowserObserve],
+            BrowserKind::Snapshot => &[
+                RunnerFeature::BrowserObserve,
+                RunnerFeature::BrowserElementActionAdmission,
+            ],
+            BrowserKind::Launch => &[RunnerFeature::BrowserLaunch],
+            BrowserKind::NewPage
+            | BrowserKind::Navigate
+            | BrowserKind::Reload
+            | BrowserKind::Key
+            | BrowserKind::ClosePage
+            | BrowserKind::ClearDiagnostics
+            | BrowserKind::CloseBrowser => &[RunnerFeature::BrowserControl],
+            BrowserKind::Click
+            | BrowserKind::InputText
+            | BrowserKind::SelectOption
+            | BrowserKind::SetValue
+            | BrowserKind::UploadFile => &[
+                RunnerFeature::BrowserControl,
+                RunnerFeature::BrowserElementActionAdmission,
+            ],
+            BrowserKind::Batch => &[
+                RunnerFeature::BrowserControl,
+                RunnerFeature::BrowserBatch,
+                RunnerFeature::BrowserElementActionAdmission,
+            ],
+        };
         if payload.len() > operation_kind.max_payload_bytes() || payload.contains('\0') {
             return Err("browser request payload is invalid or too large".to_string());
         }
@@ -2537,27 +2556,14 @@ impl RunnerRegistry {
             .get(&client_id)
             .ok_or_else(|| format!("unknown shell client: {client_id}"))?;
         assert_runner_access(auth, current)?;
-        if !current.runner_features.supports(required_feature) {
+        if let Some(required_feature) = required_features
+            .iter()
+            .copied()
+            .find(|feature| !current.runner_features.supports(*feature))
+        {
             return Err(format!(
                 "capability_unavailable: runner {client_id} does not support {}",
                 required_feature.as_wire_name()
-            ));
-        }
-        if kind == "browser_batch"
-            && !current
-                .runner_features
-                .supports(RunnerFeature::BrowserBatch)
-        {
-            return Err("capability_unavailable: runner does not support browser_batch".into());
-        }
-        if requires_element_action_admission
-            && !current
-                .runner_features
-                .supports(RunnerFeature::BrowserElementActionAdmission)
-        {
-            return Err(format!(
-                "capability_unavailable: runner {client_id} does not support {}",
-                RunnerFeature::BrowserElementActionAdmission.as_wire_name()
             ));
         }
         enqueue_pending_request_locked(

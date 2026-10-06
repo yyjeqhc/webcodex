@@ -58,6 +58,10 @@ impl DesktopShellState {
         self.with(|state| state.can_enter_lightweight())
     }
 
+    pub fn mark_bootstrap_complete(&self) {
+        self.with(Lifecycle::mark_bootstrap_complete);
+    }
+
     pub fn needs_background_observation(&self) -> bool {
         self.with(|state| state.prevent_implicit_exit(None))
     }

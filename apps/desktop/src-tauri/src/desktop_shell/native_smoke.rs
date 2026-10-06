@@ -60,6 +60,10 @@ fn exercise(app: &AppHandle) {
     wait_until("initial visible React UI", || {
         visible(app) && !active_page(app).is_empty()
     });
+    wait_until("initial renderer bootstrap complete", || {
+        app.state::<desktop_shell::DesktopShellState>()
+            .can_enter_lightweight()
+    });
     let state_address = app.state::<AppState>().inner() as *const AppState as usize;
     assert!(
         app.state::<AppState>().get_state().topology.is_none(),

@@ -86,6 +86,7 @@ fn desktop_builder() -> tauri::Builder<tauri::Wry> {
         .invoke_handler(tauri::generate_handler![
             commands::get_desktop_state,
             commands::desktop_shell_restore_only,
+            commands::desktop_shell_bootstrap_complete,
             commands::read_desktop_navigation,
             commands::acknowledge_desktop_navigation,
             commands::set_desktop_locale,

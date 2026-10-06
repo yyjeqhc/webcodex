@@ -9,6 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: workspace.invoke, isTauri: () =
 
 const api = vi.hoisted(() => ({
   shellRestoreOnly: vi.fn(),
+  shellBootstrapComplete: vi.fn(),
   readDesktopNavigation: vi.fn(),
   acknowledgeDesktopNavigation: vi.fn(),
   getState: vi.fn(),
@@ -237,6 +238,7 @@ async function editTunnel() {
 beforeEach(() => {
     vi.resetAllMocks();
     api.shellRestoreOnly.mockResolvedValue(false);
+    api.shellBootstrapComplete.mockResolvedValue(undefined);
     api.readDesktopNavigation.mockResolvedValue(null);
     api.acknowledgeDesktopNavigation.mockResolvedValue(undefined);
     window.localStorage.removeItem("webcodex.desktop.appearance.v1");
@@ -301,6 +303,27 @@ beforeEach(() => {
     await waitFor(() => expect(api.shellRestoreOnly).toHaveBeenCalled());
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
     expect(api.resumeSavedConnections).not.toHaveBeenCalled();
+  });
+
+  it("does not enable lightweight until one-time Runtime autostart settles", async () => {
+    const resumed = deferred<DesktopState>();
+    api.getState.mockResolvedValue({ ...readyState, runtime_autostart: true });
+    api.resumeSavedRuntime.mockReturnValueOnce(resumed.promise);
+    renderApp();
+    await waitFor(() => expect(api.resumeSavedRuntime).toHaveBeenCalledTimes(1));
+    expect(api.shellBootstrapComplete).not.toHaveBeenCalled();
+    resumed.resolve(readyState);
+    await waitFor(() => expect(api.shellBootstrapComplete).toHaveBeenCalledTimes(1));
+  });
+
+  it("recreated persistent Environment skips eager refresh and only observes existing state", async () => {
+    api.shellRestoreOnly.mockResolvedValue(true);
+    api.getState.mockResolvedValue({ ...readyState, persistent_environment: "env-a" });
+    renderApp();
+    await screen.findByRole("heading", { level: 1, name: "工作概览" });
+    await waitFor(() => expect(api.shellRestoreOnly).toHaveBeenCalledTimes(1));
+    expect(api.refresh).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.shellBootstrapComplete).toHaveBeenCalledTimes(1));
   });
 
   it("offers explicit persistent local and remote setup from Runtime settings", async () => {

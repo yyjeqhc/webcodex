@@ -19,6 +19,7 @@ import type { CodingAgentRequest, SshRegisterRequest, SshResourcesSnapshot, SshM
 
 export const desktopApi = {
   shellRestoreOnly: () => invoke<boolean>("desktop_shell_restore_only"),
+  shellBootstrapComplete: () => invoke<void>("desktop_shell_bootstrap_complete"),
   readDesktopNavigation: () => invoke<unknown>("read_desktop_navigation"),
   acknowledgeDesktopNavigation: (sequence: number) => invoke<void>("acknowledge_desktop_navigation", { sequence }),
   setDesktopLocale: (locale: import("../i18n/locale").Locale) => invoke<void>("set_desktop_locale", { locale }),

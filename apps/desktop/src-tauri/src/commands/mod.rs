@@ -14,6 +14,16 @@ pub fn desktop_shell_restore_only(shell: State<'_, desktop_shell::DesktopShellSt
 }
 
 #[tauri::command]
+pub fn desktop_shell_bootstrap_complete(
+    app: AppHandle,
+    shell: State<'_, desktop_shell::DesktopShellState>,
+) {
+    shell.mark_bootstrap_complete();
+    let snapshot = app.state::<AppState>().get_state();
+    tray::refresh_from_snapshot(&app, &snapshot);
+}
+
+#[tauri::command]
 pub fn read_desktop_navigation(
     shell: State<'_, desktop_shell::DesktopShellState>,
 ) -> Option<desktop_shell::NavigationIntent> {

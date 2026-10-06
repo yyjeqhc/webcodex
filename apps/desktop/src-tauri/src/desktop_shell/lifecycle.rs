@@ -29,7 +29,7 @@ pub(super) struct Lifecycle {
     generation: u32,
     navigation_sequence: u32,
     pending_navigation: Option<NavigationIntent>,
-    restore_only: bool,
+    bootstrap_complete: bool,
 }
 
 impl Default for Lifecycle {
@@ -39,7 +39,7 @@ impl Default for Lifecycle {
             generation: 0,
             navigation_sequence: 0,
             pending_navigation: None,
-            restore_only: false,
+            bootstrap_complete: false,
         }
     }
 }
@@ -67,7 +67,13 @@ impl Lifecycle {
     }
 
     pub fn can_enter_lightweight(&self) -> bool {
-        self.phase == Phase::Loaded
+        self.phase == Phase::Loaded && self.bootstrap_complete
+    }
+
+    pub fn mark_bootstrap_complete(&mut self) {
+        if self.phase != Phase::ExitRequested {
+            self.bootstrap_complete = true;
+        }
     }
 
     pub fn begin_lightweight(&mut self) -> bool {
@@ -89,7 +95,6 @@ impl Lifecycle {
         let Phase::Destroying { reopen } = self.phase else {
             return OpenAction::None;
         };
-        self.restore_only = true;
         self.phase = Phase::Lightweight;
         if reopen {
             self.open(None)
@@ -147,7 +152,8 @@ impl Lifecycle {
     }
 
     pub fn restore_only(&self) -> bool {
-        self.restore_only || matches!(self.phase, Phase::Destroying { .. } | Phase::ExitRequested)
+        self.bootstrap_complete
+            || matches!(self.phase, Phase::Destroying { .. } | Phase::ExitRequested)
     }
 
     pub fn pending_navigation(&self) -> Option<NavigationIntent> {

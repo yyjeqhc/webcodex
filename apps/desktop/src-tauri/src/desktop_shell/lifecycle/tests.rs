@@ -2,6 +2,7 @@ use super::*;
 
 fn lightweight() -> Lifecycle {
     let mut state = Lifecycle::default();
+    state.mark_bootstrap_complete();
     assert!(state.begin_lightweight());
     assert_eq!(state.destroyed(), OpenAction::None);
     assert_eq!(state.phase, Phase::Lightweight);
@@ -16,11 +17,24 @@ fn ordinary_close_never_destroys_and_unexpected_exit_is_not_swallowed() {
     assert_eq!(state.destroyed(), OpenAction::None);
     assert_eq!(state.phase, Phase::Loaded);
     assert!(!state.restore_only());
+    assert!(!state.can_enter_lightweight());
+}
+
+#[test]
+fn lightweight_is_gated_until_the_initial_renderer_bootstrap_completes() {
+    let mut state = Lifecycle::default();
+    assert!(!state.can_enter_lightweight());
+    assert!(!state.begin_lightweight());
+    assert!(!state.restore_only());
+    state.mark_bootstrap_complete();
+    assert!(state.can_enter_lightweight());
+    assert!(state.restore_only());
 }
 
 #[test]
 fn lightweight_requires_destroyed_confirmation_and_is_idempotent() {
     let mut state = Lifecycle::default();
+    state.mark_bootstrap_complete();
     assert!(state.begin_lightweight());
     assert!(!state.begin_lightweight());
     assert_eq!(state.phase, Phase::Destroying { reopen: false });
@@ -34,13 +48,14 @@ fn lightweight_requires_destroyed_confirmation_and_is_idempotent() {
 }
 
 #[test]
-fn destroy_failure_restores_loaded_and_never_claims_lightweight() {
+fn destroy_failure_restores_loaded_without_losing_completed_bootstrap() {
     let mut state = Lifecycle::default();
+    state.mark_bootstrap_complete();
     state.begin_lightweight();
     state.destroy_failed();
     assert_eq!(state.phase, Phase::Loaded);
     assert!(state.can_enter_lightweight());
-    assert!(!state.restore_only());
+    assert!(state.restore_only());
     assert!(!state.prevent_implicit_exit(None));
 }
 
@@ -71,6 +86,7 @@ fn concurrent_open_and_navigation_share_one_recreation_latest_target_wins() {
 #[test]
 fn open_during_destruction_waits_for_label_removal() {
     let mut state = Lifecycle::default();
+    state.mark_bootstrap_complete();
     state.begin_lightweight();
     assert_eq!(
         state.open(Some(NavigationTarget::Connections)),
@@ -107,6 +123,7 @@ fn quit_wins_in_every_phase_and_late_callbacks_cannot_revive_ui() {
     for stage in 0..4 {
         let mut state = Lifecycle::default();
         if stage > 0 {
+            state.mark_bootstrap_complete();
             state.begin_lightweight();
         }
         if stage > 1 {
@@ -149,6 +166,7 @@ fn navigation_ack_consumes_once_and_cannot_clear_a_newer_intent() {
     state.open(None);
     assert!(state.pending_navigation().is_none());
     state.open(Some(NavigationTarget::Settings));
+    state.mark_bootstrap_complete();
     state.begin_lightweight();
     state.destroyed();
     state.open(None);

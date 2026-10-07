@@ -23,6 +23,7 @@ fn browser_snapshot_payload(
     max_nodes: Option<usize>,
     max_depth: Option<u32>,
     node_offset: Option<usize>,
+    query: Option<&webcodex_core::browser_query::BrowserSnapshotQuery>,
 ) -> Value {
     let mut payload = json!({
         "browser_id": browser_id,
@@ -39,6 +40,9 @@ fn browser_snapshot_payload(
     }
     if let Some(node_offset) = node_offset {
         payload["node_offset"] = json!(node_offset);
+    }
+    if let Some(query) = query {
+        payload["query"] = json!(query);
     }
     payload
 }
@@ -248,6 +252,7 @@ impl ToolRuntime {
                 max_nodes,
                 max_depth,
                 node_offset,
+                query,
             }) => {
                 self.dispatch_browser_request(
                     &client_id,
@@ -259,6 +264,7 @@ impl ToolRuntime {
                         max_nodes,
                         max_depth,
                         node_offset,
+                        query.as_ref(),
                     ),
                     auth,
                     false,
@@ -683,6 +689,7 @@ impl ToolRuntime {
                 client.supports(RunnerFeature::BrowserElementActionAdmission);
             let browser_launch = client.supports(RunnerFeature::BrowserLaunch);
             let browser_batch = client.supports(RunnerFeature::BrowserBatch);
+            let browser_semantic_query = client.supports(RunnerFeature::BrowserSemanticQuery);
             let browser_managed_profile = client.supports(RunnerFeature::BrowserManagedProfile);
             let browser_extension_bridge = client.supports(RunnerFeature::BrowserExtensionBridge);
             let browser_surface_handoff = client.supports(RunnerFeature::BrowserSurfaceHandoff);
@@ -703,6 +710,7 @@ impl ToolRuntime {
                     "browser_control": browser_control,
                     "browser_element_action_admission": browser_element_action_admission,
                     "browser_batch": browser_batch,
+                    "browser_semantic_query": browser_semantic_query,
                     "browser_managed_profile": browser_managed_profile,
                     "browser_extension_bridge": browser_extension_bridge,
                     "browser_surface_handoff": browser_surface_handoff,
@@ -833,6 +841,18 @@ impl ToolRuntime {
                     "target Runner does not advertise {}",
                     RunnerFeature::BrowserElementActionAdmission.as_wire_name()
                 ),
+                "not_started",
+                false,
+                None,
+            );
+        }
+        if kind == "browser_snapshot"
+            && payload.get("query").is_some()
+            && !client.supports(RunnerFeature::BrowserSemanticQuery)
+        {
+            return browser_error(
+                "capability_unavailable",
+                "target Runner does not advertise browser_semantic_query",
                 "not_started",
                 false,
                 None,
@@ -1231,6 +1251,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert_eq!(snapshot["browser_id"], "browser_abcdefghijklmnop");
         assert_eq!(snapshot["page_id"], "page_abcdefghijklmnop");
@@ -1246,11 +1267,28 @@ mod tests {
             Some(48),
             Some(10),
             Some(256),
+            None,
         );
         assert_eq!(enhanced["mode"], "interactive");
         assert_eq!(enhanced["max_nodes"], 48);
         assert_eq!(enhanced["max_depth"], 10);
         assert_eq!(enhanced["node_offset"], 256);
+        let query = webcodex_core::browser_query::BrowserSnapshotQuery {
+            fields_only: true,
+            text: Some("School".into()),
+            ..Default::default()
+        };
+        let queried = browser_snapshot_payload(
+            "browser_fixture",
+            "page_fixture",
+            "auto",
+            None,
+            None,
+            None,
+            Some(&query),
+        );
+        assert_eq!(queried["query"]["fields_only"], true);
+        assert_eq!(queried["query"]["text"], "School");
 
         let diagnostics = browser_diagnostics_payload(
             "browser_abcdefghijklmnop",

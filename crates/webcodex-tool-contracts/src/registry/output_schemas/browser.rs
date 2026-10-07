@@ -17,6 +17,7 @@ fn target_schema() -> Value {
                     "browser_control": {"type": "boolean"},
                     "browser_element_action_admission": {"type": "boolean"},
                     "browser_batch": {"type": "boolean"},
+                    "browser_semantic_query": {"type": "boolean"},
                     "browser_launch": {"type": "boolean"},
                     "browser_managed_profile": {"type": "boolean"},
                     "browser_surface_handoff": {"type": "boolean"},

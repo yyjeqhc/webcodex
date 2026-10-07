@@ -207,3 +207,18 @@ fn browser_control_result_audit_drops_page_text_and_url() {
         assert!(!serialized.contains(private));
     }
 }
+
+#[test]
+fn browser_semantic_query_audit_omits_private_search_terms() {
+    let projection = session_log_arguments_for_tool_request(
+        "observe_browser",
+        &json!({
+            "action":"snapshot", "client_id":"mini", "browser_id":"browser_abcdefghijklmnop",
+            "page_id":"page_abcdefghijklmnop", "query": {
+                "text":"PRIVATE_TEXT", "group":"PRIVATE_GROUP", "section":"PRIVATE_SECTION"
+            }
+        }),
+    );
+    assert!(!projection.to_string().contains("PRIVATE_"));
+    assert!(projection.get("query").is_none());
+}

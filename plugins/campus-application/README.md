@@ -105,3 +105,18 @@ Then open `http://127.0.0.1:32124/`. Fixture submit events are intercepted local
 ## Safety boundary
 
 This Plugin is a planner, not an autonomous submission service. It does not call Browser tools itself, access external recruiting APIs, or submit forms. Browser authority stays with WebCodex and the caller, and final submission remains a review boundary.
+
+### Browser semantic query workflow
+
+For a large form, use `observe_browser(action=snapshot, query={fields_only:true})`
+(or narrow `text`, `group`, `section`) before passing the returned nodes to
+`plan_fill`. This finds fields beyond the first ordinary snapshot page while
+keeping all returned element ids in one fresh generation. Queries still return
+at most 256 nodes / 64 KiB and search at most 4,352 source nodes; a truncated
+no-match result is inconclusive. Each further snapshot invalidates previous ids.
+Use only the actions admitted by the current snapshot, batch up to 32 ordinary
+field operations, then read a fresh snapshot. Inspect partial completion and
+certainty before deciding any further effect; uncertainty never permits replay.
+The provider remains a planner: automatic batch construction/readback
+reconciliation is not implemented by this slice, and final submission remains
+manual review.

@@ -59,3 +59,5 @@ mod project_build_tests;
 mod project_operation_tests;
 
 pub mod directory_page;
+
+pub mod browser_query;

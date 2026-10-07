@@ -5188,6 +5188,7 @@ dependencies = [
  "tungstenite",
  "url",
  "uuid",
+ "webcodex-core",
  "webcodex-process",
  "webcodex-runner-config",
  "windows-sys 0.61.2",

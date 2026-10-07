@@ -767,6 +767,10 @@ pub enum BrowserObserveToolCall {
         #[schemars(range(min = 0, max = 4096))]
         #[serde(default)]
         node_offset: Option<usize>,
+        /// Filter one bounded source before pagination; all returned ids share a fresh generation.
+        /// AND filters; auto mode keeps semantic text. At most 4352 source nodes are searched.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<webcodex_core::browser_query::BrowserSnapshotQuery>,
     },
     Console {
         #[schemars(length(min = 1, max = 128))]

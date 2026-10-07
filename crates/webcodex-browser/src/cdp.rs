@@ -1,3 +1,4 @@
+mod clickable;
 use crate::bridge::ExternalLease;
 use crate::profiles::{ManagedProfile, OwnedProfile};
 use crate::types::{
@@ -1008,11 +1009,55 @@ impl BrowserBackend for CdpBackend {
             ));
         }
         let (mut nodes, mut truncated) = project_ax_nodes(&raw_nodes, dom_root.as_ref());
+        // One read-only CDP capture, under the existing response-byte and request
+        // deadline bounds. Missing evidence grants nothing; native controls are unchanged.
+        if let Some(root) = dom_root.as_ref() {
+            if nodes
+                .iter()
+                .take(crate::MAX_SNAPSHOT_OFFSET + MAX_SNAPSHOT_NODES)
+                .any(|node| {
+                    matches!(
+                        node.role.as_str(),
+                        "generic" | "group" | "listitem" | "article"
+                    )
+                })
+            {
+                if let Ok(capture) = cdp_call_on_websocket_until(
+                    &mut websocket,
+                    &mut self.next_id,
+                    "DOMSnapshot.captureSnapshot",
+                    json!({"computedStyles": ["cursor", "visibility", "display", "pointer-events", "opacity"]}),
+                    false,
+                    deadline,
+                ) {
+                    clickable::admit_clickable_cards(&mut nodes, root, &capture);
+                }
+                // Reject document replacement between AX/DOM/layout observations.
+                let current = cdp_call_on_websocket_until(
+                    &mut websocket,
+                    &mut self.next_id,
+                    "Page.getFrameTree",
+                    json!({}),
+                    false,
+                    deadline,
+                )?;
+                if current
+                    .pointer("/frameTree/frame/loaderId")
+                    .and_then(Value::as_str)
+                    != Some(document_id.as_str())
+                {
+                    return Err(BrowserError::not_started(
+                        "stale_element",
+                        "Document changed during snapshot; observe again",
+                    ));
+                }
+            }
+        }
         let mut form_context_by_backend_id = dom_root
             .as_ref()
             .map(index_form_contexts)
             .unwrap_or_default();
-        let mut source_incomplete = false;
+        let mut source_incomplete = ax_source_incomplete(&raw_nodes);
         if let Some(root) = dom_root.as_ref() {
             let documents = frame_documents(&frame_tree, root);
             let fence = frame_fence(&frame_tree, root);
@@ -1030,6 +1075,7 @@ impl BrowserBackend for CdpBackend {
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
+                source_incomplete |= ax_source_incomplete(&raw);
                 let (mut children, child_truncated) = project_ax_nodes(&raw, Some(document));
                 form_context_by_backend_id.extend(index_form_contexts(document));
                 for node in &mut children {
@@ -1042,7 +1088,7 @@ impl BrowserBackend for CdpBackend {
                 truncated |= child_truncated;
                 // Bound aggregation across frames, including non-actionable content.
                 if nodes.len() >= MAX_SNAPSHOT_NODES {
-                    source_incomplete = index + 1 < documents.len();
+                    source_incomplete |= index + 1 < documents.len();
                     break;
                 }
             }
@@ -1709,6 +1755,24 @@ fn read_frame_fence(
         .get("root")
         .ok_or_else(|| BrowserError::not_started("stale_element", "Frame document unavailable"))?;
     Ok(frame_fence(&tree, root))
+}
+
+// AX depth limits can omit advertised descendants. A query with no match must
+// not turn that partial observation into a claim of absence.
+fn ax_source_incomplete(raw_nodes: &[Value]) -> bool {
+    let ids = raw_nodes
+        .iter()
+        .filter_map(|node| node.get("nodeId").and_then(Value::as_str))
+        .collect::<HashSet<_>>();
+    raw_nodes.iter().any(|node| {
+        node.get("childIds")
+            .and_then(Value::as_array)
+            .is_some_and(|children| {
+                children
+                    .iter()
+                    .any(|id| id.as_str().is_none_or(|id| !ids.contains(id)))
+            })
+    })
 }
 
 fn parse_ax_snapshot_nodes(raw_nodes: &[Value]) -> (Vec<BackendNode>, bool) {

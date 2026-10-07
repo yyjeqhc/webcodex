@@ -2,11 +2,31 @@
 use super::*;
 
 pub(super) fn browser_observe_audit_projection(call: &BrowserObserveToolCall) -> Value {
-    serde_json::to_value(call).unwrap_or_else(|_| {
-        serde_json::json!({
-            "action": call.action_name()
-        })
-    })
+    let value = serde_json::to_value(call).unwrap_or_default();
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = value.as_object() {
+        // Queries are page/user content, unlike opaque identities and budgets.
+        // Keep an allowlist so future observation inputs cannot leak by default.
+        copy_keys(
+            obj,
+            &mut out,
+            &[
+                "action",
+                "client_id",
+                "browser_id",
+                "page_id",
+                "limit",
+                "mode",
+                "max_nodes",
+                "max_depth",
+                "node_offset",
+                "include_all_console",
+                "include_all_network",
+                "since_cursor",
+            ],
+        );
+    }
+    Value::Object(out)
 }
 
 pub(super) fn browser_act_audit_projection(call: &BrowserActToolCall) -> Value {

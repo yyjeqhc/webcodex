@@ -1511,7 +1511,14 @@ fn job_concurrency_for_client(client: &RunnerView, runner_jobs: &[ShellJobInfo])
         .iter()
         .filter(|job| job.client_id == client.client_id)
     {
-        running += usize::from(job_status_is_running(&job.status));
+        // A stop request does not release the durable execution slot until
+        // termination is observed. Keep capacity distinct from the literal
+        // running-state count used elsewhere in Runtime status.
+        running += usize::from(
+            job_status_is_running(&job.status)
+                || RunnerJobLifecycle::from_wire(&job.status)
+                    == Ok(RunnerJobLifecycle::StopRequested),
+        );
         queued += usize::from(job_status_is_runner_queued(&job.status));
     }
     json!({

@@ -1,7 +1,7 @@
 use super::*;
 
 fn fixture() -> (Vec<BackendNode>, Value, Value) {
-    let root = json!({"nodeType":9,"backendNodeId":1,"children":[
+    let root = json!({"nodeType":9,"backendNodeId":1,"childNodeCount":1,"children":[
         {"nodeType":1,"localName":"div","backendNodeId":2,"childNodeCount":1,"children":[
             {"nodeType":3,"nodeValue":"Graduate software engineer","backendNodeId":3}
         ]}
@@ -107,4 +107,21 @@ fn transparent_ancestors_nested_handlers_and_long_or_unknown_content_are_rejecte
         admit_clickable_cards(&mut nodes, &root, &capture);
         assert!(!nodes[0].capability.admits_any(), "case {case}");
     }
+}
+
+#[test]
+fn event_capture_requires_a_complete_bounded_dom_before_dispatch() {
+    let (_, root, _) = fixture();
+    assert!(capture_source_is_bounded(&root));
+    let mut truncated = root.clone();
+    truncated["children"][0]["childNodeCount"] = json!(2);
+    assert!(!capture_source_is_bounded(&truncated));
+    let mut frame = root.clone();
+    frame["children"][0]["localName"] = json!("iframe");
+    assert!(!capture_source_is_bounded(&frame));
+    let mut shadow = root.clone();
+    shadow["children"][0]["shadowRoots"] = json!([{"nodeType":11,"childNodeCount":1}]);
+    assert!(!capture_source_is_bounded(&shadow));
+    let large = json!({"nodeType":9,"childNodeCount":MAX_CLICK_SCAN_NODES,"children":vec![json!({"nodeType":3,"nodeValue":"text"}); MAX_CLICK_SCAN_NODES]});
+    assert!(!capture_source_is_bounded(&large));
 }

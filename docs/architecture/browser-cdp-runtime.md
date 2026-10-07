@@ -85,8 +85,11 @@ ancestors suppress admission; nested event targets are ambiguous and suppressed.
 Neither pointer styling nor `onclick` alone grants authority. No site selector,
 listener source, raw DOM or CDP entry point is exposed to the model.
 
-The existing CDP message/deadline ceilings cover the extra capture. Classification
-rejects documents over 4,352 captured nodes, scans at most that many DOM/AX nodes,
+Before the extra capture, the existing depth-bounded DOM must prove a complete
+tree of at most 4,352 nodes (including shadow/frame contents); missing children
+or unknown frame documents suppress capture entirely. The existing CDP
+message/deadline ceilings guard changes racing that preflight. Classification
+also rejects documents over 4,352 captured nodes, scans at most that many DOM/AX nodes,
 checks at most 64 content nodes per candidate, and admits at most 32 cards.
 Missing/oversized evidence fails closed for cards while existing native control
 semantics remain unchanged. Root DOM identity and a post-capture loader check

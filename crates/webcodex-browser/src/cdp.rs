@@ -1012,15 +1012,16 @@ impl BrowserBackend for CdpBackend {
         // One read-only CDP capture, under the existing response-byte and request
         // deadline bounds. Missing evidence grants nothing; native controls are unchanged.
         if let Some(root) = dom_root.as_ref() {
-            if nodes
-                .iter()
-                .take(crate::MAX_SNAPSHOT_OFFSET + MAX_SNAPSHOT_NODES)
-                .any(|node| {
-                    matches!(
-                        node.role.as_str(),
-                        "generic" | "group" | "listitem" | "article"
-                    )
-                })
+            if clickable::capture_source_is_bounded(root)
+                && nodes
+                    .iter()
+                    .take(crate::MAX_SNAPSHOT_OFFSET + MAX_SNAPSHOT_NODES)
+                    .any(|node| {
+                        matches!(
+                            node.role.as_str(),
+                            "generic" | "group" | "listitem" | "article"
+                        )
+                    })
             {
                 if let Ok(capture) = cdp_call_on_websocket_until(
                     &mut websocket,

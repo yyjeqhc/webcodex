@@ -153,12 +153,15 @@ fn snapshot_session(failed_method: Option<&'static str>, iframe: bool, card: boo
                 .as_array_mut()
                 .unwrap()
                 .push(json!({"nodeId":"card", "backendDOMNodeId":200, "role":{"value":"generic"}}));
-            replies[2].2 = json!({"root":{"nodeType":9,"backendNodeId":1,"children":[
+            replies[2].2 = json!({"root":{"nodeType":9,"backendNodeId":1,"childNodeCount":1,"children":[
                 {"nodeType":1,"localName":"div","backendNodeId":200,"childNodeCount":1,"children":[
                     {"nodeType":3,"nodeValue":"Graduate engineer","backendNodeId":201}
                 ]}
             ]}});
-            replies.extend([
+            if failed_method == Some("card_dom_incomplete") {
+                replies[2].2["root"]["childNodeCount"] = json!(2);
+            } else {
+                replies.extend([
                 ("DOMSnapshot.captureSnapshot", json!({"computedStyles":["cursor","visibility","display","pointer-events","opacity"]}),
                     json!({"strings":["pointer","visible","block","auto","1"],"documents":[{
                         "nodes":{"backendNodeId":[1,200,201],"isClickable":{"index":[1]}},
@@ -166,6 +169,7 @@ fn snapshot_session(failed_method: Option<&'static str>, iframe: bool, card: boo
                     }]})),
                 ("Page.getFrameTree", json!({}), json!({"frameTree":{"frame":{"loaderId":if failed_method == Some("card_document_changed") { "document-2" } else { "document-1" }}}})),
             ]);
+            }
         }
         if iframe {
             let tree = json!({"frameTree":{"frame":{"id":"top","loaderId":"document-1","securityOrigin":"https://example.test"},
@@ -255,7 +259,7 @@ fn snapshot_session(failed_method: Option<&'static str>, iframe: bool, card: boo
                 count,
                 if iframe {
                     6
-                } else if card {
+                } else if card && failed_method != Some("card_dom_incomplete") {
                     5
                 } else {
                     3
@@ -271,7 +275,10 @@ fn snapshot_session(failed_method: Option<&'static str>, iframe: bool, card: boo
                     .unwrap();
                 assert_eq!(
                     card.capability.admits_any(),
-                    failed_method != Some("DOMSnapshot.captureSnapshot")
+                    !matches!(
+                        failed_method,
+                        Some("DOMSnapshot.captureSnapshot" | "card_dom_incomplete")
+                    )
                 );
             }
             if iframe {
@@ -340,6 +347,7 @@ fn snapshot_card_uses_one_bounded_capture_and_checks_document_afterwards() {
     snapshot_session(None, false, true);
     snapshot_session(Some("card_document_changed"), false, true);
     snapshot_session(Some("DOMSnapshot.captureSnapshot"), false, true);
+    snapshot_session(Some("card_dom_incomplete"), false, true);
 }
 
 #[test]

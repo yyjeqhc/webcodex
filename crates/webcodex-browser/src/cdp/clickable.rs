@@ -5,6 +5,49 @@ use super::*;
 const MAX_CLICK_SCAN_NODES: usize = crate::MAX_SNAPSHOT_OFFSET + MAX_SNAPSHOT_NODES;
 const MAX_CLICK_CARDS: usize = 32;
 
+/// Preflight the already depth-bounded DOM response before asking Chromium for
+/// layout/event evidence. Refuse incomplete trees and unknown frame contents;
+/// the response cap and deadline still guard changes racing this observation.
+pub(super) fn capture_source_is_bounded(root: &Value) -> bool {
+    fn visit(node: &Value, remaining: &mut usize, depth: usize) -> bool {
+        if *remaining == 0 || depth > 64 {
+            return false;
+        }
+        *remaining -= 1;
+        let children = node.get("children").and_then(Value::as_array);
+        if matches!(
+            node.get("nodeType").and_then(Value::as_i64),
+            Some(1 | 9 | 11)
+        ) && node.get("childNodeCount").and_then(Value::as_u64)
+            != Some(children.map_or(0, Vec::len) as u64)
+        {
+            return false;
+        }
+        if matches!(
+            node.get("localName").and_then(Value::as_str),
+            Some("iframe" | "frame")
+        ) && node.get("contentDocument").is_none()
+        {
+            return false;
+        }
+        for key in ["children", "shadowRoots", "pseudoElements"] {
+            if let Some(children) = node.get(key).and_then(Value::as_array) {
+                if children.len() > *remaining
+                    || !children
+                        .iter()
+                        .all(|child| visit(child, remaining, depth + 1))
+                {
+                    return false;
+                }
+            }
+        }
+        node.get("contentDocument")
+            .is_none_or(|document| visit(document, remaining, depth + 1))
+    }
+    let mut remaining = MAX_CLICK_SCAN_NODES;
+    visit(root, &mut remaining, 0)
+}
+
 pub(super) fn admit_clickable_cards(nodes: &mut [BackendNode], root: &Value, capture: &Value) {
     let Some(strings) = capture.get("strings").and_then(Value::as_array) else {
         return;

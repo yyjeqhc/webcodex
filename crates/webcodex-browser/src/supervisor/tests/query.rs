@@ -117,6 +117,21 @@ fn query_filters_before_windowing_and_keeps_text_in_auto_mode() {
 #[test]
 fn query_validation_and_group_filters_fail_closed() {
     let (supervisor, browser, page) = setup(901);
+    assert_eq!(
+        supervisor
+            .snapshot_query(
+                &browser,
+                &page,
+                SnapshotMode::Auto,
+                32,
+                32,
+                0,
+                Some(&BrowserSnapshotQuery::default()),
+            )
+            .unwrap_err()
+            .kind,
+        "invalid_request"
+    );
     for text in [" ".into(), "x".repeat(129)] {
         let query = BrowserSnapshotQuery {
             text: Some(text),

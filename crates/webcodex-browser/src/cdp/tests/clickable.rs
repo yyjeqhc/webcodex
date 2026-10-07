@@ -110,6 +110,31 @@ fn transparent_ancestors_nested_handlers_and_long_or_unknown_content_are_rejecte
 }
 
 #[test]
+fn css_hidden_or_unobserved_descendant_text_does_not_label_card() {
+    for hidden_in_layout in [false, true] {
+        let (mut nodes, mut root, mut capture) = fixture();
+        root["children"][0]["children"] = json!([{
+            "nodeType": 1,
+            "localName": "span",
+            "backendNodeId": 3,
+            "childNodeCount": 1,
+            "children": [{"nodeType":3,"nodeValue":"Hidden job title","backendNodeId":4}]
+        }]);
+        root["children"][0]["childNodeCount"] = json!(1);
+        capture["documents"][0]["nodes"]["backendNodeId"] = json!([1, 2, 3, 4]);
+        if hidden_in_layout {
+            capture["strings"].as_array_mut().unwrap().push(json!("0"));
+            capture["documents"][0]["layout"]["nodeIndex"] = json!([1, 2]);
+            capture["documents"][0]["layout"]["styles"] = json!([[0, 1, 2, 3, 4], [0, 1, 2, 3, 5]]);
+            capture["documents"][0]["layout"]["bounds"] =
+                json!([[10, 20, 300, 100], [20, 30, 100, 20]]);
+        }
+        admit_clickable_cards(&mut nodes, &root, &capture);
+        assert!(!nodes[0].capability.admits_any());
+    }
+}
+
+#[test]
 fn event_capture_requires_a_complete_bounded_dom_before_dispatch() {
     let (_, root, _) = fixture();
     assert!(capture_source_is_bounded(&root));

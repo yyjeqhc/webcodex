@@ -28,9 +28,11 @@ pub struct BrowserSnapshotQuery {
 
 impl BrowserSnapshotQuery {
     pub fn is_valid(&self) -> bool {
-        [&self.text, &self.role, &self.group, &self.section]
-            .into_iter()
-            .flatten()
-            .all(|value| !value.trim().is_empty() && value.chars().count() <= 128)
+        let filters = [&self.text, &self.role, &self.group, &self.section];
+        (self.fields_only || filters.iter().any(|value| value.is_some()))
+            && filters
+                .into_iter()
+                .flatten()
+                .all(|value| !value.trim().is_empty() && value.chars().count() <= 128)
     }
 }

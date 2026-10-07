@@ -109,6 +109,7 @@ pub(super) fn admit_clickable_cards(nodes: &mut [BackendNode], root: &Value, cap
             .and_then(Value::as_str)
     };
     let mut visible = HashSet::new();
+    let mut rendered = HashSet::new();
     let mut invisible = HashSet::new();
     for (i, index) in indices.iter().enumerate() {
         let Some(id) = index
@@ -134,18 +135,8 @@ pub(super) fn admit_clickable_cards(nodes: &mut [BackendNode], root: &Value, cap
             invisible.insert(id);
             continue;
         };
-        if string(styles.get(1)) != Some("visible")
-            || !string(styles.get(4))
-                .and_then(|v| v.parse::<f64>().ok())
-                .is_some_and(|v| v > 0.0)
-        {
-            invisible.insert(id);
-        }
-        if clickable.contains(&id)
-            && string(styles.first()) == Some("pointer")
-            && string(styles.get(1)) == Some("visible")
+        let rendered_here = string(styles.get(1)) == Some("visible")
             && string(styles.get(2)).is_some_and(|v| v != "none")
-            && string(styles.get(3)) == Some("auto")
             && string(styles.get(4))
                 .and_then(|v| v.parse::<f64>().ok())
                 .is_some_and(|v| v > 0.0)
@@ -156,7 +147,16 @@ pub(super) fn admit_clickable_cards(nodes: &mut [BackendNode], root: &Value, cap
             && bounds
                 .get(3)
                 .and_then(Value::as_f64)
-                .is_some_and(|v| v > 0.0)
+                .is_some_and(|v| v > 0.0);
+        if rendered_here {
+            rendered.insert(id);
+        } else {
+            invisible.insert(id);
+        }
+        if clickable.contains(&id)
+            && rendered_here
+            && string(styles.first()) == Some("pointer")
+            && string(styles.get(3)) == Some("auto")
         {
             visible.insert(id);
         }
@@ -167,6 +167,7 @@ pub(super) fn admit_clickable_cards(nodes: &mut [BackendNode], root: &Value, cap
         root,
         false,
         &visible,
+        &rendered,
         &invisible,
         &clickable,
         &mut candidates,
@@ -203,6 +204,7 @@ fn collect_candidates(
     node: &Value,
     blocked: bool,
     visible: &HashSet<i64>,
+    rendered: &HashSet<i64>,
     invisible: &HashSet<i64>,
     clickable: &HashSet<i64>,
     candidates: &mut HashMap<i64, String>,
@@ -238,7 +240,14 @@ fn collect_candidates(
             // with another target, unknown shadow contents or truncated children is ambiguous.
             let mut budget = 64;
             let mut text_budget = MAX_NODE_TEXT_BYTES - 1;
-            if safe_content(node, clickable, &mut budget, &mut text_budget, true) {
+            if safe_content(
+                node,
+                rendered,
+                clickable,
+                &mut budget,
+                &mut text_budget,
+                true,
+            ) {
                 if let Some(label) = dom_text_content(node)
                     .filter(|label| !label.trim().is_empty() && label.len() < MAX_NODE_TEXT_BYTES)
                 {
@@ -260,6 +269,7 @@ fn collect_candidates(
                 child,
                 ancestor_clickable,
                 visible,
+                rendered,
                 invisible,
                 clickable,
                 candidates,
@@ -272,6 +282,7 @@ fn collect_candidates(
 
 fn safe_content(
     node: &Value,
+    rendered: &HashSet<i64>,
     clickable: &HashSet<i64>,
     budget: &mut usize,
     text_budget: &mut usize,
@@ -298,6 +309,17 @@ fn safe_content(
     }
     if node.get("shadowRoots").is_some() || node.get("contentDocument").is_some() {
         return false;
+    }
+    if !owner && node.get("nodeType").and_then(Value::as_i64) == Some(1) {
+        let tag = node.get("localName").and_then(Value::as_str).unwrap_or("");
+        if !matches!(tag, "script" | "style" | "noscript")
+            && !node
+                .get("backendNodeId")
+                .and_then(Value::as_i64)
+                .is_some_and(|id| rendered.contains(&id))
+        {
+            return false;
+        }
     }
     if !owner {
         let tag = node.get("localName").and_then(Value::as_str).unwrap_or("");
@@ -327,7 +349,7 @@ fn safe_content(
     children.is_none_or(|children| {
         children
             .iter()
-            .all(|child| safe_content(child, clickable, budget, text_budget, false))
+            .all(|child| safe_content(child, rendered, clickable, budget, text_budget, false))
     })
 }
 

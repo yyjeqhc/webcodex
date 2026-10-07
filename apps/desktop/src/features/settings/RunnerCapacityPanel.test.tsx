@@ -136,6 +136,49 @@ describe("local Runner concurrency settings", () => {
     expect(screen.getByText("Capacity needs refresh.")).toBeInTheDocument();
     expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
   });
+  it("can still read saved local settings while the Server is offline", async () => {
+    settings.max_concurrent_jobs = 12;
+    query.mockRejectedValue(new Error("offline"));
+    render(view({ ...state, readiness: { ...state.readiness, server: "stopped" } }));
+    expect(await screen.findByRole("spinbutton")).toHaveValue(12);
+    expect(screen.getByRole("spinbutton")).toBeEnabled();
+    expect(screen.getByText("Saved limit: 12 · Default: 4")).toBeInTheDocument();
+    expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
+  });
+  it.each(["restart", "server offline"])("keeps capacity stale after %s until a fresh observation arrives", async boundary => {
+    const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+    const interrupted = boundary === "restart"
+      ? { ...state, current_operation: { id: "restart", kind: "runner_restart", phase: "running" } as DesktopState["current_operation"] }
+      : { ...state, readiness: { ...state.readiness, server: "stopped" as const } };
+    mounted.rerender(view(interrupted));
+    expect(screen.getByText("Capacity needs refresh.")).toBeInTheDocument();
+    let resolve!: (value: typeof runner) => void;
+    query.mockReturnValue(new Promise(done => { resolve = done; }));
+    settings.max_concurrent_jobs = 12;
+    mounted.rerender(view());
+    expect(screen.getByText("Capacity needs refresh.")).toBeInTheDocument();
+    expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
+    expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
+    await act(async () => resolve({ ...runner, jobs_running: 1, jobs_queued: 0, job_concurrency_limit: 12 }));
+    expect(await screen.findByText("1 running · 0 queued · 12 max")).toBeInTheDocument();
+    expect(screen.getByText("Saved limit is in effect.")).toBeInTheDocument();
+  });
+  it("discards a pre-operation read without blocking the post-operation refresh", async () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+    let resolveOld!: (value: typeof runner) => void, resolveFresh!: (value: typeof runner) => void;
+    query.mockReturnValueOnce(new Promise(done => { resolveOld = done; }));
+    fireEvent(document, new Event("visibilitychange"));
+    mounted.rerender(view({ ...state, current_operation: { id: "restart", kind: "runner_restart", phase: "running" } as DesktopState["current_operation"] }));
+    query.mockReturnValueOnce(new Promise(done => { resolveFresh = done; }));
+    mounted.rerender(view());
+    expect(query).toHaveBeenCalledTimes(3);
+    await act(async () => resolveOld({ ...runner, jobs_running: 3, jobs_queued: 1 }));
+    expect(screen.getByText("Capacity needs refresh.")).toBeInTheDocument();
+    expect(screen.queryByText("3 running · 1 queued · 4 max")).not.toBeInTheDocument();
+    await act(async () => resolveFresh({ ...runner, jobs_running: 2, jobs_queued: 0 }));
+    expect(await screen.findByText("2 running · 0 queued · 4 max")).toBeInTheDocument();
+  });
   it("does not revive expired counts while a hidden settings page refreshes", async () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1000000);
     const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");

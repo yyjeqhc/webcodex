@@ -21,7 +21,7 @@ export function RunnerCapacityPanel(props: Props) {
 function RunnerCapacitySettings({ state, onState, active }: Props) {
   const s = useShellText();
   const [settings, setSettings] = useState<RunnerSettings | null>(null);
-  const [observation, setObservation] = useState<{ runner: ServerRunnerSummary; at: number } | null>(null);
+  const [observation, setObservation] = useState<{ runner: ServerRunnerSummary; at: number | null } | null>(null);
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -33,6 +33,7 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
   const generation = useRef(0);
   const editBase = useRef<number | null | undefined>(undefined);
   const operationBusy = Boolean(state.current_operation);
+  const serverReady = state.readiness.server === "ready";
   const selected = useRef(state.workspace_runner).current;
   const expectsLocalSettings = Boolean(selected && state.topology?.runner?.kind === "local");
   useEffect(() => { alive.current = true; return () => { alive.current = false; generation.current++; }; }, []);
@@ -59,6 +60,13 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
     setNow(Date.now()); setLoading(false);
   }, [selected, expectsLocalSettings]);
   useEffect(() => {
+    // Keep pre-operation counts stale until a new observation, and discard
+    // responses from reads that crossed the service boundary.
+    generation.current++;
+    reading.current = 0;
+    setObservation(current => current && ({ ...current, at: null }));
+  }, [operationBusy, serverReady]);
+  useEffect(() => {
     if (!active || operationBusy) return;
     if (!action.current) void refresh();
     const timer = window.setInterval(() => {
@@ -68,8 +76,8 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
     const visible = () => { if (document.visibilityState === "visible" && !action.current) { setNow(Date.now()); void refresh(); } };
     document.addEventListener("visibilitychange", visible);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
-  }, [active, operationBusy, refresh]);
-  const stale = !active || state.readiness.server !== "ready" || operationBusy || Math.max(now, Date.now()) - (observation?.at ?? 0) > 30000;
+  }, [active, operationBusy, serverReady, refresh]);
+  const stale = !active || !serverReady || operationBusy || observation?.at == null || Math.max(now, Date.now()) - observation.at > 30000;
   const capacity = runnerCapacity(observation?.runner, stale);
   const saved = settings?.max_concurrent_jobs;
   const savedLimit = saved === undefined ? null : saved ?? 4;

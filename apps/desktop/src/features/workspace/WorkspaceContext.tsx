@@ -89,10 +89,10 @@ export function WorkspaceProvider({ state, suspended = false, preservePollDeadli
   const busy = suspended || operationBusy;
   const ready = state.readiness.server === "ready";
   useEffect(() => {
-    // A service operation invalidates capacity until a new fleet observation,
-    // including the gap after the operation ends and before polling completes.
-    if (operationBusy) setSnapshot(current => current && ({ ...current, fleetObservedAt: null }));
-  }, [operationBusy]);
+    // Service operations and Server disconnects invalidate capacity until a new
+    // fleet observation, including the gap before recovery polling completes.
+    if (operationBusy || !ready) setSnapshot(current => current && ({ ...current, fleetObservedAt: null }));
+  }, [operationBusy, ready]);
   useEffect(() => {
     nextPollAt.current = null;
     preservePollDeadlineOnResume.current = false;

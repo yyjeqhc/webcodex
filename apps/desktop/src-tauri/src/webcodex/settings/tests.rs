@@ -359,7 +359,10 @@ fn job_concurrency_save_preserves_config_and_requires_exact_saved_value() {
         limit,
     };
     save_job_concurrency(&f.runtime, request(None, 12)).unwrap();
-    assert_eq!(inspect(&f.runtime, true).unwrap().max_concurrent_jobs, Some(12));
+    assert_eq!(
+        inspect(&f.runtime, true).unwrap().max_concurrent_jobs,
+        Some(12)
+    );
     let text = read(f.runtime.runner_config.as_ref().unwrap()).unwrap();
     for preserved in [
         "# keep this comment",
@@ -376,7 +379,10 @@ fn job_concurrency_save_preserves_config_and_requires_exact_saved_value() {
     let mut wrong = request(Some(12), 8);
     wrong.target.client_id = "other".into();
     assert!(save_job_concurrency(&f.runtime, wrong).is_err());
-    assert_eq!(read(f.runtime.runner_config.as_ref().unwrap()).unwrap(), text);
+    assert_eq!(
+        read(f.runtime.runner_config.as_ref().unwrap()).unwrap(),
+        text
+    );
     for limit in [1, 64] {
         let expected = inspect(&f.runtime, true).unwrap().max_concurrent_jobs;
         save_job_concurrency(&f.runtime, request(expected, limit)).unwrap();

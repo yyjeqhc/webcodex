@@ -347,6 +347,17 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
                     json!({"type": "integer", "minimum": 0, "maximum": 256}),
                 ),
                 (
+                    "node_offset",
+                    json!({"type": "integer", "minimum": 0, "maximum": 4096}),
+                ),
+                (
+                    "next_node_offset",
+                    json!({"anyOf": [
+                        {"type": "integer", "minimum": 0, "maximum": 4096},
+                        {"type": "null"}
+                    ]}),
+                ),
+                (
                     "nodes",
                     json!({"type": "array", "maxItems": 256, "items": node_schema()}),
                 ),

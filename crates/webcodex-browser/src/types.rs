@@ -6,6 +6,7 @@ pub const MAX_BROWSERS: usize = 4;
 pub const MAX_PAGES_PER_BROWSER: usize = 16;
 pub const MAX_PAGE_SUMMARIES: usize = 32;
 pub const MAX_SNAPSHOT_NODES: usize = 256;
+pub const MAX_SNAPSHOT_OFFSET: usize = 4096;
 pub const MAX_SNAPSHOT_BYTES: usize = 64 * 1024;
 pub const MAX_NODE_TEXT_BYTES: usize = 512;
 pub const MAX_IMAGE_BYTES: usize = 1024 * 1024;
@@ -422,6 +423,12 @@ pub struct SemanticSnapshot {
     pub max_nodes: usize,
     pub max_depth: u32,
     pub node_count: usize,
+    /// Effective post-filter semantic-node offset for this bounded window.
+    pub node_offset: usize,
+    /// Next recoverable post-filter offset, if more projected source nodes remain.
+    /// This is independent of `truncated`, which may also report unrecoverable
+    /// source/field truncation.
+    pub next_node_offset: Option<usize>,
     pub truncated: bool,
     pub nodes: Vec<SemanticNode>,
 }
@@ -537,6 +544,8 @@ mod tests {
             max_nodes: 256,
             max_depth: 32,
             node_count: 2,
+            node_offset: 16,
+            next_node_offset: Some(18),
             truncated: false,
             nodes: vec![
                 SemanticNode {
@@ -600,6 +609,8 @@ mod tests {
             "auto_compacted",
             "max_nodes",
             "max_depth",
+            "node_offset",
+            "next_node_offset",
             "nodes",
         ] {
             assert!(object.contains_key(field), "missing {field}");
@@ -609,6 +620,8 @@ mod tests {
         }
         assert_eq!(value["snapshot_mode"], "interactive");
         assert_eq!(value["auto_compacted"], true);
+        assert_eq!(value["node_offset"], 16);
+        assert_eq!(value["next_node_offset"], 18);
         let option = &value["nodes"][1];
         assert_eq!(option["name"], "Apple");
         assert_eq!(option["value"], "a");

@@ -327,9 +327,22 @@ impl BrowserSupervisor {
         max_nodes: usize,
         max_depth: u32,
     ) -> BrowserResult<SemanticSnapshot> {
+        self.snapshot_window(browser_id, page_id, mode, max_nodes, max_depth, 0)
+    }
+
+    pub fn snapshot_window(
+        &self,
+        browser_id: &str,
+        page_id: &str,
+        mode: SnapshotMode,
+        max_nodes: usize,
+        max_depth: u32,
+        node_offset: usize,
+    ) -> BrowserResult<SemanticSnapshot> {
         self.touch_current(browser_id)?;
         let max_nodes = max_nodes.clamp(1, MAX_SNAPSHOT_NODES);
         let max_depth = max_depth.clamp(1, DEFAULT_SNAPSHOT_DEPTH);
+        let node_offset = node_offset.min(crate::MAX_SNAPSHOT_OFFSET);
         let mut state = self.operation_state()?;
         let runtime = state
             .browsers
@@ -364,17 +377,17 @@ impl BrowserSupervisor {
                     || retained_in_interactive_snapshot(node)
             })
             .collect::<Vec<_>>();
+        let source_node_count = source_nodes.len();
         let mut nodes = Vec::new();
         let mut aggregate_bytes = 0usize;
-        let mut truncated = source_incomplete
-            || if effective_mode == SnapshotMode::Interactive {
-                source_nodes.len() > max_nodes
-            } else {
-                source_truncated || source_nodes.len() > max_nodes
-            };
+        let window_end = node_offset.saturating_add(max_nodes);
+        let source_projection_truncated =
+            effective_mode != SnapshotMode::Interactive && source_truncated;
+        let mut truncated =
+            source_incomplete || source_projection_truncated || source_node_count > window_end;
         let mut group_ids = HashMap::<String, String>::new();
         let mut next_group_id = 1usize;
-        for node in source_nodes.into_iter().take(max_nodes) {
+        for node in source_nodes.into_iter().skip(node_offset).take(max_nodes) {
             let group_id = node.group_key.as_ref().map(|key| {
                 group_ids
                     .entry(key.clone())
@@ -407,6 +420,8 @@ impl BrowserSupervisor {
             aggregate_bytes += projected_bytes;
             nodes.push(projected);
         }
+        let next_offset = node_offset.saturating_add(nodes.len());
+        let next_node_offset = (next_offset < source_node_count).then_some(next_offset);
         Ok(SemanticSnapshot {
             browser_id: browser_id.to_string(),
             page_id: page_id.to_string(),
@@ -416,6 +431,8 @@ impl BrowserSupervisor {
             max_nodes,
             max_depth,
             node_count: nodes.len(),
+            node_offset,
+            next_node_offset,
             truncated,
             nodes,
         })
@@ -2810,6 +2827,58 @@ mod tests {
                 .as_ref()
                 .is_none_or(|value| value.len() <= MAX_NODE_TEXT_BYTES)
         }));
+    }
+
+    #[test]
+    fn snapshot_window_pages_post_filter_nodes_without_replaying_effects() {
+        struct WindowFactory;
+        impl BackendFactory for WindowFactory {
+            fn available(&self) -> bool {
+                true
+            }
+
+            fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
+                Ok(Box::new(FakeBackend::with_snapshot_nodes(20)))
+            }
+        }
+
+        let supervisor = BrowserSupervisor::with_factory(Arc::new(WindowFactory));
+        let browser = supervisor.launch().unwrap();
+        let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+
+        let middle = supervisor
+            .snapshot_window(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                5,
+                DEFAULT_SNAPSHOT_DEPTH,
+                5,
+            )
+            .unwrap();
+        assert_eq!(middle.node_count, 5);
+        assert_eq!(middle.node_offset, 5);
+        assert_eq!(middle.next_node_offset, Some(10));
+        assert_eq!(middle.nodes[0].name.as_deref(), Some("Go 5"));
+        assert_eq!(middle.nodes[4].name.as_deref(), Some("Go 9"));
+        assert!(middle.truncated);
+
+        let tail = supervisor
+            .snapshot_window(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                5,
+                DEFAULT_SNAPSHOT_DEPTH,
+                18,
+            )
+            .unwrap();
+        assert_eq!(tail.node_count, 2);
+        assert_eq!(tail.node_offset, 18);
+        assert_eq!(tail.next_node_offset, None);
+        assert_eq!(tail.nodes[0].name.as_deref(), Some("Go 18"));
+        assert_eq!(tail.nodes[1].name.as_deref(), Some("Go 19"));
+        assert!(!tail.truncated);
     }
 
     #[test]

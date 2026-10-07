@@ -2224,6 +2224,14 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
     let tools = compact["tools"].as_array().unwrap();
     for (name, phrases) in [
         (
+            "project_build",
+            vec![
+                "Portable Rust/Go project build",
+                "same durable Job",
+                "pending never authorizes retry or redispatch",
+            ],
+        ),
+        (
             "run_process",
             vec!["native executable", "literal argv", "observe_jobs"],
         ),
@@ -2645,6 +2653,26 @@ async fn mcp_text_json_compat_uses_runtime_snapshot() {
     assert_eq!(
         off["result"]["structuredContent"], on["result"]["structuredContent"],
         "the snapshot changes only the compatibility text projection"
+    );
+}
+
+#[tokio::test]
+async fn project_build_is_exposed_directly_on_adaptive_mcp_surface() {
+    let runtime = test_runtime();
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc("tools/list", Some(Value::from(30)), json!({})),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("expected Adaptive tools/list success, got {outcome:?}");
+    };
+    let tools = value["result"]["tools"].as_array().unwrap();
+    assert!(tools.iter().any(|tool| tool["name"] == "project_build"));
+    assert_eq!(
+        crate::model_surface::adaptive_runtime_tool_invocation_route("project_build"),
+        ("direct", None)
     );
 }
 

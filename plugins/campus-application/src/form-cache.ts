@@ -4,6 +4,24 @@ import {
   type CanonicalField,
 } from "./resume.js";
 
+export type SnapshotFormContext = {
+  field_signature: string;
+  dom_tag: string;
+  input_type?: string;
+  html_name?: string;
+  placeholder?: string;
+  autocomplete?: string;
+  nearby_label?: string;
+  group_label?: string;
+  group_index?: number;
+  group_size?: number;
+  section_label?: string;
+  component_hint?: string;
+  aria_invalid?: boolean;
+  validation_hint?: string;
+  option_count?: number;
+};
+
 export type SnapshotNode = {
   role: string;
   name: string;
@@ -17,7 +35,9 @@ export type SnapshotNode = {
   required?: boolean;
   disabled?: boolean;
   read_only?: boolean;
+  form_context?: SnapshotFormContext;
   element_id?: string;
+  actions?: string[];
   actionable: boolean;
 };
 
@@ -25,13 +45,23 @@ export type CachedFieldMapping = {
   canonicalField: CanonicalField;
   resumePath: string;
   confidence: number;
-  source: "name" | "group" | "resume_upload" | "section";
+  source: "name" | "group" | "form_context" | "hint" | "resume_upload" | "section";
+  choiceValue?: string | undefined;
 };
 
 export type ResolvedStructureNode = {
   node: SnapshotNode;
   key: string;
+  mapping_id: string;
   mapping?: CachedFieldMapping;
+};
+
+export type FormMappingHint = {
+  mapping_id: string;
+  label?: string | undefined;
+  canonicalField?: CanonicalField | undefined;
+  resumePath?: string | undefined;
+  choiceValue?: string | undefined;
 };
 
 const MAX_STRUCTURE_NODES = 256;
@@ -157,14 +187,39 @@ const fieldKeywords: ReadonlyArray<{
 }> = [
   { field: "first_name", exact: ["firstname", "givenname", "名"], contains: ["firstname", "givenname"] },
   { field: "last_name", exact: ["lastname", "surname", "familyname", "姓"], contains: ["lastname", "surname", "familyname"] },
+  { field: "gender", exact: ["gender", "sex", "性别"], contains: ["gender", "性别"] },
+  { field: "birth_date", exact: ["dateofbirth", "birthdate", "birthday", "出生日期", "出生年月", "生日"], contains: ["dateofbirth", "birthdate", "出生日期", "出生年月"] },
+  { field: "id_type", exact: ["idtype", "identificationtype", "证件类型"], contains: ["idtype", "证件类型"] },
+  { field: "id_number", exact: ["idnumber", "identificationnumber", "身份证号", "身份证号码", "证件号码", "证件号"], contains: ["idnumber", "身份证号", "证件号码", "证件号"] },
+  { field: "ethnicity", exact: ["ethnicity", "nationalityethnicity", "民族"], contains: ["ethnicity", "民族"] },
+  { field: "political_status", exact: ["politicalstatus", "政治面貌"], contains: ["politicalstatus", "政治面貌"] },
+  { field: "health_status", exact: ["healthstatus", "健康状况", "健康状态"], contains: ["healthstatus", "健康状况"] },
+  { field: "native_place_province", exact: ["nativeplaceprovince", "籍贯省", "籍贯省份"], contains: ["nativeplaceprovince", "籍贯省"] },
+  { field: "native_place_city", exact: ["nativeplacecity", "籍贯市", "籍贯城市"], contains: ["nativeplacecity", "籍贯市", "籍贯城市"] },
+  { field: "native_place", exact: ["nativeplace", "籍贯"], contains: ["nativeplace", "籍贯"] },
+  { field: "household_registration_province", exact: ["householdregistrationprovince", "hukouprovince", "户籍省", "户籍省份", "户口省份"], contains: ["householdregistrationprovince", "hukouprovince", "户籍省", "户口省"] },
+  { field: "household_registration_city", exact: ["householdregistrationcity", "hukoucity", "户籍市", "户籍城市", "户口城市"], contains: ["householdregistrationcity", "hukoucity", "户籍市", "户口城市"] },
+  { field: "household_registration", exact: ["householdregistration", "hukou", "户籍所在地", "户口所在地", "户籍"], contains: ["householdregistration", "hukou", "户籍", "户口"] },
+  { field: "student_origin_province", exact: ["studentoriginprovince", "生源地省", "生源省份", "高考生源地省", "高考生源省份"], contains: ["studentoriginprovince", "生源地省", "生源省", "高考生源省"] },
+  { field: "student_origin_city", exact: ["studentorigincity", "生源地市", "生源城市", "高考生源地市", "高考生源城市"], contains: ["studentorigincity", "生源地市", "生源城市", "高考生源城市"] },
+  { field: "student_origin", exact: ["studentorigin", "sourceplace", "生源地", "生源所在地", "生源地区", "高考生源地"], contains: ["studentorigin", "sourceplace", "生源地", "生源所在", "高考生源"] },
+  { field: "is_fresh_graduate", exact: ["isfreshgraduate", "freshgraduate", "是否为应届毕业生", "是否应届毕业生", "应届毕业生"], contains: ["freshgraduate", "应届毕业生"] },
+  { field: "marital_status", exact: ["maritalstatus", "婚姻状况", "婚姻状态"], contains: ["maritalstatus", "婚姻"] },
   { field: "full_name", exact: ["name", "fullname", "姓名"], contains: ["fullname", "candidatename"] },
   { field: "email", exact: ["email", "emailaddress", "邮箱", "电子邮箱"], contains: ["email"] },
   { field: "phone", exact: ["phone", "phonenumber", "mobile", "mobilenumber", "手机号", "手机号码", "联系电话", "电话"], contains: ["phone", "mobile", "手机号", "联系电话"] },
-  { field: "city", exact: ["city", "location", "currentlocation", "所在城市", "当前城市", "城市"], contains: ["currentlocation", "所在城市", "当前城市"] },
+  { field: "current_residence_province", exact: ["currentresidenceprovince", "现居住省份", "现居省份", "当前居住省份"], contains: ["currentresidenceprovince", "现居住省", "当前居住省"] },
+  { field: "city", exact: ["city", "location", "currentlocation", "所在城市", "当前城市", "现居住城市", "现居城市", "城市"], contains: ["currentlocation", "现居住城市", "现居城市", "当前城市"] },
   { field: "address", exact: ["address", "mailingaddress", "地址", "通讯地址"], contains: ["address", "通讯地址"] },
+  { field: "education_province", exact: ["educationprovince", "schoolprovince", "院校所在省份", "学校所在省份", "就读院校所在省份"], contains: ["educationprovince", "schoolprovince", "院校所在省", "学校所在省"] },
+  { field: "education_city", exact: ["educationcity", "schoolcity", "院校所在城市", "学校所在城市", "就读院校所在城市"], contains: ["educationcity", "schoolcity", "院校所在城市", "学校所在城市"] },
   { field: "university", exact: ["school", "university", "college", "学校", "院校", "毕业院校"], contains: ["school", "university", "college", "毕业院校"] },
   { field: "degree", exact: ["degree", "educationlevel", "学历", "学位"], contains: ["degree", "educationlevel", "学历", "学位"] },
-  { field: "major", exact: ["discipline", "major", "fieldofstudy", "专业"], contains: ["discipline", "major", "fieldofstudy", "专业"] },
+  {
+    field: "major",
+    exact: ["discipline", "major", "fieldofstudy", "专业", "专业名称", "所学专业", "主修专业", "专业方向"],
+    contains: ["discipline", "major", "fieldofstudy", "所学专业", "主修专业"],
+  },
   { field: "graduation_date", exact: ["graduationdate", "graduationtime", "enddate", "毕业时间", "预计毕业时间"], contains: ["graduation", "毕业时间"] },
   { field: "gpa", exact: ["gpa", "gradepointaverage", "绩点"], contains: ["gpa", "绩点"] },
   { field: "current_company", exact: ["currentcompany", "company", "当前公司", "公司"], contains: ["currentcompany", "当前公司"] },
@@ -194,13 +249,45 @@ export function matchField(
   return undefined;
 }
 
+function matchFieldExact(
+  label: string,
+): { canonicalField: CanonicalField; confidence: number } | undefined {
+  const normalized = normalizeLabel(label);
+  if (!normalized) return undefined;
+  for (const rule of fieldKeywords) {
+    if (rule.exact.includes(normalized)) {
+      return { canonicalField: rule.field, confidence: 0.99 };
+    }
+  }
+  return undefined;
+}
+
+export function isUploadControl(node: SnapshotNode): boolean {
+  const role = node.role.toLowerCase();
+  return (
+    node.actions?.includes("upload_file") === true ||
+    (role === "button" && normalizeLabel(node.value ?? "").includes("未选择任何文件"))
+  );
+}
+
 export function isResumeUpload(node: SnapshotNode): boolean {
-  const label = normalizeLabel(node.name);
+  if (!isUploadControl(node)) return false;
+
+  const label = normalizeLabel(
+    [
+      node.name,
+      node.description ?? "",
+      node.group_label ?? "",
+      node.form_context?.section_label ?? "",
+      node.form_context?.nearby_label ?? "",
+      node.form_context?.placeholder ?? "",
+      node.form_context?.html_name ?? "",
+    ].join(" "),
+  );
   return (
     label.includes("resume") ||
     label.includes("cv") ||
-    label.includes("简历") ||
-    label.includes("附件")
+    label.includes("简历")
   );
 }
 
@@ -222,7 +309,7 @@ export function choiceMatches(option: string, desired: string): boolean {
 
 function isStructureNode(node: SnapshotNode): boolean {
   const role = node.role.toLowerCase();
-  if (node.actionable && isResumeUpload(node)) return true;
+  if (node.actionable && isUploadControl(node)) return true;
   return [
     "textbox",
     "searchbox",
@@ -248,15 +335,22 @@ function structuralBase(node: SnapshotNode): string {
   ]);
 }
 
-function structuralEntries(nodes: readonly SnapshotNode[]): Array<{ node: SnapshotNode; key: string }> {
+function mappingIdForKey(key: string): string {
+  return createHash("sha256").update(key).digest("hex").slice(0, 24);
+}
+
+function structuralEntries(
+  nodes: readonly SnapshotNode[],
+): Array<{ node: SnapshotNode; key: string; mapping_id: string }> {
   const counts = new Map<string, number>();
-  const entries: Array<{ node: SnapshotNode; key: string }> = [];
+  const entries: Array<{ node: SnapshotNode; key: string; mapping_id: string }> = [];
   for (const node of nodes.slice(0, MAX_STRUCTURE_NODES)) {
     if (!isStructureNode(node)) continue;
     const base = structuralBase(node);
     const occurrence = counts.get(base) ?? 0;
     counts.set(base, occurrence + 1);
-    entries.push({ node, key: `${base}#${occurrence}` });
+    const key = `${base}#${occurrence}`;
+    entries.push({ node, key, mapping_id: mappingIdForKey(key) });
   }
   return entries;
 }
@@ -270,7 +364,7 @@ export function formStructureSignature(nodes: readonly SnapshotNode[]): string {
 }
 
 function deriveMappings(
-  entries: ReadonlyArray<{ node: SnapshotNode; key: string }>,
+  entries: ReadonlyArray<{ node: SnapshotNode; key: string; mapping_id: string }>,
 ): Map<string, CachedFieldMapping> {
   const mappings = new Map<string, CachedFieldMapping>();
   const groupIndexes = new Map<string, number>();
@@ -279,6 +373,28 @@ function deriveMappings(
     experience: 0,
     projects: 0,
   };
+
+  // Count model-visible controls sharing the same semantic group. Frameworks often
+  // implement one scalar select with several internal DOM controls; DOM group size
+  // alone cannot distinguish those internals from a real composite field such as
+  // province + city. A single projected control can safely use an exact group label,
+  // while two or more projected controls keep the group observable but unmapped.
+  const hasDataAction = (node: SnapshotNode): boolean =>
+    ["input_text", "select_option", "set_value", "upload_file"].some(
+      (action) => node.actions?.includes(action) === true,
+    );
+  const projectedGroupDataCounts = new Map<string, number>();
+  for (const { node } of entries) {
+    if (!hasDataAction(node)) continue;
+    const label = normalizeLabel(
+      node.group_label ?? node.form_context?.group_label ?? "",
+    );
+    if (!label) continue;
+    projectedGroupDataCounts.set(
+      label,
+      (projectedGroupDataCounts.get(label) ?? 0) + 1,
+    );
+  }
 
   for (const { node, key } of entries) {
     const role = node.role.toLowerCase();
@@ -292,13 +408,14 @@ function deriveMappings(
       continue;
     }
 
-    const sectionKind = node.group_label
-      ? repeatSectionKind(node.group_label)
+    const sectionLabel = node.group_label || node.form_context?.section_label;
+    const sectionKind = sectionLabel
+      ? repeatSectionKind(sectionLabel)
       : undefined;
-    if (sectionKind && node.group_label) {
-      const explicitIndex = explicitSectionIndex(node.group_label);
+    if (sectionKind && sectionLabel) {
+      const explicitIndex = explicitSectionIndex(sectionLabel);
       const groupKey =
-        node.group_id ?? `${sectionKind}:${normalizeLabel(node.group_label)}`;
+        node.group_id ?? `${sectionKind}:${normalizeLabel(sectionLabel)}`;
       let sectionIndex = explicitIndex ?? groupIndexes.get(groupKey);
       if (sectionIndex === undefined) {
         sectionIndex = nextIndexes[sectionKind];
@@ -308,7 +425,13 @@ function deriveMappings(
       }
       groupIndexes.set(groupKey, sectionIndex);
 
-      const sectionField = matchSectionField(sectionKind, node.name);
+      const sectionField = matchSectionField(
+        sectionKind,
+        node.name ||
+          node.form_context?.placeholder ||
+          node.form_context?.html_name ||
+          "",
+      );
       if (sectionField) {
         mappings.set(key, {
           canonicalField: sectionField.canonicalField,
@@ -332,23 +455,64 @@ function deriveMappings(
       continue;
     }
 
-    const match = matchField(node.name);
-    if (match) {
+    const evidenceLabels: ReadonlyArray<{
+      label: string;
+      source: CachedFieldMapping["source"];
+      exactOnly?: boolean;
+    }> = [
+      { label: node.name, source: "name" },
+      { label: node.description ?? "", source: "group" },
+      {
+        label: (() => {
+          const groupLabel =
+            node.group_label ?? node.form_context?.group_label ?? "";
+          if (!groupLabel) return "";
+          return hasDataAction(node) &&
+            (projectedGroupDataCounts.get(normalizeLabel(groupLabel)) ?? 0) <= 1
+            ? groupLabel
+            : "";
+        })(),
+        source: "group",
+        exactOnly: true,
+      },
+      { label: node.form_context?.nearby_label ?? "", source: "form_context" },
+      { label: node.form_context?.placeholder ?? "", source: "form_context" },
+      {
+        label: node.form_context?.html_name ?? "",
+        source: "form_context",
+        exactOnly: true,
+      },
+      {
+        label: node.form_context?.autocomplete ?? "",
+        source: "form_context",
+        exactOnly: true,
+      },
+    ];
+    for (const evidence of evidenceLabels) {
+      const match = evidence.exactOnly
+        ? matchFieldExact(evidence.label)
+        : matchField(evidence.label);
+      if (!match) continue;
       mappings.set(key, {
         ...match,
         resumePath: resumePathForCanonicalField(match.canonicalField),
-        source: "name",
+        source: evidence.source,
       });
+      break;
     }
   }
   return mappings;
 }
 
-function remember(signature: string, mappings: Map<string, CachedFieldMapping>): void {
-  if (mappingCache.has(signature)) {
-    mappingCache.delete(signature);
+function cacheKeyFor(scope: string, signature: string): string {
+  return scope.length > 0 ? `${scope}\u0000${signature}` : signature;
+}
+
+function remember(cacheKey: string, mappings: Map<string, CachedFieldMapping>): void {
+  if (mappingCache.has(cacheKey)) {
+    mappingCache.delete(cacheKey);
   }
-  mappingCache.set(signature, mappings);
+  mappingCache.set(cacheKey, mappings);
   while (mappingCache.size > MAX_MAPPING_CACHE_ENTRIES) {
     const oldest = mappingCache.keys().next().value as string | undefined;
     if (oldest === undefined) break;
@@ -356,7 +520,11 @@ function remember(signature: string, mappings: Map<string, CachedFieldMapping>):
   }
 }
 
-export function resolveFormMappings(nodes: readonly SnapshotNode[]): {
+export function resolveFormMappings(
+  nodes: readonly SnapshotNode[],
+  hints: readonly FormMappingHint[] = [],
+  cacheScope = "",
+): {
   signature: string;
   cacheHit: boolean;
   cacheEntries: number;
@@ -367,17 +535,48 @@ export function resolveFormMappings(nodes: readonly SnapshotNode[]): {
     .update(JSON.stringify(entries.map(({ key }) => key)))
     .digest("hex")
     .slice(0, 24);
-  const cached = mappingCache.get(signature);
+  const cacheKey = cacheKeyFor(cacheScope, signature);
+  const cached = mappingCache.get(cacheKey);
   const cacheHit = cached !== undefined;
-  const mappings = cached ?? deriveMappings(entries);
-  remember(signature, mappings);
+  // Re-derive automatic mappings on every observation so newly available Browser
+  // semantics (for example form_context) take effect without changing the stable
+  // structure signature. Explicit taught mappings always win; otherwise cached
+  // automatic evidence is only a fallback when the fresh observation cannot map.
+  const mappings = deriveMappings(entries);
+  for (const [key, mapping] of cached ?? []) {
+    if (mapping.source === "hint" || !mappings.has(key)) mappings.set(key, mapping);
+  }
+
+  const entryByMappingId = new Map(entries.map((entry) => [entry.mapping_id, entry]));
+  for (const hint of hints) {
+    const entry = entryByMappingId.get(hint.mapping_id);
+    if (!entry) continue;
+    const matched = hint.canonicalField
+      ? { canonicalField: hint.canonicalField, confidence: 1 }
+      : hint.label
+        ? matchField(hint.label)
+        : undefined;
+    if (!matched) continue;
+    mappings.set(entry.key, {
+      canonicalField: matched.canonicalField,
+      resumePath:
+        hint.resumePath ?? resumePathForCanonicalField(matched.canonicalField),
+      confidence: matched.confidence,
+      source: "hint",
+      ...(hint.choiceValue === undefined ? {} : { choiceValue: hint.choiceValue }),
+    });
+  }
+  remember(cacheKey, mappings);
+
   return {
     signature,
     cacheHit,
     cacheEntries: mappingCache.size,
-    nodes: entries.map(({ node, key }) => {
+    nodes: entries.map(({ node, key, mapping_id }) => {
       const mapping = mappings.get(key);
-      return mapping === undefined ? { node, key } : { node, key, mapping };
+      return mapping === undefined
+        ? { node, key, mapping_id }
+        : { node, key, mapping_id, mapping };
     }),
   };
 }

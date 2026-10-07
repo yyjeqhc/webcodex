@@ -49,3 +49,16 @@ fn continuity_outputs_are_closed_and_do_not_need_transport_identity() {
     unsafe_output["output"]["debugger_endpoint"] = json!("ws://127.0.0.1:9222");
     assert!(crate::test_support::validate_schema_instance(&unsafe_output, &schema).is_err());
 }
+
+#[test]
+fn semantic_query_schema_is_closed_and_preserves_snapshot_shape() {
+    let value = json!({"action":"snapshot","client_id":"mini", "browser_id":"browser_abcdefghijklmnop", "page_id":"page_abcdefghijklmnop", "query":{"fields_only":true,"text":"School","group":"Education","section":"History"}});
+    let schema = crate::input_schema_for_tool("observe_browser");
+    crate::test_support::validate_schema_instance(&value, &schema).unwrap();
+    let call: BrowserObserveToolCall = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(call).unwrap()["query"], value["query"]);
+    let mut invalid = value;
+    invalid["query"]["selector"] = json!("div");
+    assert!(serde_json::from_value::<BrowserObserveToolCall>(invalid.clone()).is_err());
+    assert!(crate::test_support::validate_schema_instance(&invalid, &schema).is_err());
+}

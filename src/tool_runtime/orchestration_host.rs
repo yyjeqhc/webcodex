@@ -178,6 +178,10 @@ pub(crate) struct OrchestrationCompositionSummary {
     pub(crate) known_results: usize,
     pub(crate) job_handoffs: usize,
     pub(crate) outcome_unknown: usize,
+    /// Authoritative mutation effects from canonical child ToolResults. These
+    /// are aggregate observability facts only; they never expose paths or payloads.
+    pub(crate) mutation_state_changed: usize,
+    pub(crate) mutation_no_change: usize,
 }
 
 #[derive(Debug, Default)]
@@ -241,6 +245,8 @@ impl OrchestrationCompositionAccumulator {
             known_results: 0,
             job_handoffs: 0,
             outcome_unknown: 0,
+            mutation_state_changed: 0,
+            mutation_no_change: 0,
         }
     }
 }
@@ -679,6 +685,16 @@ impl CanonicalOrchestrationHost {
         summary.known_results = effects.known_results;
         summary.job_handoffs = effects.job_handoffs;
         summary.outcome_unknown = effects.outcome_unknown;
+        summary.mutation_state_changed = effects
+            .children
+            .iter()
+            .filter(|child| child.state_changed == Some(true))
+            .count();
+        summary.mutation_no_change = effects
+            .children
+            .iter()
+            .filter(|child| child.state_changed == Some(false))
+            .count();
         summary
     }
 

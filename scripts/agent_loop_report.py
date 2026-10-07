@@ -60,7 +60,11 @@ CODE_MODE_COMPOSITION_NUMERIC_FIELDS = (
 )
 # Additive fields may be absent from historical ActionAudit rows. They get their
 # own availability/missing accounting and never invalidate the core composition.
-CODE_MODE_COMPOSITION_OPTIONAL_NUMERIC_FIELDS = ("input_bytes",)
+CODE_MODE_COMPOSITION_OPTIONAL_NUMERIC_FIELDS = (
+    "input_bytes",
+    "mutation_state_changed",
+    "mutation_no_change",
+)
 
 # Closed v13 persisted wire vocabulary for this offline consumer, not alias rules.
 # Runtime/schema spellings are owned by ToolInputNormalizationCode in tool-contracts.
@@ -71,6 +75,16 @@ INPUT_NORMALIZATION_CODES = frozenset((
     "run_process_bash_lc_to_login_run_shell",
 ))
 INPUT_NORMALIZATION_SCHEMA_VERSION = 13
+EDIT_OUTCOME_SCHEMA_VERSION = 13
+EDIT_OUTCOMES = frozenset((
+    "applied",
+    "dry_run_would_change",
+    "dry_run_no_change",
+    "no_change",
+    "conflict",
+    "uncertain",
+    "rejected",
+))
 
 
 class ReportError(ValueError):
@@ -151,11 +165,17 @@ def validate_case_manifest(value: Any) -> dict[str, Any]:
 
 def load_case_manifest(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise ReportError(f"could not read case manifest: {path}") from exc
+    except UnicodeDecodeError as exc:
+        raise ReportError(f"case manifest must be UTF-8: {path}") from exc
+    try:
+        value = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ReportError(f"case manifest is not valid JSON: {path}:{exc.lineno}") from exc
+    except (RecursionError, ValueError) as exc:
+        raise ReportError(f"case manifest is not valid bounded JSON: {path}") from exc
     return validate_case_manifest(value)
 
 
@@ -830,6 +850,13 @@ def _summarize_job_convergence(selected: list[dict[str, Any]], context: list[dic
     failure_observed: set[str] = set()
     timed: set[str] = set()
     pending_observed: set[str] = set()
+    pending_origin_by_relation: dict[str, str | None] = {}
+    pending_by_origin_tool: Counter[str] = Counter()
+    followup_by_origin_tool: Counter[str] = Counter()
+    timings_by_origin_tool: dict[str, list[int]] = {}
+    timing_missing_by_origin_tool: Counter[str] = Counter()
+    selected_terminal_by_origin_tool: Counter[str] = Counter()
+    selected_terminal_relations: set[str] = set()
 
     def facts(row: dict[str, Any]) -> dict[str, Any]:
         value = (_telemetry(row) or {}).get("job_convergence")
@@ -842,6 +869,19 @@ def _summarize_job_convergence(selected: list[dict[str, Any]], context: list[dic
         return [event for event in raw if isinstance(event, dict)
                 and _is_exact_sha256(event.get("relation"))
                 and event.get("kind") in ("pending_handoff", "explicit_observe", "passive_terminal")]
+
+    def origin_tool(row: dict[str, Any]) -> str | None:
+        telemetry = _telemetry(row)
+        if not isinstance(telemetry, dict):
+            return None
+        tool = telemetry.get("tool_name")
+        if (
+            isinstance(tool, str)
+            and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", tool) is not None
+            and tool == row.get("operation")
+        ):
+            return tool
+        return None
 
     def predecessor(row: dict[str, Any]) -> dict[str, Any] | None:
         nonlocal links_remaining
@@ -875,6 +915,28 @@ def _summarize_job_convergence(selected: list[dict[str, Any]], context: list[dic
 
     selected_relations = {event["relation"] for row in selected for event in events(row)}
     selected_traces = {row.get("server_trace_id") for row in selected}
+    for row in selected:
+        telemetry = _telemetry(row) or {}
+        version = telemetry.get("schema_version")
+        if (
+            facts(row).get("correlation_complete") is not True
+            or not isinstance(version, int)
+            or isinstance(version, bool)
+            or version < 10
+        ):
+            continue
+        tool = origin_tool(row)
+        for event in events(row):
+            if event["kind"] != "pending_handoff":
+                continue
+            relation_id = event["relation"]
+            if relation_id not in pending_origin_by_relation:
+                pending_origin_by_relation[relation_id] = tool
+            elif pending_origin_by_relation[relation_id] != tool:
+                pending_origin_by_relation[relation_id] = None
+    for tool in pending_origin_by_relation.values():
+        if tool is not None:
+            pending_by_origin_tool[tool] += 1
     measured_rows = [row for row in rows.values() if row.get("server_trace_id") in selected_traces
                      or any(event["relation"] in selected_relations for event in events(row))]
     # Missing trace/timing still contributes observed invocation counts, but
@@ -891,11 +953,24 @@ def _summarize_job_convergence(selected: list[dict[str, Any]], context: list[dic
                 if event["kind"] == "pending_handoff" and event["relation"] in selected_relations:
                     known_followups.add(event["relation"])
     counts["pending_followup_known_count"] = len(known_followups)
+    for relation_id in known_followups:
+        tool = pending_origin_by_relation.get(relation_id)
+        if tool is not None:
+            followup_by_origin_tool[tool] += 1
     for row in measured_rows:
         data = facts(row)
-        for name in ("pending_handoff_count", "passive_terminal_delivery_count", "passive_failure_delivery_count", "wait_for_job_terminal_count"):
+        for name, maximum in (
+            ("pending_handoff_count", 32),
+            ("passive_terminal_delivery_count", 9),
+            ("passive_failure_delivery_count", 9),
+            ("wait_for_job_terminal_count", 1),
+        ):
             value = data.get(name, 0)
-            if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 9:
+            if (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and 0 <= value <= maximum
+            ):
                 counts[name] += value
         if data.get("correlation_complete") is False:
             counts["uncorrelated_calls"] += 1
@@ -908,18 +983,17 @@ def _summarize_job_convergence(selected: list[dict[str, Any]], context: list[dic
                     if relation_id not in pending_observed:
                         counts["pending_followed_immediately_by_observe_count"] += 1
                         pending_observed.add(relation_id)
-                if relation_id in failure_observed:
-                    continue
-                for previous in history(row):
-                    matching = [old for old in events(previous) if old["relation"] == relation_id]
-                    if any(old["kind"] == "passive_terminal" and old.get("failure") is True for old in matching):
-                        counts["terminal_failure_followed_by_observe_count"] += 1
-                        failure_observed.add(relation_id)
-                        if any(old.get("validation_failure") is True for old in matching if old["kind"] == "passive_terminal"):
-                            counts["terminal_validation_failure_followed_by_observe_count"] += 1
-                        break
-                    if any(old["kind"] == "pending_handoff" for old in matching):
-                        break
+                if relation_id not in failure_observed:
+                    for previous in history(row):
+                        matching = [old for old in events(previous) if old["relation"] == relation_id]
+                        if any(old["kind"] == "passive_terminal" and old.get("failure") is True for old in matching):
+                            counts["terminal_failure_followed_by_observe_count"] += 1
+                            failure_observed.add(relation_id)
+                            if any(old.get("validation_failure") is True for old in matching if old["kind"] == "passive_terminal"):
+                                counts["terminal_validation_failure_followed_by_observe_count"] += 1
+                            break
+                        if any(old["kind"] == "pending_handoff" for old in matching):
+                            break
             elif event["kind"] == "passive_terminal":
                 counts["passive_validation_failure_delivery_count"] += int(event.get("validation_failure") is True)
                 observed = False
@@ -940,15 +1014,52 @@ def _summarize_job_convergence(selected: list[dict[str, Any]], context: list[dic
                         pending = previous
                         break
             if event["kind"] == "passive_terminal" or event.get("terminal_observed_at_ms") is not None:
+                origin = pending_origin_by_relation.get(relation_id)
+                trace_id = row.get("server_trace_id")
+                if (
+                    pending is not None
+                    and origin is not None
+                    and isinstance(trace_id, str)
+                    and trace_id in selected_traces
+                    and relation_id not in selected_terminal_relations
+                ):
+                    selected_terminal_relations.add(relation_id)
+                    selected_terminal_by_origin_tool[origin] += 1
                 if relation_id not in timed:
                     timed.add(relation_id)
                     handed = pending.get("response_handed_at_ms") if pending else None
                     terminal = event.get("terminal_observed_at_ms")
                     if isinstance(handed, int) and isinstance(terminal, int) and terminal >= handed:
-                        timings.append(terminal - handed)
+                        elapsed = terminal - handed
+                        timings.append(elapsed)
+                        if origin is not None:
+                            timings_by_origin_tool.setdefault(origin, []).append(elapsed)
                     else:
                         timing_missing += 1
-    return {**counts, "pending_to_terminal_ms": _metric_distribution(timings, missing=timing_missing)}
+                        if origin is not None:
+                            timing_missing_by_origin_tool[origin] += 1
+    origin_tools = sorted(
+        set(pending_by_origin_tool)
+        | set(followup_by_origin_tool)
+        | set(timings_by_origin_tool)
+        | set(timing_missing_by_origin_tool)
+    )
+    return {
+        **counts,
+        "pending_handoff_by_origin_tool": dict(sorted(pending_by_origin_tool.items())),
+        "pending_followup_known_by_origin_tool": dict(sorted(followup_by_origin_tool.items())),
+        "selected_terminal_by_origin_tool": dict(
+            sorted(selected_terminal_by_origin_tool.items())
+        ),
+        "pending_to_terminal_ms": _metric_distribution(timings, missing=timing_missing),
+        "pending_to_terminal_ms_by_origin_tool": {
+            tool: _metric_distribution(
+                timings_by_origin_tool.get(tool, []),
+                missing=timing_missing_by_origin_tool.get(tool, 0),
+            )
+            for tool in origin_tools
+        },
+    }
 
 
 
@@ -1513,11 +1624,31 @@ def _summarize_audit(
     failure_kinds: Counter[str] = Counter()
     recovery_guidance: Counter[str] = Counter()
     error_kinds: Counter[str] = Counter()
+    edit_outcomes: Counter[str] = Counter()
+    edit_outcomes_by_tool: dict[str, Counter[str]] = {}
+    unrecognized_edit_outcomes = 0
     for _, value in present_telemetries:
         for field, counter in (("failure_kind", failure_kinds), ("recovery_kind", recovery_guidance), ("error_kind", error_kinds)):
             item = value.get(field)
             if isinstance(item, str) and item:
                 counter[item] += 1
+        outcome = value.get("edit_outcome")
+        if outcome is None:
+            continue
+        schema_version = value.get("schema_version")
+        if (
+            not isinstance(schema_version, int)
+            or isinstance(schema_version, bool)
+            or schema_version < EDIT_OUTCOME_SCHEMA_VERSION
+            or not isinstance(outcome, str)
+            or outcome not in EDIT_OUTCOMES
+        ):
+            unrecognized_edit_outcomes += 1
+            continue
+        edit_outcomes[outcome] += 1
+        tool_name = value.get("tool_name")
+        if isinstance(tool_name, str) and tool_name:
+            edit_outcomes_by_tool.setdefault(tool_name, Counter())[outcome] += 1
 
     gaps, overlap_count, missing_serial = _window_timing(outer, continuity_events)
     host_short_chain, host_short_chain_availability = _summarize_host_short_chains(
@@ -1552,6 +1683,15 @@ def _summarize_audit(
             "total": canonical_total,
             "observed_outer_runtime_records": canonical_observed,
             "by_name": dict(sorted(canonical_by_name.items())),
+        },
+        "edit_outcomes": {
+            "observed": sum(edit_outcomes.values()),
+            "unrecognized": unrecognized_edit_outcomes,
+            "by_outcome": dict(sorted(edit_outcomes.items())),
+            "by_tool": {
+                tool: dict(sorted(counts.items()))
+                for tool, counts in sorted(edit_outcomes_by_tool.items())
+            },
         },
         "composition": composition,
         "host_short_chain": host_short_chain,
@@ -1599,6 +1739,16 @@ def _summarize_audit(
             "tool_runtime_timing": {"available": runtime_duration["total"] is not None, "reason": None if runtime_duration["total"] is not None else "one or more outer calls lack ModelErgonomics runtime duration evidence"},
             "window_timing": {"available": missing_serial == 0, "reason": None if missing_serial == 0 else "one or more canonical serial transitions lack the predecessor timestamps needed for a gap"},
             "canonical_calls": {"available": canonical_total is not None, "reason": canonical_reason},
+            "edit_outcomes": {
+                "available": bool(edit_outcomes) and unrecognized_edit_outcomes == 0,
+                "reason": (
+                    None
+                    if edit_outcomes and unrecognized_edit_outcomes == 0
+                    else "no complete authoritative ModelErgonomics edit outcome evidence"
+                    if not edit_outcomes
+                    else "one or more edit outcome labels are unknown or malformed"
+                ),
+            },
             "code_mode_composition": composition_availability,
             "host_short_chain": host_short_chain_availability,
             "host_same_model_turn_identity": {
@@ -1663,6 +1813,12 @@ def _summarize_trace_only(trace_events: list[dict[str, Any]], variant: str | Non
         "outer_calls": {"total": len(handlers), "meaningful": None, "successful": statuses.get("success", 0), "failed": statuses.get("failed", 0), "timeout_or_unknown": statuses.get("unknown", 0), "by_status": dict(sorted(statuses.items()))},
         "tools": {"outer_by_name": dict(sorted(tools.items()))},
         "canonical_calls": {"total": None, "observed_outer_runtime_records": None, "by_name": {}},
+        "edit_outcomes": {
+            "observed": 0,
+            "unrecognized": 0,
+            "by_outcome": {},
+            "by_tool": {},
+        },
         "composition": composition,
         "host_short_chain": {
             "serial_transitions": None,
@@ -1685,6 +1841,10 @@ def _summarize_trace_only(trace_events: list[dict[str, Any]], variant: str | Non
         "failures": {"error_kind_by_name": {}, "failure_kind_by_name": {}, "recovery_guidance_by_kind": {}, "child_failure_kind_by_name": None, "resolved_recoveries": None},
         "availability": {
             "action_audit": {"available": False, "reason": "no ActionAudit DB evidence was provided"},
+            "edit_outcomes": {
+                "available": False,
+                "reason": "trace metadata does not persist authoritative edit outcome evidence",
+            },
             "model_round_trips": {
                 "available": False,
                 "reason": "events.jsonl does not persist model response/turn identity",

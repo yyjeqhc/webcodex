@@ -1,12 +1,14 @@
+mod clickable;
 use crate::bridge::ExternalLease;
 use crate::profiles::{ManagedProfile, OwnedProfile};
 use crate::types::{
     clip_bytes, BrowserError, BrowserKey, BrowserResult, BrowserStability, ControlCapability,
-    LAUNCH_TIMEOUT, MAX_NODE_TEXT_BYTES, MAX_PAGES_PER_BROWSER, MAX_SNAPSHOT_BYTES,
+    FormContext, LAUNCH_TIMEOUT, MAX_NODE_TEXT_BYTES, MAX_PAGES_PER_BROWSER, MAX_SNAPSHOT_BYTES,
     MAX_SNAPSHOT_NODES, REQUEST_TIMEOUT,
 };
 use crate::BrowserOwnership;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Read;
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
@@ -147,6 +149,7 @@ pub(crate) struct BackendNode {
 pub(crate) struct BackendSnapshot {
     pub(crate) document_id: String,
     pub(crate) nodes: Vec<BackendNode>,
+    pub(crate) form_context_by_backend_id: HashMap<i64, FormContext>,
     /// Frame collection omitted source nodes; compaction cannot recover them.
     pub(crate) source_incomplete: bool,
     pub(crate) truncated: bool,
@@ -1006,7 +1009,56 @@ impl BrowserBackend for CdpBackend {
             ));
         }
         let (mut nodes, mut truncated) = project_ax_nodes(&raw_nodes, dom_root.as_ref());
-        let mut source_incomplete = false;
+        // One read-only CDP capture, under the existing response-byte and request
+        // deadline bounds. Missing evidence grants nothing; native controls are unchanged.
+        if let Some(root) = dom_root.as_ref() {
+            if clickable::capture_source_is_bounded(root)
+                && nodes
+                    .iter()
+                    .take(crate::MAX_SNAPSHOT_OFFSET + MAX_SNAPSHOT_NODES)
+                    .any(|node| {
+                        matches!(
+                            node.role.as_str(),
+                            "generic" | "group" | "listitem" | "article"
+                        )
+                    })
+            {
+                if let Ok(capture) = cdp_call_on_websocket_until(
+                    &mut websocket,
+                    &mut self.next_id,
+                    "DOMSnapshot.captureSnapshot",
+                    json!({"computedStyles": ["cursor", "visibility", "display", "pointer-events", "opacity"]}),
+                    false,
+                    deadline,
+                ) {
+                    clickable::admit_clickable_cards(&mut nodes, root, &capture);
+                }
+                // Reject document replacement between AX/DOM/layout observations.
+                let current = cdp_call_on_websocket_until(
+                    &mut websocket,
+                    &mut self.next_id,
+                    "Page.getFrameTree",
+                    json!({}),
+                    false,
+                    deadline,
+                )?;
+                if current
+                    .pointer("/frameTree/frame/loaderId")
+                    .and_then(Value::as_str)
+                    != Some(document_id.as_str())
+                {
+                    return Err(BrowserError::not_started(
+                        "stale_element",
+                        "Document changed during snapshot; observe again",
+                    ));
+                }
+            }
+        }
+        let mut form_context_by_backend_id = dom_root
+            .as_ref()
+            .map(index_form_contexts)
+            .unwrap_or_default();
+        let mut source_incomplete = ax_source_incomplete(&raw_nodes);
         if let Some(root) = dom_root.as_ref() {
             let documents = frame_documents(&frame_tree, root);
             let fence = frame_fence(&frame_tree, root);
@@ -1024,7 +1076,9 @@ impl BrowserBackend for CdpBackend {
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
+                source_incomplete |= ax_source_incomplete(&raw);
                 let (mut children, child_truncated) = project_ax_nodes(&raw, Some(document));
+                form_context_by_backend_id.extend(index_form_contexts(document));
                 for node in &mut children {
                     node.frame_fence = Some(fence.clone());
                     if let Some(key) = &mut node.group_key {
@@ -1035,7 +1089,7 @@ impl BrowserBackend for CdpBackend {
                 truncated |= child_truncated;
                 // Bound aggregation across frames, including non-actionable content.
                 if nodes.len() >= MAX_SNAPSHOT_NODES {
-                    source_incomplete = index + 1 < documents.len();
+                    source_incomplete |= index + 1 < documents.len();
                     break;
                 }
             }
@@ -1053,6 +1107,7 @@ impl BrowserBackend for CdpBackend {
         Ok(BackendSnapshot {
             document_id,
             nodes,
+            form_context_by_backend_id,
             source_incomplete,
             truncated,
         })
@@ -1703,6 +1758,24 @@ fn read_frame_fence(
     Ok(frame_fence(&tree, root))
 }
 
+// AX depth limits can omit advertised descendants. A query with no match must
+// not turn that partial observation into a claim of absence.
+fn ax_source_incomplete(raw_nodes: &[Value]) -> bool {
+    let ids = raw_nodes
+        .iter()
+        .filter_map(|node| node.get("nodeId").and_then(Value::as_str))
+        .collect::<HashSet<_>>();
+    raw_nodes.iter().any(|node| {
+        node.get("childIds")
+            .and_then(Value::as_array)
+            .is_some_and(|children| {
+                children
+                    .iter()
+                    .any(|id| id.as_str().is_none_or(|id| !ids.contains(id)))
+            })
+    })
+}
+
 fn parse_ax_snapshot_nodes(raw_nodes: &[Value]) -> (Vec<BackendNode>, bool) {
     let raw_by_id = raw_nodes
         .iter()
@@ -1777,12 +1850,15 @@ pub(crate) fn project_ax_nodes(
 struct DomControlFacts {
     local_name: String,
     input_type: Option<String>,
+    semantic_label: Option<String>,
+    semantic_group_label: Option<String>,
     in_native_control_shadow: bool,
     owning_select_backend_id: Option<i64>,
     host_backend_node_id: Option<i64>,
     host_local_name: Option<String>,
     host_input_type: Option<String>,
     host_label: Option<String>,
+    host_group_label: Option<String>,
     host_value: Option<String>,
     host_disabled: Option<bool>,
     host_read_only: Option<bool>,
@@ -1793,9 +1869,25 @@ struct ShadowHost {
     local_name: String,
     input_type: Option<String>,
     label: Option<String>,
+    group_label: Option<String>,
     value: Option<String>,
     disabled: Option<bool>,
     read_only: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+struct DomGroupLabel {
+    label: String,
+    index: usize,
+    size: usize,
+}
+
+#[derive(Default)]
+struct DomSemanticIndex {
+    id_text: HashMap<String, String>,
+    labels_for: HashMap<String, String>,
+    container_labels: HashMap<i64, String>,
+    container_group_labels: HashMap<i64, DomGroupLabel>,
 }
 
 fn apply_dom_capabilities(
@@ -1810,6 +1902,29 @@ fn apply_dom_capabilities(
         .filter_map(|node| node.backend_node_id)
         .collect::<HashSet<_>>();
     for node in nodes.iter_mut() {
+        if let (Some(index), Some(backend_node_id)) = (index.as_ref(), node.backend_node_id) {
+            if let Some(facts) = index.get(&backend_node_id) {
+                if node
+                    .name
+                    .as_deref()
+                    .is_none_or(|name| name.trim().is_empty())
+                {
+                    node.name = facts.semantic_label.clone();
+                }
+                if node
+                    .group_label
+                    .as_deref()
+                    .is_none_or(|label| label.trim().is_empty())
+                {
+                    if let Some(group_label) = facts.semantic_group_label.clone() {
+                        node.group_label = Some(group_label);
+                        if node.group_role.is_none() {
+                            node.group_role = Some("group".to_string());
+                        }
+                    }
+                }
+            }
+        }
         node.capability = gate_published_capability(
             capability_for_ax_node(node, index.as_ref(), &private_descendants),
             node.disabled,
@@ -1976,8 +2091,8 @@ fn host_projection(facts: &DomControlFacts, capability: ControlCapability) -> Op
         description: None,
         value: facts.host_value.clone(),
         group_key: None,
-        group_role: None,
-        group_label: None,
+        group_role: facts.host_group_label.as_ref().map(|_| "group".to_string()),
+        group_label: facts.host_group_label.clone(),
         checked: None,
         selected: None,
         required: None,
@@ -2122,8 +2237,9 @@ fn shadow_owner_promotion_rank(role: &str) -> u8 {
 }
 
 fn index_dom_controls(root: &Value) -> HashMap<i64, DomControlFacts> {
+    let semantics = index_dom_semantics(root);
     let mut index = HashMap::new();
-    walk_dom_controls(root, None, None, &mut index);
+    walk_dom_controls(root, None, None, None, None, &semantics, &mut index);
     index
 }
 
@@ -2131,6 +2247,9 @@ fn walk_dom_controls(
     node: &Value,
     host: Option<&ShadowHost>,
     owning_select: Option<i64>,
+    ancestor_label: Option<&str>,
+    fieldset_label: Option<&str>,
+    semantics: &DomSemanticIndex,
     index: &mut HashMap<i64, DomControlFacts>,
 ) {
     let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
@@ -2139,7 +2258,7 @@ fn walk_dom_controls(
         if let Some(children) = node.get("children").and_then(Value::as_array) {
             for child in children {
                 // Shadow contents are not light-DOM choices of an enclosing select.
-                walk_dom_controls(child, host, None, index);
+                walk_dom_controls(child, host, None, None, None, semantics, index);
             }
         }
         return;
@@ -2147,7 +2266,15 @@ fn walk_dom_controls(
     if node_type != 1 {
         if let Some(children) = node.get("children").and_then(Value::as_array) {
             for child in children {
-                walk_dom_controls(child, host, owning_select, index);
+                walk_dom_controls(
+                    child,
+                    host,
+                    owning_select,
+                    ancestor_label,
+                    fieldset_label,
+                    semantics,
+                    index,
+                );
             }
         }
         return;
@@ -2166,10 +2293,24 @@ fn walk_dom_controls(
             raw
         }
     });
+    let semantic_label = semantic_element_label(node, semantics, ancestor_label);
+    let own_label = (local_name == "label")
+        .then(|| dom_text_content(node))
+        .flatten();
+    let descendant_label = own_label.as_deref().or(ancestor_label);
+    let own_fieldset_label = (local_name == "fieldset")
+        .then(|| fieldset_legend(node))
+        .flatten();
+    let descendant_fieldset_label = own_fieldset_label.as_deref().or(fieldset_label);
     let in_native_control_shadow = host
         .as_ref()
         .is_some_and(|host| matches!(host.local_name.as_str(), "input" | "select" | "textarea"));
     let backend_node_id = node.get("backendNodeId").and_then(Value::as_i64);
+    let semantic_group_label = fieldset_label.map(ToOwned::to_owned).or_else(|| {
+        backend_node_id
+            .and_then(|id| semantics.container_group_labels.get(&id))
+            .map(|group| group.label.clone())
+    });
     let child_owning_select = if local_name == "select" && !in_native_control_shadow {
         backend_node_id
     } else if in_native_control_shadow {
@@ -2183,6 +2324,8 @@ fn walk_dom_controls(
             DomControlFacts {
                 local_name: local_name.clone(),
                 input_type: input_type.clone(),
+                semantic_label: semantic_label.clone(),
+                semantic_group_label: semantic_group_label.clone(),
                 in_native_control_shadow,
                 owning_select_backend_id: if local_name == "option" && !in_native_control_shadow {
                     owning_select
@@ -2193,6 +2336,7 @@ fn walk_dom_controls(
                 host_local_name: host.map(|host| host.local_name.clone()),
                 host_input_type: host.and_then(|host| host.input_type.clone()),
                 host_label: host.and_then(|host| host.label.clone()),
+                host_group_label: host.and_then(|host| host.group_label.clone()),
                 host_value: host.and_then(|host| host.value.clone()),
                 host_disabled: host.and_then(|host| host.disabled),
                 host_read_only: host.and_then(|host| host.read_only),
@@ -2203,19 +2347,36 @@ fn walk_dom_controls(
         backend_node_id,
         local_name,
         input_type,
-        label: element_label(node),
+        label: semantic_label,
+        group_label: semantic_group_label,
         value: element_value(node),
         disabled: dom_boolean_attribute(node, "disabled"),
         read_only: dom_boolean_attribute(node, "readonly"),
     };
     if let Some(children) = node.get("children").and_then(Value::as_array) {
         for child in children {
-            walk_dom_controls(child, host, child_owning_select, index);
+            walk_dom_controls(
+                child,
+                host,
+                child_owning_select,
+                descendant_label,
+                descendant_fieldset_label,
+                semantics,
+                index,
+            );
         }
     }
     if let Some(shadow_roots) = node.get("shadowRoots").and_then(Value::as_array) {
         for shadow_root in shadow_roots {
-            walk_dom_controls(shadow_root, Some(&next_host), None, index);
+            walk_dom_controls(
+                shadow_root,
+                Some(&next_host),
+                None,
+                None,
+                None,
+                semantics,
+                index,
+            );
         }
     }
 }
@@ -2245,13 +2406,766 @@ fn dom_attribute_raw(node: &Value, name: &str) -> Option<String> {
     None
 }
 
-fn element_label(node: &Value) -> Option<String> {
-    for name in ["aria-label", "title"] {
-        if let Some(value) = dom_attribute_raw(node, name).filter(|value| !value.is_empty()) {
-            return Some(clip_bytes(&value, MAX_NODE_TEXT_BYTES));
+fn index_dom_semantics(root: &Value) -> DomSemanticIndex {
+    fn walk(node: &Value, semantics: &mut DomSemanticIndex) {
+        let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
+        if node_type == 1 {
+            let local_name = node
+                .get("localName")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if let Some(id) = dom_attribute_raw(node, "id").filter(|id| !id.is_empty()) {
+                if let Some(text) = dom_text_content(node) {
+                    semantics.id_text.entry(id).or_insert(text);
+                }
+            }
+            if local_name == "label" {
+                if let Some(target) =
+                    dom_attribute_raw(node, "for").filter(|target| !target.is_empty())
+                {
+                    if let Some(text) = dom_text_content(node) {
+                        semantics
+                            .labels_for
+                            .entry(target)
+                            .and_modify(|existing| append_semantic_text(existing, &text))
+                            .or_insert(text);
+                    }
+                }
+            }
+        }
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            for child in children {
+                walk(child, semantics);
+            }
         }
     }
-    None
+
+    let mut semantics = DomSemanticIndex::default();
+    walk(root, &mut semantics);
+    infer_control_container_labels(root, &mut semantics);
+    semantics
+}
+
+fn index_form_contexts(root: &Value) -> HashMap<i64, FormContext> {
+    let semantics = index_dom_semantics(root);
+    let mut contexts = HashMap::new();
+    walk_form_contexts(root, &semantics, None, None, None, None, &mut contexts);
+    contexts
+}
+
+fn walk_form_contexts(
+    node: &Value,
+    semantics: &DomSemanticIndex,
+    ancestor_label: Option<&str>,
+    fieldset_label: Option<&str>,
+    section_label: Option<&str>,
+    component_hint: Option<&str>,
+    contexts: &mut HashMap<i64, FormContext>,
+) {
+    let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
+    let is_shadow_root = node.get("shadowRootType").is_some() || node_type == 11;
+    if is_shadow_root {
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            for child in children {
+                walk_form_contexts(
+                    child,
+                    semantics,
+                    None,
+                    None,
+                    section_label,
+                    component_hint,
+                    contexts,
+                );
+            }
+        }
+        return;
+    }
+    if node_type != 1 {
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            for child in children {
+                walk_form_contexts(
+                    child,
+                    semantics,
+                    ancestor_label,
+                    fieldset_label,
+                    section_label,
+                    component_hint,
+                    contexts,
+                );
+            }
+        }
+        return;
+    }
+
+    let local_name = node
+        .get("localName")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let input_type = (local_name == "input").then(|| {
+        dom_attribute(node, "type")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "text".to_string())
+    });
+    let semantic_label = semantic_element_label(node, semantics, ancestor_label);
+    let own_label = (local_name == "label")
+        .then(|| dom_text_content(node))
+        .flatten();
+    let descendant_label = own_label.as_deref().or(ancestor_label);
+    let own_fieldset_label = (local_name == "fieldset")
+        .then(|| fieldset_legend(node))
+        .flatten();
+    let descendant_fieldset_label = own_fieldset_label.as_deref().or(fieldset_label);
+    let backend_node_id = node.get("backendNodeId").and_then(Value::as_i64);
+    let nearby_label = backend_node_id
+        .and_then(|id| semantics.container_labels.get(&id))
+        .map(String::as_str);
+    let nearby_group = backend_node_id.and_then(|id| semantics.container_group_labels.get(&id));
+    let semantic_group_label =
+        fieldset_label.or_else(|| nearby_group.map(|group| group.label.as_str()));
+    let own_section_label = direct_section_heading(node);
+    let descendant_section_label = own_section_label.as_deref().or(section_label);
+    let explicit_component = framework_component_hint(node);
+    let effective_component = explicit_component
+        .as_deref()
+        .or(component_hint)
+        .map(ToOwned::to_owned)
+        .or_else(|| native_component_hint(&local_name).map(ToOwned::to_owned));
+
+    if let Some(backend_node_id) = backend_node_id {
+        if let Some(context) = build_form_context(
+            node,
+            &local_name,
+            input_type.as_deref(),
+            semantic_label.as_deref(),
+            semantic_group_label,
+            nearby_label,
+            nearby_group.map(|group| group.index),
+            nearby_group.map(|group| group.size),
+            section_label,
+            effective_component.as_deref(),
+            semantics,
+        ) {
+            contexts.insert(backend_node_id, context);
+        }
+    }
+
+    if let Some(children) = node.get("children").and_then(Value::as_array) {
+        for child in children {
+            walk_form_contexts(
+                child,
+                semantics,
+                descendant_label,
+                descendant_fieldset_label,
+                descendant_section_label,
+                effective_component.as_deref(),
+                contexts,
+            );
+        }
+    }
+    if let Some(shadow_roots) = node.get("shadowRoots").and_then(Value::as_array) {
+        for shadow_root in shadow_roots {
+            walk_form_contexts(
+                shadow_root,
+                semantics,
+                None,
+                None,
+                descendant_section_label,
+                effective_component.as_deref(),
+                contexts,
+            );
+        }
+    }
+}
+
+fn build_form_context(
+    node: &Value,
+    local_name: &str,
+    input_type: Option<&str>,
+    semantic_label: Option<&str>,
+    semantic_group_label: Option<&str>,
+    nearby_label: Option<&str>,
+    group_index: Option<usize>,
+    group_size: Option<usize>,
+    section_label: Option<&str>,
+    component_hint: Option<&str>,
+    semantics: &DomSemanticIndex,
+) -> Option<FormContext> {
+    let dom_role = dom_attribute(node, "role");
+    let form_role = dom_role.as_deref().is_some_and(|role| {
+        matches!(
+            role,
+            "textbox"
+                | "searchbox"
+                | "combobox"
+                | "listbox"
+                | "radio"
+                | "checkbox"
+                | "switch"
+                | "spinbutton"
+        )
+    });
+    let native_control = matches!(local_name, "input" | "select" | "textarea" | "button");
+    if !native_control && !form_role {
+        return None;
+    }
+
+    let html_name = dom_attribute_raw(node, "name")
+        .filter(|value| !value.is_empty())
+        .map(|value| clip_bytes(&value, 256));
+    let placeholder = dom_attribute_raw(node, "placeholder")
+        .filter(|value| !value.is_empty())
+        .map(|value| clip_bytes(&value, MAX_NODE_TEXT_BYTES));
+    let autocomplete = dom_attribute_raw(node, "autocomplete")
+        .filter(|value| !value.is_empty())
+        .map(|value| clip_bytes(&value, 128));
+    let aria_invalid = dom_attribute(node, "aria-invalid").and_then(|value| match value.as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    });
+    let validation_hint = if aria_invalid == Some(true) {
+        referenced_semantic_text(node, "aria-errormessage", semantics)
+            .or_else(|| referenced_semantic_text(node, "aria-describedby", semantics))
+    } else {
+        None
+    };
+    let option_count = (local_name == "select")
+        .then(|| count_descendant_elements(node, "option").min(256))
+        .filter(|count| *count > 0);
+
+    let group_index_piece = group_index
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let group_size_piece = group_size
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let seed = [
+        local_name,
+        input_type.unwrap_or(""),
+        dom_role.as_deref().unwrap_or(""),
+        semantic_label.unwrap_or(""),
+        semantic_group_label.unwrap_or(""),
+        nearby_label.unwrap_or(""),
+        section_label.unwrap_or(""),
+        html_name.as_deref().unwrap_or(""),
+        placeholder.as_deref().unwrap_or(""),
+        autocomplete.as_deref().unwrap_or(""),
+        component_hint.unwrap_or(""),
+        group_index_piece.as_str(),
+        group_size_piece.as_str(),
+    ]
+    .into_iter()
+    .map(normalize_form_signature_piece)
+    .collect::<Vec<_>>()
+    .join("\u{1f}");
+    let digest = format!("{:x}", Sha256::digest(seed.as_bytes()));
+
+    Some(FormContext {
+        field_signature: digest[..24].to_string(),
+        dom_tag: clip_bytes(local_name, 32),
+        input_type: input_type.map(|value| clip_bytes(value, 32)),
+        html_name,
+        placeholder,
+        autocomplete,
+        nearby_label: nearby_label.map(|value| clip_bytes(value, MAX_NODE_TEXT_BYTES)),
+        group_label: semantic_group_label.map(|value| clip_bytes(value, MAX_NODE_TEXT_BYTES)),
+        group_index,
+        group_size,
+        section_label: section_label.map(|value| clip_bytes(value, MAX_NODE_TEXT_BYTES)),
+        component_hint: component_hint.map(|value| clip_bytes(value, 64)),
+        aria_invalid,
+        validation_hint,
+        option_count,
+    })
+}
+
+fn normalize_form_signature_piece(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn direct_section_heading(node: &Value) -> Option<String> {
+    node.get("children")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|child| {
+            if child.get("nodeType").and_then(Value::as_i64) != Some(1) {
+                return false;
+            }
+            let name = child
+                .get("localName")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            matches!(name.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
+                || dom_attribute(child, "role").as_deref() == Some("heading")
+        })
+        .and_then(dom_text_content)
+}
+
+fn framework_component_hint(node: &Value) -> Option<String> {
+    let class = dom_attribute_raw(node, "class")?.to_ascii_lowercase();
+    [
+        ("ant-select", "ant-select"),
+        ("ant-input", "ant-input"),
+        ("el-select", "element-select"),
+        ("el-input", "element-input"),
+        ("ivu-select", "iview-select"),
+        ("arco-select", "arco-select"),
+        ("tdesign", "tdesign"),
+        ("t-select", "tdesign-select"),
+        ("semi-select", "semi-select"),
+        ("sd-select", "sd-select"),
+        ("select2", "select2"),
+    ]
+    .into_iter()
+    .find_map(|(needle, hint)| class.contains(needle).then(|| hint.to_string()))
+}
+
+fn native_component_hint(local_name: &str) -> Option<&'static str> {
+    match local_name {
+        "input" => Some("native-input"),
+        "select" => Some("native-select"),
+        "textarea" => Some("native-textarea"),
+        "button" => Some("native-button"),
+        _ => None,
+    }
+}
+
+fn referenced_semantic_text(
+    node: &Value,
+    attribute: &str,
+    semantics: &DomSemanticIndex,
+) -> Option<String> {
+    let ids = dom_attribute_raw(node, attribute)?;
+    let mut text = String::new();
+    for id in ids.split_ascii_whitespace() {
+        if let Some(value) = semantics.id_text.get(id) {
+            append_semantic_text(&mut text, value);
+        }
+    }
+    (!text.is_empty()).then(|| clip_bytes(&text, MAX_NODE_TEXT_BYTES))
+}
+
+fn count_descendant_elements(node: &Value, local_name: &str) -> usize {
+    fn walk(node: &Value, local_name: &str, count: &mut usize) {
+        if *count >= 256 {
+            return;
+        }
+        if node.get("nodeType").and_then(Value::as_i64) == Some(1)
+            && node
+                .get("localName")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name.eq_ignore_ascii_case(local_name))
+        {
+            *count += 1;
+        }
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            for child in children {
+                walk(child, local_name, count);
+                if *count >= 256 {
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut count = 0;
+    if let Some(children) = node.get("children").and_then(Value::as_array) {
+        for child in children {
+            walk(child, local_name, &mut count);
+            if count >= 256 {
+                break;
+            }
+        }
+    }
+    count
+}
+
+fn infer_control_container_labels(root: &Value, semantics: &mut DomSemanticIndex) {
+    const MAX_GROUP_CONTROLS: usize = 8;
+    const MAX_NEARBY_LABEL_CHARS: usize = 120;
+
+    #[derive(Default)]
+    struct ControlSummary {
+        backend_node_ids: Vec<i64>,
+        choice_count: usize,
+        overflow: bool,
+    }
+
+    fn is_hidden_element(node: &Value) -> bool {
+        if node.get("nodeType").and_then(Value::as_i64) != Some(1) {
+            return false;
+        }
+        if dom_attribute_raw(node, "hidden").is_some()
+            || dom_attribute(node, "aria-hidden").as_deref() == Some("true")
+        {
+            return true;
+        }
+        let style = dom_attribute_raw(node, "style")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .replace(' ', "");
+        style.contains("display:none") || style.contains("visibility:hidden")
+    }
+
+    fn is_container_form_control(node: &Value) -> bool {
+        if node.get("nodeType").and_then(Value::as_i64) != Some(1) || is_hidden_element(node) {
+            return false;
+        }
+        let local_name = node
+            .get("localName")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let input_type = (local_name == "input")
+            .then(|| dom_attribute(node, "type").unwrap_or_else(|| "text".to_string()));
+        if local_name == "input"
+            && matches!(
+                input_type.as_deref(),
+                Some("hidden" | "button" | "submit" | "reset" | "image")
+            )
+        {
+            return false;
+        }
+        if matches!(local_name.as_str(), "input" | "select" | "textarea") {
+            return true;
+        }
+        dom_attribute(node, "role").is_some_and(|role| {
+            matches!(
+                role.as_str(),
+                "textbox"
+                    | "searchbox"
+                    | "combobox"
+                    | "listbox"
+                    | "radio"
+                    | "checkbox"
+                    | "switch"
+                    | "spinbutton"
+            )
+        })
+    }
+
+    fn is_choice_control(node: &Value) -> bool {
+        if node.get("nodeType").and_then(Value::as_i64) != Some(1) || is_hidden_element(node) {
+            return false;
+        }
+        let local_name = node
+            .get("localName")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if local_name == "input" {
+            return matches!(
+                dom_attribute(node, "type").as_deref(),
+                Some("radio" | "checkbox")
+            );
+        }
+        matches!(
+            dom_attribute(node, "role").as_deref(),
+            Some("radio" | "checkbox")
+        )
+    }
+
+    fn clean_label_text(value: &str) -> Option<String> {
+        let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+        let trimmed = normalized
+            .trim_matches(|ch: char| {
+                ch.is_whitespace() || matches!(ch, '*' | ':' | '：' | '·' | '•')
+            })
+            .trim();
+        if trimmed.is_empty() || trimmed.chars().count() > MAX_NEARBY_LABEL_CHARS {
+            return None;
+        }
+        if !trimmed
+            .chars()
+            .any(|ch| ch.is_alphanumeric() || !ch.is_ascii())
+        {
+            return None;
+        }
+        Some(clip_bytes(trimmed, MAX_NODE_TEXT_BYTES))
+    }
+
+    fn candidate_label_text(node: &Value) -> Option<String> {
+        let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
+        if node_type == 3 {
+            return node
+                .get("nodeValue")
+                .and_then(Value::as_str)
+                .and_then(clean_label_text);
+        }
+        if node_type != 1 || is_hidden_element(node) {
+            return None;
+        }
+        let local_name = node
+            .get("localName")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if matches!(
+            local_name.as_str(),
+            "a" | "button"
+                | "input"
+                | "select"
+                | "textarea"
+                | "option"
+                | "script"
+                | "style"
+                | "noscript"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+        ) {
+            return None;
+        }
+        if local_name == "label"
+            && dom_attribute_raw(node, "for").is_some_and(|value| !value.is_empty())
+        {
+            return None;
+        }
+        if dom_attribute(node, "role").is_some_and(|role| {
+            matches!(
+                role.as_str(),
+                "button"
+                    | "link"
+                    | "textbox"
+                    | "searchbox"
+                    | "combobox"
+                    | "listbox"
+                    | "radio"
+                    | "checkbox"
+                    | "switch"
+                    | "spinbutton"
+            )
+        }) {
+            return None;
+        }
+        dom_text_content(node).and_then(|text| clean_label_text(&text))
+    }
+
+    fn visit(node: &Value, semantics: &mut DomSemanticIndex) -> ControlSummary {
+        let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
+        if node.get("shadowRootType").is_some()
+            || node_type == 11
+            || (node_type == 1 && is_hidden_element(node))
+        {
+            return ControlSummary::default();
+        }
+
+        let mut summary = ControlSummary::default();
+        if is_container_form_control(node) {
+            if let Some(backend_node_id) = node.get("backendNodeId").and_then(Value::as_i64) {
+                summary.backend_node_ids.push(backend_node_id);
+                if is_choice_control(node) {
+                    summary.choice_count = 1;
+                }
+            }
+        }
+
+        let children = node.get("children").and_then(Value::as_array);
+        let mut child_summaries = Vec::new();
+        if let Some(children) = children {
+            child_summaries.reserve(children.len());
+            for child in children {
+                let child_summary = visit(child, semantics);
+                if child_summary.overflow {
+                    summary.overflow = true;
+                }
+                summary.choice_count = summary
+                    .choice_count
+                    .saturating_add(child_summary.choice_count);
+                for backend_node_id in child_summary.backend_node_ids.iter().copied() {
+                    if summary.backend_node_ids.len() < MAX_GROUP_CONTROLS + 1 {
+                        summary.backend_node_ids.push(backend_node_id);
+                    } else {
+                        summary.overflow = true;
+                        break;
+                    }
+                }
+                child_summaries.push(child_summary);
+            }
+        }
+
+        if summary.backend_node_ids.len() > MAX_GROUP_CONTROLS {
+            summary.overflow = true;
+        }
+
+        if !summary.overflow && !summary.backend_node_ids.is_empty() {
+            if let Some(children) = children {
+                let first_control_child = child_summaries
+                    .iter()
+                    .position(|child| child.overflow || !child.backend_node_ids.is_empty());
+                if let Some(first_control_child) = first_control_child {
+                    let mut candidate: Option<String> = None;
+                    let mut ambiguous = false;
+                    for child in children.iter().take(first_control_child) {
+                        let Some(text) = candidate_label_text(child) else {
+                            continue;
+                        };
+                        if candidate.is_some() {
+                            ambiguous = true;
+                            break;
+                        }
+                        candidate = Some(text);
+                    }
+                    if !ambiguous
+                        && candidate.is_none()
+                        && summary.backend_node_ids.len() == 1
+                        && summary.choice_count == 1
+                    {
+                        for child in children.iter().skip(first_control_child + 1) {
+                            let Some(text) = candidate_label_text(child) else {
+                                continue;
+                            };
+                            if candidate.is_some() {
+                                ambiguous = true;
+                                break;
+                            }
+                            candidate = Some(text);
+                        }
+                    }
+                    if !ambiguous {
+                        if let Some(label) = candidate {
+                            if summary.backend_node_ids.len() == 1 {
+                                semantics
+                                    .container_labels
+                                    .entry(summary.backend_node_ids[0])
+                                    .or_insert(label);
+                            } else {
+                                let size = summary.backend_node_ids.len();
+                                for (index, backend_node_id) in
+                                    summary.backend_node_ids.iter().copied().enumerate()
+                                {
+                                    semantics
+                                        .container_group_labels
+                                        .entry(backend_node_id)
+                                        .or_insert_with(|| DomGroupLabel {
+                                            label: label.clone(),
+                                            index,
+                                            size,
+                                        });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        summary
+    }
+
+    let _ = visit(root, semantics);
+}
+
+fn semantic_element_label(
+    node: &Value,
+    semantics: &DomSemanticIndex,
+    ancestor_label: Option<&str>,
+) -> Option<String> {
+    if let Some(value) = dom_attribute_raw(node, "aria-label").filter(|value| !value.is_empty()) {
+        return Some(clip_bytes(&value, MAX_NODE_TEXT_BYTES));
+    }
+    if let Some(labelled_by) =
+        dom_attribute_raw(node, "aria-labelledby").filter(|value| !value.is_empty())
+    {
+        let mut label = String::new();
+        for id in labelled_by.split_ascii_whitespace() {
+            if let Some(text) = semantics.id_text.get(id) {
+                append_semantic_text(&mut label, text);
+            }
+        }
+        if !label.is_empty() {
+            return Some(clip_bytes(&label, MAX_NODE_TEXT_BYTES));
+        }
+    }
+    if let Some(id) = dom_attribute_raw(node, "id").filter(|id| !id.is_empty()) {
+        if let Some(label) = semantics.labels_for.get(&id) {
+            return Some(clip_bytes(label, MAX_NODE_TEXT_BYTES));
+        }
+    }
+    if let Some(backend_node_id) = node.get("backendNodeId").and_then(Value::as_i64) {
+        if let Some(label) = semantics.container_labels.get(&backend_node_id) {
+            return Some(clip_bytes(label, MAX_NODE_TEXT_BYTES));
+        }
+    }
+    if let Some(label) = ancestor_label.filter(|label| !label.trim().is_empty()) {
+        return Some(clip_bytes(label, MAX_NODE_TEXT_BYTES));
+    }
+    dom_attribute_raw(node, "title")
+        .filter(|value| !value.is_empty())
+        .map(|value| clip_bytes(&value, MAX_NODE_TEXT_BYTES))
+}
+
+fn fieldset_legend(node: &Value) -> Option<String> {
+    node.get("children")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|child| {
+            child.get("nodeType").and_then(Value::as_i64) == Some(1)
+                && child
+                    .get("localName")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| name.eq_ignore_ascii_case("legend"))
+        })
+        .and_then(dom_text_content)
+}
+
+fn dom_text_content(node: &Value) -> Option<String> {
+    fn collect(node: &Value, output: &mut String) {
+        if output.len() >= MAX_NODE_TEXT_BYTES {
+            return;
+        }
+        let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
+        if node_type == 3 {
+            if let Some(value) = node.get("nodeValue").and_then(Value::as_str) {
+                append_semantic_text(output, value);
+            }
+            return;
+        }
+        if node_type == 1 {
+            let local_name = node.get("localName").and_then(Value::as_str).unwrap_or("");
+            if matches!(local_name, "script" | "style" | "noscript") {
+                return;
+            }
+        }
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            for child in children {
+                collect(child, output);
+                if output.len() >= MAX_NODE_TEXT_BYTES {
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut output = String::new();
+    collect(node, &mut output);
+    (!output.is_empty()).then(|| clip_bytes(&output, MAX_NODE_TEXT_BYTES))
+}
+
+fn append_semantic_text(output: &mut String, value: &str) {
+    for part in value.split_whitespace() {
+        if output.len() >= MAX_NODE_TEXT_BYTES {
+            break;
+        }
+        if !output.is_empty() {
+            output.push(' ');
+        }
+        output.push_str(part);
+        if output.len() > MAX_NODE_TEXT_BYTES {
+            *output = clip_bytes(output, MAX_NODE_TEXT_BYTES);
+            break;
+        }
+    }
 }
 
 fn element_value(node: &Value) -> Option<String> {
@@ -2957,6 +3871,544 @@ mod tests {
                 && node.backend_node_id == Some(67)
                 && node.capability.action_names().is_empty()
         }));
+    }
+
+    #[test]
+    fn dom_semantics_fill_missing_ax_labels_without_overwriting_accessible_names() {
+        let dom = json!({
+            "nodeType": 9,
+            "children": [{
+                "nodeType": 1,
+                "localName": "body",
+                "backendNodeId": 1,
+                "children": [
+                    {
+                        "nodeType": 1,
+                        "localName": "fieldset",
+                        "backendNodeId": 10,
+                        "children": [
+                            {
+                                "nodeType": 1,
+                                "localName": "legend",
+                                "backendNodeId": 11,
+                                "children": [{"nodeType": 3, "nodeValue": "性别"}]
+                            },
+                            {
+                                "nodeType": 1,
+                                "localName": "label",
+                                "backendNodeId": 12,
+                                "attributes": ["for", "gender-male"],
+                                "children": [{"nodeType": 3, "nodeValue": "男"}]
+                            },
+                            {
+                                "nodeType": 1,
+                                "localName": "input",
+                                "backendNodeId": 13,
+                                "attributes": ["type", "radio", "id", "gender-male"]
+                            },
+                            {
+                                "nodeType": 1,
+                                "localName": "label",
+                                "backendNodeId": 14,
+                                "children": [
+                                    {"nodeType": 3, "nodeValue": "女"},
+                                    {
+                                        "nodeType": 1,
+                                        "localName": "input",
+                                        "backendNodeId": 15,
+                                        "attributes": ["type", "radio", "id", "gender-female"]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "span",
+                        "backendNodeId": 19,
+                        "attributes": ["id", "health-label"],
+                        "children": [{"nodeType": 3, "nodeValue": "健康状况"}]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "select",
+                        "backendNodeId": 20,
+                        "attributes": ["aria-labelledby", "health-label"]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "label",
+                        "backendNodeId": 21,
+                        "attributes": ["for", "candidate-name"],
+                        "children": [{"nodeType": 3, "nodeValue": "真实姓名"}]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "input",
+                        "backendNodeId": 22,
+                        "attributes": ["type", "text", "id", "candidate-name"]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 30,
+                        "children": [
+                            {
+                                "nodeType": 1,
+                                "localName": "label",
+                                "backendNodeId": 31,
+                                "children": [{"nodeType": 3, "nodeValue": "高考生源地"}]
+                            },
+                            {
+                                "nodeType": 1,
+                                "localName": "div",
+                                "backendNodeId": 32,
+                                "children": [{
+                                    "nodeType": 1,
+                                    "localName": "select",
+                                    "backendNodeId": 33
+                                }]
+                            }
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 40,
+                        "children": [
+                            {
+                                "nodeType": 1,
+                                "localName": "label",
+                                "backendNodeId": 41,
+                                "children": [{"nodeType": 3, "nodeValue": "不要猜"}]
+                            },
+                            {
+                                "nodeType": 1,
+                                "localName": "input",
+                                "backendNodeId": 42,
+                                "attributes": ["type", "text"]
+                            },
+                            {
+                                "nodeType": 1,
+                                "localName": "input",
+                                "backendNodeId": 43,
+                                "attributes": ["type", "text"]
+                            }
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "label",
+                        "backendNodeId": 23,
+                        "attributes": ["for", "already-named"],
+                        "children": [{"nodeType": 3, "nodeValue": "DOM 备用名称"}]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "input",
+                        "backendNodeId": 24,
+                        "attributes": ["type", "text", "id", "already-named"]
+                    }
+                ]
+            }]
+        });
+        let raw_nodes = vec![
+            json!({
+                "nodeId": "ax-male",
+                "role": {"value": "radio"},
+                "name": {"value": ""},
+                "backendDOMNodeId": 13
+            }),
+            json!({
+                "nodeId": "ax-female",
+                "role": {"value": "radio"},
+                "name": {"value": ""},
+                "backendDOMNodeId": 15
+            }),
+            json!({
+                "nodeId": "ax-health",
+                "role": {"value": "combobox"},
+                "name": {"value": ""},
+                "backendDOMNodeId": 20
+            }),
+            json!({
+                "nodeId": "ax-name",
+                "role": {"value": "textbox"},
+                "name": {"value": ""},
+                "backendDOMNodeId": 22
+            }),
+            json!({
+                "nodeId": "ax-origin",
+                "role": {"value": "combobox"},
+                "name": {"value": ""},
+                "backendDOMNodeId": 33
+            }),
+            json!({
+                "nodeId": "ax-ambiguous-a",
+                "role": {"value": "textbox"},
+                "name": {"value": ""},
+                "backendDOMNodeId": 42
+            }),
+            json!({
+                "nodeId": "ax-ambiguous-b",
+                "role": {"value": "textbox"},
+                "name": {"value": ""},
+                "backendDOMNodeId": 43
+            }),
+            json!({
+                "nodeId": "ax-preserve",
+                "role": {"value": "textbox"},
+                "name": {"value": "AX wins"},
+                "backendDOMNodeId": 24
+            }),
+        ];
+
+        let (nodes, _) = project_ax_nodes(&raw_nodes, Some(&dom));
+        let by_backend = nodes
+            .iter()
+            .filter_map(|node| node.backend_node_id.map(|id| (id, node)))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(by_backend[&13].name.as_deref(), Some("男"));
+        assert_eq!(by_backend[&13].group_label.as_deref(), Some("性别"));
+        assert_eq!(by_backend[&13].group_role.as_deref(), Some("group"));
+        assert_eq!(by_backend[&15].name.as_deref(), Some("女"));
+        assert_eq!(by_backend[&15].group_label.as_deref(), Some("性别"));
+        assert_eq!(by_backend[&20].name.as_deref(), Some("健康状况"));
+        assert_eq!(by_backend[&22].name.as_deref(), Some("真实姓名"));
+        assert_eq!(by_backend[&33].name.as_deref(), Some("高考生源地"));
+        assert_eq!(by_backend[&42].name.as_deref(), None);
+        assert_eq!(by_backend[&43].name.as_deref(), None);
+        assert_eq!(by_backend[&24].name.as_deref(), Some("AX wins"));
+    }
+
+    #[test]
+    fn form_context_is_bounded_semantic_metadata_and_value_stable() {
+        fn form_dom(value: &str) -> Value {
+            json!({
+                "nodeType": 9,
+                "children": [{
+                    "nodeType": 1,
+                    "localName": "body",
+                    "backendNodeId": 1,
+                    "children": [{
+                        "nodeType": 1,
+                        "localName": "section",
+                        "backendNodeId": 100,
+                        "children": [
+                            {
+                                "nodeType": 1,
+                                "localName": "h3",
+                                "backendNodeId": 101,
+                                "children": [{"nodeType": 3, "nodeValue": "基本信息"}]
+                            },
+                            {
+                                "nodeType": 1,
+                                "localName": "div",
+                                "backendNodeId": 102,
+                                "attributes": ["class", "ant-select ant-form-item"],
+                                "children": [
+                                    {
+                                        "nodeType": 1,
+                                        "localName": "label",
+                                        "backendNodeId": 103,
+                                        "attributes": ["for", "student-origin"],
+                                        "children": [{"nodeType": 3, "nodeValue": "高考生源地"}]
+                                    },
+                                    {
+                                        "nodeType": 1,
+                                        "localName": "select",
+                                        "backendNodeId": 104,
+                                        "attributes": [
+                                            "id", "student-origin",
+                                            "name", "studentOrigin",
+                                            "autocomplete", "address-level1",
+                                            "aria-invalid", "true",
+                                            "aria-errormessage", "origin-error",
+                                            "value", value
+                                        ],
+                                        "children": [
+                                            {
+                                                "nodeType": 1,
+                                                "localName": "option",
+                                                "backendNodeId": 105,
+                                                "children": [{"nodeType": 3, "nodeValue": "辽宁"}]
+                                            },
+                                            {
+                                                "nodeType": 1,
+                                                "localName": "option",
+                                                "backendNodeId": 106,
+                                                "children": [{"nodeType": 3, "nodeValue": "吉林"}]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "nodeType": 1,
+                                "localName": "span",
+                                "backendNodeId": 107,
+                                "attributes": ["id", "origin-error"],
+                                "children": [{"nodeType": 3, "nodeValue": "请选择高考生源地"}]
+                            }
+                        ]
+                    }]
+                }]
+            })
+        }
+
+        let first = index_form_contexts(&form_dom("辽宁"));
+        let second = index_form_contexts(&form_dom("吉林"));
+        let context = first.get(&104).expect("select form context");
+
+        assert_eq!(context.dom_tag, "select");
+        assert_eq!(context.html_name.as_deref(), Some("studentOrigin"));
+        assert_eq!(context.autocomplete.as_deref(), Some("address-level1"));
+        assert_eq!(context.section_label.as_deref(), Some("基本信息"));
+        assert_eq!(context.component_hint.as_deref(), Some("ant-select"));
+        assert_eq!(context.aria_invalid, Some(true));
+        assert_eq!(context.validation_hint.as_deref(), Some("请选择高考生源地"));
+        assert_eq!(context.option_count, Some(2));
+        assert_eq!(context.field_signature.len(), 24);
+        assert_eq!(
+            context.field_signature,
+            second
+                .get(&104)
+                .expect("same field after value change")
+                .field_signature
+        );
+    }
+
+    #[test]
+    fn nearby_visible_labels_cover_generic_rows_and_groups_without_ambiguous_guessing() {
+        let dom = json!({
+            "nodeType": 9,
+            "children": [{
+                "nodeType": 1,
+                "localName": "body",
+                "backendNodeId": 1,
+                "children": [
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 200,
+                        "children": [
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 201,
+                             "children": [{"nodeType": 3, "nodeValue": "姓名："}]},
+                            {"nodeType": 1, "localName": "div", "backendNodeId": 202,
+                             "children": [{"nodeType": 1, "localName": "input", "backendNodeId": 203,
+                                          "attributes": ["type", "text"]}]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "tr",
+                        "backendNodeId": 210,
+                        "children": [
+                            {"nodeType": 1, "localName": "td", "backendNodeId": 211,
+                             "children": [{"nodeType": 3, "nodeValue": "电子邮箱"}]},
+                            {"nodeType": 1, "localName": "td", "backendNodeId": 212,
+                             "children": [{"nodeType": 1, "localName": "input", "backendNodeId": 213,
+                                          "attributes": ["type", "email"]}]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 220,
+                        "children": [
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 221,
+                             "children": [{"nodeType": 3, "nodeValue": "性别"}]},
+                            {"nodeType": 1, "localName": "label", "backendNodeId": 222,
+                             "children": [
+                                 {"nodeType": 1, "localName": "input", "backendNodeId": 223,
+                                  "attributes": ["type", "radio"]},
+                                 {"nodeType": 3, "nodeValue": "男"}
+                             ]},
+                            {"nodeType": 1, "localName": "label", "backendNodeId": 224,
+                             "children": [
+                                 {"nodeType": 1, "localName": "input", "backendNodeId": 225,
+                                  "attributes": ["type", "radio"]},
+                                 {"nodeType": 3, "nodeValue": "女"}
+                             ]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 230,
+                        "children": [
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 231,
+                             "children": [{"nodeType": 3, "nodeValue": "* 籍贯："}]},
+                            {"nodeType": 1, "localName": "select", "backendNodeId": 232},
+                            {"nodeType": 1, "localName": "select", "backendNodeId": 233}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 240,
+                        "children": [
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 241,
+                             "children": [{"nodeType": 3, "nodeValue": "开始日期"}]},
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 242,
+                             "children": [{"nodeType": 3, "nodeValue": "结束日期"}]},
+                            {"nodeType": 1, "localName": "input", "backendNodeId": 243,
+                             "attributes": ["type", "text"]},
+                            {"nodeType": 1, "localName": "input", "backendNodeId": 244,
+                             "attributes": ["type", "text"]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 250,
+                        "children": [
+                            {"nodeType": 1, "localName": "input", "backendNodeId": 251,
+                             "attributes": ["type", "text"]},
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 252,
+                             "children": [{"nodeType": 3, "nodeValue": "填写后不可修改"}]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 260,
+                        "children": [
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 261,
+                             "attributes": ["aria-hidden", "true"],
+                             "children": [{"nodeType": 3, "nodeValue": "隐藏文案"}]},
+                            {"nodeType": 1, "localName": "input", "backendNodeId": 262,
+                             "attributes": ["type", "text"]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "section",
+                        "backendNodeId": 270,
+                        "children": [
+                            {"nodeType": 1, "localName": "h3", "backendNodeId": 271,
+                             "children": [{"nodeType": 3, "nodeValue": "基本信息"}]},
+                            {"nodeType": 1, "localName": "input", "backendNodeId": 272,
+                             "attributes": ["type", "text"]}
+                        ]
+                    }
+                ]
+            }]
+        });
+        let raw_nodes = [203, 213, 223, 225, 232, 233, 243, 244, 251, 262, 272]
+            .into_iter()
+            .enumerate()
+            .map(|(index, backend)| {
+                json!({
+                    "nodeId": format!("ax-{index}"),
+                    "role": {"value": if matches!(backend, 223 | 225) { "radio" } else if matches!(backend, 232 | 233) { "combobox" } else { "textbox" }},
+                    "name": {"value": ""},
+                    "backendDOMNodeId": backend
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let (nodes, _) = project_ax_nodes(&raw_nodes, Some(&dom));
+        let by_backend = nodes
+            .iter()
+            .filter_map(|node| node.backend_node_id.map(|id| (id, node)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(by_backend[&203].name.as_deref(), Some("姓名"));
+        assert_eq!(by_backend[&213].name.as_deref(), Some("电子邮箱"));
+        assert_eq!(by_backend[&223].name.as_deref(), Some("男"));
+        assert_eq!(by_backend[&223].group_label.as_deref(), Some("性别"));
+        assert_eq!(by_backend[&225].name.as_deref(), Some("女"));
+        assert_eq!(by_backend[&225].group_label.as_deref(), Some("性别"));
+        assert_eq!(by_backend[&232].name.as_deref(), None);
+        assert_eq!(by_backend[&232].group_label.as_deref(), Some("籍贯"));
+        assert_eq!(by_backend[&233].group_label.as_deref(), Some("籍贯"));
+        assert_eq!(by_backend[&243].group_label.as_deref(), None);
+        assert_eq!(by_backend[&244].group_label.as_deref(), None);
+        assert_eq!(by_backend[&251].name.as_deref(), None);
+        assert_eq!(by_backend[&262].name.as_deref(), None);
+        assert_eq!(by_backend[&272].name.as_deref(), None);
+
+        let contexts = index_form_contexts(&dom);
+        assert_eq!(contexts[&203].nearby_label.as_deref(), Some("姓名"));
+        assert_eq!(contexts[&213].nearby_label.as_deref(), Some("电子邮箱"));
+        assert_eq!(contexts[&223].group_label.as_deref(), Some("性别"));
+        assert_eq!(contexts[&223].group_index, Some(0));
+        assert_eq!(contexts[&223].group_size, Some(2));
+        assert_eq!(contexts[&225].group_index, Some(1));
+        assert_eq!(contexts[&232].group_label.as_deref(), Some("籍贯"));
+        assert_eq!(contexts[&232].group_index, Some(0));
+        assert_eq!(contexts[&232].group_size, Some(2));
+        assert_eq!(contexts[&233].group_index, Some(1));
+        assert_ne!(
+            contexts[&232].field_signature, contexts[&233].field_signature,
+            "group position must distinguish structurally identical composite controls"
+        );
+        assert_eq!(contexts[&243].group_label, None);
+        assert_eq!(contexts[&244].group_label, None);
+        assert_eq!(contexts[&251].nearby_label, None);
+        assert_eq!(contexts[&262].nearby_label, None);
+        assert_eq!(contexts[&272].nearby_label, None);
+        assert_eq!(contexts[&272].section_label.as_deref(), Some("基本信息"));
+    }
+
+    #[test]
+    fn choice_controls_accept_one_short_trailing_visible_label() {
+        let dom = json!({
+            "nodeType": 9,
+            "children": [{
+                "nodeType": 1,
+                "localName": "body",
+                "backendNodeId": 1,
+                "children": [{
+                    "nodeType": 1,
+                    "localName": "div",
+                    "backendNodeId": 300,
+                    "children": [
+                        {"nodeType": 1, "localName": "span", "backendNodeId": 301,
+                         "children": [{"nodeType": 3, "nodeValue": "性别"}]},
+                        {"nodeType": 1, "localName": "div", "backendNodeId": 302,
+                         "children": [
+                             {"nodeType": 1, "localName": "input", "backendNodeId": 303,
+                              "attributes": ["type", "radio"]},
+                             {"nodeType": 1, "localName": "span", "backendNodeId": 304,
+                              "children": [{"nodeType": 3, "nodeValue": "男"}]}
+                         ]},
+                        {"nodeType": 1, "localName": "div", "backendNodeId": 305,
+                         "children": [
+                             {"nodeType": 1, "localName": "input", "backendNodeId": 306,
+                              "attributes": ["type", "radio"]},
+                             {"nodeType": 1, "localName": "span", "backendNodeId": 307,
+                              "children": [{"nodeType": 3, "nodeValue": "女"}]}
+                         ]}
+                    ]
+                }]
+            }]
+        });
+        let raw_nodes = vec![
+            json!({
+                "nodeId": "ax-male-custom",
+                "role": {"value": "radio"},
+                "name": {"value": ""},
+                "backendDOMNodeId": 303
+            }),
+            json!({
+                "nodeId": "ax-female-custom",
+                "role": {"value": "radio"},
+                "name": {"value": ""},
+                "backendDOMNodeId": 306
+            }),
+        ];
+
+        let (nodes, _) = project_ax_nodes(&raw_nodes, Some(&dom));
+        let by_backend = nodes
+            .iter()
+            .filter_map(|node| node.backend_node_id.map(|id| (id, node)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(by_backend[&303].name.as_deref(), Some("男"));
+        assert_eq!(by_backend[&303].group_label.as_deref(), Some("性别"));
+        assert_eq!(by_backend[&306].name.as_deref(), Some("女"));
+        assert_eq!(by_backend[&306].group_label.as_deref(), Some("性别"));
     }
 
     #[test]

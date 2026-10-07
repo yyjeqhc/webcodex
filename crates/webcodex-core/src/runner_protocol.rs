@@ -827,6 +827,12 @@ runner_capabilities! {
         #[serde(default, skip_serializing_if = "is_false")]
         pub browser_element_action_admission: bool = false;
     }
+    /// Bounded semantic filtering before snapshot pagination.
+    BrowserSemanticQuery => RUNNER_CAPABILITY_BROWSER_SEMANTIC_QUERY("browser_semantic_query"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub browser_semantic_query: bool = false;
+    }
     /// Bounded same-snapshot Browser batches with fail-stop partial-effect receipts.
     BrowserBatch => RUNNER_CAPABILITY_BROWSER_BATCH("browser_batch"),
     v2_baseline = false {
@@ -2842,6 +2848,7 @@ mod envelope_tests {
                 browser_control: false,
                 browser_element_action_admission: false,
                 browser_batch: false,
+                browser_semantic_query: false,
                 browser_launch: false,
                 browser_extension_bridge: false,
                 browser_managed_profile: false,
@@ -3009,6 +3016,15 @@ mod envelope_tests {
         assert!(legacy.browser_control);
         assert!(!legacy.browser_element_action_admission);
         assert!(!legacy.browser_batch);
+        assert!(!legacy.browser_semantic_query);
+        assert!(!serde_json::to_value(&legacy)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("browser_semantic_query"));
+        let query: RunnerCapabilities =
+            serde_json::from_str(r#"{"browser_semantic_query":true}"#).unwrap();
+        assert!(query.browser_semantic_query);
         assert!(legacy.browser_launch);
 
         let present: RunnerCapabilities =

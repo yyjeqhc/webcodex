@@ -452,6 +452,8 @@ mod tests {
             known_results: 0,
             job_handoffs: 0,
             outcome_unknown: 0,
+            mutation_state_changed: 0,
+            mutation_no_change: 0,
         };
         observe_code_mode_composition(&PanicMetrics, &observation);
     }

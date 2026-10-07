@@ -339,9 +339,52 @@ impl BrowserSupervisor {
         max_nodes: usize,
         max_depth: u32,
     ) -> BrowserResult<SemanticSnapshot> {
+        self.snapshot_window(browser_id, page_id, mode, max_nodes, max_depth, 0)
+    }
+
+    pub fn snapshot_window(
+        &self,
+        browser_id: &str,
+        page_id: &str,
+        mode: SnapshotMode,
+        max_nodes: usize,
+        max_depth: u32,
+        node_offset: usize,
+    ) -> BrowserResult<SemanticSnapshot> {
+        self.snapshot_query(
+            browser_id,
+            page_id,
+            mode,
+            max_nodes,
+            max_depth,
+            node_offset,
+            None,
+        )
+    }
+
+    /// Query the existing bounded source before windowing, never merge authority
+    /// from successive snapshots. Unreturned matches receive no element identity.
+    #[allow(clippy::too_many_arguments)]
+    pub fn snapshot_query(
+        &self,
+        browser_id: &str,
+        page_id: &str,
+        mode: SnapshotMode,
+        max_nodes: usize,
+        max_depth: u32,
+        node_offset: usize,
+        query: Option<&crate::BrowserSnapshotQuery>,
+    ) -> BrowserResult<SemanticSnapshot> {
+        if query.is_some_and(|query| !query.is_valid()) {
+            return Err(BrowserError::not_started(
+                "invalid_request",
+                "Query filters require 1..128 nonblank characters",
+            ));
+        }
         self.touch_current(browser_id)?;
         let max_nodes = max_nodes.clamp(1, MAX_SNAPSHOT_NODES);
         let max_depth = max_depth.clamp(1, DEFAULT_SNAPSHOT_DEPTH);
+        let node_offset = node_offset.min(crate::MAX_SNAPSHOT_OFFSET);
         let mut state = self.operation_state()?;
         let runtime = state
             .browsers
@@ -349,7 +392,8 @@ impl BrowserSupervisor {
             .ok_or_else(|| stale_browser(browser_id))?;
         let target_id = runtime.page_target(page_id)?;
         let snapshot = runtime.backend.snapshot(&target_id, max_depth)?;
-        let auto_compacted = mode == SnapshotMode::Auto
+        let auto_compacted = query.is_none()
+            && mode == SnapshotMode::Auto
             && should_auto_compact_snapshot(&snapshot.nodes, snapshot.truncated, max_nodes);
         let effective_mode = match mode {
             SnapshotMode::Auto if auto_compacted => SnapshotMode::Interactive,
@@ -365,25 +409,46 @@ impl BrowserSupervisor {
             page.snapshot_generation = generation;
         }
 
+        let form_context_by_backend_id = snapshot.form_context_by_backend_id;
+        let source_incomplete = snapshot.source_incomplete;
+        let source_truncated = snapshot.truncated;
+        // Keep the existing recoverable pagination horizon; do not expand the DOM scan.
+        let scan_limit = crate::MAX_SNAPSHOT_OFFSET + MAX_SNAPSHOT_NODES;
+        let scan_incomplete = query.is_some() && snapshot.nodes.len() > scan_limit;
         let source_nodes = snapshot
             .nodes
             .into_iter()
+            .take(if query.is_some() {
+                scan_limit
+            } else {
+                usize::MAX
+            })
+            .filter(|node| {
+                query.is_none_or(|query| {
+                    let context = node
+                        .backend_node_id
+                        .and_then(|id| form_context_by_backend_id.get(&id));
+                    matches_snapshot_query(node, context, query)
+                })
+            })
             .filter(|node| {
                 effective_mode != SnapshotMode::Interactive
                     || retained_in_interactive_snapshot(node)
             })
             .collect::<Vec<_>>();
+        let source_node_count = source_nodes.len();
         let mut nodes = Vec::new();
         let mut aggregate_bytes = 0usize;
-        let mut truncated = snapshot.source_incomplete
-            || if effective_mode == SnapshotMode::Interactive {
-                source_nodes.len() > max_nodes
-            } else {
-                snapshot.truncated || source_nodes.len() > max_nodes
-            };
+        let window_end = node_offset.saturating_add(max_nodes);
+        let source_projection_truncated =
+            query.is_none() && effective_mode != SnapshotMode::Interactive && source_truncated;
+        let mut truncated = source_incomplete
+            || scan_incomplete
+            || source_projection_truncated
+            || source_node_count > window_end;
         let mut group_ids = HashMap::<String, String>::new();
         let mut next_group_id = 1usize;
-        for node in source_nodes.into_iter().take(max_nodes) {
+        for node in source_nodes.into_iter().skip(node_offset).take(max_nodes) {
             let group_id = node.group_key.as_ref().map(|key| {
                 group_ids
                     .entry(key.clone())
@@ -394,18 +459,35 @@ impl BrowserSupervisor {
                     })
                     .clone()
             });
-            let projected =
-                runtime.project_node(page_id, &snapshot.document_id, generation, node, group_id);
+            let form_context = node
+                .backend_node_id
+                .and_then(|backend_node_id| form_context_by_backend_id.get(&backend_node_id))
+                .cloned();
+            let projected = runtime.project_node(
+                page_id,
+                &snapshot.document_id,
+                generation,
+                node,
+                group_id,
+                form_context,
+            );
             let projected_bytes = serde_json::to_vec(&projected)
                 .map(|value| value.len())
                 .unwrap_or(MAX_SNAPSHOT_BYTES);
             if aggregate_bytes.saturating_add(projected_bytes) > MAX_SNAPSHOT_BYTES {
+                if let Some(id) = &projected.element_id {
+                    runtime.elements.remove(id);
+                }
                 truncated = true;
                 break;
             }
             aggregate_bytes += projected_bytes;
             nodes.push(projected);
         }
+        let next_offset = node_offset.saturating_add(nodes.len());
+        let next_node_offset = (next_offset < source_node_count
+            && next_offset <= crate::MAX_SNAPSHOT_OFFSET)
+            .then_some(next_offset);
         Ok(SemanticSnapshot {
             browser_id: browser_id.to_string(),
             page_id: page_id.to_string(),
@@ -415,6 +497,8 @@ impl BrowserSupervisor {
             max_nodes,
             max_depth,
             node_count: nodes.len(),
+            node_offset,
+            next_node_offset,
             truncated,
             nodes,
         })
@@ -1170,6 +1254,7 @@ impl BrowserRuntime {
         snapshot_generation: u64,
         node: BackendNode,
         group_id: Option<String>,
+        form_context: Option<crate::FormContext>,
     ) -> SemanticNode {
         let mut element_id = None;
         let actions = node.capability.action_names();
@@ -1212,6 +1297,7 @@ impl BrowserRuntime {
             required: node.required,
             disabled: node.disabled,
             read_only: node.read_only,
+            form_context,
             actions: if element_id.is_some() {
                 actions
             } else {
@@ -1406,11 +1492,61 @@ fn opaque_id(prefix: &str) -> String {
     format!("{prefix}_{}", Uuid::new_v4().simple())
 }
 
+fn matches_snapshot_query(
+    node: &BackendNode,
+    context: Option<&crate::FormContext>,
+    query: &crate::BrowserSnapshotQuery,
+) -> bool {
+    fn contains(value: Option<&str>, needle: &str) -> bool {
+        value.is_some_and(|value| value.to_lowercase().contains(&needle.to_lowercase()))
+    }
+    let field = context
+        .is_some_and(|c| matches!(c.dom_tag.as_str(), "input" | "select" | "textarea"))
+        || matches!(
+            node.role.as_str(),
+            "textbox"
+                | "searchbox"
+                | "combobox"
+                | "checkbox"
+                | "radio"
+                | "switch"
+                | "spinbutton"
+                | "slider"
+                | "Date"
+                | "DateTime"
+                | "InputTime"
+                | "ColorWell"
+        );
+    (!query.fields_only || field)
+        && query
+            .role
+            .as_ref()
+            .is_none_or(|role| node.role.eq_ignore_ascii_case(role))
+        && query.text.as_ref().is_none_or(|text| {
+            [
+                node.name.as_deref(),
+                node.description.as_deref(),
+                context.and_then(|c| c.nearby_label.as_deref()),
+                context.and_then(|c| c.placeholder.as_deref()),
+            ]
+            .into_iter()
+            .any(|value| contains(value, text))
+        })
+        && query.group.as_ref().is_none_or(|group| {
+            contains(node.group_label.as_deref(), group)
+                || contains(context.and_then(|c| c.group_label.as_deref()), group)
+        })
+        && query.section.as_ref().is_none_or(|section| {
+            contains(context.and_then(|c| c.section_label.as_deref()), section)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     mod batch;
     mod frames;
     mod lifecycle;
+    mod query;
     use super::*;
     use crate::cdp::{
         BackendConsoleEntry, BackendDiagnosticsSnapshot, BackendEventSnapshot, BackendFactory,
@@ -1463,6 +1599,7 @@ mod tests {
 
     struct FakeBackend {
         shutdown_probe: Option<lifecycle::ShutdownProbe>,
+        query_nodes: Option<Vec<BackendNode>>,
         frame_state: Option<Arc<Mutex<String>>>,
         batch_probe: Option<Arc<Mutex<batch::BatchProbe>>>,
         pages: Vec<BackendPage>,
@@ -1489,6 +1626,7 @@ mod tests {
         fn with_snapshot_nodes(snapshot_node_count: usize) -> Self {
             Self {
                 shutdown_probe: None,
+                query_nodes: None,
                 frame_state: None,
                 batch_probe: None,
                 pages: vec![BackendPage {
@@ -1619,6 +1757,15 @@ mod tests {
             _target_id: &str,
             _max_depth: u32,
         ) -> BrowserResult<BackendSnapshot> {
+            if let Some(nodes) = &self.query_nodes {
+                return Ok(BackendSnapshot {
+                    document_id: self.pages[0].document_id.clone(),
+                    nodes: nodes.clone(),
+                    form_context_by_backend_id: HashMap::new(),
+                    source_incomplete: false,
+                    truncated: nodes.len() > MAX_SNAPSHOT_NODES,
+                });
+            }
             if self.iframe_control_state {
                 let (mut nodes, truncated) = crate::cdp::project_ax_nodes(
                     &control_state_ax_nodes(),
@@ -1638,6 +1785,7 @@ mod tests {
                     source_incomplete: false,
                     document_id: format!("doc-{}", self.document_generation),
                     nodes,
+                    form_context_by_backend_id: HashMap::new(),
                     truncated,
                 });
             }
@@ -1660,6 +1808,7 @@ mod tests {
                     source_incomplete: false,
                     document_id: self.pages[0].document_id.clone(),
                     nodes,
+                    form_context_by_backend_id: HashMap::new(),
                     truncated: false,
                 });
             }
@@ -1668,6 +1817,7 @@ mod tests {
                     source_incomplete: false,
                     document_id: self.pages[0].document_id.clone(),
                     nodes: batch::form_nodes(),
+                    form_context_by_backend_id: HashMap::new(),
                     truncated: false,
                 });
             }
@@ -1680,6 +1830,7 @@ mod tests {
                     source_incomplete: false,
                     document_id: format!("doc-{}", self.document_generation),
                     nodes,
+                    form_context_by_backend_id: HashMap::new(),
                     truncated,
                 });
             }
@@ -1692,6 +1843,7 @@ mod tests {
                     source_incomplete: false,
                     document_id: format!("doc-{}", self.document_generation),
                     nodes,
+                    form_context_by_backend_id: HashMap::new(),
                     truncated,
                 });
             }
@@ -1699,6 +1851,7 @@ mod tests {
                 return Ok(BackendSnapshot {
                     source_incomplete: false,
                     document_id: format!("doc-{}", self.document_generation),
+                    form_context_by_backend_id: HashMap::new(),
                     nodes: vec![
                         fixture_node("button", "Go", Some(7), ControlCapability::click()),
                         fixture_node(
@@ -1748,6 +1901,7 @@ mod tests {
                 source_incomplete: false,
                 document_id: format!("doc-{}", self.document_generation),
                 nodes,
+                form_context_by_backend_id: HashMap::new(),
                 truncated: self.snapshot_node_count > MAX_SNAPSHOT_NODES,
             })
         }
@@ -2819,6 +2973,95 @@ mod tests {
                 .as_ref()
                 .is_none_or(|value| value.len() <= MAX_NODE_TEXT_BYTES)
         }));
+    }
+
+    #[test]
+    fn snapshot_window_pages_post_filter_nodes_without_replaying_effects() {
+        struct WindowFactory;
+        impl BackendFactory for WindowFactory {
+            fn available(&self) -> bool {
+                true
+            }
+
+            fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
+                Ok(Box::new(FakeBackend::with_snapshot_nodes(20)))
+            }
+        }
+
+        let supervisor = BrowserSupervisor::with_factory(Arc::new(WindowFactory));
+        let browser = supervisor.launch().unwrap();
+        let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+
+        let middle = supervisor
+            .snapshot_window(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                5,
+                DEFAULT_SNAPSHOT_DEPTH,
+                5,
+            )
+            .unwrap();
+        assert_eq!(middle.node_count, 5);
+        assert_eq!(middle.node_offset, 5);
+        assert_eq!(middle.next_node_offset, Some(10));
+        assert_eq!(middle.nodes[0].name.as_deref(), Some("Go 5"));
+        assert_eq!(middle.nodes[4].name.as_deref(), Some("Go 9"));
+        assert!(middle.truncated);
+
+        let tail = supervisor
+            .snapshot_window(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                5,
+                DEFAULT_SNAPSHOT_DEPTH,
+                18,
+            )
+            .unwrap();
+        assert_eq!(tail.node_count, 2);
+        assert_eq!(tail.node_offset, 18);
+        assert_eq!(tail.next_node_offset, None);
+        assert_eq!(tail.nodes[0].name.as_deref(), Some("Go 18"));
+        assert_eq!(tail.nodes[1].name.as_deref(), Some("Go 19"));
+        assert!(!tail.truncated);
+    }
+
+    #[test]
+    fn snapshot_window_never_advertises_an_unreachable_offset() {
+        struct LargeWindowFactory;
+        impl BackendFactory for LargeWindowFactory {
+            fn available(&self) -> bool {
+                true
+            }
+
+            fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
+                Ok(Box::new(FakeBackend::with_snapshot_nodes(
+                    crate::MAX_SNAPSHOT_OFFSET + MAX_SNAPSHOT_NODES + 1,
+                )))
+            }
+        }
+
+        let supervisor = BrowserSupervisor::with_factory(Arc::new(LargeWindowFactory));
+        let browser = supervisor.launch().unwrap();
+        let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+        let boundary = supervisor
+            .snapshot_window(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+                crate::MAX_SNAPSHOT_OFFSET,
+            )
+            .unwrap();
+
+        assert_eq!(boundary.node_offset, crate::MAX_SNAPSHOT_OFFSET);
+        assert!(boundary.node_count > 0);
+        assert!(boundary.node_count <= MAX_SNAPSHOT_NODES);
+        assert_eq!(boundary.nodes[0].name.as_deref(), Some("Go 4096"));
+        assert_eq!(boundary.next_node_offset, None);
+        assert!(boundary.truncated);
     }
 
     #[test]

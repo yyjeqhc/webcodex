@@ -6,11 +6,32 @@ export const canonicalFields = [
   "full_name",
   "first_name",
   "last_name",
+  "gender",
+  "birth_date",
+  "id_type",
+  "id_number",
+  "ethnicity",
+  "political_status",
+  "health_status",
+  "native_place",
+  "native_place_province",
+  "native_place_city",
+  "household_registration",
+  "household_registration_province",
+  "household_registration_city",
+  "student_origin",
+  "student_origin_province",
+  "student_origin_city",
+  "is_fresh_graduate",
+  "marital_status",
   "email",
   "phone",
+  "current_residence_province",
   "city",
   "address",
   "university",
+  "education_province",
+  "education_city",
   "degree",
   "major",
   "education_start_date",
@@ -44,11 +65,32 @@ const canonicalResumePaths: Record<CanonicalField, string> = {
   full_name: "identity.full_name",
   first_name: "identity.first_name",
   last_name: "identity.last_name",
+  gender: "personal.gender",
+  birth_date: "personal.birth_date",
+  id_type: "personal.id_type",
+  id_number: "personal.id_number",
+  ethnicity: "personal.ethnicity",
+  political_status: "personal.political_status",
+  health_status: "personal.health_status",
+  native_place: "personal.native_place",
+  native_place_province: "personal.native_place_province",
+  native_place_city: "personal.native_place_city",
+  household_registration: "personal.household_registration",
+  household_registration_province: "personal.household_registration_province",
+  household_registration_city: "personal.household_registration_city",
+  student_origin: "personal.student_origin",
+  student_origin_province: "personal.student_origin_province",
+  student_origin_city: "personal.student_origin_city",
+  is_fresh_graduate: "personal.is_fresh_graduate",
+  marital_status: "personal.marital_status",
   email: "contact.email",
   phone: "contact.phone",
+  current_residence_province: "contact.province",
   city: "contact.city",
   address: "contact.address",
   university: "education[0].school",
+  education_province: "education[0].province",
+  education_city: "education[0].city",
   degree: "education[0].degree",
   major: "education[0].major",
   education_start_date: "education[0].start_date",
@@ -82,9 +124,30 @@ export type ResumeProfile = {
     first_name: string;
     last_name: string;
   };
+  personal?: {
+    gender: string;
+    birth_date: string;
+    id_type: string;
+    id_number: string;
+    ethnicity: string;
+    political_status: string;
+    health_status?: string;
+    native_place: string;
+    native_place_province?: string;
+    native_place_city?: string;
+    household_registration: string;
+    household_registration_province?: string;
+    household_registration_city?: string;
+    student_origin?: string;
+    student_origin_province?: string;
+    student_origin_city?: string;
+    is_fresh_graduate?: string;
+    marital_status: string;
+  };
   contact: {
     email: string;
     phone: string;
+    province?: string;
     city: string;
     address: string;
   };
@@ -97,6 +160,8 @@ export type ResumeProfile = {
     school: string;
     degree: string;
     major: string;
+    province?: string;
+    city?: string;
     start_date: string;
     graduation_date: string;
     gpa: string;
@@ -153,6 +218,8 @@ const educationSchema = schema.object({
   school: schema.string({ maxLength: 300 }),
   degree: schema.string({ maxLength: 200 }),
   major: schema.string({ maxLength: 300 }),
+  province: schema.optional(schema.string({ maxLength: 200 })),
+  city: schema.optional(schema.string({ maxLength: 200 })),
   start_date: schema.string({ maxLength: 100 }),
   graduation_date: schema.string({ maxLength: 100 }),
   gpa: schema.string({ maxLength: 100 }),
@@ -201,9 +268,30 @@ export const resumeProfileSchema = schema.object({
     first_name: schema.string({ maxLength: 100 }),
     last_name: schema.string({ maxLength: 100 }),
   }),
+  personal: schema.optional(schema.object({
+    gender: schema.string({ maxLength: 100 }),
+    birth_date: schema.string({ maxLength: 100 }),
+    id_type: schema.string({ maxLength: 100 }),
+    id_number: schema.string({ maxLength: 200 }),
+    ethnicity: schema.string({ maxLength: 100 }),
+    political_status: schema.string({ maxLength: 100 }),
+    health_status: schema.optional(schema.string({ maxLength: 100 })),
+    native_place: schema.string({ maxLength: 300 }),
+    native_place_province: schema.optional(schema.string({ maxLength: 200 })),
+    native_place_city: schema.optional(schema.string({ maxLength: 200 })),
+    household_registration: schema.string({ maxLength: 300 }),
+    household_registration_province: schema.optional(schema.string({ maxLength: 200 })),
+    household_registration_city: schema.optional(schema.string({ maxLength: 200 })),
+    student_origin: schema.optional(schema.string({ maxLength: 300 })),
+    student_origin_province: schema.optional(schema.string({ maxLength: 200 })),
+    student_origin_city: schema.optional(schema.string({ maxLength: 200 })),
+    is_fresh_graduate: schema.optional(schema.string({ maxLength: 100 })),
+    marital_status: schema.string({ maxLength: 100 }),
+  })),
   contact: schema.object({
     email: schema.string({ maxLength: 320 }),
     phone: schema.string({ maxLength: 100 }),
+    province: schema.optional(schema.string({ maxLength: 200 })),
     city: schema.string({ maxLength: 200 }),
     address: schema.string({ maxLength: 500 }),
   }),
@@ -237,11 +325,32 @@ export const canonicalProfileSchema = schema.object({
   full_name: schema.string({ maxLength: 200 }),
   first_name: schema.string({ maxLength: 100 }),
   last_name: schema.string({ maxLength: 100 }),
+  gender: schema.string({ maxLength: 100 }),
+  birth_date: schema.string({ maxLength: 100 }),
+  id_type: schema.string({ maxLength: 100 }),
+  id_number: schema.string({ maxLength: 200 }),
+  ethnicity: schema.string({ maxLength: 100 }),
+  political_status: schema.string({ maxLength: 100 }),
+  health_status: schema.string({ maxLength: 100 }),
+  native_place: schema.string({ maxLength: 300 }),
+  native_place_province: schema.string({ maxLength: 200 }),
+  native_place_city: schema.string({ maxLength: 200 }),
+  household_registration: schema.string({ maxLength: 300 }),
+  household_registration_province: schema.string({ maxLength: 200 }),
+  household_registration_city: schema.string({ maxLength: 200 }),
+  student_origin: schema.string({ maxLength: 300 }),
+  student_origin_province: schema.string({ maxLength: 200 }),
+  student_origin_city: schema.string({ maxLength: 200 }),
+  is_fresh_graduate: schema.string({ maxLength: 100 }),
+  marital_status: schema.string({ maxLength: 100 }),
   email: schema.string({ maxLength: 320 }),
   phone: schema.string({ maxLength: 100 }),
+  current_residence_province: schema.string({ maxLength: 200 }),
   city: schema.string({ maxLength: 200 }),
   address: schema.string({ maxLength: 500 }),
   university: schema.string({ maxLength: 300 }),
+  education_province: schema.string({ maxLength: 200 }),
+  education_city: schema.string({ maxLength: 200 }),
   degree: schema.string({ maxLength: 200 }),
   major: schema.string({ maxLength: 300 }),
   education_start_date: schema.string({ maxLength: 100 }),

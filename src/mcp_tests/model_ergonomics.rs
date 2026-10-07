@@ -625,6 +625,8 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
     assert_eq!(composition["known_results"], 0);
     assert_eq!(composition["job_handoffs"], 0);
     assert_eq!(composition["outcome_unknown"], 0);
+    assert_eq!(composition["mutation_state_changed"], 0);
+    assert_eq!(composition["mutation_no_change"], 0);
     assert_eq!(composition["max_in_flight"], 0);
     assert_eq!(composition["nested_tool_counts"], json!({}));
     assert!(composition["duration_ms"].is_u64());
@@ -648,6 +650,8 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
             "job_handoffs",
             "known_results",
             "max_in_flight",
+            "mutation_no_change",
+            "mutation_state_changed",
             "nested_calls",
             "nested_failures",
             "nested_raw_result_bytes_total",

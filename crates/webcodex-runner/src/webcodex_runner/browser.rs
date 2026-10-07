@@ -117,6 +117,10 @@ struct SnapshotRequest {
     max_nodes: Option<usize>,
     #[serde(default)]
     max_depth: Option<u32>,
+    #[serde(default)]
+    node_offset: Option<usize>,
+    #[serde(default)]
+    query: Option<webcodex_browser::BrowserSnapshotQuery>,
 }
 
 fn default_snapshot_node_limit() -> usize {
@@ -248,7 +252,7 @@ pub(crate) fn handle_browser_operation(
         RunnerBrowserOperationKind::Snapshot => parse::<SnapshotRequest>(&operation.payload)
             .and_then(|request| {
                 supervisor
-                    .snapshot(
+                    .snapshot_query(
                         &request.browser_id,
                         &request.page_id,
                         request.mode,
@@ -256,6 +260,8 @@ pub(crate) fn handle_browser_operation(
                             .max_nodes
                             .unwrap_or_else(default_snapshot_node_limit),
                         request.max_depth.unwrap_or_else(default_snapshot_depth),
+                        request.node_offset.unwrap_or(0),
+                        request.query.as_ref(),
                     )
                     .map(|v| json!(v))
             }),
@@ -577,14 +583,20 @@ mod tests {
         assert_eq!(legacy_snapshot.mode, SnapshotMode::Auto);
         assert_eq!(legacy_snapshot.max_nodes, None);
         assert_eq!(legacy_snapshot.max_depth, None);
+        assert_eq!(legacy_snapshot.node_offset, None);
 
         let enhanced_snapshot = parse::<SnapshotRequest>(
-            r#"{"browser_id":"browser_abcdefghijklmnop","page_id":"page_abcdefghijklmnop","mode":"interactive","max_nodes":48,"max_depth":10}"#,
+            r#"{"browser_id":"browser_abcdefghijklmnop","page_id":"page_abcdefghijklmnop","mode":"interactive","max_nodes":48,"max_depth":10,"node_offset":256}"#,
         )
         .unwrap();
         assert_eq!(enhanced_snapshot.mode, SnapshotMode::Interactive);
         assert_eq!(enhanced_snapshot.max_nodes, Some(48));
         assert_eq!(enhanced_snapshot.max_depth, Some(10));
+        assert_eq!(enhanced_snapshot.node_offset, Some(256));
+        let query = parse::<SnapshotRequest>(r#"{"browser_id":"browser_fixture","page_id":"page_fixture","query":{"text":"学校","fields_only":true}}"#).unwrap().query.unwrap();
+        assert_eq!(query.text.as_deref(), Some("学校"));
+        assert!(query.fields_only);
+        assert!(parse::<SnapshotRequest>(r#"{"browser_id":"browser_fixture","page_id":"page_fixture","query":{"selector":"div"}}"#).is_err());
 
         let legacy_diagnostics = parse::<DiagnosticsRequest>(
             r#"{"browser_id":"browser_abcdefghijklmnop","page_id":"page_abcdefghijklmnop"}"#,

@@ -48,7 +48,9 @@ async fn code_mode_composition_projects_on_one_outer_window_activity() {
                     "consequential_calls": 1,
                     "known_results": 1,
                     "job_handoffs": 0,
-                    "outcome_unknown": 0
+                    "outcome_unknown": 0,
+                    "mutation_state_changed": 1,
+                    "mutation_no_change": 0
                 }
             }),
             request_bytes: None,
@@ -108,6 +110,47 @@ async fn code_mode_composition_projects_on_one_outer_window_activity() {
     assert_eq!(composition.known_results, 1);
     assert_eq!(composition.job_handoffs, 0);
     assert_eq!(composition.outcome_unknown, 0);
+    assert_eq!(composition.mutation_state_changed, Some(1));
+    assert_eq!(composition.mutation_no_change, Some(0));
+
+    let legacy = json!({
+        "nested_calls": 1,
+        "nested_successes": 1,
+        "nested_failures": 0,
+        "max_in_flight": 1,
+        "duration_ms": 1,
+        "slot_wait_ms": 0,
+        "returned_bytes": 1,
+        "nested_raw_result_bytes_total": 1,
+        "nested_tool_counts": {"read_files": 1},
+        "consequential_calls": 0,
+        "known_results": 0,
+        "job_handoffs": 0,
+        "outcome_unknown": 0
+    });
+    let legacy = project_code_mode_composition(&legacy)
+        .expect("historical composition without mutation counters remains readable");
+    assert_eq!(legacy.mutation_state_changed, None);
+    assert_eq!(legacy.mutation_no_change, None);
+
+    let impossible_mutation_counts = json!({
+        "nested_calls": 1,
+        "nested_successes": 1,
+        "nested_failures": 0,
+        "max_in_flight": 1,
+        "duration_ms": 1,
+        "slot_wait_ms": 0,
+        "returned_bytes": 1,
+        "nested_raw_result_bytes_total": 1,
+        "nested_tool_counts": {"read_files": 1},
+        "consequential_calls": 0,
+        "known_results": 0,
+        "job_handoffs": 0,
+        "outcome_unknown": 0,
+        "mutation_state_changed": 1,
+        "mutation_no_change": 0
+    });
+    assert!(project_code_mode_composition(&impossible_mutation_counts).is_none());
 
     let invalid = json!({
         "nested_calls": 1,

@@ -1,5 +1,7 @@
 *.sh text eol=lf
 *.toml text eol=lf
+# Benchmark fixture bytes are part of the independent oracle.
+tests/fixtures/agent-loop-multi-file/*.txt text eol=lf
 
 # Frontend freshness checks compare these generated assets byte-for-byte.
 frontend/dist/** text eol=lf

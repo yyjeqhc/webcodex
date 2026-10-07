@@ -933,6 +933,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         ("run_script", 74),
         ("run_shell", 75),
         ("observe_jobs", 80),
+        ("project_build", 94),
         ("project_validate", 95),
     ] {
         let definition = derived
@@ -1479,12 +1480,16 @@ fn readiness_tool_is_sequential_outer_only() {
 }
 
 #[test]
-fn project_build_is_gateway_visible_but_not_adaptive_direct() {
+fn project_build_is_adaptive_direct_and_keeps_typed_build_contract() {
     let definition = lookup_tool_definition("project_build").expect("project_build definition");
     assert!(definition.visibility.is_model_visible());
     assert_eq!(definition.category, TOOL_CATEGORY_EXECUTION);
-    assert_eq!(definition.adaptive_runtime_direct_rank(), None);
-    assert!(!is_adaptive_runtime_direct_tool("project_build"));
+    assert_eq!(definition.adaptive_runtime_direct_rank(), Some(94));
+    assert_eq!(
+        definition.adaptive_runtime_direct_reason(),
+        Some(ToolDirectReason::CoreWorkflow)
+    );
+    assert!(is_adaptive_runtime_direct_tool("project_build"));
     let requirement = runtime_tool_runner_capability("project_build")
         .expect("project_build must require its typed Runner capability");
     assert_eq!(requirement, RunnerCapabilityRequirement::ProjectBuild);

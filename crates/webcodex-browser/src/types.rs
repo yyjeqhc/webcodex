@@ -6,6 +6,7 @@ pub const MAX_BROWSERS: usize = 4;
 pub const MAX_PAGES_PER_BROWSER: usize = 16;
 pub const MAX_PAGE_SUMMARIES: usize = 32;
 pub const MAX_SNAPSHOT_NODES: usize = 256;
+pub const MAX_SNAPSHOT_OFFSET: usize = 4096;
 pub const MAX_SNAPSHOT_BYTES: usize = 64 * 1024;
 pub const MAX_NODE_TEXT_BYTES: usize = 512;
 pub const MAX_IMAGE_BYTES: usize = 1024 * 1024;
@@ -316,6 +317,41 @@ impl ControlCapability {
     }
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct FormContext {
+    /// Stable DOM semantic fingerprint for a rendered field. It excludes current
+    /// values and opaque Browser element ids; structurally identical repeated fields
+    /// may intentionally share the same fingerprint.
+    pub field_signature: String,
+    pub dom_tag: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub html_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub autocomplete: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nearby_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_size: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub component_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aria_invalid: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub option_count: Option<usize>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SemanticNode {
     pub role: String,
@@ -341,6 +377,8 @@ pub struct SemanticNode {
     pub disabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub form_context: Option<FormContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub element_id: Option<String>,
     /// Canonical `browser_act` effects this node admits. Empty for semantic-only nodes.
@@ -385,6 +423,12 @@ pub struct SemanticSnapshot {
     pub max_nodes: usize,
     pub max_depth: u32,
     pub node_count: usize,
+    /// Effective post-filter semantic-node offset for this bounded window.
+    pub node_offset: usize,
+    /// Next recoverable post-filter offset, if more projected source nodes remain.
+    /// This is independent of `truncated`, which may also report unrecoverable
+    /// source/field truncation.
+    pub next_node_offset: Option<usize>,
     pub truncated: bool,
     pub nodes: Vec<SemanticNode>,
 }
@@ -500,6 +544,8 @@ mod tests {
             max_nodes: 256,
             max_depth: 32,
             node_count: 2,
+            node_offset: 16,
+            next_node_offset: Some(18),
             truncated: false,
             nodes: vec![
                 SemanticNode {
@@ -515,6 +561,23 @@ mod tests {
                     required: Some(true),
                     disabled: Some(false),
                     read_only: None,
+                    form_context: Some(FormContext {
+                        field_signature: "0123456789abcdef01234567".to_string(),
+                        dom_tag: "select".to_string(),
+                        input_type: None,
+                        html_name: Some("fruit".to_string()),
+                        placeholder: None,
+                        autocomplete: None,
+                        nearby_label: None,
+                        group_label: None,
+                        group_index: None,
+                        group_size: None,
+                        section_label: Some("Preferences".to_string()),
+                        component_hint: Some("native-select".to_string()),
+                        aria_invalid: Some(false),
+                        validation_hint: None,
+                        option_count: Some(2),
+                    }),
                     element_id: Some("element_abcdefghijklmnop".to_string()),
                     actions: vec!["select_option".to_string()],
                     actionable: true,
@@ -532,6 +595,7 @@ mod tests {
                     required: None,
                     disabled: Some(false),
                     read_only: None,
+                    form_context: None,
                     element_id: None,
                     actions: Vec::new(),
                     actionable: false,
@@ -545,6 +609,8 @@ mod tests {
             "auto_compacted",
             "max_nodes",
             "max_depth",
+            "node_offset",
+            "next_node_offset",
             "nodes",
         ] {
             assert!(object.contains_key(field), "missing {field}");
@@ -554,12 +620,21 @@ mod tests {
         }
         assert_eq!(value["snapshot_mode"], "interactive");
         assert_eq!(value["auto_compacted"], true);
+        assert_eq!(value["node_offset"], 16);
+        assert_eq!(value["next_node_offset"], 18);
         let option = &value["nodes"][1];
         assert_eq!(option["name"], "Apple");
         assert_eq!(option["value"], "a");
         assert_eq!(option["group_label"], "Fruit");
         assert_eq!(option["selected"], true);
         assert_eq!(option["disabled"], false);
+        let control = &value["nodes"][0];
+        assert_eq!(
+            control["form_context"]["field_signature"],
+            "0123456789abcdef01234567"
+        );
+        assert_eq!(control["form_context"]["section_label"], "Preferences");
+        assert_eq!(control["form_context"]["option_count"], 2);
         assert_eq!(option["actionable"], false);
         assert!(option.get("actions").is_none());
         assert!(option.get("element_id").is_none());

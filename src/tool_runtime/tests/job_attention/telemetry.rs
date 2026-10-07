@@ -40,6 +40,136 @@ async fn job_convergence_correlates_only_exact_authorized_relations_without_payl
     assert_eq!(facts.events[0].kind, JobEventKind::PendingHandoff);
     assert!(facts.events[0].terminal_observed_at_ms.is_none());
     assert!(facts.correlation_complete);
+    let code_mode_pending = ToolResult::ok(json!({
+        "effect_receipt": {
+            "children": [{
+                "outcome": "job_handoff",
+                "job_id": job_id,
+                "continuation": super::super::super::jobs::observe_job_continuation(&job_id, None),
+            }]
+        }
+    }));
+    let code_mode_facts = runtime
+        .job_convergence_record(
+            "execute_effectful_code_mode",
+            &code_mode_pending,
+            &context,
+            Some(&auth),
+            Some(&window),
+        )
+        .unwrap();
+    assert_eq!(code_mode_facts.pending_handoff_count, 1);
+    assert_eq!(code_mode_facts.events.len(), 1);
+    assert_eq!(code_mode_facts.events[0].kind, JobEventKind::PendingHandoff);
+    assert_eq!(code_mode_facts.events[0].relation, facts.events[0].relation);
+    assert!(code_mode_facts.correlation_complete);
+    let mut mixed_children = vec![json!({"outcome": "known_result"}); 9];
+    mixed_children.push(json!({
+        "outcome": "job_handoff",
+        "job_id": job_id,
+        "continuation": super::super::super::jobs::observe_job_continuation(&job_id, None),
+    }));
+    let mixed_receipt = ToolResult::ok(json!({
+        "effect_receipt": {"children": mixed_children}
+    }));
+    let mixed_facts = runtime
+        .job_convergence_record(
+            "execute_effectful_code_mode",
+            &mixed_receipt,
+            &context,
+            Some(&auth),
+            Some(&window),
+        )
+        .unwrap();
+    assert_eq!(mixed_facts.pending_handoff_count, 1);
+    assert_eq!(mixed_facts.events.len(), 1);
+    assert_eq!(mixed_facts.events[0].relation, facts.events[0].relation);
+    assert!(
+        mixed_facts.correlation_complete,
+        "non-handoff receipt children do not consume the telemetry event budget",
+    );
+    let mut oversized_children = vec![json!({"outcome": "known_result"}); 32];
+    oversized_children.push(json!({
+        "outcome": "job_handoff",
+        "job_id": job_id,
+        "continuation": super::super::super::jobs::observe_job_continuation(&job_id, None),
+    }));
+    let oversized_receipt = ToolResult::ok(json!({
+        "effect_receipt": {"children": oversized_children}
+    }));
+    let oversized_facts = runtime
+        .job_convergence_record(
+            "execute_effectful_code_mode",
+            &oversized_receipt,
+            &context,
+            Some(&auth),
+            Some(&window),
+        )
+        .unwrap();
+    assert!(oversized_facts.events.is_empty());
+    assert!(
+        !oversized_facts.correlation_complete,
+        "receipt input beyond the canonical Code Mode child bound fails closed",
+    );
+    assert!(
+        !serde_json::to_string(&code_mode_facts)
+            .unwrap()
+            .contains(&job_id),
+        "payload-safe convergence telemetry must not persist raw nested Job ids",
+    );
+
+    let failed_code_mode_pending = ToolResult::err_with_output(
+        "cell failed after handoff",
+        json!({
+            "effect_receipt": {
+                "children": [{
+                    "outcome": "job_handoff",
+                    "job_id": job_id,
+                    "continuation": super::super::super::jobs::observe_job_continuation(&job_id, None),
+                }]
+            }
+        }),
+    );
+    let failed_parent_facts = runtime
+        .job_convergence_record(
+            "execute_effectful_code_mode",
+            &failed_code_mode_pending,
+            &context,
+            Some(&auth),
+            Some(&window),
+        )
+        .unwrap();
+    assert_eq!(failed_parent_facts.pending_handoff_count, 1);
+    assert_eq!(failed_parent_facts.events.len(), 1);
+    assert_eq!(
+        failed_parent_facts.events[0].relation, facts.events[0].relation,
+        "canonical child handoff truth survives a failed Code Mode parent",
+    );
+    assert!(failed_parent_facts.correlation_complete);
+
+    let malformed_code_mode_pending = ToolResult::ok(json!({
+        "effect_receipt": {
+            "children": [{
+                "outcome": "job_handoff",
+                "job_id": job_id,
+                "continuation": {
+                    "tool": "observe_jobs",
+                    "arguments": {"items": [{"job_id": "different-job"}]}
+                }
+            }]
+        }
+    }));
+    let malformed = runtime
+        .job_convergence_record(
+            "execute_effectful_code_mode",
+            &malformed_code_mode_pending,
+            &context,
+            Some(&auth),
+            Some(&window),
+        )
+        .unwrap();
+    assert!(!malformed.correlation_complete);
+    assert!(malformed.events.is_empty());
     let observe = ToolResult::ok(
         json!({"items": [{"job_id": job_id, "success": true, "output": {"stdout": "SECRET_OUTPUT", "stderr": "SECRET_ERROR"}}], "command": "SECRET_COMMAND", "source": "SECRET_SOURCE", "env": "SECRET_ENV"}),
     );
@@ -204,6 +334,77 @@ async fn job_convergence_correlates_only_exact_authorized_relations_without_payl
             Some(&window)
         )
         .is_none());
+}
+
+#[cfg(feature = "experimental-code-mode")]
+#[tokio::test]
+async fn job_convergence_marks_combined_code_mode_handoff_and_attention_overflow_incomplete() {
+    let runtime = ToolRuntime::new_for_tests();
+    let auth = shared_key_auth_context("telemetry-overflow-owner");
+    let client = "telemetry-overflow";
+    register_job_agent_for_auth(&runtime, client, "repo", &auth).await;
+    let project = format!("agent:{client}:repo");
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), None)
+        .session_id;
+    let window = ClientWindow::for_test("telemetry-overflow-window");
+    let context = ToolCallCorrelation {
+        resolved_project: Some(project),
+        business_session_id: Some(session.clone()),
+        ..Default::default()
+    };
+
+    assert!(
+        webcodex_tool_contracts::runtime_tool_supports_passive_job_attention(
+            "execute_effectful_code_mode"
+        )
+    );
+    let mut jobs = Vec::new();
+    for _ in 0..10 {
+        jobs.push(
+            start_agent_runtime_job_in_session(&runtime, client, "repo", Some(&session), &auth)
+                .await,
+        );
+    }
+    let children: Vec<_> = jobs[..9]
+        .iter()
+        .map(|job_id| {
+            json!({
+                "outcome": "job_handoff",
+                "job_id": job_id,
+                "continuation": super::super::super::jobs::observe_job_continuation(job_id, None),
+            })
+        })
+        .collect();
+    let result = ToolResult::ok(json!({
+        "effect_receipt": {"children": children},
+        "job_attention": {
+            "items": [{
+                "job_id": jobs[9],
+                "state": "terminal",
+                "command_ok": true,
+                "validation": {"passed": true}
+            }]
+        }
+    }));
+
+    let facts = runtime
+        .job_convergence_record(
+            "execute_effectful_code_mode",
+            &result,
+            &context,
+            Some(&auth),
+            Some(&window),
+        )
+        .unwrap();
+    assert_eq!(facts.pending_handoff_count, 9);
+    assert_eq!(facts.passive_terminal_delivery_count, 1);
+    assert_eq!(facts.events.len(), 9);
+    assert!(
+        !facts.correlation_complete,
+        "bounded event truncation must fail correlation completeness closed",
+    );
 }
 
 #[tokio::test]

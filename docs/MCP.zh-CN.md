@@ -318,7 +318,7 @@ Cargo all-packages provenance 是有界的 package-selection witness，并非完
 
 普通的 portable Rust/Go 构建优先使用 `project_build`。它只接受精确 registered `project`、可选的 project-relative `cwd`、可选的 `auto` / `rust` / `go` adapter hint、portable `scope`（有界 `packages` 1..8 项，或 `all_packages=true`，二者不可同时出现）以及总 `timeout_secs`。Runner 解析最近且无歧义的 recipe 并拥有 canonical argv：Rust 的显式 packages 使用重复 `-p` selector，all-packages 只有在 effective Cargo workspace root 与 registered Project root 完全一致时才映射为 `cargo build --workspace`；Go 的显式 package pattern 直接传入，all-packages 映射为 `go build ./...`。Go project build 由 Runner 固定以 `GO111MODULE=on`、`GOWORK=off` 执行；完整 `go.work` workspace 语义不属于 v1 gateway，也不会从 Runner host 隐式继承。请求不能携带 executable、argv、shell、script、release/profile/target/features、原生 workspace/exclude flag、offline／network 策略或 artifact discovery contract；portable all-packages request 额外要求 additive `project_all_packages_v1` Runner capability；v1 检测到 Node/Python recipe 时 fail closed。
 
-两个 gateway 都可选接受 `dependency_policy: {"mode":"locked"}`。这是 portable 的依赖解析保证，而不是宣称不同生态的原生 flag 完全等价：Rust build/check/test 映射为 Cargo `--locked`，Go build/vet/test 映射为 `-mod=readonly`。它要求 adapter 不得为了让本次操作成功而修复或改写项目级依赖选择状态，但**不**表示关闭 registry/module/toolchain 网络访问；offline／network policy 仍是 #599 后续独立扩展。`project_validate(action="format_check")` 会拒绝该 policy，而不是静默忽略。携带 policy 的 planning 与 typed Job admission 都要求 additive `project_dependency_policy_v1` Runner capability。locked validation 使用独立的 durable validation target identity；省略 policy 的请求保持原有 argv 与 identity。
+两个 gateway 都可选接受 `dependency_policy: {"mode":"locked"}`。这是 portable 的依赖解析保证，而不是宣称不同生态的原生 flag 完全等价：Rust build/check/test 映射为 Cargo `--locked`，Go build/vet/test 映射为 `-mod=readonly`。它要求 adapter 不得为了让本次操作成功而修复或改写项目级依赖选择状态，但**不**表示关闭 registry/module/toolchain 网络访问；offline／network policy 由 #962 作为增量 lifecycle 扩展跟踪。`project_validate(action="format_check")` 会拒绝该 policy，而不是静默忽略。携带 policy 的 planning 与 typed Job admission 都要求 additive `project_dependency_policy_v1` Runner capability。locked validation 使用独立的 durable validation target identity；省略 policy 的请求保持原有 argv 与 identity。
 
 `project_build` 在 planning 与 typed Job admission 两处都要求 additive `project_build_v1` Runner capability；Go project-build Job 准入还额外要求 `project_go_single_module_v1`。Job 准入会重新规划 registered project/root、recipe、manifest/lock provenance、package scope 与 canonical invocation；若经过本地排队，worker 会在原生进程执行前再次核验同一个计划。计划 stale 时以 `not_started` 拒绝并释放 Job 槽位，不会静默重建或执行过期意图。长构建继续使用同一个 durable Job，并返回普通的 sparse pending continuation；pending 绝不授权 retry/redispatch。这个 closed gateway 限制的是 WebCodex 自己的命令权限，并不是 OS sandbox：Cargo/Go 构建逻辑以及项目 build script 仍可能产生自己的文件系统或网络副作用。超出 v1 contract 的构建继续显式使用 lower-level execution 工具。
 
@@ -403,7 +403,7 @@ Go/Python 保留有意义的空格；空字符串或省略表示不加过滤。
 长任务仍观察同一个 Job，不能因 Host 中断而重跑。
 
 构建产物、修改源码的格式化、lint、Node 与其他 Python 生产适配器，以及更广泛的
-workspace／依赖策略仍是 #599 后续工作；现有 cargo_*、go_test 与显式进程工具保留。
+workspace/exclude、offline／network 策略由 #962 跟踪；现有 cargo_*、go_test 与显式进程工具保留。
 
 ### ChatGPT 文件桥接
 

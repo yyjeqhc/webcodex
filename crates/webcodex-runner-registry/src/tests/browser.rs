@@ -387,3 +387,49 @@ async fn browser_precise_operation_is_preserved_on_wire_without_shell_fields() {
         Some(r#"{"browser_id":"browser_test","page_id":"page_test"}"#)
     );
 }
+
+#[tokio::test]
+async fn browser_query_rechecks_additive_capability_before_enqueue() {
+    for supported in [false, true] {
+        let registry = RunnerRegistry::default();
+        let alice = auth_context(Some("alice"), false);
+        let mut registration = runner_registration("query", "browser-inst", vec![]);
+        registration.owner = Some("alice".into());
+        registration.capabilities = v2_baseline_capabilities();
+        registration
+            .capabilities
+            .set(RunnerFeature::BrowserObserve, true);
+        registration
+            .capabilities
+            .set(RunnerFeature::BrowserElementActionAdmission, true);
+        registration
+            .capabilities
+            .set(RunnerFeature::BrowserSemanticQuery, supported);
+        registry.register(registration).await.unwrap();
+        let payload = serde_json::json!({"browser_id":"browser_fixture", "page_id":"page_fixture", "query":{"fields_only":true}}).to_string();
+        let result = registry
+            .enqueue_browser(
+                "query".into(),
+                "browser_snapshot",
+                payload.clone(),
+                "alice".into(),
+                Some(&alice),
+                30,
+            )
+            .await;
+        let request = registry
+            .poll(RunnerPollRequest {
+                client_id: "query".into(),
+                runner_instance_id: "browser-inst".into(),
+            })
+            .await
+            .unwrap();
+        if supported {
+            assert!(result.is_ok());
+            assert_eq!(request.unwrap().stdin.as_deref(), Some(payload.as_str()));
+        } else {
+            assert!(result.unwrap_err().contains("browser_semantic_query"));
+            assert!(request.is_none());
+        }
+    }
+}

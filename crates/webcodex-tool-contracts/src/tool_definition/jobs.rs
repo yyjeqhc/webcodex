@@ -28,36 +28,40 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         71,
         super::ToolDirectReason::CoreWorkflow,
     ),
-    model_spec(
-        def(
-            "project_build",
-            super::ToolAuditPolicy::TYPED_CANONICAL
-                .execution(super::ToolAuditExecutionPolicy::DIRECT_ARGV_TEXT),
-            ModelVisible,
-            TOOL_CATEGORY_EXECUTION,
-            Some(ProjectBuild),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Execute,
-                risk: JobRun,
-                approval: super::ToolApprovalPolicy::Standard,
-                idempotency: super::ToolIdempotency::NonIdempotent,
-            },
-            Some(JOB_RUN),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
-        "Preferred portable project build gateway. Runner resolves the nearest unambiguous Rust/Go recipe and executes canonical cargo build or go build argv. Go project builds run in Runner-owned single-module mode (GO111MODULE=on, GOWORK=off), so ambient module/workspace mode cannot change the planned graph. Optional scope selects either bounded explicit packages or all_packages=true. Rust all-packages is admitted only for a Cargo workspace whose effective root is the registered Project root; Go all-packages keeps the Runner-owned ./... single-module scope. dependency_policy.mode=locked forbids adapters from repairing dependency selection state (Cargo --locked; Go -mod=readonly); it does not imply offline execution. Long builds remain the same durable Job; pending never authorizes retry.",
-    )
-    .with_execution(super::ToolExecutionContract::new(
-        super::ToolExecutionForm::ProjectBuild,
-        super::ToolExecutionLifetime::Runner,
-        super::ToolExecutionStart::SyncFirst,
-        super::ToolExecutionContinuation::ObserveJobs,
-    )),
+    adaptive_runtime_direct(
+        model_spec(
+            def(
+                "project_build",
+                super::ToolAuditPolicy::TYPED_CANONICAL
+                    .execution(super::ToolAuditExecutionPolicy::DIRECT_ARGV_TEXT),
+                ModelVisible,
+                TOOL_CATEGORY_EXECUTION,
+                Some(ProjectBuild),
+                TOOL_PROVIDER_RUNNER,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Execute,
+                    risk: JobRun,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::NonIdempotent,
+                },
+                Some(JOB_RUN),
+                true,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "Preferred portable project build gateway. Runner resolves the nearest unambiguous Rust/Go recipe and executes canonical cargo build or go build argv. Go project builds run in Runner-owned single-module mode (GO111MODULE=on, GOWORK=off), so ambient module/workspace mode cannot change the planned graph. Optional scope selects either bounded explicit packages or all_packages=true. Rust all-packages is admitted only for a Cargo workspace whose effective root is the registered Project root; Go all-packages keeps the Runner-owned ./... single-module scope. dependency_policy.mode=locked forbids adapters from repairing dependency selection state (Cargo --locked; Go -mod=readonly); it does not imply offline execution. Long builds remain the same durable Job; pending never authorizes retry.",
+        )
+        .with_execution(super::ToolExecutionContract::new(
+            super::ToolExecutionForm::ProjectBuild,
+            super::ToolExecutionLifetime::Runner,
+            super::ToolExecutionStart::SyncFirst,
+            super::ToolExecutionContinuation::ObserveJobs,
+        )),
+        94,
+        super::ToolDirectReason::CoreWorkflow,
+    ),
     adaptive_runtime_direct(
         model_spec(
             def(

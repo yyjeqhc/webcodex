@@ -58,6 +58,39 @@
       "code_mode_surface": "guarded_edit"
     },
     {
+      "id": "guarded_multi_file_edit",
+      "title": "Search, guarded multi-file edit, and post-edit inspection",
+      "target": "webcodex_repository",
+      "prompt": "Search for BENCH_TARGET_ALPHA and BENCH_TARGET_BETA, read only the two matched fixture files, then make exactly one guarded edit_project_files request containing both file changes: BENCH_TARGET_ALPHA=before to BENCH_TARGET_ALPHA=after and BENCH_TARGET_BETA=before to BENCH_TARGET_BETA=after using the read revisions you just observed. Post-read both files, inspect the resulting diff, and report the two changed paths. Preserve ALPHA_UNRELATED_SENTINEL=keep and BETA_UNRELATED_SENTINEL=keep exactly. Do not edit any other file.",
+      "correctness": {
+        "changed_files": [
+          "tests/fixtures/agent-loop-multi-file/alpha.txt",
+          "tests/fixtures/agent-loop-multi-file/beta.txt"
+        ],
+        "one_guarded_edit_request_required": true,
+        "post_edit_read_required": true,
+        "fixture_oracle": {
+          "changed_files": [
+            "tests/fixtures/agent-loop-multi-file/alpha.txt",
+            "tests/fixtures/agent-loop-multi-file/beta.txt"
+          ],
+          "files": {
+            "tests/fixtures/agent-loop-multi-file/alpha.txt": {
+              "expected_text": "BENCH_TARGET_ALPHA=after\nALPHA_UNRELATED_SENTINEL=keep\n"
+            },
+            "tests/fixtures/agent-loop-multi-file/beta.txt": {
+              "expected_text": "BENCH_TARGET_BETA=after\nBETA_UNRELATED_SENTINEL=keep\n"
+            }
+          }
+        }
+      },
+      "validation": {
+        "required": false,
+        "expectation": "Fixture-side oracle checks the exact two-file diff and preserved unrelated sentinels; no code validation is required."
+      },
+      "code_mode_surface": "guarded_edit"
+    },
+    {
       "id": "failed_validation_recovery",
       "title": "Failed validation recovery",
       "target": "coding_loop_eval_fixture",

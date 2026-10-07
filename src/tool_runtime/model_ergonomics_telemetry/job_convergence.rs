@@ -8,6 +8,10 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const MAX_EVENTS: usize = webcodex_runner_registry::MAX_JOB_TELEMETRY_SNAPSHOTS;
+#[cfg(feature = "experimental-code-mode")]
+const MAX_CODE_MODE_RECEIPT_CHILDREN: usize = webcodex_code_mode::MAX_TOOL_CALLS;
+#[cfg(not(feature = "experimental-code-mode"))]
+const MAX_CODE_MODE_RECEIPT_CHILDREN: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -68,9 +72,67 @@ impl ToolRuntime {
         };
         let mut selected = Vec::new();
         let mut observation_complete = tool != "observe_jobs";
+        let passive_eligible =
+            webcodex_tool_contracts::runtime_tool_supports_passive_job_attention(tool);
+        if matches!(
+            tool,
+            "execute_effectful_code_mode" | "execute_mutating_code_mode"
+        ) {
+            match result
+                .output
+                .pointer("/effect_receipt/children")
+                .and_then(serde_json::Value::as_array)
+            {
+                Some(children) if children.len() <= MAX_CODE_MODE_RECEIPT_CHILDREN => {
+                    for child in children {
+                        if child.get("outcome").and_then(serde_json::Value::as_str)
+                            != Some("job_handoff")
+                        {
+                            continue;
+                        }
+                        let job_id = child.get("job_id").and_then(serde_json::Value::as_str);
+                        let continuation = child.get("continuation");
+                        let continuation_job_id = continuation
+                            .and_then(|value| value.get("arguments"))
+                            .and_then(|value| value.get("items"))
+                            .and_then(serde_json::Value::as_array)
+                            .filter(|items| items.len() == 1)
+                            .and_then(|items| items[0].get("job_id"))
+                            .and_then(serde_json::Value::as_str);
+                        let continuation_tool = continuation
+                            .and_then(|value| value.get("tool"))
+                            .and_then(serde_json::Value::as_str);
+                        if let (Some(job_id), Some(continuation_job_id)) =
+                            (job_id, continuation_job_id)
+                        {
+                            if continuation_tool == Some("observe_jobs")
+                                && job_id == continuation_job_id
+                            {
+                                if !selected.iter().any(|(selected_id, kind, _, _)| {
+                                    *selected_id == job_id && *kind == JobEventKind::PendingHandoff
+                                }) {
+                                    record.pending_handoff_count =
+                                        record.pending_handoff_count.saturating_add(1);
+                                    selected.push((
+                                        job_id,
+                                        JobEventKind::PendingHandoff,
+                                        None,
+                                        None,
+                                    ));
+                                }
+                            } else {
+                                observation_complete = false;
+                            }
+                        } else {
+                            observation_complete = false;
+                        }
+                    }
+                }
+                Some(_) => observation_complete = false,
+                None => {}
+            }
+        }
         if result.success {
-            let passive_eligible =
-                webcodex_tool_contracts::runtime_tool_supports_passive_job_attention(tool);
             if let Some(id) = super::super::job_attention::pending_continuation_job_id(result)
                 .filter(|_| passive_eligible)
             {
@@ -129,6 +191,9 @@ impl ToolRuntime {
         }
         if selected.is_empty() && record.wait_for_job_terminal_count == 0 && observation_complete {
             return None;
+        }
+        if selected.len() > MAX_EVENTS {
+            observation_complete = false;
         }
         selected.truncate(MAX_EVENTS);
         let (Some(auth), Some(window)) = (auth, window) else {

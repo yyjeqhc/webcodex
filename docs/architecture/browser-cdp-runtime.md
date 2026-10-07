@@ -40,6 +40,65 @@ navigation, element effects, key input, and close operations. This separation
 preserves rolling compatibility, capability admission, telemetry, and exact
 failure attribution without inflating the model tool inventory.
 
+### Bounded semantic queries
+
+`observe_browser(action=snapshot, query={...})` filters the existing semantic
+source before applying `node_offset` / `max_nodes`. It does not concatenate
+successive snapshots. `fields_only=true` finds native and semantic form fields,
+including disabled/read-only controls. `text` is a case-insensitive literal
+substring of name, description, nearby label or placeholder; `role` is exact
+(case-insensitive), and `group` / `section` are literal label substrings. Filters
+are conjunctive, limited to 128 nonblank characters, and never grant actions.
+No regex, selector or script is accepted. Query terms are omitted from durable
+Browser audit projections.
+
+For example, `query={"fields_only":true,"section":"Education"}` returns fields
+across ordinary snapshot page boundaries in one call. With a query, `auto` keeps
+semantic text instead of silently compacting it away; explicit `interactive`
+still limits results to interactive semantics. Up to 4,352 existing source nodes
+(the existing pagination horizon) are searched once. Return limits remain
+256 nodes / 64 KiB; CDP reads keep the existing depth, message-byte and request
+deadline bounds. There is no unbounded pagination loop or widening of iframe
+collection. `truncated=true` makes a missing match inconclusive, including an
+exhausted search horizon or AX-advertised descendants omitted by the depth bound.
+`next_node_offset` addresses remaining matches within that horizon, with the same
+query; a null offset does not make a truncated result complete.
+
+Every returned element belongs to one new snapshot generation and can be used in
+one existing batch. A new query or snapshot invalidates every older element id.
+Do not combine ids from different result windows; narrow the semantic query to
+obtain the relevant controls together. Unreturned nodes receive no retained
+identity. The additive `browser_semantic_query` capability is checked both by
+ToolRuntime and under the Runner registry lock; older Runners still receive the
+original snapshot payload when query is absent.
+
+### Conservative clickable cards
+
+A top-document `div`, `li` or `article` already represented as a generic/group/
+listitem/article AX node can gain **click only**. One private read-only
+`DOMSnapshot.captureSnapshot` supplies Chromium's `isClickable` event-response
+fact and computed layout/style evidence. Admission additionally requires a
+visible, nonzero box, pointer cursor, enabled pointer events, readable bounded
+text, and a fully known content subtree without nested interactive targets,
+shadow roots or frame documents. Hidden, inert, disabled, editable and invisible
+ancestors suppress admission; nested event targets are ambiguous and suppressed.
+Neither pointer styling nor `onclick` alone grants authority. No site selector,
+listener source, raw DOM or CDP entry point is exposed to the model.
+
+Before the extra capture, the existing depth-bounded DOM must prove a complete
+tree of at most 4,352 nodes (including shadow/frame contents); missing children
+or unknown frame documents suppress capture entirely. The existing CDP
+message/deadline ceilings guard changes racing that preflight. Classification
+also rejects documents over 4,352 captured nodes, scans at most that many DOM/AX nodes,
+checks at most 64 content nodes per candidate, and admits at most 32 cards.
+Missing/oversized evidence fails closed for cards while existing native control
+semantics remain unchanged. Root DOM identity and a post-capture loader check
+prevent joining different documents. This slice does not infer cards inside
+shadow roots or iframes, and does not infer delegated ancestor handlers.
+
+Card `actions` and opaque ids use the same projection, generation, lease and
+document fences as native controls. No new effect path or replay behavior exists.
+
 ### Bounded form batches
 
 `control_browser(action=batch)` sends one `browser_batch` Runner invocation containing

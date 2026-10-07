@@ -98,6 +98,7 @@ class AgentLoopReportTests(unittest.TestCase):
         readiness: dict[str, object] | None = None,
         job_convergence: dict[str, object] | None = None,
         error_kind: str | None = None,
+        edit_outcome: object | None = None,
         normalization_code: object | None = None,
         schema_version: int = 12,
     ) -> None:
@@ -118,6 +119,8 @@ class AgentLoopReportTests(unittest.TestCase):
             )
         if normalization_code is not None:
             telemetry["input_normalization_code"] = normalization_code
+        if edit_outcome is not None:
+            telemetry["edit_outcome"] = edit_outcome
         if readiness is not None:
             telemetry["readiness"] = readiness
         if job_convergence is not None:
@@ -586,6 +589,46 @@ class AgentLoopReportTests(unittest.TestCase):
         )
         self.assertIsNone(result["failures"]["resolved_recoveries"])
 
+    def test_edit_outcomes_are_aggregated_from_authoritative_telemetry(self) -> None:
+        self.insert_event(
+            "applied",
+            tool="edit_project_files",
+            schema_version=13,
+            edit_outcome="applied",
+        )
+        self.insert_event(
+            "dry-run",
+            tool="edit_project_files",
+            schema_version=13,
+            edit_outcome="dry_run_would_change",
+            started=150,
+            handed=170,
+            transition="serial",
+        )
+
+        result = self.summarize()
+        self.assertEqual(result["edit_outcomes"]["observed"], 2)
+        self.assertEqual(result["edit_outcomes"]["unrecognized"], 0)
+        self.assertEqual(
+            result["edit_outcomes"]["by_tool"]["edit_project_files"],
+            {"applied": 1, "dry_run_would_change": 1},
+        )
+        self.assertTrue(result["availability"]["edit_outcomes"]["available"])
+
+        self.insert_event(
+            "unknown",
+            tool="edit_project_files",
+            schema_version=13,
+            edit_outcome="PRIVATE_UNKNOWN",
+            started=200,
+            handed=220,
+            transition="serial",
+        )
+        result = self.summarize()
+        self.assertEqual(result["edit_outcomes"]["unrecognized"], 1)
+        self.assertFalse(result["availability"]["edit_outcomes"]["available"])
+        self.assertNotIn("PRIVATE_UNKNOWN", json.dumps(result))
+
     def test_missing_optional_result_bytes_never_become_zero(self) -> None:
         self.insert_event("known", result_bytes=90)
         self.insert_event(
@@ -1024,7 +1067,11 @@ class AgentLoopReportTests(unittest.TestCase):
         self.insert_event(
             "guarded_edit",
             tool="execute_mutating_code_mode",
-            composition=code_mode_composition(input_bytes=80),
+            composition=code_mode_composition(
+                input_bytes=80,
+                mutation_state_changed=1,
+                mutation_no_change=0,
+            ),
         )
         self.insert_event(
             "validation",
@@ -1043,6 +1090,8 @@ class AgentLoopReportTests(unittest.TestCase):
                 consequential_calls=1,
                 known_results=0,
                 job_handoffs=1,
+                mutation_state_changed=0,
+                mutation_no_change=0,
             ),
         )
         result = self.summarize(variant="code_mode")
@@ -1053,6 +1102,8 @@ class AgentLoopReportTests(unittest.TestCase):
         self.assertEqual(composition["known_results"]["total"], 1)
         self.assertEqual(composition["job_handoffs"]["total"], 1)
         self.assertEqual(composition["outcome_unknown"]["total"], 0)
+        self.assertEqual(composition["mutation_state_changed"]["total"], 1)
+        self.assertEqual(composition["mutation_no_change"]["total"], 0)
         self.assertEqual(composition["duration_ms"]["total"], 35)
         self.assertEqual(composition["input_bytes"]["total"], 120)
         self.assertEqual(composition["returned_bytes"]["total"], 90)
@@ -1076,6 +1127,12 @@ class AgentLoopReportTests(unittest.TestCase):
         self.assertIsNone(input_bytes["total"])
         self.assertEqual(input_bytes["observed_total"], 0)
         self.assertEqual(input_bytes["missing"], 1)
+        mutation_changed = result["composition"]["mutation_state_changed"]
+        mutation_no_change = result["composition"]["mutation_no_change"]
+        self.assertIsNone(mutation_changed["total"])
+        self.assertEqual(mutation_changed["missing"], 1)
+        self.assertIsNone(mutation_no_change["total"])
+        self.assertEqual(mutation_no_change["missing"], 1)
 
     def test_direct_variant_with_code_mode_call_fails_composition_closed(self) -> None:
         self.insert_event(
@@ -1158,14 +1215,30 @@ class AgentLoopReportTests(unittest.TestCase):
         with self.assertRaisesRegex(report.ReportError, "duplicate case id"):
             report.validate_case_manifest(manifest)
 
+    def test_manifest_loader_fail_closes_on_pathological_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            deep = root / "deep.json"
+            deep.write_text(
+                '{"schema_version":1,"cases":' + "[" * 10000 + "0" + "]" * 10000 + "}",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(report.ReportError, "bounded JSON"):
+                report.load_case_manifest(deep)
+
+            huge_int = root / "huge-int.json"
+            huge_int.write_text("{" + '"schema_version":' + "1" * 10000 + "}", encoding="utf-8")
+            with self.assertRaisesRegex(report.ReportError, "bounded JSON"):
+                report.load_case_manifest(huge_int)
+
     def test_manifest_requires_fields_and_stable_serialization(self) -> None:
         manifest = report.load_case_manifest(report.DEFAULT_CASE_MANIFEST)
         serialized_once = report._stable_json(manifest)
         serialized_twice = report._stable_json(json.loads(serialized_once))
         self.assertEqual(serialized_once, serialized_twice)
-        self.assertEqual(len(manifest["cases"]), 16)
+        self.assertEqual(len(manifest["cases"]), 17)
         typed_cases = [case for case in manifest["cases"] if "code_mode_surface" in case]
-        self.assertEqual(len(typed_cases), 16)
+        self.assertEqual(len(typed_cases), 17)
         self.assertEqual(
             {case["code_mode_surface"] for case in typed_cases},
             {"read_only", "validation", "guarded_edit"},
@@ -1779,7 +1852,15 @@ class AgentLoopReportTests(unittest.TestCase):
 
 class JobConvergenceTests(unittest.TestCase):
     @staticmethod
-    def row(trace, previous=None, kind=None, relation="a" * 64, failure=None, terminal=None):
+    def row(
+        trace,
+        previous=None,
+        kind=None,
+        relation="a" * 64,
+        failure=None,
+        terminal=None,
+        tool="run_process",
+    ):
         event = {"kind": kind, "relation": relation}
         if failure is not None:
             event["failure"] = failure
@@ -1795,6 +1876,7 @@ class JobConvergenceTests(unittest.TestCase):
         }
         return {
             "event_id": str(trace), "server_trace_id": str(trace),
+            "operation": tool, "action_name": "toolsCall",
             "client_window_key": "window", "principal_correlation_kind": "user",
             "principal_correlation_id": "principal", "window_meaningful": True,
             "window_continuity_eligible": True, "response_streaming": False,
@@ -1802,7 +1884,11 @@ class JobConvergenceTests(unittest.TestCase):
             "request_observed_at_ms": trace * 1000,
             "response_handed_at_ms": trace * 1000 + 100,
             "summary": {"previous_meaningful_call": str(previous) if previous else None,
-                        "model_ergonomics": {"schema_version": 10, "job_convergence": facts}},
+                        "model_ergonomics": {
+                            "schema_version": 10,
+                            "tool_name": tool,
+                            "job_convergence": facts,
+                        }},
         }
 
     def test_exact_immediate_observe_and_unrelated_relations(self):
@@ -1810,7 +1896,29 @@ class JobConvergenceTests(unittest.TestCase):
         observe = self.row(2, 1, "explicit_observe")
         result = report._summarize_job_convergence([pending, observe], [])
         self.assertEqual(result["pending_handoff_count"], 1)
+        many_handoffs = self.row(9)
+        many_handoffs["summary"]["model_ergonomics"]["job_convergence"].update(
+            {
+                "pending_handoff_count": 32,
+                "correlation_complete": False,
+                "events": [],
+            }
+        )
+        self.assertEqual(
+            report._summarize_job_convergence([many_handoffs], [])[
+                "pending_handoff_count"
+            ],
+            32,
+        )
         self.assertEqual(result["pending_followed_immediately_by_observe_count"], 1)
+        self.assertEqual(
+            result["pending_handoff_by_origin_tool"],
+            {"run_process": 1},
+        )
+        self.assertEqual(
+            result["pending_followup_known_by_origin_tool"],
+            {"run_process": 1},
+        )
         unrelated = self.row(2, 1, "explicit_observe", relation="b" * 64)
         self.assertEqual(report._summarize_job_convergence([pending, unrelated], [])["pending_followed_immediately_by_observe_count"], 0)
         intervening_read = self.row(2, 1)
@@ -1828,6 +1936,10 @@ class JobConvergenceTests(unittest.TestCase):
         self.assertEqual(result["passive_terminal_before_explicit_observe_count"], 1)
         self.assertEqual(result["terminal_failure_followed_by_observe_count"], 0)
         self.assertEqual(result["pending_to_terminal_ms"]["observed_total"], 900)
+        self.assertEqual(
+            result["pending_to_terminal_ms_by_origin_tool"]["run_process"]["observed_total"],
+            900,
+        )
         observe = self.row(3, 2, "explicit_observe")
         second_observe = self.row(4, 3, "explicit_observe")
         result = report._summarize_job_convergence([pending, terminal, observe, second_observe], [])
@@ -1836,6 +1948,114 @@ class JobConvergenceTests(unittest.TestCase):
         self.assertEqual(result["passive_validation_failure_delivery_count"], 1)
         unrelated = self.row(3, 2, "explicit_observe", relation="b" * 64)
         self.assertEqual(report._summarize_job_convergence([pending, terminal, unrelated], [])["terminal_failure_followed_by_observe_count"], 0)
+
+    def test_pending_origin_tool_binds_terminal_relation_without_exporting_relation(self):
+        relation = "c" * 64
+        pending = self.row(
+            1,
+            kind="pending_handoff",
+            relation=relation,
+            tool="execute_effectful_code_mode",
+        )
+        unrelated = self.row(
+            2,
+            1,
+            "pending_handoff",
+            relation="d" * 64,
+            tool="run_process",
+        )
+        terminal = self.row(
+            3,
+            1,
+            "explicit_observe",
+            relation=relation,
+            terminal=3000,
+            tool="observe_jobs",
+        )
+        result = report._summarize_job_convergence([pending, unrelated, terminal], [])
+        self.assertEqual(
+            result["pending_handoff_by_origin_tool"],
+            {"execute_effectful_code_mode": 1, "run_process": 1},
+        )
+        self.assertEqual(
+            result["pending_followup_known_by_origin_tool"],
+            {"execute_effectful_code_mode": 1},
+        )
+        self.assertEqual(
+            result["pending_to_terminal_ms_by_origin_tool"][
+                "execute_effectful_code_mode"
+            ]["samples"],
+            1,
+        )
+        self.assertEqual(
+            result["selected_terminal_by_origin_tool"],
+            {"execute_effectful_code_mode": 1},
+        )
+        context_only = report._summarize_job_convergence(
+            [pending, unrelated],
+            [terminal],
+        )
+        self.assertEqual(
+            context_only["pending_to_terminal_ms_by_origin_tool"][
+                "execute_effectful_code_mode"
+            ]["samples"],
+            1,
+        )
+        self.assertEqual(context_only["selected_terminal_by_origin_tool"], {})
+        selected_terminal = self.row(
+            4,
+            1,
+            "explicit_observe",
+            relation=relation,
+            terminal=4000,
+            tool="observe_jobs",
+        )
+        context_first = report._summarize_job_convergence(
+            [pending, selected_terminal],
+            [terminal],
+        )
+        self.assertEqual(
+            context_first["selected_terminal_by_origin_tool"],
+            {"execute_effectful_code_mode": 1},
+        )
+        passive_failure = self.row(
+            5,
+            1,
+            "passive_terminal",
+            relation=relation,
+            failure=True,
+            terminal=5000,
+        )
+        context_observe = self.row(
+            6,
+            5,
+            "explicit_observe",
+            relation=relation,
+            tool="observe_jobs",
+        )
+        selected_after_failure = self.row(
+            7,
+            6,
+            "explicit_observe",
+            relation=relation,
+            terminal=7000,
+            tool="observe_jobs",
+        )
+        failure_context_first = report._summarize_job_convergence(
+            [pending, selected_after_failure],
+            [passive_failure, context_observe],
+        )
+        self.assertEqual(
+            failure_context_first["terminal_failure_followed_by_observe_count"],
+            1,
+        )
+        self.assertEqual(
+            failure_context_first["selected_terminal_by_origin_tool"],
+            {"execute_effectful_code_mode": 1},
+        )
+        encoded = json.dumps(result)
+        self.assertNotIn(relation, encoded)
+        self.assertNotIn("d" * 64, encoded)
 
     def test_prior_observe_does_not_count_as_passive_before_observe(self):
         rows = [self.row(1, kind="pending_handoff"), self.row(2, 1, "explicit_observe"), self.row(3, 2, "passive_terminal", failure=False, terminal=3000)]

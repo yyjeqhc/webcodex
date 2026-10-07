@@ -90,6 +90,10 @@ pub(crate) struct RuntimeConsoleCodeModeComposition {
     pub(crate) known_results: usize,
     pub(crate) job_handoffs: usize,
     pub(crate) outcome_unknown: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) mutation_state_changed: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) mutation_no_change: Option<usize>,
 }
 
 #[cfg(feature = "experimental-code-mode")]
@@ -106,6 +110,10 @@ pub(crate) fn project_code_mode_composition(
         .known_results
         .checked_add(projection.job_handoffs)
         .and_then(|total| total.checked_add(projection.outcome_unknown))?;
+    let mutation_counted = projection
+        .mutation_state_changed
+        .unwrap_or(0)
+        .checked_add(projection.mutation_no_change.unwrap_or(0))?;
     if projection.nested_calls > 32
         || projection.max_in_flight > 8
         || projection
@@ -115,6 +123,7 @@ pub(crate) fn project_code_mode_composition(
         || counted != projection.nested_calls
         || consequential_counted != projection.consequential_calls
         || projection.consequential_calls > projection.nested_calls
+        || mutation_counted > projection.consequential_calls
         || projection.nested_tool_counts.len() > 32
         || projection
             .nested_tool_counts

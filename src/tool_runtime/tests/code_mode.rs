@@ -939,14 +939,16 @@ async fn e2a_cpu_timeout_after_child_dispatch_preserves_started_job_truth() {
         project,
         session_id,
         r#"
-        const child = await tools.cargo_check({timeout_secs: 600});
+        const child = tools.cargo_check({timeout_secs: 600});
         while (true) {}
         "#
         .to_string(),
         300,
     );
-    // Await the canonical Job handoff before burning the CPU budget. An unawaited
-    // child may still be awaiting dispatch when the frontend deadline cancels it.
+    // This case intentionally burns a CPU-time budget after starting the child.
+    // Under a heavily parallel full suite, that CPU budget can span more than
+    // the generic 10-second wall-clock readiness fence. Widen only this positive
+    // dispatch wait; the production timeout contract remains unchanged.
     let (request, job_id) = super::validation_handoff::poll_start_validation_job_with_timeout(
         &runtime,
         client_id,

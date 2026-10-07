@@ -17,8 +17,11 @@
 - Project: `agent:mini:webcodex`
 - Branch: `fix/campus-application-live-form-context`
 - Base / origin/main at branch creation: `676aeb13`
-- 已提交并 rebase 的上一轮 commit：`8d0447fb feat(campus-application): persist live form mappings`
-- 本交接所述第二轮已经提交；随后再次 `git fetch origin main && git rebase origin/main`，当前 `origin/main=25af63a9`，分支已是 up to date。最终第二轮 commit 以 branch HEAD 为准。
+- 2026-10-07 已再次 rebase 到 `origin/main=301a4a66`
+- rebase 后已提交两轮 Plugin 工作：
+  - `4bcf9894 feat(campus-application): persist live form mappings`
+  - `a07c7a30 feat(campus-application): improve China campus fallback`
+- 本轮 Browser semantic-label provenance 作为第三个独立 commit 收口；最终 hash 以 branch HEAD 为准。
 - 修改范围：
   - `plugins/campus-application/src/form-cache.ts`
   - `plugins/campus-application/src/mapping-memory.ts`
@@ -34,12 +37,13 @@
 最近验证：
 
 ```text
-npm run typecheck
-npm test
+cargo fmt --all
+cargo test --profile dogfood -p webcodex-browser
+npm --prefix plugins/campus-application test
 git diff --check
 
-26 tests passed
-0 failed
+webcodex-browser: 84 passed, 0 failed, 1 ignored
+campus-application: 26 passed, 0 failed
 ```
 
 regular mini Runner 与 mini-dogfood Runner 均已重新加载 `campus-application`，状态为 ready。
@@ -310,6 +314,38 @@ blockers: 96
 - live 输出现在把缺失资料去重为 5 项：`id_type`、`gender`、`ethnicity`、`political_status`、`health_status`；性别的两个 radio 合并为同一个 profile requirement。
 - 搜索了现有 private profile、`jianli` 本地资料以及 WebCodex 本地配置，没有找到这些字段的已确认真实值，因此没有猜测或写入任何个人事实。
 
+#### 2026-10-07 下一轮：Browser semantic label provenance
+
+本轮开始时已先拉取最新 main；`origin/main` 从 `25af63a9` 前进到 `301a4a66`，两轮 Plugin commit 已无冲突 rebase。
+
+原计划继续在中国电信真实页教学籍贯/户籍/高考生源地/现居地/院校所在地/应届状态，但当前 Chrome extension 没有共享任何 tab：`observe_browser discover` 返回空 attachments、旧 browser id 已 stale。因此没有伪造 live 结果，也没有为了恢复页面去操作用户浏览器。
+
+转而完成更通用的 P1 Browser 修复，目标是从源头减少“控件存在但 name/group_label 为空”：
+
+- 非空 AX accessible name 始终优先，不被 DOM fallback 覆盖。
+- AX name 为空时，按高置信度语义补充：
+  - `aria-label`
+  - `aria-labelledby` 引用文本
+  - `<label for=...>`
+  - wrapping/nested `<label>`
+- `fieldset > legend` 会补成 `group_label`，使 radio/checkbox 可直接得到“性别”等组语义。
+- 对常见 form-item wrapper 增加保守 fallback：只有一个容器存在 **恰好一个 native input/select/textarea control** 且有 **恰好一个未绑定的直接 `<label>` 子节点** 时，才把该 label 投影给唯一控件。
+- 多控件容器明确不猜；回归测试覆盖“高考生源地”唯一控件可识别，以及“一个 label + 两个 textbox”保持无名。
+- Browser-private native shadow control owner 的 promoted node 也继承同一语义 label / fieldset group。
+- 这些变化只增强 snapshot 观察语义，不新增 Browser effect、不放宽 control capability/authority，也不引入 selector/script 控制路径。
+
+验证：
+
+```text
+cargo test --profile dogfood -p webcodex-browser
+84 passed, 0 failed, 1 ignored
+
+npm --prefix plugins/campus-application test
+26 passed, 0 failed
+```
+
+这一轮尚未做真实中国电信页面回归，因为 tab 已不再共享，而且当前源码改动没有未经授权重启/部署 Runner。下一次 live dogfood 应先部署该已验证 commit，再由用户把目标 tab 重新 share；若页面 DOM 使用标准 label/aria 或单控件 form-item 结构，原本需要手工教学的一批字段应直接进入自动 mapping。
+
 ### 当前产品优先级（用户确认）
 
 第一原则是 **准确，其次是快速**；隐私最小化不是当前优化目标。后续设计取舍按：
@@ -340,18 +376,17 @@ accuracy > speed > privacy minimization
 
 ### P1：增强 Browser semantic label provenance
 
-这是更通用、长期收益更高的修复。
+这一层已完成第一阶段，并有 Browser package 回归测试：
 
-理想 Browser node 应提供：
+- [x] associated `<label for>`
+- [x] `aria-labelledby`
+- [x] wrapping/nested `<label>`
+- [x] ancestor `fieldset/legend`
+- [x] 保守 nearest form-item label（仅唯一 native control + 唯一直接未绑定 label）
+- [ ] section heading / group label 的进一步结构化 provenance
+- [ ] file picker 所属附件分类
 
-- associated `<label for>`
-- aria-labelledby
-- ancestor fieldset/legend
-- nearest form-item label
-- section heading / group label
-- file picker 所属附件分类
-
-这样 Plugin 不需要为中国电信写站点专用 DOM hack。
+下一步优先在真实中国电信页验证这些通用语义是否已经消除大部分 mapping hints；只有仍缺失的结构再继续增强，避免写站点专用 DOM hack。
 
 ### 已完成：站点 mapping persistence
 

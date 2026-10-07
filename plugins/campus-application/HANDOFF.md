@@ -47,7 +47,7 @@ git diff --check
 
 webcodex-browser: 85 passed, 0 failed, 1 ignored
 webcodex-tool-contracts: 289 passed, 0 failed
-campus-application: 29 passed, 0 failed
+campus-application: 30 passed, 0 failed
 ```
 
 上一轮 regular mini Runner 与 mini-dogfood Runner 的 `campus-application` provider 状态均为 ready；本轮 Adapter v1 源码尚未部署/重启 Runner，新的 Browser `form_context` 也尚未进入 live runtime。
@@ -388,7 +388,13 @@ npm --prefix plugins/campus-application test
 
 部署后的 owned Browser 访问 `https://httpbin.org/forms/post` 做了端到端 smoke：interactive snapshot 共 13 个 actionable node，13/13 都带 `form_context`；例如 `custtel`/`custemail`、radio/checkbox `html_name`、time input 和 textarea 均正确投影。把同一 snapshot 直接交给 `campus-application.analyze_form` 后，Plugin 正常消费新结构：自动识别 phone/email，并在 `unmapped_candidates` 中保留其它字段的完整 `form_context`，证明 Browser -> Runner output schema -> Plugin input schema -> analyzer 整条链已通。
 
-**中国电信真实页还差一次重新 Share。** 这是 Runner restart 后 Browser Bridge 的既定 consent 语义，不是部署失败：extension `worker.js` 的 native port disconnect 会 `offers.clear()` 并 detach 全部 lease，显式 Share 不跨 live Runner instance 自动延续。重启后 `observe_browser discover(client_id=mini-dogfood)` 因此返回空 attachments。为了不绕过这条 consent boundary，没有用 Computer/脚本代替用户点击 Share。用户重新点击一次 WebCodex Browser Bridge 的 Share 后，即可继续真实页前后对比，无需 Reload extension。
+**中国电信真实页已在用户重新 Share 后完成 Adapter v1 live 回归。** `discover -> attach` 正常，interactive snapshot 仍为 `node_count=256 / truncated=true / actionable=184`；旧版约 `69` 个 actionable 有 `name/group_label`、`115` 个没有。新版这 `115/115` 个无 label actionable 全部获得了 `form_context`，整个 actionable 集合中 `168/184` 个有 `form_context`。这证明 Adapter v1 已把 DOM-level field identity/shape 全量带到了原本最困难的控件上。
+
+但 live 结果也明确暴露下一瓶颈：该站大量 HTML `name` 是 `11_28_1`、`14_53_1`、`123_2129_1` 这类站点内部数字编码，`form_context.section_label` 也尚未捕获页面肉眼可见的“姓名 / 证件类型 / 性别 / 民族 / 籍贯 / 高考生源地”等 form-item label，所以仅凭 v1 自动 mapping 并不会把这 115 个控件直接转成 canonical field。当前 `analyze_form` 仍主要依赖之前的 persistent mapping memory：`structure_signature=4c421a4eeee5699591817ce8`、`mapping_memory_hit=true`，已教学的 `id_type / gender / ethnicity / political_status / health_status` 仍能稳定恢复。
+
+真实页还发现并立即修掉了一个准确性问题：`form_context.html_name=phoneArea` 曾因 contains(`phone`) 被误映射成 `contact.phone`，甚至会计划把手机号填进“中国大陆”区号下拉。现在 machine-oriented `html_name/autocomplete` 只允许 **exact canonical match**；用户可见 `name/group/placeholder` 仍保留 contains 语义。新增回归测试确认 `phoneArea` 不再映射，而 exact `phone` / `studentOrigin` 仍可自动映射。Plugin 已在 `mini-dogfood` reload，真实中国电信页复测后 `recognized_count` 从错误的 1 降为安全的 0，`phone_mappings=[]`；测试总数更新为 30/30。
+
+因此下一轮 Browser Adapter 应集中做 **nearby visible label provenance**：从每个 form-item 的 DOM 邻近文本/label cell/aria/组容器中保守提取用户肉眼看到的字段名，并允许多控件组（例如籍贯省+市、性别男+女）共享一个 group label。不要再扩大静态 alias 或根据 `11_28_1` 这类站点编码猜字段。
 
 ### 当前产品优先级（用户确认）
 

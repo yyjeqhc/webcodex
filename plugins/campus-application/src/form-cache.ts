@@ -241,6 +241,19 @@ export function matchField(
   return undefined;
 }
 
+function matchFieldExact(
+  label: string,
+): { canonicalField: CanonicalField; confidence: number } | undefined {
+  const normalized = normalizeLabel(label);
+  if (!normalized) return undefined;
+  for (const rule of fieldKeywords) {
+    if (rule.exact.includes(normalized)) {
+      return { canonicalField: rule.field, confidence: 0.99 };
+    }
+  }
+  return undefined;
+}
+
 export function isUploadControl(node: SnapshotNode): boolean {
   const role = node.role.toLowerCase();
   return (
@@ -414,16 +427,27 @@ function deriveMappings(
     const evidenceLabels: ReadonlyArray<{
       label: string;
       source: CachedFieldMapping["source"];
+      exactOnly?: boolean;
     }> = [
       { label: node.name, source: "name" },
       { label: node.description ?? "", source: "group" },
       { label: node.group_label ?? "", source: "group" },
       { label: node.form_context?.placeholder ?? "", source: "form_context" },
-      { label: node.form_context?.html_name ?? "", source: "form_context" },
-      { label: node.form_context?.autocomplete ?? "", source: "form_context" },
+      {
+        label: node.form_context?.html_name ?? "",
+        source: "form_context",
+        exactOnly: true,
+      },
+      {
+        label: node.form_context?.autocomplete ?? "",
+        source: "form_context",
+        exactOnly: true,
+      },
     ];
     for (const evidence of evidenceLabels) {
-      const match = matchField(evidence.label);
+      const match = evidence.exactOnly
+        ? matchFieldExact(evidence.label)
+        : matchField(evidence.label);
       if (!match) continue;
       mappings.set(key, {
         ...match,

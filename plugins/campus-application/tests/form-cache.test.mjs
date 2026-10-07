@@ -401,6 +401,51 @@ test("form context maps unlabeled fields without changing stable mapping identit
   assert.equal(enriched.nodes[0]?.mapping?.source, "form_context");
 });
 
+test("machine-oriented form names require exact canonical matches", () => {
+  const phoneArea = resolveFormMappings(
+    [{
+      role: "combobox",
+      name: "",
+      value: "中国大陆",
+      element_id: "element_phone_area",
+      actionable: true,
+      actions: ["select_option"],
+      form_context: {
+        field_signature: "1234567890abcdef12345678",
+        dom_tag: "select",
+        html_name: "phoneArea",
+        option_count: 2,
+      },
+    }],
+    [],
+    "machine-name-phone-area.example",
+  );
+  assert.equal(
+    phoneArea.nodes[0]?.mapping,
+    undefined,
+    "phoneArea is a country/area selector and must not inherit the phone mapping by substring",
+  );
+
+  const exactPhone = resolveFormMappings(
+    [{
+      role: "textbox",
+      name: "",
+      element_id: "element_phone",
+      actionable: true,
+      actions: ["input_text"],
+      form_context: {
+        field_signature: "abcdef1234567890abcdef12",
+        dom_tag: "input",
+        html_name: "phone",
+      },
+    }],
+    [],
+    "machine-name-phone.example",
+  );
+  assert.equal(exactPhone.nodes[0]?.mapping?.canonicalField, "phone");
+  assert.equal(exactPhone.nodes[0]?.mapping?.source, "form_context");
+});
+
 test("form context section labels preserve repeated education paths", () => {
   const resolved = resolveFormMappings(
     [{

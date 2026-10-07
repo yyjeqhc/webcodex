@@ -815,16 +815,14 @@ impl BrowserSupervisor {
 
     pub fn shutdown_until(&self, deadline: Instant) -> BrowserShutdownReport {
         self.begin_shutdown();
-        // A runtime already removed by the worker must finish cleanup before
-        // Runner shutdown returns. The worker never waits for the state mutex.
-        self.reaper.join();
+        self.reaper.join_until(deadline);
         let mut state = self.state();
-        let mut report = BrowserShutdownReport {
-            browsers: state.browsers.len(),
-            ..BrowserShutdownReport::default()
-        };
         let browsers = std::mem::take(&mut state.browsers);
         drop(state);
+        // Taking Browser state first fences worker registration of any runtimes
+        // removed before shutdown admission. No further reaping can start.
+        let mut report = self.reaper.take_report();
+        report.browsers = report.browsers.saturating_add(browsers.len());
         for (_, mut runtime) in browsers {
             let remaining = deadline
                 .saturating_duration_since(Instant::now())
@@ -1968,7 +1966,7 @@ mod tests {
         }
         fn shutdown(&mut self, timeout: Duration) -> BrowserResult<()> {
             if let Some(probe) = &mut self.shutdown_probe {
-                probe.shutdown(timeout);
+                return probe.shutdown(timeout);
             }
             Ok(())
         }

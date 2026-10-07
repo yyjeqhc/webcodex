@@ -28,14 +28,16 @@ pub(super) struct ShutdownProbe {
     pub(super) ownership: crate::BrowserOwnership,
     entered: mpsc::Sender<Duration>,
     release: Option<mpsc::Receiver<()>>,
+    result: BrowserResult<()>,
 }
 
 impl ShutdownProbe {
-    pub(super) fn shutdown(&mut self, timeout: Duration) {
+    pub(super) fn shutdown(&mut self, timeout: Duration) -> BrowserResult<()> {
         let _ = self.entered.send(timeout);
         if let Some(release) = self.release.take() {
             release.recv_timeout(TEST_DEADLINE).unwrap();
         }
+        self.result.clone()
     }
 }
 
@@ -44,12 +46,22 @@ fn probe(
     browser: &str,
     release: Option<mpsc::Receiver<()>>,
 ) -> mpsc::Receiver<Duration> {
+    probe_with_result(supervisor, browser, release, Ok(()))
+}
+
+fn probe_with_result(
+    supervisor: &BrowserSupervisor,
+    browser: &str,
+    release: Option<mpsc::Receiver<()>>,
+    result: BrowserResult<()>,
+) -> mpsc::Receiver<Duration> {
     let (entered, receiver) = mpsc::channel();
     let mut backend = FakeBackend::new();
     backend.shutdown_probe = Some(ShutdownProbe {
         ownership: crate::BrowserOwnership::OwnedEphemeral,
         entered,
         release,
+        result,
     });
     supervisor
         .state()
@@ -112,7 +124,7 @@ fn proactive_reaping_expires_idle_and_lifetime_without_browser_requests() {
         state.browsers.get_mut(&lifetime).unwrap().created_at =
             Instant::now() - MAX_BROWSER_LIFETIME;
     }
-    // Drive the actual worker's timer branch by notification, without a Browser
+    // Drive the actual worker's expiry check by notification, without a Browser
     // API call, real Chromium process, scheduler sleep, or shortened expiry policy.
     check(&supervisor);
     assert_eq!(
@@ -133,6 +145,11 @@ fn proactive_reaping_expires_idle_and_lifetime_without_browser_requests() {
     assert_eq!(
         supervisor.pages(&lifetime, 1).unwrap_err().kind,
         "stale_browser"
+    );
+    let report = supervisor.shutdown_until(Instant::now() + TEST_DEADLINE);
+    assert_eq!(
+        (report.browsers, report.timed_out, report.failures),
+        (3, 0, 0)
     );
 }
 
@@ -157,7 +174,7 @@ fn proactive_reaping_skips_busy_state_and_rechecks_current_activity() {
 }
 
 #[test]
-fn proactive_cleanup_releases_state_lock_and_finishes_once_before_shutdown() {
+fn proactive_cleanup_releases_state_lock_and_shutdown_honors_expired_deadline() {
     let supervisor = fixture();
     let browser = supervisor.launch().unwrap().browser_id;
     let (release, wait) = mpsc::channel();
@@ -181,17 +198,171 @@ fn proactive_cleanup_releases_state_lock_and_finishes_once_before_shutdown() {
         supervisor.launch().unwrap_err().kind,
         "runner_shutting_down"
     );
+    let (reported, report) = mpsc::channel();
+    let clone = supervisor.clone();
+    let waiter = std::thread::spawn(move || {
+        reported.send(clone.shutdown_until(Instant::now())).unwrap();
+    });
+    // Do not release the in-flight backend until shutdown has had to return.
+    let report = report.recv_timeout(Duration::from_millis(100));
+    let worker_owned = report.is_ok() && supervisor.reaper.ensure_available().is_ok();
     release.send(()).unwrap();
     completed.recv_timeout(TEST_DEADLINE).unwrap();
-    let report = supervisor.shutdown_until(Instant::now());
-    assert_eq!(report.browsers, 1);
-    assert_eq!(report.timed_out, 1);
+    waiter.join().unwrap();
+    let report = report.expect("expired shutdown deadline must not join blocked cleanup");
+    assert!(
+        worker_owned,
+        "unfinished cleanup must retain its owned worker"
+    );
+    assert_eq!(report.browsers, 2);
+    assert_eq!(report.timed_out, 2);
     assert_eq!(report.failures, 0);
     assert_eq!(
         live_shutdown.recv_timeout(TEST_DEADLINE).unwrap(),
         Duration::ZERO
     );
     assert!(shutdown.try_recv().is_err());
+    assert!(supervisor.state().browsers.is_empty());
+    let report = supervisor.shutdown_until(Instant::now() + TEST_DEADLINE);
+    assert_eq!(
+        (report.browsers, report.timed_out, report.failures),
+        (0, 0, 0)
+    );
+}
+
+#[test]
+fn shutdown_waits_only_until_future_deadline_for_in_flight_reaping() {
+    let supervisor = fixture();
+    let browser = supervisor.launch().unwrap().browser_id;
+    let (release, wait) = mpsc::channel();
+    let shutdown = probe(&supervisor, &browser, Some(wait));
+    supervisor
+        .state()
+        .browsers
+        .get_mut(&browser)
+        .unwrap()
+        .created_at = Instant::now() - MAX_BROWSER_LIFETIME;
+    let completed = supervisor.reaper.check();
+    shutdown.recv_timeout(TEST_DEADLINE).unwrap();
+    let (reported, report) = mpsc::channel();
+    let clone = supervisor.clone();
+    let waiter = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_millis(25);
+        let outcome = clone.shutdown_until(deadline);
+        reported
+            .send((outcome, Instant::now() >= deadline))
+            .unwrap();
+    });
+    let report = report.recv_timeout(Duration::from_millis(100));
+    release.send(()).unwrap();
+    completed.recv_timeout(TEST_DEADLINE).unwrap();
+    waiter.join().unwrap();
+    let (report, deadline_reached) = report.expect("shutdown must stop waiting at its deadline");
+    assert!(
+        deadline_reached,
+        "shutdown should allow cleanup its remaining budget"
+    );
+    assert_eq!(
+        (report.browsers, report.timed_out, report.failures),
+        (1, 1, 0)
+    );
+}
+
+#[test]
+fn completed_background_cleanup_failure_is_included_in_shutdown_report() {
+    let supervisor = fixture();
+    let browser = supervisor.launch().unwrap().browser_id;
+    let shutdown = probe_with_result(
+        &supervisor,
+        &browser,
+        None,
+        Err(BrowserError::uncertain(
+            "browser_shutdown_failed",
+            "fixture failure",
+            "browsers",
+        )),
+    );
+    supervisor
+        .state()
+        .browsers
+        .get_mut(&browser)
+        .unwrap()
+        .created_at = Instant::now() - MAX_BROWSER_LIFETIME;
+    check(&supervisor);
+    shutdown.recv_timeout(TEST_DEADLINE).unwrap();
+    assert!(supervisor.state().browsers.is_empty());
+    let report = supervisor.shutdown_until(Instant::now() + TEST_DEADLINE);
+    assert_eq!(
+        (report.browsers, report.timed_out, report.failures),
+        (1, 0, 1)
+    );
+    let report = supervisor.shutdown_until(Instant::now());
+    assert_eq!(
+        (report.browsers, report.timed_out, report.failures),
+        (0, 0, 0)
+    );
+}
+
+#[test]
+fn shutdown_reports_pending_batch_once_and_retains_late_cleanup_failure() {
+    let supervisor = fixture();
+    let (entered, shutdown) = mpsc::channel();
+    let mut releases = Vec::new();
+    for index in 0..2 {
+        let (release, wait) = mpsc::channel();
+        releases.push(release);
+        let mut backend = FakeBackend::new();
+        backend.shutdown_probe = Some(ShutdownProbe {
+            ownership: crate::BrowserOwnership::OwnedEphemeral,
+            entered: entered.clone(),
+            release: Some(wait),
+            result: if index == 0 {
+                Err(BrowserError::uncertain(
+                    "browser_shutdown_failed",
+                    "late fixture failure",
+                    "browsers",
+                ))
+            } else {
+                Ok(())
+            },
+        });
+        let mut runtime = BrowserRuntime::new(Box::new(backend));
+        runtime.created_at = Instant::now() - MAX_BROWSER_LIFETIME;
+        supervisor
+            .state()
+            .browsers
+            .insert(opaque_id("browser"), runtime);
+    }
+    let completed = supervisor.reaper.check();
+    assert_eq!(
+        shutdown.recv_timeout(TEST_DEADLINE).unwrap(),
+        SHUTDOWN_TIMEOUT
+    );
+    // One backend is still blocked; the other runtime belongs to the same batch
+    // but has not entered cleanup. Both must be visible at this deadline.
+    let report = supervisor.shutdown_until(Instant::now());
+    for release in releases {
+        release.send(()).unwrap();
+    }
+    completed.recv_timeout(TEST_DEADLINE).unwrap();
+    assert_eq!(
+        (report.browsers, report.timed_out, report.failures),
+        (2, 2, 0)
+    );
+    assert_eq!(
+        shutdown.recv_timeout(TEST_DEADLINE).unwrap(),
+        Duration::ZERO
+    );
+    let report = supervisor.shutdown_until(Instant::now() + TEST_DEADLINE);
+    assert_eq!(
+        (report.browsers, report.timed_out, report.failures),
+        (0, 0, 1)
+    );
+    let report = supervisor.shutdown_until(Instant::now());
+    assert_eq!(
+        (report.browsers, report.timed_out, report.failures),
+        (0, 0, 0)
+    );
     assert!(supervisor.state().browsers.is_empty());
 }
 
@@ -227,6 +398,7 @@ fn proactive_reaping_delegates_each_ownership_mode_to_backend_cleanup() {
             ownership,
             entered,
             release: None,
+            result: Ok(()),
         });
         let runtime = BrowserRuntime::new(Box::new(backend));
         let browser = opaque_id("browser");

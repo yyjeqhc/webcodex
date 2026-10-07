@@ -2729,6 +2729,7 @@ fn infer_control_container_labels(root: &Value, semantics: &mut DomSemanticIndex
     #[derive(Default)]
     struct ControlSummary {
         backend_node_ids: Vec<i64>,
+        choice_count: usize,
         overflow: bool,
     }
 
@@ -2783,6 +2784,27 @@ fn infer_control_container_labels(root: &Value, semantics: &mut DomSemanticIndex
                     | "spinbutton"
             )
         })
+    }
+
+    fn is_choice_control(node: &Value) -> bool {
+        if node.get("nodeType").and_then(Value::as_i64) != Some(1) || is_hidden_element(node) {
+            return false;
+        }
+        let local_name = node
+            .get("localName")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if local_name == "input" {
+            return matches!(
+                dom_attribute(node, "type").as_deref(),
+                Some("radio" | "checkbox")
+            );
+        }
+        matches!(
+            dom_attribute(node, "role").as_deref(),
+            Some("radio" | "checkbox")
+        )
     }
 
     fn clean_label_text(value: &str) -> Option<String> {
@@ -2877,6 +2899,9 @@ fn infer_control_container_labels(root: &Value, semantics: &mut DomSemanticIndex
         if is_container_form_control(node) {
             if let Some(backend_node_id) = node.get("backendNodeId").and_then(Value::as_i64) {
                 summary.backend_node_ids.push(backend_node_id);
+                if is_choice_control(node) {
+                    summary.choice_count = 1;
+                }
             }
         }
 
@@ -2889,6 +2914,9 @@ fn infer_control_container_labels(root: &Value, semantics: &mut DomSemanticIndex
                 if child_summary.overflow {
                     summary.overflow = true;
                 }
+                summary.choice_count = summary
+                    .choice_count
+                    .saturating_add(child_summary.choice_count);
                 for backend_node_id in child_summary.backend_node_ids.iter().copied() {
                     if summary.backend_node_ids.len() < MAX_GROUP_CONTROLS + 1 {
                         summary.backend_node_ids.push(backend_node_id);
@@ -2922,6 +2950,22 @@ fn infer_control_container_labels(root: &Value, semantics: &mut DomSemanticIndex
                             break;
                         }
                         candidate = Some(text);
+                    }
+                    if !ambiguous
+                        && candidate.is_none()
+                        && summary.backend_node_ids.len() == 1
+                        && summary.choice_count == 1
+                    {
+                        for child in children.iter().skip(first_control_child + 1) {
+                            let Some(text) = candidate_label_text(child) else {
+                                continue;
+                            };
+                            if candidate.is_some() {
+                                ambiguous = true;
+                                break;
+                            }
+                            candidate = Some(text);
+                        }
                     }
                     if !ambiguous {
                         if let Some(label) = candidate {
@@ -4241,6 +4285,65 @@ mod tests {
         assert_eq!(contexts[&262].nearby_label, None);
         assert_eq!(contexts[&272].nearby_label, None);
         assert_eq!(contexts[&272].section_label.as_deref(), Some("基本信息"));
+    }
+
+    #[test]
+    fn choice_controls_accept_one_short_trailing_visible_label() {
+        let dom = json!({
+            "nodeType": 9,
+            "children": [{
+                "nodeType": 1,
+                "localName": "body",
+                "backendNodeId": 1,
+                "children": [{
+                    "nodeType": 1,
+                    "localName": "div",
+                    "backendNodeId": 300,
+                    "children": [
+                        {"nodeType": 1, "localName": "span", "backendNodeId": 301,
+                         "children": [{"nodeType": 3, "nodeValue": "性别"}]},
+                        {"nodeType": 1, "localName": "div", "backendNodeId": 302,
+                         "children": [
+                             {"nodeType": 1, "localName": "input", "backendNodeId": 303,
+                              "attributes": ["type", "radio"]},
+                             {"nodeType": 1, "localName": "span", "backendNodeId": 304,
+                              "children": [{"nodeType": 3, "nodeValue": "男"}]}
+                         ]},
+                        {"nodeType": 1, "localName": "div", "backendNodeId": 305,
+                         "children": [
+                             {"nodeType": 1, "localName": "input", "backendNodeId": 306,
+                              "attributes": ["type", "radio"]},
+                             {"nodeType": 1, "localName": "span", "backendNodeId": 307,
+                              "children": [{"nodeType": 3, "nodeValue": "女"}]}
+                         ]}
+                    ]
+                }]
+            }]
+        });
+        let raw_nodes = vec![
+            json!({
+                "nodeId": "ax-male-custom",
+                "role": {"value": "radio"},
+                "name": {"value": ""},
+                "backendDOMNodeId": 303
+            }),
+            json!({
+                "nodeId": "ax-female-custom",
+                "role": {"value": "radio"},
+                "name": {"value": ""},
+                "backendDOMNodeId": 306
+            }),
+        ];
+
+        let (nodes, _) = project_ax_nodes(&raw_nodes, Some(&dom));
+        let by_backend = nodes
+            .iter()
+            .filter_map(|node| node.backend_node_id.map(|id| (id, node)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(by_backend[&303].name.as_deref(), Some("男"));
+        assert_eq!(by_backend[&303].group_label.as_deref(), Some("性别"));
+        assert_eq!(by_backend[&306].name.as_deref(), Some("女"));
+        assert_eq!(by_backend[&306].group_label.as_deref(), Some("性别"));
     }
 
     #[test]

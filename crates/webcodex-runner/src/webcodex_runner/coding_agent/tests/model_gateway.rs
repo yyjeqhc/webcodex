@@ -39,6 +39,8 @@ fn model_gateway_adapter_completes_real_runner_acp_roundtrip() {
                         Err(error) => panic!("mock HTTP accept failed: {error}"),
                     }
                 };
+                // Accepted sockets can inherit the listener's nonblocking mode on macOS.
+                stream.set_nonblocking(false).unwrap();
                 stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                 stream.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
                 let mut reader = BufReader::new(stream);

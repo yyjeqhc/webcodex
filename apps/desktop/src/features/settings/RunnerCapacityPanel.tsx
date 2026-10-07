@@ -61,7 +61,7 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
     document.addEventListener("visibilitychange", visible);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
   }, [active, operationBusy, refresh]);
-  const stale = !active || state.readiness.server !== "ready" || operationBusy || now - (observation?.at ?? 0) > 30000;
+  const stale = !active || state.readiness.server !== "ready" || operationBusy || Math.max(now, Date.now()) - (observation?.at ?? 0) > 30000;
   const capacity = runnerCapacity(observation?.runner, stale);
   const saved = settings?.max_concurrent_jobs;
   const savedLimit = saved === undefined ? null : saved ?? 4;

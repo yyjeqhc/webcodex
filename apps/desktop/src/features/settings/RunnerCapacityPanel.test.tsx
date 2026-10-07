@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DesktopMantineProvider } from "../../components/DesktopMantineProvider";
 import { LocaleProvider } from "../../i18n/locale";
 import type { DesktopState, RunnerSettings } from "../../models/topology";
@@ -13,7 +13,7 @@ const state = { workspace_runner: target, topology: { runner: { kind: "local" },
 let settings: RunnerSettings;
 let runner: { client_id: string; connected: boolean; status: string; jobs_running: number; jobs_queued: number; job_concurrency_limit: number };
 const onState = vi.fn();
-function view(value = state) { return <DesktopMantineProvider><LocaleProvider><RunnerCapacityPanel state={value} onState={onState} active /></LocaleProvider></DesktopMantineProvider>; }
+function view(value = state, active = true) { return <DesktopMantineProvider><LocaleProvider><RunnerCapacityPanel state={value} onState={onState} active={active} /></LocaleProvider></DesktopMantineProvider>; }
 beforeEach(() => {
   vi.resetAllMocks(); localStorage.setItem("webcodex.desktop.locale", "en-US");
   settings = { target, paths: { instruction_files: [], skill_roots: [] }, file_access: { configured_roots: [], effective_roots: [], using_default_roots: true, allow_cwd_anywhere: false }, plugin_ids: [], can_restart: true, max_concurrent_jobs: null };
@@ -23,6 +23,7 @@ beforeEach(() => {
   api.saveRunnerJobConcurrency.mockImplementation(async (_target, _expected, limit) => { if (_expected !== settings.max_concurrent_jobs) throw { code: "runner_job_concurrency_invalid", message: "Saved value changed", next_action: "Reload settings" }; settings.max_concurrent_jobs = limit; return state; });
   api.restartOwnedRunner.mockResolvedValue(state);
 });
+afterEach(() => vi.restoreAllMocks());
 describe("local Runner concurrency settings", () => {
   it("separates saved and effective limits without restarting while saving", async () => {
     render(view()); const input = await screen.findByRole("spinbutton", { name: "Maximum concurrent Jobs" });
@@ -107,6 +108,15 @@ describe("local Runner concurrency settings", () => {
     mounted.rerender(view({ ...state, readiness: { ...state.readiness, server: "stopped" } }));
     expect(screen.getByText("Capacity needs refresh.")).toBeInTheDocument();
     expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
+  });
+  it("does not revive expired counts while a hidden settings page refreshes", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000000);
+    const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+    mounted.rerender(view(state, false));
+    clock.mockReturnValue(1060000); query.mockReturnValue(new Promise(() => undefined));
+    mounted.rerender(view());
+    expect(screen.getByText("Capacity needs refresh.")).toBeInTheDocument();
+    expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
   });
   it("ignores a late observation after unmount", async () => {
     let resolve!: (value: unknown) => void; query.mockReturnValue(new Promise(done => { resolve = done; }));

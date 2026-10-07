@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { choiceState, isChoiceControl, type SnapshotNode } from "./form-cache.js";
 import { uploadFileName, type UploadLocation } from "./upload-source.js";
-import { choiceReadback, validChoicePath } from "./widget-values.js";
+import { canonicalDate, choiceReadback, dateForControl, validChoicePath } from "./widget-values.js";
 
 export type FillAction = { mapping_id?: string; kind: string; label: string; element_id: string; value: string; confidence: number;
   desired_state?: boolean; upload?: UploadLocation; choice_path?: string[] };
@@ -11,7 +11,8 @@ export type Operation = { action: "input_text"; element_id: string; text: string
   | { action: "set_value"; element_id: string; value: string }
   | { action: "click"; element_id: string }
   | { action: "upload_file"; element_id: string; project: string; path: string }
-  | { action: "select_choice"; element_id: string; choice_path: string[] };
+  | { action: "select_choice"; element_id: string; choice_path: string[] }
+  | { action: "set_date"; element_id: string; value: string };
 export type Attention = { mapping_id?: string; label: string; status: "mismatch" | "unresolved"; reason: string };
 export type Batch = { action: "batch"; client_id: string; browser_id: string; page_id: string; operations: Operation[] };
 type Field = { identity: string; action: FillAction; replayBlocked?: boolean };
@@ -42,9 +43,10 @@ function indexNodes(nodes: readonly SnapshotNode[]): Map<string, SnapshotNode[]>
   }
   return index;
 }
-function isWidget(action: FillAction): boolean { return action.kind === "select_choice"; }
+function isWidget(action: FillAction): boolean { return action.kind === "select_choice" || action.kind === "set_date"; }
 export function fieldSatisfied(action: FillAction, node: SnapshotNode): boolean {
   if (node.form_context?.aria_invalid) return false;
+  if (action.kind === "set_date") return node.value !== undefined && dateForControl(node.value, node) === action.value;
   if (action.kind === "select_choice" && action.choice_path) return choiceReadback(node, action.choice_path) === "confirmed";
   if (action.kind === "click") return typeof action.desired_state === "boolean"
     && choiceState(node) === action.desired_state;
@@ -57,14 +59,19 @@ export function fieldSatisfied(action: FillAction, node: SnapshotNode): boolean 
 }
 function knownReadback(action: FillAction, node?: SnapshotNode): boolean {
   if (!node) return false;
+  if (action.kind === "set_date") return node.value !== undefined && canonicalDate(node.value) !== undefined;
   if (action.kind === "select_choice" && action.choice_path) return choiceReadback(node, action.choice_path) !== "unresolved";
   return action.kind === "click" ? choiceState(node) !== undefined : node.value !== undefined;
 }
 function operation(action: FillAction, node: SnapshotNode): Operation | undefined {
   if (!node.actionable || node.disabled || (node.read_only && !isWidget(action)) || !node.element_id
     || !node.actions?.includes(action.kind) || action.confidence < 0.9
-    || !action.value || action.value.includes("\0") || Buffer.byteLength(action.value) > 4096) return;
+    || !action.value || action.value.includes("\0")
+    || action.kind !== "select_choice" && Buffer.byteLength(action.value) > 4096) return;
   const element_id = node.element_id;
+  if (action.kind === "set_date" && canonicalDate(action.value) === action.value) return {
+    action: "set_date", element_id, value: action.value,
+  };
   if (action.kind === "select_choice" && validChoicePath(action.choice_path)) return {
     action: "select_choice", element_id, choice_path: [...action.choice_path],
   };

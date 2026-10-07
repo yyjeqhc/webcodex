@@ -84,6 +84,20 @@ test("completed composite widget with leaf-only or unavailable semantic readback
     assert.match(result.needs_attention[0].reason, /without repeating/);
   }
 });
+test("composite readback preserves boundaries and never confirms an undelimited path collision", () => {
+  const { nodes, actions } = fixture(1);
+  for (const choice_path of [["AB", "C"], ["A", "BC"]]) {
+    const action = { ...actions[0], value: choice_path.join(" / "), choice_path };
+    assert.equal(choiceReadback({ ...nodes[0], value: "ABC" }, choice_path), "unresolved");
+    assert.equal(choiceReadback({ ...nodes[0], value: choice_path.join(" / ") }, choice_path), "confirmed");
+    const plan = createFillBatch(scope, nodes, [action]);
+    const result = reconcileFill(plan.plan_id, { ...scope, snapshot_generation: 2 },
+      [{ ...nodes[0], value: "ABC", element_id: "fresh" }], complete(1));
+    assert.equal(result.confirmed, 0);
+    assert.equal(result.batch, undefined);
+    assert.equal(result.needs_attention[0].status, "unresolved");
+  }
+});
 test("partial widget batch confirms visible values but never retries or advances the uncertain boundary", () => {
   const { nodes, actions } = fixture(3);
   const plan = createFillBatch(scope, nodes, actions, [], 2);

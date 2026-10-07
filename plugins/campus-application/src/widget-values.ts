@@ -17,8 +17,36 @@ export function choiceReadback(node: SnapshotNode, path: readonly string[]): "co
   const observed = value.split(/\s*(?:\/|>|→|›|»)\s*/u).map(normalizeChoice);
   const expected = path.map(normalizeChoice);
   if (observed.length === expected.length && observed.every((part, i) => part === expected[i])) return "confirmed";
-  if (normalized && normalized === normalizeChoice(path.join(""))) return "confirmed";
-  // A leaf alone does not establish the selected ancestry, and is not evidence
-  // that re-running a completed composite action is needed.
-  return normalized === expected.at(-1) ? "unresolved" : "mismatch";
+  // An undelimited value (including a leaf or concatenated path) cannot establish
+  // ancestry. Preserve step boundaries so ["AB", "C"] and ["A", "BC"] differ.
+  return observed.length === 1 ? "unresolved" : "mismatch";
 }
+export function canonicalDate(value: string): string | undefined {
+  const text = value.normalize("NFKC").trim()
+    .replace(/^(?:预计(?:于)?|expected(?:\s+in)?)\s*/iu, "").replace(/\s+/g, "");
+  const parts = text.match(/^(\d{4})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$/u)
+    ?? text.match(/^(\d{4})年(\d{1,2})月(?:(\d{1,2})日)?$/u);
+  if (!parts) return;
+  const year = Number(parts[1]), month = Number(parts[2]), day = parts[3] === undefined ? undefined : Number(parts[3]);
+  if (year < 1 || month < 1 || month > 12) return;
+  const leap = year % 400 === 0 || year % 4 === 0 && year % 100 !== 0;
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (day !== undefined && (day < 1 || day > days[month - 1]!)) return;
+  return parts[1] + "-" + String(month).padStart(2, "0")
+    + (day === undefined ? "" : "-" + String(day).padStart(2, "0"));
+}
+
+export function dateForControl(value: string, node: SnapshotNode): string | undefined {
+  const date = canonicalDate(value);
+  if (!date) return;
+  const type = node.form_context?.input_type?.toLowerCase();
+  const hint = node.form_context?.component_hint ?? "";
+  const placeholder = (node.form_context?.placeholder ?? "").replace(/\s+/g, "");
+  if (type === "date") return date.length === 10 ? date : undefined;
+  if (type === "month") return date.slice(0, 7);
+  if (/^y{4}[-/.]m{2}[-/.]d{2}$/iu.test(placeholder)) return date.length === 10 ? date : undefined;
+  if (/month.?picker/iu.test(hint) || /^y{4}[-/.]m{2}$/iu.test(placeholder)
+    || /年月(?!日)/u.test(node.name)) return date.slice(0, 7);
+  return date;
+}
+

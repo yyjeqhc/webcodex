@@ -196,12 +196,15 @@ const fieldKeywords: ReadonlyArray<{
   { field: "health_status", exact: ["healthstatus", "健康状况", "健康状态"], contains: ["healthstatus", "健康状况"] },
   { field: "native_place_province", exact: ["nativeplaceprovince", "籍贯省", "籍贯省份"], contains: ["nativeplaceprovince", "籍贯省"] },
   { field: "native_place_city", exact: ["nativeplacecity", "籍贯市", "籍贯城市"], contains: ["nativeplacecity", "籍贯市", "籍贯城市"] },
+  { field: "native_place_district", exact: ["nativeplacedistrict", "籍贯区", "籍贯区县", "籍贯县"], contains: ["nativeplacedistrict", "籍贯区县"] },
   { field: "native_place", exact: ["nativeplace", "籍贯"], contains: ["nativeplace", "籍贯"] },
   { field: "household_registration_province", exact: ["householdregistrationprovince", "hukouprovince", "户籍省", "户籍省份", "户口省份"], contains: ["householdregistrationprovince", "hukouprovince", "户籍省", "户口省"] },
   { field: "household_registration_city", exact: ["householdregistrationcity", "hukoucity", "户籍市", "户籍城市", "户口城市"], contains: ["householdregistrationcity", "hukoucity", "户籍市", "户口城市"] },
+  { field: "household_registration_district", exact: ["householdregistrationdistrict", "hukoudistrict", "户籍区", "户籍区县", "户口区县"], contains: ["householdregistrationdistrict", "户籍区县"] },
   { field: "household_registration", exact: ["householdregistration", "hukou", "户籍所在地", "户口所在地", "户籍"], contains: ["householdregistration", "hukou", "户籍", "户口"] },
   { field: "student_origin_province", exact: ["studentoriginprovince", "生源地省", "生源省份", "高考生源地省", "高考生源省份"], contains: ["studentoriginprovince", "生源地省", "生源省", "高考生源省"] },
   { field: "student_origin_city", exact: ["studentorigincity", "生源地市", "生源城市", "高考生源地市", "高考生源城市"], contains: ["studentorigincity", "生源地市", "生源城市", "高考生源城市"] },
+  { field: "student_origin_district", exact: ["studentorigindistrict", "生源地区县", "生源地县", "高考生源地区县"], contains: ["studentorigindistrict", "生源地区县"] },
   { field: "student_origin", exact: ["studentorigin", "sourceplace", "生源地", "生源所在地", "生源地区", "高考生源地"], contains: ["studentorigin", "sourceplace", "生源地", "生源所在", "高考生源"] },
   { field: "is_fresh_graduate", exact: ["isfreshgraduate", "freshgraduate", "是否为应届毕业生", "是否应届毕业生", "应届毕业生"], contains: ["freshgraduate", "应届毕业生"] },
   { field: "marital_status", exact: ["maritalstatus", "婚姻状况", "婚姻状态"], contains: ["maritalstatus", "婚姻"] },
@@ -210,8 +213,9 @@ const fieldKeywords: ReadonlyArray<{
   { field: "full_name", exact: ["name", "fullname", "姓名"], contains: ["fullname", "candidatename"] },
   { field: "email", exact: ["email", "emailaddress", "邮箱", "电子邮箱"], contains: ["email"] },
   { field: "phone", exact: ["phone", "phonenumber", "mobile", "mobilenumber", "手机号", "手机", "手机号码", "联系电话", "电话"], contains: ["phone", "mobile", "手机号", "联系电话"] },
-  { field: "current_residence_province", exact: ["currentresidenceprovince", "现居住省份", "现居省份", "当前居住省份"], contains: ["currentresidenceprovince", "现居住省", "当前居住省"] },
-  { field: "city", exact: ["city", "location", "currentlocation", "所在城市", "当前城市", "现居住城市", "现居城市", "城市"], contains: ["currentlocation", "现居住城市", "现居城市", "当前城市"] },
+  { field: "current_residence_province", exact: ["currentresidenceprovince", "现居住省份", "现居省份", "当前居住省份", "province", "省份", "省"], contains: ["currentresidenceprovince", "现居住省", "当前居住省"] },
+  { field: "city", exact: ["city", "location", "currentlocation", "所在城市", "当前城市", "现居住城市", "现居城市", "城市", "现居住地", "现居地", "居住地"], contains: ["currentlocation", "现居住城市", "现居城市", "当前城市"] },
+  { field: "district", exact: ["district", "county", "区", "区县", "现居住区县", "现居区县"], contains: ["现居住区县", "现居区县"] },
   { field: "address", exact: ["address", "mailingaddress", "地址", "通讯地址"], contains: ["address", "通讯地址"] },
   { field: "education_province", exact: ["educationprovince", "schoolprovince", "院校所在省份", "学校所在省份", "就读院校所在省份"], contains: ["educationprovince", "schoolprovince", "院校所在省", "学校所在省"] },
   { field: "education_city", exact: ["educationcity", "schoolcity", "院校所在城市", "学校所在城市", "就读院校所在城市"], contains: ["educationcity", "schoolcity", "院校所在城市", "学校所在城市"] },
@@ -222,7 +226,8 @@ const fieldKeywords: ReadonlyArray<{
     exact: ["discipline", "major", "fieldofstudy", "专业", "专业名称", "所学专业", "主修专业", "专业方向"],
     contains: ["discipline", "major", "fieldofstudy", "所学专业", "主修专业"],
   },
-  { field: "graduation_date", exact: ["graduationdate", "graduationtime", "enddate", "毕业时间", "预计毕业时间"], contains: ["graduation", "毕业时间"] },
+  { field: "education_start_date", exact: ["educationstartdate", "入学时间", "入学日期"], contains: ["educationstartdate", "入学时间", "入学日期"] },
+  { field: "graduation_date", exact: ["graduationdate", "graduationtime", "enddate", "毕业时间", "毕业日期", "预计毕业时间", "预计毕业日期"], contains: ["graduation", "毕业时间", "毕业日期"] },
   { field: "gpa", exact: ["gpa", "gradepointaverage", "绩点"], contains: ["gpa", "绩点"] },
   { field: "current_company", exact: ["currentcompany", "company", "当前公司", "公司"], contains: ["currentcompany", "当前公司"] },
   { field: "current_title", exact: ["currenttitle", "jobtitle", "title", "职位", "当前职位"], contains: ["currenttitle", "jobtitle", "当前职位"] },
@@ -231,6 +236,8 @@ const fieldKeywords: ReadonlyArray<{
   { field: "portfolio", exact: ["portfolio", "website", "personalwebsite", "个人主页", "个人网站"], contains: ["portfolio", "personalwebsite", "个人主页", "个人网站"] },
   { field: "cover_letter", exact: ["coverletter", "additionalinformation", "additionalinfo", "motivation", "selfintroduction", "自我介绍", "补充信息", "求职动机"], contains: ["coverletter", "additionalinformation", "selfintroduction", "自我介绍", "补充信息", "求职动机"] },
   { field: "accept_transfer", exact: ["是否接受岗位调剂", "是否接受调剂", "接受岗位调剂", "accepttransfer", "willingtotransfer"], contains: ["岗位调剂", "接受调剂", "accepttransfer", "willingtotransfer"] },
+  { field: "preferred_locations", exact: ["preferredlocation", "preferredlocations", "意向地点", "意向城市", "期望工作地点", "意向工作地点", "期望工作城市"], contains: ["preferredlocation", "意向工作地点", "期望工作地点"] },
+  { field: "available_date", exact: ["availabledate", "到岗时间", "到岗日期", "最早到岗时间"], contains: ["availabledate", "到岗时间", "到岗日期"] },
 ];
 
 export function matchField(
@@ -388,6 +395,22 @@ export function formStructureSignature(nodes: readonly SnapshotNode[]): string {
     .slice(0, 24);
 }
 
+function regionAxisField(group: CanonicalField, label: string): CanonicalField | undefined {
+  const normalized = normalizeLabel(label);
+  const axis = ["province", "省", "省份"].includes(normalized) ? 0
+    : ["city", "市", "城市"].includes(normalized) ? 1
+    : ["district", "county", "区", "区县", "县"].includes(normalized) ? 2 : undefined;
+  if (axis === undefined) return;
+  const fields: Partial<Record<CanonicalField, readonly CanonicalField[]>> = {
+    native_place: ["native_place_province", "native_place_city", "native_place_district"],
+    household_registration: ["household_registration_province", "household_registration_city", "household_registration_district"],
+    student_origin: ["student_origin_province", "student_origin_city", "student_origin_district"],
+    city: ["current_residence_province", "city", "district"],
+    address: ["current_residence_province", "city", "district"],
+  };
+  return fields[group]?.[axis];
+}
+
 function deriveMappings(
   entries: ReadonlyArray<{ node: SnapshotNode; key: string; mapping_id: string }>,
 ): Map<string, CachedFieldMapping> {
@@ -475,6 +498,16 @@ function deriveMappings(
         resumePath: resumePathForCanonicalField(groupMatch.canonicalField),
         source: "group",
       });
+      continue;
+    }
+
+    const regionGroup = choiceGroupLabel ? matchFieldExact(choiceGroupLabel) : undefined;
+    const regionField = regionGroup && hasDataAction(node)
+      ? regionAxisField(regionGroup.canonicalField, node.name || node.form_context?.placeholder || node.form_context?.html_name || "")
+      : undefined;
+    if (regionField) {
+      mappings.set(key, { canonicalField: regionField,
+        resumePath: resumePathForCanonicalField(regionField), confidence: 1, source: "group" });
       continue;
     }
 

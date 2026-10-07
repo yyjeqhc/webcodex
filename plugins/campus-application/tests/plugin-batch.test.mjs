@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, copyFile, unlink } from "node:fs/promises";
+import { mkdtemp, rm, copyFile, unlink, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,9 +8,14 @@ import { createInterface } from "node:readline";
 import { once } from "node:events";
 import test from "node:test";
 
-async function provider(t, dir) {
+async function provider(t, dir, editProfile) {
   const profile = join(dir, "profile.json");
   await copyFile(new URL("../profile.example.json", import.meta.url), profile);
+  if (editProfile) {
+    const fictional = JSON.parse(await readFile(profile, "utf8"));
+    editProfile(fictional);
+    await writeFile(profile, JSON.stringify(fictional));
+  }
   const child = spawn(process.execPath, [fileURLToPath(new URL("../dist/plugin.js", import.meta.url))], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env,
@@ -156,5 +161,49 @@ test("learned custom choice_value survives provider restart without repeated mod
   const reused = await restarted("plan_fill", { ...scope, title: "Fictional choice", nodes: [{ ...nodes[0], element_id: "fresh" }] });
   assert.deepEqual(reused.batch.operations, [{ action: "select_choice", element_id: "fresh", choice_path: ["研究生（硕士）"] }]);
 });
+test("provider emits distinct location paths from split facts and canonical custom/native dates", { timeout: 10000 }, async t => {
+  const dir = await mkdtemp(join(tmpdir(), "campus-location-date-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const call = await provider(t, dir, profile => {
+    for (const [field, label] of [["native_place", "籍贯"], ["household_registration", "户籍"], ["student_origin", "生源"]]) {
+      profile.personal[field] = "";
+      for (const [axis, suffix] of [["province", "省"], ["city", "市"], ["district", "区"]]) profile.personal[field + "_" + axis] = label + suffix;
+    }
+    profile.education[0].graduation_date = "预计2027年6月";
+  });
+  const custom = (name, i, action, component_hint) => ({ ...node(name, i), role: action === "set_date" ? "textbox" : "combobox",
+    actions: [action], read_only: true, form_context: { field_signature: "complex-" + i, dom_tag: "input", input_type: "text", component_hint } });
+  const nodes = [
+    custom("籍贯", 0, "select_choice", "cascader"), custom("户籍", 1, "select_choice", "cascader"),
+    custom("生源地", 2, "select_choice", "cascader"), custom("毕业日期", 3, "set_date", "month-picker"),
+    { ...node("出生年月", 4), form_context: { field_signature: "native-month", dom_tag: "input", input_type: "month" } },
+  ];
+  const native = await call("plan_fill", { ...scope, title: "Fictional locations and dates", nodes, widget_batch_limit: 4 });
+  assert.deepEqual(native.needs_attention, []);
+  assert.deepEqual(native.batch.operations, [{ action: "set_value", element_id: "element-4", value: "2000-01" }]);
+  const fresh = nodes.map(n => ({ ...n, element_id: "fresh-" + n.element_id }));
+  fresh[4].value = "2000-01";
+  const widgets = await call("reconcile_fill", { ...scope, snapshot_generation: 2, plan_id: native.plan_id, nodes: fresh,
+    receipt: { execution_state: "completed", requested_count: 1, completed_count: 1, remaining_count: 0, stability: { stable: true } } });
+  assert.deepEqual(widgets.batch.operations.map(op => op.choice_path ?? op.value),
+    [["籍贯省", "籍贯市", "籍贯区"], ["户籍省", "户籍市", "户籍区"], ["生源省", "生源市", "生源区"], "2027-06"]);
+  assert.equal(widgets.batch.operations.at(-1).action, "set_date");
+  ["籍贯省 / 籍贯市 / 籍贯区", "户籍省 / 户籍市 / 户籍区", "生源省 / 生源市 / 生源区", "2027年6月"].forEach((value, i) => { fresh[i].value = value; });
+  const done = await call("reconcile_fill", { ...scope, snapshot_generation: 3, plan_id: widgets.plan_id, nodes: fresh,
+    receipt: { execution_state: "completed", requested_count: 4, completed_count: 4, remaining_count: 0, stability: { stable: true } } });
+  assert.deepEqual(done, { confirmed: 4, needs_attention: [] });
+  const preference = custom("意向地点", 10, "select_choice", "cascader");
+  const alternatives = await call("plan_fill", { ...scope, title: "Fictional preferences", nodes: [preference] });
+  assert.equal(alternatives.batch, undefined);
+  assert.match(alternatives.needs_attention[0].reason, /alternatives/);
+  const selectedPreference = await call("plan_fill", { ...scope, title: "Fictional preferences", nodes: [preference],
+    mapping_hints: [{ mapping_id: alternatives.needs_attention[0].mapping_id, canonical_field: "preferred_locations",
+      resume_path: "job_preferences.preferred_locations[1]" }] });
+  assert.deepEqual(selectedPreference.batch.operations[0].choice_path, ["Hangzhou"]);
+  const profile = await call("profile_get", {});
+  assert.equal(profile.profile.native_place_district, "籍贯区");
+  assert.equal(profile.profile.student_origin_district, "生源区");
+});
+
 
 

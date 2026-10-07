@@ -45,9 +45,9 @@ npm --prefix plugins/campus-application run typecheck
 npm --prefix plugins/campus-application test
 git diff --check
 
-webcodex-browser: 85 passed, 0 failed, 1 ignored
+webcodex-browser: 87 passed, 0 failed, 1 ignored
 webcodex-tool-contracts: 289 passed, 0 failed
-campus-application: 30 passed, 0 failed
+campus-application: 35 passed, 0 failed
 ```
 
 上一轮 regular mini Runner 与 mini-dogfood Runner 的 `campus-application` provider 状态均为 ready；本轮 Adapter v1 源码尚未部署/重启 Runner，新的 Browser `form_context` 也尚未进入 live runtime。
@@ -433,7 +433,9 @@ v2 live dogfood 还暴露并修复了三类 **通用准确性问题**：
 
 当前 China Telecom `analyze_form` 在不依赖旧 mapping memory 的情况下已能自动建立 `id_type / gender / ethnicity / political_status / is_fresh_graduate / accept_transfer` 等映射；由于 private profile 尚缺相应值，它们表现为 `missing_profile_fields` 而不是错误 fill plan。当前 profile 可用值下 recognized 包括主姓名、邮箱、毕业时间、学历/学位、专业名称和普通简历附件；live 发现的错误 `专业*` major 映射已经清除。
 
-源码还加入了 generic choice-label 规则（例如 `<div><input type=radio><span>Male</span></div>`），focused Browser regression 已通过；该规则需要下一次 Runner binary 部署后才能在真实页验证性别 radio 是否从空 option name 进一步变成可直接选择的 `男/女`。
+源码还加入了 generic choice-label 规则（例如 `<div><input type=radio><span>Male</span></div>`），最终 `mini-dogfood` binary 已更新到 `2fca3b70b999`（包含 Browser commit `afcf59f4`），service 正常 running。用户重新 Share 后已完成真实页验证：`性别` 的两个 radio 现在分别是 `name=男/女`，`是否为应届毕业生`、`是否有运营商实习经验`、`是否接受岗位调剂`、`是否有亲属在中国电信集团（系统）从业`、`是否最高学历` 的 choice 也都稳定投影为 `是/否`，同时保留各自 group label、group index/size 和 checked state。interactive snapshot 本轮为 `node_count=216 / actionable=184 / unlabeled=7`，比 v2 初版的 8 个又少 1 个；剩余 7 个主要是 privacy checkbox 的 duplicate/native wrapper 和无语义 click-only button，不属于普通资料字段。
+
+同一真实 snapshot 重新交给 `campus-application.analyze_form`：Plugin `ready / 3 tools`，不依赖旧 mapping memory 即能把 `id_type / gender / ethnicity / political_status / health_status / is_fresh_graduate / accept_transfer` 等字段识别为 **已映射但 profile 缺值**，而不是 unmapped；当前 `missing_profile_fields` 包含 `id_number / birth_date / id_type / gender / ethnicity / political_status / health_status / is_fresh_graduate / accept_transfer`。`recognized` 中保持姓名、邮箱、毕业时间、学历/学位、专业名称和简历附件等已有可用项，`专业课程/专业资格证书*` 的误识别未复发。说明 Adapter v2 的核心 Browser provenance + Plugin 消费链在真实站点已经闭环。
 
 ### 当前产品优先级（用户确认）
 

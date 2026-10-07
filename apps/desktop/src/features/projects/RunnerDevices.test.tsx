@@ -8,11 +8,16 @@ import { RunnerDevices } from "./RunnerDevices";
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke, isTauri: () => false }));
-const state = {
+const state: DesktopState = {
   workspace_runner: { config_path: "/fixture/runner.toml", client_id: "local", server_url: "http://localhost:1" },
-  topology: { runner: { kind: "local" }, server: { kind: "local" } },
-  readiness: { server: "ready", runner: "ready" }, current_operation: null, saved_projects: [],
-} as DesktopState;
+  topology: { experience: "full", runner: { kind: "local" }, server: { kind: "local" }, exposure: { kind: "none" }, enrollment: { kind: "shared_key" } },
+  readiness: { server: "ready", runner: "ready", exposure: "disabled", project: "none", runtime_ready: true, ready_for_chatgpt: false, summary: "", summary_kind: "runtime_ready_local_only" },
+  current_operation: null, saved_projects: [], activity_sequence: 0,
+  openai_tunnel_configured: false,
+  openai_tunnel_config: { tunnel_id_present: false, api_key_present: false, source: "file", saved_tunnel_id: null },
+  regular_tunnel_available: false, runtime_autostart: false, preferred_connection: "no_chat_gpt",
+  tunnel_proxy: { mode: "auto", custom_url: null, effective_source: "none", effective_proxy_present: false, system_proxy_detected: false },
+};
 function view(value = state, suspended = false) {
   return <DesktopMantineProvider><LocaleProvider><WorkspaceProvider state={value} suspended={suspended}><RunnerDevices /></WorkspaceProvider></LocaleProvider></DesktopMantineProvider>;
 }

@@ -191,6 +191,49 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
 }
 
 #[tokio::test]
+async fn adaptive_gateway_annotations_cover_admitted_runtime_tool_effects() {
+    for stateless in [false, true] {
+        for compact in [false, true] {
+            let McpOutcome::Ok(value) =
+                crate::mcp::tools::handle_list(Some(json!(1)), None, stateless, compact, false)
+                    .await
+            else {
+                panic!("tools/list");
+            };
+            let gateway = &value["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == "call_runtime_tool")
+                .expect("gateway descriptor")["annotations"];
+            let mut open_world_targets = Vec::new();
+            for spec in registered_tool_specs() {
+                if !crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(
+                    &spec.name, stateless,
+                ) {
+                    continue;
+                }
+                for (hint, conservative) in [
+                    ("readOnlyHint", false),
+                    ("destructiveHint", true),
+                    ("idempotentHint", false),
+                    ("openWorldHint", true),
+                ] {
+                    if spec.annotations[hint] == conservative {
+                        assert_eq!(gateway[hint], conservative, "{}: {hint}", spec.name);
+                    }
+                }
+                if spec.annotations["openWorldHint"] == true {
+                    open_world_targets.push(spec.name);
+                }
+            }
+            assert!(open_world_targets.iter().any(|name| name == "run_process"));
+            assert!(open_world_targets.iter().any(|name| name == "run_script"));
+        }
+    }
+}
+
+#[tokio::test]
 async fn interactive_job_input_prefers_direct_and_keeps_gateway_fallback() {
     let runtime = test_runtime();
     let outcome = handle_mcp_request(

@@ -221,6 +221,32 @@ fn heartbeat_batch_advances_only_runner_owned_active_lifecycles() {
         );
     }
 
+    let mut detached = test_job_snapshot("heartbeat-detached");
+    detached.status = "running".to_string();
+    detached.context.structured_execution =
+        Some(runner_protocol::ShellJobStructuredExecutionMetadata {
+            execution_source: "run_detached_process".to_string(),
+            language: None,
+            script_bytes: None,
+            arg_count: 0,
+            stdin_present: false,
+            validation_identity: None,
+            validation_tool: None,
+            assertion_name: None,
+        });
+    lock_unpoison(&manager.jobs).insert(
+        "heartbeat-detached".to_string(),
+        RunningJob {
+            client_id: "test-agent".to_string(),
+            runner_instance_id: "test-instance".to_string(),
+            snapshot: detached,
+            input: None,
+            child: None,
+            stop_requested: Arc::new(AtomicBool::new(false)),
+            slot_reserved: true,
+        },
+    );
+
     assert_eq!(
         queue_job_heartbeat_batch(
             &manager.jobs,
@@ -243,6 +269,7 @@ fn heartbeat_batch_advances_only_runner_owned_active_lifecycles() {
         "heartbeat-server-queued",
         "heartbeat-legacy-started",
         "heartbeat-terminal",
+        "heartbeat-detached",
     ] {
         assert_eq!(jobs[job_id].snapshot.update_seq, 1, "{job_id}");
     }
@@ -266,6 +293,7 @@ fn heartbeat_batch_advances_only_runner_owned_active_lifecycles() {
         "heartbeat-server-queued",
         "heartbeat-legacy-started",
         "heartbeat-terminal",
+        "heartbeat-detached",
     ] {
         assert!(!pending.contains_key(job_id), "{job_id}");
     }
@@ -1128,7 +1156,7 @@ fn detached_job_request(
             validation_steps: Vec::new(),
             validation: None,
             structured_execution: Some(runner_protocol::ShellJobStructuredExecutionMetadata {
-                execution_source: "run_process".to_string(),
+                execution_source: "run_detached_process".to_string(),
                 language: None,
                 script_bytes: None,
                 arg_count: 3,
@@ -1235,6 +1263,27 @@ fn detached_recovery_uses_same_inventory_and_observes_terminal_output() {
     assert_eq!(local.runner_instance_id, "new-runner-instance");
     assert!(local.child.is_none());
     assert!(lock_unpoison(&manager.detached_jobs).contains_key(&request.job_id));
+
+    // Generic liveness heartbeats must never advance the public sequence for a
+    // detached Job. Its durable supervisor/store is the sequence authority, and
+    // the later terminal record must remain admissible to this observer.
+    let durable_seq = recovered.update_seq;
+    assert_eq!(
+        queue_job_heartbeat_batch(
+            &manager.jobs,
+            &manager.pending_job_updates,
+            &manager.job_update_delivery_order,
+            &manager.delivery_signal,
+        ),
+        0
+    );
+    let after_heartbeat = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == request.job_id)
+        .unwrap();
+    assert_eq!(after_heartbeat.update_seq, durable_seq);
 
     assert!(wait_until(Duration::from_secs(10), || manager
         .inventory()

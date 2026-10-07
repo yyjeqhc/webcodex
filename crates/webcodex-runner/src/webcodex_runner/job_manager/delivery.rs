@@ -385,7 +385,19 @@ pub(super) fn queue_job_heartbeat_batch(
     let pending_heartbeats = {
         let mut jobs = lock_unpoison(jobs_map);
         jobs.values_mut()
-            .filter(|job| runner_job_is_active(&job.snapshot.status))
+            .filter(|job| {
+                runner_job_is_active(&job.snapshot.status)
+                    // Detached Jobs have a separate durable supervisor/store that
+                    // owns update_seq across Runner replacement. Advancing the same
+                    // sequence only in JobManager memory lets heartbeat traffic run
+                    // ahead of durable state, after which the detached observer
+                    // rejects the real terminal record as a sequence regression.
+                    // Runner transport liveness remains independently heartbeated;
+                    // detached semantic/output changes come from the durable observer.
+                    && !job.snapshot.context.structured_execution.as_ref().is_some_and(
+                        |metadata| metadata.execution_source == "run_detached_process",
+                    )
+            })
             .map(|job| {
                 job.snapshot.update_seq = job.snapshot.update_seq.saturating_add(1);
                 (

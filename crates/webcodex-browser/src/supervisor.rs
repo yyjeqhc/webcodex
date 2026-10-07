@@ -18,6 +18,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+mod reaper;
+use reaper::Reaper;
+
 // Keep non-image Browser observations below the Server's ordinary 256 KiB
 // Runner-result retention boundary, with explicit room for the Runner envelope.
 const MAX_BROWSER_OBSERVATION_RESULT_BYTES: usize = 192 * 1024;
@@ -31,6 +34,8 @@ const ACTION_STABILITY_TIMEOUT: Duration = Duration::from_millis(1500);
 
 #[derive(Clone)]
 pub struct BrowserSupervisor {
+    // Stop and join the shared worker before the final owner drops Browser state.
+    reaper: Arc<Reaper>,
     inner: Arc<Mutex<SupervisorState>>,
     factory: Arc<dyn BackendFactory>,
     shutting_down: Arc<AtomicBool>,
@@ -102,6 +107,7 @@ impl BrowserSupervisor {
 
     pub fn attach_external(&self, attachment_id: &str) -> BrowserResult<BrowserSummary> {
         self.reject_if_shutting_down()?;
+        self.reaper.ensure_available()?;
         self.reap_expired();
         let mut state = self.operation_state()?;
         if state.browsers.len() >= MAX_BROWSERS {
@@ -130,12 +136,16 @@ impl BrowserSupervisor {
     }
 
     fn with_factory(factory: Arc<dyn BackendFactory>) -> Self {
+        let inner = Arc::new(Mutex::new(SupervisorState {
+            browsers: HashMap::new(),
+        }));
+        let shutting_down = Arc::new(AtomicBool::new(false));
+        let reaper = Arc::new(Reaper::start(&inner, &shutting_down));
         Self {
-            inner: Arc::new(Mutex::new(SupervisorState {
-                browsers: HashMap::new(),
-            })),
+            reaper,
+            inner,
             factory,
-            shutting_down: Arc::new(AtomicBool::new(false)),
+            shutting_down,
             bridge: None,
         }
     }
@@ -148,6 +158,7 @@ impl BrowserSupervisor {
         // Shutdown admission must never wait behind a Browser operation that is
         // currently holding the runtime mutex while bounded CDP I/O completes.
         self.shutting_down.store(true, Ordering::Release);
+        self.reaper.stop();
     }
 
     pub fn list_browsers(&self) -> Vec<BrowserSummary> {
@@ -177,6 +188,7 @@ impl BrowserSupervisor {
 
     fn launch_mode(&self, profile: Option<&str>) -> BrowserResult<BrowserSummary> {
         self.reject_if_shutting_down()?;
+        self.reaper.ensure_available()?;
         self.reap_expired();
         let mut state = self.operation_state()?;
         if state.browsers.len() >= MAX_BROWSERS {
@@ -803,6 +815,9 @@ impl BrowserSupervisor {
 
     pub fn shutdown_until(&self, deadline: Instant) -> BrowserShutdownReport {
         self.begin_shutdown();
+        // A runtime already removed by the worker must finish cleanup before
+        // Runner shutdown returns. The worker never waits for the state mutex.
+        self.reaper.join();
         let mut state = self.state();
         let mut report = BrowserShutdownReport {
             browsers: state.browsers.len(),
@@ -853,18 +868,8 @@ impl BrowserSupervisor {
     }
 
     fn reap_expired(&self) {
-        let now = Instant::now();
         let mut state = self.state();
-        let expired_ids = state
-            .browsers
-            .iter()
-            .filter(|(_, runtime)| runtime.expired(now))
-            .map(|(id, _)| id.clone())
-            .collect::<Vec<_>>();
-        let expired = expired_ids
-            .into_iter()
-            .filter_map(|id| state.browsers.remove(&id))
-            .collect::<Vec<_>>();
+        let expired = state.take_expired(Instant::now());
         drop(state);
         for mut runtime in expired {
             let _ = runtime.backend.shutdown(SHUTDOWN_TIMEOUT);
@@ -1028,6 +1033,21 @@ impl BrowserSupervisor {
         self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl SupervisorState {
+    fn take_expired(&mut self, now: Instant) -> Vec<BrowserRuntime> {
+        let expired_ids = self
+            .browsers
+            .iter()
+            .filter(|(_, runtime)| runtime.expired(now))
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        expired_ids
+            .into_iter()
+            .filter_map(|id| self.browsers.remove(&id))
+            .collect()
     }
 }
 
@@ -1392,6 +1412,7 @@ fn opaque_id(prefix: &str) -> String {
 mod tests {
     mod batch;
     mod frames;
+    mod lifecycle;
     use super::*;
     use crate::cdp::{
         BackendConsoleEntry, BackendDiagnosticsSnapshot, BackendEventSnapshot, BackendFactory,
@@ -1443,6 +1464,7 @@ mod tests {
     }
 
     struct FakeBackend {
+        shutdown_probe: Option<lifecycle::ShutdownProbe>,
         frame_state: Option<Arc<Mutex<String>>>,
         batch_probe: Option<Arc<Mutex<batch::BatchProbe>>>,
         pages: Vec<BackendPage>,
@@ -1468,6 +1490,7 @@ mod tests {
 
         fn with_snapshot_nodes(snapshot_node_count: usize) -> Self {
             Self {
+                shutdown_probe: None,
                 frame_state: None,
                 batch_probe: None,
                 pages: vec![BackendPage {
@@ -1543,6 +1566,13 @@ mod tests {
     }
 
     impl BrowserBackend for FakeBackend {
+        fn ownership(&self) -> crate::BrowserOwnership {
+            self.shutdown_probe
+                .as_ref()
+                .map(|probe| probe.ownership)
+                .unwrap_or(crate::BrowserOwnership::OwnedEphemeral)
+        }
+
         fn validate_frame_fence(&mut self, _target_id: &str, fence: &str) -> BrowserResult<()> {
             if self
                 .frame_state
@@ -1936,7 +1966,10 @@ mod tests {
             self.pages.retain(|page| page.target_id != target_id);
             Ok(())
         }
-        fn shutdown(&mut self, _timeout: Duration) -> BrowserResult<()> {
+        fn shutdown(&mut self, timeout: Duration) -> BrowserResult<()> {
+            if let Some(probe) = &mut self.shutdown_probe {
+                probe.shutdown(timeout);
+            }
             Ok(())
         }
     }

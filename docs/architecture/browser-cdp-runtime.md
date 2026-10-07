@@ -204,7 +204,8 @@ opaque `element_id` values and an `actions` list.
 `actions` is the canonical admission for that element. It is not inferred from
 the accessibility role alone. The resolved element's local name and input type
 select the effect: native `select` admits `select_option`; text-like inputs and
-`textarea` admit `click` and `input_text`; `number`, `range`, date/time-like
+`textarea` admit `click`, `input_text` (caret insertion), and `set_value`
+(exact replacement via the native value setter plus input/change events); `number`, `range`, date/time-like
 inputs, and `color` admit `set_value`; `file` admits `upload_file`. Native
 `option` nodes remain observable choices and admit no effect. Accessibility
 `spinbutton` and `slider` nodes are not generically actionable. Descendants

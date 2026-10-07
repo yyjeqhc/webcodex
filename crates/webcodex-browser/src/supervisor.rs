@@ -1526,6 +1526,7 @@ fn matches_snapshot_query(
 #[cfg(test)]
 mod tests {
     mod batch;
+    mod fill;
     mod frames;
     mod query;
     use super::*;
@@ -2747,11 +2748,11 @@ mod tests {
         let name = find("Name");
         assert_eq!(name.disabled, None);
         assert_eq!(name.read_only, None);
-        assert_eq!(name.actions, ["click", "input_text"]);
+        assert_eq!(name.actions, ["click", "input_text", "set_value"]);
         let title = find("Title");
         assert_eq!(title.disabled, Some(false));
         assert_eq!(title.read_only, Some(false));
-        assert_eq!(title.actions, ["click", "input_text"]);
+        assert_eq!(title.actions, ["click", "input_text", "set_value"]);
         assert_eq!(find("Amount").disabled, Some(false));
         assert_eq!(find("Amount").actions, ["set_value"]);
         assert_eq!(find("Count").disabled, None);
@@ -3485,6 +3486,10 @@ mod tests {
 
     impl FormPage {
         fn serve() -> Self {
+            Self::serve_html(FORM_PAGE_HTML.to_string())
+        }
+
+        fn serve_html(html: String) -> Self {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let port = listener.local_addr().unwrap().port();
             let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -3500,7 +3505,7 @@ mod tests {
                     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
                     let mut request = [0u8; 2048];
                     let _ = std::io::Read::read(&mut stream, &mut request);
-                    let body = FORM_PAGE_HTML.as_bytes();
+                    let body = html.as_bytes();
                     let response = format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                         body.len()

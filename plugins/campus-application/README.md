@@ -8,14 +8,97 @@ The Plugin is deliberately split from Browser execution:
 - `campus-application` maps those controls to a structured resume profile and proposes bounded actions.
 - the caller executes ordinary Browser actions and takes a fresh snapshot after every structural or page-step mutation.
 
-For a built-in Browser `plan_fill` result, send up to 32 same-page field actions
-through `control_browser(action="batch")`, using the opaque elements from the same
-snapshot. Batch preserves order and stops on stale authority, rejection or
-uncertainty; inspect its completion counts and follow observation recovery rather
-than replaying effects. Take a fresh verification snapshot after filling. Keep
-section-expansion and page-step mutations separate. The plugin remains a planner;
-final submission remains `ready_for_review` and is never automatic.
-- final submit controls become a `ready_for_review` boundary with no click action.
+The normal native-field path is:
+
+1. `observe_browser(action="snapshot", query={fields_only:true})`, optionally
+   narrowed by `section` or `group`. Filtering happens before pagination. Forward
+   the returned nodes and snapshot generation with the existing target/URL context.
+2. `plan_fill` returns `batch`, ready to pass unchanged to `control_browser`,
+   plus an opaque `plan_id`. It no longer emits duplicate per-field proposals.
+3. Execute that one batch (1..32 operations).
+4. Take one fresh query with the same scope and send its nodes/generation plus
+   the **whole Browser output receipt** to `reconcile_fill`.
+
+Reconciliation success is just `{"confirmed":20,"needs_attention":[]}` (37 ASCII
+bytes). It returns no profile, confirmed fields, or semantic nodes. Values and
+field identities stay in at most 32 provider-memory plans, each with at most 256
+fields and a 15-minute lifetime. No fill plan is persisted. A plan token is
+consumed once; expiry/restart requires fresh planning, never old-batch replay.
+Unmapped/custom fields remain compact `needs_attention` entries with existing
+`mapping_id` identities for teaching or disambiguating repeated labels. Use
+`analyze_form` only for additional diagnostic detail; normal planning does not
+duplicate those details.
+
+For more than 32 fields, execute the returned batch, then reconcile once;
+reconciliation issues the next batch with **fresh** element ids. A 65-field section
+is 32/32/1, never 65 single-field calls. Completed stable batches can produce a
+retry batch for visible mismatches. Confirmed fields leave subsequent plans;
+missing, ambiguous, clipped, or invalid observations remain attention. Native
+`set_value` replaces existing input/textarea values using the native setter and
+input/change events. Older Runners admitting only `input_text` are used only for
+observably empty native text fields; insertion must never append to a mismatch.
+
+Partial, missing, `outcome_unknown`, or unstable receipts produce no automatic
+retry batch. Known completed/unstarted counts are retained in exception reasons;
+readback confirms current state, not execution certainty. Resolve the stopped
+boundary and replan only the fresh exception fields. Navigation/replacement
+invalidates old Browser element authority; changed target/URL or non-newer
+readbacks are rejected. Expansion and page-step clicks stay separate and require
+a fresh snapshot. Final submission always remains a review boundary.
+
+**Call budget:** a 20-field native section uses 5 tool invocations: query, plan,
+batch, query, reconcile. The provider SDK cannot invoke Browser. In code
+orchestration, pass the readback directly into reconciliation within one outer
+call and print only reconciliation: **4 model round trips**, 0 screenshots,
+0 pointer operations, 0 per-field tool calls. Compared with query + plan + 20
+individual writes + readback (23 calls), direct mode removes 18 calls (78%).
+Compared with an already manually assembled batch (4 calls), direct mode adds
+one reconciliation call but eliminates manual operation construction and the
+full readback from model context when composed. Do not claim 4 primitive calls.
+
+Both `plan_fill` and `reconcile_fill` take `client_id`, `browser_id`, `page_id`,
+`url`, `snapshot_generation`, and `nodes`. `plan_fill` also takes `title` and
+optional `mapping_hints`; reconciliation takes `plan_id` and `receipt` (the
+Browser tool's output object, not its transport envelope). The receipt embedding
+accepts Browser-owned extra diagnostics without reproducing that entire schema;
+missing certainty/count fields never authorize continuation. Nodes without
+`name` are accepted directly from Browser and normalized locally.
+
+A code-mode readback composition can keep every successful node out of model
+context (wrappers below denote the already admitted Browser/Plugin calls):
+
+```js
+const fresh = await observeBrowser({
+  action: "snapshot", client_id, browser_id, page_id,
+  query: { fields_only: true }, // reuse the same section/group filter if present
+});
+const delta = await campusReconcile({
+  client_id, browser_id, page_id, url, plan_id,
+  snapshot_generation: fresh.snapshot_generation,
+  nodes: fresh.nodes,
+  receipt, // previous control_browser output, forwarded without reinterpretation
+});
+emit(delta); // do not emit fresh.nodes
+```
+
+v0.4.6 was checked: its profile installation/schema-1 format remains supported.
+These model-facing tool schemas are refreshed together; the old proposal output
+is not retained as a second execution representation. Local mapping-memory format
+is unchanged. Optional `personal.height_cm` and `personal.weight_kg` support metric
+height/weight fields without inventing missing facts or converting other units.
+
+Local validation includes a real isolated Chromium test:
+
+```bash
+cargo test --locked -p webcodex-browser chromium_batch_replaces_32 -- --ignored --test-threads=1
+```
+
+It proves one fields-only query, a 32-operation batch replacing prefilled native
+inputs/textareas (including framework-style value tracking), and one semantic
+readback; it also proves old ids cannot replay after readback. On 2026-10-07 this
+passed locally. The connected `mini` Runner did not advertise Browser Bridge, so
+no live recruiting-page Share was available through that connection. No real
+application was submitted and no private data was used in fixtures.
 
 ## Install, build, and test
 
@@ -77,12 +160,12 @@ Newer WebCodex Browser snapshots may also attach bounded `form_context` to form 
 
 `analyze_form` consumes a bounded Browser semantic snapshot and reports mapped controls, indexed resume paths, blockers, site classification, and the stable form-structure signature.
 
-Both analysis/planning outputs also include `missing_profile_fields`, a deduplicated list of known mappings whose local profile value is missing or empty, and `unmapped_candidates`, actionable controls that still need teaching. This gives the caller a compact fallback path instead of requiring it to reinterpret a large blocker list.
+The diagnostic `analyze_form` output also includes `missing_profile_fields`, a deduplicated list of known mappings whose local profile value is missing or empty, and `unmapped_candidates`, actionable controls that still need teaching. This gives the caller a compact fallback path instead of requiring it to reinterpret a large blocker list.
 
 `plan_fill` returns the next safe planning phase:
 
 - `expand_sections`: exactly one add-section click, then a mandatory fresh snapshot;
-- `fill_fields`: ordinary `input_text`, `select_option`, `set_value`, `upload_file`, or grouped `click` actions;
+- `fill_fields`: one executable native-field `batch`, with unsupported controls in `needs_attention`;
 - `advance_step`: exactly one next/continue click when explicit step/progress context is visible, then a mandatory fresh snapshot;
 - `ready_for_review`: a final submission control is present; no submit click is returned.
 

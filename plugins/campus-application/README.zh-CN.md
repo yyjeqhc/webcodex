@@ -9,6 +9,28 @@
 - caller 使用普通 Browser action 执行计划；任何 DOM 结构变化或页面步骤变化之后都必须重新 snapshot；
 - 发现最终“提交申请”控件时进入 `ready_for_review`，不会生成提交 click。
 
+## 批量填写与 compact reconciliation
+
+普通 section 优先一次 `snapshot(query={fields_only:true})`，可加 section/group，
+直接把 nodes 与 snapshot_generation 交给 `plan_fill`。返回的 `batch` 可原样调用
+`control_browser`，单次 1～32 项，无需逐字段构造调用。执行后一次 fresh query，
+把 nodes、generation 和完整 Browser output receipt 交给 `reconcile_fill`。
+成功仅返回 `{"confirmed":20,"needs_attention":[]}`；不重复返回 profile、成功字段或节点。
+
+直调共 5 次工具调用；在编排代码中把 readback 直接传给 reconcile、只输出 delta，
+则为 4 轮模型交互。20 字段相对 23 次逐字段流程减少 18 次（约 78%），
+0 screenshot、0 pointer、0 单字段执行调用。65 字段按 32/32/1 执行，
+每次 reconciliation 从新观察产生下一批，confirmed 不再进入后续计划。
+
+优先原生 `set_value` 覆盖文本框；旧 Runner 只有插入式 `input_text` 时仅填写空框。
+partial、unknown、缺失计数或 unstable receipt 不自动产生重试 batch。
+目标/URL 变化、过期 snapshot 会拒绝；不复用旧 element id。只针对异常字段恢复。
+计划仅在 provider 内存保留（最多 32 个、每个最多 256 字段、15 分钟），重启/过期后
+重新观察与规划，不能重放旧 batch。mapping-memory 私有文件格式保持不变。
+复杂 combobox/cascader/date picker、上传、选择组仍走异常处理，不自动提交申请。
+
+完整契约、调用预算和本地 Chrome 32 字段验证命令见 [英文说明](README.md)。
+
 ## 安装、构建与测试
 
 ```bash

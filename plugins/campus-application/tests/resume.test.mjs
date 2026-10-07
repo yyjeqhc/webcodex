@@ -35,6 +35,8 @@ test("structured resume projects a stable canonical fill view", () => {
   assert.equal(profile.project_name, "Campus Apply Lab");
   assert.equal(profile.project_technologies, "Rust, TypeScript, Browser CDP");
   assert.equal(profile.health_status, "健康");
+  assert.equal(profile.height_cm, "170");
+  assert.equal(profile.weight_kg, "60");
   assert.equal(profile.student_origin, "示例省示例市");
   assert.equal(profile.student_origin_province, "示例省");
   assert.equal(profile.student_origin_city, "示例市");

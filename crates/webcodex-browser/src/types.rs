@@ -248,6 +248,13 @@ impl ControlCapability {
         }
     }
 
+    pub(crate) const fn native_text_input() -> Self {
+        Self {
+            exact_value: true,
+            ..Self::text_input()
+        }
+    }
+
     pub(crate) const fn select_option() -> Self {
         Self {
             pointer_click: false,

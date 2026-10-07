@@ -114,7 +114,7 @@ fn iframe_disabled_and_read_only_controls_publish_no_effect_authority() {
     assert_eq!(rejected.execution_state, ExecutionState::NotStarted);
     assert_eq!(rejected.recovery_action, None);
     let name_id = find("Name").element_id.clone().unwrap();
-    assert_eq!(find("Name").actions, ["click", "input_text"]);
+    assert_eq!(find("Name").actions, ["click", "input_text", "set_value"]);
     supervisor
         .input_text(&browser, &page, &name_id, "Ada")
         .unwrap();

@@ -1424,42 +1424,7 @@ impl BrowserBackend for CdpBackend {
         backend_node_id: i64,
         value: &str,
     ) -> BrowserResult<()> {
-        const SET_VALUE: &str = r#"function(requested) {
-            if (!(this instanceof HTMLInputElement)) {
-                return { ok: false, kind: "element_not_value_control" };
-            }
-            if (this.disabled || this.readOnly) {
-                return { ok: false, kind: "control_disabled" };
-            }
-            const type = (this.type || "text").toLowerCase();
-            const structuredTypes = new Set([
-                "date", "datetime-local", "month", "week", "time", "number", "range", "color"
-            ]);
-            if (!structuredTypes.has(type)) {
-                return { ok: false, kind: "unsupported_value_control" };
-            }
-            const probe = document.createElement("input");
-            probe.type = type;
-            for (const attribute of ["min", "max", "step"]) {
-                if (this.hasAttribute(attribute)) {
-                    probe.setAttribute(attribute, this.getAttribute(attribute));
-                }
-            }
-            probe.value = requested;
-            if (probe.value !== requested || !probe.checkValidity()) {
-                return { ok: false, kind: "invalid_control_value" };
-            }
-            this.value = requested;
-            if (this.value !== requested) {
-                return { ok: false, kind: "value_postcondition_failed", mutated: true };
-            }
-            this.dispatchEvent(new Event("input", { bubbles: true }));
-            this.dispatchEvent(new Event("change", { bubbles: true }));
-            if (this.value !== requested) {
-                return { ok: false, kind: "value_postcondition_failed", mutated: true };
-            }
-            return { ok: true };
-        }"#;
+        const SET_VALUE: &str = include_str!("cdp/set_value.js");
         self.ensure_event_collector(target_id)?;
         let deadline = Instant::now() + REQUEST_TIMEOUT;
         self.call_element_function_until(target_id, backend_node_id, SET_VALUE, value, deadline)
@@ -2150,7 +2115,7 @@ fn capability_for_element(
     match local_name {
         "select" => ControlCapability::select_option(),
         "option" => ControlCapability::default(),
-        "textarea" => ControlCapability::text_input(),
+        "textarea" => ControlCapability::native_text_input(),
         "input" => match input_type.unwrap_or("text") {
             "hidden" => ControlCapability::default(),
             "file" => ControlCapability::file_upload(),
@@ -2160,7 +2125,7 @@ fn capability_for_element(
                 ControlCapability::click()
             }
             "text" | "email" | "tel" | "url" | "search" | "password" => {
-                ControlCapability::text_input()
+                ControlCapability::native_text_input()
             }
             _ => legacy_role_capability(role),
         },
@@ -3811,13 +3776,13 @@ mod tests {
             .collect::<HashMap<_, _>>();
         let actions = |name: &str| by_name[name].capability.action_names();
 
-        assert_eq!(actions("text"), ["click", "input_text"]);
-        assert_eq!(actions("search"), ["click", "input_text"]);
-        assert_eq!(actions("email"), ["click", "input_text"]);
-        assert_eq!(actions("password"), ["click", "input_text"]);
+        assert_eq!(actions("text"), ["click", "input_text", "set_value"]);
+        assert_eq!(actions("search"), ["click", "input_text", "set_value"]);
+        assert_eq!(actions("email"), ["click", "input_text", "set_value"]);
+        assert_eq!(actions("password"), ["click", "input_text", "set_value"]);
         assert_eq!(actions("checkbox"), ["click"]);
         assert!(actions("hidden").is_empty());
-        assert_eq!(actions("notes"), ["click", "input_text"]);
+        assert_eq!(actions("notes"), ["click", "input_text", "set_value"]);
         assert_eq!(actions("number"), ["set_value"]);
         assert_eq!(actions("range"), ["set_value"]);
         assert_eq!(actions("date"), ["set_value"]);
@@ -4560,9 +4525,9 @@ mod tests {
         assert!(actions("Locked").is_empty());
         assert_eq!(by_name["Notes"].read_only, Some(true));
         assert_eq!(actions("Notes"), ["click"]);
-        assert_eq!(actions("Name"), ["click", "input_text"]);
+        assert_eq!(actions("Name"), ["click", "input_text", "set_value"]);
         assert_eq!(actions("Amount"), ["set_value"]);
-        assert_eq!(actions("Title"), ["click", "input_text"]);
+        assert_eq!(actions("Title"), ["click", "input_text", "set_value"]);
         assert_eq!(by_name["Title"].disabled, None);
         assert_eq!(by_name["Title"].read_only, None);
         assert_eq!(actions("Count"), ["set_value"]);

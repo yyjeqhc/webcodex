@@ -709,3 +709,10 @@ test("unlabeled upload controls can be taught safely without pretending every fi
   assert.equal(taught.nodes[0]?.mapping?.canonicalField, "resume_path");
   assert.equal(taught.nodes[0]?.mapping?.resumePath, "attachments.resume_path");
 });
+
+test("height and weight use explicit metric profile paths without matching other units", () => {
+  assert.equal(matchField("身高（cm）")?.canonicalField, "height_cm");
+  assert.equal(matchField("体重（kg）")?.canonicalField, "weight_kg");
+  assert.equal(matchField("Height (inches)"), undefined);
+  assert.equal(matchField("Weight (lbs)"), undefined);
+});

@@ -31,7 +31,7 @@ fn same_origin_document_uses_existing_control_admission() {
         actions,
         vec![
             vec!["click"],
-            vec!["click", "input_text"],
+            vec!["click", "input_text", "set_value"],
             vec!["select_option"],
             vec!["set_value"],
             vec![]
@@ -92,7 +92,7 @@ fn same_origin_iframe_withholds_disabled_and_read_only_effects() {
     assert_eq!(actions("Notes"), ["click"]);
     assert_eq!(node("Name").disabled, None);
     assert_eq!(node("Name").read_only, None);
-    assert_eq!(actions("Name"), ["click", "input_text"]);
+    assert_eq!(actions("Name"), ["click", "input_text", "set_value"]);
     assert_eq!(node("Amount").disabled, Some(false));
     assert_eq!(actions("Amount"), ["set_value"]);
     assert_eq!(actions("Kind"), ["select_option"]);

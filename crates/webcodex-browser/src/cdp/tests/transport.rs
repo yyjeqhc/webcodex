@@ -287,7 +287,10 @@ fn snapshot_session(failed_method: Option<&'static str>, iframe: bool, card: boo
                     .iter()
                     .find(|n| n.backend_node_id == Some(20))
                     .unwrap();
-                assert_eq!(field.capability.action_names(), vec!["click", "input_text"]);
+                assert_eq!(
+                    field.capability.action_names(),
+                    vec!["click", "input_text", "set_value"]
+                );
                 assert!(field.frame_fence.is_some());
             }
             let picker = snapshot

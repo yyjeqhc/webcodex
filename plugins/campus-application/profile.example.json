@@ -13,6 +13,8 @@
     "ethnicity": "汉族",
     "political_status": "群众",
     "health_status": "健康",
+    "height_cm": "170",
+    "weight_kg": "60",
     "native_place": "示例省示例市",
     "native_place_province": "示例省",
     "native_place_city": "示例市",

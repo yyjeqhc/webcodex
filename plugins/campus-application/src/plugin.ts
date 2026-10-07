@@ -1,5 +1,7 @@
+import { createFillBatch, reconcileFill, type Attention } from "./fill-batch.js";
 import {
   definePlugin,
+  errorResult,
   defineTool,
   runPlugin,
   schema,
@@ -60,7 +62,7 @@ const formContextSchema = schema.object({
 
 const nodeSchema = schema.object({
   role: schema.string({ maxLength: 80 }),
-  name: schema.string({ maxLength: 1200 }),
+  name: schema.optional(schema.string({ maxLength: 1200 })),
   description: schema.optional(schema.string({ maxLength: 1200 })),
   value: schema.optional(schema.string({ maxLength: 4096 })),
   group_id: schema.optional(schema.string({ maxLength: 160 })),
@@ -124,19 +126,6 @@ const unmappedCandidateSchema = schema.object({
   form_context: schema.optional(formContextSchema),
 });
 
-const actionSchema = schema.object({
-  kind: schema.string({
-    enum: ["input_text", "select_option", "set_value", "upload_file", "click", "manual_review"] as const,
-  }),
-  canonical_field: schema.string({ enum: canonicalFields }),
-  resume_path: schema.string({ maxLength: 300 }),
-  label: schema.string({ maxLength: 1200 }),
-  element_id: schema.string({ maxLength: 160 }),
-  value: schema.string({ maxLength: 4096 }),
-  confidence: schema.number(),
-  reason: schema.string({ maxLength: 500 }),
-});
-
 const sectionActionSchema = schema.object({
   kind: schema.string({ enum: ["click"] as const }),
   collection: schema.string({ enum: ["education", "experience", "projects"] as const }),
@@ -169,6 +158,7 @@ function supportFor(node: SnapshotNode): FillSupport {
   if (node.actions?.includes("upload_file") === true || isResumeUpload(node)) {
     return "upload_file";
   }
+  if (node.actions?.includes("set_value")) return "set_value";
   if (role === "combobox" || role === "listbox") return "select_option";
   if (role === "datetime" || role === "date" || role === "time") return "set_value";
   if (role === "textbox" || role === "searchbox" || role === "spinbutton") return "input_text";
@@ -500,7 +490,8 @@ const analyzeForm = defineTool({
     mapping_memory_entries: schema.integer(),
   }),
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  async execute({ title, url, nodes, mapping_hints }) {
+  async execute({ title, url, nodes: rawNodes, mapping_hints }) {
+    const nodes = rawNodes.map(node => ({ ...node, name: node.name ?? "" }));
     const resume = loadResumeProfile();
     const hints: FormMappingHint[] = (mapping_hints ?? []).map((hint) => ({
       mapping_id: hint.mapping_id,
@@ -518,77 +509,72 @@ const analyzeForm = defineTool({
   },
 });
 
+const scopeProperties = {
+  client_id: schema.string({ minLength: 1, maxLength: 160 }),
+  browser_id: schema.string({ minLength: 1, maxLength: 160 }),
+  page_id: schema.string({ minLength: 1, maxLength: 160 }),
+  snapshot_generation: schema.integer(),
+  url: schema.string({ maxLength: 4000 }),
+};
+const batchSchema = schema.object({
+  action: schema.string({ enum: ["batch"] as const }),
+  client_id: scopeProperties.client_id,
+  browser_id: scopeProperties.browser_id,
+  page_id: scopeProperties.page_id,
+  operations: schema.array(schema.object({
+    action: schema.string({ enum: ["input_text", "select_option", "set_value"] as const }),
+    element_id: schema.string({ maxLength: 160 }),
+    text: schema.optional(schema.string({ maxLength: 4096 })),
+    option: schema.optional(schema.string({ maxLength: 4096 })),
+    value: schema.optional(schema.string({ maxLength: 4096 })),
+  }), { minItems: 1, maxItems: 32 }),
+});
+const attentionSchema = schema.array(schema.object({
+  mapping_id: schema.optional(schema.string({ maxLength: 24 })),
+  label: schema.string({ maxLength: 1200 }),
+  status: schema.string({ enum: ["mismatch", "unresolved"] as const }),
+  reason: schema.string({ maxLength: 500 }),
+}), { maxItems: 256 });
+const fillResultProperties = {
+  plan_id: schema.optional(schema.string({ maxLength: 64 })),
+  batch: schema.optional(batchSchema),
+  deferred_count: schema.optional(schema.integer()),
+  needs_attention: attentionSchema,
+};
 const planFill = defineTool({
   name: "plan_fill",
-  description: "Convert a bounded Browser semantic snapshot into the next safe application step. If the structured resume has more repeated education/experience/project entries than the page currently exposes and a matching add-section button is available, return exactly one section-expansion click and require a fresh snapshot before field filling. Otherwise return the normal bounded fill plan. Optional stable mapping hints can teach unlabeled controls by mapping_id. It never executes browser actions or submits a form.",
+  description: "Plan one executable Browser batch from a fresh semantic query (prefer query.fields_only=true, optionally section/group; up to 256 nodes). Copy batch unchanged into control_browser; 1..32 admitted native field operations, no per-field calls. Then take ONE fresh query and pass it with the batch receipt to reconcile_fill. plan_id keeps expectations only in bounded provider memory for 15 minutes; restart/expiry requires fresh planning, never replay. Deferred fields continue after reconciliation. Uncertain/custom controls stay in needs_attention. Full snapshots can also propose one section-expansion or next-step click; each requires fresh observation. No Browser effects or final submission.",
   inputSchema: schema.object({
+    ...scopeProperties,
     title: schema.string({ maxLength: 1000 }),
-    url: schema.string({ maxLength: 4000 }),
     nodes: schema.array(nodeSchema, { maxItems: 256 }),
     mapping_hints: schema.optional(schema.array(mappingHintSchema, { maxItems: 256 })),
   }),
   outputSchema: schema.object({
-    site_kind: schema.string({ enum: ["greenhouse-like", "lever-like", "campus-cn-like", "generic"] as const }),
     phase: schema.string({ enum: ["expand_sections", "fill_fields", "advance_step", "ready_for_review"] as const }),
-    section_actions: schema.array(sectionActionSchema, { maxItems: 1 }),
-    flow_actions: schema.array(flowActionSchema, { maxItems: 1 }),
-    step_marker: schema.string({ maxLength: 200 }),
-    review_required: schema.boolean(),
-    review_reason: schema.string({ maxLength: 500 }),
-    actions: schema.array(actionSchema, { maxItems: 256 }),
-    blockers: schema.array(blockerSchema, { maxItems: 256 }),
-    blocker_count: schema.integer(),
-    missing_profile_fields: schema.array(missingProfileFieldSchema, { maxItems: 128 }),
-    unmapped_candidates: schema.array(unmappedCandidateSchema, { maxItems: 256 }),
-    structure_signature: schema.string({ maxLength: 64 }),
-    mapping_cache_hit: schema.boolean(),
-    mapping_cache_entries: schema.integer(),
-    mapping_memory_hit: schema.boolean(),
-    mapping_memory_entries: schema.integer(),
+    ...fillResultProperties,
+    section_actions: schema.optional(schema.array(sectionActionSchema, { maxItems: 1 })),
+    flow_actions: schema.optional(schema.array(flowActionSchema, { maxItems: 1 })),
+    review_reason: schema.optional(schema.string({ maxLength: 500 })),
   }),
-  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  async execute({ title, url, nodes, mapping_hints }) {
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  async execute({ title, nodes: rawNodes, mapping_hints, ...scope }) {
+    const nodes = rawNodes.map(node => ({ ...node, name: node.name ?? "" }));
+    const { url } = scope;
     const resume = loadResumeProfile();
     const hints: FormMappingHint[] = (mapping_hints ?? []).map((hint) => ({
-      mapping_id: hint.mapping_id,
-      label: hint.label,
-      canonicalField: hint.canonical_field,
-      resumePath: hint.resume_path,
-      choiceValue: hint.choice_value,
+      mapping_id: hint.mapping_id, label: hint.label, canonicalField: hint.canonical_field,
+      resumePath: hint.resume_path, choiceValue: hint.choice_value,
     }));
     const analysis = analyzeNodes(nodes, resume, url, hints);
     const site_kind = classifySite(title, url, nodes);
-    const flowContext = planApplicationFlow(nodes);
+    const flow = planApplicationFlow(nodes);
     const sectionExpansion = planNextSectionExpansion(nodes, {
-      education: resume.education.length,
-      experience: resume.experience.length,
-      projects: resume.projects.length,
+      education: resume.education.length, experience: resume.experience.length, projects: resume.projects.length,
     });
-    if (sectionExpansion) {
-      return textResult(
-        `Expand ${sectionExpansion.collection} from ${sectionExpansion.current_count} to ${sectionExpansion.target_count}; take a fresh Browser snapshot before filling fields.`,
-        {
-          site_kind,
-          phase: "expand_sections",
-          section_actions: [sectionExpansion] as SectionExpansionAction[],
-          flow_actions: [] as FlowAction[],
-          step_marker: flowContext.step_marker,
-          review_required: false,
-          review_reason: "",
-          actions: [] as never[],
-          blockers: [] as Array<{ mapping_id: string; label: string; role: string; element_id: string; reason: string }>,
-          blocker_count: 0,
-          missing_profile_fields: analysis.missing_profile_fields,
-          unmapped_candidates: analysis.unmapped_candidates,
-          structure_signature: analysis.structure_signature,
-          mapping_cache_hit: analysis.mapping_cache_hit,
-          mapping_cache_entries: analysis.mapping_cache_entries,
-          mapping_memory_hit: analysis.mapping_memory_hit,
-          mapping_memory_entries: analysis.mapping_memory_entries,
-        },
-      );
-    }
-
+    if (sectionExpansion) return textResult("Expand once, then observe the changed section.", {
+      phase: "expand_sections", section_actions: [sectionExpansion] as SectionExpansionAction[], needs_attention: [] as Attention[],
+    });
     const actions = analysis.recognized
       .map((item) => ({
         ...item,
@@ -606,99 +592,61 @@ const planFill = defineTool({
         );
       })
       .map((item) => ({
+        mapping_id: item.mapping_id,
         kind: item.support,
-        canonical_field: item.canonical_field,
-        resume_path: item.resume_path,
         label: item.label,
         element_id: item.element_id,
         value: item.proposed_value,
         confidence: item.confidence,
-        reason:
-          item.support === "input_text"
-            ? "Use Browser input_text."
-            : item.support === "select_option"
-              ? "Use Browser select_option with the exact native value or visible label."
-              : item.support === "set_value"
-                ? "Use Browser set_value for the native structured form value."
-                : item.support === "click"
-                  ? "Use Browser click on the option whose group semantics and label match the desired profile choice."
-                  : "Use Browser upload_file with the authorized resume project and this project-relative path.",
       }));
-    if (actions.length === 0 && analysis.blockers.length === 0) {
-      const flow = flowContext;
-      if (flow.review_required) {
-        return textResult(
-          flow.review_reason,
-          {
-            site_kind,
-            phase: "ready_for_review",
-            section_actions: [] as SectionExpansionAction[],
-            flow_actions: [] as FlowAction[],
-            step_marker: flow.step_marker,
-            review_required: true,
-            review_reason: flow.review_reason,
-            actions: [] as never[],
-            blockers: [] as Array<{ mapping_id: string; label: string; role: string; element_id: string; reason: string }>,
-            blocker_count: 0,
-            missing_profile_fields: analysis.missing_profile_fields,
-            unmapped_candidates: analysis.unmapped_candidates,
-            structure_signature: analysis.structure_signature,
-            mapping_cache_hit: analysis.mapping_cache_hit,
-            mapping_cache_entries: analysis.mapping_cache_entries,
-            mapping_memory_hit: analysis.mapping_memory_hit,
-            mapping_memory_entries: analysis.mapping_memory_entries,
-          },
-        );
-      }
-      if (flow.advance) {
-        return textResult(
-          `Current step is complete. Advance with "${flow.advance.label}", then take a fresh Browser snapshot before planning again.`,
-          {
-            site_kind,
-            phase: "advance_step",
-            section_actions: [] as SectionExpansionAction[],
-            flow_actions: [flow.advance] as FlowAction[],
-            step_marker: flow.step_marker,
-            review_required: false,
-            review_reason: "",
-            actions: [] as never[],
-            blockers: [] as Array<{ mapping_id: string; label: string; role: string; element_id: string; reason: string }>,
-            blocker_count: 0,
-            missing_profile_fields: analysis.missing_profile_fields,
-            unmapped_candidates: analysis.unmapped_candidates,
-            structure_signature: analysis.structure_signature,
-            mapping_cache_hit: analysis.mapping_cache_hit,
-            mapping_cache_entries: analysis.mapping_cache_entries,
-            mapping_memory_hit: analysis.mapping_memory_hit,
-            mapping_memory_entries: analysis.mapping_memory_entries,
-          },
-        );
-      }
-    }
 
-    return textResult(
-      `Prepared ${actions.length} proposed actions for ${site_kind}; ${analysis.blockers.length} blockers, ${analysis.missing_profile_fields.length} missing profile fields, ${analysis.unmapped_candidates.length} teachable unmapped controls remain; mapping cache ${analysis.mapping_cache_hit ? "hit" : "miss"}, persistent memory ${analysis.mapping_memory_hit ? "hit" : "miss"}.`,
-      {
-        site_kind,
-        phase: "fill_fields",
-        section_actions: [] as SectionExpansionAction[],
-        flow_actions: [] as FlowAction[],
-        step_marker: flowContext.step_marker,
-        review_required: false,
-        review_reason: "",
-        actions,
-        blockers: analysis.blockers,
-        blocker_count: analysis.blockers.length,
-        missing_profile_fields: analysis.missing_profile_fields,
-        unmapped_candidates: analysis.unmapped_candidates,
-        structure_signature: analysis.structure_signature,
-        mapping_cache_hit: analysis.mapping_cache_hit,
-        mapping_cache_entries: analysis.mapping_cache_entries,
-        mapping_memory_hit: analysis.mapping_memory_hit,
-        mapping_memory_entries: analysis.mapping_memory_entries,
-      },
-    );
+    if (!actions.length && !analysis.blockers.length) {
+      if (flow.review_required) return textResult("Review required; never submit automatically.", {
+        phase: "ready_for_review", review_reason: flow.review_reason, needs_attention: [] as Attention[],
+      });
+      if (flow.advance) return textResult("Advance once, then observe the new step.", {
+        phase: "advance_step", flow_actions: [flow.advance] as FlowAction[], needs_attention: [] as Attention[],
+      });
+    }
+    const result = createFillBatch(scope, nodes, actions, analysis.blockers.map(item => ({
+      mapping_id: item.mapping_id, label: item.label, status: "unresolved" as const, reason: item.reason,
+    })));
+    return textResult("Execute batch once, then fresh semantic readback → reconcile_fill.", {
+      phase: "fill_fields", ...result,
+    });
+  },
+});
+const reconcile = defineTool({
+  name: "reconcile_fill",
+  description: "Consume plan_id once with ONE fresh same-target semantic readback and the previous Browser batch receipt. Forward receipt counts/certainty unchanged, omit missing facts. Returns confirmed count and only mismatch/unresolved exceptions; never returns profile or confirmed nodes. A completed stable batch may yield a fresh bounded batch for remaining fields. Partial, uncertain or unstable receipts never generate retry effects. Target/URL changes and non-newer generations require fresh planning; old ids are never reused. In code orchestration pass readback directly here and expose only this compact result to the model.",
+  inputSchema: schema.object({
+    plan_id: schema.string({ maxLength: 64 }),
+    ...scopeProperties,
+    nodes: schema.array(nodeSchema, { maxItems: 256 }),
+    receipt: schema.object({
+      execution_state: schema.optional(schema.string({ maxLength: 40 })),
+      requested_count: schema.optional(schema.integer()),
+      completed_count: schema.optional(schema.integer()),
+      remaining_count: schema.optional(schema.integer()),
+      stopped_at_index: schema.optional(schema.integer()),
+      stopped_execution_state: schema.optional(schema.string({ maxLength: 40 })),
+      stability: schema.optional(schema.object({
+        stable: schema.boolean(),
+        waited_ms: schema.optional(schema.integer()),
+        reason: schema.optional(schema.string({ maxLength: 500 })),
+      })),
+    }, { additionalProperties: true }),
+  }),
+  outputSchema: schema.object({ confirmed: schema.integer(), ...fillResultProperties }),
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  async execute({ plan_id, nodes: rawNodes, receipt, ...scope }) {
+    const nodes = rawNodes.map(node => ({ ...node, name: node.name ?? "" }));
+    try {
+      return textResult("Reconciled fresh field values.", reconcileFill(plan_id, scope, nodes, receipt));
+    } catch (error) {
+      return errorResult(error instanceof Error ? error.message : "Readback unavailable", { confirmed: 0, needs_attention: [] as Attention[] });
+    }
   },
 });
 
-runPlugin(definePlugin({ tools: [profileGet, analyzeForm, planFill] }));
+runPlugin(definePlugin({ tools: [profileGet, analyzeForm, planFill, reconcile] }));

@@ -13,6 +13,8 @@ export const canonicalFields = [
   "ethnicity",
   "political_status",
   "health_status",
+  "height_cm",
+  "weight_kg",
   "native_place",
   "native_place_province",
   "native_place_city",
@@ -72,6 +74,8 @@ const canonicalResumePaths: Record<CanonicalField, string> = {
   ethnicity: "personal.ethnicity",
   political_status: "personal.political_status",
   health_status: "personal.health_status",
+  height_cm: "personal.height_cm",
+  weight_kg: "personal.weight_kg",
   native_place: "personal.native_place",
   native_place_province: "personal.native_place_province",
   native_place_city: "personal.native_place_city",
@@ -132,6 +136,8 @@ export type ResumeProfile = {
     ethnicity: string;
     political_status: string;
     health_status?: string;
+    height_cm?: string;
+    weight_kg?: string;
     native_place: string;
     native_place_province?: string;
     native_place_city?: string;
@@ -276,6 +282,8 @@ export const resumeProfileSchema = schema.object({
     ethnicity: schema.string({ maxLength: 100 }),
     political_status: schema.string({ maxLength: 100 }),
     health_status: schema.optional(schema.string({ maxLength: 100 })),
+    height_cm: schema.optional(schema.string({ maxLength: 100 })),
+    weight_kg: schema.optional(schema.string({ maxLength: 100 })),
     native_place: schema.string({ maxLength: 300 }),
     native_place_province: schema.optional(schema.string({ maxLength: 200 })),
     native_place_city: schema.optional(schema.string({ maxLength: 200 })),

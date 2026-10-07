@@ -98,6 +98,31 @@ test("composite readback preserves boundaries and never confirms an undelimited 
     assert.equal(result.needs_attention[0].status, "unresolved");
   }
 });
+test("native select code/label differences need attention and stay non-replayable through deferred widgets", () => {
+  const { nodes, actions } = fixture(2);
+  nodes.unshift({ role: "combobox", name: "Gender", value: "", actionable: true,
+    actions: ["select_option"], element_id: "native-select",
+    form_context: { field_signature: "native-select", dom_tag: "select" } });
+  actions.unshift({ kind: "select_option", element_id: "native-select", label: "Gender", value: "male", confidence: 1 });
+  let plan = createFillBatch(scope, nodes, actions);
+  assert.deepEqual(plan.batch.operations, [{ action: "select_option", element_id: "native-select", option: "male" }]);
+  let current = nodes.map((node, i) => ({ ...node, element_id: "fresh-" + i, value: i === 0 ? "男" : "" }));
+  plan = reconcileFill(plan.plan_id, { ...scope, snapshot_generation: 2 }, current, complete(1));
+  assert.equal(plan.confirmed, 0);
+  assert.deepEqual(plan.needs_attention.map(item => item.status), ["unresolved"]);
+  assert.equal(plan.batch.operations[0].action, "select_choice");
+  for (let i = 1; i <= 2; i++) {
+    current = current.map((node, index) => ({ ...node, element_id: "step-" + i + "-" + index,
+      value: index === i ? actions[index].value : node.value }));
+    plan = reconcileFill(plan.plan_id, { ...scope, snapshot_generation: 2 + i }, current, complete(1));
+    assert.equal(plan.confirmed, 1);
+    assert.deepEqual(plan.needs_attention.map(item => item.label), ["Gender"]);
+    assert.ok(plan.batch === undefined || plan.batch.operations.every(op => op.action === "select_choice"));
+  }
+  assert.equal(plan.batch, undefined);
+  const satisfied = createFillBatch(scope, [{ ...nodes[0], value: "male" }], [actions[0]]);
+  assert.deepEqual(satisfied, { needs_attention: [] });
+});
 test("partial widget batch confirms visible values but never retries or advances the uncertain boundary", () => {
   const { nodes, actions } = fixture(3);
   const plan = createFillBatch(scope, nodes, actions, [], 2);

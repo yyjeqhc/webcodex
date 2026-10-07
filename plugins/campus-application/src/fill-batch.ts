@@ -180,6 +180,7 @@ export function reconcileFill(plan_id: string, scope: FillScope, nodes: readonly
       && node?.value !== undefined && Buffer.byteLength(field.action.value) > 512
       && field.action.value.startsWith(node.value);
     const status = !knownReadback(field.action, node) || clipped ? "unresolved" : "mismatch";
+    const requiresSemanticReadback = isWidget(field.action) || field.action.kind === "select_option";
     // Never infer execution from readback. Interrupted/missing receipts retain all
     // mismatches as attention, including definitely unstarted fields. A new plan
     // may use fresh observations after the caller resolves the stopped boundary.
@@ -191,11 +192,13 @@ export function reconcileFill(plan_id: string, scope: FillScope, nodes: readonly
       needs_attention.push({ ...(field.action.mapping_id ? { mapping_id: field.action.mapping_id } : {}), label: field.action.label, status, reason: `${progress}; inspect fresh state before a new plan; do not replay the batch.` });
     } else if (!field.replayBlocked && issuedIndex < 0 && node && !node.form_context?.aria_invalid && operation(field.action, node)) {
       pending.push(field);
-    } else if (field.replayBlocked || !node || isWidget(field.action) || !knownReadback(field.action, node) || clipped || node.form_context?.aria_invalid || !operation(field.action, node)) {
-      if (isWidget(field.action) && issuedIndex >= 0) field.replayBlocked = true;
+    } else if (field.replayBlocked || !node || requiresSemanticReadback || !knownReadback(field.action, node) || clipped || node.form_context?.aria_invalid || !operation(field.action, node)) {
+      // Native selects may accept option.value while AX returns the selected label.
+      // Neither that difference nor a widget's incomplete path proves a retry is needed.
+      if (requiresSemanticReadback && issuedIndex >= 0) field.replayBlocked = true;
       unresolved.push(field);
-      needs_attention.push({ ...(field.action.mapping_id ? { mapping_id: field.action.mapping_id } : {}), label: field.action.label, status: isWidget(field.action) ? "unresolved" : status, reason: clipped ? "Readback value may be clipped; do not repeat the effect."
-          : isWidget(field.action) ? "Completed widget requires a unique semantic value/path readback; inspect this field without repeating the effect."
+      needs_attention.push({ ...(field.action.mapping_id ? { mapping_id: field.action.mapping_id } : {}), label: field.action.label, status: requiresSemanticReadback ? "unresolved" : status, reason: clipped ? "Readback value may be clipped; do not repeat the effect."
+          : requiresSemanticReadback ? "Completed selection/date requires matching semantic value/path readback; inspect this field without repeating the effect."
           : node?.form_context?.aria_invalid ? "Page reports validation failure; resolve this field before another effect."
           : "No unique fresh admitted control/value; inspect only this field." });
     } else {

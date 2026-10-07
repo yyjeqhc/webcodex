@@ -2495,19 +2495,21 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     //   excludes App-only ui.visibility=["app"] tools and Host-only _meta/title.
     // - raw transport overhead measures the additional MCP tools/list JSON that
     //   a Host must receive. It is not a token/context budget.
-    // present_pdf, present_spreadsheet and present_docx each add a public
-    // entrypoint even without an Apps Host. Apps also add private presentation
-    // artifact descriptors and the public Work Result thread entrypoint.
-    // Exact inventory counts remain a separate regression gate.
-    for (label, auth, max_tools, model_max_bytes) in [
-        ("anonymous", None, 28, 75_000),
-        ("scoped", Some(&scoped), 29, 78_000),
-        // Interactive pipe input is a CoreWorkflow Direct tool paired with
-        // run_process, so each ordinary Adaptive inventory gains one descriptor.
-        ("admin", Some(&admin), 35, 90_000),
+    //
+    // Do not hard-code exact tool counts here. The canonical ToolDefinition
+    // registry plus auth/App admission owns inventory membership; compact and
+    // full renderings must preserve the exact same admitted inventory. Byte
+    // ceilings remain intentional product budgets and still catch material
+    // discovery-surface growth.
+    for (label, auth, model_max_bytes) in [
+        ("anonymous", None, 75_000),
+        ("scoped", Some(&scoped), 78_000),
+        ("admin", Some(&admin), 90_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();
+            let mut counts = Vec::new();
+            let mut model_counts = Vec::new();
             for compact in [true, false] {
                 let McpOutcome::Ok(value) = crate::mcp::tools::handle_list(
                     Some(json!(1)),
@@ -2545,43 +2547,18 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                     .sum();
                 eprintln!("MCP_TRANSPORT_SIZE {label} app={app_enabled} compact={compact} count={count} bytes={bytes} top_description_chars={top_chars} input_description_chars={input_chars}");
                 eprintln!("MCP_MODEL_SIZE {label} app={app_enabled} compact={compact} count={model_count} bytes={model_bytes}");
-                let feature_tools = if cfg!(feature = "experimental-code-mode") {
-                    3
-                } else {
-                    0
-                };
-                let count_budget = max_tools + if app_enabled { 22 } else { 0 } + feature_tools;
-                let model_count_budget =
-                    max_tools + if app_enabled { 1 } else { 0 } + feature_tools;
-                let model_byte_budget =
-                    model_max_bytes + if app_enabled { 4_000 } else { 0 } + feature_tools * 4096;
+                let experimental_code_mode_byte_budget =
+                    webcodex_tool_contracts::tool_definitions()
+                        .filter(|definition| definition.name.ends_with("_code_mode"))
+                        .count()
+                        * 4096;
+                let model_byte_budget = model_max_bytes
+                    + if app_enabled { 4_000 } else { 0 }
+                    + experimental_code_mode_byte_budget;
                 // Raw transport includes private App bridge descriptors and Host
                 // presentation metadata. Keep a coarse overhead ceiling so transport
                 // cannot grow silently, but do not force model guidance to pay for it.
                 let transport_overhead_budget = if app_enabled { 35_000 } else { 8_000 };
-                if feature_tools == 0 {
-                    assert_eq!(
-                        count, count_budget,
-                        "{label} app={app_enabled}: tool inventory changed"
-                    );
-                } else {
-                    // Preserve the existing experimental Code Mode allowance.
-                    assert!(
-                        count <= count_budget,
-                        "{label} app={app_enabled}: {count} tools exceeds {count_budget}"
-                    );
-                }
-                if feature_tools == 0 {
-                    assert_eq!(
-                        model_count, model_count_budget,
-                        "{label} app={app_enabled}: model-visible inventory changed"
-                    );
-                } else {
-                    assert!(
-                        model_count <= model_count_budget,
-                        "{label} app={app_enabled}: {model_count} model-visible tools exceeds {model_count_budget}"
-                    );
-                }
                 if compact {
                     assert!(
                         model_bytes <= model_byte_budget,
@@ -2594,7 +2571,17 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                     );
                 }
                 sizes.push(bytes);
+                counts.push(count);
+                model_counts.push(model_count);
             }
+            assert_eq!(
+                counts[0], counts[1],
+                "{label} app={app_enabled}: compact/full transport inventory diverged"
+            );
+            assert_eq!(
+                model_counts[0], model_counts[1],
+                "{label} app={app_enabled}: compact/full model inventory diverged"
+            );
             let ratio = sizes[0] as f64 / sizes[1] as f64;
             eprintln!("MCP_TRANSPORT_RATIO {label} app={app_enabled} {ratio:.4}");
             assert!(

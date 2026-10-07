@@ -17,12 +17,9 @@
 - Project: `agent:mini:webcodex`
 - Branch: `fix/campus-application-live-form-context`
 - Base / origin/main at branch creation: `676aeb13`
-- 2026-10-07 已再次 rebase 到 `origin/main=301a4a66`
-- rebase 后已提交三轮工作：
-  - `4bcf9894 feat(campus-application): persist live form mappings`
-  - `a07c7a30 feat(campus-application): improve China campus fallback`
-  - `5fbdbed1 feat(browser): enrich semantic form labels`
-- 当前 Resume/Form Adapter v1 作为第四个独立 commit 收口；最终 hash 以 branch HEAD 为准。
+- 2026-10-07 已再次 fetch/rebase 到当时最新 `origin/main`；本交接不依赖 rebased commit hash，最终状态以 `git log origin/main..HEAD` 为准。
+- 当前分支已按独立 commit 收口：persistent mapping、China campus fallback、Browser semantic labels、bounded form context、live dogfood fixes、Adapter v2 nearby/group labels、choice labels，以及 Plugin 对通用 form provenance 的消费。
+- 不 push；完成每轮后保持 worktree clean。
 - 修改范围：
   - `plugins/campus-application/src/form-cache.ts`
   - `plugins/campus-application/src/mapping-memory.ts`
@@ -384,7 +381,7 @@ npm --prefix plugins/campus-application test
 
 当前源码测试已经覆盖 field signature 对 value 变化稳定、section/component/validation/option metadata、旧 mapping identity 兼容、旧空 cache 不阻止新 form context、生源地自动映射、重复教育 section 和简历附件语义。
 
-**新版 Runner 已完成部署与 smoke。** 用户已明确允许部署类操作直接执行。`mini-dogfood` Runner 已从旧 commit `5024ed07be2b` 原子替换为 `e763b066c81c`，LaunchAgent `cn.yyjeqhc.webcodex-runner.dogfood-mini` 重启后正常注册到 `127.0.0.1:18081`，transport=`websocket`，plugin `campus-application` check 为 `ready` / 3 tools。regular mini Runner 使用独立 `/Users/yyjeqhc/.local/lib/webcodex-dev/webcodex-runner`，本次未替换。
+**新版 Runner 已完成部署与 smoke。** 用户已明确允许部署类操作直接执行。`mini-dogfood` Runner 已从旧 `5024ed07be2b` 版本切换到包含 Resume/Form Adapter 的当前分支构建；LaunchAgent `cn.yyjeqhc.webcodex-runner.dogfood-mini` 重启后正常注册到 `127.0.0.1:18081`，transport=`websocket`，plugin `campus-application` check 为 `ready` / 3 tools。regular mini Runner 使用独立 `/Users/yyjeqhc/.local/lib/webcodex-dev/webcodex-runner`，本次未替换。
 
 部署后的 owned Browser 访问 `https://httpbin.org/forms/post` 做了端到端 smoke：interactive snapshot 共 13 个 actionable node，13/13 都带 `form_context`；例如 `custtel`/`custemail`、radio/checkbox `html_name`、time input 和 textarea 均正确投影。把同一 snapshot 直接交给 `campus-application.analyze_form` 后，Plugin 正常消费新结构：自动识别 phone/email，并在 `unmapped_candidates` 中保留其它字段的完整 `form_context`，证明 Browser -> Runner output schema -> Plugin input schema -> analyzer 整条链已通。
 
@@ -407,7 +404,7 @@ npm --prefix plugins/campus-application test
 - 多个候选 label、隐藏文本、heading、尾随 help text 等不确定结构 fail closed
 - radio/checkbox 的小型单选项容器允许一个短的尾随可见文本作为 choice label；普通 textbox/select 不使用尾随文本，避免把校验/帮助文案误当字段名
 
-`1447a888 feat(browser): infer nearby form labels` 已部署到 `mini-dogfood` 并在用户重新 Share 的中国电信真实页做了 live dogfood。结果：
+Adapter v2 的 `feat(browser): infer nearby form labels` 已部署到 `mini-dogfood` 并在用户重新 Share 的中国电信真实页做了 live dogfood。结果：
 
 ```text
 interactive node_count:       230 (truncated=true)
@@ -433,7 +430,7 @@ v2 live dogfood 还暴露并修复了三类 **通用准确性问题**：
 
 当前 China Telecom `analyze_form` 在不依赖旧 mapping memory 的情况下已能自动建立 `id_type / gender / ethnicity / political_status / is_fresh_graduate / accept_transfer` 等映射；由于 private profile 尚缺相应值，它们表现为 `missing_profile_fields` 而不是错误 fill plan。当前 profile 可用值下 recognized 包括主姓名、邮箱、毕业时间、学历/学位、专业名称和普通简历附件；live 发现的错误 `专业*` major 映射已经清除。
 
-源码还加入了 generic choice-label 规则（例如 `<div><input type=radio><span>Male</span></div>`），最终 `mini-dogfood` binary 已更新到 `2fca3b70b999`（包含 Browser commit `afcf59f4`），service 正常 running。用户重新 Share 后已完成真实页验证：`性别` 的两个 radio 现在分别是 `name=男/女`，`是否为应届毕业生`、`是否有运营商实习经验`、`是否接受岗位调剂`、`是否有亲属在中国电信集团（系统）从业`、`是否最高学历` 的 choice 也都稳定投影为 `是/否`，同时保留各自 group label、group index/size 和 checked state。interactive snapshot 本轮为 `node_count=216 / actionable=184 / unlabeled=7`，比 v2 初版的 8 个又少 1 个；剩余 7 个主要是 privacy checkbox 的 duplicate/native wrapper 和无语义 click-only button，不属于普通资料字段。
+源码还加入了 generic choice-label 规则（例如 `<div><input type=radio><span>Male</span></div>`），`mini-dogfood` 已部署包含该 Browser commit 与 Plugin follow-up 的分支构建，service 正常 running。用户重新 Share 后已完成真实页验证：`性别` 的两个 radio 现在分别是 `name=男/女`，`是否为应届毕业生`、`是否有运营商实习经验`、`是否接受岗位调剂`、`是否有亲属在中国电信集团（系统）从业`、`是否最高学历` 的 choice 也都稳定投影为 `是/否`，同时保留各自 group label、group index/size 和 checked state。interactive snapshot 本轮为 `node_count=216 / actionable=184 / unlabeled=7`，比 v2 初版的 8 个又少 1 个；剩余 7 个主要是 privacy checkbox 的 duplicate/native wrapper 和无语义 click-only button，不属于普通资料字段。
 
 同一真实 snapshot 重新交给 `campus-application.analyze_form`：Plugin `ready / 3 tools`，不依赖旧 mapping memory 即能把 `id_type / gender / ethnicity / political_status / health_status / is_fresh_graduate / accept_transfer` 等字段识别为 **已映射但 profile 缺值**，而不是 unmapped；当前 `missing_profile_fields` 包含 `id_number / birth_date / id_type / gender / ethnicity / political_status / health_status / is_fresh_graduate / accept_transfer`。`recognized` 中保持姓名、邮箱、毕业时间、学历/学位、专业名称和简历附件等已有可用项，`专业课程/专业资格证书*` 的误识别未复发。说明 Adapter v2 的核心 Browser provenance + Plugin 消费链在真实站点已经闭环。
 

@@ -111,7 +111,7 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
     : error && <div className="error-card" role="alert"><strong>{error.message}</strong><span>{error.next_action}</span></div>;
   return <section className="settings-section" aria-labelledby="runner-capacity-title">
     <h2 id="runner-capacity-title">{s("Runner Job capacity")}</h2>
-    <p className="field-help">{s("Durable Job slots, including Jobs that are still stopping. Other request queues are separate.")}</p>
+    <p className="field-help">{s("Server-reported durable Jobs. Stop-requested Jobs may still occupy slots even when omitted from the running count. Other request queues are separate.")}</p>
     <RunnerCapacitySummary capacity={capacity} />
     {loading ? <p role="status">{s("Loading…")}</p> : <>
       <p>{s("Saved limit")}: {savedLimit ?? "—"} · {s("Default")}: 4</p>

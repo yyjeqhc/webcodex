@@ -3,7 +3,7 @@
   "Refresh reloads the saved limit and discards unsaved edits.": "重新整理會載入已儲存的上限，並捨棄未儲存的修改。",
 
   "Runner Job capacity": "Runner 任務容量",
-  "Durable Job slots, including Jobs that are still stopping. Other request queues are separate.": "這裡統計持久任務占用的槽位，包括仍在停止中的任務；一般請求佇列另行計算。",
+  "Server-reported durable Jobs. Stop-requested Jobs may still occupy slots even when omitted from the running count. Other request queues are separate.": "這裡顯示 Server 回報的持久任務數。已請求停止的任務即使未計入執行數，也可能仍占用槽位；一般請求佇列另行計算。",
   "Runner offline; capacity unknown.": "Runner 已離線，容量未知。",
   "Capacity needs refresh.": "容量資訊已過期，需要重新整理。",
   "Job capacity is not reported by this Runner.": "此 Runner 未回報任務容量。",

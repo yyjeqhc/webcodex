@@ -10,7 +10,7 @@ export function runnerCapacity(runner: ServerRunnerSummary | null | undefined, s
   const { jobs_running: running, jobs_queued: queued, job_concurrency_limit: limit } = runner;
   if (![running, queued, limit].every(value => typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
     || limit! < 1 || limit! > 64) return { state: "unsupported" };
-  // Server reports occupied durable Job slots, including Jobs still stopping.
+  // Preserve reported counts; a stop request alone does not prove termination.
   return { state: "available", running: running!, queued: queued!, limit: limit! };
 }
 

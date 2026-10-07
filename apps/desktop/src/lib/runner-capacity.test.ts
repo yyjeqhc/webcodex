@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runnerCapacity, parseJobConcurrency } from "./runner-capacity";
 const online = { client_id: "local", connected: true, status: "online", jobs_running: 4, jobs_queued: 2, job_concurrency_limit: 4 };
 describe("durable Runner Job capacity", () => {
-  it("uses the reported occupied slots without subtracting stopping Jobs", () => {
+  it("preserves the Server-reported running and queued counts", () => {
     expect(runnerCapacity(online)).toEqual({ state: "available", running: 4, queued: 2, limit: 4 });
   });
   it("keeps offline, stale and unsupported distinct from idle", () => {

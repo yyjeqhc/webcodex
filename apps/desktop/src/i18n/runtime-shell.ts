@@ -6,7 +6,7 @@ const zh: Record<string, string> = {
   "Refresh reloads the saved limit and discards unsaved edits.": "刷新会重新加载已保存的上限，并放弃未保存的修改。",
 
   "Runner Job capacity": "Runner 任务容量",
-  "Durable Job slots, including Jobs that are still stopping. Other request queues are separate.": "这里统计持久任务占用的槽位，包括仍在停止中的任务；普通请求队列单独计算。",
+  "Server-reported durable Jobs. Stop-requested Jobs may still occupy slots even when omitted from the running count. Other request queues are separate.": "这里显示 Server 上报的持久任务数。已请求停止的任务即使未计入运行数，也可能仍占用槽位；普通请求队列单独计算。",
   "Runner offline; capacity unknown.": "Runner 已离线，容量未知。",
   "Capacity needs refresh.": "容量信息已过期，需要刷新。",
   "Job capacity is not reported by this Runner.": "此 Runner 未上报任务容量。",

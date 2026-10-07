@@ -384,7 +384,11 @@ npm --prefix plugins/campus-application test
 
 当前源码测试已经覆盖 field signature 对 value 变化稳定、section/component/validation/option metadata、旧 mapping identity 兼容、旧空 cache 不阻止新 form context、生源地自动映射、重复教育 section 和简历附件语义。
 
-**尚未做新版 Runner 的 live 回归。** 这轮没有改 Chrome extension 本身，因此无需 Reload extension；要在中国电信页面看到 `form_context`，需要把包含本轮 Rust Browser 改动的新 Runner 部署/重启到 `mini-dogfood`。按仓库 authority 规则，这一步等待用户显式授权部署目标后再做。
+**新版 Runner 已完成部署与 smoke。** 用户已明确允许部署类操作直接执行。`mini-dogfood` Runner 已从旧 commit `5024ed07be2b` 原子替换为 `e763b066c81c`，LaunchAgent `cn.yyjeqhc.webcodex-runner.dogfood-mini` 重启后正常注册到 `127.0.0.1:18081`，transport=`websocket`，plugin `campus-application` check 为 `ready` / 3 tools。regular mini Runner 使用独立 `/Users/yyjeqhc/.local/lib/webcodex-dev/webcodex-runner`，本次未替换。
+
+部署后的 owned Browser 访问 `https://httpbin.org/forms/post` 做了端到端 smoke：interactive snapshot 共 13 个 actionable node，13/13 都带 `form_context`；例如 `custtel`/`custemail`、radio/checkbox `html_name`、time input 和 textarea 均正确投影。把同一 snapshot 直接交给 `campus-application.analyze_form` 后，Plugin 正常消费新结构：自动识别 phone/email，并在 `unmapped_candidates` 中保留其它字段的完整 `form_context`，证明 Browser -> Runner output schema -> Plugin input schema -> analyzer 整条链已通。
+
+**中国电信真实页还差一次重新 Share。** 这是 Runner restart 后 Browser Bridge 的既定 consent 语义，不是部署失败：extension `worker.js` 的 native port disconnect 会 `offers.clear()` 并 detach 全部 lease，显式 Share 不跨 live Runner instance 自动延续。重启后 `observe_browser discover(client_id=mini-dogfood)` 因此返回空 attachments。为了不绕过这条 consent boundary，没有用 Computer/脚本代替用户点击 Share。用户重新点击一次 WebCodex Browser Bridge 的 Share 后，即可继续真实页前后对比，无需 Reload extension。
 
 ### 当前产品优先级（用户确认）
 

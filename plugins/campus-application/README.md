@@ -24,8 +24,8 @@ bytes). It returns no profile, confirmed fields, or semantic nodes. Values and
 field identities stay in at most 32 provider-memory plans, each with at most 256
 fields and a 15-minute lifetime. No fill plan is persisted. A plan token is
 consumed once; expiry/restart requires fresh planning, never old-batch replay.
-Unmapped/custom fields remain compact `needs_attention` entries with existing
-`mapping_id` identities for teaching or disambiguating repeated labels. Use
+Unmapped or unsupported fields remain compact `needs_attention` entries with
+existing `mapping_id` identities for teaching or disambiguating repeated labels. Use
 `analyze_form` only for additional diagnostic detail; normal planning does not
 duplicate those details.
 
@@ -100,6 +100,125 @@ passed locally. The connected `mini` Runner did not advertise Browser Bridge, so
 no live recruiting-page Share was available through that connection. No real
 application was submitted and no private data was used in fixtures.
 
+## Native controls, widgets, locations, and dates
+
+The planner uses only actions admitted by the current Browser snapshot:
+
+| Field/control | Planned operation | Required readback |
+| --- | --- | --- |
+| Native text, textarea, date, month and structured inputs | `set_value`; legacy `input_text` only for observably empty text inputs | Exact semantic value (date/month writes use canonical ISO values) |
+| Native select | `select_option` | Snapshot value exactly matches the planned option |
+| Radio / radio group | `click` on one uniquely mapped target | Target `checked=true` or `selected=true` |
+| Checkbox / switch / Boolean choice group | `click` only when an observed state differs | Explicit checked/selected state, including false |
+| Resume attachment | `upload_file` | Selected filename |
+| Custom combobox / select | `select_choice` with one `choice_path` step | Committed semantic value or selection |
+| Cascader / location path | `select_choice` with 1..4 steps | Path with preserved segment boundaries; leaf-only evidence is unresolved |
+| Custom date / month picker | `set_date` | Canonical `YYYY-MM-DD` or `YYYY-MM` |
+
+Already-satisfied controls produce no duplicate effect. A radio/checkbox group
+needs a unique target; ambiguous alternatives, missing checked state or disabled
+targets remain `needs_attention`. Readback uses control state rather than nearby
+text that happens to contain the requested word.
+
+Native operations run first, including resume upload, in batches of at most 32.
+Widgets run after that readback with fresh identities. `plan_fill` accepts
+`widget_batch_limit` from 1 to 8, defaulting to 1. For a form whose sibling
+identities have been demonstrated to survive widget changes, set this to 5 to
+group three comboboxes, one cascader and one date picker. This is a bounded
+caller choice, not automatic permission to retain stale ids: Browser still
+checks every operation and stops on replacement, uncertainty or stale identity.
+Each successful readback/reconciliation can return the next ready-to-execute
+batch. Completed widget operations with insufficient semantic readback are
+reported for attention and are never automatically replayed. The same rule
+applies to completed native selects: Chromium may expose an option's display
+label while the requested option was its underlying code. A code/label mismatch
+is unresolved; the planner neither guesses that mapping nor repeats selection.
+
+`personal.native_place`, `personal.household_registration` and
+`personal.student_origin` represent different facts. Their respective `_province`, `_city`, and `_district`
+fields can build explicit hierarchical paths. `contact.province`, `contact.city`,
+and `contact.district` describe the contact location; generic labels such as
+“省份 / 城市 / 区县” need their surrounding group to determine which fact they
+belong to. An unambiguous separated location string can also supply a path.
+Multiple preferred locations are alternatives, not hierarchy: choose an
+explicit indexed resume path before treating one as the requested location.
+
+Dates come from the profile, including birth, education start/end, expected
+graduation, and experience/project periods. Recognized Chinese and slash/dot
+forms normalize to ISO values. Month-only data stays month-only; a control
+requiring a complete date receives attention when the day is missing.
+A native `date`/`month` control keeps `set_value`; a custom picker uses
+`set_date`. Invalid dates, including impossible leap days, are not proposed.
+
+### Resume upload context
+
+Pass `upload_source: { project, project_root? }` to `plan_fill` when the
+profile supplies `attachments.resume_path`. A relative path needs the explicit
+authorized Project. An absolute or `~/` path additionally needs its actual
+Project root; the planner derives a relative path only when it stays inside
+that root. The provider's profile directory never implies an upload Project.
+Out-of-root paths, traversal and missing context produce attention. Browser
+independently authorizes the Project and canonical file, including symlink
+checks, before any batch effect.
+
+### Mixed-form call budget
+
+For 20 native fields, three custom comboboxes, one cascader, one custom date,
+and one upload (26 fields total), `widget_batch_limit=5` produces:
+
+1. Browser query, then Plugin `plan_fill`.
+2. One 21-operation native/upload batch.
+3. Fresh Browser query, then Plugin `reconcile_fill`, returning five widget operations.
+4. One five-operation widget batch.
+5. Fresh Browser query, then Plugin `reconcile_fill`.
+
+This is **5 Browser calls + 3 Plugin calls**, with **26 field operations**.
+Composing each readback directly with reconciliation gives six outer code-mode
+invocations; that count describes this explicit composition, not a measured
+language-model benchmark. A host can chain further deterministic dependencies
+inside one outer invocation while retaining the same eight native tool calls.
+No per-option model round trips, screenshots or coordinate-pointer operations
+are needed.
+
+With the default one-widget boundary, the same otherwise stable form uses six
+batches: 13 Browser calls and 7 Plugin calls. Widening to five widgets is explicit
+and was validated on the owned fixture; a live page that replaces sibling
+controls still stops for fresh observation.
+
+The Browser-only comparison fixture also measures the lower-level API benefit.
+Its legacy path already batches the native fields and upload, then handles
+custom options/calendar steps through successive observations and primitives.
+The new path runs one query, one 26-operation batch and one readback. It is
+deliberately separate from the Campus orchestration counts above. Timing
+excludes Chromium startup and initial navigation; report actual measurements
+from the test output, not an implied production-site latency guarantee.
+
+On 2026-10-07, the actual Node-provider/Chromium fixture confirmed all 26 fields
+with 0 attention in 3,834 ms, counting provider startup and the first query through
+final reconciliation, excluding Chromium bootstrap. The Browser-only same-form
+comparison measured 27 calls / 13 snapshots / 34 primitives / 10,266 ms for the
+legacy path and 3 calls / 2 snapshots / 26 primitives / 1,750 ms for the typed
+batch path. Both used 0 screenshots and 0 coordinate-pointer operations. These
+are local fixture observations; outer model latency was not measured.
+
+Reproduce the actual provider/Browser integration after `npm run build`:
+
+```bash
+cargo test --locked -p webcodex-browser --lib chromium_campus_e2e -- --ignored --test-threads=1 --nocapture
+```
+
+After deploying a supporting Server and Runner, exercise the real typed API,
+including individual actions, a mixed upload/widget batch, stale-id rejection
+and no-submit/default-reset checks:
+
+```bash
+node plugins/campus-application/fixtures/browser-api-smoke.mjs \
+  http://127.0.0.1:18081 mini-dogfood agent:mini-dogfood:webcodex /path/to/browser-scoped-token-file
+```
+
+The API fixture uses fictional data, starts its own loopback HTTP server and
+owned temporary Browser, and removes its temporary upload file during cleanup.
+
 ## Install, build, and test
 
 ```bash
@@ -124,7 +243,7 @@ By default the Plugin reads `profile.json` from the provider's configured `cwd`.
 
 The structured profile covers identity/contact data, common Chinese campus-recruiting personal fields (gender, birth date, identification, ethnicity, political status, health status, native place, household registration, student origin, fresh-graduate status, and marital status), split province/city location fields, links, repeated education/experience/projects/campus experience, skills/languages, job preferences, application text, and attachments. Native place and student-origin/Gaokao-origin are intentionally distinct fields.
 
-`attachments.resume_path` is passed to the later Browser `upload_file` action. It must be valid relative to the WebCodex project that the caller authorizes for upload; it is not resolved relative to the Plugin profile directory.
+`attachments.resume_path` becomes a Browser `upload_file` batch operation using the explicit `upload_source` context above. It is not resolved relative to the Plugin profile directory.
 
 ## Configure one Runner
 
@@ -165,7 +284,7 @@ The diagnostic `analyze_form` output also includes `missing_profile_fields`, a d
 `plan_fill` returns the next safe planning phase:
 
 - `expand_sections`: exactly one add-section click, then a mandatory fresh snapshot;
-- `fill_fields`: one executable native-field `batch`, with unsupported controls in `needs_attention`;
+- `fill_fields`: the next executable `batch`, native fields first and then bounded custom widgets, with unsupported controls in `needs_attention`;
 - `advance_step`: exactly one next/continue click when explicit step/progress context is visible, then a mandatory fresh snapshot;
 - `ready_for_review`: a final submission control is present; no submit click is returned.
 
@@ -197,9 +316,9 @@ For a large form, use `observe_browser(action=snapshot, query={fields_only:true}
 keeping all returned element ids in one fresh generation. Queries still return
 at most 256 nodes / 64 KiB and search at most 4,352 source nodes; a truncated
 no-match result is inconclusive. Each further snapshot invalidates previous ids.
-Use only the actions admitted by the current snapshot, batch up to 32 ordinary
-field operations, then read a fresh snapshot. Inspect partial completion and
-certainty before deciding any further effect; uncertainty never permits replay.
-The provider remains a planner: automatic batch construction/readback
-reconciliation is not implemented by this slice, and final submission remains
-manual review.
+Use only the actions admitted by the current snapshot, then execute the returned
+bounded batch and read a fresh snapshot. `reconcile_fill` checks the whole Browser
+receipt plus semantic values/states and prepares any safe deferred batch with
+fresh ids. Inspect partial completion and certainty before deciding any further
+effect; uncertainty never permits replay. The provider constructs and reconciles
+plans while Browser owns execution. Final submission remains manual review.

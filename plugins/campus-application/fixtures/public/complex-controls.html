@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Browser complex controls API fixture</title>
+<style>
+body { font: 16px system-ui; margin: 2rem; max-width: 42rem; }
+label { display: block; margin: 1rem 0; }
+input { min-width: 20rem; padding: .4rem; }
+[role=listbox] { border: 1px solid #888; padding: .5rem; }
+[role=option] { display: block; margin: .3rem; }
+</style>
+<h1>Fictional Browser API fixture</h1>
+<p>Local validation only. Form submit and reset events are counted and prevented.</p>
+<form id="form">
+  <label>API text <input id="text" aria-label="API text"></label>
+  <label>API resume <input id="resume" type="file" aria-label="API resume"></label>
+  <label>API choice <input id="choice" role="combobox" readonly aria-label="API choice" aria-controls="choices" aria-expanded="false"></label>
+  <div id="choices" role="listbox" hidden></div>
+  <label>API location <input id="location" role="combobox" readonly aria-label="API location" aria-controls="locations" aria-expanded="false"></label>
+  <div id="locations" role="listbox" hidden></div>
+  <label>API date <input id="date" role="combobox" aria-haspopup="dialog" aria-label="API date" placeholder="YYYY-MM-DD"></label>
+  <label>API monitor <input id="monitor" readonly aria-label="API monitor"></label>
+</form>
+<script>
+const form = document.getElementById("form");
+const choice = document.getElementById("choice");
+const choices = document.getElementById("choices");
+const locationControl = document.getElementById("location");
+const locations = document.getElementById("locations");
+const monitor = document.getElementById("monitor");
+const counts = { submits: 0, resets: 0 };
+const renderMonitor = () => { monitor.value = JSON.stringify(counts); };
+form.addEventListener("submit", event => { event.preventDefault(); counts.submits++; renderMonitor(); });
+form.addEventListener("reset", event => { event.preventDefault(); counts.resets++; renderMonitor(); });
+function option(label, commit) {
+  const button = document.createElement("button");
+  // Deliberately retains the native submit default: typed widget activation must suppress it.
+  button.setAttribute("role", "option");
+  button.textContent = label;
+  button.addEventListener("click", () => commit(button));
+  return button;
+}
+choice.addEventListener("click", () => {
+  choice.setAttribute("aria-expanded", "true");
+  choices.hidden = false;
+  choices.replaceChildren(...["Alpha", "Beta"].map(label => option(label, button => {
+    button.setAttribute("aria-selected", "true");
+    choice.value = label;
+    choice.setAttribute("aria-valuetext", label);
+    choice.setAttribute("aria-expanded", "false");
+    choices.hidden = true;
+  })));
+});
+locationControl.addEventListener("click", () => {
+  locationControl.setAttribute("aria-expanded", "true");
+  locations.hidden = false;
+  const path = ["Province", "City", "District"];
+  function level(index) {
+    locations.replaceChildren(option(path[index], button => {
+      button.setAttribute("aria-selected", "true");
+      if (index + 1 < path.length) {
+        level(index + 1);
+      } else {
+        locationControl.value = path.join(" / ");
+        locationControl.setAttribute("aria-valuetext", locationControl.value);
+        locationControl.setAttribute("aria-expanded", "false");
+        locations.hidden = true;
+      }
+    }));
+  }
+  level(0);
+});
+renderMonitor();
+</script>
+</html>

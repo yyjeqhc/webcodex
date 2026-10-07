@@ -28,7 +28,8 @@ observe_browser / control_browser
 `observe_browser` is guaranteed read-only and has the closed actions `targets`,
 `discover`, `browsers`, `pages`, `surface`, `snapshot`, `screenshot`, `console`, `network`, and `diagnostics`.
 `control_browser` has the closed actions `launch`, `attach`, `new_page`, `navigate`, `reload`,
-`click`, `input_text`, `select_option`, `set_value`, `upload_file`, `batch`, `key`,
+`click`, `input_text`, `select_option`, `set_value`, `select_choice`, `set_date`,
+`upload_file`, `batch`, `key`,
 `clear_diagnostics`, `close_page`, and `close_browser`. The model surface does not expose one MCP tool
 per CDP primitive, and it does not accept arbitrary protocol methods, scripts,
 Browser executables, command-line arguments, profile paths, debugger endpoints,
@@ -102,8 +103,8 @@ document fences as native controls. No new effect path or replay behavior exists
 ### Bounded form batches
 
 `control_browser(action=batch)` sends one `browser_batch` Runner invocation containing
-1..32 ordered `input_text`, `select_option`, `set_value`, `click`, or `upload_file`
-operations for one exact Browser/page. Each operation carries only an opaque
+1..32 ordered `input_text`, `select_option`, `set_value`, `select_choice`,
+`set_date`, `click`, or `upload_file` operations for one exact Browser/page. Each operation carries only an opaque
 element identity and its action-specific value; upload additionally supplies the
 authorized same-Runner Project and relative path. Server Project authorization
 and Runner upload-path validation run before any batch effect. The batch payload
@@ -135,6 +136,87 @@ absence. `needs_snapshot` and observation recovery replace retry suggestions.
 Always take a fresh verification snapshot after filling, and observe after
 structural/page changes. `campus-application` remains a planner and final submit
 remains `ready_for_review`.
+
+### Typed custom choices and dates
+
+`select_choice` and `set_date` are high-level actions on the same admitted
+opaque element ids. They work as individual `control_browser` actions or as
+operations inside the existing batch:
+
+```json
+{"action":"select_choice","element_id":"<current id>","choice_path":["Province","City","District"]}
+{"action":"set_date","element_id":"<current id>","value":"2026-06"}
+```
+
+The enclosing call still supplies the exact `client_id`, `browser_id`, and
+`page_id`. A choice has 1..4 nonblank exact semantic steps, each NUL-free and at
+most 4,096 UTF-8 bytes. Matching normalizes Unicode and whitespace; it never
+uses fuzzy matching or model-authored selectors. `choice_path` is distinct from
+the existing upload `path`, which remains a Project-relative string. Dates
+accept only calendar-valid `YYYY-MM` or `YYYY-MM-DD`, including leap-year
+validation. Invalid input is rejected before effects.
+
+The additive `browser_complex_controls` Runner capability defaults to false.
+ToolRuntime and the Runner registry check it before dispatch, including a mixed
+batch containing a later complex operation: an older Runner must not execute
+the earlier native operations and then discover an unsupported widget. Batches
+also require `browser_batch`; every element still requires the particular
+action on its current snapshot.
+
+Native selects retain `select_option`; native date/month and other structured
+inputs retain `set_value`. The new actions require successful DOM classification
+of a supported custom control: semantic combobox/listbox evidence or bounded
+select/cascader/date component hints on appropriate text/search controls. Date
+popup evidence specializes that authority to `set_date`. Plain buttons and
+native file/number/date inputs are not promoted by an incidental role or class.
+Read-only custom text inputs can retain a picker action while losing direct text
+writes; disabled controls retain no effects. A missing DOM index grants neither
+new action. `fields_only` includes the admitted custom widgets and listboxes.
+
+The Runner implements each high-level action with one bounded asynchronous CDP
+function call and its existing final stability wait. Shared internal mechanics
+cover control ownership, visibility, disabled state, exact option matching,
+native backing values, and postcondition readback. Native backing controls use
+their native value setter plus input/change events where that establishes the
+requested value. Otherwise the built-in engine opens the scoped popup and
+selects a unique option at each path level. A later cascader level must come
+from a linked child surface or new/changed options; an old-column sibling does
+not establish a child. An editable search string alone does not prove a
+committed selection.
+
+The date fallback supports semantic year/month selects, explicit year/month
+panels and bounded navigation, followed by exact day selection when a day was
+requested. A bare day number can be selected only when the displayed year and
+month are established. Month-only profile values never invent a day. These are
+generic DOM semantics and bounded framework hints, not recruiting-site adapters
+or a framework-specific model tool.
+
+Each internal traversal visits at most 4,096 nodes, with at most 256 options and
+a 3.5-second widget deadline inside a 5-second CDP request. Short mutation/value
+observations stay inside that same action; they do not take layer-by-layer
+Browser snapshots or full-page network-settling waits. DOM event activation
+uses no screenshot or coordinate-pointer path. The public tools expose neither
+the internal JavaScript nor arbitrary evaluation/CDP capabilities.
+
+A verified already-selected path/date succeeds without dispatching a field
+change. Missing, duplicate, disabled, stale, or unsupported evidence never
+permits a guessed choice. Once opening or an intermediate selection may have
+taken effect, a later failure preserves `outcome_unknown`; it is not a
+retry-safe failure. Batch progress, document/generation fences and the existing
+observation-first recovery contract are unchanged. Durable audit records retain
+only path depth or date presence/byte length, never the choice/date contents.
+
+Local validation combines deterministic fixtures with owned Chromium tests:
+
+```bash
+cargo test --locked -p webcodex-browser --lib widget -- --include-ignored --test-threads=1 --nocapture
+```
+
+The real-browser matrix covers custom choices, 2/3/4-level cascaders, native
+backing controls, date/month fast paths and calendar navigation, delayed
+popups, rerendered controls, ambiguity, disabled/missing options, stale ids,
+already-selected controls, and partial batch failures. These fixtures do not
+require a recruiting-page Share, and contain only fictional data.
 
 ## Authority and model surfaces
 
@@ -261,7 +343,8 @@ the runtime cannot distinguish `month`, `week`, and `datetime-local`, which
 admit `set_value` when classification succeeds. A custom `combobox` still
 keeps legacy `click`. Pages containing frames require successful DOM
 classification; they do not fall back to role-only authority when that read fails.
-`click`, `input_text`, `select_option`, `set_value`, and `upload_file` reject an
+`click`, `input_text`, `select_option`, `set_value`, `select_choice`, `set_date`,
+and `upload_file` reject an
 element that does not list that action.
 
 Same-origin iframe documents are classified separately using the same DOM and AX
@@ -289,8 +372,8 @@ invalidation behavior as top-document snapshots.
 Element authority is fenced to Browser identity, page identity, current document
 (loader) identity, and snapshot generation. Navigation, document replacement, page
 replacement, a newer snapshot, or Runner restart makes older element IDs stale.
-Before any element effect (`click`, `input_text`, `select_option`, `set_value`, or
-`upload_file`), the runtime re-observes the current page document and requires the
+Before any element effect (`click`, `input_text`, `select_option`, `set_value`,
+`select_choice`, `set_date`, or `upload_file`), the runtime re-observes the current page document and requires the
 complete fence to remain exact. A stale failure never guesses or
 retargets a replacement element; recovery is a fresh
 `observe_browser(action=snapshot, ...)`.

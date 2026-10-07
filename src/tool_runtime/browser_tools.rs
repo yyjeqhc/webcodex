@@ -22,6 +22,7 @@ fn browser_snapshot_payload(
     mode: &str,
     max_nodes: Option<usize>,
     max_depth: Option<u32>,
+    node_offset: Option<usize>,
 ) -> Value {
     let mut payload = json!({
         "browser_id": browser_id,
@@ -35,6 +36,9 @@ fn browser_snapshot_payload(
     }
     if let Some(max_depth) = max_depth {
         payload["max_depth"] = json!(max_depth);
+    }
+    if let Some(node_offset) = node_offset {
+        payload["node_offset"] = json!(node_offset);
     }
     payload
 }
@@ -243,6 +247,7 @@ impl ToolRuntime {
                 mode,
                 max_nodes,
                 max_depth,
+                node_offset,
             }) => {
                 self.dispatch_browser_request(
                     &client_id,
@@ -253,6 +258,7 @@ impl ToolRuntime {
                         mode.as_str(),
                         max_nodes,
                         max_depth,
+                        node_offset,
                     ),
                     auth,
                     false,
@@ -1224,12 +1230,14 @@ mod tests {
             "auto",
             None,
             None,
+            None,
         );
         assert_eq!(snapshot["browser_id"], "browser_abcdefghijklmnop");
         assert_eq!(snapshot["page_id"], "page_abcdefghijklmnop");
         assert!(snapshot.get("mode").is_none());
         assert!(snapshot.get("max_nodes").is_none());
         assert!(snapshot.get("max_depth").is_none());
+        assert!(snapshot.get("node_offset").is_none());
 
         let enhanced = browser_snapshot_payload(
             "browser_abcdefghijklmnop",
@@ -1237,10 +1245,12 @@ mod tests {
             "interactive",
             Some(48),
             Some(10),
+            Some(256),
         );
         assert_eq!(enhanced["mode"], "interactive");
         assert_eq!(enhanced["max_nodes"], 48);
         assert_eq!(enhanced["max_depth"], 10);
+        assert_eq!(enhanced["node_offset"], 256);
 
         let diagnostics = browser_diagnostics_payload(
             "browser_abcdefghijklmnop",

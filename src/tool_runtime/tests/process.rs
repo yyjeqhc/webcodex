@@ -3,9 +3,9 @@
 use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{
-    RunnerCapabilities, RunnerJobUpdateRequest, RunnerResultPayload, RunnerResultRequest,
-    ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource,
-    ShellJobActivityState,
+    RunnerCapabilities, RunnerJobUpdateRequest, RunnerPolicySummary, RunnerRegisterRequest,
+    RunnerResultPayload, RunnerResultRequest, ShellCommandExecutionState, ShellJobActivity,
+    ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
 };
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;
@@ -110,6 +110,54 @@ async fn register_detached_process_job_agent(
         client_id,
         None,
         capabilities,
+        vec![registered_project("demo", &root.to_string_lossy())],
+    )
+    .await;
+    crate::tool_runtime::runner_project_runtime_id(client_id, "demo")
+}
+
+async fn register_detached_process_job_agent_with_policy(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    root: &std::path::Path,
+    policy: RunnerPolicySummary,
+) -> String {
+    let capabilities = RunnerCapabilities {
+        shell: true,
+        async_jobs: true,
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        structured_process_argv: true,
+        structured_execution_jobs: true,
+        detached_process_jobs: true,
+        ..Default::default()
+    };
+    runtime
+        .runner_registry
+        .register(RunnerRegisterRequest {
+            computer_session_availability: None,
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            coding_agent_providers: None,
+            coding_agent_inventory: None,
+            client_id: client_id.to_string(),
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            display_name: None,
+            owner: None,
+            hostname: None,
+            host_context: None,
+            capabilities: crate::test_support::current_runner_capabilities(capabilities),
+            policy: Some(policy),
+        })
+        .await
+        .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.runner_registry,
+        client_id,
+        "inst",
         vec![registered_project("demo", &root.to_string_lossy())],
     )
     .await;
@@ -1087,6 +1135,38 @@ async fn detached_process_uses_existing_job_identity_and_typed_runner_request() 
     assert!(probe_patch_agent_request(&runtime, "detached-product-path")
         .await
         .is_none());
+}
+
+#[tokio::test]
+async fn detached_process_reports_runner_policy_timeout_clamp_at_admission() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project = register_detached_process_job_agent_with_policy(
+        &runtime,
+        "detached-policy-clamp",
+        temp.path(),
+        RunnerPolicySummary {
+            max_timeout_secs: 3_600,
+            ..Default::default()
+        },
+    )
+    .await;
+    let auth = auth_context(None, true);
+    let mut call = detached_process_call(project);
+    let ToolCall::RunDetachedProcess { timeout_secs, .. } = &mut call else {
+        unreachable!("detached_process_call must return RunDetachedProcess");
+    };
+    *timeout_secs = Some(18_000);
+
+    let result = runtime.dispatch_with_auth(call, Some(&auth)).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["requested_timeout_secs"], 18_000);
+    assert_eq!(result.output["effective_timeout_secs"], 3_600);
+    assert_eq!(result.output["runner_policy_max_timeout_secs"], 3_600);
+    assert_eq!(result.output["timeout_clamped"], true);
+
+    let request = wait_for_patch_agent_request(&runtime, "detached-policy-clamp").await;
+    assert_eq!(request.timeout_secs, 18_000);
 }
 
 #[tokio::test]

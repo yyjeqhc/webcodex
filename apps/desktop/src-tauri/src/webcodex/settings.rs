@@ -67,6 +67,7 @@ pub struct RunnerSettings {
     pub plugin_ids: Vec<String>,
     pub target: SettingsTarget,
     pub can_restart: bool,
+    pub max_concurrent_jobs: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +76,14 @@ pub struct SettingsUpdate {
     pub target: SettingsTarget,
     pub expected: RunnerPaths,
     pub paths: RunnerPaths,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobConcurrencyUpdate {
+    pub target: SettingsTarget,
+    pub expected: Option<usize>,
+    pub limit: usize,
 }
 
 #[derive(Deserialize)]
@@ -267,6 +276,7 @@ pub fn inspect(runtime: &StoredRuntime, can_restart: bool) -> DesktopResult<Runn
         plugin_ids: plugin_ids(&doc)?,
         target: target(runtime)?,
         can_restart,
+        max_concurrent_jobs: configured_job_concurrency(&doc)?,
     })
 }
 
@@ -308,6 +318,51 @@ fn plugin_ids(doc: &DocumentMut) -> DesktopResult<Vec<String>> {
         return Err(error());
     }
     Ok(ids)
+}
+
+fn job_concurrency_error() -> DesktopError {
+    DesktopError::new(
+        "runner_job_concurrency_invalid",
+        "Runner Job concurrency could not be saved safely",
+        "Reload settings and use a whole number from 1 to 64. The saved Runner identity and value must still match.",
+    )
+}
+
+fn valid_job_concurrency(value: usize) -> bool {
+    use webcodex_core::runner_protocol::{RUNNER_JOB_CONCURRENCY_MAX, RUNNER_JOB_CONCURRENCY_MIN};
+    (RUNNER_JOB_CONCURRENCY_MIN..=RUNNER_JOB_CONCURRENCY_MAX).contains(&value)
+}
+
+fn configured_job_concurrency(doc: &DocumentMut) -> DesktopResult<Option<usize>> {
+    doc.get("max_concurrent_jobs")
+        .map(|value| {
+            value
+                .as_integer()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| valid_job_concurrency(*value))
+                .ok_or_else(job_concurrency_error)
+        })
+        .transpose()
+}
+
+/// Startup-only setting: saving does not reload or restart the active Runner.
+/// Preserve unrelated TOML and fence both the displayed value and full-file write.
+pub fn save_job_concurrency(
+    runtime: &StoredRuntime,
+    request: JobConcurrencyUpdate,
+) -> DesktopResult<()> {
+    verify_target(runtime, &request.target)?;
+    if !valid_job_concurrency(request.limit) {
+        return Err(job_concurrency_error());
+    }
+    let path = runtime.runner_config.as_ref().ok_or_else(error)?;
+    let original = read(path)?;
+    let mut doc = parse(&original, runtime)?;
+    if configured_job_concurrency(&doc)? != request.expected {
+        return Err(job_concurrency_error());
+    }
+    doc["max_concurrent_jobs"] = toml_edit::value(request.limit as i64);
+    persist(path, &original, &doc)
 }
 
 pub fn stage_allowed_roots_update(

@@ -512,6 +512,15 @@ pub async fn update_runner_allowed_roots(
     project_state_result(&app, state.update_runner_allowed_roots(request).await)
 }
 #[tauri::command]
+pub async fn save_runner_job_concurrency(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::webcodex::settings::JobConcurrencyUpdate,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(&app, state.save_runner_job_concurrency(request).await)
+}
+
+#[tauri::command]
 pub async fn restart_owned_runner(
     app: AppHandle,
     state: State<'_, AppState>,

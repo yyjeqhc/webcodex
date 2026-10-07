@@ -1,0 +1,115 @@
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DesktopMantineProvider } from "../../components/DesktopMantineProvider";
+import { LocaleProvider } from "../../i18n/locale";
+import type { DesktopState, RunnerSettings } from "../../models/topology";
+import { RunnerCapacityPanel } from "./RunnerCapacityPanel";
+const api = vi.hoisted(() => ({ runnerSettings: vi.fn(), saveRunnerJobConcurrency: vi.fn(), restartOwnedRunner: vi.fn() }));
+const query = vi.hoisted(() => vi.fn());
+vi.mock("../../lib/desktop-api", () => ({ desktopApi: api }));
+vi.mock("../workspace/WorkspaceContext", () => ({ workspaceQuery: query }));
+const target = { config_path: "/fixture/runner.toml", client_id: "local", server_url: "http://localhost:1" };
+const state = { workspace_runner: target, topology: { runner: { kind: "local" }, server: { kind: "local" } }, readiness: { server: "ready", runner: "ready" }, current_operation: null } as DesktopState;
+let settings: RunnerSettings;
+let runner: { client_id: string; connected: boolean; status: string; jobs_running: number; jobs_queued: number; job_concurrency_limit: number };
+const onState = vi.fn();
+function view(value = state) { return <DesktopMantineProvider><LocaleProvider><RunnerCapacityPanel state={value} onState={onState} active /></LocaleProvider></DesktopMantineProvider>; }
+beforeEach(() => {
+  vi.resetAllMocks(); localStorage.setItem("webcodex.desktop.locale", "en-US");
+  settings = { target, paths: { instruction_files: [], skill_roots: [] }, file_access: { configured_roots: [], effective_roots: [], using_default_roots: true, allow_cwd_anywhere: false }, plugin_ids: [], can_restart: true, max_concurrent_jobs: null };
+  runner = { client_id: "local", connected: true, status: "online", jobs_running: 4, jobs_queued: 2, job_concurrency_limit: 4 };
+  api.runnerSettings.mockImplementation(async () => structuredClone(settings));
+  query.mockImplementation(async () => structuredClone(runner));
+  api.saveRunnerJobConcurrency.mockImplementation(async (_target, _expected, limit) => { if (_expected !== settings.max_concurrent_jobs) throw { code: "runner_job_concurrency_invalid", message: "Saved value changed", next_action: "Reload settings" }; settings.max_concurrent_jobs = limit; return state; });
+  api.restartOwnedRunner.mockResolvedValue(state);
+});
+describe("local Runner concurrency settings", () => {
+  it("separates saved and effective limits without restarting while saving", async () => {
+    render(view()); const input = await screen.findByRole("spinbutton", { name: "Maximum concurrent Jobs" });
+    expect(input).toHaveValue(4); expect(screen.getByText("4 running · 2 queued · 4 max")).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "12" } }); fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
+    await waitFor(() => expect(api.saveRunnerJobConcurrency).toHaveBeenCalledExactlyOnceWith(target, null, 12));
+    expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+    expect(await screen.findByText("Restart required to apply the saved limit.")).toBeInTheDocument();
+    expect(screen.getByText("4 running · 2 queued · 4 max")).toBeInTheDocument();
+  });
+  it("requires an interruption warning and supports Cancel", async () => {
+    settings.max_concurrent_jobs = 12; render(view());
+    fireEvent.click(await screen.findByRole("button", { name: "Restart Runner…" }));
+    let dialog = await screen.findByRole("dialog"); expect(within(dialog).getByText(/browser sessions and handoffs/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" })); expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Restart Runner…" })); dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restart Runner now" }));
+    await waitFor(() => expect(api.restartOwnedRunner).toHaveBeenCalledExactlyOnceWith(target));
+    expect(await screen.findByText("Restart required to apply the saved limit.")).toBeInTheDocument();
+  });
+  it("rejects invalid input and does not replay a failed save", async () => {
+    render(view()); const input = await screen.findByRole("spinbutton");
+    for (const value of ["", "0", "65", "1.5"]) { fireEvent.change(input, { target: { value } }); expect(screen.getByRole("button", { name: "Save for next restart" })).toBeDisabled(); }
+    api.saveRunnerJobConcurrency.mockRejectedValue({ code: "runner_job_concurrency_invalid", message: "Saved value changed", next_action: "Reload settings" });
+    fireEvent.change(input, { target: { value: "12" } }); fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Saved value changed");
+    expect(api.saveRunnerJobConcurrency).toHaveBeenCalledTimes(1); expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+  });
+  it.each(["offline", "stale", "unsupported", "failed"])("does not show live usage when %s", async mode => {
+    if (mode === "offline") runner.connected = false;
+    if (mode === "stale") runner.status = "stale";
+    if (mode === "unsupported") runner.job_concurrency_limit = undefined as unknown as number;
+    if (mode === "failed") query.mockRejectedValue(new Error("offline"));
+    render(view()); await screen.findByRole("spinbutton");
+    expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
+    expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
+  });
+  it("keeps unowned Runners read-only", async () => {
+    settings.can_restart = false; render(view()); expect(await screen.findByRole("spinbutton")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Restart Runner…" })).not.toBeInTheDocument();
+  });
+  it("fences an open confirmation when the selected Runner changes", async () => {
+    const mounted = render(view()); fireEvent.click(await screen.findByRole("button", { name: "Restart Runner…" })); await screen.findByRole("dialog");
+    mounted.rerender(view({ ...state, workspace_runner: { ...target, client_id: "other" } }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument()); expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+  });
+  it("does not submit repeated saves while one is pending", async () => {
+    let resolve!: (value: DesktopState) => void;
+    api.saveRunnerJobConcurrency.mockReturnValue(new Promise(done => { resolve = done; }));
+    render(view()); const input = await screen.findByRole("spinbutton");
+    fireEvent.change(input, { target: { value: "12" } });
+    const save = screen.getByRole("button", { name: "Save for next restart" });
+    fireEvent.click(save); fireEvent.click(save);
+    expect(api.saveRunnerJobConcurrency).toHaveBeenCalledTimes(1);
+    await act(async () => resolve(state));
+  });
+  it("keeps the original edit fence when refreshed settings changed in another writer", async () => {
+    render(view()); const input = await screen.findByRole("spinbutton");
+    fireEvent.change(input, { target: { value: "12" } });
+    settings.max_concurrent_jobs = 8;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText("Saved limit: 8 · Default: 4");
+    fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Saved value changed");
+    expect(api.saveRunnerJobConcurrency).toHaveBeenCalledExactlyOnceWith(target, null, 12);
+  });
+  it("rechecks the saved value before restarting", async () => {
+    render(view()); fireEvent.click(await screen.findByRole("button", { name: "Restart Runner…" }));
+    settings.max_concurrent_jobs = 8;
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Restart Runner now" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Runner settings changed");
+    expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+  });
+  it("does not retarget a late settings response or display another Runner's counts", async () => {
+    settings.target = { ...target, client_id: "other" }; runner.client_id = "other";
+    render(view()); await screen.findByText(/Read-only/);
+    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
+  });
+  it("marks observations stale when the Server goes offline", async () => {
+    const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+    mounted.rerender(view({ ...state, readiness: { ...state.readiness, server: "stopped" } }));
+    expect(screen.getByText("Capacity needs refresh.")).toBeInTheDocument();
+    expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
+  });
+  it("ignores a late observation after unmount", async () => {
+    let resolve!: (value: unknown) => void; query.mockReturnValue(new Promise(done => { resolve = done; }));
+    const mounted = render(view()); mounted.unmount(); await act(async () => resolve(runner)); expect(onState).not.toHaveBeenCalled();
+  });
+});

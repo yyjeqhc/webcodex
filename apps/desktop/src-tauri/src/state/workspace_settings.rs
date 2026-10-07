@@ -82,6 +82,48 @@ impl AppState {
             .await
     }
 
+    pub async fn save_runner_job_concurrency(
+        &self,
+        request: crate::webcodex::settings::JobConcurrencyUpdate,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        let (operation, cancellation, mut core, baseline) = self
+            .begin_operation(DesktopOperationKind::RunnerSettingsUpdate, false)
+            .await?;
+        let result = async {
+            let owned = core.config.persistent_environment.is_some()
+                || core
+                    .process_snapshot(ProcessKey::LocalRunner)
+                    .await
+                    .is_some_and(|p| p.owned_by_desktop && p.phase == ProcessPhase::Running);
+            let local = core
+                .config
+                .topology
+                .as_ref()
+                .is_some_and(|topology| topology.runner == RunnerTopology::Local);
+            if !owned || !local {
+                return Err(DesktopError::new(
+                    "runner_not_owned",
+                    "Desktop does not manage this local Runner",
+                    "Change the configuration through the Runner's actual process owner.",
+                ));
+            }
+            let runtime = core
+                .config
+                .runtime
+                .clone()
+                .ok_or_else(|| desktop_state_unavailable("Configure a Runner first"))?;
+            tokio::task::spawn_blocking(move || {
+                crate::webcodex::settings::save_job_concurrency(&runtime, request)
+            })
+            .await
+            .map_err(|_| desktop_state_unavailable("Settings worker stopped"))??;
+            core.get_state().await
+        }
+        .await;
+        self.finish_operation(operation, cancellation, core, baseline, result)
+            .await
+    }
+
     pub async fn restart_owned_runner(
         &self,
         expected: crate::webcodex::settings::SettingsTarget,

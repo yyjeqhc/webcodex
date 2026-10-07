@@ -124,6 +124,7 @@ fn desktop_builder() -> tauri::Builder<tauri::Wry> {
             commands::add_runner_plugin,
             commands::update_runner_settings,
             commands::update_runner_allowed_roots,
+            commands::save_runner_job_concurrency,
             commands::restart_owned_runner,
             commands::open_powershell_install_guide,
             commands::get_launch_at_login,

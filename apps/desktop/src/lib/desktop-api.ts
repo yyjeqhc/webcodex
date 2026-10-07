@@ -70,6 +70,7 @@ export const desktopApi = {
   runnerSettings: () => invoke<RunnerSettings>("get_runner_settings"),
   updateRunnerSettings: (target: SettingsTarget, expected: RunnerPaths, paths: RunnerPaths) => invoke<DesktopState>("update_runner_settings", { request: { target, expected, paths } }),
   updateRunnerAllowedRoots: (target: SettingsTarget, expected: string[], roots: string[]) => invoke<DesktopState>("update_runner_allowed_roots", { request: { target, expected, roots } }),
+  saveRunnerJobConcurrency: (target: SettingsTarget, expected: number | null, limit: number) => invoke<DesktopState>("save_runner_job_concurrency", { request: { target, expected, limit } }),
   restartOwnedRunner: (target: SettingsTarget) => invoke<DesktopState>("restart_owned_runner", { target }),
   addRunnerPlugin: (target: SettingsTarget, provider: PluginRegistration) => invoke<DesktopState>("add_runner_plugin", { request: { target, provider } }),
   computerPermissions: () => invoke<ComputerPermissions>("get_computer_permissions"),

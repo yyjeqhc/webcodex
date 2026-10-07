@@ -23,6 +23,7 @@ export interface RunnerOverview {
   recent_sessions?: { sessions: WorkflowSession[]; truncated: boolean; scan_truncated: boolean };
 }
 export interface ServerRunnerSummary {
+  job_concurrency_limit?: number | null; jobs_running?: number; jobs_queued?: number;
   client_id: string; connected: boolean; status?: string;
   computer_session_availability?: boolean | null;
 }

@@ -446,6 +446,112 @@ test("machine-oriented form names require exact canonical matches", () => {
   assert.equal(exactPhone.nodes[0]?.mapping?.source, "form_context");
 });
 
+test("broad semantic matching does not confuse professional-detail fields with major", () => {
+  assert.equal(matchField("专业")?.canonicalField, "major");
+  assert.equal(matchField("专业名称")?.canonicalField, "major");
+  assert.equal(matchField("所学专业")?.canonicalField, "major");
+  assert.equal(matchField("专业课程"), undefined);
+  assert.equal(matchField("专业资格证书"), undefined);
+  assert.equal(matchField("专业资格证书等级"), undefined);
+  assert.equal(matchField("专业资格证书获得时间"), undefined);
+});
+
+test("nearby labels can identify resume uploads without relabeling other attachments", () => {
+  const resume = {
+    role: "button",
+    name: "选择文件",
+    value: "未选择任何文件",
+    element_id: "element_resume_upload",
+    actionable: true,
+    actions: ["upload_file"],
+    form_context: {
+      field_signature: "333333333333333333333333",
+      dom_tag: "input",
+      input_type: "file",
+      nearby_label: "简历",
+    },
+  };
+  const transcript = {
+    ...resume,
+    element_id: "element_transcript_upload",
+    form_context: {
+      ...resume.form_context,
+      field_signature: "444444444444444444444444",
+      nearby_label: "成绩单",
+    },
+  };
+  assert.equal(isResumeUpload(resume), true);
+  assert.equal(isResumeUpload(transcript), false);
+});
+
+test("one projected control may use an exact shared group label despite framework internals", () => {
+  const scalar = resolveFormMappings(
+    [{
+      role: "combobox",
+      name: "",
+      group_label: "证件类型",
+      element_id: "element_id_type",
+      actionable: true,
+      actions: ["select_option"],
+      form_context: {
+        field_signature: "555555555555555555555555",
+        dom_tag: "select",
+        html_name: "field_1",
+        group_label: "证件类型",
+        group_index: 2,
+        group_size: 3,
+      },
+    }],
+    [],
+    "scalar-framework-group.example",
+  );
+  assert.equal(scalar.nodes[0]?.mapping?.canonicalField, "id_type");
+  assert.equal(scalar.nodes[0]?.mapping?.source, "group");
+});
+
+test("click-only framework wrappers do not block one exact data-bearing group control", () => {
+  const resolved = resolveFormMappings(
+    [
+      {
+        role: "combobox",
+        name: "",
+        group_label: "健康状况",
+        element_id: "element_health_wrapper",
+        actionable: true,
+        actions: ["click"],
+        form_context: {
+          field_signature: "666666666666666666666666",
+          dom_tag: "div",
+          group_label: "健康状况",
+          group_index: 0,
+          group_size: 3,
+        },
+      },
+      {
+        role: "combobox",
+        name: "",
+        group_label: "健康状况",
+        element_id: "element_health_select",
+        actionable: true,
+        actions: ["select_option"],
+        form_context: {
+          field_signature: "777777777777777777777777",
+          dom_tag: "select",
+          html_name: "field_health",
+          group_label: "健康状况",
+          group_index: 2,
+          group_size: 3,
+        },
+      },
+    ],
+    [],
+    "framework-wrapper.example",
+  );
+  assert.equal(resolved.nodes[0]?.mapping, undefined);
+  assert.equal(resolved.nodes[1]?.mapping?.canonicalField, "health_status");
+  assert.equal(resolved.nodes[1]?.mapping?.source, "group");
+});
+
 test("generic multi-control group labels stay observable without unsafe composite auto-mapping", () => {
   const composite = resolveFormMappings(
     [

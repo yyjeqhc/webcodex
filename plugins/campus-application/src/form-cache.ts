@@ -215,7 +215,11 @@ const fieldKeywords: ReadonlyArray<{
   { field: "education_city", exact: ["educationcity", "schoolcity", "院校所在城市", "学校所在城市", "就读院校所在城市"], contains: ["educationcity", "schoolcity", "院校所在城市", "学校所在城市"] },
   { field: "university", exact: ["school", "university", "college", "学校", "院校", "毕业院校"], contains: ["school", "university", "college", "毕业院校"] },
   { field: "degree", exact: ["degree", "educationlevel", "学历", "学位"], contains: ["degree", "educationlevel", "学历", "学位"] },
-  { field: "major", exact: ["discipline", "major", "fieldofstudy", "专业"], contains: ["discipline", "major", "fieldofstudy", "专业"] },
+  {
+    field: "major",
+    exact: ["discipline", "major", "fieldofstudy", "专业", "专业名称", "所学专业", "主修专业", "专业方向"],
+    contains: ["discipline", "major", "fieldofstudy", "所学专业", "主修专业"],
+  },
   { field: "graduation_date", exact: ["graduationdate", "graduationtime", "enddate", "毕业时间", "预计毕业时间"], contains: ["graduation", "毕业时间"] },
   { field: "gpa", exact: ["gpa", "gradepointaverage", "绩点"], contains: ["gpa", "绩点"] },
   { field: "current_company", exact: ["currentcompany", "company", "当前公司", "公司"], contains: ["currentcompany", "当前公司"] },
@@ -275,6 +279,7 @@ export function isResumeUpload(node: SnapshotNode): boolean {
       node.description ?? "",
       node.group_label ?? "",
       node.form_context?.section_label ?? "",
+      node.form_context?.nearby_label ?? "",
       node.form_context?.placeholder ?? "",
       node.form_context?.html_name ?? "",
     ].join(" "),
@@ -369,6 +374,28 @@ function deriveMappings(
     projects: 0,
   };
 
+  // Count model-visible controls sharing the same semantic group. Frameworks often
+  // implement one scalar select with several internal DOM controls; DOM group size
+  // alone cannot distinguish those internals from a real composite field such as
+  // province + city. A single projected control can safely use an exact group label,
+  // while two or more projected controls keep the group observable but unmapped.
+  const hasDataAction = (node: SnapshotNode): boolean =>
+    ["input_text", "select_option", "set_value", "upload_file"].some(
+      (action) => node.actions?.includes(action) === true,
+    );
+  const projectedGroupDataCounts = new Map<string, number>();
+  for (const { node } of entries) {
+    if (!hasDataAction(node)) continue;
+    const label = normalizeLabel(
+      node.group_label ?? node.form_context?.group_label ?? "",
+    );
+    if (!label) continue;
+    projectedGroupDataCounts.set(
+      label,
+      (projectedGroupDataCounts.get(label) ?? 0) + 1,
+    );
+  }
+
   for (const { node, key } of entries) {
     const role = node.role.toLowerCase();
     if (node.actionable && isResumeUpload(node)) {
@@ -436,12 +463,19 @@ function deriveMappings(
       { label: node.name, source: "name" },
       { label: node.description ?? "", source: "group" },
       {
-        label:
-          (node.form_context?.group_size ?? 0) > 1
-            ? ""
-            : node.group_label ?? "",
+        label: (() => {
+          const groupLabel =
+            node.group_label ?? node.form_context?.group_label ?? "";
+          if (!groupLabel) return "";
+          return hasDataAction(node) &&
+            (projectedGroupDataCounts.get(normalizeLabel(groupLabel)) ?? 0) <= 1
+            ? groupLabel
+            : "";
+        })(),
         source: "group",
+        exactOnly: true,
       },
+      { label: node.form_context?.nearby_label ?? "", source: "form_context" },
       { label: node.form_context?.placeholder ?? "", source: "form_context" },
       {
         label: node.form_context?.html_name ?? "",

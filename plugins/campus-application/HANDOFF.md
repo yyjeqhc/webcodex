@@ -396,6 +396,45 @@ npm --prefix plugins/campus-application test
 
 因此下一轮 Browser Adapter 应集中做 **nearby visible label provenance**：从每个 form-item 的 DOM 邻近文本/label cell/aria/组容器中保守提取用户肉眼看到的字段名，并允许多控件组（例如籍贯省+市、性别男+女）共享一个 group label。不要再扩大静态 alias 或根据 `11_28_1` 这类站点编码猜字段。
 
+#### 2026-10-07 Browser Adapter v2：通用 nearby/group label provenance
+
+这一轮严格按“收益必须适用于所有网站”实现，没有加入中国电信 URL、数字字段名或站点专用 DOM selector。Browser DOM semantic 层新增通用规则：
+
+- 唯一可见前置文本 + 单控件容器 -> `nearby_label`
+- table cell / nested wrapper 等同样按结构传播，不要求特定 CSS framework class
+- 一个可见标题 + 多个控件 -> `group_label + group_index + group_size`
+- 省/市、日期范围等真正 composite group 只暴露组语义，不自动把多个控件映射到同一个 canonical field
+- 多个候选 label、隐藏文本、heading、尾随 help text 等不确定结构 fail closed
+- radio/checkbox 的小型单选项容器允许一个短的尾随可见文本作为 choice label；普通 textbox/select 不使用尾随文本，避免把校验/帮助文案误当字段名
+
+`1447a888 feat(browser): infer nearby form labels` 已部署到 `mini-dogfood` 并在用户重新 Share 的中国电信真实页做了 live dogfood。结果：
+
+```text
+interactive node_count:       230 (truncated=true)
+actionable:                   184
+v1 name/group coverage:        69 / 184
+v1 unlabeled actionable:      115 / 184
+v2 name/group coverage:       176 / 184
+v2 unlabeled actionable:        8 / 184
+form_context coverage:        168 / 184
+nearby_label:                  62 actionable
+group_label context:           54 actionable
+```
+
+也就是说原来最困难的 115 个无 label actionable 中，约 107 个现在已经直接获得 model-visible `name` 或 `group_label`；这是 Browser 层的通用 DOM provenance 收益，不是 campus plugin 的站点 hack。真实页已经能直接看到诸如姓名、证件类型、性别、民族、政治面貌、是否应届、是否接受调剂、籍贯/生源地/户口所在地/现居住城市、教育字段、附件类别等语义。
+
+Adapter v2 改变了 model-visible semantic shape，因此该页面结构签名从 v1 的 `4c421a4eeee5699591817ce8` 变为 v2 的 `0e393a93e7f78d89768b42f4`，旧 persistent mapping entry 本次不会命中。大部分旧教学现在已经被自动 DOM provenance 取代；后续若还需要跨 semantic-version 迁移 explicit teaching，应单独设计 versioned mapping identity，而不是猜旧 mapping id。
+
+v2 live dogfood 还暴露并修复了三类 **通用准确性问题**：
+
+1. `专业课程 / 专业资格证书 / 专业资格证书等级 / 专业资格证书获得时间` 不应因为 contains(`专业`) 被误映射为 `major`。现在 `专业` 保留 exact match，并补 `专业名称 / 所学专业 / 主修专业 / 专业方向` 等明确语义；模糊 contains 不再匹配裸 `专业`。
+2. 附件按钮的 AX name 往往只是“选择文件”，真正类别在 nearby label。`isResumeUpload` 现在会读取 `form_context.nearby_label`，因此“简历”附件可自动识别为 `resume_path`，而成绩单/身份证/其它附件仍保持 unmapped。
+3. framework 自定义 select 经常一个逻辑字段含多个 DOM/internal control。Plugin 不再仅因 DOM `group_size > 1` 就拒绝 scalar group；它按 **model-visible projected controls** 判断：同组只有一个 projected data control 时允许 exact group mapping，真实 composite（例如省+市、电话国家区号+号码）有多个 projected controls 时继续 fail closed。
+
+当前 China Telecom `analyze_form` 在不依赖旧 mapping memory 的情况下已能自动建立 `id_type / gender / ethnicity / political_status / is_fresh_graduate / accept_transfer` 等映射；由于 private profile 尚缺相应值，它们表现为 `missing_profile_fields` 而不是错误 fill plan。当前 profile 可用值下 recognized 包括主姓名、邮箱、毕业时间、学历/学位、专业名称和普通简历附件；live 发现的错误 `专业*` major 映射已经清除。
+
+源码还加入了 generic choice-label 规则（例如 `<div><input type=radio><span>Male</span></div>`），focused Browser regression 已通过；该规则需要下一次 Runner binary 部署后才能在真实页验证性别 radio 是否从空 option name 进一步变成可直接选择的 `男/女`。
+
 ### 当前产品优先级（用户确认）
 
 第一原则是 **准确，其次是快速**；隐私最小化不是当前优化目标。后续设计取舍按：
@@ -432,12 +471,15 @@ accuracy > speed > privacy minimization
 - [x] `aria-labelledby`
 - [x] wrapping/nested `<label>`
 - [x] ancestor `fieldset/legend`
-- [x] 保守 nearest form-item label（仅唯一 native control + 唯一直接未绑定 label）
+- [x] 保守 nearby visible label（单控件容器 / table cell / nested wrapper）
+- [x] multi-control `group_label + group_index + group_size`
+- [x] radio/checkbox 单 choice 的 bounded trailing visible label
+- [x] ambiguous multi-label / help-text / hidden-text fail closed
 - [x] direct section heading 的 bounded `form_context.section_label`
-- [ ] file picker 所属附件分类
+- [x] file picker 所属附件分类可由 `nearby_label` 投影给 caller；campus 当前只自动消费“简历”类别，其它附件保持显式映射
 - [x] bounded form context（HTML name / placeholder / autocomplete / component / validation / native option count）
 
-下一步优先在真实中国电信页验证这些通用语义是否已经消除大部分 mapping hints；只有仍缺失的结构再继续增强，避免写站点专用 DOM hack。
+下一步继续只补可跨站复用的结构：优先验证 choice option label、重复 section heading/provenance，以及 composite field 的安全拆分；不要写中国电信字段编号或站点专用 DOM hack。
 
 ### 已完成：站点 mapping persistence
 

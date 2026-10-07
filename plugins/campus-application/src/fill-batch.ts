@@ -9,7 +9,7 @@ export type Operation = { action: "input_text"; element_id: string; text: string
 export type Attention = { mapping_id?: string; label: string; status: "mismatch" | "unresolved"; reason: string };
 export type Batch = { action: "batch"; client_id: string; browser_id: string; page_id: string; operations: Operation[] };
 type Field = { identity: string; action: FillAction };
-type Plan = { scope: FillScope; fields: Field[]; issued: Field[]; attention: Attention[]; expires: number };
+type Plan = { scope: FillScope; fields: Field[]; issued: Field[]; expires: number };
 export type Receipt = {
   execution_state?: string | undefined; stability?: { stable: boolean } | undefined;
   requested_count?: number | undefined; completed_count?: number | undefined;
@@ -87,7 +87,7 @@ export function createFillBatch(scope: FillScope, nodes: readonly SnapshotNode[]
     seen.add(key);
     fields.push({ identity: key, action });
   }
-  const plan: Plan = { scope, fields, issued: [], attention: needs_attention, expires: Date.now() + TTL };
+  const plan: Plan = { scope, fields, issued: [], expires: Date.now() + TTL };
   const batch = issue(plan, nodes);
   if (!batch) return { needs_attention };
   const plan_id = randomUUID();
@@ -116,7 +116,7 @@ export function reconcileFill(plan_id: string, scope: FillScope, nodes: readonly
     && Number.isInteger(receipt.remaining_count) && receipt.remaining_count! >= 0
     && receipt.completed_count! + receipt.remaining_count! <= count;
   let confirmed = 0;
-  const needs_attention: Attention[] = [...plan.attention];
+  const needs_attention: Attention[] = [];
   const pending: Field[] = [];
   const unresolved: Field[] = [];
   for (const field of plan.fields) {
@@ -151,7 +151,7 @@ export function reconcileFill(plan_id: string, scope: FillScope, nodes: readonly
     }
   }
   if (!pending.length) return { confirmed, needs_attention };
-  const next: Plan = { scope, fields: [...pending], issued: [], attention: plan.attention, expires: Date.now() + TTL };
+  const next: Plan = { scope, fields: [...pending], issued: [], expires: Date.now() + TTL };
   const batch = issue(next, nodes);
   next.fields.push(...unresolved);
   if (!batch) return { confirmed, needs_attention };

@@ -44,6 +44,18 @@ test("1..32 bound and 65 fields continue as 32/32/1 from fresh authority", () =>
   }
   assert.equal(createFillBatch(scope, [], []).batch, undefined);
 });
+test("initial blockers are delta-only and are not repeated across deferred batches", () => {
+  const { nodes, actions } = fixture(65);
+  const blocker = { label: "Custom picker", status: "unresolved", reason: "manual widget" };
+  let plan = createFillBatch(scope, nodes, actions, [blocker]);
+  assert.deepEqual(plan.needs_attention, [blocker]);
+  let done = plan.batch.operations.length;
+  plan = reconcileFill(plan.plan_id, { ...scope, snapshot_generation: 2 }, readback(nodes, actions, done), receipt(32));
+  assert.deepEqual(plan.needs_attention, []);
+  done += plan.batch.operations.length;
+  plan = reconcileFill(plan.plan_id, { ...scope, snapshot_generation: 3 }, readback(nodes, actions, done), receipt(32));
+  assert.deepEqual(plan.needs_attention, []);
+});
 test("18 confirmed, one mismatch, one unresolved: only fresh mismatch enters retry", () => {
   const { nodes, actions } = fixture(20);
   const plan = createFillBatch(scope, nodes, actions);

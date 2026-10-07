@@ -80,15 +80,42 @@ describe("local Runner concurrency settings", () => {
     expect(api.saveRunnerJobConcurrency).toHaveBeenCalledTimes(1);
     await act(async () => resolve(state));
   });
-  it("keeps the original edit fence when refreshed settings changed in another writer", async () => {
+  it("keeps the original edit fence during background refreshes", async () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     render(view()); const input = await screen.findByRole("spinbutton");
     fireEvent.change(input, { target: { value: "12" } });
     settings.max_concurrent_jobs = 8;
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    fireEvent(document, new Event("visibilitychange"));
     await screen.findByText("Saved limit: 8 · Default: 4");
     fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Saved value changed");
     expect(api.saveRunnerJobConcurrency).toHaveBeenCalledExactlyOnceWith(target, null, 12);
+  });
+  it("recovers a conflicting save through an explicit reload and a new edit", async () => {
+    render(view()); const input = await screen.findByRole("spinbutton");
+    fireEvent.change(input, { target: { value: "12" } });
+    settings.max_concurrent_jobs = 8;
+    fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Saved value changed");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(input).toHaveValue(8));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
+    await waitFor(() => expect(api.saveRunnerJobConcurrency).toHaveBeenLastCalledWith(target, 8, 12));
+    expect(api.saveRunnerJobConcurrency).toHaveBeenCalledTimes(2);
+  });
+  it("shows a settings read failure separately from a read-only Runner", async () => {
+    api.runnerSettings.mockRejectedValue({ code: "runner_settings_unavailable", message: "Cannot read settings", next_action: "Refresh" });
+    render(view());
+    expect(await screen.findByRole("alert")).toHaveTextContent("could not be read or verified");
+    expect(screen.queryByText(/Read-only/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    api.runnerSettings.mockResolvedValue(settings);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByRole("spinbutton")).toHaveValue(4);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
   it("rechecks the saved value before restarting", async () => {
     render(view()); fireEvent.click(await screen.findByRole("button", { name: "Restart Runner…" }));
@@ -99,7 +126,7 @@ describe("local Runner concurrency settings", () => {
   });
   it("does not retarget a late settings response or display another Runner's counts", async () => {
     settings.target = { ...target, client_id: "other" }; runner.client_id = "other";
-    render(view()); await screen.findByText(/Read-only/);
+    render(view()); expect(await screen.findByRole("alert")).toHaveTextContent("could not be read or verified");
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
     expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
   });

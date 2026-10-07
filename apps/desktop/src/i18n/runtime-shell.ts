@@ -2,6 +2,9 @@ import { useLocale } from "./locale";
 import zhTW from "./messages/shell-zh-TW.json";
 
 const zh: Record<string, string> = {
+  "Saved Runner settings could not be read or verified. Refresh before changing concurrency.": "无法读取或核验已保存的 Runner 配置。请刷新后再修改并发设置。",
+  "Refresh reloads the saved limit and discards unsaved edits.": "刷新会重新加载已保存的上限，并放弃未保存的修改。",
+
   "Runner Job capacity": "Runner 任务容量",
   "Durable Job slots, including Jobs that are still stopping. Other request queues are separate.": "这里统计持久任务占用的槽位，包括仍在停止中的任务；普通请求队列单独计算。",
   "Runner offline; capacity unknown.": "Runner 已离线，容量未知。",

@@ -26,6 +26,7 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [confirm, setConfirm] = useState<RunnerSettings | null>(null);
+  const [settingsUnavailable, setSettingsUnavailable] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
   const [now, setNow] = useState(Date.now);
   const alive = useRef(true), action = useRef(false), reading = useRef(0);
@@ -33,8 +34,9 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
   const editBase = useRef<number | null | undefined>(undefined);
   const operationBusy = Boolean(state.current_operation);
   const selected = useRef(state.workspace_runner).current;
+  const expectsLocalSettings = Boolean(selected && state.topology?.runner?.kind === "local");
   useEffect(() => { alive.current = true; return () => { alive.current = false; generation.current++; }; }, []);
-  const refresh = useCallback(async (force = false) => {
+  const refresh = useCallback(async (force = false, reloadDraft = false) => {
     if (reading.current && !force) return;
     const request = ++generation.current;
     reading.current = request;
@@ -45,11 +47,17 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
     if (!alive.current || request !== generation.current) return;
     const next = saved.status === "fulfilled" && saved.value && selected && sameTarget(saved.value.target, selected) ? saved.value : null;
     setSettings(next);
-    if (next?.max_concurrent_jobs !== undefined) setDraft(current => editBase.current === undefined ? String(next.max_concurrent_jobs ?? 4) : current);
+    setSettingsUnavailable(expectsLocalSettings && !next);
+    if (next?.max_concurrent_jobs !== undefined) {
+      // Only an explicit, successful reload discards the draft and its old
+      // compare-and-save fence. Background reads must not overwrite an edit.
+      if (reloadDraft) { editBase.current = undefined; setError(null); }
+      setDraft(current => editBase.current === undefined ? String(next.max_concurrent_jobs ?? 4) : current);
+    }
     const runner = live.status === "fulfilled" && selected && live.value?.client_id === selected.client_id ? live.value : null;
     setObservation(runner ? { runner, at: Date.now() } : null);
     setNow(Date.now()); setLoading(false);
-  }, [selected]);
+  }, [selected, expectsLocalSettings]);
   useEffect(() => {
     if (!active || operationBusy) return;
     if (!action.current) void refresh();
@@ -98,7 +106,9 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
     const next = await desktopApi.restartOwnedRunner(confirm.target);
     if (alive.current) { setConfirm(null); onState(next); }
   });
-  const errorCard = error && <div className="error-card" role="alert"><strong>{error.message}</strong><span>{error.next_action}</span></div>;
+  const errorCard = settingsUnavailable
+    ? <div className="error-card" role="alert">{s("Saved Runner settings could not be read or verified. Refresh before changing concurrency.")}</div>
+    : error && <div className="error-card" role="alert"><strong>{error.message}</strong><span>{error.next_action}</span></div>;
   return <section className="settings-section" aria-labelledby="runner-capacity-title">
     <h2 id="runner-capacity-title">{s("Runner Job capacity")}</h2>
     <p className="field-help">{s("Durable Job slots, including Jobs that are still stopping. Other request queues are separate.")}</p>
@@ -113,12 +123,13 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
         }} disabled={disabled} aria-describedby="runner-job-concurrency-help" />
         <p id="runner-job-concurrency-help" className="field-help">{s("Choose a whole number from 1 to 64. Saving does not restart the Runner.")}</p>
       </div>}
-      {!canEdit && <p className="field-help">{s("Read-only. Change and restart this Runner through its actual process owner.")}</p>}
+      {!canEdit && !settingsUnavailable && <p className="field-help">{s("Read-only. Change and restart this Runner through its actual process owner.")}</p>}
       <div className="connection-actions">
         {saved !== undefined && <button type="button" className="secondary-button" disabled={disabled || !changed} onClick={() => void save()}>{s("Save for next restart")}</button>}
         {canEdit && <button type="button" className="secondary-button" disabled={disabled || changed || limit === null} onClick={() => setConfirm(settings)}>{s("Restart Runner…")}</button>}
-        <button type="button" className="text-button" disabled={busy || operationBusy} onClick={() => void refresh()}>{s("Refresh")}</button>
+        <button type="button" className="text-button" disabled={busy || operationBusy} onClick={() => void refresh(true, true)}>{s("Refresh")}</button>
       </div>
+      <p className="field-help">{s("Refresh reloads the saved limit and discards unsaved edits.")}</p>
     </>}
     {!confirm && errorCard}
     {confirm && <WorkspaceDialog title={s("Restart Runner?")} onClose={() => setConfirm(null)} busy={busy}>

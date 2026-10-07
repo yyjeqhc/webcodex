@@ -1,4 +1,7 @@
 {
+  "Saved Runner settings could not be read or verified. Refresh before changing concurrency.": "無法讀取或驗證已儲存的 Runner 設定。請重新整理後再修改並行設定。",
+  "Refresh reloads the saved limit and discards unsaved edits.": "重新整理會載入已儲存的上限，並捨棄未儲存的修改。",
+
   "Runner Job capacity": "Runner 任務容量",
   "Durable Job slots, including Jobs that are still stopping. Other request queues are separate.": "這裡統計持久任務占用的槽位，包括仍在停止中的任務；一般請求佇列另行計算。",
   "Runner offline; capacity unknown.": "Runner 已離線，容量未知。",

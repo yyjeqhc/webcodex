@@ -672,6 +672,10 @@ fn chromium_widgets_review_already_expanded_date_effects_are_unknown() {
         r#"
         addDate("Committed navigation", {expandedBefore:true,commitNavigation:true,missing:true});
         addDate("Detached navigation", {expandedBefore:true,detachOnNavigation:true,missing:true});
+        addDate("Disabled year", {expandedBefore:true,disabledPart:"year",initialMonth:"06",missing:true});
+        addDate("Disabled month", {expandedBefore:true,disabledPart:"month",initialYear:"2027",missing:true});
+        addDate("Readonly year", {expandedBefore:true,yearInput:true,readOnlyYear:true,initialMonth:"06",missing:true});
+        addDate("Aria readonly year", {expandedBefore:true,yearInput:true,ariaReadOnlyYear:true,initialMonth:"06",missing:true});
         "#,
         |s, b, p| {
             for name in ["Committed navigation", "Detached navigation"] {
@@ -694,6 +698,28 @@ fn chromium_widgets_review_already_expanded_date_effects_are_unknown() {
                     assert_eq!(field_value(&readback, name), "2027-06-01");
                     assert_eq!(state[name]["changes"], 2);
                 }
+            }
+            for name in [
+                "Disabled year",
+                "Disabled month",
+                "Readonly year",
+                "Aria readonly year",
+            ] {
+                let snapshot = observe_widgets(s, b, p);
+                let error = s
+                    .set_date(b, p, &element(&snapshot, name), "2027-06-30")
+                    .unwrap_err();
+                assert_eq!(
+                    error.execution_state,
+                    ExecutionState::NotStarted,
+                    "{name}: {error:?}"
+                );
+                let readback = observe_widgets(s, b, p);
+                let state = report(&readback);
+                assert_eq!(field_value(&readback, name), "");
+                assert_eq!(state[name]["opens"], 0);
+                assert_eq!(state[name]["choices"], 0);
+                assert_eq!(state[name]["navigation_events"], 0, "{name}");
             }
         },
     );
@@ -1097,7 +1123,7 @@ function addUnlabelledCalendar(name){
 }
 function addDate(name,options={}){
   let input=labelInput(name,!options.fast);
-  const state=states[name]={value:options.initial||'',opens:0,choices:0,changes:0,expanded:!!options.expandedBefore};
+  const state=states[name]={value:options.initial||'',opens:0,choices:0,changes:0,navigation_events:0,expanded:!!options.expandedBefore};
   input.value=state.value;input.setAttribute('role','combobox');input.setAttribute('aria-haspopup','dialog');
   input.setAttribute('aria-expanded',String(state.expanded));
   const dialog=document.createElement('div');dialog.id='date-'+Object.keys(states).length;
@@ -1114,11 +1140,16 @@ function addDate(name,options={}){
   }else{
     input.addEventListener('input',()=>nativeValue.set.call(input,state.value));
   }
-  const year=document.createElement('select');year.setAttribute('aria-label','Year');
-  for(const value of ['2026','2027','2028']){const option=document.createElement('option');option.value=value;option.textContent=value;year.append(option);}
+  const year=document.createElement(options.yearInput?'input':'select');year.setAttribute('aria-label','Year');
+  if(!options.yearInput)for(const value of ['2026','2027','2028']){const option=document.createElement('option');option.value=value;option.textContent=value;year.append(option);}
   const month=document.createElement('select');month.setAttribute('aria-label','Month');
   for(let i=1;i<=12;i++){const option=document.createElement('option');option.value=String(i).padStart(2,'0');option.textContent=option.value;month.append(option);}
-  year.value='2026';month.value='10';
+  year.value=options.initialYear||'2026';month.value=options.initialMonth||'10';
+  if(options.disabledPart==='year')year.disabled=true;
+  if(options.disabledPart==='month')month.disabled=true;
+  if(options.readOnlyYear)year.readOnly=true;
+  if(options.ariaReadOnlyYear)year.setAttribute('aria-readonly','true');
+  for(const control of [year,month])for(const event of ['input','change'])control.addEventListener(event,()=>{state.navigation_events++;publish();});
   const grid=document.createElement('div');grid.setAttribute('role','grid');
   const draw=()=>{
     grid.replaceChildren();

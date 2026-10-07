@@ -15,7 +15,7 @@ try {
 
     const inputs = target instanceof view.HTMLInputElement ? [target] : inputControls().filter(visible);
     if (inputs.length === 1 && !inputs[0].readOnly && !inputs[0].disabled
-        && ["text", "search"].includes(inputs[0].type)) {
+        && attr(inputs[0], "aria-readonly") !== "true" && ["text", "search"].includes(inputs[0].type)) {
         const input = inputs[0], old = input.value, oldState = fieldFingerprint();
         changed = true;
         nativeSet(input, requested);

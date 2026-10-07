@@ -194,10 +194,10 @@ excludes Chromium startup and initial navigation; report actual measurements
 from the test output, not an implied production-site latency guarantee.
 
 On 2026-10-07, the actual Node-provider/Chromium fixture confirmed all 26 fields
-with 0 attention in 3,834 ms, counting provider startup and the first query through
+with 0 attention in 2,926 ms, counting provider startup and the first query through
 final reconciliation, excluding Chromium bootstrap. The Browser-only same-form
-comparison measured 27 calls / 13 snapshots / 34 primitives / 10,266 ms for the
-legacy path and 3 calls / 2 snapshots / 26 primitives / 1,750 ms for the typed
+comparison used a two-level province/city choice and measured 27 calls / 13 snapshots / 34 primitives / 9,959 ms for the
+legacy path and 3 calls / 2 snapshots / 26 primitives / 1,812 ms for the typed
 batch path. Both used 0 screenshots and 0 coordinate-pointer operations. These
 are local fixture observations; outer model latency was not measured.
 

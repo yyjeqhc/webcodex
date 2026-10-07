@@ -82,6 +82,8 @@ const beginEffect = () => {
 const nativeSet = (node, value) => {
     connected();
     if (!node.isConnected || node.ownerDocument !== doc) fail("stale_element");
+    if (disabled(node)) fail("control_disabled");
+    if (node instanceof view.HTMLInputElement && (node.readOnly || attr(node, "aria-readonly") === "true")) fail("widget_not_supported");
     const prototype = node instanceof view.HTMLSelectElement
         ? view.HTMLSelectElement.prototype : view.HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;

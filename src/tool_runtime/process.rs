@@ -23,7 +23,7 @@ use crate::runner_http::{
 use crate::runner_protocol::{
     validate_process_argv, ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest,
     ShellProcessArgv, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
-    STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
+    STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS, STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS,
 };
 use webcodex_core::runner_skill::RunnerSkillExecutionRequest;
 
@@ -503,6 +503,8 @@ impl ToolRuntime {
         session_id: Option<String>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        let requested_timeout_secs =
+            timeout_secs.unwrap_or(STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS);
         let budget = match StructuredExecutionBudget::resolve_process(timeout_secs) {
             Ok(budget) => budget,
             Err(error) => {
@@ -597,6 +599,20 @@ impl ToolRuntime {
             );
         }
         let access = crate::runner_http::runner_access_from_auth(auth);
+        // Runner policy is the final execution authority and may clamp a process
+        // timeout below the protocol/tool maximum. Surface the most recently
+        // registered policy at admission so callers do not mistake the requested
+        // lifetime for the effective one. The Runner still re-applies its live
+        // policy when it prepares the detached launch.
+        let runner_policy_max_timeout_secs = self
+            .runner_registry
+            .get_runner_view_for_auth(&client_id, access.as_ref())
+            .await
+            .and_then(|view| view.policy.map(|policy| policy.max_timeout_secs));
+        let admission_effective_timeout_secs = runner_policy_max_timeout_secs
+            .map(|max_timeout_secs| timeout.min(max_timeout_secs.max(1)))
+            .unwrap_or(timeout);
+        let timeout_clamped = admission_effective_timeout_secs != requested_timeout_secs;
         let detached_initiator = match crate::runner_http::detached_initiator_identity_from_auth(auth)
         {
             Ok(identity) => identity,
@@ -666,7 +682,10 @@ impl ToolRuntime {
                     "command_started": false,
                     "command_completed": false,
                     "terminal": false,
-                    "effective_timeout_secs": timeout,
+                    "requested_timeout_secs": requested_timeout_secs,
+                    "effective_timeout_secs": admission_effective_timeout_secs,
+                    "runner_policy_max_timeout_secs": runner_policy_max_timeout_secs,
+                    "timeout_clamped": timeout_clamped,
                     "created_at": job.created_at,
                     "observation_token": job.observation_token,
                     "continuation_semantics": crate::tool_runtime::jobs::job_observation_continuation_semantics(),

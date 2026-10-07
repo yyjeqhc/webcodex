@@ -63,6 +63,39 @@ test("custom action admission, 1..4 step bounds and 1..8 widget limit are enforc
   assert.equal(validChoicePath(["x".repeat(4096)]), true);
   for (const limit of [0, 9, 1.5]) assert.throws(() => createFillBatch(scope, nodes, actions, [], limit), /widget batch limit/);
 });
+test("editable search text is not an already-selected choice before the typed operation completes", () => {
+  const { nodes, actions } = fixture(1);
+  for (const read_only of [false, undefined]) {
+    const searching = { ...nodes[0], read_only, value: actions[0].value };
+    const plan = createFillBatch(scope, [searching], actions);
+    assert.deepEqual(plan.batch.operations, [{ action: "select_choice", element_id: searching.element_id,
+      choice_path: actions[0].choice_path }]);
+    assert.deepEqual(reconcileFill(plan.plan_id, { ...scope, snapshot_generation: 2 },
+      [{ ...searching, element_id: "after-completion" }], complete(1)), { confirmed: 1, needs_attention: [] });
+    for (const committed of [
+      { ...searching, selected: true },
+      { ...searching, read_only: true },
+      { ...searching, form_context: { ...searching.form_context, dom_tag: "div" } },
+    ]) assert.deepEqual(createFillBatch(scope, [committed], actions), { needs_attention: [] });
+  }
+});
+test("equal search text cannot confirm a deferred sibling or a choice without completed effect evidence", () => {
+  const { nodes, actions } = fixture(2);
+  const searching = nodes.map((node, i) => ({ ...node, read_only: false, value: actions[i].value }));
+  const first = createFillBatch(scope, searching, actions);
+  const second = reconcileFill(first.plan_id, { ...scope, snapshot_generation: 2 }, searching, complete(1));
+  assert.equal(second.confirmed, 1);
+  assert.equal(second.batch.operations[0].element_id, searching[1].element_id);
+  assert.deepEqual(second.needs_attention, []);
+  assert.deepEqual(reconcileFill(second.plan_id, { ...scope, snapshot_generation: 3 }, searching, complete(1)),
+    { confirmed: 1, needs_attention: [] });
+  const uncertain = createFillBatch(scope, [searching[0]], [actions[0]]);
+  const unresolved = reconcileFill(uncertain.plan_id, { ...scope, snapshot_generation: 2 }, [searching[0]], {});
+  assert.equal(unresolved.confirmed, 0);
+  assert.equal(unresolved.batch, undefined);
+  assert.equal(unresolved.needs_attention.length, 1);
+  assert.equal(unresolved.needs_attention[0].status, "unresolved");
+});
 test("stable form signature survives changed display names; selected label can reconcile without reopening", () => {
   const { nodes, actions } = fixture(1);
   const plan = createFillBatch(scope, nodes, actions);

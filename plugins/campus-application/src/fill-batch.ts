@@ -44,10 +44,19 @@ function indexNodes(nodes: readonly SnapshotNode[]): Map<string, SnapshotNode[]>
   return index;
 }
 function isWidget(action: FillAction): boolean { return action.kind === "select_choice" || action.kind === "set_date"; }
-export function fieldSatisfied(action: FillAction, node: SnapshotNode): boolean {
+function hasChoiceCommitEvidence(node: SnapshotNode, completedChoice = false): boolean {
+  const editableInput = ["input", "textarea"].includes(node.form_context?.dom_tag.toLowerCase() ?? "")
+    && node.read_only !== true;
+  // Equal editable text may only be a search query before the typed operation.
+  return !editableInput || node.selected === true || completedChoice;
+}
+export function fieldSatisfied(action: FillAction, node: SnapshotNode, completedChoice = false): boolean {
   if (node.form_context?.aria_invalid) return false;
   if (action.kind === "set_date") return node.value !== undefined && dateForControl(node.value, node) === action.value;
-  if (action.kind === "select_choice" && action.choice_path) return choiceReadback(node, action.choice_path) === "confirmed";
+  if (action.kind === "select_choice" && action.choice_path) {
+    if (!hasChoiceCommitEvidence(node, completedChoice)) return false;
+    return choiceReadback(node, action.choice_path) === "confirmed";
+  }
   if (action.kind === "click") return typeof action.desired_state === "boolean"
     && choiceState(node) === action.desired_state;
   if (action.kind === "upload_file") {
@@ -60,7 +69,8 @@ export function fieldSatisfied(action: FillAction, node: SnapshotNode): boolean 
 function knownReadback(action: FillAction, node?: SnapshotNode): boolean {
   if (!node) return false;
   if (action.kind === "set_date") return node.value !== undefined && canonicalDate(node.value) !== undefined;
-  if (action.kind === "select_choice" && action.choice_path) return choiceReadback(node, action.choice_path) !== "unresolved";
+  if (action.kind === "select_choice" && action.choice_path) return hasChoiceCommitEvidence(node)
+    && choiceReadback(node, action.choice_path) !== "unresolved";
   return action.kind === "click" ? choiceState(node) !== undefined : node.value !== undefined;
 }
 function operation(action: FillAction, node: SnapshotNode): Operation | undefined {
@@ -172,7 +182,7 @@ export function reconcileFill(plan_id: string, scope: FillScope, nodes: readonly
     const matches = indexed.get(field.identity);
     const node = matches?.length === 1 ? matches[0] : undefined;
     const issuedIndex = plan.issued.indexOf(field);
-    if (node && fieldSatisfied(field.action, node)) {
+    if (node && fieldSatisfied(field.action, node, complete && issuedIndex >= 0)) {
       confirmed++;
       continue;
     }

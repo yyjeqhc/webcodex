@@ -147,6 +147,21 @@ test("provider plans admitted custom choices and compactly continues a verified 
   assert.equal(unadmitted.batch, undefined);
   assert.equal(unadmitted.needs_attention.length, 1);
 });
+test("provider does not skip editable combobox search text that equals the profile choice", { timeout: 10000 }, async t => {
+  const dir = await mkdtemp(join(tmpdir(), "campus-editable-choice-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const call = await provider(t, dir);
+  const searching = { ...node("学历", 0), role: "combobox", read_only: false, value: "硕士",
+    actions: ["select_choice"] };
+  const plan = await call("plan_fill", { ...scope, title: "Fictional search combobox", nodes: [searching] });
+  assert.deepEqual(plan.batch.operations, [{ action: "select_choice", element_id: "element-0", choice_path: ["硕士"] }]);
+  assert.deepEqual(plan.needs_attention, []);
+  const result = await call("reconcile_fill", { ...scope, snapshot_generation: 2, plan_id: plan.plan_id,
+    nodes: [{ ...searching, element_id: "completed-selection" }],
+    receipt: { execution_state: "completed", requested_count: 1, completed_count: 1, remaining_count: 0,
+      stability: { stable: true } } });
+  assert.deepEqual(result, { confirmed: 1, needs_attention: [] });
+});
 test("learned custom choice_value survives provider restart without repeated model interpretation", { timeout: 10000 }, async t => {
   const dir = await mkdtemp(join(tmpdir(), "campus-choice-memory-"));
   t.after(() => rm(dir, { recursive: true, force: true }));

@@ -188,6 +188,14 @@ impl ManagedProfile {
     }
 }
 
+impl Drop for ManagedProfile {
+    fn drop(&mut self) {
+        // Do not rely on platform-specific close timing for the ownership lease.
+        // A released Browser must make the managed profile immediately reusable.
+        let _ = FileExt::unlock(&self._lock);
+    }
+}
+
 pub(crate) enum OwnedProfile {
     Ephemeral(TempDir),
     Managed(ManagedProfile),

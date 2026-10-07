@@ -487,7 +487,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
 ];
 
 pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
-    model_spec(
+    adaptive_runtime_direct(model_spec(
         def(
             "list_jobs",
             super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
@@ -515,7 +515,7 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
             super::ToolActivityInteraction::Meaningful,
         ),
         "Recovery and inventory primitive for caller-visible Jobs, not the normal continuation step. Do not call list_jobs when the initiating pending result already provides an exact continuation or passive attention already identifies the execution; retain that continuation and continue independent work, using observe_jobs only when logs/details/recovery are needed. Use list_jobs when exact Job identity was lost, unknown_job explicitly requests inventory recovery, the user asks to enumerate background work, or multiple historical/parallel Jobs must be inspected. Exact project/session_id filters are preferred when known and combine with status using AND semantics. stdout/stderr bodies are never included; exact Job logs belong to observe_jobs.",
-    ),
+    ), 79, super::ToolDirectReason::CoreWorkflow),
     model_spec(
             def(
                 "present_job_terminal_continuation",

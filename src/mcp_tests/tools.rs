@@ -2657,6 +2657,53 @@ async fn mcp_text_json_compat_uses_runtime_snapshot() {
 }
 
 #[tokio::test]
+async fn list_jobs_direct_descriptor_preserves_read_only_contract_and_recovery_guidance() {
+    let canonical = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "list_jobs")
+        .unwrap();
+    for stateless in [false, true] {
+        for compact in [false, true] {
+            let McpOutcome::Ok(value) =
+                crate::mcp::tools::handle_list(Some(json!(1)), None, stateless, compact, false)
+                    .await
+            else {
+                panic!("tools/list");
+            };
+            let descriptor = value["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == "list_jobs")
+                .expect("list_jobs must have a dedicated descriptor");
+            assert_eq!(descriptor["annotations"], canonical.annotations);
+            assert_eq!(descriptor["annotations"]["readOnlyHint"], true);
+            assert_eq!(descriptor["annotations"]["destructiveHint"], false);
+            assert_eq!(descriptor["annotations"]["idempotentHint"], true);
+            assert_eq!(descriptor["annotations"]["openWorldHint"], false);
+            let mut input = descriptor["inputSchema"].clone();
+            input["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove(DISCOVERY_INVOCATION_ENVELOPE);
+            let mut expected = canonical.input_schema.clone();
+            strip_description_text(&mut input);
+            strip_description_text(&mut expected);
+            assert_eq!(input, expected);
+            let description = descriptor["description"].as_str().unwrap();
+            for phrase in [
+                "continue independent work",
+                "observe_jobs",
+                "stdout/stderr",
+                "AND",
+            ] {
+                assert!(description.contains(phrase), "{description}");
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn project_build_is_exposed_directly_on_adaptive_mcp_surface() {
     let runtime = test_runtime();
     let outcome = handle_mcp_request(

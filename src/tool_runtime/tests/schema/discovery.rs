@@ -2511,7 +2511,7 @@ async fn tool_manifest_routing_metadata_uses_canonical_adaptive_routes() {
         ("import_host_files", "direct", None),
         ("inspect_project_artifact", "direct", None),
         ("read_session_discussion_summary", "direct", None),
-        ("list_jobs", "gateway", Some("call_runtime_tool")),
+        ("list_jobs", "direct", None),
         ("review_changes", "direct", None),
         (
             "read_workspace_changes",

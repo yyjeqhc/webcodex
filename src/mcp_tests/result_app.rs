@@ -2077,7 +2077,7 @@ async fn mcp_job_presentation_tracks_real_running_to_terminal_transition() {
     );
     assert_eq!(
         presentation(&unknown)["items"][0]["suggested_call"],
-        json!({"follow_up_kind": "fallback_recovery", "tool": "call_runtime_tool", "arguments": {"tool": "list_jobs", "arguments": {}}})
+        json!({"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {}})
     );
 
     assert!(runtime.runner_registry.remove_job_record(&job_id).await);

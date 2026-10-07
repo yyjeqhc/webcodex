@@ -1,4 +1,6 @@
 import { createFillBatch, reconcileFill, type Attention } from "./fill-batch.js";
+import { choiceGroupKey, planChoiceGroup } from "./choice-controls.js";
+import { resolveUploadLocation, uploadFileName } from "./upload-source.js";
 import {
   definePlugin,
   errorResult,
@@ -8,7 +10,8 @@ import {
   textResult,
 } from "@yyjeqhc/webcodex-plugin-sdk";
 import {
-  choiceMatches,
+  choiceState,
+  isChoiceControl,
   formStructureSignature,
   isResumeUpload,
   matchField,
@@ -96,6 +99,7 @@ const recognizedSchema = schema.object({
   element_id: schema.string({ maxLength: 160 }),
   current_value: schema.string({ maxLength: 4096 }),
   proposed_value: schema.string({ maxLength: 4096 }),
+  desired_state: schema.optional(schema.boolean()),
   confidence: schema.number(),
   support: schema.string({
     enum: ["input_text", "select_option", "set_value", "upload_file", "click", "manual_review"] as const,
@@ -221,6 +225,7 @@ function analyzeNodes(
     proposed_value: string;
     confidence: number;
     support: FillSupport;
+    desired_state?: boolean;
   }> = [];
   const blockers: Array<{
     mapping_id: string;
@@ -274,7 +279,9 @@ function analyzeNodes(
     );
   }
 
-  for (const { node, mapping, mapping_id } of resolved.nodes) {
+  const processedChoiceGroups = new Set<string>();
+  for (const entry of resolved.nodes) {
+    const { node, mapping, mapping_id } = entry;
     const role = node.role.toLowerCase();
     const label =
       node.group_label ||
@@ -315,29 +322,29 @@ function analyzeNodes(
       continue;
     }
 
-    if (
-      (
-        mapping?.source === "group" ||
-        mapping?.source === "form_context" ||
-        mapping?.source === "hint"
-      ) &&
-      (role === "radio" || role === "checkbox")
-    ) {
-      const desired = resolvedValue.value;
-      const observedChoice = mapping.choiceValue ?? node.name;
-      if (choiceMatches(observedChoice, desired)) {
-        const checked = node.checked === "true" || node.selected === true;
+    if (mapping && isChoiceControl(node)) {
+      const mapped = { ...entry, mapping };
+      const groupKey = choiceGroupKey(mapped);
+      if (processedChoiceGroups.has(groupKey)) continue;
+      processedChoiceGroups.add(groupKey);
+      const decision = planChoiceGroup(mapped, resolved.nodes, resolvedValue.value);
+      if (decision.reason) blockers.push({
+        mapping_id, label, role: node.role, element_id: node.element_id ?? "",
+        reason: decision.reason,
+      });
+      for (const target of decision.targets) {
         recognized.push({
-          mapping_id,
-          canonical_field: mapping.canonicalField,
-          resume_path: mapping.resumePath,
-          label: node.group_label || label || observedChoice,
-          role: node.role,
-          element_id: node.element_id ?? "",
-          current_value: checked ? desired : "",
-          proposed_value: desired,
-          confidence: Math.min(1, mapping.confidence + 0.01),
+          mapping_id: target.mapping_id,
+          canonical_field: target.mapping.canonicalField,
+          resume_path: target.mapping.resumePath,
+          label: target.node.group_label || label,
+          role: target.node.role,
+          element_id: target.node.element_id ?? "",
+          current_value: choiceState(target.node) === target.desired_state ? resolvedValue.value : "",
+          proposed_value: resolvedValue.value,
+          confidence: target.mapping.confidence,
           support: "click",
+          desired_state: target.desired_state,
         });
       }
       continue;
@@ -398,7 +405,7 @@ function analyzeNodes(
       });
       if (
         unmappedUpload ||
-        !["button", "link", "option", "radio", "checkbox"].includes(role)
+        !["button", "link"].includes(role)
       ) {
         blockers.push({
           mapping_id,
@@ -522,11 +529,13 @@ const batchSchema = schema.object({
   browser_id: scopeProperties.browser_id,
   page_id: scopeProperties.page_id,
   operations: schema.array(schema.object({
-    action: schema.string({ enum: ["input_text", "select_option", "set_value"] as const }),
+    action: schema.string({ enum: ["input_text", "select_option", "set_value", "click", "upload_file"] as const }),
     element_id: schema.string({ maxLength: 160 }),
     text: schema.optional(schema.string({ maxLength: 4096 })),
     option: schema.optional(schema.string({ maxLength: 4096 })),
     value: schema.optional(schema.string({ maxLength: 4096 })),
+    project: schema.optional(schema.string({ maxLength: 512 })),
+    path: schema.optional(schema.string({ maxLength: 4096 })),
   }), { minItems: 1, maxItems: 32 }),
 });
 const attentionSchema = schema.array(schema.object({
@@ -543,9 +552,13 @@ const fillResultProperties = {
 };
 const planFill = defineTool({
   name: "plan_fill",
-  description: "Plan one executable Browser batch from a fresh semantic query (prefer query.fields_only=true, optionally section/group; up to 256 nodes). Copy batch unchanged into control_browser; 1..32 admitted native field operations, no per-field calls. Then take ONE fresh query and pass it with the batch receipt to reconcile_fill. plan_id keeps expectations only in bounded provider memory for 15 minutes; restart/expiry requires fresh planning, never replay. Deferred fields continue after reconciliation. Uncertain/custom controls stay in needs_attention. Full snapshots can also propose one section-expansion or next-step click; each requires fresh observation. No Browser effects or final submission.",
+  description: "Plan one executable Browser batch from a fresh semantic query (prefer query.fields_only=true, optionally section/group; up to 256 nodes). Copy batch unchanged into control_browser; 1..32 admitted text/select/choice/upload operations, no per-field calls. Uploads require explicit upload_source.project; provide project_root when the profile resume path is absolute or home-relative. Browser independently authorizes this Project/path. Choice toggles require known checked/selected state and never click group wrappers. Then take ONE fresh query and pass it with the batch receipt to reconcile_fill. plan_id keeps expectations only in bounded provider memory for 15 minutes; restart/expiry requires fresh planning, never replay. Deferred fields continue after reconciliation. Uncertain/custom controls stay in needs_attention. Full snapshots can also propose one section-expansion or next-step click; each requires fresh observation. No Browser effects or final submission.",
   inputSchema: schema.object({
     ...scopeProperties,
+    upload_source: schema.optional(schema.object({
+      project: schema.string({ minLength: 1, maxLength: 512 }),
+      project_root: schema.optional(schema.string({ maxLength: 4096 })),
+    })),
     title: schema.string({ maxLength: 1000 }),
     nodes: schema.array(nodeSchema, { maxItems: 256 }),
     mapping_hints: schema.optional(schema.array(mappingHintSchema, { maxItems: 256 })),
@@ -558,7 +571,7 @@ const planFill = defineTool({
     review_reason: schema.optional(schema.string({ maxLength: 500 })),
   }),
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  async execute({ title, nodes: rawNodes, mapping_hints, ...scope }) {
+  async execute({ title, nodes: rawNodes, mapping_hints, upload_source, ...scope }) {
     const nodes = rawNodes.map(node => ({ ...node, name: node.name ?? "" }));
     const { url } = scope;
     const resume = loadResumeProfile();
@@ -581,24 +594,30 @@ const planFill = defineTool({
         proposed_value: adaptValue(site_kind, item.canonical_field, item.proposed_value),
       }))
       .filter((item) => {
-        const expectedFileName = item.proposed_value.split(/[\\/]/).pop() ?? item.proposed_value;
+        const expectedFileName = uploadFileName(item.proposed_value);
         const alreadySatisfied =
           item.current_value === item.proposed_value ||
-          (item.support === "upload_file" && item.current_value === expectedFileName);
+          (item.support === "upload_file" && uploadFileName(item.current_value) === expectedFileName);
         return (
           item.support !== "manual_review" &&
           item.proposed_value.length > 0 &&
           !alreadySatisfied
         );
       })
-      .map((item) => ({
-        mapping_id: item.mapping_id,
-        kind: item.support,
-        label: item.label,
-        element_id: item.element_id,
-        value: item.proposed_value,
-        confidence: item.confidence,
-      }));
+      .map((item) => {
+        const upload = item.support === "upload_file"
+          ? resolveUploadLocation(item.proposed_value, upload_source) : undefined;
+        return {
+          mapping_id: item.mapping_id,
+          kind: item.support,
+          label: item.label,
+          element_id: item.element_id,
+          value: item.proposed_value,
+          confidence: item.confidence,
+          ...(item.desired_state === undefined ? {} : { desired_state: item.desired_state }),
+          ...(upload ? { upload } : {}),
+        };
+      });
 
     if (!actions.length && !analysis.blockers.length) {
       if (flow.review_required) return textResult("Review required; never submit automatically.", {

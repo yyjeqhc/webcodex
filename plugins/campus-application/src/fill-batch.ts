@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { SnapshotNode } from "./form-cache.js";
+import { choiceState, isChoiceControl, type SnapshotNode } from "./form-cache.js";
+import { uploadFileName, type UploadLocation } from "./upload-source.js";
 
-export type FillAction = { mapping_id?: string; kind: string; label: string; element_id: string; value: string; confidence: number };
+export type FillAction = { mapping_id?: string; kind: string; label: string; element_id: string; value: string; confidence: number;
+  desired_state?: boolean; upload?: UploadLocation };
 export type FillScope = { client_id: string; browser_id: string; page_id: string; snapshot_generation: number; url: string };
 export type Operation = { action: "input_text"; element_id: string; text: string }
   | { action: "select_option"; element_id: string; option: string }
-  | { action: "set_value"; element_id: string; value: string };
+  | { action: "set_value"; element_id: string; value: string }
+  | { action: "click"; element_id: string }
+  | { action: "upload_file"; element_id: string; project: string; path: string };
 export type Attention = { mapping_id?: string; label: string; status: "mismatch" | "unresolved"; reason: string };
 export type Batch = { action: "batch"; client_id: string; browser_id: string; page_id: string; operations: Operation[] };
 type Field = { identity: string; action: FillAction };
@@ -35,11 +39,34 @@ function indexNodes(nodes: readonly SnapshotNode[]): Map<string, SnapshotNode[]>
   }
   return index;
 }
+export function fieldSatisfied(action: FillAction, node: SnapshotNode): boolean {
+  if (node.form_context?.aria_invalid) return false;
+  if (action.kind === "click") return typeof action.desired_state === "boolean"
+    && choiceState(node) === action.desired_state;
+  if (action.kind === "upload_file") {
+    const expected = uploadFileName(action.value);
+    return expected.length > 0 && (node.value !== undefined && uploadFileName(node.value) === expected
+      || node.value === undefined && node.name === expected);
+  }
+  return node.value !== undefined && node.value === action.value;
+}
+function knownReadback(action: FillAction, node?: SnapshotNode): boolean {
+  if (!node) return false;
+  return action.kind === "click" ? choiceState(node) !== undefined : node.value !== undefined;
+}
 function operation(action: FillAction, node: SnapshotNode): Operation | undefined {
   if (!node.actionable || node.disabled || node.read_only || !node.element_id
     || !node.actions?.includes(action.kind) || action.confidence < 0.9
     || !action.value || action.value.includes("\0") || Buffer.byteLength(action.value) > 4096) return;
   const element_id = node.element_id;
+  if (action.kind === "click" && isChoiceControl(node)
+    && typeof action.desired_state === "boolean" && choiceState(node) !== undefined
+    && choiceState(node) !== action.desired_state
+    && (action.desired_state || ["checkbox", "switch", "menuitemcheckbox"].includes(node.role.toLowerCase())
+      || node.form_context?.input_type?.toLowerCase() === "checkbox")) return { action: "click", element_id };
+  if (action.kind === "upload_file" && action.upload) return {
+    action: "upload_file", element_id, ...action.upload,
+  };
   if (action.kind === "input_text" && node.value === ""
     && ["input", "textarea"].includes(node.form_context?.dom_tag.toLowerCase() ?? "")) return { action: "input_text", element_id, text: action.value };
   if (action.kind === "select_option" && node.form_context?.dom_tag.toLowerCase() === "select") {
@@ -80,8 +107,9 @@ export function createFillBatch(scope: FillScope, nodes: readonly SnapshotNode[]
     const matches = nodes.filter(node => node.element_id === action.element_id);
     const node = matches.length === 1 ? matches[0] : undefined;
     const key = node && identity(node);
+    if (node && fieldSatisfied(action, node)) continue;
     if (!node || !key || indexed.get(key)?.length !== 1 || seen.has(key) || !operation(action, node)) {
-      needs_attention.push({ ...(action.mapping_id ? { mapping_id: action.mapping_id } : {}), label: action.label, status: "unresolved", reason: "Requires a supported, uniquely identified admitted native control or explicit mapping." });
+      needs_attention.push({ ...(action.mapping_id ? { mapping_id: action.mapping_id } : {}), label: action.label, status: "unresolved", reason: "Requires a supported, uniquely identified admitted control, explicit choice state, or upload_source project/path." });
       continue;
     }
     seen.add(key);
@@ -123,13 +151,14 @@ export function reconcileFill(plan_id: string, scope: FillScope, nodes: readonly
     const matches = indexed.get(field.identity);
     const node = matches?.length === 1 ? matches[0] : undefined;
     const issuedIndex = plan.issued.indexOf(field);
-    if (node?.value !== undefined && node.value === field.action.value && !node.form_context?.aria_invalid) {
+    if (node && fieldSatisfied(field.action, node)) {
       confirmed++;
       continue;
     }
-    const clipped = node?.value !== undefined && Buffer.byteLength(field.action.value) > 512
+    const clipped = field.action.kind !== "click" && field.action.kind !== "upload_file"
+      && node?.value !== undefined && Buffer.byteLength(field.action.value) > 512
       && field.action.value.startsWith(node.value);
-    const status = node?.value === undefined || clipped ? "unresolved" : "mismatch";
+    const status = !knownReadback(field.action, node) || clipped ? "unresolved" : "mismatch";
     // Never infer execution from readback. Interrupted/missing receipts retain all
     // mismatches as attention, including definitely unstarted fields. A new plan
     // may use fresh observations after the caller resolves the stopped boundary.
@@ -139,7 +168,7 @@ export function reconcileFill(plan_id: string, scope: FillScope, nodes: readonly
         : issuedIndex < 0 || issuedIndex >= count - receipt.remaining_count! ? "Definitely unstarted"
         : "Effect uncertain";
       needs_attention.push({ ...(field.action.mapping_id ? { mapping_id: field.action.mapping_id } : {}), label: field.action.label, status, reason: `${progress}; inspect fresh state before a new plan; do not replay the batch.` });
-    } else if (!node || clipped || node.form_context?.aria_invalid || !operation(field.action, node)) {
+    } else if (!node || !knownReadback(field.action, node) || clipped || node.form_context?.aria_invalid || !operation(field.action, node)) {
       unresolved.push(field);
       needs_attention.push({ ...(field.action.mapping_id ? { mapping_id: field.action.mapping_id } : {}), label: field.action.label, status, reason: clipped ? "Readback value may be clipped; do not repeat the effect."
           : node?.form_context?.aria_invalid ? "Page reports validation failure; resolve this field before another effect."

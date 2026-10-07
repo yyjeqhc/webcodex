@@ -296,6 +296,8 @@ export function isResumeUpload(node: SnapshotNode): boolean {
 const choiceAliasGroups = [
   ["是", "yes", "true", "1", "接受", "accept"],
   ["否", "no", "false", "0", "不接受", "decline"],
+  ["男", "男性", "male"],
+  ["女", "女性", "female"],
 ] as const;
 
 export function choiceMatches(option: string, desired: string): boolean {
@@ -309,9 +311,29 @@ export function choiceMatches(option: string, desired: string): boolean {
   });
 }
 
+export function booleanChoice(value: string): boolean | undefined {
+  if (choiceMatches(value, "true")) return true;
+  if (choiceMatches(value, "false")) return false;
+  return undefined;
+}
+
+export function isChoiceControl(node: SnapshotNode): boolean {
+  return ["radio", "checkbox", "switch", "option", "menuitemradio", "menuitemcheckbox"].includes(node.role.toLowerCase())
+    || (node.form_context?.dom_tag.toLowerCase() === "input"
+      && ["radio", "checkbox"].includes(node.form_context?.input_type?.toLowerCase() ?? ""));
+}
+
+export function choiceState(node: SnapshotNode): boolean | undefined {
+  const checked = node.checked === "true" ? true : node.checked === "false" ? false : undefined;
+  if (node.checked !== undefined && checked === undefined) return;
+  if (checked !== undefined && node.selected !== undefined && checked !== node.selected) return;
+  return checked ?? node.selected;
+}
+
 function isStructureNode(node: SnapshotNode): boolean {
   const role = node.role.toLowerCase();
   if (node.actionable && isUploadControl(node)) return true;
+  if (isChoiceControl(node)) return true;
   return [
     "textbox",
     "searchbox",
@@ -399,7 +421,6 @@ function deriveMappings(
   }
 
   for (const { node, key } of entries) {
-    const role = node.role.toLowerCase();
     if (node.actionable && isResumeUpload(node)) {
       mappings.set(key, {
         canonicalField: "resume_path",
@@ -445,15 +466,14 @@ function deriveMappings(
       }
     }
 
-    if ((role === "radio" || role === "checkbox") && node.group_label) {
-      const match = matchField(node.group_label);
-      if (match) {
-        mappings.set(key, {
-          ...match,
-          resumePath: resumePathForCanonicalField(match.canonicalField),
-          source: "group",
-        });
-      }
+    const choiceGroupLabel = node.group_label ?? node.form_context?.group_label;
+    const groupMatch = isChoiceControl(node) && choiceGroupLabel ? matchField(choiceGroupLabel) : undefined;
+    if (groupMatch) {
+      mappings.set(key, {
+        ...groupMatch,
+        resumePath: resumePathForCanonicalField(groupMatch.canonicalField),
+        source: "group",
+      });
       continue;
     }
 

@@ -116,4 +116,45 @@ test("real provider batches native choice/upload, skips satisfied states, and ne
   assert.equal(noProject.batch, undefined);
   assert.match(noProject.needs_attention[0].reason, /upload_source/);
 });
+test("provider plans admitted custom choices and compactly continues a verified sibling batch", { timeout: 10000 }, async t => {
+  const dir = await mkdtemp(join(tmpdir(), "campus-custom-choice-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const call = await provider(t, dir);
+  const combo = (name, i) => ({ ...node(name, i), role: "combobox", read_only: true, actions: ["select_choice"],
+    form_context: { field_signature: "combo-sig-" + i, dom_tag: "input", component_hint: "select" } });
+  const nodes = [node("姓名", 0), combo("学历", 1), combo("政治面貌", 2), combo("性别", 3)];
+  const plan = await call("plan_fill", { ...scope, title: "Fictional custom form", nodes, widget_batch_limit: 3 });
+  assert.equal(plan.batch.operations.length, 1);
+  assert.equal(plan.deferred_count, 3);
+  const fresh = nodes.map(n => ({ ...n, element_id: "fresh-" + n.element_id }));
+  fresh[0].value = "示例候选人";
+  const choices = await call("reconcile_fill", { ...scope, snapshot_generation: 2, plan_id: plan.plan_id, nodes: fresh,
+    receipt: { execution_state: "completed", requested_count: 1, completed_count: 1, remaining_count: 0, stability: { stable: true } } });
+  assert.equal(choices.batch.operations.length, 3);
+  assert.deepEqual(choices.batch.operations.map(op => op.choice_path), [["硕士"], ["群众"], ["男"]]);
+  assert.ok(choices.batch.operations.every(op => op.action === "select_choice" && op.path === undefined));
+  ["硕士", "群众", "男"].forEach((value, i) => { fresh[i + 1].value = value; });
+  const result = await call("reconcile_fill", { ...scope, snapshot_generation: 3, plan_id: choices.plan_id, nodes: fresh,
+    receipt: { execution_state: "completed", requested_count: 3, completed_count: 3, remaining_count: 0, stability: { stable: true } } });
+  assert.deepEqual(result, { confirmed: 3, needs_attention: [] });
+  const unadmitted = await call("plan_fill", { ...scope, title: "Fictional old Runner",
+    nodes: [{ ...combo("学历", 7), actions: ["click", "select_option"] }] });
+  assert.equal(unadmitted.batch, undefined);
+  assert.equal(unadmitted.needs_attention.length, 1);
+});
+test("learned custom choice_value survives provider restart without repeated model interpretation", { timeout: 10000 }, async t => {
+  const dir = await mkdtemp(join(tmpdir(), "campus-choice-memory-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const call = await provider(t, dir);
+  const nodes = [{ ...node("", 0), role: "combobox", actions: ["select_choice"] }];
+  const analysis = await call("analyze_form", { title: "Fictional choice", url: scope.url, nodes });
+  const mapping_id = analysis.unmapped_candidates[0].mapping_id;
+  const taught = await call("plan_fill", { ...scope, title: "Fictional choice", nodes,
+    mapping_hints: [{ mapping_id, canonical_field: "degree", choice_value: "研究生（硕士）" }] });
+  assert.deepEqual(taught.batch.operations[0].choice_path, ["研究生（硕士）"]);
+  const restarted = await provider(t, dir);
+  const reused = await restarted("plan_fill", { ...scope, title: "Fictional choice", nodes: [{ ...nodes[0], element_id: "fresh" }] });
+  assert.deepEqual(reused.batch.operations, [{ action: "select_choice", element_id: "fresh", choice_path: ["研究生（硕士）"] }]);
+});
+
 

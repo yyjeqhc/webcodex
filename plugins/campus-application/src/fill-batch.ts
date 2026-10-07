@@ -1,19 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { choiceState, isChoiceControl, type SnapshotNode } from "./form-cache.js";
 import { uploadFileName, type UploadLocation } from "./upload-source.js";
+import { choiceReadback, validChoicePath } from "./widget-values.js";
 
 export type FillAction = { mapping_id?: string; kind: string; label: string; element_id: string; value: string; confidence: number;
-  desired_state?: boolean; upload?: UploadLocation };
+  desired_state?: boolean; upload?: UploadLocation; choice_path?: string[] };
 export type FillScope = { client_id: string; browser_id: string; page_id: string; snapshot_generation: number; url: string };
 export type Operation = { action: "input_text"; element_id: string; text: string }
   | { action: "select_option"; element_id: string; option: string }
   | { action: "set_value"; element_id: string; value: string }
   | { action: "click"; element_id: string }
-  | { action: "upload_file"; element_id: string; project: string; path: string };
+  | { action: "upload_file"; element_id: string; project: string; path: string }
+  | { action: "select_choice"; element_id: string; choice_path: string[] };
 export type Attention = { mapping_id?: string; label: string; status: "mismatch" | "unresolved"; reason: string };
 export type Batch = { action: "batch"; client_id: string; browser_id: string; page_id: string; operations: Operation[] };
-type Field = { identity: string; action: FillAction };
-type Plan = { scope: FillScope; fields: Field[]; issued: Field[]; expires: number };
+type Field = { identity: string; action: FillAction; replayBlocked?: boolean };
+type Plan = { scope: FillScope; fields: Field[]; issued: Field[]; expires: number; widgetBatchLimit: number };
 export type Receipt = {
   execution_state?: string | undefined; stability?: { stable: boolean } | undefined;
   requested_count?: number | undefined; completed_count?: number | undefined;
@@ -28,7 +30,8 @@ const MAX_PLANS = 32;
 // repeated entries. Without provenance only a unique semantic identity is usable.
 function identity(node: SnapshotNode): string {
   return JSON.stringify([node.form_context?.field_signature ?? "", node.role,
-    node.name, node.group_label ?? "", node.form_context?.section_label ?? "",
+    node.form_context?.field_signature && !isChoiceControl(node) ? "" : node.name,
+    node.group_label ?? "", node.form_context?.section_label ?? "",
     node.form_context?.group_label ?? "", node.form_context?.group_index ?? null]);
 }
 function indexNodes(nodes: readonly SnapshotNode[]): Map<string, SnapshotNode[]> {
@@ -39,8 +42,10 @@ function indexNodes(nodes: readonly SnapshotNode[]): Map<string, SnapshotNode[]>
   }
   return index;
 }
+function isWidget(action: FillAction): boolean { return action.kind === "select_choice"; }
 export function fieldSatisfied(action: FillAction, node: SnapshotNode): boolean {
   if (node.form_context?.aria_invalid) return false;
+  if (action.kind === "select_choice" && action.choice_path) return choiceReadback(node, action.choice_path) === "confirmed";
   if (action.kind === "click") return typeof action.desired_state === "boolean"
     && choiceState(node) === action.desired_state;
   if (action.kind === "upload_file") {
@@ -52,13 +57,17 @@ export function fieldSatisfied(action: FillAction, node: SnapshotNode): boolean 
 }
 function knownReadback(action: FillAction, node?: SnapshotNode): boolean {
   if (!node) return false;
+  if (action.kind === "select_choice" && action.choice_path) return choiceReadback(node, action.choice_path) !== "unresolved";
   return action.kind === "click" ? choiceState(node) !== undefined : node.value !== undefined;
 }
 function operation(action: FillAction, node: SnapshotNode): Operation | undefined {
-  if (!node.actionable || node.disabled || node.read_only || !node.element_id
+  if (!node.actionable || node.disabled || (node.read_only && !isWidget(action)) || !node.element_id
     || !node.actions?.includes(action.kind) || action.confidence < 0.9
     || !action.value || action.value.includes("\0") || Buffer.byteLength(action.value) > 4096) return;
   const element_id = node.element_id;
+  if (action.kind === "select_choice" && validChoicePath(action.choice_path)) return {
+    action: "select_choice", element_id, choice_path: [...action.choice_path],
+  };
   if (action.kind === "click" && isChoiceControl(node)
     && typeof action.desired_state === "boolean" && choiceState(node) !== undefined
     && choiceState(node) !== action.desired_state
@@ -82,22 +91,27 @@ function prune(): void {
 }
 function issue(plan: Plan, nodes: readonly SnapshotNode[]): Batch | undefined {
   const indexed = indexNodes(nodes);
-  const operations: Operation[] = [];
-  plan.issued = [];
-  for (const field of plan.fields) {
+  const candidates = plan.fields.flatMap(field => {
     const matches = indexed.get(field.identity);
     const node = matches?.length === 1 ? matches[0] : undefined;
-    const op = node && operation(field.action, node);
-    if (op) { operations.push(op); plan.issued.push(field); }
-    if (operations.length === 32) break;
-  }
+    const op = !field.replayBlocked && node && operation(field.action, node);
+    return op ? [{ field, op }] : [];
+  });
+  // Native operations share the ordinary 32-field batch. Custom widgets can
+  // rerender siblings: batch them separately and only widen the default one-op
+  // boundary when the caller has verified sibling authority on this form.
+  const native = candidates.filter(item => !isWidget(item.field.action));
+  const chosen = native.length ? native.slice(0, 32) : candidates.slice(0, plan.widgetBatchLimit);
+  plan.issued = chosen.map(item => item.field);
+  const operations = chosen.map(item => item.op);
   if (!operations.length) return;
   return { action: "batch", client_id: plan.scope.client_id, browser_id: plan.scope.browser_id,
     page_id: plan.scope.page_id, operations };
 }
-export function createFillBatch(scope: FillScope, nodes: readonly SnapshotNode[], actions: readonly FillAction[], blockers: readonly Attention[] = []) {
+export function createFillBatch(scope: FillScope, nodes: readonly SnapshotNode[], actions: readonly FillAction[], blockers: readonly Attention[] = [], widgetBatchLimit = 1) {
   if (!Number.isSafeInteger(scope.snapshot_generation) || scope.snapshot_generation < 1
-    || nodes.length > 256 || actions.length > 256) throw new Error("Invalid bounded snapshot");
+    || nodes.length > 256 || actions.length > 256
+    || !Number.isInteger(widgetBatchLimit) || widgetBatchLimit < 1 || widgetBatchLimit > 8) throw new Error("Invalid bounded snapshot or widget batch limit");
   prune();
   const indexed = indexNodes(nodes);
   const fields: Field[] = [];
@@ -115,7 +129,7 @@ export function createFillBatch(scope: FillScope, nodes: readonly SnapshotNode[]
     seen.add(key);
     fields.push({ identity: key, action });
   }
-  const plan: Plan = { scope, fields, issued: [], expires: Date.now() + TTL };
+  const plan: Plan = { scope, fields, issued: [], expires: Date.now() + TTL, widgetBatchLimit };
   const batch = issue(plan, nodes);
   if (!batch) return { needs_attention };
   const plan_id = randomUUID();
@@ -168,9 +182,13 @@ export function reconcileFill(plan_id: string, scope: FillScope, nodes: readonly
         : issuedIndex < 0 || issuedIndex >= count - receipt.remaining_count! ? "Definitely unstarted"
         : "Effect uncertain";
       needs_attention.push({ ...(field.action.mapping_id ? { mapping_id: field.action.mapping_id } : {}), label: field.action.label, status, reason: `${progress}; inspect fresh state before a new plan; do not replay the batch.` });
-    } else if (!node || !knownReadback(field.action, node) || clipped || node.form_context?.aria_invalid || !operation(field.action, node)) {
+    } else if (!field.replayBlocked && issuedIndex < 0 && node && !node.form_context?.aria_invalid && operation(field.action, node)) {
+      pending.push(field);
+    } else if (field.replayBlocked || !node || isWidget(field.action) || !knownReadback(field.action, node) || clipped || node.form_context?.aria_invalid || !operation(field.action, node)) {
+      if (isWidget(field.action) && issuedIndex >= 0) field.replayBlocked = true;
       unresolved.push(field);
-      needs_attention.push({ ...(field.action.mapping_id ? { mapping_id: field.action.mapping_id } : {}), label: field.action.label, status, reason: clipped ? "Readback value may be clipped; do not repeat the effect."
+      needs_attention.push({ ...(field.action.mapping_id ? { mapping_id: field.action.mapping_id } : {}), label: field.action.label, status: isWidget(field.action) ? "unresolved" : status, reason: clipped ? "Readback value may be clipped; do not repeat the effect."
+          : isWidget(field.action) ? "Completed widget requires a unique semantic value/path readback; inspect this field without repeating the effect."
           : node?.form_context?.aria_invalid ? "Page reports validation failure; resolve this field before another effect."
           : "No unique fresh admitted control/value; inspect only this field." });
     } else {
@@ -180,7 +198,7 @@ export function reconcileFill(plan_id: string, scope: FillScope, nodes: readonly
     }
   }
   if (!pending.length) return { confirmed, needs_attention };
-  const next: Plan = { scope, fields: [...pending], issued: [], expires: Date.now() + TTL };
+  const next: Plan = { scope, fields: [...pending], issued: [], expires: Date.now() + TTL, widgetBatchLimit: plan.widgetBatchLimit };
   const batch = issue(next, nodes);
   next.fields.push(...unresolved);
   if (!batch) return { confirmed, needs_attention };

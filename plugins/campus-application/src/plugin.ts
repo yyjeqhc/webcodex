@@ -1,6 +1,6 @@
-import { createFillBatch, reconcileFill, type Attention } from "./fill-batch.js";
+import { createFillBatch, fieldSatisfied, reconcileFill, type Attention, type FillAction } from "./fill-batch.js";
 import { choiceGroupKey, planChoiceGroup } from "./choice-controls.js";
-import { resolveUploadLocation, uploadFileName } from "./upload-source.js";
+import { resolveUploadLocation } from "./upload-source.js";
 import {
   definePlugin,
   errorResult,
@@ -100,9 +100,10 @@ const recognizedSchema = schema.object({
   current_value: schema.string({ maxLength: 4096 }),
   proposed_value: schema.string({ maxLength: 4096 }),
   desired_state: schema.optional(schema.boolean()),
+  choice_value: schema.optional(schema.string({ maxLength: 500 })),
   confidence: schema.number(),
   support: schema.string({
-    enum: ["input_text", "select_option", "set_value", "upload_file", "click", "manual_review"] as const,
+    enum: ["input_text", "select_option", "set_value", "select_choice", "upload_file", "click", "manual_review"] as const,
   }),
 });
 
@@ -152,6 +153,7 @@ const flowActionSchema = schema.object({
 type FillSupport =
   | "input_text"
   | "select_option"
+  | "select_choice"
   | "set_value"
   | "upload_file"
   | "click"
@@ -162,8 +164,9 @@ function supportFor(node: SnapshotNode): FillSupport {
   if (node.actions?.includes("upload_file") === true || isResumeUpload(node)) {
     return "upload_file";
   }
+  if (node.actions?.includes("select_choice") && node.form_context?.dom_tag.toLowerCase() !== "select") return "select_choice";
+  if (role === "combobox" || role === "listbox") return node.form_context?.dom_tag.toLowerCase() === "select" ? "select_option" : "manual_review";
   if (node.actions?.includes("set_value")) return "set_value";
-  if (role === "combobox" || role === "listbox") return "select_option";
   if (role === "datetime" || role === "date" || role === "time") return "set_value";
   if (role === "textbox" || role === "searchbox" || role === "spinbutton") return "input_text";
   return "manual_review";
@@ -226,6 +229,7 @@ function analyzeNodes(
     confidence: number;
     support: FillSupport;
     desired_state?: boolean;
+    choice_value?: string;
   }> = [];
   const blockers: Array<{
     mapping_id: string;
@@ -432,6 +436,7 @@ function analyzeNodes(
       proposed_value: resolvedValue.value,
       confidence: mapping.confidence,
       support,
+      ...(mapping.choiceValue === undefined ? {} : { choice_value: mapping.choiceValue }),
     });
     if (support === "manual_review") {
       blockers.push({
@@ -529,13 +534,14 @@ const batchSchema = schema.object({
   browser_id: scopeProperties.browser_id,
   page_id: scopeProperties.page_id,
   operations: schema.array(schema.object({
-    action: schema.string({ enum: ["input_text", "select_option", "set_value", "click", "upload_file"] as const }),
+    action: schema.string({ enum: ["input_text", "select_option", "set_value", "select_choice", "click", "upload_file"] as const }),
     element_id: schema.string({ maxLength: 160 }),
     text: schema.optional(schema.string({ maxLength: 4096 })),
     option: schema.optional(schema.string({ maxLength: 4096 })),
     value: schema.optional(schema.string({ maxLength: 4096 })),
     project: schema.optional(schema.string({ maxLength: 512 })),
     path: schema.optional(schema.string({ maxLength: 4096 })),
+    choice_path: schema.optional(schema.array(schema.string({ minLength: 1, maxLength: 4096 }), { minItems: 1, maxItems: 4 })),
   }), { minItems: 1, maxItems: 32 }),
 });
 const attentionSchema = schema.array(schema.object({
@@ -552,9 +558,10 @@ const fillResultProperties = {
 };
 const planFill = defineTool({
   name: "plan_fill",
-  description: "Plan one executable Browser batch from a fresh semantic query (prefer query.fields_only=true, optionally section/group; up to 256 nodes). Copy batch unchanged into control_browser; 1..32 admitted text/select/choice/upload operations, no per-field calls. Uploads require explicit upload_source.project; provide project_root when the profile resume path is absolute or home-relative. Browser independently authorizes this Project/path. Choice toggles require known checked/selected state and never click group wrappers. Then take ONE fresh query and pass it with the batch receipt to reconcile_fill. plan_id keeps expectations only in bounded provider memory for 15 minutes; restart/expiry requires fresh planning, never replay. Deferred fields continue after reconciliation. Uncertain/custom controls stay in needs_attention. Full snapshots can also propose one section-expansion or next-step click; each requires fresh observation. No Browser effects or final submission.",
+  description: "Plan one executable Browser batch from a fresh semantic query (prefer query.fields_only=true, optionally section/group; up to 256 nodes). Copy batch unchanged into control_browser; 1..32 admitted text/select/choice/upload operations, no per-field calls. Uploads require explicit upload_source.project; provide project_root when the profile resume path is absolute or home-relative. Browser independently authorizes this Project/path. Choice toggles require known checked/selected state and never click group wrappers. Then take ONE fresh query and pass it with the batch receipt to reconcile_fill. plan_id keeps expectations only in bounded provider memory for 15 minutes; restart/expiry requires fresh planning, never replay. Deferred fields continue after reconciliation. Admitted custom choices use one select_choice operation with choice_path (1..4 exact labels). Native fields run first. Widgets default to one operation per batch; widget_batch_limit=2..8 is for a form with verified stable sibling authority. The same limit continues across fresh reconciliation; never replay uncertain batches. Unsupported or ambiguous controls stay in needs_attention. Full snapshots can also propose one section-expansion or next-step click; each requires fresh observation. No Browser effects or final submission.",
   inputSchema: schema.object({
     ...scopeProperties,
+    widget_batch_limit: schema.optional(schema.integer({ enum: [1, 2, 3, 4, 5, 6, 7, 8] })),
     upload_source: schema.optional(schema.object({
       project: schema.string({ minLength: 1, maxLength: 512 }),
       project_root: schema.optional(schema.string({ maxLength: 4096 })),
@@ -571,7 +578,7 @@ const planFill = defineTool({
     review_reason: schema.optional(schema.string({ maxLength: 500 })),
   }),
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  async execute({ title, nodes: rawNodes, mapping_hints, upload_source, ...scope }) {
+  async execute({ title, nodes: rawNodes, mapping_hints, upload_source, widget_batch_limit, ...scope }) {
     const nodes = rawNodes.map(node => ({ ...node, name: node.name ?? "" }));
     const { url } = scope;
     const resume = loadResumeProfile();
@@ -588,38 +595,28 @@ const planFill = defineTool({
     if (sectionExpansion) return textResult("Expand once, then observe the changed section.", {
       phase: "expand_sections", section_actions: [sectionExpansion] as SectionExpansionAction[], needs_attention: [] as Attention[],
     });
-    const actions = analysis.recognized
-      .map((item) => ({
-        ...item,
-        proposed_value: adaptValue(site_kind, item.canonical_field, item.proposed_value),
-      }))
-      .filter((item) => {
-        const expectedFileName = uploadFileName(item.proposed_value);
-        const alreadySatisfied =
-          item.current_value === item.proposed_value ||
-          (item.support === "upload_file" && uploadFileName(item.current_value) === expectedFileName);
-        return (
-          item.support !== "manual_review" &&
-          item.proposed_value.length > 0 &&
-          !alreadySatisfied
-        );
-      })
-      .map((item) => {
-        const upload = item.support === "upload_file"
-          ? resolveUploadLocation(item.proposed_value, upload_source) : undefined;
-        return {
-          mapping_id: item.mapping_id,
-          kind: item.support,
-          label: item.label,
-          element_id: item.element_id,
-          value: item.proposed_value,
-          confidence: item.confidence,
-          ...(item.desired_state === undefined ? {} : { desired_state: item.desired_state }),
-          ...(upload ? { upload } : {}),
-        };
-      });
+    const blockers: Attention[] = analysis.blockers.map(item => ({
+      mapping_id: item.mapping_id, label: item.label, status: "unresolved", reason: item.reason,
+    }));
+    const actions: FillAction[] = [];
+    for (const item of analysis.recognized) {
+      if (item.support === "manual_review") continue;
+      const value = item.support === "select_choice" && item.choice_value !== undefined
+        ? item.choice_value : adaptValue(site_kind, item.canonical_field, item.proposed_value);
+      const upload = item.support === "upload_file" ? resolveUploadLocation(value, upload_source) : undefined;
+      const action: FillAction = {
+        mapping_id: item.mapping_id, kind: item.support, label: item.label,
+        element_id: item.element_id, value, confidence: item.confidence,
+        ...(item.desired_state === undefined ? {} : { desired_state: item.desired_state }),
+        ...(upload ? { upload } : {}),
+        ...(item.support === "select_choice" ? { choice_path: [value] } : {}),
+      };
+      const matching = nodes.filter(node => node.element_id === item.element_id);
+      if (matching.length === 1 && fieldSatisfied(action, matching[0]!)) continue;
+      actions.push(action);
+    }
 
-    if (!actions.length && !analysis.blockers.length) {
+    if (!actions.length && !blockers.length) {
       if (flow.review_required) return textResult("Review required; never submit automatically.", {
         phase: "ready_for_review", review_reason: flow.review_reason, needs_attention: [] as Attention[],
       });
@@ -627,9 +624,7 @@ const planFill = defineTool({
         phase: "advance_step", flow_actions: [flow.advance] as FlowAction[], needs_attention: [] as Attention[],
       });
     }
-    const result = createFillBatch(scope, nodes, actions, analysis.blockers.map(item => ({
-      mapping_id: item.mapping_id, label: item.label, status: "unresolved" as const, reason: item.reason,
-    })));
+    const result = createFillBatch(scope, nodes, actions, blockers, widget_batch_limit);
     return textResult("Execute batch once, then fresh semantic readback → reconcile_fill.", {
       phase: "fill_fields", ...result,
     });

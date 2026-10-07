@@ -334,6 +334,7 @@ function isStructureNode(node: SnapshotNode): boolean {
   const role = node.role.toLowerCase();
   if (node.actionable && isUploadControl(node)) return true;
   if (isChoiceControl(node)) return true;
+  if (node.actions?.some(action => ["select_choice", "set_date"].includes(action))) return true;
   return [
     "textbox",
     "searchbox",
@@ -404,7 +405,7 @@ function deriveMappings(
   // province + city. A single projected control can safely use an exact group label,
   // while two or more projected controls keep the group observable but unmapped.
   const hasDataAction = (node: SnapshotNode): boolean =>
-    ["input_text", "select_option", "set_value", "upload_file"].some(
+    ["input_text", "select_option", "set_value", "upload_file", "select_choice", "set_date"].some(
       (action) => node.actions?.includes(action) === true,
     );
   const projectedGroupDataCounts = new Map<string, number>();

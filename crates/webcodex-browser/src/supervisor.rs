@@ -421,7 +421,9 @@ impl BrowserSupervisor {
             nodes.push(projected);
         }
         let next_offset = node_offset.saturating_add(nodes.len());
-        let next_node_offset = (next_offset < source_node_count).then_some(next_offset);
+        let next_node_offset = (next_offset < source_node_count
+            && next_offset <= crate::MAX_SNAPSHOT_OFFSET)
+            .then_some(next_offset);
         Ok(SemanticSnapshot {
             browser_id: browser_id.to_string(),
             page_id: page_id.to_string(),
@@ -2879,6 +2881,43 @@ mod tests {
         assert_eq!(tail.nodes[0].name.as_deref(), Some("Go 18"));
         assert_eq!(tail.nodes[1].name.as_deref(), Some("Go 19"));
         assert!(!tail.truncated);
+    }
+
+    #[test]
+    fn snapshot_window_never_advertises_an_unreachable_offset() {
+        struct LargeWindowFactory;
+        impl BackendFactory for LargeWindowFactory {
+            fn available(&self) -> bool {
+                true
+            }
+
+            fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
+                Ok(Box::new(FakeBackend::with_snapshot_nodes(
+                    crate::MAX_SNAPSHOT_OFFSET + MAX_SNAPSHOT_NODES + 1,
+                )))
+            }
+        }
+
+        let supervisor = BrowserSupervisor::with_factory(Arc::new(LargeWindowFactory));
+        let browser = supervisor.launch().unwrap();
+        let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+        let boundary = supervisor
+            .snapshot_window(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+                crate::MAX_SNAPSHOT_OFFSET,
+            )
+            .unwrap();
+
+        assert_eq!(boundary.node_offset, crate::MAX_SNAPSHOT_OFFSET);
+        assert!(boundary.node_count > 0);
+        assert!(boundary.node_count <= MAX_SNAPSHOT_NODES);
+        assert_eq!(boundary.nodes[0].name.as_deref(), Some("Go 4096"));
+        assert_eq!(boundary.next_node_offset, None);
+        assert!(boundary.truncated);
     }
 
     #[test]

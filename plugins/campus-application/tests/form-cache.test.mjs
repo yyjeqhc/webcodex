@@ -446,6 +446,90 @@ test("machine-oriented form names require exact canonical matches", () => {
   assert.equal(exactPhone.nodes[0]?.mapping?.source, "form_context");
 });
 
+test("generic multi-control group labels stay observable without unsafe composite auto-mapping", () => {
+  const composite = resolveFormMappings(
+    [
+      {
+        role: "combobox",
+        name: "",
+        group_label: "籍贯",
+        element_id: "element_native_place_province",
+        actionable: true,
+        actions: ["select_option"],
+        form_context: {
+          field_signature: "000000000000000000000001",
+          dom_tag: "select",
+          html_name: "field_1",
+          group_label: "籍贯",
+          group_index: 0,
+          group_size: 2,
+        },
+      },
+      {
+        role: "combobox",
+        name: "",
+        group_label: "籍贯",
+        element_id: "element_native_place_city",
+        actionable: true,
+        actions: ["select_option"],
+        form_context: {
+          field_signature: "000000000000000000000002",
+          dom_tag: "select",
+          html_name: "field_2",
+          group_label: "籍贯",
+          group_index: 1,
+          group_size: 2,
+        },
+      },
+    ],
+    [],
+    "composite-group.example",
+  );
+  assert.equal(composite.nodes[0]?.mapping, undefined);
+  assert.equal(composite.nodes[1]?.mapping, undefined);
+
+  const choices = resolveFormMappings(
+    [
+      {
+        role: "radio",
+        name: "男",
+        group_label: "性别",
+        element_id: "element_gender_male",
+        actionable: true,
+        actions: ["click"],
+        form_context: {
+          field_signature: "111111111111111111111111",
+          dom_tag: "input",
+          input_type: "radio",
+          group_label: "性别",
+          group_index: 0,
+          group_size: 2,
+        },
+      },
+      {
+        role: "radio",
+        name: "女",
+        group_label: "性别",
+        element_id: "element_gender_female",
+        actionable: true,
+        actions: ["click"],
+        form_context: {
+          field_signature: "222222222222222222222222",
+          dom_tag: "input",
+          input_type: "radio",
+          group_label: "性别",
+          group_index: 1,
+          group_size: 2,
+        },
+      },
+    ],
+    [],
+    "choice-group.example",
+  );
+  assert.equal(choices.nodes[0]?.mapping?.canonicalField, "gender");
+  assert.equal(choices.nodes[1]?.mapping?.canonicalField, "gender");
+});
+
 test("form context section labels preserve repeated education paths", () => {
   const resolved = resolveFormMappings(
     [{

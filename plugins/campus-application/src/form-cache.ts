@@ -11,6 +11,10 @@ export type SnapshotFormContext = {
   html_name?: string;
   placeholder?: string;
   autocomplete?: string;
+  nearby_label?: string;
+  group_label?: string;
+  group_index?: number;
+  group_size?: number;
   section_label?: string;
   component_hint?: string;
   aria_invalid?: boolean;
@@ -431,7 +435,13 @@ function deriveMappings(
     }> = [
       { label: node.name, source: "name" },
       { label: node.description ?? "", source: "group" },
-      { label: node.group_label ?? "", source: "group" },
+      {
+        label:
+          (node.form_context?.group_size ?? 0) > 1
+            ? ""
+            : node.group_label ?? "",
+        source: "group",
+      },
       { label: node.form_context?.placeholder ?? "", source: "form_context" },
       {
         label: node.form_context?.html_name ?? "",

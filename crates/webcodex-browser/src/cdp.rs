@@ -1810,11 +1810,19 @@ struct ShadowHost {
     read_only: Option<bool>,
 }
 
+#[derive(Debug, Clone)]
+struct DomGroupLabel {
+    label: String,
+    index: usize,
+    size: usize,
+}
+
 #[derive(Default)]
 struct DomSemanticIndex {
     id_text: HashMap<String, String>,
     labels_for: HashMap<String, String>,
     container_labels: HashMap<i64, String>,
+    container_group_labels: HashMap<i64, DomGroupLabel>,
 }
 
 fn apply_dom_capabilities(
@@ -2229,11 +2237,15 @@ fn walk_dom_controls(
         .then(|| fieldset_legend(node))
         .flatten();
     let descendant_fieldset_label = own_fieldset_label.as_deref().or(fieldset_label);
-    let semantic_group_label = fieldset_label.map(ToOwned::to_owned);
     let in_native_control_shadow = host
         .as_ref()
         .is_some_and(|host| matches!(host.local_name.as_str(), "input" | "select" | "textarea"));
     let backend_node_id = node.get("backendNodeId").and_then(Value::as_i64);
+    let semantic_group_label = fieldset_label.map(ToOwned::to_owned).or_else(|| {
+        backend_node_id
+            .and_then(|id| semantics.container_group_labels.get(&id))
+            .map(|group| group.label.clone())
+    });
     let child_owning_select = if local_name == "select" && !in_native_control_shadow {
         backend_node_id
     } else if in_native_control_shadow {
@@ -2366,7 +2378,7 @@ fn index_dom_semantics(root: &Value) -> DomSemanticIndex {
 
     let mut semantics = DomSemanticIndex::default();
     walk(root, &mut semantics);
-    infer_unique_control_container_labels(root, &mut semantics);
+    infer_control_container_labels(root, &mut semantics);
     semantics
 }
 
@@ -2440,7 +2452,13 @@ fn walk_form_contexts(
         .then(|| fieldset_legend(node))
         .flatten();
     let descendant_fieldset_label = own_fieldset_label.as_deref().or(fieldset_label);
-    let semantic_group_label = fieldset_label;
+    let backend_node_id = node.get("backendNodeId").and_then(Value::as_i64);
+    let nearby_label = backend_node_id
+        .and_then(|id| semantics.container_labels.get(&id))
+        .map(String::as_str);
+    let nearby_group = backend_node_id.and_then(|id| semantics.container_group_labels.get(&id));
+    let semantic_group_label =
+        fieldset_label.or_else(|| nearby_group.map(|group| group.label.as_str()));
     let own_section_label = direct_section_heading(node);
     let descendant_section_label = own_section_label.as_deref().or(section_label);
     let explicit_component = framework_component_hint(node);
@@ -2450,13 +2468,16 @@ fn walk_form_contexts(
         .map(ToOwned::to_owned)
         .or_else(|| native_component_hint(&local_name).map(ToOwned::to_owned));
 
-    if let Some(backend_node_id) = node.get("backendNodeId").and_then(Value::as_i64) {
+    if let Some(backend_node_id) = backend_node_id {
         if let Some(context) = build_form_context(
             node,
             &local_name,
             input_type.as_deref(),
             semantic_label.as_deref(),
             semantic_group_label,
+            nearby_label,
+            nearby_group.map(|group| group.index),
+            nearby_group.map(|group| group.size),
             section_label,
             effective_component.as_deref(),
             semantics,
@@ -2499,6 +2520,9 @@ fn build_form_context(
     input_type: Option<&str>,
     semantic_label: Option<&str>,
     semantic_group_label: Option<&str>,
+    nearby_label: Option<&str>,
+    group_index: Option<usize>,
+    group_size: Option<usize>,
     section_label: Option<&str>,
     component_hint: Option<&str>,
     semantics: &DomSemanticIndex,
@@ -2546,17 +2570,26 @@ fn build_form_context(
         .then(|| count_descendant_elements(node, "option").min(256))
         .filter(|count| *count > 0);
 
+    let group_index_piece = group_index
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let group_size_piece = group_size
+        .map(|value| value.to_string())
+        .unwrap_or_default();
     let seed = [
         local_name,
         input_type.unwrap_or(""),
         dom_role.as_deref().unwrap_or(""),
         semantic_label.unwrap_or(""),
         semantic_group_label.unwrap_or(""),
+        nearby_label.unwrap_or(""),
         section_label.unwrap_or(""),
         html_name.as_deref().unwrap_or(""),
         placeholder.as_deref().unwrap_or(""),
         autocomplete.as_deref().unwrap_or(""),
         component_hint.unwrap_or(""),
+        group_index_piece.as_str(),
+        group_size_piece.as_str(),
     ]
     .into_iter()
     .map(normalize_form_signature_piece)
@@ -2571,6 +2604,10 @@ fn build_form_context(
         html_name,
         placeholder,
         autocomplete,
+        nearby_label: nearby_label.map(|value| clip_bytes(value, MAX_NODE_TEXT_BYTES)),
+        group_label: semantic_group_label.map(|value| clip_bytes(value, MAX_NODE_TEXT_BYTES)),
+        group_index,
+        group_size,
         section_label: section_label.map(|value| clip_bytes(value, MAX_NODE_TEXT_BYTES)),
         component_hint: component_hint.map(|value| clip_bytes(value, 64)),
         aria_invalid,
@@ -2685,88 +2722,231 @@ fn count_descendant_elements(node: &Value, local_name: &str) -> usize {
     count
 }
 
-fn infer_unique_control_container_labels(root: &Value, semantics: &mut DomSemanticIndex) {
+fn infer_control_container_labels(root: &Value, semantics: &mut DomSemanticIndex) {
+    const MAX_GROUP_CONTROLS: usize = 8;
+    const MAX_NEARBY_LABEL_CHARS: usize = 120;
+
     #[derive(Default)]
     struct ControlSummary {
-        count: u8,
-        only_backend_node_id: Option<i64>,
+        backend_node_ids: Vec<i64>,
+        overflow: bool,
+    }
+
+    fn is_hidden_element(node: &Value) -> bool {
+        if node.get("nodeType").and_then(Value::as_i64) != Some(1) {
+            return false;
+        }
+        if dom_attribute_raw(node, "hidden").is_some()
+            || dom_attribute(node, "aria-hidden").as_deref() == Some("true")
+        {
+            return true;
+        }
+        let style = dom_attribute_raw(node, "style")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .replace(' ', "");
+        style.contains("display:none") || style.contains("visibility:hidden")
+    }
+
+    fn is_container_form_control(node: &Value) -> bool {
+        if node.get("nodeType").and_then(Value::as_i64) != Some(1) || is_hidden_element(node) {
+            return false;
+        }
+        let local_name = node
+            .get("localName")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let input_type = (local_name == "input")
+            .then(|| dom_attribute(node, "type").unwrap_or_else(|| "text".to_string()));
+        if local_name == "input"
+            && matches!(
+                input_type.as_deref(),
+                Some("hidden" | "button" | "submit" | "reset" | "image")
+            )
+        {
+            return false;
+        }
+        if matches!(local_name.as_str(), "input" | "select" | "textarea") {
+            return true;
+        }
+        dom_attribute(node, "role").is_some_and(|role| {
+            matches!(
+                role.as_str(),
+                "textbox"
+                    | "searchbox"
+                    | "combobox"
+                    | "listbox"
+                    | "radio"
+                    | "checkbox"
+                    | "switch"
+                    | "spinbutton"
+            )
+        })
+    }
+
+    fn clean_label_text(value: &str) -> Option<String> {
+        let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+        let trimmed = normalized
+            .trim_matches(|ch: char| {
+                ch.is_whitespace() || matches!(ch, '*' | ':' | '：' | '·' | '•')
+            })
+            .trim();
+        if trimmed.is_empty() || trimmed.chars().count() > MAX_NEARBY_LABEL_CHARS {
+            return None;
+        }
+        if !trimmed
+            .chars()
+            .any(|ch| ch.is_alphanumeric() || !ch.is_ascii())
+        {
+            return None;
+        }
+        Some(clip_bytes(trimmed, MAX_NODE_TEXT_BYTES))
+    }
+
+    fn candidate_label_text(node: &Value) -> Option<String> {
+        let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
+        if node_type == 3 {
+            return node
+                .get("nodeValue")
+                .and_then(Value::as_str)
+                .and_then(clean_label_text);
+        }
+        if node_type != 1 || is_hidden_element(node) {
+            return None;
+        }
+        let local_name = node
+            .get("localName")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if matches!(
+            local_name.as_str(),
+            "a" | "button"
+                | "input"
+                | "select"
+                | "textarea"
+                | "option"
+                | "script"
+                | "style"
+                | "noscript"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+        ) {
+            return None;
+        }
+        if local_name == "label"
+            && dom_attribute_raw(node, "for").is_some_and(|value| !value.is_empty())
+        {
+            return None;
+        }
+        if dom_attribute(node, "role").is_some_and(|role| {
+            matches!(
+                role.as_str(),
+                "button"
+                    | "link"
+                    | "textbox"
+                    | "searchbox"
+                    | "combobox"
+                    | "listbox"
+                    | "radio"
+                    | "checkbox"
+                    | "switch"
+                    | "spinbutton"
+            )
+        }) {
+            return None;
+        }
+        dom_text_content(node).and_then(|text| clean_label_text(&text))
     }
 
     fn visit(node: &Value, semantics: &mut DomSemanticIndex) -> ControlSummary {
         let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
-        if node.get("shadowRootType").is_some() || node_type == 11 {
+        if node.get("shadowRootType").is_some()
+            || node_type == 11
+            || (node_type == 1 && is_hidden_element(node))
+        {
             return ControlSummary::default();
         }
 
-        let local_name = (node_type == 1)
-            .then(|| {
-                node.get("localName")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_ascii_lowercase()
-            })
-            .unwrap_or_default();
-        let input_type = (local_name == "input")
-            .then(|| dom_attribute(node, "type").unwrap_or_else(|| "text".to_string()));
-        let is_control = matches!(local_name.as_str(), "select" | "textarea")
-            || (local_name == "input" && input_type.as_deref() != Some("hidden"));
-
-        let mut summary = if is_control {
-            ControlSummary {
-                count: 1,
-                only_backend_node_id: node.get("backendNodeId").and_then(Value::as_i64),
-            }
-        } else {
-            ControlSummary::default()
-        };
-
-        let children = node.get("children").and_then(Value::as_array);
-        if let Some(children) = children {
-            for child in children {
-                let child_summary = visit(child, semantics);
-                if child_summary.count == 0 {
-                    continue;
-                }
-                if summary.count == 0 && child_summary.count == 1 {
-                    summary = child_summary;
-                } else {
-                    summary.count = 2;
-                    summary.only_backend_node_id = None;
-                }
+        let mut summary = ControlSummary::default();
+        if is_container_form_control(node) {
+            if let Some(backend_node_id) = node.get("backendNodeId").and_then(Value::as_i64) {
+                summary.backend_node_ids.push(backend_node_id);
             }
         }
 
-        if summary.count == 1 {
-            let mut direct_label: Option<String> = None;
-            let mut ambiguous = false;
-            for child in children.into_iter().flatten() {
-                let is_unbound_label = child.get("nodeType").and_then(Value::as_i64) == Some(1)
-                    && child
-                        .get("localName")
-                        .and_then(Value::as_str)
-                        .is_some_and(|name| name.eq_ignore_ascii_case("label"))
-                    && dom_attribute_raw(child, "for")
-                        .is_none_or(|target| target.trim().is_empty());
-                if !is_unbound_label {
-                    continue;
+        let children = node.get("children").and_then(Value::as_array);
+        let mut child_summaries = Vec::new();
+        if let Some(children) = children {
+            child_summaries.reserve(children.len());
+            for child in children {
+                let child_summary = visit(child, semantics);
+                if child_summary.overflow {
+                    summary.overflow = true;
                 }
-                let Some(text) = dom_text_content(child) else {
-                    continue;
-                };
-                if direct_label.is_some() {
-                    ambiguous = true;
-                    break;
+                for backend_node_id in child_summary.backend_node_ids.iter().copied() {
+                    if summary.backend_node_ids.len() < MAX_GROUP_CONTROLS + 1 {
+                        summary.backend_node_ids.push(backend_node_id);
+                    } else {
+                        summary.overflow = true;
+                        break;
+                    }
                 }
-                direct_label = Some(text);
+                child_summaries.push(child_summary);
             }
-            if !ambiguous {
-                if let (Some(backend_node_id), Some(label)) =
-                    (summary.only_backend_node_id, direct_label)
-                {
-                    semantics
-                        .container_labels
-                        .entry(backend_node_id)
-                        .or_insert(label);
+        }
+
+        if summary.backend_node_ids.len() > MAX_GROUP_CONTROLS {
+            summary.overflow = true;
+        }
+
+        if !summary.overflow && !summary.backend_node_ids.is_empty() {
+            if let Some(children) = children {
+                let first_control_child = child_summaries
+                    .iter()
+                    .position(|child| child.overflow || !child.backend_node_ids.is_empty());
+                if let Some(first_control_child) = first_control_child {
+                    let mut candidate: Option<String> = None;
+                    let mut ambiguous = false;
+                    for child in children.iter().take(first_control_child) {
+                        let Some(text) = candidate_label_text(child) else {
+                            continue;
+                        };
+                        if candidate.is_some() {
+                            ambiguous = true;
+                            break;
+                        }
+                        candidate = Some(text);
+                    }
+                    if !ambiguous {
+                        if let Some(label) = candidate {
+                            if summary.backend_node_ids.len() == 1 {
+                                semantics
+                                    .container_labels
+                                    .entry(summary.backend_node_ids[0])
+                                    .or_insert(label);
+                            } else {
+                                let size = summary.backend_node_ids.len();
+                                for (index, backend_node_id) in
+                                    summary.backend_node_ids.iter().copied().enumerate()
+                                {
+                                    semantics
+                                        .container_group_labels
+                                        .entry(backend_node_id)
+                                        .or_insert_with(|| DomGroupLabel {
+                                            label: label.clone(),
+                                            index,
+                                            size,
+                                        });
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3888,6 +4068,179 @@ mod tests {
                 .expect("same field after value change")
                 .field_signature
         );
+    }
+
+    #[test]
+    fn nearby_visible_labels_cover_generic_rows_and_groups_without_ambiguous_guessing() {
+        let dom = json!({
+            "nodeType": 9,
+            "children": [{
+                "nodeType": 1,
+                "localName": "body",
+                "backendNodeId": 1,
+                "children": [
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 200,
+                        "children": [
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 201,
+                             "children": [{"nodeType": 3, "nodeValue": "姓名："}]},
+                            {"nodeType": 1, "localName": "div", "backendNodeId": 202,
+                             "children": [{"nodeType": 1, "localName": "input", "backendNodeId": 203,
+                                          "attributes": ["type", "text"]}]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "tr",
+                        "backendNodeId": 210,
+                        "children": [
+                            {"nodeType": 1, "localName": "td", "backendNodeId": 211,
+                             "children": [{"nodeType": 3, "nodeValue": "电子邮箱"}]},
+                            {"nodeType": 1, "localName": "td", "backendNodeId": 212,
+                             "children": [{"nodeType": 1, "localName": "input", "backendNodeId": 213,
+                                          "attributes": ["type", "email"]}]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 220,
+                        "children": [
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 221,
+                             "children": [{"nodeType": 3, "nodeValue": "性别"}]},
+                            {"nodeType": 1, "localName": "label", "backendNodeId": 222,
+                             "children": [
+                                 {"nodeType": 1, "localName": "input", "backendNodeId": 223,
+                                  "attributes": ["type", "radio"]},
+                                 {"nodeType": 3, "nodeValue": "男"}
+                             ]},
+                            {"nodeType": 1, "localName": "label", "backendNodeId": 224,
+                             "children": [
+                                 {"nodeType": 1, "localName": "input", "backendNodeId": 225,
+                                  "attributes": ["type", "radio"]},
+                                 {"nodeType": 3, "nodeValue": "女"}
+                             ]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 230,
+                        "children": [
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 231,
+                             "children": [{"nodeType": 3, "nodeValue": "* 籍贯："}]},
+                            {"nodeType": 1, "localName": "select", "backendNodeId": 232},
+                            {"nodeType": 1, "localName": "select", "backendNodeId": 233}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 240,
+                        "children": [
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 241,
+                             "children": [{"nodeType": 3, "nodeValue": "开始日期"}]},
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 242,
+                             "children": [{"nodeType": 3, "nodeValue": "结束日期"}]},
+                            {"nodeType": 1, "localName": "input", "backendNodeId": 243,
+                             "attributes": ["type", "text"]},
+                            {"nodeType": 1, "localName": "input", "backendNodeId": 244,
+                             "attributes": ["type", "text"]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 250,
+                        "children": [
+                            {"nodeType": 1, "localName": "input", "backendNodeId": 251,
+                             "attributes": ["type", "text"]},
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 252,
+                             "children": [{"nodeType": 3, "nodeValue": "填写后不可修改"}]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "div",
+                        "backendNodeId": 260,
+                        "children": [
+                            {"nodeType": 1, "localName": "span", "backendNodeId": 261,
+                             "attributes": ["aria-hidden", "true"],
+                             "children": [{"nodeType": 3, "nodeValue": "隐藏文案"}]},
+                            {"nodeType": 1, "localName": "input", "backendNodeId": 262,
+                             "attributes": ["type", "text"]}
+                        ]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "section",
+                        "backendNodeId": 270,
+                        "children": [
+                            {"nodeType": 1, "localName": "h3", "backendNodeId": 271,
+                             "children": [{"nodeType": 3, "nodeValue": "基本信息"}]},
+                            {"nodeType": 1, "localName": "input", "backendNodeId": 272,
+                             "attributes": ["type", "text"]}
+                        ]
+                    }
+                ]
+            }]
+        });
+        let raw_nodes = [203, 213, 223, 225, 232, 233, 243, 244, 251, 262, 272]
+            .into_iter()
+            .enumerate()
+            .map(|(index, backend)| {
+                json!({
+                    "nodeId": format!("ax-{index}"),
+                    "role": {"value": if matches!(backend, 223 | 225) { "radio" } else if matches!(backend, 232 | 233) { "combobox" } else { "textbox" }},
+                    "name": {"value": ""},
+                    "backendDOMNodeId": backend
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let (nodes, _) = project_ax_nodes(&raw_nodes, Some(&dom));
+        let by_backend = nodes
+            .iter()
+            .filter_map(|node| node.backend_node_id.map(|id| (id, node)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(by_backend[&203].name.as_deref(), Some("姓名"));
+        assert_eq!(by_backend[&213].name.as_deref(), Some("电子邮箱"));
+        assert_eq!(by_backend[&223].name.as_deref(), Some("男"));
+        assert_eq!(by_backend[&223].group_label.as_deref(), Some("性别"));
+        assert_eq!(by_backend[&225].name.as_deref(), Some("女"));
+        assert_eq!(by_backend[&225].group_label.as_deref(), Some("性别"));
+        assert_eq!(by_backend[&232].name.as_deref(), None);
+        assert_eq!(by_backend[&232].group_label.as_deref(), Some("籍贯"));
+        assert_eq!(by_backend[&233].group_label.as_deref(), Some("籍贯"));
+        assert_eq!(by_backend[&243].group_label.as_deref(), None);
+        assert_eq!(by_backend[&244].group_label.as_deref(), None);
+        assert_eq!(by_backend[&251].name.as_deref(), None);
+        assert_eq!(by_backend[&262].name.as_deref(), None);
+        assert_eq!(by_backend[&272].name.as_deref(), None);
+
+        let contexts = index_form_contexts(&dom);
+        assert_eq!(contexts[&203].nearby_label.as_deref(), Some("姓名"));
+        assert_eq!(contexts[&213].nearby_label.as_deref(), Some("电子邮箱"));
+        assert_eq!(contexts[&223].group_label.as_deref(), Some("性别"));
+        assert_eq!(contexts[&223].group_index, Some(0));
+        assert_eq!(contexts[&223].group_size, Some(2));
+        assert_eq!(contexts[&225].group_index, Some(1));
+        assert_eq!(contexts[&232].group_label.as_deref(), Some("籍贯"));
+        assert_eq!(contexts[&232].group_index, Some(0));
+        assert_eq!(contexts[&232].group_size, Some(2));
+        assert_eq!(contexts[&233].group_index, Some(1));
+        assert_ne!(
+            contexts[&232].field_signature, contexts[&233].field_signature,
+            "group position must distinguish structurally identical composite controls"
+        );
+        assert_eq!(contexts[&243].group_label, None);
+        assert_eq!(contexts[&244].group_label, None);
+        assert_eq!(contexts[&251].nearby_label, None);
+        assert_eq!(contexts[&262].nearby_label, None);
+        assert_eq!(contexts[&272].nearby_label, None);
+        assert_eq!(contexts[&272].section_label.as_deref(), Some("基本信息"));
     }
 
     #[test]

@@ -332,6 +332,14 @@ pub struct FormContext {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autocomplete: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub nearby_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_size: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub section_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub component_hint: Option<String>,
@@ -551,6 +559,10 @@ mod tests {
                         html_name: Some("fruit".to_string()),
                         placeholder: None,
                         autocomplete: None,
+                        nearby_label: None,
+                        group_label: None,
+                        group_index: None,
+                        group_size: None,
                         section_label: Some("Preferences".to_string()),
                         component_hint: Some("native-select".to_string()),
                         aria_invalid: Some(false),

@@ -28,6 +28,8 @@ try {
         if (!matches.length) matches = options.filter(node => norm(node.text) === path[0]);
         const option = unique(matches);
         if (option) {
+            if (backing.value === option.value && option.selected
+                && options.filter(item => item.selected).length === 1) return { ok: true };
             changed = true;
             nativeSet(backing, option.value);
             await tick();

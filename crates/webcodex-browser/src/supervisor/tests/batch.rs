@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Default)]
 pub(super) struct BatchProbe {
-    effects: Vec<String>,
+    pub(super) effects: Vec<String>,
     pub(super) waits: usize,
     replace_after: Option<usize>,
     close_after: Option<usize>,
@@ -225,15 +225,15 @@ fn batch_invalid_value_fails_before_dispatch_without_normalizing_intent() {
             element_id: ids[4].clone(),
         });
         let receipt = s.batch(&b, &p, &ops).unwrap();
-        assert_eq!(receipt.execution_state, ExecutionState::Completed);
-        assert_eq!(receipt.completed_count, 1);
+        assert_eq!(receipt.execution_state, ExecutionState::NotStarted);
+        assert_eq!(receipt.completed_count, 0);
         assert_eq!(receipt.stopped_at_index, Some(1));
-        assert_eq!(receipt.remaining_count, 2);
+        assert_eq!(receipt.remaining_count, 3);
         assert_eq!(
             receipt.error.unwrap().execution_state,
             ExecutionState::NotStarted
         );
-        assert_eq!(probe.lock().unwrap().effects.len(), 1);
+        assert!(probe.lock().unwrap().effects.is_empty());
     }
 }
 

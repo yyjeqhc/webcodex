@@ -133,6 +133,7 @@ fn widget_batch_keeps_native_and_semantic_operations_in_one_settle() {
 fn widget_batch_rejects_invalid_path_and_calendar_date_before_dispatch() {
     let (s, b, p, probe) = mock_widgets();
     let snapshot = observe_widgets(&s, &b, &p);
+    let native = element(&snapshot, "Native");
     let choice = element(&snapshot, "Choice");
     let date = element(&snapshot, "Date");
     let mut invalid = vec![
@@ -176,7 +177,36 @@ fn widget_batch_rejects_invalid_path_and_calendar_date_before_dispatch() {
             ExecutionState::NotStarted
         );
     }
-    assert_eq!(probe.lock().unwrap().waits, 0);
+    let mixed = s
+        .batch(
+            &b,
+            &p,
+            &[
+                BatchOperation::SetValue {
+                    element_id: native,
+                    value: "must-not-run".into(),
+                },
+                BatchOperation::SetDate {
+                    element_id: date,
+                    value: "2027-02-29".into(),
+                },
+            ],
+        )
+        .unwrap();
+    assert_eq!(mixed.execution_state, ExecutionState::NotStarted);
+    assert_eq!(mixed.completed_count, 0);
+    assert_eq!(mixed.remaining_count, 2);
+    assert_eq!(mixed.stopped_at_index, Some(1));
+    assert_eq!(
+        mixed.error.unwrap().execution_state,
+        ExecutionState::NotStarted
+    );
+    let probe = probe.lock().unwrap();
+    assert!(
+        probe.effects.is_empty(),
+        "invalid suffix must reject before native prefix effects"
+    );
+    assert_eq!(probe.waits, 0);
 }
 
 #[test]
@@ -552,16 +582,30 @@ fn chromium_widgets_virtual_aria_popup_uses_visible_generic_options() {
 #[test]
 #[ignore = "requires local Chromium; verified native backing select should avoid opening a popup"]
 fn chromium_widgets_native_backing_select_finishes_without_opening_popup() {
-    with_widget_page(r#"addBackedChoice("Degree");"#, |s, b, p| {
-        let snapshot = observe_widgets(s, b, p);
-        s.select_choice(b, p, &element(&snapshot, "Degree"), &["Master".into()])
-            .unwrap();
-        let readback = observe_widgets(s, b, p);
-        let state = report(&readback);
-        assert_eq!(state["Degree"]["value"], "Master");
-        assert_eq!(state["Degree"]["changes"], 1);
-        assert_eq!(state["Degree"]["opens"], 0);
-    });
+    with_widget_page(
+        r#"addBackedChoice("Degree"); addBackedChoice("Existing", {initial:"Master", noMirror:true});"#,
+        |s, b, p| {
+            let snapshot = observe_widgets(s, b, p);
+            s.select_choice(b, p, &element(&snapshot, "Degree"), &["Master".into()])
+                .unwrap();
+            let readback = observe_widgets(s, b, p);
+            let state = report(&readback);
+            assert_eq!(state["Degree"]["value"], "Master");
+            assert_eq!(state["Degree"]["changes"], 1);
+            assert_eq!(state["Degree"]["opens"], 0);
+
+            // The trigger intentionally does not mirror the backing select, so
+            // the widget fast path must inspect the already-selected native option
+            // and avoid emitting redundant input/change events.
+            s.select_choice(b, p, &element(&readback, "Existing"), &["Master".into()])
+                .unwrap();
+            let final_readback = observe_widgets(s, b, p);
+            let state = report(&final_readback);
+            assert_eq!(state["Existing"]["value"], "Master");
+            assert_eq!(state["Existing"]["changes"], 0);
+            assert_eq!(state["Existing"]["opens"], 0);
+        },
+    );
 }
 
 #[test]
@@ -1049,16 +1093,16 @@ function addChoice(name,layers,options={}){
   }
   publish();
 }
-function addBackedChoice(name){
+function addBackedChoice(name,options={}){
   const wrapper=document.createElement('label');wrapper.textContent=name;form.append(wrapper);
   const trigger=document.createElement('button');trigger.type='button';trigger.textContent='Choose';
   trigger.setAttribute('role','combobox');trigger.setAttribute('aria-label',name);trigger.setAttribute('aria-haspopup','listbox');
   trigger.setAttribute('aria-expanded','false');
-  const backing=document.createElement('select');backing.id='backing-degree';backing.hidden=true;
+  const backing=document.createElement('select');backing.id='backing-'+Object.keys(states).length;backing.hidden=true;
   for(const value of ['','Master','Bachelor']){const option=document.createElement('option');option.value=value;option.textContent=value;backing.append(option);}
   wrapper.append(trigger,backing);trigger.setAttribute('aria-controls',backing.id);
-  const state=states[name]={value:'',opens:0,changes:0};
-  backing.addEventListener('change',()=>{state.value=backing.value;state.changes++;trigger.value=state.value;trigger.textContent=state.value;trigger.setAttribute('aria-valuetext',state.value);publish();});
+  const state=states[name]={value:options.initial||'',opens:0,changes:0};backing.value=state.value;
+  backing.addEventListener('change',()=>{state.value=backing.value;state.changes++;if(!options.noMirror){trigger.value=state.value;trigger.textContent=state.value;trigger.setAttribute('aria-valuetext',state.value);}publish();});
   trigger.addEventListener('click',()=>{state.opens++;publish();});
   publish();
 }

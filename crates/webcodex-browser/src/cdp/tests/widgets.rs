@@ -20,12 +20,13 @@ fn custom_widget_admission_uses_dom_control_kind_and_preserves_native_actions() 
         {"nodeType":1,"localName":"select","backendNodeId":1},
         {"nodeType":1,"localName":"input","backendNodeId":2,"attributes":["role","combobox","type","text"]},
         {"nodeType":1,"localName":"div","backendNodeId":3,"attributes":["role","listbox"]},
-        {"nodeType":1,"localName":"input","backendNodeId":4,"attributes":["role","combobox","aria-haspopup","dialog","readonly",""]},
+        {"nodeType":1,"localName":"input","backendNodeId":4,"attributes":["role","combobox","aria-haspopup","dialog","aria-label","Date","readonly",""]},
         {"nodeType":1,"localName":"input","backendNodeId":5,"attributes":["type","date"]},
         {"nodeType":1,"localName":"input","backendNodeId":6,"attributes":["type","month"]},
         {"nodeType":1,"localName":"input","backendNodeId":7,"attributes":["type","file","aria-haspopup","dialog"]},
         {"nodeType":1,"localName":"input","backendNodeId":8,"attributes":["type","date","aria-haspopup","dialog"]},
-        {"nodeType":1,"localName":"input","backendNodeId":9,"attributes":["type","number"]}
+        {"nodeType":1,"localName":"input","backendNodeId":9,"attributes":["type","number"]},
+        {"nodeType":1,"localName":"input","backendNodeId":10,"attributes":["role","combobox","aria-haspopup","dialog","aria-label","Address"]}
     ]});
     let raw = [
         ax(1, "combobox"),
@@ -37,6 +38,7 @@ fn custom_widget_admission_uses_dom_control_kind_and_preserves_native_actions() 
         ax(7, "combobox"),
         ax(8, "combobox"),
         ax(9, "combobox"),
+        ax(10, "combobox"),
     ];
     let (nodes, _) = project_ax_nodes(&raw, Some(&root));
     assert_eq!(actions(&nodes, 1), ["select_option"]);
@@ -49,6 +51,8 @@ fn custom_widget_admission_uses_dom_control_kind_and_preserves_native_actions() 
     assert_eq!(actions(&nodes, 7), ["upload_file"]);
     assert_eq!(actions(&nodes, 8), ["set_value"]);
     assert_eq!(actions(&nodes, 9), ["set_value"]);
+    assert!(actions(&nodes, 10).contains(&"select_choice".to_string()));
+    assert!(!actions(&nodes, 10).contains(&"set_date".to_string()));
     let (without_dom, _) = project_ax_nodes(&raw, None);
     assert!(without_dom
         .iter()

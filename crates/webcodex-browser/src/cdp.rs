@@ -1887,6 +1887,7 @@ struct DomControlFacts {
     semantic_label: Option<String>,
     semantic_group_label: Option<String>,
     popup_kind: Option<String>,
+    popup_date_semantics: bool,
     in_native_control_shadow: bool,
     owning_select_backend_id: Option<i64>,
     host_backend_node_id: Option<i64>,
@@ -1923,6 +1924,7 @@ struct DomSemanticIndex {
     labels_for: HashMap<String, String>,
     container_labels: HashMap<i64, String>,
     container_group_labels: HashMap<i64, DomGroupLabel>,
+    date_popup_ids: HashSet<String>,
 }
 
 fn apply_dom_capabilities(
@@ -2083,6 +2085,28 @@ fn mark_native_select_choices(nodes: &mut [BackendNode], index: &HashMap<i64, Do
     }
 }
 
+fn semantic_label_suggests_date_widget(label: Option<&str>) -> bool {
+    let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) else {
+        return false;
+    };
+    let lower = label.to_lowercase();
+    if ["日期", "年月", "时间", "生日"]
+        .into_iter()
+        .any(|token| lower.contains(token))
+    {
+        return true;
+    }
+    if label.contains("Date") || label.contains("DATE") {
+        return true;
+    }
+    lower.split(|ch: char| !ch.is_alphanumeric()).any(|part| {
+        matches!(
+            part,
+            "date" | "month" | "year" | "day" | "calendar" | "datepicker" | "monthpicker"
+        )
+    })
+}
+
 fn capability_for_ax_node(
     node: &BackendNode,
     index: Option<&HashMap<i64, DomControlFacts>>,
@@ -2107,6 +2131,8 @@ fn capability_for_ax_node(
                         .as_deref()
                         .is_none_or(|kind| matches!(kind, "text" | "search"))
                     && matches!(node.role.as_str(), "combobox" | "textbox")
+                    && (semantic_label_suggests_date_widget(facts.semantic_label.as_deref())
+                        || facts.popup_date_semantics)
                 {
                     capability.custom_choice = false;
                     capability.custom_date = true;
@@ -2369,6 +2395,10 @@ fn walk_dom_controls(
             .and_then(|id| semantics.container_group_labels.get(&id))
             .map(|group| group.label.clone())
     });
+    let popup_date_semantics = dom_attribute_raw(node, "aria-controls").is_some_and(|ids| {
+        ids.split_ascii_whitespace()
+            .any(|id| semantics.date_popup_ids.contains(id))
+    });
     let child_owning_select = if local_name == "select" && !in_native_control_shadow {
         backend_node_id
     } else if in_native_control_shadow {
@@ -2385,6 +2415,7 @@ fn walk_dom_controls(
                 semantic_label: semantic_label.clone(),
                 semantic_group_label: semantic_group_label.clone(),
                 popup_kind: dom_attribute(node, "aria-haspopup"),
+                popup_date_semantics,
                 in_native_control_shadow,
                 owning_select_backend_id: if local_name == "option" && !in_native_control_shadow {
                     owning_select
@@ -2476,7 +2507,19 @@ fn index_dom_semantics(root: &Value) -> DomSemanticIndex {
                 .to_ascii_lowercase();
             if let Some(id) = dom_attribute_raw(node, "id").filter(|id| !id.is_empty()) {
                 if let Some(text) = dom_text_content(node) {
-                    semantics.id_text.entry(id).or_insert(text);
+                    semantics.id_text.entry(id.clone()).or_insert(text);
+                }
+                if dom_attribute(node, "role").as_deref() == Some("dialog") {
+                    let aria_label = dom_attribute_raw(node, "aria-label");
+                    let title = dom_attribute_raw(node, "title");
+                    let hints = [Some(id.as_str()), aria_label.as_deref(), title.as_deref()];
+                    if hints
+                        .into_iter()
+                        .flatten()
+                        .any(|hint| semantic_label_suggests_date_widget(Some(hint)))
+                    {
+                        semantics.date_popup_ids.insert(id);
+                    }
                 }
             }
             if local_name == "label" {

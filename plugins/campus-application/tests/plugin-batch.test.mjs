@@ -66,6 +66,19 @@ test("real provider protocol emits compact executable plan and reconciles withou
       remaining_count: 0, needs_snapshot: false, stability: { stable: true, waited_ms: 250, reason: "quiet" } } });
   assert.deepEqual(result, { confirmed: 20, needs_attention: [] });
 });
+test("date-only profile never emits a guaranteed-invalid datetime-local set_value", { timeout: 10000 }, async t => {
+  const dir = await mkdtemp(join(tmpdir(), "campus-datetime-local-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const call = await provider(t, dir);
+  const datetime = {
+    ...node("出生日期", 0),
+    form_context: { field_signature: "datetime-local", dom_tag: "input", input_type: "datetime-local" },
+  };
+  const plan = await call("plan_fill", { ...scope, title: "Fictional datetime form", nodes: [datetime] });
+  assert.equal(plan.batch, undefined);
+  assert.equal(plan.needs_attention.length, 1);
+  assert.match(plan.needs_attention[0].reason, /required precision/);
+});
 test("mapping memory survives provider restart and emits batch without re-teaching unnamed field", { timeout: 10000 }, async t => {
   const dir = await mkdtemp(join(tmpdir(), "campus-batch-memory-"));
   t.after(() => rm(dir, { recursive: true, force: true }));

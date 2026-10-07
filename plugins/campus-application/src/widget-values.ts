@@ -44,6 +44,10 @@ export function dateForControl(value: string, node: SnapshotNode): string | unde
   const placeholder = (node.form_context?.placeholder ?? "").replace(/\s+/g, "");
   if (type === "date") return date.length === 10 ? date : undefined;
   if (type === "month") return date.slice(0, 7);
+  // Campus profiles intentionally carry date precision, not invented clock time.
+  // A native datetime-local requires a time component, so fail during planning
+  // instead of issuing a Browser set_value that HTML will deterministically reject.
+  if (type === "datetime-local") return undefined;
   if (/^y{4}[-/.]m{2}[-/.]d{2}$/iu.test(placeholder)) return date.length === 10 ? date : undefined;
   if (/month.?picker/iu.test(hint) || /^y{4}[-/.]m{2}$/iu.test(placeholder)
     || /年月(?!日)/u.test(node.name)) return date.slice(0, 7);

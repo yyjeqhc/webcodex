@@ -632,7 +632,7 @@ const planFill = defineTool({
         value = choice_path.join(" / ");
       }
       if (node && (item.support === "set_date" || item.support === "set_value"
-        && ["date", "month"].includes(node.form_context?.input_type?.toLowerCase() ?? ""))) {
+        && ["date", "month", "datetime-local"].includes(node.form_context?.input_type?.toLowerCase() ?? ""))) {
         const date = dateForControl(value, node);
         if (!date) {
           blockers.push({ mapping_id: item.mapping_id, label: item.label, status: "unresolved",

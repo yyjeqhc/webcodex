@@ -1013,7 +1013,6 @@ impl BrowserSupervisor {
             .get_mut(browser_id)
             .ok_or_else(|| stale_browser(browser_id))?;
         let target = runtime.page_target(page_id)?;
-        let deadline = Instant::now() + Duration::from_secs(20);
         let mut result = BatchResult {
             execution_state: ExecutionState::NotStarted,
             requested_count: operations.len(),
@@ -1024,6 +1023,17 @@ impl BrowserSupervisor {
             stability: None,
             error: None,
         };
+        // Intrinsic arguments are independent of page state. Validate the whole
+        // request before dispatch so a malformed later widget cannot mutate an
+        // earlier native field and then fail as a partial batch.
+        for (index, operation) in operations.iter().enumerate() {
+            if let Err(error) = operation.validate() {
+                result.stopped_at_index = Some(index);
+                result.error = Some(error);
+                return Ok(result);
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(20);
         for (index, operation) in operations.iter().enumerate() {
             let attempt = (|| {
                 if Instant::now() >= deadline {
@@ -1032,7 +1042,6 @@ impl BrowserSupervisor {
                         "batch dispatch budget exhausted",
                     ));
                 }
-                operation.validate()?;
                 let (element_id, action) = operation.authority();
                 let element = runtime.authorized_element(page_id, &target, element_id, action)?;
                 let node = element.backend_node_id;

@@ -18,7 +18,7 @@ mod candidate_relocation_tests;
 mod desktop_tree;
 mod observation;
 mod status;
-pub mod windows_legacy;
+pub mod windows_package;
 pub(crate) use observation::upgrade_observation_under_lock;
 pub use observation::{upgrade_observation, UpgradeObservation, UpgradeOutcome};
 pub use status::{
@@ -716,7 +716,7 @@ fn error(code: &str, message: &str) -> SetupDiagnostic {
 /// Call while holding `EnvironmentStore::lock()` before any non-upgrade
 /// operation can mutate services, projects, credentials, or setup state.
 pub fn ensure_upgrade_idle_under_lock(store: &EnvironmentStore) -> SetupResultValue<()> {
-    windows_legacy::ensure_idle(store)?;
+    windows_package::ensure_idle(store)?;
     ensure_upgrade_idle_environment(store)
 }
 

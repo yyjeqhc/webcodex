@@ -70,32 +70,11 @@ readers so they use the new canonical tools. See the
 older installation paths, and explicit reconciliation of a Desktop Tunnel profile
 that was saved but never configured in Environment.
 
-## Migrate an existing Linux CLI service
+## Upgrade installations older than v0.4.6
 
-Linux provides explicit migration commands for the supported legacy CLI templates. They preserve the existing identity and do not issue a new pairing code. Source review is complete, but these commands have not passed native package/service acceptance. Do not treat M2f migration as natively accepted for these paths.
+v0.5 uses the published v0.4.6 Environment release as its minimum direct upgrade source. Pre-Environment Linux installations and the official Windows v0.4.3 package are no longer migrated directly by v0.5. Upgrade or migrate those installations to v0.4.6 first, verify that the Environment owns the intended Server/Runner identity and services, and then upgrade that Environment to v0.5.
 
-For a legacy user-owned Runner, run as its original owner and provide that owner's private user credential file:
-
-```bash
-webcodex environment migrate-legacy-runner \
-  --join https://server.example \
-  --project /home/alice/src/repo \
-  --token-file /home/alice/.config/webcodex/webcodex-user-token
-```
-
-Add `--profile NAME` only for a named profile. The migration accepts a known owner-bearing Runner configuration and its generated user unit, reuses its Runner identity, project IDs, and user credential, and does not re-pair. It will not infer ownerless shared-key configurations or custom units.
-
-For the fixed root-owned system Server unit/socket pair, run the explicit migration with the original Server username, that user's private API credential file, and the exact old listen address:
-
-```bash
-webcodex environment migrate-legacy-server \
-  --user alice \
-  --token-file /home/alice/.config/webcodex/webcodex-user-token \
-  --listen 0.0.0.0:8080 \
-  --server-url http://127.0.0.1:8080
-```
-
-`--server-url` is optional; when omitted, the CLI derives a local URL from the original listener. This command targets only the known systemd unit/socket and fixed environment/data locations. It transfers the Server only. An independently configured legacy Tunnel remains with its existing owner/profile and is not imported into Core by this migration. The command does not guess custom units, paths, or owners. Keep the credential file private and do not use the Server bootstrap token in place of the original user's API credential.
+This keeps one tested bridge for historical installation shapes instead of carrying their systemd handoff and v0.4.3 package classifier into every later release. Do not delete or recreate credentials when crossing the bridge; v0.4.6 is responsible for importing the older identity, while v0.5 preserves the resulting Environment data.
 
 ## Tunnel profiles
 

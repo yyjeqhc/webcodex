@@ -250,25 +250,6 @@ async fn installer_finalization_cannot_override_authorized_store() {
 }
 
 #[test]
-fn legacy_server_network_inputs_are_explicit_and_scoped() {
-    let legacy = input(&[
-        "migrate-legacy-server",
-        "--user",
-        "alice",
-        "--listen",
-        "0.0.0.0:8080",
-        "--server-url",
-        "http://127.0.0.1:8080",
-        "--token-file",
-        "private-token",
-    ])
-    .unwrap();
-    assert_eq!(legacy.listen.as_deref(), Some("0.0.0.0:8080"));
-    assert_eq!(legacy.username.as_deref(), Some("alice"));
-    assert!(input(&["configure", "--create", "--listen", "0.0.0.0:8080"]).is_err());
-}
-
-#[test]
 fn guarded_installer_options_never_fall_back_to_unbound_commands() {
     let target = [
         "--environment-dir",

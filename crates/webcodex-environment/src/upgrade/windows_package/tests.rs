@@ -65,7 +65,7 @@ impl Fixture {
             &self.store,
             self.candidate.clone(),
             &self.runtime,
-            InstallationKind::Legacy,
+            InstallationKind::Unconfigured,
         )
         .unwrap();
     }
@@ -109,9 +109,14 @@ fn package_trust_owner_target_receipt_and_old_bytes_are_independent_fences() {
     let mut unproven = f.candidate.clone();
     unproven.provenance_verified = false;
     assert_eq!(
-        prepare_verified(&f.store, unproven, &f.runtime, InstallationKind::Legacy)
-            .unwrap_err()
-            .code,
+        prepare_verified(
+            &f.store,
+            unproven,
+            &f.runtime,
+            InstallationKind::Unconfigured
+        )
+        .unwrap_err()
+        .code,
         "candidate_provenance"
     );
     f.prepare();
@@ -243,145 +248,4 @@ async fn environment_owner_path_is_preserved_and_package_coordinator_cannot_adop
         f.store.load_environment().unwrap().unwrap().environment_id,
         "original-environment"
     );
-}
-
-// Native PE fixtures intentionally implement the old v0.4.3 wire identity and
-// reject Environment with exit 2. They never open the real Desktop data root.
-fn native_program(path: &Path, info: &MachineBuildInfo) {
-    let source = path.with_extension("rs");
-    let encoded = serde_json::to_string(info).unwrap();
-    std::fs::write(&source,format!(r#"fn main() {{
-        let args: Vec<String> = std::env::args().collect();
-        if args.get(1).map(String::as_str) == Some("--build-info-json") {{ println!("{{}}", {encoded:?}); }}
-        else if args.get(1).map(String::as_str) == Some("--version") {{ println!("webcodex 0.4.3"); }}
-        else {{ std::process::exit(2); }}
-    }}"#)).unwrap();
-    let output = std::process::Command::new("rustc")
-        .arg("--crate-name")
-        .arg("legacy_fixture")
-        .arg(&source)
-        .arg("-o")
-        .arg(path)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "native fixture compilation failed");
-    #[cfg(windows)]
-    crate::storage::secure_windows_path(path).unwrap();
-}
-
-#[tokio::test]
-async fn pre_environment_detection_uses_v043_build_identity_not_unknown_command_exit() {
-    let f = Fixture::new();
-    for (name, path) in targets(&f.runtime).unwrap() {
-        let mut info = f.candidate.artifacts[&name].build_info.clone();
-        info.version = "0.4.3".into();
-        info.git_commit = Some(OFFICIAL_V043.into());
-        info.environment_data_format = None;
-        native_program(&path, &info);
-    }
-    assert_eq!(
-        classify_inner(&f.store, &f.runtime).await.unwrap(),
-        InstallationKind::Legacy
-    );
-    let checked = UpgradePreflight {
-        ready: true,
-        candidate: f.candidate.clone(),
-        diagnostics: vec![],
-        active_tasks: 0,
-    };
-    assert!(
-        preflight_verified(&f.store, &f.runtime, checked)
-            .await
-            .unwrap()
-            .ready
-    );
-    let mut arm64 = f.candidate.artifacts["webcodex"].build_info.clone();
-    arm64.version = "0.4.3".into();
-    arm64.git_commit = Some(OFFICIAL_V043.into());
-    arm64.environment_data_format = None;
-    arm64.target = "aarch64-pc-windows-msvc".into();
-    arm64.architecture = "aarch64".into();
-    assert!(pre_environment(&arm64));
-
-    let mut unsupported = f.candidate.artifacts["webcodex"].build_info.clone();
-    unsupported.environment_data_format = None;
-    unsupported.version = "0.4.2".into();
-    native_program(&f.runtime.join("webcodex.exe"), &unsupported);
-    assert_eq!(
-        classify_inner(&f.store, &f.runtime).await.unwrap_err().code,
-        "legacy_identity"
-    );
-}
-
-#[cfg(windows)]
-#[tokio::test]
-async fn native_v043_legacy_detection_receipt_replacement_finish_and_rollback() {
-    let mut f = Fixture::new();
-    for (name, target) in targets(&f.runtime).unwrap() {
-        let mut old = f.candidate.artifacts[&name].build_info.clone();
-        old.version = "0.4.3".into();
-        old.git_commit = Some(OFFICIAL_V043.into());
-        old.environment_data_format = None;
-        native_program(&target, &old);
-        let artifact = f.candidate.artifacts.get_mut(&name).unwrap();
-        native_program(&artifact.path, &artifact.build_info);
-        artifact.sha256 = digest(&artifact.path).unwrap();
-    }
-    f.candidate.desktop.as_mut().unwrap().managed_files.insert(
-        "WebCodex.exe".into(),
-        f.candidate.artifacts["webcodex-desktop"].sha256.clone(),
-    );
-    let rejected = std::process::Command::new(f.runtime.join("webcodex.exe"))
-        .args(["environment", "upgrade-preflight", "--json"])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .unwrap();
-    assert_eq!(rejected.status.code(), Some(2));
-    assert_eq!(
-        classify(&f.store, &f.runtime).await.unwrap(),
-        InstallationKind::Legacy
-    );
-    // Published candidate verification has its own tests; exercise the exact
-    // native legacy preflight boundary with an independently verified fixture.
-    let checked = UpgradePreflight {
-        ready: true,
-        candidate: f.candidate.clone(),
-        diagnostics: vec![],
-        active_tasks: 0,
-    };
-    assert!(
-        preflight_verified(&f.store, &f.runtime, checked)
-            .await
-            .unwrap()
-            .ready
-    );
-    let originals: BTreeMap<_, _> = targets(&f.runtime)
-        .unwrap()
-        .into_iter()
-        .map(|(n, p)| (n, digest(&p).unwrap()))
-        .collect();
-    f.prepare();
-    verify_receipt_inner(&f.store, &f.candidate, &f.runtime).unwrap();
-    f.replace();
-    finish(&f.store, &f.runtime).await.unwrap();
-    finish(&f.store, &f.runtime).await.unwrap();
-    assert_eq!(
-        rollback(&f.store, &f.runtime).unwrap_err().code,
-        "upgrade_committed"
-    );
-    // A separate failed transaction restores native old programs exactly.
-    let original_journal: PackageJournal = f.store.read_json(JOURNAL).unwrap().unwrap();
-    for p in &original_journal.programs {
-        std::fs::copy(&p.backup, &p.target).unwrap();
-    }
-    f.prepare();
-    f.replace();
-    std::fs::remove_file(f.runtime.join("webcodex-runner.exe")).unwrap();
-    assert!(finish(&f.store, &f.runtime).await.is_err());
-    rollback(&f.store, &f.runtime).unwrap();
-    for (name, path) in targets(&f.runtime).unwrap() {
-        assert_eq!(digest(&path).unwrap(), originals[&name]);
-    }
-    assert!(f.store.load_environment().unwrap().is_none());
 }

@@ -31,16 +31,15 @@ operation, nor lose unrelated supported operations merely because its build diff
 
 ## The actual stable upgrade sources
 
-**v0.4.6 already contains Environment.** Its schema-1 records, service ownership,
-update receipts, and Tunnel configuration are published data contracts. The
-v0.5 transition has both of these sources:
+**v0.4.6 already contains Environment and is the minimum direct v0.5 upgrade source.**
+Its schema-1 records, service ownership, update receipts, and Tunnel configuration
+are published data contracts. v0.5 directly upgrades an existing v0.4.6-or-newer
+Environment and reuses its selected owner, service scope, Runtime paths,
+Runner/Project identities, private credential bindings, and recovery records.
 
-- An existing Environment installation, including v0.4.6. Reuse its selected
-  Environment, owner, service scope, Runtime paths, Runner/Project identities,
-  private credential bindings, and recovery records.
-- An older pre-Environment installation using a supported migration path. Keep
-  the explicit migration commands and their original-identity/recovery checks;
-  do not infer a new owner or silently re-pair.
+Installations older than v0.4.6 use v0.4.6 as the bridge. Their historical
+pre-Environment Linux service handoff and official Windows v0.4.3 package
+classification are intentionally not reimplemented in v0.5.
 
 The following code is retained for concrete consumers:
 
@@ -48,8 +47,7 @@ The following code is retained for concrete consumers:
 |---|---|
 | `crates/webcodex-environment/src/types/setup_wire.rs` | v0.4.6 writes `create/join/user_create/user_join` and may omit `service_scope` or `runner`. Scope/mode conflict checks prevent a user service from being interpreted as a system service. |
 | Environment storage, migration journals, upgrade receipts and rollback | Preserve the original target, owner, credentials, data format, and uncertain-effect recovery across an upgrade. A missing optional new field is not a reason to reset an installation. |
-| `legacy_system_server.rs`, `legacy_systemd.rs`, `legacy_cli.rs` | Explicit Linux migration of supported old Server/Runner services. These files are byte-identical between the v0.4.6 tag and the audit baseline. |
-| `upgrade/windows_legacy.rs` | The current Windows installer calls this package transaction code for `Fresh`, `Legacy`, `Unconfigured`, and `Environment` installations. Only one branch is the official Windows 0.4.3 special case. |
+| `upgrade/windows_package.rs` | The current Windows installer still owns `Fresh`, `Unconfigured`, and `Environment` package transactions, sealed receipts and rollback. The official v0.4.3 `Legacy` classifier is no longer a v0.5 direct-upgrade path. |
 | Desktop schema-1 state, backup recovery and saved Runner identity recovery | These readers shipped in v0.4.6; losing them can discard saved projects or associate an old local Runtime with a different Runner. |
 | Desktop `secrets/tunnel-config.json` and its singleton-to-profile conversion | Both the schema-2 profile catalog and the older singleton reader shipped in v0.4.6. Non-persistent runtimes still use this store. |
 | Environment `tunnel.json` and private per-profile `webcodex.env` | v0.4.6 records contain `profile_id/installed/started` without `host_mode`. Missing owner mode must remain standalone, not silently become embedded. |
@@ -62,7 +60,7 @@ The following code is retained for concrete consumers:
 The scope decoder and default-value coverage are in
 [`types/setup_wire.rs`](../crates/webcodex-environment/src/types/setup_wire.rs).
 The Windows classifications and package transaction are in
-[`upgrade/windows_legacy.rs`](../crates/webcodex-environment/src/upgrade/windows_legacy.rs).
+[`upgrade/windows_package.rs`](../crates/webcodex-environment/src/upgrade/windows_package.rs).
 The current installer calls are in
 [`build_windows_unified_bootstrap.py`](../scripts/build_windows_unified_bootstrap.py).
 
@@ -147,20 +145,14 @@ cached Host schema. Reopen the reader or reconnect/refresh the MCP schema.
 
 ## Future removal criteria
 
-The v0.5 line retains the supported published upgrade paths described above.
-A later intentional support-floor change, potentially v0.6, may retire direct
-pre-Environment migration. It is not an automatic whole-file deletion deadline.
+The v0.5 support floor is explicit: v0.4.6 is the bridge for older installations.
+The removed Linux migration commands and Windows v0.4.3 classifier must not be
+recreated as convenience fallbacks.
 
-Before that change:
-
-- State the minimum supported upgrade source and document an intermediate-release
-  route for older installations.
-- Separate migration-only code from current installation and recovery duties.
-  On Windows, remove only the retired official-0.4.3 classifier/branch and its
-  dedicated fixtures; retain `Fresh/Unconfigured/Environment`, sealed receipts,
-  owner/path checks and rollback.
-- Remove the corresponding CLI entries, exports, privilege branches and
-  migration-only fixtures as a coherent change. Keep current service management.
+Future support-floor changes should likewise name a published bridge before
+removing readers or migrations. Current `Fresh/Unconfigured/Environment` Windows
+transactions, sealed receipts, owner/path checks and rollback remain installation
+infrastructure rather than legacy-version support.
 - Keep reject-before-use guards where silently ignoring old settings could
   change authority, execution target, registry selection, or retained data.
 - Retire a dated MCP protocol only after identifying its actual remaining Host

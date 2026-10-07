@@ -1,17 +1,15 @@
-//! A Windows package transaction has no Environment identity or service authority.
-//! In particular v0.4.3 cannot execute Environment commands. The manifest-bound
-//! candidate coordinates this transaction as the installing user, never as admin.
+//! A Windows package transaction without an Environment has no service authority.
+//! v0.5 accepts only Environment-aware package identities; older pre-Environment
+//! installs must first cross the published v0.4.6 bridge.
 use super::*;
 
 const JOURNAL: &str = "windows-package-upgrade.json";
 const RECEIPT: &str = "windows-package-prepared.json";
-const OFFICIAL_V043: &str = "b96a59a712ca5355ad8609cd861cd0c7acb9f99e";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallationKind {
     Fresh,
-    Legacy,
     Unconfigured,
     Environment,
 }
@@ -105,7 +103,7 @@ fn stopped(path: &Path) -> SetupResultValue<()> {
     {
         use std::os::windows::fs::OpenOptionsExt;
         std::fs::OpenOptions::new().read(true).write(true).share_mode(0).open(path)
-            .map_err(|_| error("legacy_program_busy", "Quit the old Desktop and stop its Server/Runner before upgrading; a program is running or cannot be replaced"))?;
+            .map_err(|_| error("package_program_busy", "Quit the old Desktop and stop its Server/Runner before upgrading; a program is running or cannot be replaced"))?;
     }
     #[cfg(not(windows))]
     let _ = path;
@@ -153,28 +151,16 @@ async fn probe_installed(path: &Path, name: &str) -> SetupResultValue<MachineBui
         .await
         .map_err(|_| {
             error(
-                "legacy_identity",
+                "package_identity",
                 "The installed build identity probe timed out",
             )
         })?
         .map_err(|_| {
             error(
-                "legacy_identity",
+                "package_identity",
                 "The installed build identity could not be verified",
             )
         })
-}
-
-fn pre_environment(info: &MachineBuildInfo) -> bool {
-    let official_windows_target = matches!(
-        (info.target.as_str(), info.architecture.as_str()),
-        ("x86_64-pc-windows-msvc", "x86_64") | ("aarch64-pc-windows-msvc", "aarch64")
-    );
-    info.version == "0.4.3"
-        && info.git_commit.as_deref() == Some(OFFICIAL_V043)
-        && info.git_dirty == Some(false)
-        && info.environment_data_format.is_none()
-        && official_windows_target
 }
 
 async fn classify_inner(
@@ -245,27 +231,25 @@ async fn classify_inner(
         );
         if identity.as_ref().is_some_and(|previous| previous != &build) {
             return Err(error(
-                "legacy_identity",
+                "package_identity",
                 "The installed runtime components have different build identities",
             ));
         }
         identity = Some(build);
-        let observed = if pre_environment(&info) {
-            InstallationKind::Legacy
-        } else if info.environment_data_format == Some(DATA_FORMAT)
+        let observed = if info.environment_data_format == Some(DATA_FORMAT)
             && info.target.ends_with("-pc-windows-msvc")
         {
             InstallationKind::Unconfigured
         } else {
             return Err(error(
-                "legacy_identity",
-                "This installed package has no supported legacy upgrade identity",
+                "package_identity",
+                "This installed package predates the minimum direct upgrade source; upgrade through v0.4.6 first",
             ));
         };
         if digest(&files[name])? != before || kind.is_some_and(|k| k != observed) {
             return Err(error(
-                "legacy_identity",
-                "The old package contains changing or mixed installation identities",
+                "package_identity",
+                "The installed package contains changing or mixed installation identities",
             ));
         }
         kind = Some(observed);
@@ -321,10 +305,7 @@ fn load_bound(store: &EnvironmentStore, runtime: &Path) -> SetupResultValue<Pack
         || !journal.candidate.provenance_verified
         || journal.owner_identity != owner
         || journal.runtime_dir != runtime
-        || !matches!(
-            journal.kind,
-            InstallationKind::Legacy | InstallationKind::Unconfigured
-        )
+        || journal.kind != InstallationKind::Unconfigured
         || receipt(&journal).targets != expected
         || journal.programs.len() != expected.len()
         || uuid::Uuid::parse_str(&journal.operation_id).is_err()
@@ -395,10 +376,7 @@ async fn preflight_verified(
             ));
         }
     }
-    if !matches!(
-        classify_inner(store, runtime).await?,
-        InstallationKind::Legacy | InstallationKind::Unconfigured
-    ) {
+    if classify_inner(store, runtime).await? != InstallationKind::Unconfigured {
         return Err(error(
             "installer_environment",
             "This is not an unconfigured Windows package upgrade",
@@ -514,10 +492,7 @@ pub async fn prepare(
         }
     }
     let kind = classify_inner(store, runtime).await?;
-    if !matches!(
-        kind,
-        InstallationKind::Legacy | InstallationKind::Unconfigured
-    ) {
+    if kind != InstallationKind::Unconfigured {
         return Err(error(
             "installer_environment",
             "Use the installed Environment owner's transaction",

@@ -26,108 +26,6 @@ struct RestoreRequest {
     requester: LocalAccount,
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) async fn legacy_server_operation(
-    store: &EnvironmentStore,
-    request: &SetupRequest,
-    action: crate::legacy_system_server::LegacyServerAction,
-) -> SetupResultValue<crate::legacy_system_server::LegacyServerObservation> {
-    if crate::installer_unix::child_channel_active() {
-        return Err(SetupDiagnostic::new(
-            "installer_broker_denied",
-            "Installer child cannot perform old system Server handoff",
-            "Resume migration from the actual project user after installer recovery",
-        ));
-    }
-    let value = crate::legacy_system_server::LegacyServerRequest {
-        kind: "legacy_cli_system_server".into(),
-        action,
-        requester: request.account.clone(),
-        listen: match &request.mode {
-            EnvironmentMode::Create { listen } => listen.clone(),
-            _ => return Err(SetupDiagnostic::io()),
-        },
-    };
-    if elevated()? {
-        return crate::legacy_system_server::privileged_apply(store.root(), &value);
-    }
-    let nonce = uuid::Uuid::new_v4().simple().to_string();
-    let request_path = store.root().join(format!(".service-request-{nonce}.json"));
-    let response_path = store.root().join(format!(".service-result-{nonce}.json"));
-    let trusted_cli = trusted_legacy_cli(&request.binaries.cli)?;
-    atomic_private_write(
-        &request_path,
-        &serde_json::to_vec(&value).map_err(|_| SetupDiagnostic::io())?,
-    )?;
-    atomic_private_write(&response_path, b"null")?;
-    let launch = elevate(&trusted_cli, &request_path, &response_path).await;
-    let bytes = crate::storage::read_private(&response_path)?;
-    let result: Option<
-        Result<crate::legacy_system_server::LegacyServerObservation, SetupDiagnostic>,
-    > = serde_json::from_slice(&bytes).map_err(|_| SetupDiagnostic::io())?;
-    match result {
-        Some(result) => {
-            let _ = std::fs::remove_file(&request_path);
-            let _ = std::fs::remove_file(&response_path);
-            result
-        }
-        None => Err(launch.err().unwrap_or_else(|| SetupDiagnostic::new(
-            "legacy_handoff_outcome_unknown", "The privileged old Server handoff did not report a result",
-            "Inspect the root-protected handoff receipt and both Server owners before retrying migration"))),
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn trusted_legacy_cli(path: &Path) -> SetupResultValue<std::path::PathBuf> {
-    use std::os::unix::fs::MetadataExt;
-    let denied = || {
-        SetupDiagnostic::new(
-            "legacy_cli_program",
-            "The privileged handoff CLI is not installed under a root-controlled path",
-            "Use the installed WebCodex CLI package for system Server migration",
-        )
-    };
-    if !path.is_absolute() || path.file_name().and_then(|name| name.to_str()) != Some("webcodex") {
-        return Err(denied());
-    }
-    for ancestor in path.parent().into_iter().flat_map(Path::ancestors) {
-        let meta = std::fs::symlink_metadata(ancestor).map_err(|_| denied())?;
-        if !meta.is_dir()
-            || meta.file_type().is_symlink()
-            || meta.uid() != 0
-            || meta.mode() & 0o022 != 0
-        {
-            return Err(denied());
-        }
-    }
-    let link = std::fs::symlink_metadata(path).map_err(|_| denied())?;
-    if link.file_type().is_symlink() && (link.uid() != 0 || link.mode() & 0o022 != 0) {
-        return Err(denied());
-    }
-    let target = path.canonicalize().map_err(|_| denied())?;
-    for ancestor in target.parent().into_iter().flat_map(Path::ancestors) {
-        let meta = std::fs::symlink_metadata(ancestor).map_err(|_| denied())?;
-        if !meta.is_dir()
-            || meta.file_type().is_symlink()
-            || meta.uid() != 0
-            || meta.mode() & 0o022 != 0
-        {
-            return Err(denied());
-        }
-    }
-    let meta = std::fs::symlink_metadata(&target).map_err(|_| denied())?;
-    if !meta.is_file()
-        || meta.file_type().is_symlink()
-        || meta.uid() != 0
-        || meta.nlink() != 1
-        || meta.mode() & 0o022 != 0
-        || meta.mode() & 0o111 == 0
-    {
-        return Err(denied());
-    }
-    Ok(target)
-}
-
 pub(crate) async fn restore_upgrade_programs(
     store: &EnvironmentStore,
     record: &EnvironmentRecord,
@@ -394,33 +292,13 @@ pub fn run_privileged_service_request(
     } else {
         None
     };
-    #[cfg(target_os = "linux")]
-    let legacy: Option<crate::legacy_system_server::LegacyServerRequest> =
-        if kind == Some("legacy_cli_system_server") {
-            Some(serde_json::from_slice(&bytes).map_err(|_| SetupDiagnostic::io())?)
-        } else {
-            None
-        };
-    #[cfg(not(target_os = "linux"))]
-    let legacy: Option<()> = None;
-    let service: Option<ServiceRequest> = if restore.is_none() && legacy.is_none() && kind.is_none()
-    {
+    let service: Option<ServiceRequest> = if restore.is_none() && kind.is_none() {
         Some(serde_json::from_slice(&bytes).map_err(|_| SetupDiagnostic::io())?)
     } else {
         None
     };
     let requester = if let Some(request) = &restore {
         &request.requester
-    } else if let Some(request) = &legacy {
-        #[cfg(target_os = "linux")]
-        {
-            &request.requester
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = request;
-            return Err(SetupDiagnostic::io());
-        }
     } else {
         &service.as_ref().ok_or_else(SetupDiagnostic::io)?.requester
     };
@@ -467,20 +345,6 @@ pub fn run_privileged_service_request(
             Err(SetupDiagnostic::io())
         };
         serde_json::to_vec(&result).map_err(|_| SetupDiagnostic::io())?
-    } else if let Some(request) = legacy {
-        #[cfg(target_os = "linux")]
-        {
-            let result = crate::legacy_system_server::privileged_apply(
-                request_path.parent().ok_or_else(SetupDiagnostic::io)?,
-                &request,
-            );
-            serde_json::to_vec(&result).map_err(|_| SetupDiagnostic::io())?
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = request;
-            return Err(SetupDiagnostic::io());
-        }
     } else {
         let request = service.ok_or_else(SetupDiagnostic::io)?;
         let result = apply(

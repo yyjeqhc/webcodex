@@ -361,6 +361,88 @@ test("stable mapping hints can preserve a learned choice value for unlabeled rad
   assert.equal(taught.nodes[0]?.mapping?.choiceValue, "男");
 });
 
+test("form context maps unlabeled fields without changing stable mapping identity", () => {
+  const base = {
+    role: "combobox",
+    name: "",
+    element_id: "element_origin_a",
+    actionable: true,
+    actions: ["select_option"],
+  };
+  const withContext = {
+    ...base,
+    element_id: "element_origin_b",
+    form_context: {
+      field_signature: "0123456789abcdef01234567",
+      dom_tag: "select",
+      html_name: "studentOrigin",
+      section_label: "基本信息",
+      component_hint: "ant-select",
+      option_count: 34,
+    },
+  };
+
+  assert.equal(
+    formStructureSignature([base]),
+    formStructureSignature([withContext]),
+    "new form metadata must not invalidate existing mapping memory",
+  );
+
+  const scope = "form-context-upgrade.example";
+  const plain = resolveFormMappings([base], [], scope);
+  const enriched = resolveFormMappings([withContext], [], scope);
+  assert.equal(plain.nodes[0]?.mapping, undefined);
+  assert.equal(
+    enriched.cacheHit,
+    true,
+    "a prior empty cache entry must not suppress newly observed form semantics",
+  );
+  assert.equal(enriched.nodes[0]?.mapping?.canonicalField, "student_origin");
+  assert.equal(enriched.nodes[0]?.mapping?.source, "form_context");
+});
+
+test("form context section labels preserve repeated education paths", () => {
+  const resolved = resolveFormMappings(
+    [{
+      role: "textbox",
+      name: "",
+      element_id: "element_school_a",
+      actionable: true,
+      actions: ["input_text"],
+      form_context: {
+        field_signature: "fedcba9876543210fedcba98",
+        dom_tag: "input",
+        html_name: "school",
+        section_label: "教育经历",
+      },
+    }],
+    [],
+    "form-context-section.example",
+  );
+  assert.equal(resolved.nodes[0]?.mapping?.canonicalField, "university");
+  assert.equal(resolved.nodes[0]?.mapping?.resumePath, "education[0].school");
+  assert.equal(resolved.nodes[0]?.mapping?.source, "section");
+});
+
+test("resume upload detection can use bounded form context", () => {
+  assert.equal(
+    isResumeUpload({
+      role: "button",
+      name: "",
+      value: "未选择任何文件",
+      actionable: true,
+      actions: ["upload_file"],
+      form_context: {
+        field_signature: "aaaaaaaaaaaaaaaaaaaaaaaa",
+        dom_tag: "input",
+        input_type: "file",
+        section_label: "简历附件",
+      },
+    }),
+    true,
+  );
+});
+
 test("unlabeled upload controls can be taught safely without pretending every file picker is a resume", () => {
   const first = resolveFormMappings([
     {

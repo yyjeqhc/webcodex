@@ -353,6 +353,9 @@ impl BrowserSupervisor {
             page.snapshot_generation = generation;
         }
 
+        let form_context_by_backend_id = snapshot.form_context_by_backend_id;
+        let source_incomplete = snapshot.source_incomplete;
+        let source_truncated = snapshot.truncated;
         let source_nodes = snapshot
             .nodes
             .into_iter()
@@ -363,11 +366,11 @@ impl BrowserSupervisor {
             .collect::<Vec<_>>();
         let mut nodes = Vec::new();
         let mut aggregate_bytes = 0usize;
-        let mut truncated = snapshot.source_incomplete
+        let mut truncated = source_incomplete
             || if effective_mode == SnapshotMode::Interactive {
                 source_nodes.len() > max_nodes
             } else {
-                snapshot.truncated || source_nodes.len() > max_nodes
+                source_truncated || source_nodes.len() > max_nodes
             };
         let mut group_ids = HashMap::<String, String>::new();
         let mut next_group_id = 1usize;
@@ -382,8 +385,18 @@ impl BrowserSupervisor {
                     })
                     .clone()
             });
-            let projected =
-                runtime.project_node(page_id, &snapshot.document_id, generation, node, group_id);
+            let form_context = node
+                .backend_node_id
+                .and_then(|backend_node_id| form_context_by_backend_id.get(&backend_node_id))
+                .cloned();
+            let projected = runtime.project_node(
+                page_id,
+                &snapshot.document_id,
+                generation,
+                node,
+                group_id,
+                form_context,
+            );
             let projected_bytes = serde_json::to_vec(&projected)
                 .map(|value| value.len())
                 .unwrap_or(MAX_SNAPSHOT_BYTES);
@@ -1152,6 +1165,7 @@ impl BrowserRuntime {
         snapshot_generation: u64,
         node: BackendNode,
         group_id: Option<String>,
+        form_context: Option<crate::FormContext>,
     ) -> SemanticNode {
         let mut element_id = None;
         let actions = node.capability.action_names();
@@ -1194,6 +1208,7 @@ impl BrowserRuntime {
             required: node.required,
             disabled: node.disabled,
             read_only: node.read_only,
+            form_context,
             actions: if element_id.is_some() {
                 actions
             } else {
@@ -1610,6 +1625,7 @@ mod tests {
                     source_incomplete: false,
                     document_id: format!("doc-{}", self.document_generation),
                     nodes,
+                    form_context_by_backend_id: HashMap::new(),
                     truncated,
                 });
             }
@@ -1632,6 +1648,7 @@ mod tests {
                     source_incomplete: false,
                     document_id: self.pages[0].document_id.clone(),
                     nodes,
+                    form_context_by_backend_id: HashMap::new(),
                     truncated: false,
                 });
             }
@@ -1640,6 +1657,7 @@ mod tests {
                     source_incomplete: false,
                     document_id: self.pages[0].document_id.clone(),
                     nodes: batch::form_nodes(),
+                    form_context_by_backend_id: HashMap::new(),
                     truncated: false,
                 });
             }
@@ -1652,6 +1670,7 @@ mod tests {
                     source_incomplete: false,
                     document_id: format!("doc-{}", self.document_generation),
                     nodes,
+                    form_context_by_backend_id: HashMap::new(),
                     truncated,
                 });
             }
@@ -1664,6 +1683,7 @@ mod tests {
                     source_incomplete: false,
                     document_id: format!("doc-{}", self.document_generation),
                     nodes,
+                    form_context_by_backend_id: HashMap::new(),
                     truncated,
                 });
             }
@@ -1671,6 +1691,7 @@ mod tests {
                 return Ok(BackendSnapshot {
                     source_incomplete: false,
                     document_id: format!("doc-{}", self.document_generation),
+                    form_context_by_backend_id: HashMap::new(),
                     nodes: vec![
                         fixture_node("button", "Go", Some(7), ControlCapability::click()),
                         fixture_node(
@@ -1720,6 +1741,7 @@ mod tests {
                 source_incomplete: false,
                 document_id: format!("doc-{}", self.document_generation),
                 nodes,
+                form_context_by_backend_id: HashMap::new(),
                 truncated: self.snapshot_node_count > MAX_SNAPSHOT_NODES,
             })
         }

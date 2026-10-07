@@ -71,6 +71,8 @@ Plugin provider 是 Runner 管理的常驻子进程，因此 **TS/JS 代码改�
 
 对于真实 ATS 中 semantic snapshot 无 label 的控件，`analyze_form` / `plan_fill` 会返回稳定的 `mapping_id`。caller 可以传 `mapping_hints`（label 或 canonical field + resume path）教会当前结构；radio/checkbox 还可以附带 `choice_value`，把无文本的选项一次教学为“男/女”“是/否”等实际语义。hint 不依赖易变的 Browser `element_id`。学习结果同时进入站点隔离的进程内 cache，并持久化到 provider 私有目录的 `mapping-memory.json`（可用 `WEBCODEX_CAMPUS_APPLICATION_MAPPING_MEMORY` 改路径），键为 `site + structure_signature`，因此 Plugin reload 后仍可复用。
 
+较新的 WebCodex Browser snapshot 还会为表单控件附带可选 `form_context`：稳定 `field_signature`、DOM tag/type/name、placeholder/autocomplete、section heading、组件提示、`aria-invalid`/校验提示和 native select option 数量。Plugin 会把这些信息作为 **补充证据**，用于原本无 AX label 的字段和重复经历 section；它们不会改变既有 `mapping_id` / structure signature，因此历史 mapping memory 仍可复用。旧 Runner 没有 `form_context` 时仍按原路径工作。
+
 ## 工具与流程
 
 `profile_get` 返回配置的结构化 Resume Resource 和当前 bounded canonical view；`analyze_form` 返回字段映射、indexed resume path、blocker 和 form-structure signature；`plan_fill` 返回下一步安全 phase：

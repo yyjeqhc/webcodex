@@ -18,10 +18,11 @@
 - Branch: `fix/campus-application-live-form-context`
 - Base / origin/main at branch creation: `676aeb13`
 - 2026-10-07 已再次 rebase 到 `origin/main=301a4a66`
-- rebase 后已提交两轮 Plugin 工作：
+- rebase 后已提交三轮工作：
   - `4bcf9894 feat(campus-application): persist live form mappings`
   - `a07c7a30 feat(campus-application): improve China campus fallback`
-- 本轮 Browser semantic-label provenance 作为第三个独立 commit 收口；最终 hash 以 branch HEAD 为准。
+  - `5fbdbed1 feat(browser): enrich semantic form labels`
+- 当前 Resume/Form Adapter v1 作为第四个独立 commit 收口；最终 hash 以 branch HEAD 为准。
 - 修改范围：
   - `plugins/campus-application/src/form-cache.ts`
   - `plugins/campus-application/src/mapping-memory.ts`
@@ -39,14 +40,17 @@
 ```text
 cargo fmt --all
 cargo test --profile dogfood -p webcodex-browser
+cargo test --profile dogfood -p webcodex-tool-contracts --lib
+npm --prefix plugins/campus-application run typecheck
 npm --prefix plugins/campus-application test
 git diff --check
 
-webcodex-browser: 84 passed, 0 failed, 1 ignored
-campus-application: 26 passed, 0 failed
+webcodex-browser: 85 passed, 0 failed, 1 ignored
+webcodex-tool-contracts: 289 passed, 0 failed
+campus-application: 29 passed, 0 failed
 ```
 
-regular mini Runner 与 mini-dogfood Runner 均已重新加载 `campus-application`，状态为 ready。
+上一轮 regular mini Runner 与 mini-dogfood Runner 的 `campus-application` provider 状态均为 ready；本轮 Adapter v1 源码尚未部署/重启 Runner，新的 Browser `form_context` 也尚未进入 live runtime。
 
 ## Plugin 动态开发 / reload 语义
 
@@ -346,6 +350,42 @@ npm --prefix plugins/campus-application test
 
 这一轮尚未做真实中国电信页面回归，因为 tab 已不再共享，而且当前源码改动没有未经授权重启/部署 Runner。下一次 live dogfood 应先部署该已验证 commit，再由用户把目标 tab 重新 share；若页面 DOM 使用标准 label/aria 或单控件 form-item 结构，原本需要手工教学的一批字段应直接进入自动 mapping。
 
+#### 2026-10-07 下一轮：Browser Bridge Resume/Form Adapter v1
+
+用户已重新 Share 中国电信在线简历 tab，本轮先重新 attach 并记录旧部署 Runner 的真实基线：
+
+- interactive snapshot: `node_count=256`, `truncated=true`
+- actionable controls: `184`
+- 有 `name/group_label`：约 `69`
+- 仍无 `name/group_label`：约 `115`
+- snapshot 中已经能看到 `72` 个 native option（例如证件类型、民族的实际选项）
+
+这进一步确认问题不是“Browser 完全看不到 DOM”，而是 **页面表单上下文没有被结构化投影给 Agent**；同时 256-node 页面已经截断，不适合继续靠肉眼逐项猜映射。
+
+本轮没有另写第二个 Chrome Extension。现有 `extensions/browser-bridge` 已通过 `chrome.debugger + nativeMessaging` 把用户显式 Share 的 tab 的 Accessibility/DOM/Page/Input 等 CDP 能力安全桥接给 Runner，继续复用它更直接。Adapter v1 放在 Browser snapshot 层，并新增可选 `form_context`：
+
+- `field_signature`：24 hex，排除当前 value 和 opaque `element_id`
+- DOM tag / input type / HTML name
+- placeholder / autocomplete
+- 最近的直接 section heading
+- component hint：native / Ant Design / Element / iView / Arco / TDesign / Semi / sd-Select / select2 等
+- `aria-invalid`
+- `aria-errormessage` / `aria-describedby` 的 bounded validation hint
+- native select `option_count`
+
+实现原则：
+
+- `form_context` 是观察语义，不新增 Browser effect/selector/script authority。
+- 现有 AX name/group_label 仍是第一证据；`form_context` 只补充缺失语义。
+- campus Plugin 已能用 `html_name/placeholder/autocomplete` 补映射，用 `section_label` 补重复教育/实习/项目路径，并把完整 context 放进 `unmapped_candidates` 方便快速 fallback。
+- radio/checkbox 若由 form context 确认 canonical field，仍用可见 choice label 与 profile desired value 比对后才产生 click。
+- **不把 `form_context` 纳入现有 mapping_id / structure signature**，避免升级后让中国电信已经积累的 persistent mapping memory 全部失效。
+- mapping cache 每次重新派生自动语义，只把显式 hint 当跨 snapshot authoritative override；因此同一 structure 先被旧 Browser 观察过，也不会压住后续新 Browser 提供的 form context。
+
+当前源码测试已经覆盖 field signature 对 value 变化稳定、section/component/validation/option metadata、旧 mapping identity 兼容、旧空 cache 不阻止新 form context、生源地自动映射、重复教育 section 和简历附件语义。
+
+**尚未做新版 Runner 的 live 回归。** 这轮没有改 Chrome extension 本身，因此无需 Reload extension；要在中国电信页面看到 `form_context`，需要把包含本轮 Rust Browser 改动的新 Runner 部署/重启到 `mini-dogfood`。按仓库 authority 规则，这一步等待用户显式授权部署目标后再做。
+
 ### 当前产品优先级（用户确认）
 
 第一原则是 **准确，其次是快速**；隐私最小化不是当前优化目标。后续设计取舍按：
@@ -383,8 +423,9 @@ accuracy > speed > privacy minimization
 - [x] wrapping/nested `<label>`
 - [x] ancestor `fieldset/legend`
 - [x] 保守 nearest form-item label（仅唯一 native control + 唯一直接未绑定 label）
-- [ ] section heading / group label 的进一步结构化 provenance
+- [x] direct section heading 的 bounded `form_context.section_label`
 - [ ] file picker 所属附件分类
+- [x] bounded form context（HTML name / placeholder / autocomplete / component / validation / native option count）
 
 下一步优先在真实中国电信页验证这些通用语义是否已经消除大部分 mapping hints；只有仍缺失的结构再继续增强，避免写站点专用 DOM hack。
 

@@ -13,6 +13,7 @@ import {
   normalizeLabel,
   resolveFormMappings,
   type FormMappingHint,
+  type SnapshotFormContext,
   type SnapshotNode,
 } from "./form-cache.js";
 import {
@@ -39,6 +40,20 @@ import {
   type FlowAction,
 } from "./application-flow.js";
 
+const formContextSchema = schema.object({
+  field_signature: schema.string({ maxLength: 24 }),
+  dom_tag: schema.string({ maxLength: 32 }),
+  input_type: schema.optional(schema.string({ maxLength: 32 })),
+  html_name: schema.optional(schema.string({ maxLength: 256 })),
+  placeholder: schema.optional(schema.string({ maxLength: 512 })),
+  autocomplete: schema.optional(schema.string({ maxLength: 128 })),
+  section_label: schema.optional(schema.string({ maxLength: 512 })),
+  component_hint: schema.optional(schema.string({ maxLength: 64 })),
+  aria_invalid: schema.optional(schema.boolean()),
+  validation_hint: schema.optional(schema.string({ maxLength: 512 })),
+  option_count: schema.optional(schema.integer()),
+});
+
 const nodeSchema = schema.object({
   role: schema.string({ maxLength: 80 }),
   name: schema.string({ maxLength: 1200 }),
@@ -52,6 +67,7 @@ const nodeSchema = schema.object({
   required: schema.optional(schema.boolean()),
   disabled: schema.optional(schema.boolean()),
   read_only: schema.optional(schema.boolean()),
+  form_context: schema.optional(formContextSchema),
   element_id: schema.optional(schema.string({ maxLength: 160 })),
   actions: schema.optional(schema.array(schema.string({ maxLength: 80 }), { maxItems: 16 })),
   actionable: schema.boolean(),
@@ -101,6 +117,7 @@ const unmappedCandidateSchema = schema.object({
   role: schema.string({ maxLength: 80 }),
   element_id: schema.string({ maxLength: 160 }),
   actions: schema.array(schema.string({ maxLength: 80 }), { maxItems: 16 }),
+  form_context: schema.optional(formContextSchema),
 });
 
 const actionSchema = schema.object({
@@ -230,6 +247,7 @@ function analyzeNodes(
     role: string;
     element_id: string;
     actions: string[];
+    form_context?: SnapshotFormContext;
   }> = [];
   const structureSignature = formStructureSignature(nodes);
   const persistent = loadPersistentMappingHints(url, structureSignature);
@@ -264,7 +282,14 @@ function analyzeNodes(
 
   for (const { node, mapping, mapping_id } of resolved.nodes) {
     const role = node.role.toLowerCase();
-    const label = node.group_label || node.name || node.description || "";
+    const label =
+      node.group_label ||
+      node.name ||
+      node.form_context?.placeholder ||
+      node.form_context?.html_name ||
+      node.form_context?.section_label ||
+      node.description ||
+      "";
     const resolvedValue = mapping
       ? resolveResumeValue(resume, mapping.resumePath)
       : { found: false, value: "" };
@@ -297,7 +322,11 @@ function analyzeNodes(
     }
 
     if (
-      mapping?.source === "group" &&
+      (
+        mapping?.source === "group" ||
+        mapping?.source === "form_context" ||
+        mapping?.source === "hint"
+      ) &&
       (role === "radio" || role === "checkbox")
     ) {
       const desired = resolvedValue.value;
@@ -369,6 +398,9 @@ function analyzeNodes(
         role: node.role,
         element_id: node.element_id ?? "",
         actions: node.actions ?? [],
+        ...(node.form_context === undefined
+          ? {}
+          : { form_context: node.form_context }),
       });
       if (
         unmappedUpload ||

@@ -69,6 +69,8 @@ Invocation remains on the canonical `plugin_tool describe -> call` path.
 
 For real ATS controls whose Browser semantic snapshot has no usable label, `analyze_form` and `plan_fill` return a stable `mapping_id`. Callers can teach the structure with `mapping_hints` using a label or explicit canonical field/resume path; radio/checkbox hints may also carry `choice_value` so unlabeled choices can be taught once as values such as male/female or yes/no. Explicit teaching is kept in a site-scoped in-process cache and also persisted in the provider-private `mapping-memory.json` (override with `WEBCODEX_CAMPUS_APPLICATION_MAPPING_MEMORY`), keyed by site identity plus structure signature, so it survives Plugin reloads.
 
+Newer WebCodex Browser snapshots may also attach bounded `form_context` to form controls: a stable field signature, DOM tag/type/name, placeholder/autocomplete, section heading, component hint, `aria-invalid`/validation text, and native-select option count. The Plugin treats this as **additional evidence** for otherwise unlabeled fields and repeated sections. It deliberately does not feed `form_context` into the existing `mapping_id`/structure signature, so learned mappings remain compatible; older Runners without the field continue to work.
+
 ## Tools
 
 `profile_get` returns the configured structured resume resource plus the bounded canonical fill view.

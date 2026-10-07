@@ -4,6 +4,20 @@ import {
   type CanonicalField,
 } from "./resume.js";
 
+export type SnapshotFormContext = {
+  field_signature: string;
+  dom_tag: string;
+  input_type?: string;
+  html_name?: string;
+  placeholder?: string;
+  autocomplete?: string;
+  section_label?: string;
+  component_hint?: string;
+  aria_invalid?: boolean;
+  validation_hint?: string;
+  option_count?: number;
+};
+
 export type SnapshotNode = {
   role: string;
   name: string;
@@ -17,6 +31,7 @@ export type SnapshotNode = {
   required?: boolean;
   disabled?: boolean;
   read_only?: boolean;
+  form_context?: SnapshotFormContext;
   element_id?: string;
   actions?: string[];
   actionable: boolean;
@@ -26,7 +41,7 @@ export type CachedFieldMapping = {
   canonicalField: CanonicalField;
   resumePath: string;
   confidence: number;
-  source: "name" | "group" | "resume_upload" | "section";
+  source: "name" | "group" | "form_context" | "hint" | "resume_upload" | "section";
   choiceValue?: string | undefined;
 };
 
@@ -238,7 +253,14 @@ export function isResumeUpload(node: SnapshotNode): boolean {
   if (!isUploadControl(node)) return false;
 
   const label = normalizeLabel(
-    [node.name, node.description ?? "", node.group_label ?? ""].join(" "),
+    [
+      node.name,
+      node.description ?? "",
+      node.group_label ?? "",
+      node.form_context?.section_label ?? "",
+      node.form_context?.placeholder ?? "",
+      node.form_context?.html_name ?? "",
+    ].join(" "),
   );
   return (
     label.includes("resume") ||
@@ -342,13 +364,14 @@ function deriveMappings(
       continue;
     }
 
-    const sectionKind = node.group_label
-      ? repeatSectionKind(node.group_label)
+    const sectionLabel = node.group_label || node.form_context?.section_label;
+    const sectionKind = sectionLabel
+      ? repeatSectionKind(sectionLabel)
       : undefined;
-    if (sectionKind && node.group_label) {
-      const explicitIndex = explicitSectionIndex(node.group_label);
+    if (sectionKind && sectionLabel) {
+      const explicitIndex = explicitSectionIndex(sectionLabel);
       const groupKey =
-        node.group_id ?? `${sectionKind}:${normalizeLabel(node.group_label)}`;
+        node.group_id ?? `${sectionKind}:${normalizeLabel(sectionLabel)}`;
       let sectionIndex = explicitIndex ?? groupIndexes.get(groupKey);
       if (sectionIndex === undefined) {
         sectionIndex = nextIndexes[sectionKind];
@@ -358,7 +381,13 @@ function deriveMappings(
       }
       groupIndexes.set(groupKey, sectionIndex);
 
-      const sectionField = matchSectionField(sectionKind, node.name);
+      const sectionField = matchSectionField(
+        sectionKind,
+        node.name ||
+          node.form_context?.placeholder ||
+          node.form_context?.html_name ||
+          "",
+      );
       if (sectionField) {
         mappings.set(key, {
           canonicalField: sectionField.canonicalField,
@@ -382,14 +411,24 @@ function deriveMappings(
       continue;
     }
 
-    const evidenceLabels = [node.name, node.description ?? "", node.group_label ?? ""];
-    for (const label of evidenceLabels) {
-      const match = matchField(label);
+    const evidenceLabels: ReadonlyArray<{
+      label: string;
+      source: CachedFieldMapping["source"];
+    }> = [
+      { label: node.name, source: "name" },
+      { label: node.description ?? "", source: "group" },
+      { label: node.group_label ?? "", source: "group" },
+      { label: node.form_context?.placeholder ?? "", source: "form_context" },
+      { label: node.form_context?.html_name ?? "", source: "form_context" },
+      { label: node.form_context?.autocomplete ?? "", source: "form_context" },
+    ];
+    for (const evidence of evidenceLabels) {
+      const match = matchField(evidence.label);
       if (!match) continue;
       mappings.set(key, {
         ...match,
         resumePath: resumePathForCanonicalField(match.canonicalField),
-        source: label === node.name ? "name" : "group",
+        source: evidence.source,
       });
       break;
     }
@@ -431,7 +470,14 @@ export function resolveFormMappings(
   const cacheKey = cacheKeyFor(cacheScope, signature);
   const cached = mappingCache.get(cacheKey);
   const cacheHit = cached !== undefined;
-  const mappings = new Map(cached ?? deriveMappings(entries));
+  // Re-derive automatic mappings on every observation so newly available Browser
+  // semantics (for example form_context) take effect without changing the stable
+  // structure signature. Explicit taught mappings always win; otherwise cached
+  // automatic evidence is only a fallback when the fresh observation cannot map.
+  const mappings = deriveMappings(entries);
+  for (const [key, mapping] of cached ?? []) {
+    if (mapping.source === "hint" || !mappings.has(key)) mappings.set(key, mapping);
+  }
 
   const entryByMappingId = new Map(entries.map((entry) => [entry.mapping_id, entry]));
   for (const hint of hints) {
@@ -448,7 +494,7 @@ export function resolveFormMappings(
       resumePath:
         hint.resumePath ?? resumePathForCanonicalField(matched.canonicalField),
       confidence: matched.confidence,
-      source: "group",
+      source: "hint",
       ...(hint.choiceValue === undefined ? {} : { choiceValue: hint.choiceValue }),
     });
   }

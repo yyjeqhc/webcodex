@@ -316,6 +316,33 @@ impl ControlCapability {
     }
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct FormContext {
+    /// Stable DOM semantic fingerprint for a rendered field. It excludes current
+    /// values and opaque Browser element ids; structurally identical repeated fields
+    /// may intentionally share the same fingerprint.
+    pub field_signature: String,
+    pub dom_tag: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub html_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub autocomplete: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub component_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aria_invalid: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub option_count: Option<usize>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SemanticNode {
     pub role: String,
@@ -341,6 +368,8 @@ pub struct SemanticNode {
     pub disabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub form_context: Option<FormContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub element_id: Option<String>,
     /// Canonical `browser_act` effects this node admits. Empty for semantic-only nodes.
@@ -515,6 +544,19 @@ mod tests {
                     required: Some(true),
                     disabled: Some(false),
                     read_only: None,
+                    form_context: Some(FormContext {
+                        field_signature: "0123456789abcdef01234567".to_string(),
+                        dom_tag: "select".to_string(),
+                        input_type: None,
+                        html_name: Some("fruit".to_string()),
+                        placeholder: None,
+                        autocomplete: None,
+                        section_label: Some("Preferences".to_string()),
+                        component_hint: Some("native-select".to_string()),
+                        aria_invalid: Some(false),
+                        validation_hint: None,
+                        option_count: Some(2),
+                    }),
                     element_id: Some("element_abcdefghijklmnop".to_string()),
                     actions: vec!["select_option".to_string()],
                     actionable: true,
@@ -532,6 +574,7 @@ mod tests {
                     required: None,
                     disabled: Some(false),
                     read_only: None,
+                    form_context: None,
                     element_id: None,
                     actions: Vec::new(),
                     actionable: false,
@@ -560,6 +603,13 @@ mod tests {
         assert_eq!(option["group_label"], "Fruit");
         assert_eq!(option["selected"], true);
         assert_eq!(option["disabled"], false);
+        let control = &value["nodes"][0];
+        assert_eq!(
+            control["form_context"]["field_signature"],
+            "0123456789abcdef01234567"
+        );
+        assert_eq!(control["form_context"]["section_label"], "Preferences");
+        assert_eq!(control["form_context"]["option_count"], 2);
         assert_eq!(option["actionable"], false);
         assert!(option.get("actions").is_none());
         assert!(option.get("element_id").is_none());

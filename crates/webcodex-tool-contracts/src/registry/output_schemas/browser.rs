@@ -62,6 +62,27 @@ fn page_schema() -> Value {
     })
 }
 
+fn form_context_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "field_signature": {"type": "string", "pattern": "^[0-9a-f]{24}$"},
+            "dom_tag": {"type": "string", "maxLength": 32},
+            "input_type": {"type": "string", "maxLength": 32},
+            "html_name": {"type": "string", "maxLength": 256},
+            "placeholder": {"type": "string", "maxLength": 512},
+            "autocomplete": {"type": "string", "maxLength": 128},
+            "section_label": {"type": "string", "maxLength": 512},
+            "component_hint": {"type": "string", "maxLength": 64},
+            "aria_invalid": {"type": "boolean"},
+            "validation_hint": {"type": "string", "maxLength": 512},
+            "option_count": {"type": "integer", "minimum": 0, "maximum": 256}
+        },
+        "required": ["field_signature", "dom_tag"]
+    })
+}
+
 fn node_schema() -> Value {
     json!({
         "type": "object",
@@ -79,6 +100,7 @@ fn node_schema() -> Value {
             "required": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
             "disabled": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
             "read_only": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+            "form_context": {"anyOf": [form_context_schema(), {"type": "null"}]},
             "element_id": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
             "actions": {
                 "type": "array",

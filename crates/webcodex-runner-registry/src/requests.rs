@@ -2489,6 +2489,11 @@ impl RunnerRegistry {
                 .map_err(|_| "invalid browser snapshot payload".to_string())?
                 .get("query")
                 .is_some_and(|value| !value.is_null());
+        let complex_batch = operation_kind == RunnerBrowserOperationKind::Batch
+            && operation_kind.requires_complex_controls(
+                &serde_json::from_str::<serde_json::Value>(&payload)
+                    .map_err(|_| "invalid browser batch payload".to_string())?,
+            );
         // Match the canonical enum exhaustively: adding a wire operation must
         // also choose its registry admission, not silently hit a string fallback.
         use RunnerBrowserOperationKind as BrowserKind;
@@ -2540,6 +2545,17 @@ impl RunnerRegistry {
             | BrowserKind::UploadFile => &[
                 RunnerFeature::BrowserControl,
                 RunnerFeature::BrowserElementActionAdmission,
+            ],
+            BrowserKind::SelectChoice | BrowserKind::SetDate => &[
+                RunnerFeature::BrowserControl,
+                RunnerFeature::BrowserElementActionAdmission,
+                RunnerFeature::BrowserComplexControls,
+            ],
+            BrowserKind::Batch if complex_batch => &[
+                RunnerFeature::BrowserControl,
+                RunnerFeature::BrowserBatch,
+                RunnerFeature::BrowserElementActionAdmission,
+                RunnerFeature::BrowserComplexControls,
             ],
             BrowserKind::Batch => &[
                 RunnerFeature::BrowserControl,

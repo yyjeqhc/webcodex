@@ -336,6 +336,10 @@ pub(crate) fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabili
     );
     capabilities.set(RunnerCapabilityId::BrowserBatch, browser_available);
     capabilities.set(RunnerCapabilityId::BrowserSemanticQuery, browser_available);
+    capabilities.set(
+        RunnerCapabilityId::BrowserComplexControls,
+        browser_available,
+    );
     capabilities.set(RunnerCapabilityId::BrowserLaunch, owned_browser_available);
     capabilities.set(
         RunnerCapabilityId::BrowserManagedProfile,

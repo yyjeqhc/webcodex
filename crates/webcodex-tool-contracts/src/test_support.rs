@@ -250,6 +250,16 @@ fn validate_schema_instance_at(instance: &Value, schema: &Value, path: &str) -> 
                         .bytes()
                         .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
             }
+            "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?$" => {
+                matches!(value.len(), 7 | 10)
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 4 | 7) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit()
+                        }
+                    })
+            }
             "^repository:v1:[0-9a-f]{64}$" => {
                 value.strip_prefix("repository:v1:").is_some_and(|digest| {
                     digest.len() == 64

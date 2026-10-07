@@ -3581,6 +3581,61 @@ fn browser_batch_schema_is_closed_bounded_and_reports_partial_certainty() {
 }
 
 #[test]
+fn browser_complex_control_schema_has_bounded_semantics_and_no_raw_escape_hatch() {
+    let schema = crate::input_schema_for_tool("control_browser");
+    for operation in [
+        json!({"action": "select_choice", "element_id": "element_abcdefghijklmnop", "choice_path": ["硕士"]}),
+        json!({"action": "select_choice", "element_id": "element_abcdefghijklmnop", "choice_path": ["四川省", "成都市", "武侯区"]}),
+        json!({"action": "set_date", "element_id": "element_abcdefghijklmnop", "value": "2027-06"}),
+        json!({"action": "set_date", "element_id": "element_abcdefghijklmnop", "value": "2027-06-30"}),
+    ] {
+        let mut single = operation.clone();
+        single["client_id"] = json!("mini");
+        single["browser_id"] = json!("browser_abcdefghijklmnop");
+        single["page_id"] = json!("page_abcdefghijklmnop");
+        test_support::validate_schema_instance(&single, &schema).unwrap();
+        let parsed: crate::tool_call::BrowserActToolCall =
+            serde_json::from_value(single.clone()).unwrap();
+        assert_eq!(parsed.action_name(), operation["action"].as_str().unwrap());
+        let batch = json!({"action": "batch", "client_id": "mini",
+            "browser_id": "browser_abcdefghijklmnop", "page_id": "page_abcdefghijklmnop",
+            "operations": [operation.clone()]});
+        test_support::validate_schema_instance(&batch, &schema).unwrap();
+        for field in ["selector", "script", "method", "backend_node_id"] {
+            let mut invalid = single.clone();
+            invalid[field] = json!("forbidden");
+            assert!(test_support::validate_schema_instance(&invalid, &schema).is_err());
+            assert!(
+                serde_json::from_value::<crate::tool_call::BrowserActToolCall>(invalid).is_err()
+            );
+        }
+    }
+    for path in [
+        json!([]),
+        json!(vec!["a"; 5]),
+        json!([""]),
+        json!(["x".repeat(4097)]),
+    ] {
+        let invalid = json!({"action": "batch", "client_id": "mini",
+            "browser_id": "browser_abcdefghijklmnop", "page_id": "page_abcdefghijklmnop",
+            "operations": [{"action":"select_choice","element_id":"element_abcdefghijklmnop","choice_path":path}]});
+        assert!(test_support::validate_schema_instance(&invalid, &schema).is_err());
+    }
+    for value in [
+        "2027",
+        "June 2027",
+        "2027/06/30",
+        "2027-6-30",
+        "2027-06-30T00:00",
+    ] {
+        let invalid = json!({"action":"set_date","client_id":"mini",
+            "browser_id":"browser_abcdefghijklmnop","page_id":"page_abcdefghijklmnop",
+            "element_id":"element_abcdefghijklmnop","value":value});
+        assert!(test_support::validate_schema_instance(&invalid, &schema).is_err());
+    }
+}
+
+#[test]
 fn structured_validation_definitions_receive_the_validation_output_family() {
     let mut count = 0;
     for definition in tool_definitions().filter(|definition| {

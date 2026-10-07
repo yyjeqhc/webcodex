@@ -109,6 +109,14 @@ pub enum BatchOperation {
         element_id: String,
         value: String,
     },
+    SelectChoice {
+        element_id: String,
+        choice_path: Vec<String>,
+    },
+    SetDate {
+        element_id: String,
+        value: String,
+    },
     UploadFile {
         element_id: String,
         path: std::path::PathBuf,
@@ -124,11 +132,20 @@ impl BatchOperation {
                 (element_id, AdmittedBrowserAction::SelectOption)
             }
             Self::SetValue { element_id, .. } => (element_id, AdmittedBrowserAction::SetValue),
+            Self::SelectChoice { element_id, .. } => {
+                (element_id, AdmittedBrowserAction::SelectChoice)
+            }
+            Self::SetDate { element_id, .. } => (element_id, AdmittedBrowserAction::SetDate),
             Self::UploadFile { element_id, .. } => (element_id, AdmittedBrowserAction::UploadFile),
         }
     }
 
     pub(crate) fn validate(&self) -> BrowserResult<()> {
+        match self {
+            Self::SelectChoice { choice_path, .. } => return validate_choice_path(choice_path),
+            Self::SetDate { value, .. } => return validate_date_value(value),
+            _ => {}
+        }
         let value = match self {
             Self::InputText { text, .. } => Some(text),
             Self::SelectOption { option, .. } => Some(option),
@@ -144,6 +161,71 @@ impl BatchOperation {
         }
         Ok(())
     }
+}
+
+pub(crate) fn validate_choice_path(path: &[String]) -> BrowserResult<()> {
+    if path.is_empty()
+        || path.len() > 4
+        || path.iter().any(|value| {
+            value.trim().is_empty() || value.contains('\0') || value.len() > MAX_INPUT_TEXT_BYTES
+        })
+    {
+        return Err(BrowserError::not_started(
+            "invalid_choice_path",
+            "choice path requires 1..4 non-empty, NUL-free segments within the Browser UTF-8 byte bound",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_date_value(value: &str) -> BrowserResult<()> {
+    fn valid(value: &str) -> bool {
+        let bytes = value.as_bytes();
+        if !matches!(bytes.len(), 7 | 10)
+            || bytes[4] != b'-'
+            || (bytes.len() == 10 && bytes[7] != b'-')
+            || bytes
+                .iter()
+                .enumerate()
+                .any(|(index, byte)| index != 4 && index != 7 && !byte.is_ascii_digit())
+        {
+            return false;
+        }
+        let year = value[..4].parse::<u32>().unwrap_or(0);
+        let month = value[5..7].parse::<usize>().unwrap_or(0);
+        if year == 0 || !(1..=12).contains(&month) {
+            return false;
+        }
+        if bytes.len() == 7 {
+            return true;
+        }
+        let leap =
+            year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+        let days = [
+            31,
+            if leap { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
+        value[8..10]
+            .parse::<u32>()
+            .is_ok_and(|day| (1..=days[month - 1]).contains(&day))
+    }
+    if !valid(value) {
+        return Err(BrowserError::not_started(
+            "invalid_date",
+            "date requires a valid canonical YYYY-MM-DD or YYYY-MM value",
+        ));
+    }
+    Ok(())
 }
 
 /// Sparse receipt. Aggregate certainty never erases an earlier completed effect.
@@ -216,6 +298,8 @@ pub(crate) struct ControlCapability {
     pub(crate) select_option: bool,
     pub(crate) exact_value: bool,
     pub(crate) file_upload: bool,
+    pub(crate) custom_choice: bool,
+    pub(crate) custom_date: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,6 +308,8 @@ pub(crate) enum AdmittedBrowserAction {
     InputText,
     SelectOption,
     SetValue,
+    SelectChoice,
+    SetDate,
     UploadFile,
 }
 
@@ -235,6 +321,8 @@ impl ControlCapability {
             select_option: false,
             exact_value: false,
             file_upload: false,
+            custom_choice: false,
+            custom_date: false,
         }
     }
 
@@ -245,6 +333,8 @@ impl ControlCapability {
             select_option: false,
             exact_value: false,
             file_upload: false,
+            custom_choice: false,
+            custom_date: false,
         }
     }
 
@@ -262,6 +352,8 @@ impl ControlCapability {
             select_option: true,
             exact_value: false,
             file_upload: false,
+            custom_choice: false,
+            custom_date: false,
         }
     }
 
@@ -272,6 +364,8 @@ impl ControlCapability {
             select_option: false,
             exact_value: true,
             file_upload: false,
+            custom_choice: false,
+            custom_date: false,
         }
     }
 
@@ -282,6 +376,8 @@ impl ControlCapability {
             select_option: false,
             exact_value: false,
             file_upload: true,
+            custom_choice: false,
+            custom_date: false,
         }
     }
 
@@ -291,6 +387,8 @@ impl ControlCapability {
             || self.select_option
             || self.exact_value
             || self.file_upload
+            || self.custom_choice
+            || self.custom_date
     }
 
     pub(crate) const fn admits(self, action: AdmittedBrowserAction) -> bool {
@@ -299,6 +397,8 @@ impl ControlCapability {
             AdmittedBrowserAction::InputText => self.text_input,
             AdmittedBrowserAction::SelectOption => self.select_option,
             AdmittedBrowserAction::SetValue => self.exact_value,
+            AdmittedBrowserAction::SelectChoice => self.custom_choice,
+            AdmittedBrowserAction::SetDate => self.custom_date,
             AdmittedBrowserAction::UploadFile => self.file_upload,
         }
     }
@@ -316,6 +416,12 @@ impl ControlCapability {
         }
         if self.exact_value {
             names.push("set_value".to_string());
+        }
+        if self.custom_choice {
+            names.push("select_choice".to_string());
+        }
+        if self.custom_date {
+            names.push("set_date".to_string());
         }
         if self.file_upload {
             names.push("upload_file".to_string());

@@ -833,6 +833,13 @@ runner_capabilities! {
         #[serde(default, skip_serializing_if = "is_false")]
         pub browser_semantic_query: bool = false;
     }
+    /// Bounded custom choice/path and date operations with composite-effect readback.
+    /// Older Runners must reject these operations before any batch effect.
+    BrowserComplexControls => RUNNER_CAPABILITY_BROWSER_COMPLEX_CONTROLS("browser_complex_controls"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub browser_complex_controls: bool = false;
+    }
     /// Bounded same-snapshot Browser batches with fail-stop partial-effect receipts.
     BrowserBatch => RUNNER_CAPABILITY_BROWSER_BATCH("browser_batch"),
     v2_baseline = false {
@@ -2849,6 +2856,7 @@ mod envelope_tests {
                 browser_element_action_admission: false,
                 browser_batch: false,
                 browser_semantic_query: false,
+                browser_complex_controls: false,
                 browser_launch: false,
                 browser_extension_bridge: false,
                 browser_managed_profile: false,

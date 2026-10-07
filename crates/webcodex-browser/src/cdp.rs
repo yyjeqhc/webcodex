@@ -99,6 +99,14 @@ pub(crate) trait BrowserBackend: Send {
         backend_node_id: i64,
         value: &str,
     ) -> BrowserResult<()>;
+    fn select_choice(
+        &mut self,
+        target_id: &str,
+        backend_node_id: i64,
+        path: &[String],
+    ) -> BrowserResult<()>;
+    fn set_date(&mut self, target_id: &str, backend_node_id: i64, value: &str)
+        -> BrowserResult<()>;
     fn upload_file(
         &mut self,
         target_id: &str,
@@ -758,7 +766,7 @@ impl CdpBackend {
         target_id: &str,
         backend_node_id: i64,
         function_declaration: &'static str,
-        argument: &str,
+        argument: Value,
         deadline: Instant,
     ) -> BrowserResult<()> {
         // Remote object ids are scoped to the DevTools session that created
@@ -792,6 +800,7 @@ impl CdpBackend {
                 "objectId": object_id,
                 "functionDeclaration": function_declaration,
                 "arguments": [{ "value": argument }],
+                "awaitPromise": true,
                 "returnByValue": true,
                 "userGesture": true,
             }),
@@ -827,22 +836,27 @@ impl CdpBackend {
             .and_then(Value::as_str)
             .unwrap_or("form_control_rejected");
         let (kind, message) = match kind {
+            "stale_element" => ("stale_element", "the exact widget element is detached; observe a fresh snapshot"),
+            "widget_not_supported" => ("widget_not_supported", "the control has no supported semantic popup or backing value"),
+            "widget_bounds_exceeded" => ("widget_bounds_exceeded", "widget discovery exceeded its bounded DOM or option budget"),
+            "widget_timeout" => ("widget_timeout", "the requested widget state did not appear within the bounded observation budget"),
+            "date_not_found" => ("date_not_found", "the picker did not expose a unique supported path to the requested date"),
             "element_not_select" => (
                 "element_not_select",
                 "target element is not a native select control",
             ),
             "option_not_found" => (
                 "option_not_found",
-                "no native option matched the exact value or visible label",
+                "no option matched the exact normalized value or visible label",
             ),
             "option_ambiguous" => (
                 "option_ambiguous",
-                "more than one native option matched the requested visible label",
+                "more than one option matched the requested value or visible label",
             ),
-            "option_disabled" => ("option_disabled", "the requested native option is disabled"),
+            "option_disabled" => ("option_disabled", "the requested option is disabled"),
             "control_disabled" => (
                 "control_disabled",
-                "target native form control is disabled or read-only",
+                "target form control is disabled or read-only",
             ),
             "element_not_value_control" => (
                 "element_not_value_control",
@@ -1104,6 +1118,7 @@ impl BrowserBackend for CdpBackend {
                 }
             }
         }
+        apply_custom_widget_contexts(&mut nodes, &form_context_by_backend_id);
         Ok(BackendSnapshot {
             document_id,
             nodes,
@@ -1399,6 +1414,10 @@ impl BrowserBackend for CdpBackend {
                 return { ok: false, kind: "option_disabled" };
             }
             const selectedValue = matches[0].value;
+            if (this.value === selectedValue && matches[0].selected
+                && options.filter((item) => item.selected).length === 1) {
+                return { ok: true };
+            }
             this.value = selectedValue;
             this.dispatchEvent(new Event("input", { bubbles: true }));
             this.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1413,7 +1432,7 @@ impl BrowserBackend for CdpBackend {
             target_id,
             backend_node_id,
             SELECT_OPTION,
-            option,
+            json!(option),
             deadline,
         )
     }
@@ -1427,7 +1446,57 @@ impl BrowserBackend for CdpBackend {
         const SET_VALUE: &str = include_str!("cdp/set_value.js");
         self.ensure_event_collector(target_id)?;
         let deadline = Instant::now() + REQUEST_TIMEOUT;
-        self.call_element_function_until(target_id, backend_node_id, SET_VALUE, value, deadline)
+        self.call_element_function_until(
+            target_id,
+            backend_node_id,
+            SET_VALUE,
+            json!(value),
+            deadline,
+        )
+    }
+
+    fn select_choice(
+        &mut self,
+        target_id: &str,
+        backend_node_id: i64,
+        path: &[String],
+    ) -> BrowserResult<()> {
+        const SELECT_CHOICE: &str = concat!(
+            "async function(requested) {\n",
+            include_str!("cdp/widgets/common.js"),
+            include_str!("cdp/widgets/choice.js"),
+            "\n}"
+        );
+        self.ensure_event_collector(target_id)?;
+        self.call_element_function_until(
+            target_id,
+            backend_node_id,
+            SELECT_CHOICE,
+            json!(path),
+            Instant::now() + REQUEST_TIMEOUT,
+        )
+    }
+
+    fn set_date(
+        &mut self,
+        target_id: &str,
+        backend_node_id: i64,
+        value: &str,
+    ) -> BrowserResult<()> {
+        const SET_DATE: &str = concat!(
+            "async function(requested) {\n",
+            include_str!("cdp/widgets/common.js"),
+            include_str!("cdp/widgets/date.js"),
+            "\n}"
+        );
+        self.ensure_event_collector(target_id)?;
+        self.call_element_function_until(
+            target_id,
+            backend_node_id,
+            SET_DATE,
+            json!(value),
+            Instant::now() + REQUEST_TIMEOUT,
+        )
     }
 
     fn upload_file(
@@ -1817,6 +1886,7 @@ struct DomControlFacts {
     input_type: Option<String>,
     semantic_label: Option<String>,
     semantic_group_label: Option<String>,
+    popup_kind: Option<String>,
     in_native_control_shadow: bool,
     owning_select_backend_id: Option<i64>,
     host_backend_node_id: Option<i64>,
@@ -2025,7 +2095,23 @@ fn capability_for_ax_node(
         return match index.get(&backend_node_id) {
             Some(facts) if facts.in_native_control_shadow => ControlCapability::default(),
             Some(facts) => {
-                capability_for_element(&facts.local_name, facts.input_type.as_deref(), &node.role)
+                let mut capability = capability_for_element(
+                    &facts.local_name,
+                    facts.input_type.as_deref(),
+                    &node.role,
+                );
+                if facts.popup_kind.as_deref() == Some("dialog")
+                    && matches!(facts.local_name.as_str(), "input" | "button")
+                    && facts
+                        .input_type
+                        .as_deref()
+                        .is_none_or(|kind| matches!(kind, "text" | "search"))
+                    && matches!(node.role.as_str(), "combobox" | "textbox")
+                {
+                    capability.custom_choice = false;
+                    capability.custom_date = true;
+                }
+                capability
             }
             // The document was classified, but this node was omitted. Do not
             // guess a click target from its accessibility role.
@@ -2112,7 +2198,7 @@ fn capability_for_element(
     input_type: Option<&str>,
     role: &str,
 ) -> ControlCapability {
-    match local_name {
+    let mut capability = match local_name {
         "select" => ControlCapability::select_option(),
         "option" => ControlCapability::default(),
         "textarea" => ControlCapability::native_text_input(),
@@ -2133,7 +2219,14 @@ fn capability_for_element(
         "a" => legacy_role_capability(role),
         _ if role == "option" => ControlCapability::default(),
         _ => legacy_role_capability(role),
+    };
+    if !matches!(local_name, "select" | "option")
+        && (local_name != "input" || matches!(input_type.unwrap_or("text"), "text" | "search"))
+        && matches!(role, "combobox" | "listbox")
+    {
+        capability.custom_choice = true;
     }
+    capability
 }
 
 fn legacy_role_capability(role: &str) -> ControlCapability {
@@ -2291,6 +2384,7 @@ fn walk_dom_controls(
                 input_type: input_type.clone(),
                 semantic_label: semantic_label.clone(),
                 semantic_group_label: semantic_group_label.clone(),
+                popup_kind: dom_attribute(node, "aria-haspopup"),
                 in_native_control_shadow,
                 owning_select_backend_id: if local_name == "option" && !in_native_control_shadow {
                     owning_select
@@ -2491,7 +2585,9 @@ fn walk_form_contexts(
         fieldset_label.or_else(|| nearby_group.map(|group| group.label.as_str()));
     let own_section_label = direct_section_heading(node);
     let descendant_section_label = own_section_label.as_deref().or(section_label);
-    let explicit_component = framework_component_hint(node);
+    let explicit_component = framework_component_hint(node).filter(|hint| {
+        !matches!(hint.as_str(), "ant-input" | "element-input") || component_hint.is_none()
+    });
     let effective_component = explicit_component
         .as_deref()
         .or(component_hint)
@@ -2676,6 +2772,13 @@ fn direct_section_heading(node: &Value) -> Option<String> {
 fn framework_component_hint(node: &Value) -> Option<String> {
     let class = dom_attribute_raw(node, "class")?.to_ascii_lowercase();
     [
+        ("ant-cascader", "ant-cascader"),
+        ("el-cascader", "element-cascader"),
+        ("ant-picker", "ant-datepicker"),
+        ("el-date-editor", "element-datepicker"),
+        ("el-date-picker", "element-datepicker"),
+        ("react-datepicker", "react-datepicker"),
+        ("flatpickr", "flatpickr-datepicker"),
         ("ant-select", "ant-select"),
         ("ant-input", "ant-input"),
         ("el-select", "element-select"),
@@ -2690,6 +2793,33 @@ fn framework_component_hint(node: &Value) -> Option<String> {
     ]
     .into_iter()
     .find_map(|(needle, hint)| class.contains(needle).then(|| hint.to_string()))
+}
+
+fn apply_custom_widget_contexts(nodes: &mut [BackendNode], contexts: &HashMap<i64, FormContext>) {
+    for node in nodes {
+        if node.disabled == Some(true) {
+            continue;
+        }
+        let Some(context) = node.backend_node_id.and_then(|id| contexts.get(&id)) else {
+            continue;
+        };
+        // Reuse the existing form-context index; no second selector/semantic system.
+        if !(context.dom_tag == "input" || matches!(node.role.as_str(), "combobox" | "listbox"))
+            || context
+                .input_type
+                .as_deref()
+                .is_some_and(|kind| !matches!(kind, "text" | "search"))
+        {
+            continue;
+        }
+        let hint = context.component_hint.as_deref().unwrap_or("");
+        if hint.contains("datepicker") {
+            node.capability.custom_date = true;
+            node.capability.custom_choice = false;
+        } else if hint.contains("cascader") || hint.ends_with("select") || hint == "select2" {
+            node.capability.custom_choice = true;
+        }
+    }
 }
 
 fn native_component_hint(local_name: &str) -> Option<&'static str> {
@@ -5420,3 +5550,7 @@ Connection: close
 #[cfg(test)]
 #[path = "cdp/tests/transport.rs"]
 mod transport_tests;
+
+#[cfg(test)]
+#[path = "cdp/tests/widgets.rs"]
+mod widget_tests;

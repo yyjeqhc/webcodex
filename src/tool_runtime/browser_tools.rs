@@ -11,6 +11,7 @@ use crate::auth::{
 use crate::runner_http::RunnerFeature;
 use serde_json::{json, Value};
 use std::time::Duration;
+use webcodex_core::runner_operation::RunnerBrowserOperationKind;
 
 const BROWSER_WAIT_SECS: u64 = 30;
 const MAX_BROWSER_TARGETS: usize = 64;
@@ -532,6 +533,50 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::BrowserAct(BrowserActToolCall::SelectChoice {
+                client_id,
+                browser_id,
+                page_id,
+                element_id,
+                choice_path,
+            }) => {
+                self.dispatch_browser_request(
+                    &client_id,
+                    "browser_select_choice",
+                    json!({
+                        "browser_id": browser_id,
+                        "page_id": page_id,
+                        "element_id": element_id,
+                        "choice_path": choice_path
+                    }),
+                    auth,
+                    true,
+                    BrowserRecoveryContext::snapshot(&client_id, &browser_id, &page_id),
+                )
+                .await
+            }
+            ToolCall::BrowserAct(BrowserActToolCall::SetDate {
+                client_id,
+                browser_id,
+                page_id,
+                element_id,
+                value,
+            }) => {
+                self.dispatch_browser_request(
+                    &client_id,
+                    "browser_set_date",
+                    json!({
+                        "browser_id": browser_id,
+                        "page_id": page_id,
+                        "element_id": element_id,
+                        "value": value
+                    }),
+                    auth,
+                    true,
+                    BrowserRecoveryContext::snapshot(&client_id, &browser_id, &page_id),
+                )
+                .await
+            }
             ToolCall::BrowserAct(BrowserActToolCall::SetValue {
                 client_id,
                 browser_id,
@@ -690,6 +735,7 @@ impl ToolRuntime {
             let browser_launch = client.supports(RunnerFeature::BrowserLaunch);
             let browser_batch = client.supports(RunnerFeature::BrowserBatch);
             let browser_semantic_query = client.supports(RunnerFeature::BrowserSemanticQuery);
+            let browser_complex_controls = client.supports(RunnerFeature::BrowserComplexControls);
             let browser_managed_profile = client.supports(RunnerFeature::BrowserManagedProfile);
             let browser_extension_bridge = client.supports(RunnerFeature::BrowserExtensionBridge);
             let browser_surface_handoff = client.supports(RunnerFeature::BrowserSurfaceHandoff);
@@ -711,6 +757,7 @@ impl ToolRuntime {
                     "browser_element_action_admission": browser_element_action_admission,
                     "browser_batch": browser_batch,
                     "browser_semantic_query": browser_semantic_query,
+                    "browser_complex_controls": browser_complex_controls,
                     "browser_managed_profile": browser_managed_profile,
                     "browser_extension_bridge": browser_extension_bridge,
                     "browser_surface_handoff": browser_surface_handoff,
@@ -753,6 +800,8 @@ impl ToolRuntime {
                 | "browser_click"
                 | "browser_input_text"
                 | "browser_select_option"
+                | "browser_select_choice"
+                | "browser_set_date"
                 | "browser_set_value"
                 | "browser_upload_file"
                 | "browser_batch"
@@ -775,6 +824,8 @@ impl ToolRuntime {
             | "browser_click"
             | "browser_input_text"
             | "browser_select_option"
+            | "browser_select_choice"
+            | "browser_set_date"
             | "browser_set_value"
             | "browser_upload_file"
             | "browser_batch"
@@ -853,6 +904,18 @@ impl ToolRuntime {
             return browser_error(
                 "capability_unavailable",
                 "target Runner does not advertise browser_semantic_query",
+                "not_started",
+                false,
+                None,
+            );
+        }
+        if RunnerBrowserOperationKind::from_wire(kind)
+            .is_some_and(|operation| operation.requires_complex_controls(&payload))
+            && !client.supports(RunnerFeature::BrowserComplexControls)
+        {
+            return browser_error(
+                "capability_unavailable",
+                "target Runner does not advertise browser_complex_controls",
                 "not_started",
                 false,
                 None,

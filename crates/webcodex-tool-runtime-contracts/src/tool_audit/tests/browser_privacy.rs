@@ -11,13 +11,37 @@ fn browser_batch_audit_omits_nested_field_values_and_upload_paths() {
                 {"action": "input_text", "element_id": "element_abcdefghijklmnop", "text": "PRIVATE_TEXT"},
                 {"action": "select_option", "element_id": "element_abcdefghijklmnop", "option": "PRIVATE_OPTION"},
                 {"action": "set_value", "element_id": "element_abcdefghijklmnop", "value": "PRIVATE_VALUE"},
+                {"action": "select_choice", "element_id": "element_abcdefghijklmnop", "choice_path": ["PRIVATE_PROVINCE", "PRIVATE_CITY"]},
+                {"action": "set_date", "element_id": "element_abcdefghijklmnop", "value": "2027-06-30"},
                 {"action": "upload_file", "element_id": "element_abcdefghijklmnop", "project": "agent:mini:resume", "path": "PRIVATE_PATH.pdf"}
             ]
         }),
     );
-    assert_eq!(projection["operation_count"], 4);
+    assert_eq!(projection["operation_count"], 6);
+    assert!(!projection.to_string().contains("2027-06-30"));
     assert!(projection.get("operations").is_none());
     assert!(!projection.to_string().contains("PRIVATE_"));
+}
+
+#[test]
+fn browser_complex_control_audit_keeps_identity_without_location_or_date() {
+    for operation in [
+        json!({"action":"select_choice","choice_path":["PRIVATE_PROVINCE","PRIVATE_CITY"]}),
+        json!({"action":"set_date","value":"2027-06-30"}),
+    ] {
+        let mut request = operation;
+        request["client_id"] = json!("mini");
+        request["browser_id"] = json!("browser_abcdefghijklmnop");
+        request["page_id"] = json!("page_abcdefghijklmnop");
+        request["element_id"] = json!("element_abcdefghijklmnop");
+        let projection = session_log_arguments_for_tool_request("control_browser", &request);
+        assert_eq!(projection["action"], request["action"]);
+        assert_eq!(projection["element_id"], request["element_id"]);
+        assert!(projection.get("choice_path").is_none());
+        assert!(projection.get("value").is_none());
+        assert!(!projection.to_string().contains("PRIVATE_"));
+        assert!(!projection.to_string().contains("2027-06-30"));
+    }
 }
 
 #[test]

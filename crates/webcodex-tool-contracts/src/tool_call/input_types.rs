@@ -900,6 +900,26 @@ pub enum BrowserBatchOperation {
         #[schemars(length(min = 1, max = 4096))]
         option: String,
     },
+    /// Choose a custom semantic option or a hierarchical path in one operation.
+    SelectChoice {
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^element_[A-Za-z0-9_-]{16,64}$"))]
+        element_id: String,
+        /// Exact normalized labels/values, from outermost choice to leaf.
+        #[schemars(length(min = 1, max = 4))]
+        #[schemars(inner(length(min = 1, max = 4096)))]
+        choice_path: Vec<String>,
+    },
+    /// Set a custom date picker, using a backing input or bounded calendar navigation.
+    SetDate {
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^element_[A-Za-z0-9_-]{16,64}$"))]
+        element_id: String,
+        /// Canonical ISO year-month or complete date; calendar validity is checked before effects.
+        #[schemars(length(min = 7, max = 10))]
+        #[schemars(regex(pattern = "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?$"))]
+        value: String,
+    },
     SetValue {
         #[schemars(length(min = 1, max = 128))]
         #[schemars(regex(pattern = "^element_[A-Za-z0-9_-]{16,64}$"))]
@@ -1038,6 +1058,42 @@ pub enum BrowserActToolCall {
         #[schemars(length(min = 1, max = 4096))]
         option: String,
     },
+    /// Choose a custom semantic option or a hierarchical path in one operation.
+    SelectChoice {
+        #[schemars(length(min = 1, max = 128))]
+        client_id: String,
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^browser_[A-Za-z0-9_-]{16,64}$"))]
+        browser_id: String,
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^page_[A-Za-z0-9_-]{16,64}$"))]
+        page_id: String,
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^element_[A-Za-z0-9_-]{16,64}$"))]
+        element_id: String,
+        /// Exact normalized labels/values, from outermost choice to leaf.
+        #[schemars(length(min = 1, max = 4))]
+        #[schemars(inner(length(min = 1, max = 4096)))]
+        choice_path: Vec<String>,
+    },
+    /// Set a custom date picker, using a backing input or bounded calendar navigation.
+    SetDate {
+        #[schemars(length(min = 1, max = 128))]
+        client_id: String,
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^browser_[A-Za-z0-9_-]{16,64}$"))]
+        browser_id: String,
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^page_[A-Za-z0-9_-]{16,64}$"))]
+        page_id: String,
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^element_[A-Za-z0-9_-]{16,64}$"))]
+        element_id: String,
+        /// Canonical ISO year-month or complete date; calendar validity is checked before effects.
+        #[schemars(length(min = 7, max = 10))]
+        #[schemars(regex(pattern = "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?$"))]
+        value: String,
+    },
     SetValue {
         #[schemars(length(min = 1, max = 128))]
         client_id: String,
@@ -1124,6 +1180,8 @@ impl BrowserActToolCall {
             Self::Click { .. } => "click",
             Self::InputText { .. } => "input_text",
             Self::SelectOption { .. } => "select_option",
+            Self::SelectChoice { .. } => "select_choice",
+            Self::SetDate { .. } => "set_date",
             Self::SetValue { .. } => "set_value",
             Self::UploadFile { .. } => "upload_file",
             Self::Batch { .. } => "batch",

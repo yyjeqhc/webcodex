@@ -49,6 +49,12 @@ fn current_runner_registration_advertises_v2_and_complete_generation_baseline() 
     let browser_available = webcodex_browser::discover_chromium_executable().is_some();
     assert_eq!(body.capabilities.browser_batch, browser_available);
     assert_eq!(body.capabilities.browser_semantic_query, browser_available);
+    assert_eq!(
+        body.capabilities.browser_complex_controls,
+        browser_available
+    );
+    assert!(!RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
+        .contains(&"browser_complex_controls"));
     assert!(!RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES.contains(&"browser_batch"));
     assert_eq!(
         body.capabilities.browser_element_action_admission,

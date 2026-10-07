@@ -18,6 +18,7 @@ fn target_schema() -> Value {
                     "browser_element_action_admission": {"type": "boolean"},
                     "browser_batch": {"type": "boolean"},
                     "browser_semantic_query": {"type": "boolean"},
+                    "browser_complex_controls": {"type": "boolean"},
                     "browser_launch": {"type": "boolean"},
                     "browser_managed_profile": {"type": "boolean"},
                     "browser_surface_handoff": {"type": "boolean"},
@@ -109,11 +110,11 @@ fn node_schema() -> Value {
             "element_id": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
             "actions": {
                 "type": "array",
-                "maxItems": 5,
+                "maxItems": 7,
                 "uniqueItems": true,
                 "items": {
                     "type": "string",
-                    "enum": ["click", "input_text", "select_option", "set_value", "upload_file"]
+                    "enum": ["click", "input_text", "select_option", "select_choice", "set_date", "set_value", "upload_file"]
                 }
             },
             "actionable": {"type": "boolean"}

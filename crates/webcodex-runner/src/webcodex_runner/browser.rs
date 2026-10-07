@@ -180,6 +180,15 @@ struct SelectOptionRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct SelectChoiceRequest {
+    browser_id: String,
+    page_id: String,
+    element_id: String,
+    choice_path: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SetValueRequest {
     browser_id: String,
     page_id: String,
@@ -375,6 +384,29 @@ pub(crate) fn handle_browser_operation(
                     .map(|stability| json!({"stability": stability}))
             })
         }
+        RunnerBrowserOperationKind::SelectChoice => {
+            parse::<SelectChoiceRequest>(&operation.payload).and_then(|request| {
+                supervisor
+                    .select_choice(
+                        &request.browser_id,
+                        &request.page_id,
+                        &request.element_id,
+                        &request.choice_path,
+                    )
+                    .map(|stability| json!({"stability": stability}))
+            })
+        }
+        RunnerBrowserOperationKind::SetDate => parse::<SetValueRequest>(&operation.payload)
+            .and_then(|request| {
+                supervisor
+                    .set_date(
+                        &request.browser_id,
+                        &request.page_id,
+                        &request.element_id,
+                        &request.value,
+                    )
+                    .map(|stability| json!({"stability": stability}))
+            }),
         RunnerBrowserOperationKind::SetValue => parse::<SetValueRequest>(&operation.payload)
             .and_then(|request| {
                 supervisor

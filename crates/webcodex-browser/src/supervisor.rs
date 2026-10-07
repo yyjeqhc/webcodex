@@ -831,6 +831,42 @@ impl BrowserSupervisor {
         )
     }
 
+    pub fn select_choice(
+        &self,
+        browser_id: &str,
+        page_id: &str,
+        element_id: &str,
+        path: &[String],
+    ) -> BrowserResult<BrowserStability> {
+        self.touch_current(browser_id)?;
+        crate::types::validate_choice_path(path)?;
+        self.element_effect(
+            browser_id,
+            page_id,
+            element_id,
+            AdmittedBrowserAction::SelectChoice,
+            |backend, target, node| backend.select_choice(target, node, path),
+        )
+    }
+
+    pub fn set_date(
+        &self,
+        browser_id: &str,
+        page_id: &str,
+        element_id: &str,
+        value: &str,
+    ) -> BrowserResult<BrowserStability> {
+        self.touch_current(browser_id)?;
+        crate::types::validate_date_value(value)?;
+        self.element_effect(
+            browser_id,
+            page_id,
+            element_id,
+            AdmittedBrowserAction::SetDate,
+            |backend, target, node| backend.set_date(target, node, value),
+        )
+    }
+
     pub fn upload_file(
         &self,
         browser_id: &str,
@@ -1010,6 +1046,12 @@ impl BrowserSupervisor {
                     }
                     BatchOperation::SetValue { value, .. } => {
                         runtime.backend.set_value(&target, node, value)
+                    }
+                    BatchOperation::SelectChoice { choice_path, .. } => {
+                        runtime.backend.select_choice(&target, node, choice_path)
+                    }
+                    BatchOperation::SetDate { value, .. } => {
+                        runtime.backend.set_date(&target, node, value)
                     }
                     BatchOperation::UploadFile { path, .. } => {
                         runtime.backend.upload_file(&target, node, path)
@@ -1500,14 +1542,16 @@ fn matches_snapshot_query(
     fn contains(value: Option<&str>, needle: &str) -> bool {
         value.is_some_and(|value| value.to_lowercase().contains(&needle.to_lowercase()))
     }
-    let field = context
-        .is_some_and(|c| matches!(c.dom_tag.as_str(), "input" | "select" | "textarea"))
+    let field = node.capability.custom_choice
+        || node.capability.custom_date
+        || context.is_some_and(|c| matches!(c.dom_tag.as_str(), "input" | "select" | "textarea"))
         || matches!(
             node.role.as_str(),
             "textbox"
                 | "searchbox"
                 | "combobox"
                 | "checkbox"
+                | "listbox"
                 | "radio"
                 | "switch"
                 | "spinbutton"
@@ -1544,10 +1588,12 @@ fn matches_snapshot_query(
 #[cfg(test)]
 mod tests {
     mod batch;
+    mod campus_e2e;
     mod fill;
     mod frames;
     mod lifecycle;
     mod query;
+    mod widgets;
     use super::*;
     use crate::cdp::{
         BackendConsoleEntry, BackendDiagnosticsSnapshot, BackendEventSnapshot, BackendFactory,
@@ -2078,6 +2124,17 @@ mod tests {
             _value: &str,
         ) -> BrowserResult<()> {
             self.record_batch_effect(format!("value:{_backend_node_id}:{_value}"))
+        }
+        fn select_choice(
+            &mut self,
+            _target_id: &str,
+            node: i64,
+            path: &[String],
+        ) -> BrowserResult<()> {
+            self.record_batch_effect(format!("choice:{node}:{}", path.join("/")))
+        }
+        fn set_date(&mut self, _target_id: &str, node: i64, value: &str) -> BrowserResult<()> {
+            self.record_batch_effect(format!("date:{node}:{value}"))
         }
         fn upload_file(
             &mut self,

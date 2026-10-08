@@ -81,6 +81,7 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
   const capacity = runnerCapacity(observation?.runner, stale);
   const saved = settings?.max_concurrent_jobs;
   const savedLimit = saved === undefined ? null : saved ?? 4;
+  const savedDisplay = saved == null ? "—" : saved;
   const limit = parseJobConcurrency(draft ?? "");
   const canEdit = state.topology?.runner?.kind === "local" && Boolean(settings?.can_restart) && saved !== undefined;
   const disabled = busy || operationBusy || !canEdit;
@@ -122,8 +123,8 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
     <p className="field-help">{s("Server-reported durable Job capacity. Stop-requested Jobs remain in the running count until termination because they still occupy execution slots. Other request queues are separate.")}</p>
     <RunnerCapacitySummary capacity={capacity} />
     {loading ? <p role="status">{s("Loading…")}</p> : <>
-      <p>{s("Saved limit")}: {savedLimit ?? "—"} · {s("Default")}: 4</p>
-      {savedLimit !== null && <p role="status">{s(capacity.state !== "available" ? "Saved for the next Runner start; the effective limit is unknown." : capacity.limit !== savedLimit ? "Restart required to apply the saved limit." : "Saved limit is in effect.")}</p>}
+      <p>{s("Saved limit")}: {savedDisplay} · {s("Default")}: 4</p>
+      {saved != null && savedLimit !== null && <p role="status">{s(capacity.state !== "available" ? "Saved for the next Runner start; the effective limit is unknown." : capacity.limit !== savedLimit ? "Restart required to apply the saved limit." : "Saved limit is in effect.")}</p>}
       {saved !== undefined && <div className="field-group"><label htmlFor="runner-job-concurrency">{s("Maximum concurrent Jobs")}</label>
         <input id="runner-job-concurrency" type="number" min={1} max={64} step={1} value={draft ?? ""} onChange={event => {
           editBase.current = event.target.value === String(savedLimit) ? undefined : editBase.current === undefined ? saved : editBase.current;

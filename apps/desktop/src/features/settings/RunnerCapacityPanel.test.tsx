@@ -28,6 +28,8 @@ describe("local Runner concurrency settings", () => {
   it("separates saved and effective limits without restarting while saving", async () => {
     render(view()); const input = await screen.findByRole("spinbutton", { name: "Maximum concurrent Jobs" });
     expect(input).toHaveValue(4); expect(screen.getByText("4 running · 2 queued · 4 max")).toBeInTheDocument();
+    expect(screen.getByText("Saved limit: — · Default: 4")).toBeInTheDocument();
+    expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "12" } }); fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
     await waitFor(() => expect(api.saveRunnerJobConcurrency).toHaveBeenCalledExactlyOnceWith(target, null, 12));
     expect(api.restartOwnedRunner).not.toHaveBeenCalled();

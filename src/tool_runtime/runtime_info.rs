@@ -1497,6 +1497,10 @@ fn job_status_is_running(status: &str) -> bool {
     )
 }
 
+fn job_status_occupies_execution_slot(status: &str) -> bool {
+    RunnerJobLifecycle::from_wire(status).is_ok_and(RunnerJobLifecycle::occupies_execution_slot)
+}
+
 fn job_status_is_runner_queued(status: &str) -> bool {
     matches!(
         RunnerJobLifecycle::from_wire(status),
@@ -1514,11 +1518,7 @@ fn job_concurrency_for_client(client: &RunnerView, runner_jobs: &[ShellJobInfo])
         // A stop request does not release the durable execution slot until
         // termination is observed. Keep capacity distinct from the literal
         // running-state count used elsewhere in Runtime status.
-        running += usize::from(
-            job_status_is_running(&job.status)
-                || RunnerJobLifecycle::from_wire(&job.status)
-                    == Ok(RunnerJobLifecycle::StopRequested),
-        );
+        running += usize::from(job_status_occupies_execution_slot(&job.status));
         queued += usize::from(job_status_is_runner_queued(&job.status));
     }
     json!({

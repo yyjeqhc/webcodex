@@ -93,6 +93,15 @@ impl RunnerJobLifecycle {
         matches!(self, Self::Queued | Self::StartedLegacy) || self.is_runner_active()
     }
 
+    /// Execution states that still occupy one Runner JobManager concurrency slot.
+    /// A stop request does not free capacity until terminal execution is observed.
+    pub const fn occupies_execution_slot(self) -> bool {
+        matches!(
+            self,
+            Self::StartedLegacy | Self::Running | Self::StopRequested
+        )
+    }
+
     /// Both accepted timeout spellings have the same timeout semantics while
     /// retaining their exact wire representation.
     pub const fn is_timed_out(self) -> bool {
@@ -103,6 +112,30 @@ impl RunnerJobLifecycle {
 #[cfg(test)]
 mod tests {
     use super::RunnerJobLifecycle;
+
+    #[test]
+    fn runner_job_slot_occupancy_is_canonical() {
+        for lifecycle in [
+            RunnerJobLifecycle::StartedLegacy,
+            RunnerJobLifecycle::Running,
+            RunnerJobLifecycle::StopRequested,
+        ] {
+            assert!(lifecycle.occupies_execution_slot(), "{lifecycle:?}");
+        }
+        for lifecycle in [
+            RunnerJobLifecycle::Queued,
+            RunnerJobLifecycle::RunnerQueued,
+            RunnerJobLifecycle::Completed,
+            RunnerJobLifecycle::Failed,
+            RunnerJobLifecycle::Stopped,
+            RunnerJobLifecycle::Timeout,
+            RunnerJobLifecycle::TimedOut,
+            RunnerJobLifecycle::Lost,
+            RunnerJobLifecycle::Cancelled,
+        ] {
+            assert!(!lifecycle.occupies_execution_slot(), "{lifecycle:?}");
+        }
+    }
 
     #[test]
     fn runner_job_lifecycle_wire_semantics_are_canonical() {

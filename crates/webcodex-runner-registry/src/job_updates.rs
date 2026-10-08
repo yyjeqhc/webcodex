@@ -2412,10 +2412,7 @@ impl RunnerRegistry {
             {
                 let count = counts.entry(job.client_id.clone()).or_default();
                 count.active += 1;
-                count.running += usize::from(matches!(
-                    job.lifecycle,
-                    JobLifecycleState::Running | JobLifecycleState::StartedLegacy
-                ));
+                count.running += usize::from(job.lifecycle.occupies_execution_slot());
                 count.queued += usize::from(matches!(
                     job.lifecycle,
                     JobLifecycleState::Queued | JobLifecycleState::RunnerQueued

@@ -37,8 +37,8 @@ a separate design. See the [schema and validation report](implementation/configu
 
 **Projects → execution devices** shows each Runner's reported durable Job usage:
 running, queued, and the effective concurrency limit. Counts follow the Server's
-report: its existing aggregate omits stop-requested Jobs, which can still occupy
-slots until termination. Offline, stale, unavailable, or unsupported observations
+capacity aggregate: stop-requested Jobs remain in the running count until termination
+because they still occupy execution slots. Offline, stale, unavailable, or unsupported observations
 never mean zero usage; ordinary request-dispatch queues are separate.
 
 In **Settings → Runtime & services → Runner Job capacity**, Desktop-managed local

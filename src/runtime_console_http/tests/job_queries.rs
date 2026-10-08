@@ -76,6 +76,60 @@ async fn console_job_query_uses_the_same_authorized_inventory_without_model_only
             "leaked {private}: {wire}"
         );
     }
+    let (runner_jobs, runner_truncated) = runner_jobs_for_auth(&runtime, &auth, "job-query-own")
+        .await
+        .unwrap();
+    assert!(!runner_truncated);
+    assert_eq!(runner_jobs.len(), 1);
+    let projected = serde_json::to_value(&runner_jobs[0]).unwrap();
+    assert_eq!(projected["job_id"], canonical.output["jobs"][0]["job_id"]);
+    assert_eq!(projected["project_id"], project);
+    assert_eq!(projected["session_id"], session.session_id);
+    assert!(!projected.to_string().contains("PRIVATE_COMMAND"));
+    let runner_detail = runner_for_auth(&runtime, &auth, "job-query-own", Some(20))
+        .await
+        .unwrap();
+    assert_eq!(runner_detail.jobs.len(), 1);
+    assert!(!runner_detail.jobs_truncated);
+    assert_eq!(runner_detail.jobs[0].job_id, runner_jobs[0].job_id);
+    assert!(runner_detail.jobs[0].started_at.is_none());
+    let mut runtime_only = auth.clone();
+    runtime_only
+        .scopes
+        .retain(|scope| scope != crate::auth::SCOPE_PROJECT_READ);
+    let (redacted, _) = runner_jobs_for_auth(&runtime, &runtime_only, "job-query-own")
+        .await
+        .unwrap();
+    assert_eq!(redacted.len(), 1);
+    assert!(redacted[0].project_id.is_none());
+    assert!(redacted[0].session_id.is_none());
+    let (foreign_runner_jobs, _) = runner_jobs_for_auth(&runtime, &foreign, "job-query-own")
+        .await
+        .unwrap();
+    assert!(
+        foreign_runner_jobs.is_empty(),
+        "runner inventory must use existing job visibility"
+    );
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.runner_registry,
+        "job-query-own",
+        "inst-job-query-own",
+        Vec::new(),
+    )
+    .await;
+    let (retained_job, _) = runner_jobs_for_auth(&runtime, &auth, "job-query-own")
+        .await
+        .unwrap();
+    assert_eq!(
+        retained_job.len(),
+        1,
+        "retained Job identity remains visible"
+    );
+    assert!(
+        retained_job[0].project_id.is_none() && retained_job[0].session_id.is_none(),
+        "Project/Session association must be reauthorized against current Project visibility"
+    );
+
     let (invisible, truncated) =
         session_jobs_for_auth(&runtime, &foreign, project, &session.session_id)
             .await

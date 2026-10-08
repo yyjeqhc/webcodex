@@ -508,20 +508,11 @@ pub struct ValidationFailureEvidence<'a> {
     pub stderr_excerpt: &'a str,
 }
 
-pub trait ValidationAdapter: Sync {
+/// Result interpretation without command-building authority.
+pub trait ValidationEvidenceProfile: Sync {
     fn validation_kind(&self) -> &'static str;
 
     fn tool_identity(&self) -> &'static str;
-
-    fn build_readonly_plan(
-        &self,
-        options: ValidationCommandOptions,
-    ) -> Result<ReadOnlyValidationPlan, String>;
-
-    fn build_command(&self, options: ValidationCommandOptions) -> Result<String, String> {
-        self.build_readonly_plan(options)
-            .map(|plan| plan.compatibility_command)
-    }
 
     fn parse(
         &self,
@@ -534,6 +525,18 @@ pub trait ValidationAdapter: Sync {
 
     fn reports_test_run_metadata(&self) -> bool {
         false
+    }
+}
+
+pub trait ValidationAdapter: ValidationEvidenceProfile {
+    fn build_readonly_plan(
+        &self,
+        options: ValidationCommandOptions,
+    ) -> Result<ReadOnlyValidationPlan, String>;
+
+    fn build_command(&self, options: ValidationCommandOptions) -> Result<String, String> {
+        self.build_readonly_plan(options)
+            .map(|plan| plan.compatibility_command)
     }
 }
 
@@ -571,4 +574,21 @@ pub fn validation_adapter_for_recipe(
         ("python", Test) => "python:pytest:test",
         _ => return None,
     })
+}
+
+/// Evidence-only view of the canonical adapter registry.
+pub fn validation_evidence_profile_for_tool(
+    tool_identity: &str,
+) -> Option<&'static dyn ValidationEvidenceProfile> {
+    validation_adapter_for_tool(tool_identity)
+        .map(|adapter| adapter as &dyn ValidationEvidenceProfile)
+}
+
+/// Evidence-only view of the canonical backend/action mapping.
+pub fn validation_evidence_profile_for_recipe(
+    backend: &str,
+    action: crate::SemanticCheck,
+) -> Option<&'static dyn ValidationEvidenceProfile> {
+    validation_adapter_for_recipe(backend, action)
+        .map(|adapter| adapter as &dyn ValidationEvidenceProfile)
 }

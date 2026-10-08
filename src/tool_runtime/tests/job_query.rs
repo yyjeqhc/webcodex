@@ -8,6 +8,7 @@ async fn typed_job_query_matches_inventory_order_bounds_and_does_not_select_fore
     let auth = shared_key_auth_context("typed-query-own");
     let foreign = shared_key_auth_context("typed-query-foreign");
     register_job_agent_for_auth(&runtime, "typed-own", "demo", &auth).await;
+    register_job_agent_for_auth(&runtime, "typed-other", "demo", &auth).await;
     register_job_agent_for_auth(&runtime, "typed-foreign", "demo", &foreign).await;
     let project = "agent:typed-own:demo";
     let session = runtime.sessions.start_session(Some(project.into()), None);
@@ -22,6 +23,7 @@ async fn typed_job_query_matches_inventory_order_bounds_and_does_not_select_fore
         .await;
     }
     start_agent_runtime_job_in_session(&runtime, "typed-foreign", "demo", None, &foreign).await;
+    start_agent_runtime_job_in_session(&runtime, "typed-other", "demo", None, &auth).await;
     let before = runtime
         .sessions
         .summary(&session.session_id, Some(200))
@@ -32,6 +34,7 @@ async fn typed_job_query_matches_inventory_order_bounds_and_does_not_select_fore
             None,
             Some(project),
             Some(&session.session_id),
+            None,
             Some(&auth),
         )
         .await
@@ -68,11 +71,23 @@ async fn typed_job_query_matches_inventory_order_bounds_and_does_not_select_fore
         .iter()
         .all(|job| job.project_id.as_deref() == Some(project)
             && job.session_id.as_deref() == Some(session.session_id.as_str())));
+    let runner_page = runtime
+        .query_job_inventory_for_auth(Some(1), None, None, None, Some("typed-other"), Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(runner_page.matched_count, 1);
+    assert_eq!(runner_page.jobs.len(), 1);
+    assert_eq!(runner_page.jobs[0].client_id, "typed-other");
+    assert!(
+        !runner_page.truncated(),
+        "Runner filtering must precede the page bound"
+    );
     let denied = runtime
         .query_job_inventory_for_auth(
             None,
             None,
             Some("agent:typed-foreign:demo"),
+            None,
             None,
             Some(&auth),
         )
@@ -99,7 +114,7 @@ async fn typed_job_query_retains_invalid_filter_errors_and_empty_status_normaliz
         (None, Some(" "), "invalid_session_filter"),
     ] {
         let error = runtime
-            .query_job_inventory_for_auth(None, None, project, session, None)
+            .query_job_inventory_for_auth(None, None, project, session, None, None)
             .await
             .err()
             .unwrap();

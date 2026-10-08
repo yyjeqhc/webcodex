@@ -122,6 +122,20 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
     <h2 id="runner-capacity-title">{s("Runner Job capacity")}</h2>
     <p className="field-help">{s("Server-reported durable Job capacity. Stop-requested Jobs remain in the running count until termination because they still occupy execution slots. Other request queues are separate.")}</p>
     <RunnerCapacitySummary capacity={capacity} />
+    {!stale && observation?.runner.jobs && <section className="workspace-section" aria-label={s("Runner Jobs")}>
+      <h3>{s("Runner Jobs")}</h3>
+      <p className="field-help">{s("Read-only Job inventory. Stop controls require a separately authorized action.")}</p>
+      {observation.runner.jobs.length === 0
+        ? <p>{s("No retained Jobs in this inventory.")}</p>
+        : <ul className="changed-files" data-testid="runner-job-inventory">{observation.runner.jobs.map(job => <li key={job.job_id}>
+            <span><strong>{job.kind}</strong> · <code>{job.job_id}</code> · {job.status}
+              {job.elapsed_secs !== undefined && ` · ${job.elapsed_secs}s`}
+              {job.project_id && <small> · {job.project_id}</small>}
+              {job.session_id && <small> · {job.session_id}</small>}
+            </span>
+          </li>)}</ul>}
+      {observation.runner.jobs_truncated && <p className="field-help">{s("Inventory incomplete; some Jobs are not shown.")}</p>}
+    </section>}
     {loading ? <p role="status">{s("Loading…")}</p> : <>
       <p>{s("Saved limit")}: {savedDisplay} · {s("Default")}: 4</p>
       {saved != null && savedLimit !== null && <p role="status">{s(capacity.state !== "available" ? "Saved for the next Runner start; the effective limit is unknown." : capacity.limit !== savedLimit ? "Restart required to apply the saved limit." : "Saved limit is in effect.")}</p>}

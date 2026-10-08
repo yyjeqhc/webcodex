@@ -22,11 +22,12 @@ mod recipe_tests;
 
 pub use adapters::{
     execution_purpose_for_validation_kind, project_validation_operation,
-    validation_adapter_for_recipe, validation_adapter_for_tool, CargoCheckOptions,
-    CargoReadOnlyValidationOperation, CargoTestOptions, GoCheckOptions,
+    validation_adapter_for_recipe, validation_adapter_for_tool,
+    validation_evidence_profile_for_recipe, validation_evidence_profile_for_tool,
+    CargoCheckOptions, CargoReadOnlyValidationOperation, CargoTestOptions, GoCheckOptions,
     GoReadOnlyValidationOperation, GoTestOptions, PythonTestOptions, ReadOnlyValidationOperation,
     ReadOnlyValidationPlan, ValidationAdapter, ValidationCommandOptions,
-    ValidationCompatibilityProfile, ValidationFailureEvidence,
+    ValidationCompatibilityProfile, ValidationEvidenceProfile, ValidationFailureEvidence,
 };
 #[cfg(any(feature = "session-evidence", test))]
 pub use evidence::{

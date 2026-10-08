@@ -890,3 +890,58 @@ fn project_validation_python_pytest_owns_filter_plan_and_parser() {
     assert!(!is_known_tool_name("pytest"));
     assert!(!is_known_tool_name("python:pytest:test"));
 }
+
+#[test]
+fn evidence_profiles_share_direct_adapter_registry_and_recipe_mapping() {
+    use crate::{validation_evidence_profile_for_recipe, validation_evidence_profile_for_tool};
+    for (backend, action, tool) in [
+        ("rust", SemanticCheck::Format, "cargo_fmt"),
+        ("rust", SemanticCheck::Check, "cargo_check"),
+        ("rust", SemanticCheck::Test, "cargo_test"),
+        ("go", SemanticCheck::Check, "go_vet"),
+        ("go", SemanticCheck::Test, "go_test"),
+        ("python", SemanticCheck::Test, "python:pytest:test"),
+    ] {
+        let adapter = validation_adapter_for_tool(tool).unwrap();
+        let profile = validation_evidence_profile_for_tool(tool).unwrap();
+        let recipe = validation_evidence_profile_for_recipe(backend, action).unwrap();
+        assert_eq!(profile.tool_identity(), adapter.tool_identity());
+        assert_eq!(recipe.tool_identity(), tool);
+        assert_eq!(profile.validation_kind(), adapter.validation_kind());
+        assert_eq!(
+            profile.reports_test_run_metadata(),
+            adapter.reports_test_run_metadata()
+        );
+        for truncated in [false, true] {
+            let stdout = "test result: ok. 2 passed; 0 failed; 0 ignored\n2 passed in 0.01s\n";
+            let stderr = "error: example failure";
+            let diagnostics = profile.parse(stdout, stderr, truncated);
+            assert_eq!(
+                serde_json::to_value(&diagnostics).unwrap(),
+                serde_json::to_value(adapter.parse(stdout, stderr, truncated)).unwrap()
+            );
+            for success in [false, true] {
+                let evidence = || ValidationFailureEvidence {
+                    success,
+                    reported_failure_kind: None,
+                    exit_code: Some(if success { 0 } else { 1 }),
+                    diagnostics: Some(&diagnostics),
+                    stdout_excerpt: stdout,
+                    stderr_excerpt: stderr,
+                };
+                assert_eq!(
+                    profile.map_failure_kind(evidence()),
+                    adapter.map_failure_kind(evidence())
+                );
+            }
+        }
+        assert!(adapter
+            .build_readonly_plan(ValidationCommandOptions {
+                check: tool == "cargo_fmt",
+                ..Default::default()
+            })
+            .is_ok());
+    }
+    assert!(validation_evidence_profile_for_tool("unknown_test").is_none());
+    assert!(validation_evidence_profile_for_recipe("go", SemanticCheck::Format).is_none());
+}

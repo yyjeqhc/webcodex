@@ -90,6 +90,12 @@ fn project_validation_runner_resolves_all_production_actions() {
         ("Cargo.toml", Test, "cargo_test", vec!["test"]),
         ("go.mod", Check, "go_vet", vec!["vet", "./..."]),
         ("go.mod", Test, "go_test", vec!["test", "-json", "./..."]),
+        (
+            "pyproject.toml",
+            Test,
+            "python:pytest:test",
+            vec!["-m", "pytest", "--color=no", "-rA"],
+        ),
     ] {
         let (_tmp, root, registry, policy) = fixture(marker);
         let (plan, cwd) = project::plan(&policy, &registry, &request(action)).unwrap();
@@ -102,31 +108,25 @@ fn project_validation_runner_resolves_all_production_actions() {
             Check => webcodex_validation::SemanticCheck::Check,
             Test => webcodex_validation::SemanticCheck::Test,
         };
-        let canonical_adapter = webcodex_validation::validation_adapter_for_recipe(
-            plan.provenance.backend.as_str(),
-            semantic_check,
+        let resolved = webcodex_validation::resolve_project_validation_recipe(
+            &root,
+            None,
+            None,
+            &[semantic_check],
+            None,
+            None,
+            false,
+            None,
         )
         .unwrap();
-        let canonical_options = if plan.provenance.backend == "rust" && action == FormatCheck {
-            webcodex_validation::ValidationCommandOptions {
-                check: true,
-                ..Default::default()
-            }
-        } else {
-            webcodex_validation::ValidationCommandOptions::default()
-        };
-        let canonical_plan = canonical_adapter
-            .build_readonly_plan(canonical_options)
-            .unwrap();
         assert_eq!(
-            plan.step, canonical_plan.structured_step,
-            "{adapter} gateway plan must use the canonical adapter step"
+            std::slice::from_ref(&plan.step),
+            resolved.steps.as_slice(),
+            "{adapter} gateway plan must use the resolved recipe step"
         );
         let invocation_digest = format!(
             "{:x}",
-            sha2::Sha256::digest(
-                serde_json::to_vec(&vec![canonical_plan.structured_step]).unwrap()
-            )
+            sha2::Sha256::digest(serde_json::to_vec(&resolved.steps).unwrap())
         );
         assert_eq!(
             plan.provenance.invocation_digest, invocation_digest,
@@ -138,6 +138,109 @@ fn project_validation_runner_resolves_all_production_actions() {
             .contains(root.to_str().unwrap()));
     }
 }
+#[test]
+fn project_validation_recipe_step_and_identity_preserve_normalized_selection() {
+    for (marker, backend, tool, filter, packages) in [
+        (
+            "Cargo.toml",
+            "rust",
+            "cargo_test",
+            "selected",
+            vec!["b", "a", "a"],
+        ),
+        (
+            "go.mod",
+            "go",
+            "go_test",
+            " ^TestA/sub$ ",
+            vec!["./b", "./a", "./a"],
+        ),
+        (
+            "pyproject.toml",
+            "python",
+            "python:pytest:test",
+            " selected and not slow ",
+            vec![],
+        ),
+    ] {
+        let (_tmp, root, registry, policy) = fixture(marker);
+        let mut req = request(ProjectValidationAction::Test);
+        req.test = Some(ProjectValidationTestOptions {
+            filter: Some(if backend == "rust" {
+                format!("  {filter}  ")
+            } else {
+                filter.into()
+            }),
+            ..Default::default()
+        });
+        if !packages.is_empty() {
+            req.scope = Some(ProjectValidationScope {
+                packages: packages.into_iter().map(str::to_string).collect(),
+                all_packages: false,
+            });
+            req.dependency_policy = Some(ProjectDependencyPolicy {
+                mode: ProjectDependencyMode::Locked,
+            });
+        }
+        let (plan, _) = project::plan(&policy, &registry, &req).unwrap();
+        let resolved = webcodex_validation::resolve_project_validation_recipe(
+            &root,
+            None,
+            None,
+            &[webcodex_validation::SemanticCheck::Test],
+            req.test.as_ref().unwrap().filter.as_deref(),
+            req.scope
+                .as_ref()
+                .and_then(ProjectValidationScope::explicit_packages),
+            false,
+            req.dependency_policy,
+        )
+        .unwrap();
+        assert_eq!(std::slice::from_ref(&plan.step), resolved.steps.as_slice());
+        assert_eq!(plan.adapter, tool);
+        assert_eq!(
+            plan.provenance.invocation_digest,
+            resolved.invocation_digest
+        );
+
+        req.test.as_mut().unwrap().filter = Some(filter.into());
+        if backend == "rust" {
+            let scope = req.scope.as_mut().unwrap();
+            scope.packages.sort();
+            scope.packages.dedup();
+        }
+        let (normalized, _) = project::plan(&policy, &registry, &req).unwrap();
+        assert_eq!(plan.step, normalized.step);
+        assert_eq!(plan.validation_target_id, normalized.validation_target_id);
+        let operation = webcodex_validation::project_validation_operation(
+            backend,
+            webcodex_validation::SemanticCheck::Test,
+            req.scope
+                .as_ref()
+                .and_then(ProjectValidationScope::explicit_packages)
+                .map(<[String]>::to_vec),
+            false,
+        )
+        .unwrap()
+        .with_dependency_policy(req.dependency_policy)
+        .unwrap()
+        .with_test_filter(Some(filter))
+        .unwrap();
+        let identity = operation
+            .validation_target_id(Some(&resolved.recipe_root_relative))
+            .unwrap();
+        let expected = if backend == "go" {
+            webcodex_core::validation_identity::contextualize_structured_validation_target_identity(
+                &identity,
+                webcodex_core::validation_identity::StructuredValidationExecutionContext::GoProjectSingleModuleV1,
+            ).unwrap()
+        } else {
+            identity
+        };
+        assert_eq!(plan.validation_target_id, expected);
+    }
+}
+
 #[test]
 fn go_project_validation_identity_is_single_module_domain_separated() {
     for action in [

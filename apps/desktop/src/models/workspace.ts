@@ -22,7 +22,12 @@ export interface RunnerOverview {
   projects: WorkspaceProject[]; projects_truncated: boolean;
   recent_sessions?: { sessions: WorkflowSession[]; truncated: boolean; scan_truncated: boolean };
 }
+export interface ServerRunnerJob {
+  job_id: string; kind: string; status: string; terminal: boolean; created_at: number;
+  started_at?: number; elapsed_secs?: number; project_id?: string; session_id?: string;
+}
 export interface ServerRunnerSummary {
+  jobs?: ServerRunnerJob[]; jobs_truncated?: boolean;
   job_concurrency_limit?: number | null; jobs_running?: number; jobs_queued?: number;
   client_id: string; connected: boolean; status?: string;
   computer_session_availability?: boolean | null;

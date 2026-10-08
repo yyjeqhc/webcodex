@@ -11,6 +11,183 @@ use crate::runner_protocol::{
 };
 use serde_json::json;
 
+#[test]
+fn validation_evidence_unknown_profiles_preserve_only_process_success() {
+    assert_unproven_validation_profiles(
+        &[("unknown_test", "test"), ("unknown_check", "check")],
+        true,
+    );
+}
+
+#[test]
+fn validation_evidence_known_mismatched_profiles_fail_even_without_minimum() {
+    assert_unproven_validation_profiles(
+        &[
+            ("cargo_check", "test"),
+            ("cargo_fmt", "test"),
+            ("cargo_test", "check"),
+            ("go_vet", "test"),
+            ("go_test", "check"),
+            ("python:pytest:test", "check"),
+            ("cargo_test", "format"),
+        ],
+        false,
+    );
+}
+
+fn assert_unproven_validation_profiles(profiles: &[(&str, &str)], generic_success: bool) {
+    use crate::tool_runtime::jobs::{structured_validation_evidence, validation_job_projection};
+
+    let stdout = "test result: ok. 20 passed; 0 failed; 0 ignored\n";
+    let stderr = "warning: unused import\nerror[E0308]: mismatched types\n";
+    for &(tool, kind) in profiles {
+        for truncated in [false, true] {
+            let evidence = structured_validation_evidence(tool, kind, stdout, stderr, truncated);
+            assert!(evidence.diagnostics.is_none(), "{tool}/{kind}");
+            assert!(evidence.tests_detected.is_none());
+            assert!(evidence.tests_run_count.is_none());
+            assert!(evidence.tests_passed.is_none());
+            assert!(evidence.tests_failed.is_none());
+            assert!(evidence.zero_tests_run.is_none());
+            assert!(evidence.warnings_count.is_none());
+            assert!(evidence.errors_count.is_none());
+            for minimum in [None, Some(0), Some(1)] {
+                let value = validation_job_projection(
+                    Some(tool),
+                    Some(kind),
+                    "completed",
+                    Some(0),
+                    stdout,
+                    stderr,
+                    truncated,
+                    minimum,
+                )
+                .unwrap();
+                assert_eq!(
+                    value["passed"],
+                    generic_success && minimum.is_none(),
+                    "{tool}/{kind}: {value}"
+                );
+                if let Some(minimum) = minimum {
+                    assert_eq!(value["test_count_assertion"]["status"], "unproven");
+                    assert_eq!(value["test_count_assertion"]["minimum_tests"], minimum);
+                    assert_eq!(
+                        value["test_count_assertion"]["reason_code"],
+                        "test_count_unproven"
+                    );
+                    assert!(value["test_count_assertion"]["actual_tests_run"].is_null());
+                } else {
+                    assert!(value.get("test_count_assertion").is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn validation_evidence_go_vet_preserves_historic_counters() {
+    use crate::tool_runtime::jobs::structured_validation_evidence;
+    let stderr = "warning: unused import\nerror[E0308]: mismatched types\n";
+    // Preserve known Go check counter compatibility while unknown tools
+    // cannot borrow the old generic Rustc counter fallback.
+    let go = structured_validation_evidence("go_vet", "check", "", stderr, false);
+    assert!(go.diagnostics.is_some());
+    assert_eq!(go.warnings_count, Some(1));
+    assert_eq!(go.errors_count, Some(1));
+}
+
+#[test]
+fn validation_evidence_authoritative_cargo_count_requires_matching_kind_and_tool() {
+    use crate::runner_protocol::ShellJobTestCountEvidence;
+    use webcodex_core::validation_evidence::CargoTestCountEvidenceStatus;
+
+    let count = ShellJobTestCountEvidence {
+        tests_detected: true,
+        tests_run_count: Some(20),
+        status: CargoTestCountEvidenceStatus::CompleteSummary,
+    };
+    for (tool, kind) in [
+        ("cargo_test", "check"),
+        ("unknown_test", "test"),
+        ("go_test", "test"),
+    ] {
+        let value = crate::tool_runtime::jobs::validation_job_projection_with_policy(
+            Some(tool),
+            Some(kind),
+            "completed",
+            Some(0),
+            "",
+            "",
+            true,
+            Some(&count),
+            Some(1),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(value["passed"], false, "{value}");
+        assert_eq!(value["test_count_assertion"]["status"], "unproven");
+        assert!(value["test_count_assertion"]["actual_tests_run"].is_null());
+    }
+}
+
+#[test]
+fn validation_evidence_known_profiles_preserve_counts_failures_zero_and_truncation() {
+    use crate::tool_runtime::jobs::validation_job_projection;
+
+    for (tool, stdout, passed, failed, status, exit) in [
+        ("cargo_test", "test result: ok. 2 passed; 0 failed; 0 ignored\n", 2, 0, "completed", 0),
+        ("cargo_test", "test result: FAILED. 1 passed; 1 failed; 0 ignored\n", 1, 1, "failed", 101),
+        ("cargo_test", "test result: ok. 0 passed; 0 failed; 0 ignored\n", 0, 0, "completed", 0),
+        ("go_test", "{\"Action\":\"pass\",\"Package\":\"example\",\"Test\":\"TestOne\"}\n{\"Action\":\"pass\",\"Package\":\"example\"}\n", 1, 0, "completed", 0),
+        ("go_test", "{\"Action\":\"fail\",\"Package\":\"example\",\"Test\":\"TestOne\"}\n{\"Action\":\"fail\",\"Package\":\"example\"}\n", 0, 1, "failed", 1),
+        ("python:pytest:test", "2 passed in 0.01s\n", 2, 0, "completed", 0),
+        ("python:pytest:test", "1 failed, 1 passed in 0.01s\n", 1, 1, "failed", 1),
+        ("python:pytest:test", "no tests ran in 0.01s\n", 0, 0, "failed", 5),
+    ] {
+        for truncated in [false, true] {
+            let value = validation_job_projection(
+                Some(tool), Some("test"), status, Some(exit), stdout, "", truncated, Some(1),
+            ).unwrap();
+            if truncated {
+                assert!(value["tests_run_count"].is_null(), "{value}");
+                assert!(value["tests_passed"].is_null());
+                assert!(value["tests_failed"].is_null());
+                assert!(value["zero_tests_run"].is_null());
+            } else {
+                assert_eq!(value["tests_run_count"], passed + failed, "{value}");
+                assert_eq!(value["tests_passed"], passed, "{value}");
+                assert_eq!(value["tests_failed"], failed, "{value}");
+                assert_eq!(value["zero_tests_run"], passed + failed == 0);
+                assert_eq!(value["diagnostics"]["available"], true);
+            }
+            assert_eq!(value["passed"], exit == 0 && passed > 0 && !truncated, "{value}");
+            if exit != 0 {
+                assert!(value.get("test_count_assertion").is_none());
+            } else {
+                assert_eq!(value["test_count_assertion"]["status"],
+                    if truncated { "unproven" } else if passed > 0 { "passed" } else { "failed" });
+            }
+        }
+    }
+    // Package-only Go output cannot prove zero; preserve that existing contract.
+    let go_no_tests = validation_job_projection(
+        Some("go_test"),
+        Some("test"),
+        "completed",
+        Some(0),
+        "{\"Action\":\"pass\",\"Package\":\"example\"}\n",
+        "",
+        false,
+        Some(1),
+    )
+    .unwrap();
+    assert!(go_no_tests["tests_run_count"].is_null());
+    assert!(go_no_tests["zero_tests_run"].is_null());
+    assert_eq!(go_no_tests["passed"], false);
+    assert_eq!(go_no_tests["test_count_assertion"]["status"], "unproven");
+}
+
 fn run_jobs_test_in_large_stack_thread<F, Fut>(test: F)
 where
     F: FnOnce() -> Fut + Send + 'static,
@@ -199,6 +376,17 @@ fn passive_validation_projection_separates_execution_result_from_source_freshnes
     metadata.kind = "test".to_string();
     job.exit_code = Some(0);
     job.test_count_evidence = None;
+    let mismatched = runtime
+        .passive_job_validation_projection(&job, None)
+        .expect("mismatched validation profile");
+    assert_eq!(mismatched["passed"], false);
+
+    // A consistent Cargo test identity without count evidence remains
+    // inconclusive, independently of source freshness.
+    let metadata = job.validation.as_mut().unwrap();
+    metadata.adapter = "cargo_test".to_string();
+    metadata.steps[0].name = "test".to_string();
+    metadata.steps[0].args = vec!["test".to_string()];
     let inconclusive = runtime
         .passive_job_validation_projection(&job, None)
         .expect("test validation projection");

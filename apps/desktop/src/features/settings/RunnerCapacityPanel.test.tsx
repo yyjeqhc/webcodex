@@ -63,6 +63,22 @@ describe("local Runner concurrency settings", () => {
     expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
     expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
   });
+  it("shows authorized Runner Jobs without exposing stale inventory", async () => {
+    query.mockImplementation(async () => ({
+      ...runner,
+      jobs: [{ job_id: "wc_job_test", kind: "run_process", status: "stop_requested",
+        terminal: false, created_at: 1, started_at: 2, elapsed_secs: 14,
+        project_id: "agent:local:demo" }],
+      jobs_truncated: true,
+    }));
+    const mounted = render(view());
+    expect(await screen.findByText(/wc_job_test/)).toBeInTheDocument();
+    expect(screen.getByText(/stop_requested/)).toBeInTheDocument();
+    expect(screen.getByText("Inventory incomplete; some Jobs are not shown.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Stop Job/ })).not.toBeInTheDocument();
+    mounted.rerender(view({ ...state, readiness: { ...state.readiness, server: "stopped" } }));
+    expect(screen.queryByText(/wc_job_test/)).not.toBeInTheDocument();
+  });
   it("keeps unowned Runners read-only", async () => {
     settings.can_restart = false; render(view()); expect(await screen.findByRole("spinbutton")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Restart Runner…" })).not.toBeInTheDocument();

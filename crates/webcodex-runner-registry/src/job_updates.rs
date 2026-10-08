@@ -2061,13 +2061,14 @@ impl RunnerRegistry {
     }
 
     /// Complete caller-visible Job set after exact static identity filters.
-    /// Project/session selection happens before lifecycle refresh so focused
-    /// model-facing inventory queries do not refresh unrelated Jobs. Status is
+    /// Runner/Project/Session selection happens before lifecycle refresh so
+    /// focused inventory queries do not refresh unrelated Jobs. Status is
     /// intentionally not accepted here because it depends on the refreshed
     /// lifecycle and must be applied by the caller afterwards.
     pub async fn list_jobs_for_auth_filtered(
         &self,
         auth: Option<&crate::RunnerAccess>,
+        client_id: Option<&str>,
         project_id: Option<&str>,
         session_id: Option<&str>,
     ) -> Vec<ShellJobInfo> {
@@ -2077,6 +2078,11 @@ impl RunnerRegistry {
             .values()
             .filter(|job| job.visibility == ShellJobVisibility::Public)
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
+            .filter(|job| {
+                client_id
+                    .map(|client_id| job.client_id == client_id)
+                    .unwrap_or(true)
+            })
             .filter(|job| {
                 project_id
                     .map(|project_id| job.project_id.as_deref() == Some(project_id))
@@ -2100,6 +2106,11 @@ impl RunnerRegistry {
             .values()
             .filter(|job| job.visibility == ShellJobVisibility::Public)
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
+            .filter(|job| {
+                client_id
+                    .map(|client_id| job.client_id == client_id)
+                    .unwrap_or(true)
+            })
             .filter(|job| {
                 project_id
                     .map(|project_id| job.project_id.as_deref() == Some(project_id))

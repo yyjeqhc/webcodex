@@ -59,11 +59,13 @@ pub(crate) fn plan(
         .test
         .as_ref()
         .and_then(|test| test.filter.as_deref());
+    // The operation supplies semantic identity and normalization only. The
+    // resolved recipe below is the sole authority for the executable step.
     let operation = project_validation_operation(backend.as_str(), action, packages, all_packages)
         .and_then(|operation| operation.with_dependency_policy(request.dependency_policy))
         .and_then(|operation| operation.with_test_filter(filter))
         .map_err(|code| unavailable(code, Some(backend.as_str())))?;
-    let adapter = operation.adapter();
+    let profile = operation.compatibility_profile();
     let resolved = resolve_project_validation_recipe(
         &root,
         request.cwd.as_deref(),
@@ -90,13 +92,6 @@ pub(crate) fn plan(
     } else {
         identity
     };
-    debug_assert_eq!(
-        operation
-            .build_readonly_plan()
-            .ok()
-            .map(|plan| plan.structured_step),
-        resolved.steps.first().cloned()
-    );
     let cwd = root.join(&resolved.recipe_root_relative);
     Ok((
         ProjectValidationPlan {
@@ -108,7 +103,7 @@ pub(crate) fn plan(
                 manifest_digest: resolved.manifest_digest,
                 invocation_digest: resolved.invocation_digest,
             },
-            adapter: adapter.tool_identity().into(),
+            adapter: profile.tool_identity.into(),
             step: resolved
                 .steps
                 .into_iter()

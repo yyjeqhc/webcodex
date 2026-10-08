@@ -3,6 +3,10 @@
   "Refresh reloads the saved limit and discards unsaved edits.": "重新整理會載入已儲存的上限，並捨棄未儲存的修改。",
 
   "Runner Job capacity": "Runner 任務容量",
+  "Runner Jobs": "Runner 任務明細",
+  "Read-only Job inventory. Stop controls require a separately authorized action.": "此處僅提供任務唯讀明細。停止任務需要獨立授權的操作。",
+  "No retained Jobs in this inventory.": "目前未檢索到保留的任務。",
+  "Inventory incomplete; some Jobs are not shown.": "任務清單不完整，部分任務未顯示。",
   "Server-reported durable Job capacity. Stop-requested Jobs remain in the running count until termination because they still occupy execution slots. Other request queues are separate.": "這裡顯示 Server 回報的持久任務容量。已請求停止的任務在真正終止前仍計入執行數，因為它們仍占用執行槽位；一般請求佇列另行計算。",
   "Runner offline; capacity unknown.": "Runner 已離線，容量未知。",
   "Capacity needs refresh.": "容量資訊已過期，需要重新整理。",

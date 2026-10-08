@@ -1380,10 +1380,23 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     return validProject(project) ? { project } : null;
   }
 
-  function failClosed(_message) {
+  // Only these hardcoded codes are user-visible. Never render arbitrary
+  // failure text, identities, or Host-delivered payloads into diagnostics.
+  const FAIL_CLOSED_CODES = Object.freeze({
+    "Invalid or conflicting Work identity": "WR-IDENTITY-INVALID",
+    "Conflicting sealed Work identity": "WR-FROZEN-IDENTITY-CONFLICT",
+    "Invalid file changes": "WR-FILE-CHANGES-INVALID",
+    "Work Result state unavailable": "WR-STATE-INVALID",
+    "Thread binding unavailable": "WR-THREAD-BINDING-MISSING",
+    "Conflicting Workflow Session": "WR-SESSION-CONFLICT",
+    "Conflicting thread binding": "WR-THREAD-BINDING-CONFLICT",
+  });
+  function failClosed(reason) {
+    const code = Object.prototype.hasOwnProperty.call(FAIL_CLOSED_CODES, reason)
+      ? FAIL_CLOSED_CODES[reason] : "WR-UNKNOWN";
     teardown();
     el("badge").textContent = "Unavailable";
-    el("status").textContent = "This Work Result card is unavailable";
+    el("status").textContent = "This Work Result card is unavailable · " + code;
     conversationPage = null; readingHistory = false; historyGeneration++;
     el("messages").replaceChildren();
     el("finalChanges").hidden = true;

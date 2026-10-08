@@ -939,3 +939,68 @@ async fn project_validation_all_packages_dispatches_and_completes_same_wire_job(
             .is_none());
     }
 }
+
+#[tokio::test]
+async fn project_validation_mismatched_evidence_profile_starts_nothing() {
+    for (backend, identity) in [
+        ("rust", "cargo_test"),
+        ("rust", "go_vet"),
+        ("go", "cargo_check"),
+        ("python", "cargo_test"),
+        ("rust", "unknown_check"),
+    ] {
+        let runtime = setup(1).await;
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        call(ProjectValidationAction::Check, None),
+                        Some(&auth_context(None, true)),
+                    )
+                    .await
+            }
+        });
+        let request = wait_for_runner_request(&runtime, "project-validation").await;
+        assert_eq!(request.kind, "plan_project_validation");
+        let semantic: ProjectValidationRequest =
+            serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+        let operation = webcodex_validation::project_validation_operation(
+            "rust",
+            webcodex_validation::SemanticCheck::Check,
+            None,
+            false,
+        )
+        .unwrap();
+        let plan = ProjectValidationPlan {
+            provenance: ProjectValidationProvenance {
+                request: semantic,
+                backend: backend.into(),
+                recipe_root: ".".into(),
+                root_digest: "a".repeat(64),
+                manifest_digest: "b".repeat(64),
+                invocation_digest: "c".repeat(64),
+            },
+            adapter: identity.into(),
+            step: operation.build_readonly_plan().unwrap().structured_step,
+            validation_target_id: operation.validation_target_id(Some(".")).unwrap(),
+        };
+        complete_sync_shell_lifecycle(
+            &runtime,
+            "project-validation",
+            request.request_id,
+            ShellCommandExecutionState::Completed,
+            Some(0),
+            &serde_json::to_string(&ProjectValidationPlanningResult::Ready { plan }).unwrap(),
+            "",
+            None,
+        )
+        .await;
+        let result = task.await.unwrap();
+        assert!(!result.success, "{backend}/{identity}");
+        assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
+        assert!(probe_patch_agent_request(&runtime, "project-validation")
+            .await
+            .is_none());
+    }
+}

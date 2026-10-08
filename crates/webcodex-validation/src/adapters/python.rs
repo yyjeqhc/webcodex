@@ -1,6 +1,6 @@
 use super::{
     read_only_validation_plan, ReadOnlyValidationPlan, ValidationAdapter, ValidationCommandOptions,
-    ValidationFailureEvidence, ValidationPlanArg,
+    ValidationEvidenceProfile, ValidationFailureEvidence, ValidationPlanArg,
 };
 use webcodex_core::validation_evidence::{parse_pytest_diagnostics, ValidationDiagnostics};
 
@@ -10,13 +10,42 @@ pub(super) fn test_adapter() -> &'static dyn ValidationAdapter {
     &PYTEST_ADAPTER
 }
 
-impl ValidationAdapter for PytestValidationAdapter {
+impl ValidationEvidenceProfile for PytestValidationAdapter {
     fn validation_kind(&self) -> &'static str {
         "test"
     }
+
     fn tool_identity(&self) -> &'static str {
         "python:pytest:test"
     }
+
+    fn parse(&self, stdout: &str, _stderr: &str, truncated: bool) -> ValidationDiagnostics {
+        parse_pytest_diagnostics(stdout, truncated)
+    }
+
+    fn reports_test_run_metadata(&self) -> bool {
+        true
+    }
+
+    fn map_failure_kind(&self, evidence: ValidationFailureEvidence<'_>) -> &'static str {
+        if evidence.success {
+            return "unknown";
+        }
+        if matches!(
+            evidence.reported_failure_kind,
+            Some("timeout" | "timed_out" | "command_timeout")
+        ) {
+            return "timeout";
+        }
+        if evidence.exit_code == Some(1) {
+            "test_failure"
+        } else {
+            "process_exit"
+        }
+    }
+}
+
+impl ValidationAdapter for PytestValidationAdapter {
     fn build_readonly_plan(
         &self,
         options: ValidationCommandOptions,
@@ -51,27 +80,5 @@ impl ValidationAdapter for PytestValidationAdapter {
             args.push(ValidationPlanArg::Value(filter));
         }
         read_only_validation_plan("test", "python", args)
-    }
-    fn parse(&self, stdout: &str, _stderr: &str, truncated: bool) -> ValidationDiagnostics {
-        parse_pytest_diagnostics(stdout, truncated)
-    }
-    fn reports_test_run_metadata(&self) -> bool {
-        true
-    }
-    fn map_failure_kind(&self, evidence: ValidationFailureEvidence<'_>) -> &'static str {
-        if evidence.success {
-            return "unknown";
-        }
-        if matches!(
-            evidence.reported_failure_kind,
-            Some("timeout" | "timed_out" | "command_timeout")
-        ) {
-            return "timeout";
-        }
-        if evidence.exit_code == Some(1) {
-            "test_failure"
-        } else {
-            "process_exit"
-        }
     }
 }

@@ -4,9 +4,10 @@ use super::helpers::{
 };
 
 pub(crate) use webcodex_validation::{
-    validation_adapter_for_tool, CargoCheckOptions, CargoReadOnlyValidationOperation,
+    validation_adapter_for_tool, validation_evidence_profile_for_recipe,
+    validation_evidence_profile_for_tool, CargoCheckOptions, CargoReadOnlyValidationOperation,
     CargoTestOptions, GoReadOnlyValidationOperation, GoTestOptions, ReadOnlyValidationOperation,
-    ValidationAdapter, ValidationCommandOptions, ValidationFailureEvidence,
+    ValidationCommandOptions, ValidationEvidenceProfile, ValidationFailureEvidence,
 };
 
 pub(crate) struct ValidationRuntimeProfile {

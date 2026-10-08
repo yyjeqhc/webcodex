@@ -3,7 +3,7 @@
 `present_docx(project, path)` is a model-visible, read-only presentation tool for
 one authorized project-relative `.docx`, including unchanged or untracked files.
 It does not require Git or a Workflow Session, edit the file, or create a Session.
-An MCP Apps Host mounts `ui://webcodex/docx/v1`; other clients retain the selected
+An MCP Apps Host mounts `ui://webcodex/docx/v2`; other clients retain the selected
 file metadata. A presentation result selects exact size/SHA-256, not a live path.
 The resource URI advances when HTML changes so Hosts invalidate their cached
 reader. Retired URIs never alias the current template.

@@ -249,3 +249,25 @@ test('failed debugger attach releases reservations without detaching another deb
     assert(!f.calls.some(call=>call[0]==='detach'));
   } finally {await f.cleanup();}
 });
+
+for (const method of ['Network.requestWillBeSent', 'Network.responseReceived', 'Runtime.consoleAPICalled']) {
+  test(`projects oversized unused fields for ${method} without losing evidence`, async () => {
+    const f = fixture(); try {
+      await f.share(); await f.command('attach');
+      const secret = 'private'.repeat(20000);
+      f.chrome.debugger.onEvent.emit({tabId:7}, method, {
+        requestId:'exact-id', type:'Document', timestamp:12,
+        request:{method:'GET', url:'https://example.test/', headers:{cookie:secret}, postData:secret},
+        response:{status:200, headers:{cookie:secret}},
+        args:[{value:'hello', preview:{description:secret}, objectId:secret}], stackTrace:secret
+      });
+      const event = f.sent.at(-1);
+      assert.equal(event.message.method, method);
+      assert(!JSON.stringify(event).includes('private'));
+      assert(Buffer.byteLength(JSON.stringify(event)) < 65536);
+      await f.command('Page.navigate',{url:'https://example.test/next'},'cdp','tab_7');
+      assert(f.sent.at(-1).message.result);
+      assert.equal(vm.runInContext('leases.size',f.context),1);
+    } finally { await f.cleanup(); }
+  });
+}

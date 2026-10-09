@@ -218,13 +218,34 @@ async function command(message) {
   try { send({kind: 'message', channel: message.channel, lease: message.lease, message: response}); }
   catch { await disconnect(); }
 }
+// This projection mirrors record_cdp_event in webcodex-browser. Never forward
+// request bodies, headers, cookies, stack traces or remote object previews.
+// Keep identities exact: an oversized identity must produce a loss marker.
+function diagnosticParams(method, p = {}) {
+  const pick = (value, keys) => Object.fromEntries(keys
+    .filter(key => value?.[key] !== undefined).map(key => [key, value[key]]));
+  switch (method) {
+    case 'Network.requestWillBeSent':
+      return {...pick(p, ['requestId', 'type', 'timestamp']), request: pick(p.request, ['method', 'url'])};
+    case 'Network.responseReceived':
+      return {...pick(p, ['requestId']), response: pick(p.response, ['status'])};
+    case 'Network.loadingFailed': return pick(p, ['requestId', 'errorText']);
+    case 'Network.loadingFinished': return pick(p, ['requestId']);
+    case 'Runtime.consoleAPICalled':
+      return {...pick(p, ['type', 'timestamp']), args: (p.args ?? []).map(arg => pick(arg, ['value', 'description']))};
+    case 'Runtime.exceptionThrown':
+      return {...pick(p, ['timestamp']), exceptionDetails: pick(p.exceptionDetails, ['text', 'url'])};
+    case 'Log.entryAdded': return {entry: pick(p.entry, ['level', 'text', 'url', 'timestamp'])};
+  }
+}
 chrome.debugger.onEvent.addListener((source, method, params) => {
   const lease = tabLease.get(source.tabId);
   if (!lease || source.sessionId || !diagnosticEvents.has(method)) return;
-  let event = {kind: 'event', lease, target: `tab_${source.tabId}`, message: {method, params}};
+  let event = {kind: 'event', lease, target: `tab_${source.tabId}`, message: {method, params: diagnosticParams(method, params)}};
   // Page-controlled diagnostic payloads are not loss of user consent. Preserve
   // the wire bound and explicitly mark missing evidence; never forward the body.
-  if (size(event) > MAX_EVENT_BYTES) {
+  if ((method.startsWith('Network.') && (typeof params?.requestId !== 'string' || !params.requestId))
+      || size(event) > MAX_EVENT_BYTES) {
     event = {kind: 'event', lease, target: `tab_${source.tabId}`,
       message: {method: 'WebCodex.eventsDiscarded', params: {domain: method.split('.')[0]}}};
   }

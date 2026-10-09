@@ -78,6 +78,8 @@ describe("Runtime usability", () => {
     expect(screen.getByText("Server configuration")).toBeTruthy();
     expect(screen.getByText("Shared key authentication")).toBeTruthy();
     expect(screen.getByText("60 seconds")).toBeTruthy();
+    expect(screen.getByText("Legacy handoff hint (unused)")).toBeTruthy();
+    expect(screen.queryByText("Initial job handoff wait")).toBeNull();
     expect(screen.getByText("Disabled")).toBeTruthy();
   });
 });

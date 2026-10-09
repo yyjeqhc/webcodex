@@ -80,6 +80,33 @@ cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
 On Windows, process-tree/lifecycle work may also need the ignored real-process
 suite documented in [Testing](TESTING.md).
 
+Windows session shutdown uses a hidden native top-level window, including tray
+startup without opening the UI. The Desktop owner receives shutdown before its
+ordinary children, accepts queries without stopping connections, and performs
+cleanup only for a confirmed `WM_ENDSESSION`. All exposure stdin leases close
+together, while the shared Server remains available for admitted work to drain.
+Concurrent Tauri/native exit notifications wait for the same cleanup attempt;
+lock acquisition, process cleanup and operation settlement share a four-second
+Windows budget. Work that cannot settle retains the tunnel restart fence.
+Managed tunnel children observe parent stdin EOF throughout preparation and
+startup, including the first control-plane poll. Startup cancellation retains
+the task owner until its shutdown result is observed, so an idle connection can
+retire its fence without first becoming ready. Persistent daemon mode continues
+to ignore stdin EOF.
+Abrupt termination or power loss still requires uncertainty resolution; reboot
+alone is never permission to remove a fence or replay work.
+
+The focused native regression sends session messages only to a disposable
+fixture window and checks four real child leases plus shared Server ordering:
+
+```powershell
+cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib desktop_real_process_windows_session_shutdown_drains_all_profiles -- --ignored --test-threads=1
+cargo test --locked -p webcodex --lib regular_tunnel_real_process_parent_eof_during_local_probe -- --ignored --test-threads=1
+```
+
+This tests the native notification and cleanup boundary, not an actual system
+reboot. Qualify installed autostart separately when doing a real Windows reboot.
+
 ## Build the local WebCodex runtime
 
 Desktop debug builds look for the three binaries in the repository's

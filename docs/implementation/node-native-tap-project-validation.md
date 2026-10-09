@@ -28,3 +28,21 @@ Node tests themselves execute Project-authored code and can have filesystem/netw
 ## Regression requirements
 
 Check native TAP pass/fail/skip/suite behavior, zero/contradictory/incomplete/duplicated/truncated report semantics, source drift after scheduling, explicit vs auto Node Runner capabilities, old-Runner denial, fixed argv, Node interpreter selection and environment sanitization, and ledger serialization of validation metadata. Tests for existing Node script-based `check` must remain unchanged.
+
+## Root plan and accounting evidence
+
+A complete native Node TAP report has a single unindented root `1..N` plan
+immediately before the canonical eight-line accounting trailer. Indented plans
+belong to nested suites and cannot substitute for a root plan. `N` counts
+top-level assertions (including suite parents), not all nested tests from
+the `# tests` footer. Top-level assertion ordinals must match this plan.
+
+Duplicated/displaced root plans, repeated top-level numeric accounting fields,
+bad assertion ordinals, contradictory counts and truncated reports cannot prove
+test counts. Ordinary Node diagnostic comments (for example,
+`# pass phase complete`) are not themselves reporter accounting entries.
+Regression fixtures include real Node v26-shaped pass, failure, nested suites,
+skip/TODO, a synthetic zero-test trailer and malformed reports. The existing
+unavailable-count path remains authoritative even when `require_tests=false`.
+This is an evidence-parser-only extension: no new npm/Jest/Vitest support,
+Runner argv changes, source fences or public wire fields.

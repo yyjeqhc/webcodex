@@ -56,6 +56,17 @@ function reader(options = {}) {
   const document = { body: node(), documentElement: node(), getElementById: id => nodes[id] ||= node(), createElement: node, createDocumentFragment: () => node('#fragment') };
   document.activeElement = document.body;
   document.getElementById('viewport').append(document.getElementById('cells'));
+  // Include old absolute-positioned cells: they can overflow a newly smaller spacer.
+  for (const [axis, size, dimension, position, cellSize] of [['Top', 'Height', 'height', 'top', 32], ['Left', 'Width', 'width', 'left', 144]]) {
+    let offset = 0;
+    Object.defineProperty(nodes.viewport, 'scroll' + axis, {
+      get: () => offset,
+      set: value => {
+        const extent = nodes.cells.querySelectorAll('button').reduce((maximum, cell) => Math.max(maximum, parseFloat(cell.style[position]) + cellSize), parseFloat(nodes.spacer?.style[dimension]) || 0);
+        offset = Math.max(0, Math.min(value, extent - nodes.viewport['client' + size]));
+      },
+    });
+  }
   const parent = { postMessage: message => {
     sent.push(message);
     if (message.method === 'tools/call' && !options.manual) {
@@ -192,6 +203,160 @@ test('virtual scrolling keeps one keyboard entry and retains grid focus when the
     assert.equal(view.chunks().length, 1);
     await view.teardown();
   }
+});
+
+const positionWorkbook = () => ({ sheets: [
+  { name: 'Data', firstRow: 40, firstColumn: 3, rows: 5000, columns: 50, cells: [[102, 12, 'cached', '=SUM(A1:A2)', false]] },
+  { name: 'Data', firstRow: 0, firstColumn: 0, rows: 100, columns: 12, cells: [[22, 5, 'second', 'second', false]] },
+  { name: 'Empty', firstRow: 0, firstColumn: 0, rows: 0, columns: 0, cells: [] },
+] });
+async function openPositionWorkbook(view, name = 'positions', value = positionWorkbook()) {
+  view.present(result(name)); await flush();
+  view.workers.at(-1).reply(value); await flush(); await view.expire(16);
+}
+async function moveViewport(view, top, left) {
+  view.nodes.viewport.scrollTop = top; view.nodes.viewport.scrollLeft = left;
+  view.nodes.viewport.events.scroll(); await view.expire(16);
+}
+function selectCell(view, row, column) {
+  const button = view.nodes.cells.querySelectorAll('button').find(cell => Number(cell.dataset.row) === row && Number(cell.dataset.column) === column);
+  assert.ok(button, 'selection must exist in the virtual window');
+  button.focus(); view.nodes.cells.events.click({ target: { closest: () => button } });
+}
+async function switchSheet(view, index) {
+  const tab = view.nodes.sheets.children[index];
+  tab.focus(); tab.events.click(); await view.expire(16);
+  assert.equal(view.document.activeElement, tab, 'switching sheets must not steal tab focus');
+}
+function assertPosition(view, address, top, left) {
+  assert.equal(view.nodes.address.textContent, address);
+  assert.equal(view.nodes.viewport.scrollTop, top);
+  assert.equal(view.nodes.viewport.scrollLeft, left);
+}
+
+test('sheet switching restores independent selections and both scroll axes within the workbook', async () => {
+  const view = reader(); await view.initialize(); await openPositionWorkbook(view);
+  await moveViewport(view, 3200, 1440); selectCell(view, 102, 12);
+  assertPosition(view, 'P143', 3200, 1440);
+  await switchSheet(view, 1);
+  assertPosition(view, 'A1', 0, 0);
+  await moveViewport(view, 640, 576); selectCell(view, 22, 5);
+  await switchSheet(view, 0);
+  assertPosition(view, 'P143', 3200, 1440);
+  assert.equal(view.nodes.value.textContent, '=SUM(A1:A2)');
+  const active = view.nodes.cells.querySelector('[aria-selected="true"]');
+  assert.equal(active.dataset.row, '102'); assert.equal(active.dataset.column, '12');
+  assert.equal(view.nodes.viewport.tabIndex, -1);
+  assert.ok(view.nodes.cells.querySelectorAll('button').length < 100);
+  await switchSheet(view, 1);
+  assertPosition(view, 'F23', 640, 576);
+  assert.equal(view.nodes.value.textContent, 'second');
+  assert.equal(view.chunks().length, 1, 'sheet switching stays local');
+  await view.teardown();
+});
+
+test('clicking the active sheet leaves its selection, scroll and rendered cells untouched', async () => {
+  const view = reader(); await view.initialize(); await openPositionWorkbook(view);
+  await moveViewport(view, 3200, 1440); selectCell(view, 102, 12);
+  const active = view.nodes.cells.querySelector('[aria-selected="true"]');
+  await switchSheet(view, 0); await switchSheet(view, 0);
+  assertPosition(view, 'P143', 3200, 1440);
+  assert.equal(view.nodes.cells.querySelector('[aria-selected="true"]'), active);
+  await view.teardown();
+});
+
+test('restoring a viewport does not reveal an off-screen selection and keyboard navigation retains focus', async () => {
+  const view = reader(); await view.initialize(); await openPositionWorkbook(view);
+  await moveViewport(view, 3200, 1440); selectCell(view, 102, 12);
+  await moveViewport(view, 6400, 2880);
+  await switchSheet(view, 1); await switchSheet(view, 0);
+  assertPosition(view, 'P143', 6400, 2880);
+  assert.equal(view.nodes.cells.querySelector('[aria-selected="true"]'), null);
+  assert.equal(view.nodes.viewport.tabIndex, 0);
+  view.nodes.viewport.focus();
+  view.nodes.viewport.events.keydown({ key: 'ArrowRight', preventDefault() {} });
+  assertPosition(view, 'Q143', 3264, 1872);
+  const active = view.nodes.cells.querySelector('[aria-selected="true"]');
+  assert.equal(view.document.activeElement, active);
+  assert.equal(view.nodes.cells.querySelectorAll('button').filter(button => button.tabIndex === 0).length, 1);
+  await view.expire(16);
+  assert.equal(view.document.activeElement, view.nodes.cells.querySelector('[aria-selected="true"]'));
+  await view.teardown();
+});
+
+test('empty sheets and a resized viewport keep restoration within the current bounds', async () => {
+  const view = reader(); await view.initialize(); await openPositionWorkbook(view);
+  await switchSheet(view, 1); await moveViewport(view, 10000, 10000);
+  selectCell(view, 99, 11);
+  assertPosition(view, 'L100', 2848, 1172);
+  await switchSheet(view, 2);
+  assertPosition(view, '', 0, 0);
+  assert.equal(view.nodes.status.textContent, 'Empty worksheet');
+  assert.equal(view.nodes.cells.querySelectorAll('button').length, 0);
+  assert.equal(view.nodes.viewport.tabIndex, 0);
+  view.nodes.viewport.clientHeight = 640; view.nodes.viewport.clientWidth = 1000;
+  await switchSheet(view, 1);
+  assertPosition(view, 'L100', 2560, 772);
+  assert.equal(view.nodes.cells.querySelector('[aria-selected="true"]').dataset.row, '99');
+  await switchSheet(view, 2); assertPosition(view, '', 0, 0);
+  await view.teardown();
+});
+
+test('replacement, invalidation and teardown discard all saved sheet positions', async () => {
+  for (const boundary of ['replacement', 'invalid', 'failure', 'teardown']) {
+    const view = reader(); await view.initialize(); await openPositionWorkbook(view);
+    await moveViewport(view, 3200, 1440); selectCell(view, 102, 12);
+    await switchSheet(view, 1); await moveViewport(view, 640, 576); selectCell(view, 22, 5);
+    if (boundary === 'teardown') await view.teardown();
+    else if (boundary === 'invalid') view.present(result('positions', 'bad'));
+    else if (boundary === 'failure') view.present({ structuredContent: { success: false, error: 'Cancelled' } });
+    else view.present(result('replacement'));
+    assert.equal(view.nodes.grid.hidden, true);
+    assertPosition(view, '', 0, 0);
+    if (boundary === 'teardown') {
+      view.present(result('positions')); await view.expire(16);
+      assert.equal(view.nodes.sheets.children.length, 0); assert.equal(view.timers.size, 0);
+      continue;
+    }
+    await openPositionWorkbook(view, boundary === 'replacement' ? 'replacement' : 'positions');
+    assertPosition(view, 'D41', 0, 0);
+    await switchSheet(view, 1); assertPosition(view, 'A1', 0, 0);
+    await switchSheet(view, 0); assertPosition(view, 'D41', 0, 0);
+    await view.teardown();
+  }
+});
+
+test('restored scroll is clamped to the target sheet before stale virtual cells are removed', async () => {
+  const view = reader(); await view.initialize(); await openPositionWorkbook(view);
+  await switchSheet(view, 1); await moveViewport(view, 10000, 10000); selectCell(view, 99, 11);
+  await switchSheet(view, 0); await moveViewport(view, 10000, 3000);
+  view.nodes.viewport.clientHeight = 640; view.nodes.viewport.clientWidth = 1000;
+  await switchSheet(view, 1);
+  assertPosition(view, 'L100', 2560, 772);
+  assert.equal(view.nodes.cells.querySelector('[aria-selected="true"]').dataset.column, '11');
+  await view.teardown();
+});
+
+test('restoring scroll measures the viewport after selected content changes its width', async () => {
+  const view = reader(); await view.initialize();
+  const longValue = 'long selected value\n'.repeat(12);
+  // Long selection text can add an outer document scrollbar in a bounded Host.
+  Object.defineProperty(view.nodes.viewport, 'clientWidth', {
+    get: () => view.nodes.value.textContent === longValue ? 706 : 721,
+  });
+  await openPositionWorkbook(view, 'content-width', { sheets: [
+    { name: 'Long', firstRow: 0, firstColumn: 0, rows: 100, columns: 12, cells: [[0, 0, 'long', longValue, false]] },
+    { name: 'Short', firstRow: 0, firstColumn: 0, rows: 100, columns: 12, cells: [] },
+  ] });
+  await moveViewport(view, 0, 10000);
+  assertPosition(view, 'A1', 0, 1066);
+  await switchSheet(view, 1);
+  assert.equal(view.nodes.viewport.clientWidth, 721);
+  await switchSheet(view, 0);
+  assert.equal(view.nodes.viewport.clientWidth, 706);
+  assertPosition(view, 'A1', 0, 1066);
+  assert.equal(view.nodes.cells.querySelector('[aria-selected="true"]'), null);
+  await view.teardown();
 });
 
 test('private identity and segment metadata survive Host wrappers and normalized meta fields', async () => {

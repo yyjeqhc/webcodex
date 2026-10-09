@@ -2713,6 +2713,35 @@ async fn runtime_status_reports_effective_mcp_host_budget_override() {
 }
 
 #[tokio::test]
+async fn runtime_status_reports_deployment_timing_overrides_without_exposing_source_env() {
+    let policy = {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS", "8");
+        env.set("WEBCODEX_MCP_HOST_CONTINUATION_WAIT_MAX_SECS", "12");
+        crate::mcp_host::McpHostConfig {
+            profile: crate::mcp_host::McpHostProfile::HostCodeMode,
+            host_budget_secs: None,
+        }
+        .runtime_policy()
+        .with_timing_overrides(crate::mcp_host::McpHostTimingOverrides::from_env().unwrap())
+    };
+    let runtime = test_runtime().with_mcp_host_policy(policy);
+    let result = runtime.dispatch(runtime_status_call()).await;
+    assert!(result.success, "{:?}", result.error);
+    let host = &result.output["effective_config"]["mcp_host"];
+    assert_eq!(host["host_budget_secs"], 55);
+    assert_eq!(host["max_sync_wait_secs"], 8);
+    assert_eq!(host["continuation_wait_secs"], 12);
+    assert_eq!(host["initial_job_handoff_secs"], 5);
+    assert!(host.get("timing_overrides").is_none());
+    assert!(result
+        .output
+        .to_string()
+        .find("WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS")
+        .is_none());
+}
+
+#[tokio::test]
 async fn runtime_status_reports_effective_mcp_compact_schema_policy() {
     // Production-style capture: build each Runtime while its env guard is held,
     // then drop the guard so no process-global env lock is held across the

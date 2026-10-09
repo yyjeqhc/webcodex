@@ -538,6 +538,20 @@ impl ProcessSupervisor {
     }
 
     pub async fn stop_all(&mut self) {
+        // Ordinary application exit keeps the established per-process grace;
+        // only OS session shutdown uses one absolute deadline.
+        for key in self.prepare_stopping_all() {
+            self.stop(key).await;
+        }
+    }
+
+    pub(crate) async fn stop_all_until(&mut self, deadline: Deadline) {
+        for key in self.prepare_stopping_all() {
+            self.stop_until(key, deadline).await;
+        }
+    }
+
+    fn prepare_stopping_all(&mut self) -> Vec<ProcessKey> {
         // Stop exposures before the shared runtime, including every profile.
         let mut keys = self.keys();
         keys.sort_by_key(|key| match key {
@@ -546,9 +560,18 @@ impl ProcessSupervisor {
             ProcessKey::LocalRunner => 2,
             ProcessKey::LocalServer => 3,
         });
-        for key in keys {
-            self.stop(key).await;
+        // All exposures receive their generation-scoped EOF lease together.
+        // Waiting on a busy profile first must not leave the other profiles
+        // connected until Windows has exhausted the owner's shutdown budget.
+        // Keep the shared Server available while admitted tunnel work drains.
+        for key in &keys {
+            if matches!(key, ProcessKey::QuickShare | ProcessKey::RegularTunnel(_)) {
+                if let Some(process) = self.processes.get_mut(key) {
+                    drop(process.child.child_mut().stdin.take());
+                }
+            }
         }
+        keys
     }
 }
 

@@ -1,5 +1,5 @@
 use super::client_handoff_service::{copy_text_to_clipboard, mcp_url, ClipboardCopyOutcome};
-use super::openai_tunnel_service::{prepare_openai_tunnel, start_openai_tunnel};
+use super::openai_tunnel_service::{prepare_openai_tunnel, start_openai_tunnel_with_stop};
 use super::setup_service::create_private_dir;
 use super::ProductError;
 use serde_json::{json, Value};
@@ -59,22 +59,32 @@ async fn run_regular_server_tunnel_inner(
 ) -> Result<(), ProductError> {
     let local_server_url = validate_local_server_url(&options.local_server_url)?;
     let session = RegularTunnelSession::create(&options.runtime_parent)?;
+    // The parent lease covers preparation and connection startup too. Waiting
+    // until readiness to observe EOF can leave the owner fenced on Windows exit.
+    let stop = async {
+        tokio::select! {
+            _ = stop => {},
+            _ = wait_for_regular_tunnel_stop_signal(options.stop_on_stdin_eof) => {},
+        }
+    };
     tokio::pin!(stop);
     let prerequisites = tokio::select! {
+        biased;
         _ = &mut stop => return Ok(()),
         result = prepare_openai_tunnel() => result?,
     };
     let deadline = Instant::now() + REGULAR_TUNNEL_STARTUP_TIMEOUT;
     let mcp_endpoint = mcp_url(&local_server_url);
-    let start = start_openai_tunnel(
+    let Some(mut tunnel) = start_openai_tunnel_with_stop(
         &prerequisites,
         &mcp_endpoint,
         &options.bootstrap_token,
         deadline,
-    );
-    let mut tunnel = tokio::select! {
-        _ = &mut stop => return Ok(()),
-        result = start => result?,
+        &mut stop,
+    )
+    .await?
+    else {
+        return Ok(());
     };
 
     // Managed profiles use explicit Copy ID controls; concurrent starts must not
@@ -102,7 +112,6 @@ async fn run_regular_server_tunnel_inner(
         .then_some(readiness_path)
         .filter(|path| path.is_file());
     let outcome = tokio::select! {
-        _ = wait_for_regular_tunnel_stop_signal(options.stop_on_stdin_eof) => Ok(()),
         _ = &mut stop => Ok(()),
         result = tunnel.wait_for_exit() => result,
         result = report_regular_tunnel_health(&health, &local_mcp_url, &options.bootstrap_token, service_readiness.as_deref(), options.stop_on_stdin_eof) => result,
@@ -335,6 +344,10 @@ fn tunnel_auth_error(message: &str) -> ProductError {
         Some("Restore the local Server bootstrap configuration, then retry."),
     )
 }
+
+#[cfg(test)]
+#[path = "project_entry_regular_tunnel_startup_tests.rs"]
+mod startup_tests;
 
 #[cfg(test)]
 mod tests {

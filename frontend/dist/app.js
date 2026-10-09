@@ -16216,7 +16216,7 @@ var jA = "webcodex.runtime.language.v1", An = {
   "OAuth2 shared key bridge": "OAuth2 共享密钥桥接",
   "MCP host profile": "MCP 主机配置",
   "Host request budget": "主机请求预算",
-  "Initial job handoff wait": "首次任务交接等待",
+  "Legacy handoff hint (unused)": "旧版交接提示值（未参与执行）",
   "Maximum synchronous wait": "同步等待上限",
   "Continuation wait": "后续等待时长",
   "Some running calls are not shown.": "运行中调用仅显示部分记录。",
@@ -31676,7 +31676,7 @@ var Ej = {
   oauth2_shared_key_bridge_enabled: "OAuth2 shared key bridge",
   profile: "MCP host profile",
   host_budget_secs: "Host request budget",
-  initial_job_handoff_secs: "Initial job handoff wait",
+  initial_job_handoff_secs: "Legacy handoff hint (unused)",
   max_sync_wait_secs: "Maximum synchronous wait",
   continuation_wait_secs: "Continuation wait"
 };

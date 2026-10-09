@@ -22,9 +22,9 @@ class InlineBinaryDataFactory {
 // before that variant reached artifact transport.
 export function createPreview(host, options) {
   let disposed = false, loading = null, pdf = null, worker = null, port = null, workerUrl = null;
-  let readyCancel = null, workerFailure = null, scale = 1, fit = true, currentPage = 1;
+  let readyCancel = null, renderAttempt = null, scale = 1, fit = true, currentPage = 1;
   let resizeTimer = null, renderGeneration = 0, rendering = false, scrollFrame = null;
-  let defaultGeometry = null;
+  let defaultGeometry = null, failureMessage = null;
   let layoutWidth = null, readingPosition = null;
   const pageStates = new Map();
   const cachedPages = new Set(), nearPages = new Set(), visiblePages = new Set(), renderQueue = new Set();
@@ -81,9 +81,9 @@ export function createPreview(host, options) {
     const match = [...(state?.layer?.querySelectorAll("span") || [])]
       .find(node => node.textContent.toLocaleLowerCase().includes(query));
     if (!match) {
-      status.textContent = state?.rendered
+      setStatus(state?.rendered
         ? "No match on this page · scanned images may have no text"
-        : "Current page text is still loading";
+        : "Current page text is still loading");
       return;
     }
     const range = host.ownerDocument.createRange();
@@ -91,7 +91,7 @@ export function createPreview(host, options) {
     const selection = host.ownerDocument.getSelection();
     selection.removeAllRanges(); selection.addRange(range);
     match.scrollIntoView({ block: "nearest", inline: "nearest" });
-    status.textContent = "Matching text selected";
+    setStatus("Matching text selected");
   }, searchGroup);
   search.onkeydown = event => {
     if (event.key === "Enter") { event.preventDefault(); find.onclick(); }
@@ -105,24 +105,32 @@ export function createPreview(host, options) {
     info.textContent = ready ? `${currentPage} / ${pdf.numPages}` : "0 / 0";
     fitButton.textContent = ready && !fit ? `${Math.round(scale * 100)}%` : "Fit width";
   }
+  function setStatus(message) {
+    status.textContent = failureMessage || message;
+  }
   function summary() {
     if (!pdf) return;
     const pageScale = pageStates.get(currentPage)?.scale ?? scale;
-    status.textContent = `${options.sourceLabel || "PDF"} · ${pdf.numPages} ${pdf.numPages === 1 ? "page" : "pages"} · ${Math.round(pageScale * 100)}%`;
+    setStatus(`${options.sourceLabel || "PDF"} · ${pdf.numPages} ${pdf.numPages === 1 ? "page" : "pages"} · ${Math.round(pageScale * 100)}%`);
   }
   function failure(error) {
-    if (!current()) return;
-    options.failed?.();
+    if (!current() || failureMessage) return;
     const reason = String(error?.message || error).includes("Image exceeded maximum allowed size")
       ? "An embedded image exceeds the 16 million pixel limit; a complete preview is unavailable."
       : String(error?.message || error);
-    status.textContent = `PDF unavailable: ${reason}`;
+    // Retry/source replacement creates a new preview; zoom is not recovery.
+    failureMessage = `PDF unavailable: ${reason}`;
+    setStatus(failureMessage);
+    options.failed?.();
   }
   function workerMessage(event) {
     const reason = event.data?.reason;
-    if (current() && event.data?.stream && typeof reason?.message === "string") {
-      workerFailure = new Error(reason.message);
-      failure(workerFailure);
+    // PDF.js may finish painting after an operator-stream failure. Observe only
+    // streams owned by the active page; a cancelled page can reply much later.
+    const belongsToPage = renderAttempt && Object.values(renderAttempt.state.streams)
+      .some(stream => stream.id === event.data?.streamId && stream.source === event.data?.targetName);
+    if (renderAttempt?.active() && belongsToPage && event.data?.stream && typeof reason?.message === "string") {
+      failPage(renderAttempt.state, new Error(reason.message));
     }
   }
   async function createWorker() {
@@ -130,6 +138,16 @@ export function createPreview(host, options) {
     if (!current()) throw new Error("PDF preview closed");
     workerUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
     port = new Worker(workerUrl, { type: "module", name: "webcodex-pdf" });
+    const postMessage = port.postMessage.bind(port);
+    port.postMessage = (message, ...transfer) => {
+      if (renderAttempt?.active() && ["GetOperatorList", "GetTextContent"].includes(message?.action)
+        && message.data?.pageIndex === renderAttempt.state.number - 1) {
+        // Two bounded identities per page, retained when PDF.js reuses an
+        // in-flight operator stream across zoom/canvas cancellation.
+        renderAttempt.state.streams[message.action] = { id: message.streamId, source: message.sourceName };
+      }
+      return postMessage(message, ...transfer);
+    };
     port.addEventListener("message", workerMessage);
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => finish(new Error("PDF Worker unavailable")), 3000);
@@ -174,6 +192,13 @@ export function createPreview(host, options) {
       void Promise.allSettled([paint?.promise, text]).then(() => proxy?.cleanup());
     } else proxy?.cleanup();
   }
+  function failPage(state, error) {
+    // Release incomplete pixels/text without cancelling other queued pages.
+    // Keep this marker across cache eviction/rescale until explicit Retry.
+    state.failed = true;
+    clearPage(state);
+    failure(error);
+  }
   function reserveCanvas(state, pixels) {
     cachedPages.add(state);
     const totalPixels = () => [...cachedPages].reduce((total, page) => total
@@ -186,9 +211,11 @@ export function createPreview(host, options) {
     }
   }
   async function renderPage(state, generation = renderGeneration) {
-    if (!current() || !pdf || (state.rendered && state.renderedScale === state.scale)) return;
+    if (!current() || !pdf || state.failed || (state.rendered && state.renderedScale === state.scale)) return;
     const revision = state.revision;
     const active = () => current() && generation === renderGeneration && revision === state.revision;
+    const attempt = { state, active };
+    renderAttempt = attempt;
     try {
       if (!state.pageProxy) {
         const proxy = await pdf.getPage(state.number);
@@ -218,7 +245,6 @@ export function createPreview(host, options) {
       await state.renderTask.promise;
       if (!active()) return;
       state.renderTask = null;
-      if (workerFailure) throw workerFailure;
       const text = await state.pageProxy.getTextContent();
       if (!active()) return;
       state.textLayer = new TextLayer({ textContentSource: text, container: state.layer, viewport: view });
@@ -226,11 +252,12 @@ export function createPreview(host, options) {
       await state.textPromise;
       if (!active()) return;
       state.textPromise = null;
-      if (workerFailure) throw workerFailure;
       state.rendered = true; state.renderedScale = state.scale;
       summary(); controls();
     } catch (error) {
-      if (active() && error?.name !== "RenderingCancelledException") failure(error);
+      if (active() && error?.name !== "RenderingCancelledException") failPage(state, error);
+    } finally {
+      if (renderAttempt === attempt) renderAttempt = null;
     }
   }
 
@@ -261,7 +288,7 @@ export function createPreview(host, options) {
     // Fast jumps can skip Observer transitions. Retention uses current geometry too.
     for (const state of cachedPages) if (!wanted.has(state)) clearPage(state);
     for (const state of wanted) {
-      if (!state.rendered) renderQueue.add(state);
+      if (!state.rendered && !state.failed) renderQueue.add(state);
     }
     void drainRenderQueue();
   }
@@ -329,7 +356,7 @@ export function createPreview(host, options) {
       canvas.setAttribute("aria-label", `PDF page ${number}`);
       wrapper.append(canvas); node.append(wrapper, layer); pages.append(node);
       const state = { number, node, canvas, layer, pageProxy: number === 1 ? firstProxy : null, viewport: null,
-        geometry: number === 1 ? defaultGeometry : null, scale: 1, revision: 0,
+        geometry: number === 1 ? defaultGeometry : null, scale: 1, revision: 0, failed: false, streams: {},
         renderTask: null, textLayer: null, textPromise: null, rendered: false, renderedScale: null };
       pageStates.set(number, state);
       applyPageGeometry(state);
@@ -393,7 +420,7 @@ export function createPreview(host, options) {
     const task = loading; loading = null; pdf = null;
     const oldWorker = worker, oldPort = port, oldUrl = workerUrl;
     worker = port = workerUrl = null;
-    oldPort?.removeEventListener("message", workerMessage); workerFailure = null;
+    oldPort?.removeEventListener("message", workerMessage); renderAttempt = null;
     let finished = false, timer;
     const finish = () => {
       if (finished) return;
@@ -416,7 +443,7 @@ export function createPreview(host, options) {
           ...options,
           current,
           progress: (loaded, total) => {
-            if (current()) status.textContent = `Loading PDF · ${loaded} / ${total} bytes`;
+            if (current()) setStatus(`Loading PDF · ${loaded} / ${total} bytes`);
           },
         });
         await createWorker();

@@ -275,7 +275,11 @@ pub async fn run_server_with_shutdown(
         );
     }
     let config = Config::from_env();
-    let mcp_host_policy = mcp_host::McpHostConfig::from_env().runtime_policy();
+    let mcp_host_timing =
+        mcp_host::McpHostTimingOverrides::from_env().map_err(std::io::Error::other)?;
+    let mcp_host_policy = mcp_host::McpHostConfig::from_env()
+        .runtime_policy()
+        .with_timing_overrides(mcp_host_timing);
     let model_workflow_policy =
         model_workflow::ModelWorkflowPolicy::from_env().map_err(std::io::Error::other)?;
     let (acceptor, listener_mode, listener_addr) = server_listener::server_acceptor(&config.addr)

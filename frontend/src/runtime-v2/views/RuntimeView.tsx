@@ -24,7 +24,7 @@ const CONFIG_LABELS: Record<string, string> = {
   "oauth2_shared_key_bridge_enabled": "OAuth2 shared key bridge",
   "profile": "MCP host profile",
   "host_budget_secs": "Host request budget",
-  "initial_job_handoff_secs": "Initial job handoff wait",
+  "initial_job_handoff_secs": "Legacy handoff hint (unused)",
   "max_sync_wait_secs": "Maximum synchronous wait",
   "continuation_wait_secs": "Continuation wait"
 };

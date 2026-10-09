@@ -377,37 +377,56 @@ impl AppState {
     }
 
     pub async fn shutdown(&self) {
+        // Windows exit can race with the native session-ending notification.
+        // Preserve its bounded owner deadline in both paths. Other platforms
+        // retain their original per-process graceful shutdown budget.
         #[cfg(windows)]
-        let budget = SESSION_SHUTDOWN_BUDGET;
+        let deadline = Some(Deadline::after(SESSION_SHUTDOWN_BUDGET));
         #[cfg(not(windows))]
-        let budget = SHUTDOWN_OPERATION_WAIT;
-        self.shutdown_until(Deadline::after(budget)).await;
+        let deadline = None;
+        self.shutdown_with_deadline(deadline).await;
     }
 
     pub(crate) async fn shutdown_until(&self, deadline: Deadline) {
+        self.shutdown_with_deadline(Some(deadline)).await;
+    }
+
+    async fn shutdown_with_deadline(&self, deadline: Option<Deadline>) {
         if self.shutdown_started.swap(true, Ordering::SeqCst) {
             // Tauri's window notification and the tray-independent native
             // observer can arrive concurrently. Neither may announce exit
             // while the first owner is still draining the child leases.
-            let _ = tokio::time::timeout_at(deadline.instant(), self.shutdown_complete.cancelled())
+            if let Some(deadline) = deadline {
+                let _ = tokio::time::timeout_at(
+                    deadline.instant(),
+                    self.shutdown_complete.cancelled(),
+                )
                 .await;
+            } else {
+                self.shutdown_complete.cancelled().await;
+            }
             return;
         }
         self.shutdown_signal.cancel();
         self.updates.cancel_download(false);
         self.operations.cancel_active_for_shutdown();
         self.connections.cancel_all();
-        // Session ending has an OS-owned budget. Lock acquisition, process
-        // cleanup and operation settlement must consume the same deadline.
-        if let Ok(mut supervisor) =
-            tokio::time::timeout_at(deadline.instant(), self.supervisor.lock()).await
-        {
-            supervisor.stop_all_until(deadline).await;
+        // OS session ending has one absolute deadline for lock acquisition,
+        // process cleanup and operation settlement. Ordinary exits keep the
+        // original per-process grace and post-cleanup operation wait.
+        if let Some(deadline) = deadline {
+            if let Ok(mut supervisor) =
+                tokio::time::timeout_at(deadline.instant(), self.supervisor.lock()).await
+            {
+                supervisor.stop_all_until(deadline).await;
+            }
+        } else {
+            self.supervisor.lock().await.stop_all().await;
         }
-        let _ = self
-            .operations
-            .wait_until_idle(deadline.instant())
-            .await;
+        let settle_deadline = deadline
+            .map(Deadline::instant)
+            .unwrap_or_else(|| tokio::time::Instant::now() + SHUTDOWN_OPERATION_WAIT);
+        let _ = self.operations.wait_until_idle(settle_deadline).await;
         self.shutdown_complete.cancel();
     }
 

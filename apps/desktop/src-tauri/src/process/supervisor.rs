@@ -538,11 +538,20 @@ impl ProcessSupervisor {
     }
 
     pub async fn stop_all(&mut self) {
-        self.stop_all_until(Deadline::after(GRACEFUL_STOP_TIMEOUT))
-            .await;
+        // Ordinary application exit keeps the established per-process grace;
+        // only OS session shutdown uses one absolute deadline.
+        for key in self.prepare_stopping_all() {
+            self.stop(key).await;
+        }
     }
 
     pub(crate) async fn stop_all_until(&mut self, deadline: Deadline) {
+        for key in self.prepare_stopping_all() {
+            self.stop_until(key, deadline).await;
+        }
+    }
+
+    fn prepare_stopping_all(&mut self) -> Vec<ProcessKey> {
         // Stop exposures before the shared runtime, including every profile.
         let mut keys = self.keys();
         keys.sort_by_key(|key| match key {
@@ -562,9 +571,7 @@ impl ProcessSupervisor {
                 }
             }
         }
-        for key in keys {
-            self.stop_until(key, deadline).await;
-        }
+        keys
     }
 }
 

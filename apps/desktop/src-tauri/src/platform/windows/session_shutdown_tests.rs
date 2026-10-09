@@ -46,10 +46,17 @@ fn desktop_real_process_windows_session_shutdown_drains_all_profiles() {
         "{}",
         std::fs::read_to_string(root.path().join("child.log")).unwrap()
     );
-    assert!(
-        child.try_tree_exit().unwrap(),
-        "owned fixture descendants survived"
-    );
+    // Job Object descendant accounting may settle just after the fixture's
+    // direct child exits. Wait a bounded interval instead of racing the
+    // final kernel notification.
+    let tree_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !child.try_tree_exit().unwrap() {
+        if std::time::Instant::now() >= tree_deadline {
+            let _ = child.terminate_tree();
+            panic!("owned fixture descendants survived");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
     assert_eq!(
         std::fs::read_to_string(root.path().join("passed")).unwrap(),
         "passed"

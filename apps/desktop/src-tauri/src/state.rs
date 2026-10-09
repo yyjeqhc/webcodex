@@ -66,7 +66,6 @@ const PROJECT_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const QUICK_SHARE_READY_TIMEOUT: Duration = Duration::from_secs(90);
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
 const READINESS_CLEANUP_SLACK: Duration = Duration::from_secs(2);
-#[cfg(not(windows))]
 const SHUTDOWN_OPERATION_WAIT: Duration = Duration::from_secs(5);
 #[cfg(windows)]
 pub(crate) const SESSION_SHUTDOWN_BUDGET: Duration = Duration::from_secs(4);

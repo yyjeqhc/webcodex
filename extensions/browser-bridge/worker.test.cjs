@@ -136,7 +136,8 @@ test('large navigation diagnostics do not disconnect or revoke a shared tab',asy
     f.chrome.debugger.onEvent.emit({tabId:7},'Runtime.consoleAPICalled',{args:[{value:'x'.repeat(70000)}]});
     assert.equal(vm.runInContext('leases.size',f.context),1);
     assert(!f.calls.some(call=>call[0]==='disconnect'));
-    assert.equal(f.sent.at(-1).message.method,'WebCodex.eventsDiscarded');
+    assert.equal(f.sent.at(-1).message.method,'Runtime.consoleAPICalled');
+    assert.equal(f.sent.at(-1).message.params.args[0].value.length,2048);
     await f.command('Page.getFrameTree',{},'cdp','tab_7');
     assert(f.sent.at(-1).message.result);
   } finally {await f.cleanup();}
@@ -294,4 +295,32 @@ test('popup status is read only and repeated Share is idempotent', async () => {
     await f.revoke();
     assert.equal((await f.status()).state, 'unshared');
   } finally { await f.cleanup(); }
+});
+
+test('oversized network identities still mark loss; display-only payloads are UTF-8 bounded', async () => {
+  const f=fixture(); try {
+    await f.share(); await f.command('attach');
+    f.chrome.debugger.onEvent.emit({tabId:7},'Network.requestWillBeSent',{requestId:'x'.repeat(70000),request:{url:'https://example.test/'}});
+    assert.equal(f.sent.at(-1).message.method,'WebCodex.eventsDiscarded');
+    assert.equal(f.sent.at(-1).message.params.domain,'Network');
+    f.chrome.debugger.onEvent.emit({tabId:7},'Runtime.consoleAPICalled',{args:[{value:'😀'.repeat(20000)}]});
+    assert.equal(Buffer.byteLength(f.sent.at(-1).message.params.args[0].value),2048);
+    f.chrome.debugger.onEvent.emit({tabId:7},'Network.requestWillBeSent',{requestId:'exact',request:{url:'https://example.test/'+ 'x'.repeat(100000)}});
+    assert.equal(f.sent.at(-1).message.params.requestId,'exact');
+    assert.equal(Buffer.byteLength(f.sent.at(-1).message.params.request.url),8192);
+    await f.cleanup(); await f.share(); await f.command('attach');
+    assert.equal(vm.runInContext('leases.size',f.context),1);
+  } finally {await f.cleanup();}
+});
+
+test('concurrent Share requests issue only one offer after connection', async () => {
+  const f=fixture(); try {
+    await Promise.all([f.share(), f.share(), f.share()]);
+    assert.equal(f.sent.filter(m => m.kind === 'offer').length, 1);
+    f.chrome.debugger.onEvent.emit({tabId:7},'Network.loadingFinished',{requestId:'not-attached'});
+    assert.equal(f.sent.length, 1);
+    await f.command('attach');
+    f.chrome.debugger.onEvent.emit({tabId:7},'Runtime.consoleAPICalled',{args:[{value:'x'.repeat(2045)},{value:'a'}]});
+    assert.equal(f.sent.at(-1).message.params.args[0].value, 'x'.repeat(2045)+' a');
+  } finally {await f.cleanup();}
 });

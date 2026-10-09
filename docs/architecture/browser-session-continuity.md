@@ -200,3 +200,35 @@ VM fixtures test consent, unsupported process commands, exact tabs, attach races
 and disconnect cleanup. Neither fixture suite is a claim of real Chrome dogfood;
 real deployment, profile persistence, screenshots and live external attach are
 recorded separately with their observed limitations.
+
+## Dogfood sharing and diagnostics
+
+The extension popup reads the current offer/lease state without creating consent:
+not shared, authorized and waiting for Attach, attached, or disconnected. Repeated
+Share retains an existing offer/lease; reconnect requires fresh explicit Share.
+Empty discover lists pending offers only: inspect browsers/pages for an existing
+attached_external Browser. A stale element needs a new Snapshot; a stale attachment
+needs explicit sharing recovery. Website-opened tabs remain unshared. When authorized,
+Computer Use can select the new tab and operate the extension Share UI, followed by
+Browser discover/attach. The original Browser remains independently usable.
+
+The extension projects CDP diagnostics onto the fields consumed by record_cdp_event.
+Display text uses the same UTF-8 budgets as Rust; exact network request IDs are never
+clipped. Bodies, headers, cookies, object previews and stacks are not forwarded.
+The 64 KiB event ceiling remains; an unrepresentable event emits an explicit loss
+marker. Network loss still prevents a network-quiet claim. Neither navigation nor
+reconnect silently clears the retained gap; clear_diagnostics remains the explicit
+barrier. Extension reload is required for these worker/popup changes; no new Chrome
+permission, automatic child-tab sharing or Native Messaging wire version is added.
+
+### Possible future single-use child-tab consent
+
+A separate explicit action could authorize exactly one next child of the current
+attached tab. This is worth a future design review, but is not implemented here.
+It must bind to the exact opener tab, live attachment lease and bridge generation;
+expire after a short visible interval; admit only a positively identified child;
+and consume consent atomically before dispatching Attach. Revocation, lease loss,
+worker restart, ambiguous opener provenance, or attach failure must never rearm it.
+The ordinary Share action must not imply this broader consent. Tests must cover
+multiple simultaneous popups, opener replacement, expired leases and consumption
+racing revocation before shipping it.

@@ -95,7 +95,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       return {ok: true, message: 'Tab revoked. Chrome and its login data remain unchanged.'};
     }
     if (!/^https?:\/\//i.test(tab.url ?? '') || offers.size >= 16) throw new Error('tab_not_shareable');
-    await connect();
+    const port = await connect();
+    if (native !== port) throw new Error('connection_lost');
+    if (tabLease.has(tab.id) || offers.get(tab.id)?.expires > Date.now()) return tabStatus(tab.id);
+    if (offers.size >= 16) throw new Error('tab_not_shareable');
     offers.set(tab.id, {window: tab.windowId, expires: Date.now() + 600000});
     send({kind: 'offer', tab: tab.id, window: tab.windowId, title: (tab.title ?? '').slice(0, 256), url: tab.url});
     return tabStatus(tab.id);
@@ -237,30 +240,57 @@ async function command(message) {
 // This projection mirrors record_cdp_event in webcodex-browser. Never forward
 // request bodies, headers, cookies, stack traces or remote object previews.
 // Keep identities exact: an oversized identity must produce a loss marker.
+// Match the Rust display budgets without truncating request identities. Display
+// text was already clipped by Rust; clipping before transport preserves evidence.
+function diagnosticText(value, limit) {
+  if (typeof value !== 'string') return undefined;
+  let text = '', bytes = 0;
+  for (const character of value) {
+    const length = encoder.encode(character).length;
+    if (bytes + length > limit) break;
+    text += character; bytes += length;
+  }
+  return text;
+}
+function consoleText(args = []) {
+  let text = '', seen = false;
+  for (const arg of args) {
+    const value = arg.value !== undefined
+      ? (typeof arg.value === 'string' ? arg.value : JSON.stringify(arg.value)) : arg.description;
+    if (typeof value !== 'string') continue;
+    const combined = text + (seen ? ' ' : '') + value;
+    text = diagnosticText(combined, 2048);
+    seen = true;
+    if (text.length < combined.length || encoder.encode(text).length === 2048) break;
+  }
+  return text;
+}
 function diagnosticParams(method, p = {}) {
-  const pick = (value, keys) => Object.fromEntries(keys
-    .filter(key => value?.[key] !== undefined).map(key => [key, value[key]]));
+  const text = diagnosticText;
   switch (method) {
     case 'Network.requestWillBeSent':
-      return {...pick(p, ['requestId', 'type', 'timestamp']), request: pick(p.request, ['method', 'url'])};
-    case 'Network.responseReceived':
-      return {...pick(p, ['requestId']), response: pick(p.response, ['status'])};
-    case 'Network.loadingFailed': return pick(p, ['requestId', 'errorText']);
-    case 'Network.loadingFinished': return pick(p, ['requestId']);
+      return {requestId:p.requestId, type:text(p.type,64), timestamp:p.timestamp,
+        request:{method:text(p.request?.method,128), url:text(p.request?.url,8192)}};
+    case 'Network.responseReceived': return {requestId:p.requestId, response:{status:p.response?.status}};
+    case 'Network.loadingFailed': return {requestId:p.requestId, errorText:text(p.errorText,512)};
+    case 'Network.loadingFinished': return {requestId:p.requestId};
     case 'Runtime.consoleAPICalled':
-      return {...pick(p, ['type', 'timestamp']), args: (p.args ?? []).map(arg => pick(arg, ['value', 'description']))};
+      return {type:text(p.type,64), timestamp:p.timestamp, args:[{value:consoleText(p.args)}]};
     case 'Runtime.exceptionThrown':
-      return {...pick(p, ['timestamp']), exceptionDetails: pick(p.exceptionDetails, ['text', 'url'])};
-    case 'Log.entryAdded': return {entry: pick(p.entry, ['level', 'text', 'url', 'timestamp'])};
+      return {timestamp:p.timestamp, exceptionDetails:{text:text(p.exceptionDetails?.text,2048), url:text(p.exceptionDetails?.url,8192)}};
+    case 'Log.entryAdded': return {entry:{level:text(p.entry?.level,64), text:text(p.entry?.text,2048),
+      url:text(p.entry?.url,8192), timestamp:p.entry?.timestamp}};
   }
 }
 chrome.debugger.onEvent.addListener((source, method, params) => {
   const lease = tabLease.get(source.tabId);
   if (!lease || source.sessionId || !diagnosticEvents.has(method)) return;
-  let event = {kind: 'event', lease, target: `tab_${source.tabId}`, message: {method, params: diagnosticParams(method, params)}};
+  let projected;
+  try { projected = diagnosticParams(method, params); } catch { projected = null; }
+  let event = {kind: 'event', lease, target: `tab_${source.tabId}`, message: {method, params: projected}};
   // Page-controlled diagnostic payloads are not loss of user consent. Preserve
   // the wire bound and explicitly mark missing evidence; never forward the body.
-  if ((method.startsWith('Network.') && (typeof params?.requestId !== 'string' || !params.requestId))
+  if (projected === null || (method.startsWith('Network.') && (typeof params?.requestId !== 'string' || !params.requestId))
       || size(event) > MAX_EVENT_BYTES) {
     event = {kind: 'event', lease, target: `tab_${source.tabId}`,
       message: {method: 'WebCodex.eventsDiscarded', params: {domain: method.split('.')[0]}}};

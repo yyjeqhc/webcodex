@@ -75,7 +75,7 @@ struct PublishedAsset {
     name: String,
 }
 
-fn verify_release(bytes: &[u8], version: &str) -> UpdateResult<bool> {
+fn release_catalog(bytes: &[u8], version: &str) -> UpdateResult<Option<u16>> {
     let value = strict_json(bytes).map_err(|_| UpdateError::ManifestInvalid)?;
     let release: PublishedRelease =
         serde_json::from_value(value).map_err(|_| UpdateError::ManifestInvalid)?;
@@ -93,7 +93,13 @@ fn verify_release(bytes: &[u8], version: &str) -> UpdateResult<bool> {
             return Err(UpdateError::ManifestInvalid);
         }
     }
-    Ok(seen.contains("manifest.json"))
+    Ok(if seen.contains("manifest-v2.json") {
+        Some(2)
+    } else if seen.contains("manifest.json") {
+        Some(1)
+    } else {
+        None
+    })
 }
 
 pub struct ReleaseArtifacts {
@@ -123,7 +129,12 @@ fn verify_checksums(
             return Err(UpdateError::ManifestInvalid);
         }
     }
-    if sums.len() > 32 || sums.get("manifest.json").copied() != Some(sha256(raw).as_str()) {
+    let name = if manifest.catalog_version == 2 {
+        "manifest-v2.json"
+    } else {
+        "manifest.json"
+    };
+    if sums.len() > 32 || sums.get(name).copied() != Some(sha256(raw).as_str()) {
         return Err(UpdateError::ChecksumMismatch);
     }
     for platform in RuntimePlatform::ALL {
@@ -150,13 +161,35 @@ fn verify_checksums(
             return Err(UpdateError::ChecksumMismatch);
         }
     }
-    for target in InstallerTarget::ALL {
+    for target in InstallerTarget::ALL.into_iter().chain(
+        InstallerTarget::RUNTIME
+            .into_iter()
+            .filter(|_| manifest.catalog_version == 2),
+    ) {
         let entry = manifest.entry(target)?;
-        if sums.get(entry.filename.as_str()).copied() != Some(entry.sha256.as_str()) {
+        let source = target.source_filename(&manifest.version);
+        if sums.get(source.as_str()).copied() != Some(entry.source_manifest_sha256.as_str())
+            || sums.get(entry.filename.as_str()).copied() != Some(entry.sha256.as_str())
+        {
             return Err(UpdateError::ChecksumMismatch);
         }
     }
     Ok(())
+}
+
+fn verify_compatibility_view(
+    manifest: &UnifiedInstallerManifest,
+    legacy: &[u8],
+    sums: &[u8],
+) -> UpdateResult<()> {
+    let view = UnifiedInstallerManifest::parse(legacy, &manifest.version)?;
+    if serde_json::to_value(&view).map_err(|_| UpdateError::ManifestInvalid)?
+        != serde_json::to_value(manifest.full_compatibility())
+            .map_err(|_| UpdateError::ManifestInvalid)?
+    {
+        return Err(UpdateError::ManifestInvalid);
+    }
+    verify_checksums(sums, &view, legacy)
 }
 
 /// Always re-establish fixed publisher/tag authority before trusting cached
@@ -175,17 +208,31 @@ pub async fn fetch_release(
     let release = metadata(&client, &release_url, MAX_MANIFEST_BYTES)
         .await?
         .ok_or(UpdateError::NetworkUnavailable)?;
-    if !verify_release(&release, version)? {
+    let Some(catalog_version) = release_catalog(&release, version)? else {
+        return Ok(None);
+    };
+    if catalog_version == 1 && !target.flavor.is_full() {
         return Ok(None);
     }
+    // Declared v2 is publisher intent: its absence, invalid bytes or checksum
+    // failure never retries the legacy asset.
+    let catalog_name = if catalog_version == 2 {
+        "manifest-v2.json"
+    } else {
+        "manifest.json"
+    };
     let manifest_bytes = metadata(
         &client,
-        &release_asset_url(version, "manifest.json")?,
+        &release_asset_url(version, catalog_name)?,
         MAX_MANIFEST_BYTES,
     )
     .await?
     .ok_or(UpdateError::ManifestInvalid)?;
-    let manifest = UnifiedInstallerManifest::parse(&manifest_bytes, version)?;
+    let manifest = if catalog_version == 2 {
+        UnifiedInstallerManifest::parse_v2(&manifest_bytes, version)?
+    } else {
+        UnifiedInstallerManifest::parse(&manifest_bytes, version)?
+    };
     let sums = metadata(
         &client,
         &release_asset_url(version, "SHA256SUMS")?,
@@ -194,6 +241,16 @@ pub async fn fetch_release(
     .await?
     .ok_or(UpdateError::ManifestInvalid)?;
     verify_checksums(&sums, &manifest, &manifest_bytes)?;
+    if catalog_version == 2 {
+        let legacy = metadata(
+            &client,
+            &release_asset_url(version, "manifest.json")?,
+            MAX_MANIFEST_BYTES,
+        )
+        .await?
+        .ok_or(UpdateError::ManifestInvalid)?;
+        verify_compatibility_view(&manifest, &legacy, &sums)?;
+    }
     let entry = manifest.entry(target)?;
     let source_bytes = metadata(&client, &entry.source_manifest_url, MAX_SOURCE_BYTES)
         .await?
@@ -201,7 +258,8 @@ pub async fn fetch_release(
     if sha256(&source_bytes) != entry.source_manifest_sha256 {
         return Err(UpdateError::ChecksumMismatch);
     }
-    let source = verify_source_manifest(&source_bytes, version, platform)?;
+    let source =
+        verify_source_manifest_for_flavor(&source_bytes, version, platform, target.flavor)?;
     Ok(Some(ReleaseArtifacts {
         manifest,
         manifest_bytes,
@@ -291,9 +349,9 @@ mod tests {
     fn published_tag_must_be_exact_stable_and_not_duplicated() {
         let mut release = serde_json::json!({"tag_name":"v1.2.3","draft":false,"prerelease":false,"assets":[{"name":"manifest.json"}]});
         let check = |value: &serde_json::Value| {
-            verify_release(&serde_json::to_vec(value).unwrap(), "1.2.3")
+            release_catalog(&serde_json::to_vec(value).unwrap(), "1.2.3")
         };
-        assert_eq!(check(&release), Ok(true));
+        assert_eq!(check(&release), Ok(Some(1)));
         for key in ["draft", "prerelease"] {
             release[key] = true.into();
             assert!(check(&release).is_err());
@@ -303,8 +361,89 @@ mod tests {
         assert!(check(&release).is_err());
         release["tag_name"] = "v1.2.3".into();
         release["assets"] = serde_json::json!([]);
-        assert_eq!(check(&release), Ok(false));
+        assert_eq!(check(&release), Ok(None));
         release["assets"] = serde_json::json!([{"name":"manifest.json"},{"name":"manifest.json"}]);
         assert!(check(&release).is_err());
+    }
+}
+
+#[cfg(test)]
+mod catalog_compatibility_tests {
+    use super::*;
+    #[test]
+    fn v2_declaration_never_selects_legacy_and_duplicate_assets_fail() {
+        let mut value = serde_json::json!({"tag_name":"v1.2.3","draft":false,"prerelease":false,"assets":[{"name":"manifest-v2.json"},{"name":"manifest.json"}]});
+        let classify =
+            |v: &serde_json::Value| release_catalog(&serde_json::to_vec(v).unwrap(), "1.2.3");
+        assert_eq!(classify(&value), Ok(Some(2)));
+        value["assets"] = serde_json::json!([{"name":"manifest-v2.json"}]);
+        assert_eq!(classify(&value), Ok(Some(2)));
+        value["assets"] =
+            serde_json::json!([{"name":"manifest-v2.json"},{"name":"manifest-v2.json"}]);
+        assert!(classify(&value).is_err());
+    }
+    #[test]
+    fn full_compatibility_accepts_exact_32_sums_and_rejects_split_authority() {
+        let raw = serde_json::to_vec(&super::super::tests::catalog_v2()).unwrap();
+        let manifest = UnifiedInstallerManifest::parse_v2(&raw, "1.2.3").unwrap();
+        let legacy = serde_json::to_vec(&manifest.full_compatibility()).unwrap();
+        let mut sums = BTreeMap::<String, String>::new();
+        sums.insert("manifest-v2.json".into(), sha256(&raw));
+        sums.insert("manifest.json".into(), sha256(&legacy));
+        for platform in RuntimePlatform::ALL {
+            sums.insert(
+                format!("webcodex-v1.2.3-{}.tar.gz", platform.as_str()),
+                manifest.artifacts[&platform].sha256.clone(),
+            );
+        }
+        for target in InstallerTarget::ALL
+            .into_iter()
+            .chain(InstallerTarget::RUNTIME)
+        {
+            let entry = manifest.entry(target).unwrap();
+            sums.insert(entry.filename.clone(), entry.sha256.clone());
+            sums.insert(
+                target.source_filename("1.2.3"),
+                entry.source_manifest_sha256.clone(),
+            );
+        }
+        for name in [
+            "webcodex-desktop-v1.2.3-linux-x64.AppImage",
+            "webcodex-desktop-v1.2.3-darwin-arm64.dmg",
+            "webcodex-desktop-v1.2.3-win32-x64.exe",
+            "webcodex-desktop-runtime.json",
+        ] {
+            sums.insert(name.into(), "f".repeat(64));
+        }
+        assert_eq!(sums.len(), 32);
+        let text: String = sums
+            .iter()
+            .map(|(name, hash)| format!("{hash}  {name}\n"))
+            .collect();
+        assert_eq!(verify_checksums(text.as_bytes(), &manifest, &raw), Ok(()));
+        assert_eq!(
+            verify_compatibility_view(&manifest, &legacy, text.as_bytes()),
+            Ok(())
+        );
+        // Frozen old updater budget/Full shape still accepts the compatibility
+        // view despite the new Runtime/v2 lines, without changing its 32 cap.
+        assert_eq!(
+            verify_checksums(
+                text.as_bytes(),
+                &UnifiedInstallerManifest::parse(&legacy, "1.2.3").unwrap(),
+                &legacy
+            ),
+            Ok(())
+        );
+        let oversized = format!("{text}{}  extra.bin\n", "f".repeat(64));
+        assert!(verify_checksums(oversized.as_bytes(), &manifest, &raw).is_err());
+        let mut changed: serde_json::Value = serde_json::from_slice(&legacy).unwrap();
+        changed["artifacts"]["linux-x64"]["sha256"] = "e".repeat(64).into();
+        assert!(verify_compatibility_view(
+            &manifest,
+            &serde_json::to_vec(&changed).unwrap(),
+            text.as_bytes()
+        )
+        .is_err());
     }
 }

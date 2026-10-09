@@ -7,6 +7,15 @@ use webcodex_core::authority::{
 
 pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
     route(
+        CloudflareForwardingProbe,
+        Get,
+        "/.well-known/webcodex-connection",
+        Public,
+        OAuth,
+        Other,
+        RouteAuth::Public,
+    ),
+    route(
         WellKnownProtectedResource,
         Get,
         "/.well-known/oauth-protected-resource",
@@ -90,6 +99,15 @@ pub(super) const PUBLIC_ROUTES: &[RouteSpec] = &[
 ];
 
 pub(super) const MANAGEMENT_ROUTES: &[RouteSpec] = &[
+    route(
+        CloudflareControl,
+        Post,
+        "/api/connections/cloudflare",
+        FirstPartyOnly,
+        OAuth,
+        Other,
+        AuthMiddleware,
+    ),
     route(
         OAuthClientsCreate,
         Post,

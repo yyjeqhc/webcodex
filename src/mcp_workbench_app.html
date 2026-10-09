@@ -5,16 +5,88 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>WebCodex Workbench</title>
 <style>
-:root{color-scheme:light dark;font:13px/1.5 var(--font-sans,ui-sans-serif,system-ui,sans-serif);--border:color-mix(in srgb,CanvasText 16%,transparent);--muted:color-mix(in srgb,CanvasText 62%,transparent);--surface:color-mix(in srgb,Canvas 94%,CanvasText 6%);--accent:light-dark(#2563eb,#60a5fa)}
-*{box-sizing:border-box}body{margin:0;padding:2px;background:transparent;color:CanvasText}button,input,select,textarea{font:inherit;color:inherit}button,select,input,textarea{border:1px solid var(--border);border-radius:8px;background:Canvas;padding:7px 10px}button{cursor:pointer}button:hover:not(:disabled){background:var(--surface)}button:disabled{opacity:.5;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}[hidden]{display:none!important}.card{border:1px solid var(--border);border-radius:14px;overflow:hidden;background:Canvas}header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--surface);border-bottom:1px solid var(--border);gap:10px}h1{font-size:16px;margin:0}h2{font-size:14px;margin:0 0 10px}p{margin:6px 0}.muted{color:var(--muted)}.selection{display:flex;flex-wrap:wrap;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)}label{display:grid;gap:4px;flex:1;min-width:180px}select{width:100%}nav{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap}nav button{border-color:transparent;background:transparent}nav button[aria-selected=true]{color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}.body{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,32%)}.main{min-width:0;padding:16px}.side{border-left:1px solid var(--border);padding:16px;min-width:0}.row{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border)}.row-copy{flex:1;min-width:0;overflow-wrap:anywhere}.row-name{font-weight:600}.row-actions{display:flex;gap:6px;flex-wrap:wrap}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.toolbar input{flex:1;min-width:120px}pre,textarea{white-space:pre-wrap;overflow-wrap:anywhere;width:100%;font:12px/1.5 var(--font-mono,ui-monospace,monospace)}pre{max-height:420px;overflow:auto;background:var(--surface);padding:12px;border-radius:8px}.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.metric{border:1px solid var(--border);border-radius:10px;padding:12px}.metric strong{display:block;margin-top:4px;font-size:14px}.preview{margin-top:16px;border-top:1px solid var(--border);padding-top:16px}footer{padding:10px 16px;border-top:1px solid var(--border);color:var(--muted)}@media(max-width:640px){.body{grid-template-columns:1fr}.side{border-left:0;border-top:1px solid var(--border)}.row{align-items:flex-start;flex-wrap:wrap}.row-actions{width:100%}.selection label{min-width:140px}}
+:root {
+  color-scheme: light dark;
+  font: 14px/1.5 var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  --border: color-mix(in srgb, CanvasText 13%, transparent);
+  --muted: color-mix(in srgb, CanvasText 62%, transparent);
+  --surface: color-mix(in srgb, Canvas 96%, CanvasText 4%);
+  --accent: light-dark(#2563eb, #8ab4f8);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: transparent; }
+body { padding: 2px; color: CanvasText; }
+button, input, select, textarea { font: inherit; color: inherit; min-width: 0; max-width: 100%; }
+button, select, input, textarea { border: 1px solid var(--border); border-radius: 8px; background: Canvas; padding: 8px 10px; }
+button { cursor: pointer; }
+button:hover:not(:disabled) { background: var(--surface); }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.card { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: Canvas; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--border); gap: 16px; }
+header > div { min-width: 0; }
+header button { flex: none; }
+h1 { font-size: 19px; line-height: 1.3; margin: 0; letter-spacing: -.02em; }
+h2 { font-size: 14px; margin: 0 0 12px; }
+p { margin: 6px 0; overflow-wrap: anywhere; }
+.muted { color: var(--muted); font-size: 13px; }
+.selection { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 16px; padding: 18px 24px; }
+label { display: grid; gap: 6px; min-width: 0; font-size: 12px; font-weight: 550; }
+select { width: 100%; font-size: 13px; font-weight: 400; text-overflow: ellipsis; }
+.discovery { padding: 0 24px 14px; border-bottom: 1px solid var(--border); }
+.discovery > summary { width: fit-content; cursor: pointer; color: var(--muted); font-size: 12px; }
+nav { display: flex; gap: 6px; padding: 8px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+nav button { border-color: transparent; background: transparent; }
+nav button[aria-selected=true] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 28%); }
+.main { min-width: 0; padding: 24px; }
+.side { border-left: 1px solid var(--border); padding: 24px; min-width: 0; background: var(--surface); }
+#selectionState { margin: 0 0 12px; }
+#targetSummary:empty { display: none; }
+#targetSummary { font: 12px/1.5 var(--font-mono, ui-monospace, monospace); }
+#useContext { margin: 0 0 20px; background: var(--accent); color: light-dark(white, #101820); border-color: transparent; }
+.row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.row-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.row-name { font-weight: 600; }
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.toolbar input { flex: 1; width: 0; min-width: 120px; }
+pre, textarea { white-space: pre-wrap; overflow-wrap: anywhere; width: 100%; font: 12px/1.6 var(--font-mono, ui-monospace, monospace); }
+pre { margin: 12px 0; background: var(--surface); padding: 14px; border-radius: 8px; }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 12px; margin-bottom: 16px; }
+.metric { border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-wrap: anywhere; }
+.metric strong { display: block; margin-top: 6px; font-size: 15px; }
+.preview { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px; }
+footer { padding: 12px 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+:root[data-display-mode=fullscreen] body { padding: 24px; background: var(--surface); }
+:root[data-display-mode=fullscreen] .card { max-width: 1200px; margin: 0 auto; min-height: calc(100dvh - 48px); display: flex; flex-direction: column; }
+:root[data-display-mode=fullscreen] .body { flex: 1; }
+@media (max-width: 700px) {
+  .body { grid-template-columns: 1fr; }
+  .side { border-left: 0; border-top: 1px solid var(--border); }
+  .selection { grid-template-columns: 1fr; gap: 12px; }
+  header { align-items: flex-start; }
+  header, .main, .side { padding: 16px; }
+  .selection { padding: 16px; }
+  .discovery { padding: 0 16px 12px; }
+  nav { padding: 8px 12px; }
+  .row { align-items: flex-start; }
+  .row-actions { width: 100%; }
+  :root[data-display-mode=fullscreen] body { padding: 12px; }
+  :root[data-display-mode=fullscreen] .card { min-height: calc(100dvh - 24px); }
+}
+@media (pointer: coarse) { button, select, input { min-height: 44px; } }
 </style>
 </head>
 <body>
 <div class="card">
-<header><div><h1>WebCodex Workbench</h1><p class="muted">Browse work and choose references for your next message.</p></div><button id="refresh" type="button">Refresh</button></header>
+<header><div><h1>Projects &amp; Resources</h1><p class="muted">Choose a project to explore its files, work and references.</p></div><button id="refresh" type="button">Refresh</button></header>
 <div class="selection"><label for="runnerSelect">Runner<select id="runnerSelect"><option value="">Choose a Runner</option></select></label><label for="projectSelect">Project<select id="projectSelect"><option value="">Choose a Project</option></select></label><label for="sessionSelect">Workflow Session<select id="sessionSelect"><option value="">Project overview · no Session selected</option></select></label><button id="sessionsMore" type="button" hidden>More Sessions</button></div>
-<form id="runnerSearchForm" class="toolbar" style="padding:0 16px"><input id="runnerQuery" aria-label="Find Runners" placeholder="Find a Runner" maxlength="200"/><button id="runnerSearch" type="submit">Find Runners</button></form>
-<form id="projectSearchForm" class="toolbar" style="padding:0 16px"><input id="projectQuery" aria-label="Find Projects" placeholder="Find a Project" maxlength="200"/><button id="projectSearch" type="submit">Find Projects</button><button id="projectsMore" type="button" hidden>More Projects</button></form>
+<details class="discovery"><summary>Find a Runner or Project</summary>
+<form id="runnerSearchForm" class="toolbar"><input id="runnerQuery" aria-label="Find Runners" placeholder="Find a Runner" maxlength="200"/><button id="runnerSearch" type="submit">Find Runners</button></form>
+<form id="projectSearchForm" class="toolbar"><input id="projectQuery" aria-label="Find Projects" placeholder="Find a Project" maxlength="200"/><button id="projectSearch" type="submit">Find Projects</button><button id="projectsMore" type="button" hidden>More Projects</button></form>
+</details>
 <nav role="tablist" aria-label="Workbench areas"><button id="tabOverview" role="tab" aria-controls="panelOverview">Overview</button><button id="tabFiles" role="tab" aria-controls="panelFiles">Files</button><button id="tabGoals" role="tab" aria-controls="panelGoals">Goals</button><button id="tabArtifacts" role="tab" aria-controls="panelArtifacts">Artifacts</button></nav>
 <div class="body"><main class="main">
 <p id="selectionState" class="muted">Choose a Runner to begin.</p><p id="targetSummary" class="muted"></p><button id="useContext" type="button" hidden>Use selected context</button>
@@ -74,6 +146,25 @@
   let modalities = {}, contextAdapter = false, contextId = null, content = [], overviewGeneration = 0;
   let contextQueue = Promise.resolve(), queuedReferences = 0;
   const pending = new Map(), reads = new Map();
+  let lastHeight = 0;
+  function reportSize() {
+    if (!ready || disposed || document.documentElement.getAttribute("data-display-mode") === "fullscreen") return;
+    const height = Math.ceil(document.body.getBoundingClientRect().height);
+    if (Number.isFinite(height) && height > 0 && height !== lastHeight) {
+      lastHeight = height; notify("ui/notifications/size-changed", {height});
+    }
+  }
+  const sizeObserver = new ResizeObserver(reportSize);
+  sizeObserver.observe(document.body);
+  function syncDisplay(context) {
+    if (!context || typeof context !== "object" || disposed) return;
+    if (context.theme === "light" || context.theme === "dark") document.documentElement.style.colorScheme = context.theme;
+    if ((context.displayMode === "inline" || context.displayMode === "fullscreen")
+      && context.displayMode !== document.documentElement.getAttribute("data-display-mode")) {
+      document.documentElement.setAttribute("data-display-mode", context.displayMode); lastHeight = 0;
+    }
+    reportSize();
+  }
   const object = v => v !== null && typeof v === "object" && !Array.isArray(v);
   const bounded = (v, n) => typeof v === "string" && v.length > 0 && v.length <= n && !/[\u0000-\u001f]/.test(v);
   const uriValid = uri => bounded(uri, 8192) && /^webcodex-resource:\/\/(?:project\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+|file\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+|goal\/[A-Za-z0-9_-]+)$/.test(uri);
@@ -313,7 +404,7 @@
       const remove=document.createElement("button"); remove.type="button"; remove.textContent="Remove"; remove.disabled=contextBusy || queuedReferences > 0 || disposed; remove.onclick=()=>void queueContextAction(()=>updateContext(content.filter(item=>item!==block)));
       node.append(name,remove);el("references").append(node);
     }
-    el("copyLabel").hidden=acceptsReferences() && !selectionCopy;
+    el("copyLabel").hidden=!selectionCopy && (acceptsReferences() || content.length === 0);
     el("referenceHint").textContent=selectionCopy ? "This Host cannot attach the selected Session context. Copy the exact selection below." : el("copyLabel").hidden ? "Add references to the model context for your next message." : "This Host does not accept references. Choose resources, then copy the bounded text below.";
     if (!el("copyLabel").hidden) el("referenceText").value=selectionCopy || content.map(block=>block.text || blockUri(block)).join("\n\n");
     updateControls();
@@ -434,6 +525,7 @@
   }
   function teardown() {
     if (disposed) return; disposed=true;scope++;listGeneration++;previewGeneration++;contextGeneration++;stopRefresh();
+    sizeObserver.disconnect();
     for (const [id,entry] of pending) {clearTimeout(entry.timer);notify("notifications/cancelled",{requestId:id,reason:"Workbench closed"});entry.reject(new Error("Workbench closed"));}
     pending.clear();updateControls();
   }
@@ -447,7 +539,7 @@
       if (!object(args) || args.client_id !== undefined && !bounded(args.client_id,128) || args.project !== undefined && !bounded(args.project,4096) || args.session_id !== undefined && !bounded(args.session_id,256) || args.session_id && !args.project) {el("status").textContent="Invalid launcher selection.";return;}
       launchInput=args;applyLaunch();
     } else if (msg.method === "ui/notifications/tool-result") acceptResult(msg.params);
-    else if (msg.method === "ui/notifications/host-context-changed") syncContext(msg.params);
+    else if (msg.method === "ui/notifications/host-context-changed") {syncDisplay(msg.params);syncContext(msg.params);}
     else if (msg.method === "ui/resource-teardown") {teardown();if ("id" in msg) parent.postMessage({jsonrpc:"2.0",id:msg.id,result:{}},"*");}
   });
   el("runnerSelect").onchange=()=>{userSelected=true;void chooseRunner(el("runnerSelect").value);};
@@ -477,7 +569,7 @@
     if (!object(result) || result.protocolVersion !== "2026-01-26") throw new Error("Unsupported Host protocol");
     modalities=object(result.hostCapabilities?.updateModelContext) ? result.hostCapabilities.updateModelContext : {};
     contextAdapter=object(result.hostCapabilities?.experimental?.["openai/modelContext"]);
-    ready=true;notify("ui/notifications/initialized",{});renderReferences();syncContext(result.hostContext);el("status").textContent="Ready.";applyLaunch();
+    ready=true;notify("ui/notifications/initialized",{});syncDisplay(result.hostContext);renderReferences();syncContext(result.hostContext);el("status").textContent="Ready.";applyLaunch();
   }).catch(error=>{if(!disposed){el("status").textContent=errorMessage(error);updateControls();}});
 })();
 </script>

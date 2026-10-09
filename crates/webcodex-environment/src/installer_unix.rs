@@ -552,6 +552,8 @@ mod tests {
     fn broker_rejects_nonfrozen_service_without_running_it() {
         let temp = tempfile::tempdir().unwrap();
         let frozen = FrozenInstallerUpgrade {
+            package_flavor: crate::unified_update::PackageFlavor::Full,
+            installer_target: None,
             root: temp.path().into(),
             operation_id: "op".into(),
             owner: crate::LocalAccount {
@@ -617,6 +619,8 @@ mod tests {
         let cli = temp.path().join("webcodex");
         std::fs::write(&cli, b"fake executable fixture").unwrap();
         let frozen = FrozenInstallerUpgrade {
+            package_flavor: crate::unified_update::PackageFlavor::Full,
+            installer_target: None,
             root: temp.path().into(),
             operation_id: "op".into(),
             owner: crate::LocalAccount {
@@ -645,6 +649,8 @@ mod tests {
     fn broker_loop_replies_to_disallowed_request_and_closes_cleanly() {
         let temp = tempfile::tempdir().unwrap();
         let frozen = FrozenInstallerUpgrade {
+            package_flavor: crate::unified_update::PackageFlavor::Full,
+            installer_target: None,
             root: temp.path().into(),
             operation_id: "op".into(),
             owner: crate::LocalAccount {

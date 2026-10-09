@@ -9,15 +9,29 @@ use webcodex_core::runner_protocol::{ShellJobContext, ShellJobValidationMetadata
 
 #[test]
 fn project_validation_rechecks_manifest_and_dependency_state_after_queueing() {
-    for (marker, dependency, change_dependency, member_cwd) in [
-        ("Cargo.toml", "Cargo.lock", false, false),
-        ("Cargo.toml", "Cargo.lock", true, false),
-        ("go.mod", "go.sum", false, false),
-        ("go.mod", "go.sum", true, false),
-        ("pyproject.toml", "pytest.ini", false, false),
-        ("pyproject.toml", "pytest.ini", true, false),
-        ("Cargo.toml", "Cargo.lock", false, true),
-        ("Cargo.toml", "Cargo.lock", true, true),
+    for (marker, dependency, change_dependency, member_cwd, ruff_action) in [
+        ("Cargo.toml", "Cargo.lock", false, false, None),
+        ("Cargo.toml", "Cargo.lock", true, false, None),
+        ("go.mod", "go.sum", false, false, None),
+        ("go.mod", "go.sum", true, false, None),
+        ("pyproject.toml", "pytest.ini", false, false, None),
+        ("pyproject.toml", "pytest.ini", true, false, None),
+        ("Cargo.toml", "Cargo.lock", false, true, None),
+        ("Cargo.toml", "Cargo.lock", true, true, None),
+        (
+            "pyproject.toml",
+            "unused",
+            false,
+            false,
+            Some(ProjectValidationAction::Check),
+        ),
+        (
+            "pyproject.toml",
+            "unused",
+            false,
+            false,
+            Some(ProjectValidationAction::FormatCheck),
+        ),
     ] {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("project");
@@ -44,7 +58,15 @@ edition = "2021"
             )
             .unwrap();
         } else {
-            std::fs::write(root.join(marker), "").unwrap();
+            std::fs::write(
+                root.join(marker),
+                if ruff_action.is_some() {
+                    "[tool.ruff]\ntarget-version='py311'\n"
+                } else {
+                    ""
+                },
+            )
+            .unwrap();
         }
         std::fs::write(root.join(dependency), "").unwrap();
         std::fs::write(
@@ -63,7 +85,9 @@ edition = "2021"
         let request = ProjectValidationRequest {
             project_id: "demo".into(),
             cwd: member_cwd.then(|| "member".into()),
-            action: if marker == "pyproject.toml" {
+            action: if let Some(action) = ruff_action {
+                action
+            } else if marker == "pyproject.toml" {
                 ProjectValidationAction::Test
             } else {
                 ProjectValidationAction::Check
@@ -359,13 +383,26 @@ fn enqueue_python_project_fixture(
     body: &str,
     filter: Option<&str>,
 ) -> (tempfile::TempDir, JobManager) {
+    enqueue_python_validation_fixture(shell, body, filter, ProjectValidationAction::Test)
+}
+
+fn enqueue_python_validation_fixture(
+    shell: ShellConfig,
+    body: &str,
+    filter: Option<&str>,
+    action: ProjectValidationAction,
+) -> (tempfile::TempDir, JobManager) {
     use webcodex_core::project_validation::ProjectValidationTestOptions;
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("project");
     let registry = temp.path().join("registry");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::create_dir_all(&registry).unwrap();
-    std::fs::write(root.join("pyproject.toml"), "[tool.pytest.ini_options]\n").unwrap();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[tool.pytest.ini_options]\n[tool.ruff]\ntarget-version='py311'\n",
+    )
+    .unwrap();
     std::fs::write(root.join("test_example.py"), body).unwrap();
     std::fs::write(
         registry.join("demo.toml"),
@@ -382,7 +419,7 @@ fn enqueue_python_project_fixture(
     let request = ProjectValidationRequest {
         project_id: "demo".into(),
         cwd: None,
-        action: ProjectValidationAction::Test,
+        action,
         adapter: ProjectValidationAdapter::Python,
         scope: None,
         dependency_policy: None,
@@ -396,15 +433,15 @@ fn enqueue_python_project_fixture(
     let metadata = ShellJobValidationMetadata {
         project_validation: Some(plan.provenance),
         tool: "project_validate".into(),
-        kind: "test".into(),
+        kind: action.kind().into(),
         steps: vec![plan.step.clone()],
         effective_timeout_secs: 60,
         sync_wait_secs: 1,
         adapter: plan.adapter,
         validation_target_id: Some(plan.validation_target_id),
         source_fence: None,
-        minimum_tests: Some(1),
-        require_tests: Some(true),
+        minimum_tests: request.test_requirements().1,
+        require_tests: request.test_requirements().0,
         no_run: None,
     };
     assert!(metadata.is_valid());
@@ -415,10 +452,14 @@ fn enqueue_python_project_fixture(
         ssh_resource: None,
         project_cwd: Some(".".into()),
         cwd: Some(cwd.to_string_lossy().into_owned()),
-        purpose: Some("test".into()),
+        purpose: Some(
+            webcodex_validation::execution_purpose_for_validation_kind(action.kind())
+                .as_str()
+                .into(),
+        ),
         shell: None,
-        command_preview: "pytest validation".into(),
-        validation_steps: vec!["test".into()],
+        command_preview: "Python validation".into(),
+        validation_steps: vec![plan.step.name.clone()],
         structured_execution: None,
     };
     let operation = RunnerJobOperation::StartValidation(RunnerJobValidationOperation {
@@ -549,4 +590,41 @@ fn runner_real_process_project_validation_python_pytest_fixtures() {
     manager.stop_all();
     assert_eq!(snapshot.exit_code, Some(0), "{snapshot:?}");
     assert_eq!(snapshot.stdout.tail.trim(), "1 passed in 0.01s");
+}
+
+#[test]
+fn project_validation_ruff_missing_interpreter_is_definitely_not_started() {
+    for action in [
+        ProjectValidationAction::Check,
+        ProjectValidationAction::FormatCheck,
+    ] {
+        let bin = tempfile::tempdir().unwrap();
+        let mut shell = ShellConfig::default();
+        shell
+            .env
+            .insert("PATH".into(), bin.path().to_string_lossy().into_owned());
+        let (_temp, manager) = enqueue_python_validation_fixture(
+            shell,
+            "raise RuntimeError('must not run')\n",
+            None,
+            action,
+        );
+        assert!(manager.wait_for_workers(Instant::now() + Duration::from_secs(10)));
+        let snapshot = lock_unpoison(&manager.jobs)["pytest-fixture-job"]
+            .snapshot
+            .clone();
+        manager.stop_all();
+        assert_eq!(
+            snapshot.command_execution_state,
+            Some(ShellCommandExecutionState::NotStarted)
+        );
+        assert_eq!(
+            snapshot.error.as_deref(),
+            Some(VALIDATION_TOOL_UNAVAILABLE_CODE)
+        );
+        assert_eq!(
+            snapshot.context.validation.unwrap().adapter,
+            format!("python:ruff:{}", action.kind())
+        );
+    }
 }

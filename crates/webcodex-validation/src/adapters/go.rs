@@ -1,6 +1,7 @@
 use super::{
     read_only_validation_plan, validate_package_scope_exclusivity, ReadOnlyValidationPlan,
-    ValidationAdapter, ValidationCommandOptions, ValidationFailureEvidence, ValidationPlanArg,
+    ValidationAdapter, ValidationCommandOptions, ValidationEvidenceProfile,
+    ValidationFailureEvidence, ValidationPlanArg,
 };
 use webcodex_core::runner_protocol::normalize_go_test_packages;
 use webcodex_core::validation_evidence::{parse_go_test_diagnostics, ValidationDiagnostics};
@@ -17,69 +18,13 @@ pub(super) fn validation_adapter(tool_identity: &str) -> Option<&'static dyn Val
     }
 }
 
-pub(super) fn check_adapter() -> &'static dyn ValidationAdapter {
-    &GO_VET_ADAPTER
-}
-
-pub(super) fn test_adapter() -> &'static dyn ValidationAdapter {
-    &GO_TEST_ADAPTER
-}
-
-impl ValidationAdapter for GoTestValidationAdapter {
+impl ValidationEvidenceProfile for GoTestValidationAdapter {
     fn validation_kind(&self) -> &'static str {
         "test"
     }
 
     fn tool_identity(&self) -> &'static str {
         "go_test"
-    }
-
-    fn build_readonly_plan(
-        &self,
-        options: ValidationCommandOptions,
-    ) -> Result<ReadOnlyValidationPlan, String> {
-        if options.check
-            || options.lib.is_some()
-            || options.all_targets.is_some()
-            || options.all_features.is_some()
-            || options.no_default_features.is_some()
-            || options.features.is_some()
-            || options.package.is_some()
-            || options.cargo_packages.is_some()
-            || options.no_run.is_some()
-        {
-            return Err("go_test does not accept Cargo validation command options".to_string());
-        }
-        let explicit_packages = options.go_packages.is_some();
-        validate_package_scope_exclusivity(explicit_packages, options.all_packages)?;
-        let packages = normalize_go_test_packages(options.go_packages.as_deref())
-            .map_err(|reason| format!("packages {reason}"))?;
-        let mut args = vec![
-            ValidationPlanArg::Literal("test"),
-            ValidationPlanArg::Literal("-json"),
-        ];
-        if options.dependency_mode
-            == Some(webcodex_core::project_validation::ProjectDependencyMode::Locked)
-        {
-            args.push(ValidationPlanArg::Literal("-mod=readonly"));
-        }
-        if let Some(filter) = options
-            .filter
-            .as_deref()
-            .map(webcodex_core::runner_protocol::normalize_go_test_filter)
-            .transpose()?
-            .flatten()
-        {
-            args.push(ValidationPlanArg::Literal("-run"));
-            args.push(ValidationPlanArg::Value(filter));
-        }
-        if explicit_packages && !options.all_packages {
-            args.extend(packages.into_iter().map(ValidationPlanArg::Value));
-        } else {
-            debug_assert_eq!(packages.as_slice(), ["./..."]);
-            args.push(ValidationPlanArg::Literal("./..."));
-        }
-        read_only_validation_plan("test", "go", args)
     }
 
     fn parse(
@@ -132,15 +77,86 @@ impl ValidationAdapter for GoTestValidationAdapter {
     }
 }
 
+impl ValidationAdapter for GoTestValidationAdapter {
+    fn build_readonly_plan(
+        &self,
+        options: ValidationCommandOptions,
+    ) -> Result<ReadOnlyValidationPlan, String> {
+        if options.check
+            || options.lib.is_some()
+            || options.all_targets.is_some()
+            || options.all_features.is_some()
+            || options.no_default_features.is_some()
+            || options.features.is_some()
+            || options.package.is_some()
+            || options.cargo_packages.is_some()
+            || options.no_run.is_some()
+        {
+            return Err("go_test does not accept Cargo validation command options".to_string());
+        }
+        let explicit_packages = options.go_packages.is_some();
+        validate_package_scope_exclusivity(explicit_packages, options.all_packages)?;
+        let packages = normalize_go_test_packages(options.go_packages.as_deref())
+            .map_err(|reason| format!("packages {reason}"))?;
+        let mut args = vec![
+            ValidationPlanArg::Literal("test"),
+            ValidationPlanArg::Literal("-json"),
+        ];
+        if options.dependency_mode
+            == Some(webcodex_core::project_validation::ProjectDependencyMode::Locked)
+        {
+            args.push(ValidationPlanArg::Literal("-mod=readonly"));
+        }
+        if let Some(filter) = options
+            .filter
+            .as_deref()
+            .map(webcodex_core::runner_protocol::normalize_go_test_filter)
+            .transpose()?
+            .flatten()
+        {
+            args.push(ValidationPlanArg::Literal("-run"));
+            args.push(ValidationPlanArg::Value(filter));
+        }
+        if explicit_packages && !options.all_packages {
+            args.extend(packages.into_iter().map(ValidationPlanArg::Value));
+        } else {
+            debug_assert_eq!(packages.as_slice(), ["./..."]);
+            args.push(ValidationPlanArg::Literal("./..."));
+        }
+        read_only_validation_plan("test", "go", args)
+    }
+}
+
 struct GoVetValidationAdapter;
 static GO_VET_ADAPTER: GoVetValidationAdapter = GoVetValidationAdapter;
-impl ValidationAdapter for GoVetValidationAdapter {
+impl ValidationEvidenceProfile for GoVetValidationAdapter {
     fn validation_kind(&self) -> &'static str {
         "check"
     }
+
     fn tool_identity(&self) -> &'static str {
         "go_vet"
     }
+
+    fn parse(&self, _stdout: &str, stderr: &str, truncated: bool) -> ValidationDiagnostics {
+        webcodex_core::validation_evidence::parse_go_vet_diagnostics(stderr, truncated)
+    }
+
+    fn map_failure_kind(&self, evidence: ValidationFailureEvidence<'_>) -> &'static str {
+        if evidence.success {
+            "unknown"
+        } else if matches!(
+            evidence.reported_failure_kind,
+            Some("timeout" | "timed_out" | "command_timeout")
+        ) {
+            "timeout"
+        } else {
+            "compile_error"
+        }
+    }
+}
+
+impl ValidationAdapter for GoVetValidationAdapter {
     fn build_readonly_plan(
         &self,
         options: ValidationCommandOptions,
@@ -175,20 +191,5 @@ impl ValidationAdapter for GoVetValidationAdapter {
             args.push(ValidationPlanArg::Literal("./..."));
         }
         read_only_validation_plan("check", "go", args)
-    }
-    fn parse(&self, _stdout: &str, stderr: &str, truncated: bool) -> ValidationDiagnostics {
-        webcodex_core::validation_evidence::parse_go_vet_diagnostics(stderr, truncated)
-    }
-    fn map_failure_kind(&self, evidence: ValidationFailureEvidence<'_>) -> &'static str {
-        if evidence.success {
-            "unknown"
-        } else if matches!(
-            evidence.reported_failure_kind,
-            Some("timeout" | "timed_out" | "command_timeout")
-        ) {
-            "timeout"
-        } else {
-            "compile_error"
-        }
     }
 }

@@ -4,9 +4,10 @@ use super::helpers::{
 };
 
 pub(crate) use webcodex_validation::{
-    validation_adapter_for_tool, CargoCheckOptions, CargoReadOnlyValidationOperation,
+    validation_adapter_for_tool, validation_evidence_profile_for_recipe,
+    validation_evidence_profile_for_tool, CargoCheckOptions, CargoReadOnlyValidationOperation,
     CargoTestOptions, GoReadOnlyValidationOperation, GoTestOptions, ReadOnlyValidationOperation,
-    ValidationAdapter, ValidationCommandOptions, ValidationFailureEvidence,
+    ValidationCommandOptions, ValidationEvidenceProfile, ValidationFailureEvidence,
 };
 
 pub(crate) struct ValidationRuntimeProfile {
@@ -17,6 +18,21 @@ pub(crate) struct ValidationRuntimeProfile {
 
 pub(crate) fn runtime_profile(operation: &ReadOnlyValidationOperation) -> ValidationRuntimeProfile {
     match operation {
+        ReadOnlyValidationOperation::NodeNativeTest => ValidationRuntimeProfile {
+            default_timeout_secs: DEFAULT_CARGO_TEST_TIMEOUT_SECS,
+            force_agent_handoff: true,
+            invalid_argument_guidance: "Native node:test TAP only; no custom scripts, filter or package scope.",
+        },
+        ReadOnlyValidationOperation::NodeScriptCheck => ValidationRuntimeProfile {
+            default_timeout_secs: DEFAULT_CARGO_CHECK_TIMEOUT_SECS,
+            force_agent_handoff: false,
+            invalid_argument_guidance: "Node >=22.3 must be installed; require one project-local check/typecheck/lint script. Script effects are project-controlled.",
+        },
+        ReadOnlyValidationOperation::PythonRuffCheck | ReadOnlyValidationOperation::PythonRuffFormat => ValidationRuntimeProfile {
+            default_timeout_secs: DEFAULT_CARGO_CHECK_TIMEOUT_SECS,
+            force_agent_handoff: false,
+            invalid_argument_guidance: "use project-local pyproject.toml [tool.ruff] with target-version and no extend; no flags or install.",
+        },
         ReadOnlyValidationOperation::Python(_) => ValidationRuntimeProfile {
             default_timeout_secs: DEFAULT_CARGO_TEST_TIMEOUT_SECS,
             force_agent_handoff: true,

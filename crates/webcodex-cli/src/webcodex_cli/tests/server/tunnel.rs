@@ -73,3 +73,94 @@ fn regular_tunnel_server_url_is_derived_from_loopback_env_only() {
     std::fs::write(&env_file, "WEBCODEX_ADDR=192.0.2.10:18080\n").unwrap();
     assert!(crate::webcodex_cli::server::derive_regular_tunnel_server_url(&env_file).is_err());
 }
+
+#[test]
+fn cloudflare_server_tunnel_uses_only_a_private_runtime_binding() {
+    for provider in ["cloudflare_named", "cloudflare_quick"] {
+        let parsed = parse_server_tunnel(&args(&[
+            "--provider",
+            provider,
+            "--runtime-binding",
+            "private/runtime.json",
+            "--json",
+        ]))
+        .unwrap();
+        assert_eq!(
+            parsed.runtime_binding,
+            Some(PathBuf::from("private/runtime.json"))
+        );
+        assert!(parsed.env_file.as_os_str().is_empty());
+        assert!(parse_server_tunnel(&args(&[
+            "--provider",
+            provider,
+            "--env-file",
+            "server.env",
+            "--json"
+        ]))
+        .is_err());
+        assert!(parse_server_tunnel(&args(&[
+            "--provider",
+            provider,
+            "--runtime-binding",
+            "runtime.json",
+            "--env-file",
+            "server.env",
+            "--json"
+        ]))
+        .is_err());
+    }
+    assert!(parse_server_tunnel(&args(&[
+        "--provider",
+        "openai",
+        "--runtime-binding",
+        "runtime.json",
+        "--json"
+    ]))
+    .is_err());
+    let error = parse_server_tunnel(&args(&[
+        "--provider",
+        "cloudflare_named",
+        "--token",
+        "private-token-fixture",
+        "--json",
+    ]))
+    .unwrap_err();
+    assert!(!error.contains("private-token-fixture"));
+    assert!(parse_server_tunnel(&args(&[
+        "--provider",
+        "openai",
+        "--provider",
+        "cloudflare_quick",
+        "--runtime-binding",
+        "runtime.json",
+        "--json"
+    ]))
+    .is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn machine_tunnel_rejects_provider_mismatch_before_contacting_server() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let directory = tmp.path().join("quick");
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = directory.join("runtime.json");
+    std::fs::write(&path,serde_json::json!({"profile_id":"quick","provider":{"kind":"cloudflare_quick"},"host_mode":"standalone","autostart":true,"revision":1,"runtime_revision":1,"owner_username":"owner","runner_client_id":"client-one","ingress_port":34567,"token_ref":null,"local_server_url":"http://127.0.0.1:1","bootstrap_token":"private-bootstrap"}).to_string()).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let parsed = parse_server_tunnel(&args(&[
+        "--provider",
+        "cloudflare_named",
+        "--runtime-binding",
+        path.to_str().unwrap(),
+        "--json",
+    ]))
+    .unwrap();
+    let error =
+        crate::webcodex_cli::server::run_server_tunnel_with_stop(parsed, std::future::pending())
+            .await
+            .unwrap_err();
+    assert!(error.contains("does not match"));
+    assert!(!error.contains("private-bootstrap"));
+}

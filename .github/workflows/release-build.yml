@@ -14,6 +14,11 @@ on:
         required: false
         default: manual
         type: string
+      include_runtime_installers:
+        description: Build Linux Runtime DEB/RPM installers (requires unified installers and a release tag)
+        required: false
+        default: false
+        type: boolean
       include_unified_installers:
         description: Build optional unified distro installers in addition to the core release
         required: false
@@ -51,8 +56,14 @@ jobs:
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          INCLUDE_RUNTIME_INSTALLERS: ${{ inputs.include_runtime_installers }}
+          INCLUDE_UNIFIED_INSTALLERS: ${{ inputs.include_unified_installers }}
         run: |
           set -euo pipefail
+          if [ "${INCLUDE_RUNTIME_INSTALLERS:-false}" = true ]; then
+            test "$INCLUDE_UNIFIED_INSTALLERS" = true
+            [[ "$INPUT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          fi
           test "$GITHUB_REF" = "refs/tags/$INPUT_TAG"
           test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$INPUT_TAG")"
           bash scripts/release_check.sh --static-only
@@ -955,6 +966,90 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  runtime-native:
+    needs: [prepare, linux]
+    if: inputs.include_runtime_installers
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-latest
+            architecture: x86_64
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            architecture: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+      ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
+      PLATFORM: ${{ matrix.platform }}
+      NATIVE_ARCHITECTURE: ${{ matrix.architecture }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}
+          path: runtime-input
+      - name: Package exact native CLI Server Runner bytes without Desktop build
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]
+          [ -z "$(git status --porcelain --untracked-files=all -- . ':!runtime-input')" ]
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work \
+            -e VERSION -e SOURCE_SHA -e ARCHIVE_STEM -e PLATFORM -e NATIVE_ARCHITECTURE \
+            -e GITHUB_RUN_ID -e GITHUB_WORKFLOW_REF -e GITHUB_SHA ubuntu:22.04 bash -lc '
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends python3 dpkg-dev rpm cpio binutils
+              [ "$(uname -m)" = "$NATIVE_ARCHITECTURE" ]
+              python3 -m unittest scripts.tests.test_runtime_installers.RuntimeInstallerTests.test_rpm_preserves_prebuilt_payload_and_candidate_bytes
+              mkdir -p runtime-native-input/artifacts/bin dist
+              (cd runtime-input && sha256sum -c "$ARCHIVE_STEM-$PLATFORM.tar.gz.sha256")
+              python3 -c "from pathlib import Path; from scripts.prepare_release_metadata import normalized_members, expected_members; assert normalized_members(Path(\"runtime-input/$ARCHIVE_STEM-$PLATFORM.tar.gz\")) == expected_members(\"$PLATFORM\")"
+              tar -xzf "runtime-input/$ARCHIVE_STEM-$PLATFORM.tar.gz" -C runtime-native-input/artifacts/bin \
+                -- webcodex webcodex-server webcodex-runner
+              python3 scripts/verify_linux_elf_baseline.py --architecture "$NATIVE_ARCHITECTURE" \
+                runtime-native-input/artifacts/bin/webcodex runtime-native-input/artifacts/bin/webcodex-server runtime-native-input/artifacts/bin/webcodex-runner
+              python3 scripts/collect_unified_installer_inputs.py --package-flavor runtime \
+                --platform "$PLATFORM" --input-root runtime-native-input \
+                --webcodex artifacts/bin/webcodex --webcodex-server artifacts/bin/webcodex-server \
+                --webcodex-runner artifacts/bin/webcodex-runner --version "$VERSION" --source-sha "$SOURCE_SHA" \
+                --workflow-run-id "$GITHUB_RUN_ID" --workflow-ref "$GITHUB_WORKFLOW_REF" --output-dir runtime-candidate
+              source_name="webcodex-runtime-source-v$VERSION-$PLATFORM.json"
+              cp runtime-candidate/source-manifest.json "dist/$source_name"
+              (cd dist && sha256sum "$source_name" > "$source_name.sha256")
+              for suffix in deb rpm; do
+                filename="webcodex-runtime-v$VERSION-$PLATFORM.$suffix"
+                python3 scripts/package_unified_installer.py --package-flavor runtime \
+                  --manifest runtime-candidate/source-manifest.json --checksums runtime-candidate/SHA256SUMS \
+                  --input-root runtime-candidate --platform "$PLATFORM" --output "dist/$filename"
+                (cd dist && sha256sum "$filename" > "$filename.sha256")
+              done
+            '
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ needs.prepare.outputs.archive_stem }}-runtime-${{ matrix.platform }}
+          path: |
+            dist/webcodex-runtime-v*.deb
+            dist/webcodex-runtime-v*.deb.sha256
+            dist/webcodex-runtime-v*.rpm
+            dist/webcodex-runtime-v*.rpm.sha256
+            dist/webcodex-runtime-source-v*.json
+            dist/webcodex-runtime-source-v*.json.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   unified-native:
     needs: [prepare, linux, macos]
     if: inputs.include_unified_installers
@@ -1221,14 +1316,15 @@ jobs:
           fi
 
   assemble:
-    needs: [prepare, linux, macos, windows, unified-native]
+    needs: [prepare, linux, macos, windows, unified-native, runtime-native]
     if: >-
       always() &&
       needs.prepare.result == 'success' &&
       needs.linux.result == 'success' &&
       needs.macos.result == 'success' &&
       needs.windows.result == 'success' &&
-      (!inputs.include_unified_installers || needs.unified-native.result == 'success')
+      (!inputs.include_unified_installers || needs.unified-native.result == 'success') &&
+      (!inputs.include_runtime_installers || needs.runtime-native.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -1241,6 +1337,7 @@ jobs:
       INPUT_TAG: ${{ inputs.tag }}
       DESKTOP_DARWIN_X64_SUPPLEMENTAL: ${{ needs.prepare.outputs.desktop_darwin_x64_supplemental }}
       INCLUDE_UNIFIED_INSTALLERS: ${{ inputs.include_unified_installers }}
+      INCLUDE_RUNTIME_INSTALLERS: ${{ inputs.include_runtime_installers }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -1344,6 +1441,14 @@ jobs:
               "webcodex-source-v$VERSION-win32-arm64.json.sha256"
             )
           fi
+          if [ "${INCLUDE_RUNTIME_INSTALLERS:-false}" = true ]; then
+            for platform in linux-x64 linux-arm64; do
+              expected+=("webcodex-runtime-source-v$VERSION-$platform.json" "webcodex-runtime-source-v$VERSION-$platform.json.sha256")
+              for suffix in deb rpm; do
+                expected+=("webcodex-runtime-v$VERSION-$platform.$suffix" "webcodex-runtime-v$VERSION-$platform.$suffix.sha256")
+              done
+            done
+          fi
           mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
           if find candidate-input -mindepth 1 ! -type f -print -quit | grep -q .; then
             echo "same-run release candidate download contains a non-regular or nested entry" >&2
@@ -1436,6 +1541,18 @@ jobs:
           cp "candidate-input/$desktop_darwin_arm64" release-bundle/
           cp "candidate-input/$desktop_win32_x64" release-bundle/
           cp "candidate-input/$desktop_win32_arm64" release-bundle/
+          if [ "${INCLUDE_RUNTIME_INSTALLERS:-false}" = true ]; then
+            for platform in linux-x64 linux-arm64; do
+              source_name="webcodex-runtime-source-v$VERSION-$platform.json"
+              (cd candidate-input && sha256sum -c "$source_name.sha256")
+              cp "candidate-input/$source_name" release-bundle/
+              for suffix in deb rpm; do
+                filename="webcodex-runtime-v$VERSION-$platform.$suffix"
+                (cd candidate-input && sha256sum -c "$filename.sha256")
+                installers+=("$filename")
+              done
+            done
+          fi
           for installer in "${installers[@]}"; do
             cp "candidate-input/$installer" release-bundle/
           done
@@ -1450,6 +1567,9 @@ jobs:
             metadata_options=()
             if [ "$INCLUDE_UNIFIED_INSTALLERS" = true ]; then
               metadata_options+=(--require-unified-installers)
+            fi
+            if [ "${INCLUDE_RUNTIME_INSTALLERS:-false}" = true ]; then
+              metadata_options+=(--require-runtime-installers)
             fi
             python3 scripts/prepare_release_metadata.py \
               "${metadata_options[@]}" \
@@ -1565,6 +1685,14 @@ jobs:
                       installer_record["inner_sha256"] = evidence["inner_installer_sha256"]
                       installer_record["candidate_manifest_sha256"] = evidence["candidate_manifest_sha256"]
                   installer_artifacts[target] = installer_record
+          if os.environ.get("INCLUDE_RUNTIME_INSTALLERS", "false") == "true":
+              from scripts.runtime_installer_manifest import RUNTIME_TARGETS, installer_filename, source_filename
+              for target, (platform, suffix) in RUNTIME_TARGETS.items():
+                  filename = installer_filename(os.environ["VERSION"], target)
+                  source_name = source_filename(os.environ["VERSION"], platform)
+                  installer_artifacts[target] = {"filename": filename, "sha256": hashlib.sha256((source / filename).read_bytes()).hexdigest(),
+                      "flavor": "runtime", "source_manifest_filename": source_name,
+                      "source_manifest_sha256": hashlib.sha256((source / source_name).read_bytes()).hexdigest()}
           payload = {
               "tag": os.environ["INPUT_TAG"],
               "version": os.environ["VERSION"],
@@ -1576,6 +1704,9 @@ jobs:
               "artifacts": artifacts,
               "desktop_artifacts": desktop_artifacts,
           }
+          if os.environ.get("INCLUDE_RUNTIME_INSTALLERS", "false") == "true":
+              path = Path("release-bundle/manifest-v2.json")
+              payload["installer_manifest_v2"] = {"filename": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
           if installer_artifacts:
               payload["installer_artifacts"] = installer_artifacts
           runtime_manifest = Path("release-bundle/webcodex-release-manifest.json")
@@ -1615,6 +1746,7 @@ jobs:
               expected_source_sha=os.environ["SOURCE_SHA"], expected_tag=os.environ["INPUT_TAG"],
               artifact_name=os.environ["ARCHIVE_STEM"] + "-bundle",
               require_unified_installers=os.environ["INCLUDE_UNIFIED_INSTALLERS"] == "true",
+              require_runtime_installers=os.environ.get("INCLUDE_RUNTIME_INSTALLERS", "false") == "true",
           )
           PYTHON
 

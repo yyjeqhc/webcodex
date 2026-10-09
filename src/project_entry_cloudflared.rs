@@ -710,19 +710,10 @@ fn make_private_executable(path: &Path) -> Result<(), ProductError> {
 }
 
 async fn verify_cloudflared_version(path: &Path) -> Result<(), ProductError> {
-    let output = tokio::time::timeout(
-        CLOUDFLARED_VERIFY_TIMEOUT,
-        Command::new(path).arg("--version").output(),
-    )
-    .await
-    .map_err(|_| verification_error())?
-    .map_err(|_| verification_error())?;
-    let version_text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if !output.status.success() || !version_text.contains(CLOUDFLARED_VERSION) {
+    let version = super::cloudflare_transport::cloudflared_binary_version(path)
+        .await
+        .map_err(|_| verification_error())?;
+    if format!("{}.{}.{}", version.0, version.1, version.2) != CLOUDFLARED_VERSION {
         return Err(verification_error());
     }
     Ok(())

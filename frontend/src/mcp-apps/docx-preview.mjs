@@ -140,6 +140,7 @@ export function sanitizeDocx(container, styles, win) {
 export async function renderDocx(bytes, stage, current = () => true) {
   const win = stage.ownerDocument.defaultView;
   const prepared = await prepareDocx(bytes, win, current);
+  if (!current()) throw new Error("DOCX reader closed");
   const content = stage.ownerDocument.createElement("div"), styles = stage.ownerDocument.createElement("div");
   await renderAsync(prepared, content, styles, {
     renderAltChunks: false, renderComments: false, renderChanges: false,

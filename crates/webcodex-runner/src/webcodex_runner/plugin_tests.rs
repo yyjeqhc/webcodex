@@ -391,22 +391,49 @@ fn project_affine_catalog_uses_exact_committed_cwd_without_process_side_effects(
         project_root.to_string_lossy().as_ref(),
         other_root.to_string_lossy().as_ref(),
         fake.path.to_string_lossy().as_ref(),
-        "provider_instance_id",
-        "inputSchema",
-        "outputSchema",
-        "command",
-        "argv",
-        "cwd",
-        "env",
-        "stderr",
-        "pid",
-        "binding",
     ] {
         assert!(
             !serialized.contains(forbidden),
             "leaked {forbidden}: {serialized}"
         );
     }
+    fn assert_public_keys(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                for (key, child) in object {
+                    assert!(
+                        ![
+                            "provider_instance_id",
+                            "inputSchema",
+                            "outputSchema",
+                            "command",
+                            "argv",
+                            "cwd",
+                            "env",
+                            "stderr",
+                            "pid",
+                            "binding",
+                        ]
+                        .contains(&key.as_str()),
+                        "leaked private catalog key: {key}"
+                    );
+                    assert_public_keys(child);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    assert_public_keys(item);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut value = serde_json::to_value(&catalog).unwrap();
+    assert_public_keys(&value);
+    // Opaque hashes and public descriptions can contain these letter sequences;
+    // the CI revision containing "cwd" was not a private schema field.
+    value["catalog_revision"] = "wc_plugcat_cwd_env_pid_command".into();
+    assert_public_keys(&value);
 }
 
 #[test]

@@ -1329,6 +1329,48 @@ fn nearest_recipe_root(
     }
 }
 
+/// Reject an invalid Node marker before ordinary nearest-root detection can
+/// silently fall back to an ancestor project. This validates filesystem facts;
+/// it does not independently select or synthesize a validation operation.
+pub fn validate_node_project_marker_chain(
+    execution_root: &Path,
+    cwd: Option<&str>,
+) -> Result<(), ProjectRecipeResolutionError> {
+    let root = execution_root
+        .canonicalize()
+        .map_err(|_| ProjectRecipeResolutionError::ExecutionRootUnavailable)?;
+    let mut directory = resolve_cwd(&root, cwd)?;
+    loop {
+        match fs::symlink_metadata(directory.join(ProjectRecipeId::Node.marker())) {
+            Ok(metadata) if !metadata.file_type().is_file() => {
+                return Err(ProjectRecipeResolutionError::SourceFileInvalid);
+            }
+            Ok(_) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(ProjectRecipeResolutionError::SourceFileInvalid),
+        }
+        // The existing resolver stops at the nearest project marker. Ignore
+        // unrelated ancestor packages after such a valid boundary.
+        if [
+            ProjectRecipeId::Rust,
+            ProjectRecipeId::Go,
+            ProjectRecipeId::Python,
+        ]
+        .into_iter()
+        .any(|recipe| directory.join(recipe.marker()).is_file())
+        {
+            return Ok(());
+        }
+        if directory == root {
+            return Ok(());
+        }
+        directory = directory
+            .parent()
+            .ok_or(ProjectRecipeResolutionError::SourceFileInvalid)?
+            .to_path_buf();
+    }
+}
+
 pub fn read_project_recipe_file(
     execution_root: &Path,
     path: &Path,

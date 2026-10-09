@@ -221,6 +221,25 @@ impl ShellJobValidationStep {
         self.is_canonical_with_project_workspace(true)
     }
 
+    /// Canonical bounded Node project script. The project manifest and Runner
+    /// capability remain separate required authorization facts.
+    pub fn is_structured_node_check(&self) -> bool {
+        self.name == "check"
+            && self.program == "node"
+            && self.env.is_empty()
+            && self.args.len() == 2
+            && self.args[0] == "--run"
+            && matches!(self.args[1].as_str(), "check" | "typecheck" | "lint")
+    }
+
+    /// Exact native Node test executor; manifest and Runner capability are separate fences.
+    pub fn is_structured_node_tap_test(&self) -> bool {
+        self.name == "test"
+            && self.program == "node"
+            && self.env.is_empty()
+            && self.args == ["--test", "--test-reporter=tap"]
+    }
+
     fn is_canonical_with_project_workspace(&self, allow_project_workspace: bool) -> bool {
         if self
             .args
@@ -245,10 +264,18 @@ impl ShellJobValidationStep {
             ("test", "cargo") => is_canonical_cargo_test_args(&args, allow_project_workspace),
             ("check", "go") => is_canonical_go_vet_args(&args),
             ("test", "go") => args == ["test", "./..."] || self.is_structured_go_test_json(),
+            ("check", "node") => self.is_structured_node_check(),
+            ("test", "node") => self.env.is_empty() && args == ["--test", "--test-reporter=tap"],
             ("format", "python") => {
-                args == ["-m", "ruff", "format", "--check"] || args == ["-m", "black", "--check"]
+                args == ["-m", "ruff", "format", "--check"]
+                    || args == ["-m", "black", "--check"]
+                    || self.is_structured_ruff()
             }
-            ("check", "python") => args == ["-m", "ruff", "check"] || args == ["-m", "mypy"],
+            ("check", "python") => {
+                args == ["-m", "ruff", "check"]
+                    || args == ["-m", "mypy"]
+                    || self.is_structured_ruff()
+            }
             ("test", "python") => {
                 args == ["-m", "pytest"]
                     || args == ["-B", "-m", "unittest", "discover", "-v"]
@@ -262,6 +289,53 @@ impl ShellJobValidationStep {
             }
             _ => false,
         }
+    }
+
+    /// Exact Runner-owned Ruff argv. Callers must additionally prove the local
+    /// manifest and project provenance; this constructor grants no authority.
+    pub fn python_ruff(kind: &str) -> Option<Self> {
+        let args: &[&str] = match kind {
+            "check" => &[
+                "-I",
+                "-B",
+                "-m",
+                "ruff",
+                "check",
+                "--no-fix",
+                "--no-fix-only",
+                "--no-cache",
+                "--no-respect-gitignore",
+                "--output-format",
+                "json-lines",
+                "--config",
+                "pyproject.toml",
+                ".",
+            ],
+            "format" => &[
+                "-I",
+                "-B",
+                "-m",
+                "ruff",
+                "format",
+                "--check",
+                "--no-cache",
+                "--no-respect-gitignore",
+                "--config",
+                "pyproject.toml",
+                ".",
+            ],
+            _ => return None,
+        };
+        Some(Self {
+            name: kind.into(),
+            program: "python".into(),
+            args: args.iter().map(|arg| (*arg).into()).collect(),
+            env: Vec::new(),
+        })
+    }
+
+    pub fn is_structured_ruff(&self) -> bool {
+        Self::python_ruff(&self.name).as_ref() == Some(self)
     }
 
     /// Exact project pytest argv; no executable, free flags or environment input.
@@ -838,7 +912,7 @@ impl ShellJobValidationMetadata {
         if self.minimum_tests.is_some()
             && !matches!(
                 self.adapter.as_str(),
-                "cargo_test" | "go_test" | "python:pytest:test"
+                "cargo_test" | "go_test" | "python:pytest:test" | "node:tap:test"
             )
         {
             return false;
@@ -846,7 +920,7 @@ impl ShellJobValidationMetadata {
         if (self.require_tests.is_some() || self.no_run.is_some())
             && !matches!(
                 self.adapter.as_str(),
-                "cargo_test" | "go_test" | "python:pytest:test"
+                "cargo_test" | "go_test" | "python:pytest:test" | "node:tap:test"
             )
         {
             return false;
@@ -872,8 +946,26 @@ impl ShellJobValidationMetadata {
                     (provenance.backend.as_str(), self.adapter.as_str()),
                     ("rust", "cargo_fmt" | "cargo_check" | "cargo_test")
                         | ("go", "go_vet" | "go_test")
-                        | ("python", "python:pytest:test")
+                        | (
+                            "python",
+                            "python:pytest:test" | "python:ruff:check" | "python:ruff:format"
+                        )
+                        | ("node", "node:script:check" | "node:tap:test")
                 )
+                || (provenance.backend == "node"
+                    && (!matches!(
+                        (self.adapter.as_str(), provenance.request.action),
+                        (
+                            "node:script:check",
+                            crate::project_validation::ProjectValidationAction::Check
+                        ) | (
+                            "node:tap:test",
+                            crate::project_validation::ProjectValidationAction::Test
+                        )
+                    ) || provenance.request.scope.is_some()
+                        || provenance.request.dependency_policy.is_some()
+                        || (self.adapter == "node:script:check"
+                            && provenance.request.test.is_some())))
                 || (self.require_tests, self.minimum_tests)
                     != provenance.request.test_requirements()
                 || self.no_run.is_some()
@@ -898,7 +990,26 @@ impl ShellJobValidationMetadata {
                     && self.kind == "test"
                     && step.is_structured_pytest()
             }
+            "python:ruff:check" | "python:ruff:format" => {
+                self.tool == "project_validate"
+                    && self.adapter == format!("python:ruff:{}", self.kind)
+                    && self.kind == step.name
+                    && step.is_structured_ruff()
+            }
             "go_vet" => self.kind == "check" && step.name == "check" && step.program == "go",
+            "node:tap:test" => {
+                self.tool == "project_validate"
+                    && self.kind == "test"
+                    && step.name == "test"
+                    && step.program == "node"
+                    && step.args == ["--test", "--test-reporter=tap"]
+                    && step.env.is_empty()
+            }
+            "node:script:check" => {
+                self.tool == "project_validate"
+                    && self.kind == "check"
+                    && step.is_structured_node_check()
+            }
             _ => false,
         }
     }
@@ -998,6 +1109,12 @@ impl ShellJobStructuredExecutionMetadata {
                     && self.validation_identity.is_none()
                     && self.validation_tool.is_none()
                     && self.assertion_name.is_none()
+            }
+            "run_skill_resource" => {
+                self.language.is_none()
+                    && self.script_bytes.is_none()
+                    && self.arg_count <= PROCESS_ARG_MAX_COUNT
+                    && self.stdin_present
             }
             "run_script" => {
                 self.language.is_some()

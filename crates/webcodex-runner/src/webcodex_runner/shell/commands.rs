@@ -1,6 +1,7 @@
 //! Shell/process command construction and executable resolution.
 
 use super::*;
+use webcodex_core::runner_protocol::ShellJobValidationStep;
 
 /// POSIX sh single-quote escaping.
 pub(crate) fn shell_quote(value: &str) -> String {
@@ -189,6 +190,47 @@ pub(crate) fn configured_prepared_shell_job_command(
 /// Resolve one existing Python runtime and use that exact executable and profile
 /// environment for both the bounded availability probe and actual pytest spawn.
 /// No shell fallback, environment creation or package installation is permitted.
+/// Native Node project-check command. Interpreter resolution is Runner-owned
+/// and the same exact executable is probed and used for the script. An existing
+/// project script may have effects; this does not create a filesystem sandbox.
+pub(crate) fn configured_node_project_check_job_command(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+    step: &ShellJobValidationStep,
+    cwd: &Path,
+    stop_requested: Option<&AtomicBool>,
+) -> Result<Command, String> {
+    if !step.is_structured_node_check() && !step.is_structured_node_tap_test() {
+        return Err("invalid Node project validation step".into());
+    }
+    let unavailable =
+        || webcodex_core::runner_protocol::VALIDATION_TOOL_UNAVAILABLE_CODE.to_string();
+    let program = super::scripts::configured_validation_node_interpreter(shell, profile)
+        .map_err(|_| unavailable())?;
+    let mut probe = Command::new(&program);
+    probe.arg("--version").current_dir(cwd).stdin(Stdio::null());
+    super::scripts::apply_script_environment(&mut probe, shell, profile)
+        .map_err(|_| unavailable())?;
+    probe.env_remove("NODE_OPTIONS");
+    // Bounded managed process-tree probe: no fallbacks, installs, or package
+    // manager invocations. Version 22.3 added the native root/PATH behavior.
+    let (status, stdout, _) = run_prepare_command(probe, Duration::from_secs(5), stop_requested)
+        .map_err(|_| unavailable())?;
+    let version = super::scripts::parse_node_version(&stdout).ok_or_else(unavailable)?;
+    if !status.success() || version.major < 22 || (version.major == 22 && version.minor < 3) {
+        return Err(unavailable());
+    }
+    let mut command = Command::new(&program);
+    command
+        .args(&step.args)
+        .current_dir(cwd)
+        .stdin(Stdio::null());
+    super::scripts::apply_script_environment(&mut command, shell, profile)
+        .map_err(|_| unavailable())?;
+    command.env_remove("NODE_OPTIONS");
+    Ok(command)
+}
+
 pub(crate) fn configured_pytest_job_command(
     shell: &ShellConfig,
     profile: Option<&PreparedShellProfile>,
@@ -196,16 +238,48 @@ pub(crate) fn configured_pytest_job_command(
     cwd: &Path,
     stop_requested: Option<&AtomicBool>,
 ) -> Result<Command, String> {
+    configured_python_module_job_command(shell, profile, args, cwd, stop_requested, false)
+}
+
+pub(crate) fn configured_ruff_job_command(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+    step: &ShellJobValidationStep,
+    cwd: &Path,
+    stop_requested: Option<&AtomicBool>,
+) -> Result<Command, String> {
+    if !step.is_structured_ruff() {
+        return Err("invalid Ruff validation step".into());
+    }
+    configured_python_module_job_command(shell, profile, &step.args, cwd, stop_requested, true)
+}
+
+fn configured_python_module_job_command(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+    args: &[String],
+    cwd: &Path,
+    stop_requested: Option<&AtomicBool>,
+    ruff: bool,
+) -> Result<Command, String> {
     let unavailable =
         || webcodex_core::runner_protocol::VALIDATION_TOOL_UNAVAILABLE_CODE.to_string();
-    let program = configured_script_interpreter(shell, profile, ShellScriptLanguage::Python)
-        .map_err(|_| unavailable())?;
+    let program = if ruff {
+        super::scripts::configured_validation_python_interpreter(shell, profile)
+    } else {
+        super::scripts::configured_script_interpreter(shell, profile, ShellScriptLanguage::Python)
+    }
+    .map_err(|_| unavailable())?;
     let mut probe = Command::new(&program);
     const PROBE: &str = "import sys,importlib.util;sys.exit(0 if sys.version_info.major == 3 and importlib.util.find_spec('pytest') else 42)";
-    // Keep the same profile PYTHONPATH/module search environment as the actual
-    // pytest process. Isolation here would reject explicitly configured tooling.
+    const RUFF_PROBE: &str = "import sys,importlib.util;sys.exit(0 if sys.version_info.major == 3 and importlib.util.find_spec('ruff') else 42)";
+    if ruff {
+        probe.args(["-I", "-B"]);
+    }
+    // Ruff isolates both probe and spawn from project/PYTHONPATH impersonation.
+    // Pytest preserves the configured module search environment for both.
     probe
-        .args(["-c", PROBE])
+        .args(["-c", if ruff { RUFF_PROBE } else { PROBE }])
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -215,7 +289,12 @@ pub(crate) fn configured_pytest_job_command(
     // PYTEST_ADDOPTS is parsed as additional command-line argv before pytest
     // resolves rootdir/config. Structured validation owns the complete argv, so
     // ambient profile/shell values must not widen selection or inject flags.
-    probe.env_remove("PYTEST_ADDOPTS");
+    if ruff {
+        probe.env_remove("RUFF_OUTPUT_FILE");
+        probe.env("PYTHONDONTWRITEBYTECODE", "1");
+    } else {
+        probe.env_remove("PYTEST_ADDOPTS");
+    }
     if stop_requested.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
         return Err(unavailable());
     }
@@ -241,7 +320,12 @@ pub(crate) fn configured_pytest_job_command(
     command.args(args);
     super::scripts::apply_script_environment(&mut command, shell, profile)
         .map_err(|_| unavailable())?;
-    command.env_remove("PYTEST_ADDOPTS");
+    if ruff {
+        command.env_remove("RUFF_OUTPUT_FILE");
+        command.env("PYTHONDONTWRITEBYTECODE", "1");
+    } else {
+        command.env_remove("PYTEST_ADDOPTS");
+    }
     Ok(command)
 }
 

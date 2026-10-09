@@ -58,6 +58,13 @@ SERVER_IMAGE_BASE_METADATA_KEYS = frozenset(
         "platforms",
     }
 )
+try:
+    from . import runtime_installer_manifest as runtime_contract
+    from . import prepare_release_metadata as release_metadata
+except ImportError:
+    import runtime_installer_manifest as runtime_contract
+    import prepare_release_metadata as release_metadata
+
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_NPM_TARBALL_BYTES = 16 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 128 * 1024 * 1024
@@ -391,7 +398,7 @@ def validate_public_installers(manifest: dict, version: str) -> dict[str, dict[s
         }
     return result
 
-def parse_sha256sums(text: str, version: str, *, runtime_manifest: bool = False, unified_installers: bool = False) -> dict[str, str]:
+def parse_sha256sums(text: str, version: str, *, runtime_manifest: bool = False, unified_installers: bool = False, runtime_installers: bool = False) -> dict[str, str]:
     expected_names = {canonical_archive_name(version, platform) for platform in PLATFORMS}
     expected_names.update(
         canonical_desktop_name(version, platform) for platform in desktop_platforms_for_version(version)
@@ -402,6 +409,14 @@ def parse_sha256sums(text: str, version: str, *, runtime_manifest: bool = False,
         expected_names.update(canonical_installer_name(version, target) for target in INSTALLER_TARGETS)
         expected_names.add("manifest.json")
         expected_names.update(canonical_source_manifest_name(version, platform) for platform in PLATFORMS)
+    if runtime_installers:
+        if not unified_installers:
+            raise VerificationError("Runtime checksum contract requires Full installers")
+        expected_names.update(runtime_contract.installer_filename(version, target) for target in runtime_contract.RUNTIME_TARGETS)
+        expected_names.update(runtime_contract.source_filename(version, platform) for platform in ("linux-x64", "linux-arm64"))
+        expected_names.add("manifest-v2.json")
+        if len(expected_names) != 32:
+            raise VerificationError("Runtime release must have exactly 32 primary checksum records")
     result: dict[str, str] = {}
     for raw_line in text.splitlines():
         if not raw_line:
@@ -540,7 +555,7 @@ def validate_server_image_release_record(
     return identity
 
 
-def validate_github_assets(release: dict, version: str, *, unified_installers: bool | None = None) -> dict[str, dict]:
+def validate_github_assets(release: dict, version: str, *, unified_installers: bool | None = None, require_runtime_installers: bool = False) -> dict[str, dict]:
     if (
         release.get("tag_name") != f"v{version}"
         or release.get("draft") is not False
@@ -584,6 +599,13 @@ def validate_github_assets(release: dict, version: str, *, unified_installers: b
         required.update(source_names)
     elif has_installer:
         raise VerificationError("GitHub Release contains installers but the manifest does not")
+    runtime_names = {runtime_contract.installer_filename(version, target) for target in runtime_contract.RUNTIME_TARGETS}
+    runtime_names.update(runtime_contract.source_filename(version, platform) for platform in ("linux-x64", "linux-arm64"))
+    runtime_names.add("manifest-v2.json")
+    if require_runtime_installers or names & runtime_names:
+        if not unified_installers or not runtime_names <= names:
+            raise VerificationError("Runtime assets require complete Full and manifest-v2 contracts")
+        required.update(runtime_names)
     if "webcodex-release-manifest.json" in names:
         required.add("webcodex-release-manifest.json")
     expected = set(required)
@@ -905,7 +927,7 @@ def verify_supplemental_desktop_asset(
     )
 
 
-def verify_public_release(version: str, timeout: float, *, require_unified_installers: bool = False) -> None:
+def verify_public_release(version: str, timeout: float, *, require_unified_installers: bool = False, require_runtime_installers: bool = False) -> None:
     encoded_package = urllib.parse.quote(PACKAGE, safe="@")
     npm_url = f"https://registry.npmjs.org/{encoded_package}/{version}"
     npm_metadata = fetch_json(npm_url, timeout)
@@ -917,7 +939,10 @@ def verify_public_release(version: str, timeout: float, *, require_unified_insta
 
     release_url = f"https://api.github.com/repos/{REPO}/releases/tags/v{version}"
     release = fetch_json(release_url, timeout)
-    assets = validate_github_assets(release, version, unified_installers=True if require_unified_installers else None)
+    if require_runtime_installers and not require_unified_installers:
+        raise VerificationError("Runtime requirement needs explicit Full requirement")
+    assets = validate_github_assets(release, version, unified_installers=True if require_unified_installers else None, require_runtime_installers=require_runtime_installers)
+    runtime_selected = "manifest-v2.json" in assets
 
     with tempfile.TemporaryDirectory(prefix=f"webcodex-v{version}-verify-") as temp:
         root = Path(temp)
@@ -945,7 +970,25 @@ def verify_public_release(version: str, timeout: float, *, require_unified_insta
         except UnicodeDecodeError as exc:
             raise VerificationError("SHA256SUMS is not ASCII") from exc
         runtime_asset = assets.get("webcodex-release-manifest.json")
-        sums = parse_sha256sums(sums_text, version, runtime_manifest=runtime_asset is not None, unified_installers=bool(manifest_installers))
+        sums = parse_sha256sums(sums_text, version, runtime_manifest=runtime_asset is not None, unified_installers=bool(manifest_installers), runtime_installers=runtime_selected)
+        if runtime_selected:
+            asset = assets["manifest-v2.json"]
+            expected_url = f"https://github.com/{REPO}/releases/download/v{version}/manifest-v2.json"
+            if asset.get("browser_download_url") != expected_url:
+                raise VerificationError("manifest-v2 URL is not canonical")
+            raw = fetch_bytes(expected_url, MAX_JSON_BYTES, timeout)
+            digest = hashlib.sha256(raw).hexdigest()
+            if sums.get("manifest-v2.json") != digest or (_asset_digest(asset) is not None and _asset_digest(asset) != digest):
+                raise VerificationError("manifest-v2 SHA-256 mismatch")
+            try:
+                canonical = json.loads(raw, object_pairs_hook=_unique_json_object)
+                runtime_entries = runtime_contract.validate(canonical, manifest, version=version, repo=REPO, full_targets=set(INSTALLER_TARGETS))
+            except (ValueError, UnicodeError) as exc:
+                raise VerificationError("invalid manifest-v2; legacy fallback is forbidden") from exc
+            legacy_raw = fetch_bytes(f"https://github.com/{REPO}/releases/download/v{version}/manifest.json", MAX_JSON_BYTES, timeout)
+            if legacy_raw != runtime_contract.encode(runtime_contract.legacy_projection(canonical)).encode():
+                raise VerificationError("public legacy manifest is not deterministic manifest-v2 projection")
+            manifest_installers.update(runtime_entries)
         if manifest_installers:
             verify_public_installer_manifest(assets, sums, manifest, version, timeout)
         if runtime_asset is not None:
@@ -1085,6 +1128,14 @@ def verify_public_release(version: str, timeout: float, *, require_unified_insta
                 source_info = json.loads(source_path.read_text(encoding="utf-8"))
                 if source_info.get("platform") != platform or source_info.get("version") != version:
                     raise VerificationError(f"source manifest identity mismatch for {target}")
+                if target in runtime_contract.RUNTIME_TARGETS:
+                    full_name = canonical_source_manifest_name(version, platform)
+                    full = json.loads((root / full_name).read_text(encoding="utf-8"))
+                    try:
+                        runtime_source = release_metadata.validate_source_manifest(source_path, version, platform, full["source_sha"], full["source_workflow_run_id"], full["source_workflow_ref"], package_flavor="runtime")
+                        release_metadata.validate_runtime_archive(runtime_source, root / canonical_archive_name(version, platform))
+                    except (SystemExit, ValueError, KeyError) as exc:
+                        raise VerificationError("Runtime source is not bound to native archive/Full provenance") from exc
                 source_github_digest = _asset_digest(source_asset)
                 if source_github_digest is not None and source_github_digest != source_digest:
                     raise VerificationError(f"GitHub source manifest asset digest mismatch for {target}")
@@ -1101,13 +1152,14 @@ def main() -> int:
         description="Verify published WebCodex npm/GitHub release bytes on one network host."
     )
     parser.add_argument("--require-unified-installers", action="store_true")
+    parser.add_argument("--require-runtime-installers", action="store_true")
     parser.add_argument("version", help="release version, for example 0.3.8 or v0.3.8")
     parser.add_argument("--timeout", type=float, default=60.0, help="per-request timeout in seconds")
     args = parser.parse_args()
     version = normalize_version(args.version)
     if args.timeout <= 0 or args.timeout > 300:
         raise VerificationError("--timeout must be in (0, 300]")
-    verify_public_release(version, args.timeout, require_unified_installers=args.require_unified_installers)
+    verify_public_release(version, args.timeout, require_unified_installers=args.require_unified_installers, require_runtime_installers=args.require_runtime_installers)
     return 0
 
 

@@ -195,7 +195,7 @@ fn urls_cannot_smuggle_paths_credentials_ports_or_redirect_hosts() {
     }
 }
 
-fn source(platform: RuntimePlatform) -> Value {
+pub(crate) fn source(platform: RuntimePlatform) -> Value {
     let desktop_path = if matches!(
         platform,
         RuntimePlatform::DarwinX64 | RuntimePlatform::DarwinArm64
@@ -343,4 +343,160 @@ fn guarded_windows_capability_is_raw_hash_bound_and_keeps_legacy_wire() {
         RuntimePlatform::LinuxX64
     )
     .is_err());
+}
+
+#[test]
+fn runtime_flavor_is_explicit_linux_only_and_legacy_full_wire_is_unchanged() {
+    let full = InstallerTarget::new(RuntimePlatform::LinuxX64, PackageFormat::Deb);
+    assert_eq!(
+        serde_json::to_value(full).unwrap(),
+        json!({"platform":"linux-x64","format":"deb"})
+    );
+    let runtime = InstallerTarget::runtime(RuntimePlatform::LinuxX64, PackageFormat::Deb);
+    assert_eq!(runtime.as_str(), "linux-x64-runtime-deb");
+    assert_eq!(
+        runtime.installer_filename("1.2.3"),
+        "webcodex-runtime-v1.2.3-linux-x64.deb"
+    );
+    assert_eq!(
+        runtime.source_filename("1.2.3"),
+        "webcodex-runtime-source-v1.2.3-linux-x64.json"
+    );
+    assert_eq!(InstallerTarget::parse(&runtime.as_str()), Some(runtime));
+    assert!(!InstallerTarget::runtime(RuntimePlatform::DarwinArm64, PackageFormat::Pkg).valid());
+    assert!(!InstallerTarget::runtime(RuntimePlatform::Win32X64, PackageFormat::Exe).valid());
+    assert_eq!(
+        serde_json::from_value::<InstallerTarget>(serde_json::to_value(full).unwrap())
+            .unwrap()
+            .flavor,
+        PackageFlavor::Full
+    );
+}
+
+#[test]
+fn runtime_source_requires_exact_three_components_and_explicit_schema() {
+    for platform in [RuntimePlatform::LinuxX64, RuntimePlatform::LinuxArm64] {
+        let mut value = source(platform);
+        value["schema_version"] = 2.into();
+        value["package_flavor"] = "runtime".into();
+        value.as_object_mut().unwrap().remove("desktop_payload");
+        value["artifacts"]
+            .as_object_mut()
+            .unwrap()
+            .remove("webcodex-desktop");
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let checked =
+            verify_source_manifest_for_flavor(&bytes, "1.2.3", platform, PackageFlavor::Runtime)
+                .unwrap();
+        assert_eq!(checked.flavor, PackageFlavor::Runtime);
+        assert!(checked.component_build("webcodex-desktop").is_none());
+        assert!(verify_source_manifest(&bytes, "1.2.3", platform).is_err());
+        for change in [
+            "schema_version",
+            "package_flavor",
+            "desktop_payload",
+            "extra_component",
+            "missing_component",
+            "wrong_identity",
+        ] {
+            let mut bad = value.clone();
+            match change {
+                "schema_version" => bad[change] = 1.into(),
+                "package_flavor" => bad[change] = "full".into(),
+                "desktop_payload" => bad[change] = serde_json::Value::Null,
+                "extra_component" => {
+                    bad["artifacts"]["webcodex-desktop"] =
+                        source(platform)["artifacts"]["webcodex-desktop"].clone();
+                }
+                "missing_component" => {
+                    bad["artifacts"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("webcodex-server");
+                }
+                _ => bad["artifacts"]["webcodex"]["build_info"]["git_dirty"] = true.into(),
+            }
+            assert!(
+                verify_source_manifest_for_flavor(
+                    &serde_json::to_vec(&bad).unwrap(),
+                    "1.2.3",
+                    platform,
+                    PackageFlavor::Runtime
+                )
+                .is_err(),
+                "{change}"
+            );
+        }
+        let mut explicit_full = source(platform);
+        explicit_full["package_flavor"] = "full".into();
+        assert!(verify_source_manifest(
+            &serde_json::to_vec(&explicit_full).unwrap(),
+            "1.2.3",
+            platform
+        )
+        .is_err());
+        let mut broken_full = source(platform);
+        broken_full["artifacts"]
+            .as_object_mut()
+            .unwrap()
+            .remove("webcodex-desktop");
+        broken_full
+            .as_object_mut()
+            .unwrap()
+            .remove("desktop_payload");
+        assert!(verify_source_manifest(
+            &serde_json::to_vec(&broken_full).unwrap(),
+            "1.2.3",
+            platform
+        )
+        .is_err());
+    }
+}
+
+pub(super) fn catalog_v2() -> serde_json::Value {
+    let mut catalog = manifest();
+    catalog["schema_version"] = 2.into();
+    for target in InstallerTarget::RUNTIME {
+        let name = target.installer_filename("1.2.3");
+        catalog["installers"][target.as_str()] = json!({"flavor":"runtime","platform":target.platform,"format":target.format,"filename":name,"url":release_asset_url("1.2.3",&name).unwrap(),"sha256":"d".repeat(64),"source_manifest_url":release_asset_url("1.2.3", &target.source_filename("1.2.3")).unwrap(),"source_manifest_sha256":"e".repeat(64)});
+    }
+    catalog
+}
+#[test]
+fn v2_catalog_is_complete_strict_and_has_exact_legacy_full_projection() {
+    let catalog = catalog_v2();
+    let mut extra_full_flavor = catalog.clone();
+    extra_full_flavor["installers"]["linux-x64-deb"]["flavor"] = "full".into();
+    assert!(UnifiedInstallerManifest::parse_v2(
+        &serde_json::to_vec(&extra_full_flavor).unwrap(),
+        "1.2.3"
+    )
+    .is_err());
+    let mut legacy_extra = manifest();
+    legacy_extra["installers"]["linux-x64-deb"]["flavor"] = "full".into();
+    assert!(parse(&legacy_extra).is_err());
+    let bytes = serde_json::to_vec(&catalog).unwrap();
+    let checked = UnifiedInstallerManifest::parse_v2(&bytes, "1.2.3").unwrap();
+    assert_eq!(checked.catalog_version, 2);
+    assert_eq!(checked.installers.len(), 12);
+    assert!(UnifiedInstallerManifest::parse(&bytes, "1.2.3").is_err());
+    let mut legacy = checked;
+    legacy.installers.retain(|_, entry| entry.flavor.is_full());
+    assert_eq!(serde_json::to_value(&legacy).unwrap(), manifest());
+    let mut incomplete = catalog.clone();
+    incomplete["installers"]
+        .as_object_mut()
+        .unwrap()
+        .remove("linux-arm64-runtime-rpm");
+    assert!(
+        UnifiedInstallerManifest::parse_v2(&serde_json::to_vec(&incomplete).unwrap(), "1.2.3")
+            .is_err()
+    );
+    let mut retargeted = catalog;
+    retargeted["installers"]["linux-x64-runtime-rpm"]["source_manifest_sha256"] =
+        "f".repeat(64).into();
+    assert!(
+        UnifiedInstallerManifest::parse_v2(&serde_json::to_vec(&retargeted).unwrap(), "1.2.3")
+            .is_err()
+    );
 }

@@ -36,6 +36,7 @@ def _versions(**overrides: str) -> dict[str, str]:
 def _state() -> dict:
     return {
         "schema_version": publication.BUILD_STATE_SCHEMA_VERSION,
+        "include_runtime_installers": False,
         "include_unified_installers": False,
         "kind": "release-build",
         "repo": collector.DEFAULT_REPO,
@@ -487,7 +488,7 @@ class BuildDispatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "build.json"
             legacy = _state(); legacy["schema_version"] = 1
-            legacy.pop("include_unified_installers")
+            legacy.pop("include_unified_installers"); legacy.pop("include_runtime_installers")
             publication._write_state(path, legacy)
             loaded = publication._load_state(path)
             self.assertEqual(loaded["schema_version"], publication.BUILD_STATE_SCHEMA_VERSION)

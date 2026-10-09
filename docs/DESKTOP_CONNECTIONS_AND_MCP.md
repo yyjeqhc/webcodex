@@ -32,6 +32,14 @@ system/user-service environments retain their installer-based update path.
 
 ## One runtime, multiple connections
 
+Cloudflare Named and Quick connections use the same persistent Runtime, Runner
+and projects through a dedicated OAuth-only ingress. Desktop offers provider
+selection, protected Named-token input, callback/client configuration, separate
+network/OAuth/client observations, and profile-fenced copy, stop and reconnect.
+One Cloudflare connection may run alongside multiple OpenAI connections. See
+[Cloudflare configuration and recovery](CLOUDFLARE_CONNECTIONS.md) for routing,
+permissions, Quick address changes, standalone service ownership and validation.
+
 ```text
 Desktop
   ├─ one local Server ── http://127.0.0.1:<server-port>/mcp

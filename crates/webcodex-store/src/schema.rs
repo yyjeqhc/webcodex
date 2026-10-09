@@ -471,6 +471,7 @@ impl Database {
         // Project Memory was introduced after v0.3.9. Only the current schema is
         // supported; development-only intermediate shapes are rejected.
         Self::ensure_project_memory_schema(&mut conn)?;
+        crate::public_ingress::ensure_schema(&mut conn)?;
 
         Ok(())
     }

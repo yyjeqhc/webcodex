@@ -44,9 +44,9 @@ export function FirstReadGuide({ state, onProjects }: { state: DesktopState; onP
     <ChatgptObservation state={state} />
   </section>;
 }
-export function FirstRunCompletion({ state, onState, onComplete, onProjects, onConnection }: {
+export function FirstRunCompletion({ state, onState, onComplete, onProjects, onConnection, onRuntime }: {
   state: DesktopState; onState: (state: DesktopState) => void; onComplete: () => void;
-  onProjects: () => void; onConnection: () => void;
+  onProjects: () => void; onConnection: () => void; onRuntime?: () => void;
 }) {
   const { t } = useLocale();
   const [editor, setEditor] = useState(false);
@@ -66,6 +66,6 @@ export function FirstRunCompletion({ state, onState, onComplete, onProjects, onC
     </section>
     <FirstReadGuide state={state} onProjects={onProjects} />
     <div className="setup-actions"><button type="button" className="primary-button" disabled={busy} onClick={onComplete}>{t(create && !connected ? "completion.later" : "completion.overview")}</button></div>
-    {create && editor && <ConnectionEditor profile={null} persistentLocal={Boolean(state.persistent_environment)} onState={onState} onClose={() => setEditor(false)} />}
+    {create && editor && <ConnectionEditor profile={null} persistentLocal={Boolean(state.persistent_environment)} onSetup={onRuntime ?? onConnection} onState={onState} onClose={() => setEditor(false)} />}
   </section>;
 }

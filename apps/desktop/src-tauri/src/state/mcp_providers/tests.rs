@@ -360,6 +360,8 @@ async fn tunnel_configuration_edit_does_not_change_runner_generation_or_mcp_desi
         .unwrap();
     let state = app
         .save_tunnel_profile(crate::tunnel_config::TunnelProfileRequest {
+            provider: webcodex_environment::TunnelProvider::Openai,
+            cloudflare_token: None,
             id: None,
             name: "Personal".into(),
             tunnel_id: format!("tunnel_{}", uuid::Uuid::new_v4().simple()),
@@ -372,6 +374,8 @@ async fn tunnel_configuration_edit_does_not_change_runner_generation_or_mcp_desi
         .unwrap();
     let connection = &state.connections.profiles[0].config;
     app.save_tunnel_profile(crate::tunnel_config::TunnelProfileRequest {
+        provider: webcodex_environment::TunnelProvider::Openai,
+        cloudflare_token: None,
         id: Some(connection.id.clone()),
         name: "Work".into(),
         tunnel_id: connection.tunnel_id.clone().unwrap(),

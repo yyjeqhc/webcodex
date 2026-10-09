@@ -47,7 +47,8 @@ use communication::{
 };
 use goals::{goal_handler, goals_handler};
 use job_projection::{
-    running_jobs_for_auth, session_jobs_for_auth, RunningJobSnapshot, RuntimeConsoleSessionJob,
+    runner_jobs_for_auth, running_jobs_for_auth, session_jobs_for_auth, RunningJobSnapshot,
+    RuntimeConsoleRunnerJob, RuntimeConsoleSessionJob,
 };
 
 // Runtime Console inventories are operator-facing and the underlying stores are
@@ -630,6 +631,8 @@ struct RuntimeConsoleRunner {
     job_concurrency_limit: Option<u64>,
     jobs_running: usize,
     jobs_queued: usize,
+    jobs: Vec<RuntimeConsoleRunnerJob>,
+    jobs_truncated: bool,
     projects_available: bool,
     visible_project_count: usize,
     projects_returned: usize,
@@ -1957,6 +1960,7 @@ async fn runner_for_auth(
         .as_ref()
         .is_some_and(|visible| visible.truncated);
     let running_jobs = running_jobs_for_auth(runtime, auth, None).await?;
+    let (jobs, jobs_truncated) = runner_jobs_for_auth(runtime, auth, client_id).await?;
     let mut project_summaries = Vec::new();
     let mut recent_sessions = Vec::new();
     let mut session_scan_truncated = false;
@@ -2045,6 +2049,8 @@ async fn runner_for_auth(
         job_concurrency_limit: concurrency.get("limit").and_then(Value::as_u64),
         jobs_running: safe_usize(concurrency.get("running")),
         jobs_queued: safe_usize(concurrency.get("queued")),
+        jobs,
+        jobs_truncated,
         projects_available: project_access,
         visible_project_count,
         projects_returned,

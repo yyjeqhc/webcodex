@@ -924,6 +924,46 @@ async fn detached_process_idempotency_replays_same_intent_and_rejects_conflict()
     );
     assert_eq!(runtime.runner_registry.list_jobs(Some(10)).await.len(), 1);
 
+    // Same-key replay must not disguise already-terminal Job truth as a new
+    // pending handoff. The original execution is still never redispatched.
+    update_process_job(
+        &runtime,
+        "detached-idempotency",
+        &request,
+        "completed",
+        Some(ShellCommandExecutionState::Completed),
+        Some(0),
+        None,
+        None,
+        None,
+    )
+    .await;
+    let completed_replay = runtime
+        .dispatch_with_auth(
+            detached_process_call_with(
+                project.clone(),
+                key,
+                "argv-helper",
+                vec!["detached".to_string()],
+                None,
+            ),
+            Some(&auth),
+        )
+        .await;
+    assert!(completed_replay.success, "{:?}", completed_replay.error);
+    assert_eq!(completed_replay.output["job_id"], job_id);
+    assert_eq!(completed_replay.output["status"], "completed");
+    assert_eq!(completed_replay.output["execution_state"], "completed");
+    assert_eq!(completed_replay.output["terminal"], true);
+    assert_eq!(completed_replay.output["command_started"], true);
+    assert_eq!(completed_replay.output["command_completed"], true);
+    assert!(
+        probe_patch_agent_request(&runtime, "detached-idempotency")
+            .await
+            .is_none(),
+        "terminal same-key replay must not redispatch"
+    );
+
     let conflict = runtime
         .dispatch_with_auth(
             detached_process_call_with(

@@ -1,6 +1,99 @@
 use crate::project_validation::*;
 use crate::runner_operation::{RunnerInvocationMetadata, RunnerOperation};
 use crate::runner_protocol::RunnerRequest;
+
+#[test]
+fn project_node_check_step_identity_capability_and_metadata_are_closed() {
+    use crate::runner_protocol::{
+        RunnerCapabilities, ShellJobValidationMetadata, ShellJobValidationStep,
+    };
+    use crate::validation_identity::{
+        structured_validation_target_identity, ToolValidationIdentityKind,
+    };
+    let old: RunnerCapabilities =
+        serde_json::from_value(serde_json::json!({"project_validation_v1":true})).unwrap();
+    assert!(!old.project_validation_node_script_check_v1);
+    let mut ids = std::collections::HashSet::new();
+    for script in ["check", "typecheck", "lint"] {
+        let step = ShellJobValidationStep {
+            name: "check".into(),
+            program: "node".into(),
+            args: vec!["--run".into(), script.into()],
+            env: vec![],
+        };
+        assert!(step.is_canonical() && step.is_structured_node_check());
+        let id = structured_validation_target_identity(
+            ToolValidationIdentityKind::NodeScriptCheck,
+            &serde_json::json!({"cwd":".","script":script}),
+        )
+        .unwrap();
+        assert!(ids.insert(id.clone()));
+        let mut metadata = ShellJobValidationMetadata {
+            tool: "project_validate".into(),
+            kind: "check".into(),
+            steps: vec![step],
+            effective_timeout_secs: 60,
+            sync_wait_secs: 1,
+            adapter: "node:script:check".into(),
+            validation_target_id: Some(id),
+            source_fence: None,
+            minimum_tests: None,
+            require_tests: None,
+            no_run: None,
+            project_validation: Some(ProjectValidationProvenance {
+                request: ProjectValidationRequest {
+                    project_id: "demo".into(),
+                    cwd: None,
+                    action: ProjectValidationAction::Check,
+                    adapter: ProjectValidationAdapter::Node,
+                    scope: None,
+                    dependency_policy: None,
+                    test: None,
+                },
+                backend: "node".into(),
+                recipe_root: ".".into(),
+                root_digest: "a".repeat(64),
+                manifest_digest: "b".repeat(64),
+                invocation_digest: "c".repeat(64),
+            }),
+        };
+        assert!(metadata.is_valid());
+        let wire = serde_json::to_string(&metadata).unwrap();
+        assert!(serde_json::from_str::<ShellJobValidationMetadata>(&wire)
+            .unwrap()
+            .is_valid());
+        metadata.steps[0].args.push("arbitrary".into());
+        assert!(!metadata.is_valid());
+        metadata.steps[0].args.pop();
+        metadata.steps[0]
+            .env
+            .push(("CARGO_TARGET_DIR".into(), "/tmp".into()));
+        assert!(!metadata.is_valid());
+        metadata.steps[0].env.clear();
+        metadata.require_tests = Some(true);
+        assert!(!metadata.is_valid());
+        metadata.require_tests = None;
+        metadata.project_validation.as_mut().unwrap().request.action =
+            ProjectValidationAction::Test;
+        assert!(!metadata.is_valid());
+    }
+    assert!(structured_validation_target_identity(
+        ToolValidationIdentityKind::NodeScriptCheck,
+        &serde_json::json!({"cwd":".","script":"--eval"}),
+    )
+    .is_none());
+    let node = structured_validation_target_identity(
+        ToolValidationIdentityKind::NodeScriptCheck,
+        &serde_json::json!({"cwd":".","script":"check"}),
+    )
+    .unwrap();
+    let ruff = structured_validation_target_identity(
+        ToolValidationIdentityKind::PythonRuffCheck,
+        &serde_json::json!({"cwd":"."}),
+    )
+    .unwrap();
+    assert_ne!(node, ruff);
+}
 #[test]
 fn project_validation_protocol_is_closed_declarative_and_roundtrips() {
     let input = ProjectValidationRequest {
@@ -317,4 +410,99 @@ fn project_validation_python_argv_identity_and_metadata_are_closed() {
     assert_eq!(wire["adapter"], "python");
     metadata.steps[0].args.push("--collect-only".into());
     assert!(!metadata.is_valid());
+}
+
+#[test]
+fn project_ruff_step_identity_metadata_and_capability_are_independent() {
+    use crate::runner_protocol::{
+        RunnerCapabilities, ShellJobValidationMetadata, ShellJobValidationStep,
+    };
+    use crate::validation_identity::{
+        structured_validation_target_identity, ToolValidationIdentityKind,
+    };
+    let capabilities: RunnerCapabilities =
+        serde_json::from_value(serde_json::json!({"project_validation_python_pytest_v1":true}))
+            .unwrap();
+    assert!(!capabilities.project_validation_python_ruff_v1);
+    let mut identities = std::collections::HashSet::new();
+    for (action, kind, identity_kind) in [
+        (
+            ProjectValidationAction::Check,
+            "check",
+            ToolValidationIdentityKind::PythonRuffCheck,
+        ),
+        (
+            ProjectValidationAction::FormatCheck,
+            "format",
+            ToolValidationIdentityKind::PythonRuffFormat,
+        ),
+    ] {
+        let step = ShellJobValidationStep::python_ruff(kind).unwrap();
+        assert!(step.is_canonical() && step.is_structured_ruff());
+        assert_eq!(&step.args[..4], ["-I", "-B", "-m", "ruff"]);
+        for removed in 0..step.args.len() {
+            let mut bad = step.clone();
+            bad.args.remove(removed);
+            assert!(!bad.is_structured_ruff());
+        }
+        for extra in [
+            "--fix",
+            "--fix-only",
+            "--output-file=report.json",
+            "--config=../ruff.toml",
+            "--isolated",
+            "src",
+        ] {
+            let mut bad = step.clone();
+            bad.args.push(extra.into());
+            assert!(!bad.is_canonical());
+        }
+        let identity =
+            structured_validation_target_identity(identity_kind, &serde_json::json!({"cwd":"."}))
+                .unwrap();
+        assert!(identities.insert(identity.clone()));
+        let mut metadata = ShellJobValidationMetadata {
+            tool: "project_validate".into(),
+            kind: kind.into(),
+            steps: vec![step],
+            effective_timeout_secs: 60,
+            sync_wait_secs: 1,
+            adapter: identity_kind.tool_name().unwrap().into(),
+            validation_target_id: Some(identity),
+            source_fence: None,
+            minimum_tests: None,
+            require_tests: None,
+            no_run: None,
+            project_validation: Some(ProjectValidationProvenance {
+                request: ProjectValidationRequest {
+                    project_id: "demo".into(),
+                    cwd: None,
+                    action,
+                    adapter: ProjectValidationAdapter::Python,
+                    scope: None,
+                    dependency_policy: None,
+                    test: None,
+                },
+                backend: "python".into(),
+                recipe_root: ".".into(),
+                root_digest: "a".repeat(64),
+                manifest_digest: "b".repeat(64),
+                invocation_digest: "c".repeat(64),
+            }),
+        };
+        assert!(metadata.is_valid());
+        metadata.minimum_tests = Some(1);
+        assert!(!metadata.is_valid());
+        metadata.minimum_tests = None;
+        metadata.steps[0]
+            .env
+            .push(("CARGO_TARGET_DIR".into(), "/tmp/cache".into()));
+        assert!(!metadata.is_valid());
+        metadata.steps[0].env.clear();
+        metadata.adapter = "python:pytest:test".into();
+        assert!(!metadata.is_valid());
+        metadata.adapter = identity_kind.tool_name().unwrap().into();
+        metadata.project_validation = None;
+        assert!(!metadata.is_valid());
+    }
 }

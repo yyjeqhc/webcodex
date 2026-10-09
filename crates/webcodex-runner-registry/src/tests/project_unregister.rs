@@ -146,20 +146,25 @@ async fn filtered_job_inventory_refreshes_only_authorized_static_candidates() {
     assert_eq!(registry.filtered_job_refresh_count_for_test(), 0);
 
     let focused = registry
-        .list_jobs_for_auth_filtered(Some(&alice), Some("agent:oe:target"), Some("session-a"))
+        .list_jobs_for_auth_filtered(
+            Some(&alice),
+            None,
+            Some("agent:oe:target"),
+            Some("session-a"),
+        )
         .await;
     assert_eq!(focused.len(), 1);
     assert_eq!(registry.filtered_job_refresh_count_for_test(), 1);
 
     let by_project = registry
-        .list_jobs_for_auth_filtered(Some(&alice), Some("agent:oe:target"), None)
+        .list_jobs_for_auth_filtered(Some(&alice), None, Some("agent:oe:target"), None)
         .await;
     assert_eq!(by_project.len(), 2);
     assert_eq!(registry.filtered_job_refresh_count_for_test(), 3);
 
     let before_denied = registry.filtered_job_refresh_count_for_test();
     assert!(registry
-        .list_jobs_for_auth_filtered(Some(&bob), Some("agent:oe:target"), Some("session-a"),)
+        .list_jobs_for_auth_filtered(Some(&bob), None, Some("agent:oe:target"), Some("session-a"),)
         .await
         .is_empty());
     assert_eq!(

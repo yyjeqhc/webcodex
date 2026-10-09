@@ -10,6 +10,8 @@ use std::process::Command;
 
 fn config(id: TunnelProfileId) -> TunnelProfileConfigSnapshot {
     TunnelProfileConfigSnapshot {
+        provider: webcodex_environment::TunnelProvider::Openai,
+        configuration_id: None,
         id: id.to_string(),
         name: id.to_string(),
         tunnel_id: Some(format!("tunnel_{}", id)),

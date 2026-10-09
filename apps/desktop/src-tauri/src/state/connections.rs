@@ -90,14 +90,31 @@ impl AppState {
         id: String,
         action: ConnectionAction,
     ) -> DesktopResult<DesktopStateSnapshot> {
+        self.tunnel_profile_action_at_revision(id, action, None, None)
+            .await
+    }
+
+    pub async fn tunnel_profile_action_at_revision(
+        &self,
+        id: String,
+        action: ConnectionAction,
+        expected_revision: Option<u64>,
+        expected_configuration_id: Option<String>,
+    ) -> DesktopResult<DesktopStateSnapshot> {
         let (operation, cancellation, mut core, baseline) = self
             .begin_operation(DesktopOperationKind::TunnelConfigUpdate, false)
             .await?;
         let result = async {
             cancellation.check()?;
             if core.config.persistent_environment.is_some() {
-                core.persistent_tunnel_profile_action(&id, action, &cancellation)
-                    .await?;
+                core.persistent_tunnel_profile_action(
+                    &id,
+                    action,
+                    expected_revision,
+                    expected_configuration_id.as_deref(),
+                    &cancellation,
+                )
+                .await?;
                 return core.get_state().await;
             }
 
@@ -189,6 +206,55 @@ impl DesktopCore {
         if request.id.is_some() && existing.is_none() {
             return Err(connection_missing());
         }
+        if request.provider != webcodex_environment::TunnelProvider::Openai {
+            let saved = store
+                .load_environment()
+                .map_err(super::environment::desktop_error)?;
+            if saved.as_ref().map(|record| record.environment_id.as_str())
+                != self.config.persistent_environment.as_deref()
+            {
+                return Err(DesktopError::new(
+                    "environment_changed",
+                    "The saved Environment changed",
+                    "Refresh Runtime setup before saving this connection.",
+                ));
+            }
+            if !self.config.topology.as_ref().is_some_and(|topology| {
+                topology.experience == Experience::Full
+                    && matches!(topology.server, ServerTopology::Local)
+            }) {
+                return Err(DesktopError::new(
+                    "cloudflare_environment_required",
+                    "Cloudflare needs a persistent local Environment",
+                    "Use Runtime setup or repair first.",
+                ));
+            }
+            let token = request
+                .cloudflare_token
+                .map(webcodex_environment::Secret::new);
+            let native = webcodex_environment::NativeEnvironment::new()
+                .map_err(super::environment::desktop_error)?;
+            native
+                .configure_cloudflare_tunnel_profile(
+                    &store,
+                    &webcodex_environment::CloudflareTunnelProfileRequest {
+                        profile_id: &profile_id,
+                        name: Some(&request.name),
+                        host_mode: request.host_mode,
+                        autostart: request.autostart,
+                        expected_revision: request.expected_revision,
+                        provider: request.provider,
+                        token: token.as_ref(),
+                        ingress_port: None,
+                    },
+                )
+                .await
+                .map_err(super::environment::desktop_error)?;
+            return cancellation.check();
+        }
+        if request.cloudflare_token.is_some() {
+            return Err(connection_missing());
+        }
         let tunnel_id = request.tunnel_id.trim();
         let api_key = request
             .api_key
@@ -246,25 +312,84 @@ impl DesktopCore {
         &mut self,
         id: &str,
         action: ConnectionAction,
+        expected_revision: Option<u64>,
+        expected_configuration_id: Option<&str>,
         cancellation: &CancellationContext,
     ) -> DesktopResult<()> {
         cancellation.check()?;
         let store = super::environment::store()?;
         self.tunnel_config
             .ensure_persistent_catalog_compatible(&store)?;
+        let native = webcodex_environment::NativeEnvironment::new()
+            .map_err(super::environment::desktop_error)?;
+        if action == ConnectionAction::Delete {
+            if let (Some(revision), Some(configuration_id), Some(environment_id)) = (
+                expected_revision,
+                expected_configuration_id,
+                self.config.persistent_environment.as_deref(),
+            ) {
+                // Cleanup may outlive removal from the catalog. Preserve the caller's
+                // exact retired identity so a retry cannot delete a replacement.
+                native
+                    .remove_tunnel_fenced(
+                        &store,
+                        id,
+                        Some(revision),
+                        Some(environment_id),
+                        Some(configuration_id),
+                    )
+                    .await
+                    .map_err(super::environment::desktop_error)?;
+                return cancellation.check();
+            }
+        }
         let profile = webcodex_environment::tunnel_profile_snapshots(&store)
             .map_err(super::environment::desktop_error)?
             .into_iter()
             .find(|profile| profile.profile_id == id)
             .ok_or_else(connection_missing)?;
-        let native = webcodex_environment::NativeEnvironment::new()
-            .map_err(super::environment::desktop_error)?;
+        if profile.provider != webcodex_environment::TunnelProvider::Openai {
+            let saved = store
+                .load_environment()
+                .map_err(super::environment::desktop_error)?;
+            if saved.as_ref().map(|record| record.environment_id.as_str())
+                != self.config.persistent_environment.as_deref()
+            {
+                return Err(DesktopError::new(
+                    "environment_changed",
+                    "The saved Environment changed",
+                    "Refresh Runtime setup before controlling this connection.",
+                ));
+            }
+        }
         if action == ConnectionAction::Delete {
+            if profile.provider != webcodex_environment::TunnelProvider::Openai
+                && (expected_revision.is_none() || expected_configuration_id.is_none())
+            {
+                return Err(DesktopError::new(
+                    "tunnel_revision_stale",
+                    "Refresh this Cloudflare profile before deleting it",
+                    "Review the current connection and retry Delete.",
+                ));
+            }
             native
-                .remove_tunnel(&store, id)
+                .remove_tunnel_fenced(
+                    &store,
+                    id,
+                    expected_revision,
+                    expected_configuration_id.and(self.config.persistent_environment.as_deref()),
+                    expected_configuration_id,
+                )
                 .await
                 .map_err(super::environment::desktop_error)?;
             return cancellation.check();
+        }
+        if profile.provider != webcodex_environment::TunnelProvider::Openai {
+            return Err(DesktopError::new(
+                "cloudflare_control_required",
+                "Refresh the Cloudflare connection before controlling it",
+                "Use its connection controls to target the observed Server and process.",
+            ));
         }
         if profile.host_mode == webcodex_environment::TunnelHostMode::Embedded {
             return Err(DesktopError::new(
@@ -649,6 +774,8 @@ fn persistent_connection_projection(
     let runtime = persistent_runtime_projection(&profile, observation);
     TunnelConnectionSnapshot {
         config: crate::tunnel_config::TunnelProfileConfigSnapshot {
+            provider: profile.provider.clone(),
+            configuration_id: profile.configuration_id.clone(),
             id: profile.profile_id,
             name: profile.name,
             tunnel_id: Some(profile.tunnel_id),

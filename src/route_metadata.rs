@@ -131,6 +131,8 @@ pub(crate) enum RouteId {
     ProjectsResolveOrRegister,
     RuntimeStatus,
     RuntimeUpgradeMaintenance,
+    CloudflareControl,
+    CloudflareForwardingProbe,
     OAuthClientsCreate,
     OAuthClientsList,
     OAuthClientsUpdateScopes,
@@ -414,11 +416,12 @@ mod tests {
         source.split("#[cfg(test)]").next().unwrap_or(source)
     }
 
-    fn mounted_route_sources() -> [&'static str; 3] {
+    fn mounted_route_sources() -> [&'static str; 4] {
         [
             include_str!("lib.rs"),
             production_prefix(include_str!("runtime_console_http.rs")),
             production_prefix(include_str!("admin_http.rs")),
+            production_prefix(include_str!("cloudflare_ingress.rs")),
         ]
     }
 
@@ -519,8 +522,23 @@ mod tests {
             let needle = format!("RouteId::{:?}", spec.id);
             assert_eq!(
                 exact_route_id_reference_count(&combined, &needle),
-                1,
-                "production leaf mount must reference {needle} exactly once"
+                if matches!(
+                    spec.id,
+                    RouteId::McpGet
+                        | RouteId::McpPost
+                        | RouteId::WellKnownProtectedResource
+                        | RouteId::WellKnownAuthorizationServer
+                        | RouteId::OAuthAuthorize
+                        | RouteId::OAuthAuthorizeLogin
+                        | RouteId::OAuthAuthorizeConsent
+                        | RouteId::OAuthToken
+                        | RouteId::OAuthRevoke
+                ) {
+                    2
+                } else {
+                    1
+                },
+                "production leaf mount must reference {needle} once per owning listener"
             );
             references += 1;
         }

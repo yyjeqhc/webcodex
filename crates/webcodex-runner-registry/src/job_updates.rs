@@ -1396,6 +1396,42 @@ impl RunnerRegistry {
                 RunnerFeature::ProjectValidation,
             ));
         }
+        // Auto-detected Node scripts need admission recheck against the actual
+        // retained Job adapter and step, including on Runner replacement.
+        let node_script_check = validation
+            .as_ref()
+            .is_some_and(|v| v.adapter == "node:script:check")
+            || validation_steps
+                .iter()
+                .any(ShellJobValidationStep::is_structured_node_check);
+        if node_script_check
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectValidationNodeScriptCheck)
+        {
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectValidationNodeScriptCheck,
+            ));
+        }
+        let python_ruff = validation.as_ref().is_some_and(|v| {
+            matches!(
+                v.adapter.as_str(),
+                "python:ruff:check" | "python:ruff:format"
+            )
+        }) || validation_steps
+            .iter()
+            .any(ShellJobValidationStep::is_structured_ruff);
+        if python_ruff
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectValidationPythonRuff)
+        {
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectValidationPythonRuff,
+            ));
+        }
         let python_pytest = validation
             .as_ref()
             .is_some_and(|v| v.adapter == "python:pytest:test")
@@ -1410,6 +1446,22 @@ impl RunnerRegistry {
             return Err(capability_upgrade_error(
                 &client_id,
                 RunnerFeature::ProjectValidationPythonPytest,
+            ));
+        }
+        let node_test = validation
+            .as_ref()
+            .is_some_and(|v| v.adapter == "node:tap:test")
+            || validation_steps
+                .iter()
+                .any(|step| step.program == "node" && step.name == "test");
+        if node_test
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectValidationNodeTap)
+        {
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectValidationNodeTap,
             ));
         }
         // Recheck at admission, not only during the earlier planning round trip:
@@ -2061,13 +2113,14 @@ impl RunnerRegistry {
     }
 
     /// Complete caller-visible Job set after exact static identity filters.
-    /// Project/session selection happens before lifecycle refresh so focused
-    /// model-facing inventory queries do not refresh unrelated Jobs. Status is
+    /// Runner/Project/Session selection happens before lifecycle refresh so
+    /// focused inventory queries do not refresh unrelated Jobs. Status is
     /// intentionally not accepted here because it depends on the refreshed
     /// lifecycle and must be applied by the caller afterwards.
     pub async fn list_jobs_for_auth_filtered(
         &self,
         auth: Option<&crate::RunnerAccess>,
+        client_id: Option<&str>,
         project_id: Option<&str>,
         session_id: Option<&str>,
     ) -> Vec<ShellJobInfo> {
@@ -2077,6 +2130,11 @@ impl RunnerRegistry {
             .values()
             .filter(|job| job.visibility == ShellJobVisibility::Public)
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
+            .filter(|job| {
+                client_id
+                    .map(|client_id| job.client_id == client_id)
+                    .unwrap_or(true)
+            })
             .filter(|job| {
                 project_id
                     .map(|project_id| job.project_id.as_deref() == Some(project_id))
@@ -2100,6 +2158,11 @@ impl RunnerRegistry {
             .values()
             .filter(|job| job.visibility == ShellJobVisibility::Public)
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
+            .filter(|job| {
+                client_id
+                    .map(|client_id| job.client_id == client_id)
+                    .unwrap_or(true)
+            })
             .filter(|job| {
                 project_id
                     .map(|project_id| job.project_id.as_deref() == Some(project_id))
@@ -2412,10 +2475,7 @@ impl RunnerRegistry {
             {
                 let count = counts.entry(job.client_id.clone()).or_default();
                 count.active += 1;
-                count.running += usize::from(matches!(
-                    job.lifecycle,
-                    JobLifecycleState::Running | JobLifecycleState::StartedLegacy
-                ));
+                count.running += usize::from(job.lifecycle.occupies_execution_slot());
                 count.queued += usize::from(matches!(
                     job.lifecycle,
                     JobLifecycleState::Queued | JobLifecycleState::RunnerQueued

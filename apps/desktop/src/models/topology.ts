@@ -281,7 +281,7 @@ export interface ActivityEntry {
 export interface RunnerPaths { instruction_files: string[]; skill_roots: string[] }
 export interface RunnerFileAccess { configured_roots: string[]; default_roots?: string[]; effective_roots: string[]; using_default_roots: boolean; allow_cwd_anywhere: boolean }
 export interface SettingsTarget { config_path: string; client_id: string; server_url: string }
-export interface RunnerSettings { paths: RunnerPaths; file_access: RunnerFileAccess; plugin_ids: string[]; target: SettingsTarget; can_restart: boolean }
+export interface RunnerSettings { max_concurrent_jobs?: number | null; paths: RunnerPaths; file_access: RunnerFileAccess; plugin_ids: string[]; target: SettingsTarget; can_restart: boolean }
 export interface PluginRegistration { id: string; name: string; command: string; args: string[]; cwd: string | null }
 export type PermissionStatus = "granted" | "denied" | "unknown";
 export interface ComputerPermissions { supported: boolean; foreground: boolean; execution_process: string | null; execution_path: string | null; runner_accessibility: PermissionStatus; runner_screen_recording: PermissionStatus; desktop_accessibility: boolean; desktop_screen_recording: boolean }

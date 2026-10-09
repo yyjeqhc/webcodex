@@ -39,6 +39,22 @@ pub(crate) async fn run_server_tunnel_with_stop(
     opts: ServerTunnelOptions,
     stop: impl std::future::Future<Output = ()>,
 ) -> Result<(), String> {
+    if let Some(runtime_binding) = opts.runtime_binding {
+        let profile =
+            webcodex_environment::load_cloudflare_tunnel_materialization(&runtime_binding)
+                .map_err(|error| error.to_string())?;
+        if !opts.provider.matches(&profile.provider) {
+            return Err(
+                "The requested Tunnel provider does not match its private runtime binding".into(),
+            );
+        }
+        return webcodex::run_cloudflare_tunnel_with_stop(
+            runtime_binding,
+            opts.stop_on_stdin_eof,
+            stop,
+        )
+        .await;
+    }
     webcodex::load_service_environment_file(&opts.env_file)?;
     let local_server_url = derive_regular_tunnel_server_url(&opts.env_file)?;
     let bootstrap_token = derive_regular_tunnel_bootstrap_token(&opts.env_file)?;

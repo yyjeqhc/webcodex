@@ -188,8 +188,8 @@ pub struct CurrentValidationEvidenceProjection {
 }
 
 use crate::adapters::{
-    execution_purpose_for_validation_kind, validation_adapter_for_tool, ValidationAdapter,
-    ValidationFailureEvidence,
+    execution_purpose_for_validation_kind, validation_evidence_profile_for_tool,
+    ValidationEvidenceProfile, ValidationFailureEvidence,
 };
 
 pub fn skipped_validation_summary() -> Value {
@@ -751,7 +751,7 @@ fn validation_event_decides_historical_failure_status(event: &ValidationEvent) -
 // `validation_kind = test` is only an intent/category for generic execution.
 // Only an actual first-class structured test tool opts into count/zero-test proof.
 fn structured_test_requires_execution_proof(event: &ValidationEvent) -> bool {
-    validation_adapter_for_tool(&event.tool_name).is_some_and(|adapter| {
+    validation_evidence_profile_for_tool(&event.tool_name).is_some_and(|adapter| {
         adapter.validation_kind() == "test" && adapter.reports_test_run_metadata()
     })
 }
@@ -1005,7 +1005,7 @@ pub fn event_is_job_acceptance_only(event: &SessionEvent) -> bool {
 }
 
 pub fn validation_kind_for_tool(tool_name: &str) -> Option<&'static str> {
-    if let Some(adapter) = validation_adapter_for_tool(tool_name) {
+    if let Some(adapter) = validation_evidence_profile_for_tool(tool_name) {
         return Some(adapter.validation_kind());
     }
     None
@@ -1070,7 +1070,7 @@ fn validation_event_from_finished(
     finished: &SessionEvent,
     started: Option<&SessionEvent>,
 ) -> Option<ValidationEvent> {
-    let adapter = validation_adapter_for_execution(finished, started);
+    let adapter = validation_evidence_profile_for_execution(finished, started);
     let purpose = started
         .and_then(execution_purpose)
         .or_else(|| execution_purpose(finished))?;
@@ -1278,18 +1278,18 @@ fn validation_event_failure_class(event: &ValidationEvent) -> &'static str {
     }
 }
 
-fn validation_adapter_for_execution(
+fn validation_evidence_profile_for_execution(
     finished: &SessionEvent,
     started: Option<&SessionEvent>,
-) -> Option<&'static dyn ValidationAdapter> {
-    validation_adapter_for_tool(&finished.tool_name)
+) -> Option<&'static dyn ValidationEvidenceProfile> {
+    validation_evidence_profile_for_tool(&finished.tool_name)
         .or_else(|| {
             finished
                 .validation_output_summary
                 .as_ref()
                 .and_then(|v| v.get("adapter"))
                 .and_then(Value::as_str)
-                .and_then(validation_adapter_for_tool)
+                .and_then(validation_evidence_profile_for_tool)
         })
         .or_else(|| {
             started
@@ -1310,7 +1310,7 @@ fn validation_adapter_for_execution(
                         .and_then(|summary| summary.get("validation_tool"))
                         .and_then(Value::as_str)
                 })
-                .and_then(validation_adapter_for_tool)
+                .and_then(validation_evidence_profile_for_tool)
         })
         .or_else(|| {
             let command = started
@@ -1330,9 +1330,11 @@ fn validation_adapter_for_execution(
                 })?;
             let mut words = command.split_whitespace();
             match (words.next(), words.next()) {
-                (Some("cargo"), Some("fmt")) => validation_adapter_for_tool("cargo_fmt"),
-                (Some("cargo"), Some("check")) => validation_adapter_for_tool("cargo_check"),
-                (Some("cargo"), Some("test")) => validation_adapter_for_tool("cargo_test"),
+                (Some("cargo"), Some("fmt")) => validation_evidence_profile_for_tool("cargo_fmt"),
+                (Some("cargo"), Some("check")) => {
+                    validation_evidence_profile_for_tool("cargo_check")
+                }
+                (Some("cargo"), Some("test")) => validation_evidence_profile_for_tool("cargo_test"),
                 _ => None,
             }
         })
@@ -1505,7 +1507,7 @@ fn validation_failure_kind(
     finished: &SessionEvent,
     success: bool,
     diagnostics: Option<&ValidationDiagnostics>,
-    adapter: Option<&dyn ValidationAdapter>,
+    adapter: Option<&dyn ValidationEvidenceProfile>,
 ) -> &'static str {
     if let Some(adapter) = adapter {
         let (stdout_excerpt, stderr_excerpt, _) =
@@ -1614,7 +1616,7 @@ fn parser_summary_for_events(events: &[ValidationEvent]) -> ValidationParserSumm
 
 fn validation_diagnostics_from_summary(
     finished: &SessionEvent,
-    adapter: &dyn ValidationAdapter,
+    adapter: &dyn ValidationEvidenceProfile,
 ) -> Option<ValidationDiagnostics> {
     let (stdout_excerpt, stderr_excerpt, truncated) = validation_output_excerpts(finished)?;
     Some(adapter.parse(stdout_excerpt, stderr_excerpt, truncated))
@@ -1643,7 +1645,7 @@ fn validation_output_excerpts(finished: &SessionEvent) -> Option<(&str, &str, bo
 
 fn validation_test_run_metadata(
     finished: &SessionEvent,
-    adapter: Option<&dyn ValidationAdapter>,
+    adapter: Option<&dyn ValidationEvidenceProfile>,
     diagnostics: Option<&ValidationDiagnostics>,
 ) -> (
     Option<bool>,
@@ -1664,7 +1666,8 @@ fn validation_test_run_metadata(
         .into_iter()
         .any(|field| value.get(field).is_some())
     });
-    if !adapter.is_some_and(ValidationAdapter::reports_test_run_metadata) && !explicit_test_metadata
+    if !adapter.is_some_and(ValidationEvidenceProfile::reports_test_run_metadata)
+        && !explicit_test_metadata
     {
         return (None, None, None, None, None);
     }

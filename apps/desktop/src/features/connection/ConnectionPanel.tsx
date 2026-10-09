@@ -12,6 +12,7 @@ import { desktopStatusPresentation } from "../workspace/WorkspaceStatus";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 import { FirstReadGuide } from "../onboarding/FirstRunCompletion";
 import { ConnectionEditor } from "./ConnectionEditor";
+import { CloudflareConnectionCard } from "./CloudflareConnectionCard";
 import { ConnectionCard } from "./ConnectionCard";
 
 export function ConnectionPanel({ state, onState, onSettings }: {
@@ -59,14 +60,14 @@ export function ConnectionPanel({ state, onState, onSettings }: {
     const timer = window.setTimeout(() => setCopiedId(null), 2500);
     return () => window.clearTimeout(timer);
   }, [copiedId]);
-  const run = async (id: string, action: TunnelProfileAction) => {
+  const run = async (id: string, action: TunnelProfileAction, expectedRevision?: number, expectedConfigurationId?: string | null) => {
     if (submitting.current || state.current_operation) return;
     submitting.current = true;
     setBusyId(id);
     setFailed(null);
     setSaved(false);
     try {
-      onState(await desktopApi.tunnelProfileAction(id, action));
+      onState(await (expectedRevision === undefined ? desktopApi.tunnelProfileAction(id, action) : desktopApi.tunnelProfileAction(id, action, expectedRevision, expectedConfigurationId)));
       if (action === "delete") setDeleting(null);
     } catch (value) {
       setFailed(normalizeDesktopError(value));
@@ -101,18 +102,18 @@ export function ConnectionPanel({ state, onState, onSettings }: {
     {profiles.config_error && <p role="alert" className="workspace-notice">{c("configError")}</p>}
     {failure && !deleting && <div role="alert" className="workspace-notice"><strong>{failure.title}</strong><p>{failure.action}</p><p>{c("operationFailed")}</p>{autoProxyRecovery && <p>{c("currentProxyHint")}</p>}</div>}
     {saved && <p role="status" className="workspace-notice">{c("saved")}</p>}
-    <div className="connection-list">{profiles.profiles.map(profile => <ConnectionCard key={profile.id} profile={profile} canStart={local && state.readiness.runtime_ready} busy={disabled || !canManageConnections} copied={copiedId === profile.id}
+    <div className="connection-list">{profiles.profiles.map(profile => profile.provider && profile.provider.kind !== "openai" ? <CloudflareConnectionCard key={profile.id} profile={profile} canStart={local && state.readiness.server === "ready"} busy={disabled || !canManageConnections} onRepair={() => onSettings("runtime")} onRestartServer={persistentLocal ? () => void runServer("restart") : undefined} onEdit={() => setEditor({ profile })} onDelete={() => { setFailed(null); setDeleting(profile); }} /> : <ConnectionCard key={profile.id} profile={profile} canStart={local && state.readiness.runtime_ready} busy={disabled || !canManageConnections} copied={copiedId === profile.id}
       onAction={action => void run(profile.id, action)} onSettings={onSettings}
       onEdit={() => { setSaved(false); setEditor({ profile }); }} onDelete={() => { setFailed(null); setDeleting(profile); }}
       onCopy={() => { if (profile.tunnel_id) void writeText(profile.tunnel_id).then(() => setCopiedId(profile.id)).catch(value => setFailed(normalizeDesktopError(value))); }} />)}</div>
     {state.connections && !profiles.profiles.length && !profiles.config_error && state.topology?.experience !== "quick_share" && <p className="workspace-empty">{presentation.connectionText}</p>}
     {state.topology?.experience === "quick_share" && state.quick_share && <button className="secondary-button" disabled={disabled} onClick={() => { void desktopApi.stopQuickShare().then(onState).catch(value => setFailed(normalizeDesktopError(value))); }}>{p("stop")} Quick Share</button>}
     <FirstReadGuide state={state} />
-    {editor && <ConnectionEditor profile={editor.profile} persistentLocal={persistentLocal} onState={next => { onState(next); setSaved(true); }} onClose={() => setEditor(null)} />}
+    {editor && <ConnectionEditor profile={editor.profile} persistentLocal={persistentLocal} onSetup={() => onSettings("runtime")} onState={next => { onState(next); setSaved(true); }} onClose={() => setEditor(null)} />}
     {deleting && <WorkspaceDialog title={c("delete") + " " + deleting.name} onClose={() => setDeleting(null)} busy={busyId !== null}>
       <p>{deleting.host_mode === "embedded" ? c("deleteServerOwnedHelp") : c("deleteConnectionHelp")}</p>
       {failed && <p role="alert" className="workspace-notice">{c("operationFailed")}</p>}
-      <div className="connection-actions"><button type="button" className="primary-button" disabled={disabled} onClick={() => void run(deleting.id, "delete")}>{c("delete")}</button><button type="button" className="secondary-button" disabled={disabled} onClick={() => setDeleting(null)}>{p("cancel")}</button></div>
+      <div className="connection-actions"><button type="button" className="primary-button" disabled={disabled} onClick={() => void run(deleting.id, "delete", deleting.provider && deleting.provider.kind !== "openai" ? deleting.revision : undefined, deleting.configuration_id)}>{c("delete")}</button><button type="button" className="secondary-button" disabled={disabled} onClick={() => setDeleting(null)}>{p("cancel")}</button></div>
     </WorkspaceDialog>}
   </section>;
 }

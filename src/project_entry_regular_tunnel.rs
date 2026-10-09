@@ -252,7 +252,7 @@ fn validate_local_server_url(value: &str) -> Result<String, ProductError> {
     Ok(value.to_string())
 }
 
-async fn wait_for_regular_tunnel_stop_signal(stop_on_stdin_eof: bool) {
+pub(crate) async fn wait_for_regular_tunnel_stop_signal(stop_on_stdin_eof: bool) {
     wait_for_regular_tunnel_stop_signal_with(
         stop_on_stdin_eof,
         wait_for_platform_stop_signal(),

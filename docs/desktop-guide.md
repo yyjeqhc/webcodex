@@ -33,6 +33,29 @@ credential, database, log or project files and cannot restore an Environment.
 Incomplete inventories cannot be exported. Full secret backup and restore require
 a separate design. See the [schema and validation report](implementation/configuration-inventory-backup-manifest.md).
 
+## Runner Job capacity
+
+**Projects → execution devices** shows each Runner's reported durable Job usage:
+running, queued, and the effective concurrency limit. Counts follow the Server's
+capacity aggregate: stop-requested Jobs remain in the running count until termination
+because they still occupy execution slots. Offline, stale, unavailable, or unsupported observations
+never mean zero usage; ordinary request-dispatch queues are separate.
+
+In **Settings → Runtime & services → Runner Job capacity**, Desktop-managed local
+Runners can save **Maximum concurrent Jobs** as a whole number from **1 to 64**.
+The default remains **4**. The saved value and current effective limit are shown
+separately. **Save for next restart** only writes the exact local Runner's
+configuration, preserves unrelated settings, and rejects a conflicting edit.
+It does not hot-reload or restart services.
+
+Choose **Restart Runner…** when ready and confirm the interruption warning.
+Restarting applies the saved Runner configuration and may interrupt Jobs,
+browser sessions, and handoffs. Desktop reuses its existing owned-process or
+persistent-service restart path. Remote and independently managed Runners remain
+read-only; their actual operator must edit the configuration and restart them.
+A restart is not reported as applying the saved limit until fresh Runner status
+reports that limit.
+
 ## Windows startup and upgrades
 
 **After sign-in (recommended)** uses user-session Task Scheduler tasks. This is the ordinary Desktop path and does not require an administrator account or a service password. Server, Runner and Tunnel use the signed-in user's identity. Closing Desktop does not stop these tasks; signing out ends the user-session path.

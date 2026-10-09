@@ -33,6 +33,7 @@ pub enum ProjectValidationAdapter {
     Rust,
     Go,
     Python,
+    Node,
 }
 
 /// Test-only selection and evidence policy. Filtering changes the execution
@@ -167,7 +168,7 @@ impl ProjectValidationProvenance {
     pub fn is_valid(&self) -> bool {
         self.request.validate().is_ok()
             && validate_relative(&self.recipe_root).is_ok()
-            && matches!(self.backend.as_str(), "rust" | "go" | "python")
+            && matches!(self.backend.as_str(), "rust" | "go" | "python" | "node")
             && [
                 &self.root_digest,
                 &self.manifest_digest,

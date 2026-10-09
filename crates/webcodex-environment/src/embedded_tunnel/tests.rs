@@ -20,6 +20,8 @@ fn records(store: &EnvironmentStore, names: &[&str]) {
     let values: Vec<_> = names
         .iter()
         .map(|name| TunnelRecord {
+            configuration_id: None,
+            provider: crate::TunnelProvider::Openai,
             profile_id: (*name).into(),
             name: (*name).into(),
             host_mode: TunnelHostMode::Embedded,
@@ -151,6 +153,8 @@ fn duplicate_tunnel_identity_across_standalone_and_embedded_owners_fails_closed(
     let (_temp, store) = fixture();
     let records = vec![
         TunnelRecord {
+            configuration_id: None,
+            provider: crate::TunnelProvider::Openai,
             profile_id: "separate".into(),
             name: "Separate".into(),
             host_mode: TunnelHostMode::Standalone,
@@ -161,6 +165,8 @@ fn duplicate_tunnel_identity_across_standalone_and_embedded_owners_fails_closed(
             started: false,
         },
         TunnelRecord {
+            configuration_id: None,
+            provider: crate::TunnelProvider::Openai,
             profile_id: "server-owned".into(),
             name: "Server owned".into(),
             host_mode: TunnelHostMode::Embedded,

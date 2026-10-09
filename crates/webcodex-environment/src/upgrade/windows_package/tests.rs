@@ -47,6 +47,7 @@ impl Fixture {
             store,
             runtime,
             candidate: UpgradeCandidate {
+                package_flavor: crate::unified_update::PackageFlavor::Full,
                 version: "0.5.0".into(),
                 source_sha: "a".repeat(40),
                 platform: "win32-x64".into(),

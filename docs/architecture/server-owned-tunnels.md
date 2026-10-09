@@ -1,5 +1,11 @@
 # Server-owned OpenAI Tunnels
 
+This document describes the OpenAI adapter. Cloudflare Named/Quick reuse its
+Environment catalog and shared Server shutdown ordering, while using their own
+OAuth-only loopback ingress and process-tree owner. See
+[Cloudflare connections](../CLOUDFLARE_CONNECTIONS.md) for the entry/epoch,
+standalone-control, forwarding-proof and client-lifecycle contracts.
+
 A long-lived Server can own up to 16 explicitly embedded named profiles. This is
 an opt-in lifecycle adapter over `webcodex-openai-tunnel::TunnelClient`, not a
 second Tunnel wire implementation. No existing profile is migrated by upgrade.

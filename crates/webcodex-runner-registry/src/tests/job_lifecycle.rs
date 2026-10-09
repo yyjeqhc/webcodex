@@ -448,6 +448,14 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
         .await
         .unwrap();
     assert_eq!(stop_requested.status, "stop_requested");
+    let capacity = registry.active_job_summary_by_runner_for_auth(None).await;
+    let capacity = capacity.get("oe").expect("Runner capacity aggregate");
+    assert_eq!(capacity.active, 1);
+    assert_eq!(
+        capacity.running, 1,
+        "stopping Job still occupies its execution slot"
+    );
+    assert_eq!(capacity.queued, 0);
     let duplicate = registry
         .stop_job(&job.job_id, "test".to_string())
         .await

@@ -214,6 +214,88 @@ fn pytest_summary_line(line: &str) -> Option<CargoTestSummary> {
     })
 }
 
+/// Node's own TAP reporter emits a fixed trailing accounting block. Never
+/// infer executed tests from a package-manager script's exit status or an
+/// arbitrary progress line. Incomplete/truncated/conflicting trailers prove
+/// nothing.
+pub fn parse_node_native_test_diagnostics(stdout: &str, truncated: bool) -> ValidationDiagnostics {
+    let summary = (!truncated)
+        .then(|| node_native_test_summary(stdout))
+        .flatten();
+    ValidationDiagnostics {
+        available: summary.is_some(),
+        parser: PARSER_KIND,
+        reason: summary.is_none().then_some("no complete Node TAP summary"),
+        diagnostic_count: Some(0),
+        diagnostics: Vec::new(),
+        returned_diagnostic_count: 0,
+        diagnostics_truncated: false,
+        invalid_diagnostics_omitted: 0,
+        test_summary: summary,
+        failed_test_details: Vec::new(),
+        failed_test_details_truncated: false,
+        truncated: Some(truncated),
+    }
+}
+
+fn node_native_test_summary(stdout: &str) -> Option<CargoTestSummary> {
+    let lines: Vec<_> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.len() < 10 || lines.first().copied() != Some("TAP version 13") {
+        return None;
+    }
+    let tail = lines.get(lines.len().checked_sub(8)?..)?;
+    let duration = tail[7]
+        .strip_prefix("# duration_ms ")?
+        .parse::<f64>()
+        .ok()?;
+    if !duration.is_finite() || duration < 0.0 {
+        return None;
+    }
+    let fields = [
+        "# tests ",
+        "# suites ",
+        "# pass ",
+        "# fail ",
+        "# cancelled ",
+        "# skipped ",
+        "# todo ",
+    ];
+    let mut values = [0_u64; 7];
+    for (i, prefix) in fields.iter().enumerate() {
+        values[i] = tail[i].strip_prefix(prefix)?.parse::<u64>().ok()?;
+    }
+    let [total, _suites, passed, failed, cancelled, skipped, todo] = values;
+    if cancelled != 0
+        || passed
+            .checked_add(failed)?
+            .checked_add(skipped)?
+            .checked_add(todo)?
+            != total
+        || !lines[..lines.len() - 8].iter().any(|line| {
+            line.strip_prefix("1..")
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        })
+    {
+        return None;
+    }
+    // A second accounting footer cannot be accepted as authoritative.
+    if lines[..lines.len() - 8]
+        .iter()
+        .any(|line| line.starts_with("# tests "))
+    {
+        return None;
+    }
+    Some(CargoTestSummary {
+        passed: Some(passed),
+        failed: Some(failed),
+        ignored: skipped.checked_add(todo),
+    })
+}
+
 /// Parse Go vet's stable relative-file:line:column diagnostics. Compiler prose
 /// without a stable location is not invented into structured evidence.
 pub fn parse_go_vet_diagnostics(stderr: &str, truncated: bool) -> ValidationDiagnostics {

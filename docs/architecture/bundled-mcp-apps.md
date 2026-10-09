@@ -13,22 +13,27 @@ Continuation, and Job Continuation. The Changes v4 template remains readable by
 its exact URI for cached descriptors, but is neither listed nor bound to any new
 tool descriptor. No retired URI alias is accepted.
 
-All seven HTML files are unchanged. Existing folding, frozen-diff paging,
+Template logic remains owned by each App. Existing folding, frozen-diff paging,
 activity detail loading, draft retention, origin checks, message sequencing,
 observation deadlines and disposal stay in their current templates. Consequently
-this structural change needs no App URI bump; future template or incompatible
-App-tool changes must still advance the affected URI.
+the original registry extraction needed no App URI bump; template or incompatible
+App-tool changes must advance the affected URI. The later Workbench/Work Result
+display changes and identity advances are documented in
+[workspace presentation](../implementation/mcp-workspace-experience.md).
 
 The registry preserves three distinct projections rather than merging metadata:
 
 - `resources/list` carries common closed CSP, optional configured public domain,
   and the existing public listing, not resource-read-only display modes.
 - `resources/read` carries the exact bundled template and common metadata.
-  Workbench additionally carries its existing inline/fullscreen display modes.
+  Workbench prefers fullscreen and also supports inline; Work Result supports
+  inline/fullscreen. Both consume Host theme and display-context notifications
+  and report content height for inline embedding.
   Only Computer overrides the enclosing stateless cache TTL with the existing
   zero-millisecond diagnostic policy.
 - An already-admitted tool descriptor gets its App resource binding. Workbench
-  additionally keeps its title and global/thread entrypoints. Existing unrelated
+  additionally owns its title and single global entrypoint. The separate Work
+  Result launcher owns the thread entrypoint. Existing unrelated
   descriptor metadata survives attachment.
 
 Computer remains an independently readable resource, not an automatic binding

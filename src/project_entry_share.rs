@@ -1294,7 +1294,7 @@ fn bounded_tunnel_log_summary(recent: &Arc<Mutex<VecDeque<String>>>) -> String {
         .unwrap_or_default()
 }
 
-fn parse_quick_tunnel_url(line: &str) -> Option<String> {
+pub(super) fn parse_quick_tunnel_url(line: &str) -> Option<String> {
     let start = line.find("https://")?;
     let candidate = line[start..]
         .split_whitespace()
@@ -1306,6 +1306,9 @@ fn parse_quick_tunnel_url(line: &str) -> Option<String> {
     let host = parsed.host_str()?;
     (parsed.scheme() == "https"
         && host.ends_with(".trycloudflare.com")
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.port().is_none()
         && parsed.path() == "/"
         && parsed.query().is_none()
         && parsed.fragment().is_none())

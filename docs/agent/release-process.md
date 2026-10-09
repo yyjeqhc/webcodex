@@ -3,6 +3,10 @@
 Detailed release readiness lives in
 [`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md).
 
+The optional Linux Runtime package flavor, explicit release selection, v2
+installer manifest and retained legacy view are described in
+[Linux Runtime packaging](../implementation/linux-runtime-packaging.md).
+
 **Default agent policy** is defined in [`AGENTS.md`](../../AGENTS.md): external
 changes, including deploys, require an explicit task and named destination. A
 reviewed development build deployed only to named dogfood targets is distinct

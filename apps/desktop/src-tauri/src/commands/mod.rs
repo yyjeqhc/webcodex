@@ -147,8 +147,30 @@ pub async fn tunnel_profile_action(
     state: State<'_, AppState>,
     profile_id: String,
     action: crate::state::ConnectionAction,
+    expected_revision: Option<u64>,
+    expected_configuration_id: Option<String>,
 ) -> DesktopResult<DesktopStateSnapshot> {
-    project_state_result(&app, state.tunnel_profile_action(profile_id, action).await)
+    let result = if expected_revision.is_some() || expected_configuration_id.is_some() {
+        state
+            .tunnel_profile_action_at_revision(
+                profile_id,
+                action,
+                expected_revision,
+                expected_configuration_id,
+            )
+            .await
+    } else {
+        state.tunnel_profile_action(profile_id, action).await
+    };
+    project_state_result(&app, result)
+}
+
+#[tauri::command]
+pub async fn cloudflare_connection(
+    state: State<'_, AppState>,
+    request: crate::state::CloudflareConnectionRequest,
+) -> DesktopResult<crate::state::CloudflareConnectionResponse> {
+    state.cloudflare_connection(request).await
 }
 
 #[tauri::command]
@@ -511,6 +533,15 @@ pub async fn update_runner_allowed_roots(
 ) -> Result<DesktopStateSnapshot, DesktopError> {
     project_state_result(&app, state.update_runner_allowed_roots(request).await)
 }
+#[tauri::command]
+pub async fn save_runner_job_concurrency(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::webcodex::settings::JobConcurrencyUpdate,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(&app, state.save_runner_job_concurrency(request).await)
+}
+
 #[tauri::command]
 pub async fn restart_owned_runner(
     app: AppHandle,

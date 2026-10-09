@@ -29,6 +29,10 @@ pub fn embedded_tunnel_profiles(root: &Path) -> SetupResultValue<Vec<EmbeddedTun
     let mut identities = BTreeSet::new();
     let mut output = Vec::new();
     for profile in profiles {
+        crate::cloudflare_tunnel::ensure_cloudflare_profile_available(&store, &profile.profile_id)?;
+        if profile.provider != TunnelProvider::Openai {
+            continue;
+        }
         let directory = root.join("server/tunnels").join(&profile.profile_id);
         let binding_path = directory.join("webcodex.env");
         let binding_present = match std::fs::symlink_metadata(&binding_path) {
@@ -105,6 +109,9 @@ impl NativeEnvironment {
             .iter()
             .position(|profile| profile.profile_id == profile_id)
             .ok_or_else(invalid)?;
+        if profiles[profile_index].provider != TunnelProvider::Openai {
+            crate::cloudflare_tunnel::ensure_cloudflare_profile_available(store, profile_id)?;
+        }
         if profiles[profile_index].host_mode == mode {
             return Ok(());
         }

@@ -23,6 +23,10 @@ pub enum ToolValidationIdentityKind {
     GoTest,
     GoVet,
     PythonPytest,
+    PythonRuffCheck,
+    PythonRuffFormat,
+    NodeScriptCheck,
+    NodeNativeTest,
     Project,
 }
 
@@ -36,6 +40,10 @@ impl ToolValidationIdentityKind {
             Self::GoTest => Some("go_test"),
             Self::GoVet => Some("go_vet"),
             Self::PythonPytest => Some("python:pytest:test"),
+            Self::PythonRuffCheck => Some("python:ruff:check"),
+            Self::PythonRuffFormat => Some("python:ruff:format"),
+            Self::NodeScriptCheck => Some("node:script:check"),
+            Self::NodeNativeTest => Some("node:tap:test"),
         }
     }
 }
@@ -205,6 +213,20 @@ pub fn structured_validation_target_identity(
                 semantic["filter"] = Value::String(filter);
             }
             semantic
+        }
+        ToolValidationIdentityKind::PythonRuffCheck
+        | ToolValidationIdentityKind::PythonRuffFormat => {
+            serde_json::json!({"tool":tool_name,"kind": if kind == ToolValidationIdentityKind::PythonRuffCheck { "check" } else { "format" },"cwd":cwd})
+        }
+        ToolValidationIdentityKind::NodeScriptCheck => {
+            let script = obj.get("script")?.as_str()?;
+            if !matches!(script, "check" | "typecheck" | "lint") {
+                return None;
+            }
+            serde_json::json!({"tool": tool_name, "kind": "check", "cwd": cwd, "script": script, "engine": "node-native-run-v1"})
+        }
+        ToolValidationIdentityKind::NodeNativeTest => {
+            serde_json::json!({"tool":tool_name,"kind":"test","cwd":cwd})
         }
         ToolValidationIdentityKind::PythonPytest => {
             let filter = match obj.get("filter") {

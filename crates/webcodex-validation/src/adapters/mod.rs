@@ -1,6 +1,7 @@
-//! Structured Cargo, Go and project pytest validation adapters.
+//! Structured project validation for Cargo, Go, Python and Node.
 
 mod go;
+mod node;
 mod python;
 mod rust;
 
@@ -106,6 +107,10 @@ pub enum ReadOnlyValidationOperation {
     Cargo(CargoReadOnlyValidationOperation),
     Go(GoReadOnlyValidationOperation),
     Python(PythonTestOptions),
+    PythonRuffCheck,
+    PythonRuffFormat,
+    NodeScriptCheck,
+    NodeNativeTest,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +152,12 @@ impl ReadOnlyValidationOperation {
             return Ok(self);
         };
         match &mut self {
-            Self::Python(_) | Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => {
+            Self::Python(_)
+            | Self::PythonRuffCheck
+            | Self::PythonRuffFormat
+            | Self::NodeScriptCheck
+            | Self::NodeNativeTest
+            | Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => {
                 return Err("dependency_policy_unsupported")
             }
             Self::Cargo(CargoReadOnlyValidationOperation::Check(options)) => {
@@ -168,7 +178,12 @@ impl ReadOnlyValidationOperation {
 
     fn dependency_mode(&self) -> Option<ProjectDependencyMode> {
         match self {
-            Self::Python(_) | Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => None,
+            Self::Python(_)
+            | Self::PythonRuffCheck
+            | Self::PythonRuffFormat
+            | Self::NodeScriptCheck
+            | Self::NodeNativeTest
+            | Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => None,
             Self::Cargo(CargoReadOnlyValidationOperation::Check(options)) => {
                 options.dependency_mode
             }
@@ -184,12 +199,33 @@ impl ReadOnlyValidationOperation {
             Self::Cargo(CargoReadOnlyValidationOperation::Test(options)) => options.all_packages,
             Self::Go(GoReadOnlyValidationOperation::Check(options)) => options.all_packages,
             Self::Go(GoReadOnlyValidationOperation::Test(options)) => options.all_packages,
-            Self::Python(_) | Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => false,
+            Self::Python(_)
+            | Self::PythonRuffCheck
+            | Self::PythonRuffFormat
+            | Self::NodeScriptCheck
+            | Self::NodeNativeTest
+            | Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => false,
         }
     }
 
     pub fn compatibility_profile(&self) -> ValidationCompatibilityProfile {
         match self {
+            Self::NodeNativeTest => ValidationCompatibilityProfile {
+                tool_identity: "node:tap:test",
+                validation_identity: ToolValidationIdentityKind::NodeNativeTest,
+            },
+            Self::NodeScriptCheck => ValidationCompatibilityProfile {
+                tool_identity: "node:script:check",
+                validation_identity: ToolValidationIdentityKind::NodeScriptCheck,
+            },
+            Self::PythonRuffCheck => ValidationCompatibilityProfile {
+                tool_identity: "python:ruff:check",
+                validation_identity: ToolValidationIdentityKind::PythonRuffCheck,
+            },
+            Self::PythonRuffFormat => ValidationCompatibilityProfile {
+                tool_identity: "python:ruff:format",
+                validation_identity: ToolValidationIdentityKind::PythonRuffFormat,
+            },
             Self::Python(_) => ValidationCompatibilityProfile {
                 tool_identity: "python:pytest:test",
                 validation_identity: ToolValidationIdentityKind::PythonPytest,
@@ -223,43 +259,47 @@ impl ReadOnlyValidationOperation {
         }
     }
 
-    pub fn adapter(&self) -> &'static dyn ValidationAdapter {
-        match self {
-            Self::Python(_) => python::test_adapter(),
-            Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => rust::format_adapter(),
-            Self::Cargo(CargoReadOnlyValidationOperation::Check(_)) => rust::check_adapter(),
-            Self::Cargo(CargoReadOnlyValidationOperation::Test(_)) => rust::test_adapter(),
-            Self::Go(GoReadOnlyValidationOperation::Check(_)) => go::check_adapter(),
-            Self::Go(GoReadOnlyValidationOperation::Test(_)) => go::test_adapter(),
-        }
+    pub fn evidence_profile(&self) -> &'static dyn ValidationEvidenceProfile {
+        validation_evidence_profile_for_tool(self.compatibility_profile().tool_identity)
+            .expect("operation has a registered evidence profile")
     }
 
     pub fn build_readonly_plan(&self) -> Result<ReadOnlyValidationPlan, String> {
+        let adapter = validation_adapter_for_tool(self.compatibility_profile().tool_identity)
+            .ok_or_else(|| match self {
+                Self::NodeScriptCheck | Self::NodeNativeTest => {
+                    "Node requires Runner-owned package manifest resolution"
+                }
+                _ => "Ruff requires Runner-owned project manifest resolution",
+            })?;
         match self {
-            Self::Python(options) => self
-                .adapter()
-                .build_readonly_plan(ValidationCommandOptions {
-                    filter: options.filter.clone(),
-                    ..Default::default()
-                }),
-            Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => self
-                .adapter()
+            Self::PythonRuffCheck
+            | Self::PythonRuffFormat
+            | Self::NodeScriptCheck
+            | Self::NodeNativeTest => {
+                unreachable!("project-local adapter has no static command")
+            }
+            Self::Python(options) => adapter.build_readonly_plan(ValidationCommandOptions {
+                filter: options.filter.clone(),
+                ..Default::default()
+            }),
+            Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => adapter
                 .build_readonly_plan(ValidationCommandOptions {
                     check: true,
                     ..ValidationCommandOptions::default()
                 }),
-            Self::Cargo(CargoReadOnlyValidationOperation::Check(options)) => self
-                .adapter()
-                .build_readonly_plan(ValidationCommandOptions::from(options.clone())),
-            Self::Cargo(CargoReadOnlyValidationOperation::Test(options)) => self
-                .adapter()
-                .build_readonly_plan(ValidationCommandOptions::from(options.clone())),
-            Self::Go(GoReadOnlyValidationOperation::Check(options)) => self
-                .adapter()
-                .build_readonly_plan(ValidationCommandOptions::from(options.clone())),
-            Self::Go(GoReadOnlyValidationOperation::Test(options)) => self
-                .adapter()
-                .build_readonly_plan(ValidationCommandOptions::from(options.clone())),
+            Self::Cargo(CargoReadOnlyValidationOperation::Check(options)) => {
+                adapter.build_readonly_plan(ValidationCommandOptions::from(options.clone()))
+            }
+            Self::Cargo(CargoReadOnlyValidationOperation::Test(options)) => {
+                adapter.build_readonly_plan(ValidationCommandOptions::from(options.clone()))
+            }
+            Self::Go(GoReadOnlyValidationOperation::Check(options)) => {
+                adapter.build_readonly_plan(ValidationCommandOptions::from(options.clone()))
+            }
+            Self::Go(GoReadOnlyValidationOperation::Test(options)) => {
+                adapter.build_readonly_plan(ValidationCommandOptions::from(options.clone()))
+            }
         }
     }
 
@@ -268,6 +308,12 @@ impl ReadOnlyValidationOperation {
     pub fn validation_target_id(&self, cwd: Option<&str>) -> Option<String> {
         let profile = self.compatibility_profile();
         let arguments = match self {
+            Self::PythonRuffCheck
+            | Self::PythonRuffFormat
+            | Self::NodeScriptCheck
+            | Self::NodeNativeTest => {
+                serde_json::json!({"cwd":cwd})
+            }
             Self::Python(options) => serde_json::json!({"cwd":cwd,"filter":options.filter}),
             Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => serde_json::json!({
                 "cwd": cwd,
@@ -378,7 +424,12 @@ pub fn project_validation_operation(
         ("python", Test) => Ok(ReadOnlyValidationOperation::Python(PythonTestOptions {
             filter: None,
         })),
-        ("python", _) => Err("validation_action_unsupported"),
+        ("python", Check) => Ok(ReadOnlyValidationOperation::PythonRuffCheck),
+        ("python", Format) => Ok(ReadOnlyValidationOperation::PythonRuffFormat),
+        ("node", _) if packages.is_some() || all_packages => Err("validation_scope_unsupported"),
+        ("node", Check) => Ok(ReadOnlyValidationOperation::NodeScriptCheck),
+        ("node", Test) => Ok(ReadOnlyValidationOperation::NodeNativeTest),
+        ("node", _) => Err("validation_action_unsupported"),
         _ => Err("validation_adapter_unavailable"),
     }
 }
@@ -508,20 +559,11 @@ pub struct ValidationFailureEvidence<'a> {
     pub stderr_excerpt: &'a str,
 }
 
-pub trait ValidationAdapter: Sync {
+/// Result interpretation without command-building authority.
+pub trait ValidationEvidenceProfile: Sync {
     fn validation_kind(&self) -> &'static str;
 
     fn tool_identity(&self) -> &'static str;
-
-    fn build_readonly_plan(
-        &self,
-        options: ValidationCommandOptions,
-    ) -> Result<ReadOnlyValidationPlan, String>;
-
-    fn build_command(&self, options: ValidationCommandOptions) -> Result<String, String> {
-        self.build_readonly_plan(options)
-            .map(|plan| plan.compatibility_command)
-    }
 
     fn parse(
         &self,
@@ -534,6 +576,18 @@ pub trait ValidationAdapter: Sync {
 
     fn reports_test_run_metadata(&self) -> bool {
         false
+    }
+}
+
+pub trait ValidationAdapter: ValidationEvidenceProfile {
+    fn build_readonly_plan(
+        &self,
+        options: ValidationCommandOptions,
+    ) -> Result<ReadOnlyValidationPlan, String>;
+
+    fn build_command(&self, options: ValidationCommandOptions) -> Result<String, String> {
+        self.build_readonly_plan(options)
+            .map(|plan| plan.compatibility_command)
     }
 }
 
@@ -571,4 +625,37 @@ pub fn validation_adapter_for_recipe(
         ("python", Test) => "python:pytest:test",
         _ => return None,
     })
+}
+
+/// Evidence-only view of the canonical adapter registry.
+pub fn validation_evidence_profile_for_tool(
+    tool_identity: &str,
+) -> Option<&'static dyn ValidationEvidenceProfile> {
+    validation_adapter_for_tool(tool_identity)
+        .map(|adapter| adapter as &dyn ValidationEvidenceProfile)
+        .or_else(|| python::ruff_evidence_profile(tool_identity))
+        .or_else(|| node::evidence_profile(tool_identity))
+}
+
+/// Evidence-only view of the canonical backend/action mapping.
+pub fn validation_evidence_profile_for_recipe(
+    backend: &str,
+    action: crate::SemanticCheck,
+) -> Option<&'static dyn ValidationEvidenceProfile> {
+    match (backend, action) {
+        ("node", crate::SemanticCheck::Test) => {
+            validation_evidence_profile_for_tool("node:tap:test")
+        }
+        ("node", crate::SemanticCheck::Check) => {
+            validation_evidence_profile_for_tool("node:script:check")
+        }
+        ("python", crate::SemanticCheck::Check) => {
+            validation_evidence_profile_for_tool("python:ruff:check")
+        }
+        ("python", crate::SemanticCheck::Format) => {
+            validation_evidence_profile_for_tool("python:ruff:format")
+        }
+        _ => validation_adapter_for_recipe(backend, action)
+            .map(|adapter| adapter as &dyn ValidationEvidenceProfile),
+    }
 }

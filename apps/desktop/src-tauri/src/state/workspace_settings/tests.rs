@@ -167,3 +167,23 @@ async fn external_config_edit_before_reload_is_never_replaced_or_applied() {
     assert_eq!(calls, 1);
     assert_eq!(std::fs::read_to_string(path).unwrap(), "# external change");
 }
+
+#[tokio::test]
+async fn job_concurrency_save_rejects_unowned_runner_without_changing_the_file() {
+    let (root, runtime, _edit, _) = fixture();
+    let before = std::fs::read_to_string(runtime.runner_config.as_ref().unwrap()).unwrap();
+    let app = AppState::new(root.path().to_path_buf(), root.path().join("resources")).unwrap();
+    app.core.lock().await.as_mut().unwrap().config.runtime = Some(runtime.clone());
+    let result = app
+        .save_runner_job_concurrency(settings::JobConcurrencyUpdate {
+            target: settings::target(&runtime).unwrap(),
+            expected: None,
+            limit: 12,
+        })
+        .await;
+    assert_eq!(result.unwrap_err().code, "runner_not_owned");
+    assert_eq!(
+        std::fs::read_to_string(runtime.runner_config.as_ref().unwrap()).unwrap(),
+        before
+    );
+}

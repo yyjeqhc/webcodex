@@ -1,5 +1,7 @@
+mod cloudflare_connections;
 mod coding_agents;
 mod connections;
+pub use cloudflare_connections::{CloudflareConnectionRequest, CloudflareConnectionResponse};
 mod diagnostics;
 mod environment;
 mod environment_invitation;

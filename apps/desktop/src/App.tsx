@@ -117,7 +117,7 @@ function DesktopApp() {
         {navigation === "home" && <UpdateBanner updates={updates} />}
         {navigation === "home" && (state.topology || state.configuration_issue || state.runtime_error) && <ReadinessBanner state={state} onState={commitState} onDiagnostics={() => openSettings("diagnostics")} onRuntime={() => openSettings("runtime")} onConnection={() => setNavigation("connection")} onProviders={kind => { setExtensionTab(kind === "mcp" ? "mcpProviders" : "codingAgents"); setNavigation("extensions"); }} />}
         {navigation === "home" && !state.configuration_issue && (!needsSetup && completionEnvironment !== null && completionEnvironment === (state.environment_setup?.environment_id ?? state.persistent_environment) && state.topology?.experience === "full" ? (
-          <FirstRunCompletion state={state} onState={commitState} onComplete={() => setCompletionEnvironment(null)}
+          <FirstRunCompletion state={state} onState={commitState} onRuntime={() => { setCompletionEnvironment(null); openSettings("runtime"); }} onComplete={() => setCompletionEnvironment(null)}
             onProjects={() => { setCompletionEnvironment(null); setNavigation("projects"); }}
             onConnection={() => { setCompletionEnvironment(null); setNavigation("connection"); }} />
         ) : needsSetup ? (

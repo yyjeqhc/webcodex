@@ -14,7 +14,7 @@ import type {
   TunnelProxyMode,
 } from "../models/topology";
 
-import type { McpProviderRequest, TunnelProfileAction, TunnelProfileRequest } from "../models/connections-tools";
+import type { CloudflareConnectionRequest, CloudflareConnectionStatus, CloudflareOAuthHandoff, McpProviderRequest, TunnelProfileAction, TunnelProfileRequest } from "../models/connections-tools";
 import type { CodingAgentRequest, SshRegisterRequest, SshResourcesSnapshot, SshMutationResult, RunnerCapabilityAuthorizationSnapshot } from "../models/runner-capabilities";
 
 export const desktopApi = {
@@ -63,13 +63,15 @@ export const desktopApi = {
   registerSshResource: (request: SshRegisterRequest) => invoke<SshMutationResult>("ssh_resource_register", { request }),
   removeSshResource: (expected: SettingsTarget, observationId: string, name: string) =>
     invoke<SshMutationResult>("ssh_resource_remove", { request: { expected, observation_id: observationId, name } }),
+  cloudflareConnection: <T extends CloudflareConnectionStatus | CloudflareOAuthHandoff = CloudflareConnectionStatus>(request: CloudflareConnectionRequest) => invoke<T>("cloudflare_connection", { request }),
   saveTunnelProfile: (request: TunnelProfileRequest) => invoke<DesktopState>("save_tunnel_profile", { request }),
-  tunnelProfileAction: (profileId: string, action: TunnelProfileAction) => invoke<DesktopState>("tunnel_profile_action", { profileId, action }),
+  tunnelProfileAction: (profileId: string, action: TunnelProfileAction, expectedRevision?: number, expectedConfigurationId?: string | null) => invoke<DesktopState>("tunnel_profile_action", { profileId, action, ...(expectedRevision === undefined ? {} : { expectedRevision }), ...(expectedConfigurationId == null ? {} : { expectedConfigurationId }) }),
   saveMcpProvider: (request: McpProviderRequest) => invoke<DesktopState>("save_mcp_provider", { request }),
   removeMcpProvider: (id: string, expectedRevision: number) => invoke<DesktopState>("remove_mcp_provider", { id, expectedRevision }),
   runnerSettings: () => invoke<RunnerSettings>("get_runner_settings"),
   updateRunnerSettings: (target: SettingsTarget, expected: RunnerPaths, paths: RunnerPaths) => invoke<DesktopState>("update_runner_settings", { request: { target, expected, paths } }),
   updateRunnerAllowedRoots: (target: SettingsTarget, expected: string[], roots: string[]) => invoke<DesktopState>("update_runner_allowed_roots", { request: { target, expected, roots } }),
+  saveRunnerJobConcurrency: (target: SettingsTarget, expected: number | null, limit: number) => invoke<DesktopState>("save_runner_job_concurrency", { request: { target, expected, limit } }),
   restartOwnedRunner: (target: SettingsTarget) => invoke<DesktopState>("restart_owned_runner", { target }),
   addRunnerPlugin: (target: SettingsTarget, provider: PluginRegistration) => invoke<DesktopState>("add_runner_plugin", { request: { target, provider } }),
   computerPermissions: () => invoke<ComputerPermissions>("get_computer_permissions"),

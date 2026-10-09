@@ -42,6 +42,10 @@ struct StoredProfiles {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TunnelProfileConfigSnapshot {
+    #[serde(default)]
+    pub provider: webcodex_environment::TunnelProvider,
+    #[serde(default)]
+    pub configuration_id: Option<String>,
     pub id: String,
     pub name: String,
     pub tunnel_id: Option<String>,
@@ -78,6 +82,10 @@ impl Default for TunnelConfig {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TunnelProfileRequest {
+    #[serde(default)]
+    pub provider: webcodex_environment::TunnelProvider,
+    #[serde(default)]
+    pub cloudflare_token: Option<String>,
     pub id: Option<String>,
     pub name: String,
     pub tunnel_id: String,
@@ -229,6 +237,8 @@ impl TunnelConfig {
                     return None;
                 }
                 Some(TunnelProfileConfigSnapshot {
+                    provider: webcodex_environment::TunnelProvider::Openai,
+                    configuration_id: None,
                     id: profile.id.to_string(),
                     name: profile.name.clone(),
                     tunnel_id: safe.effective_tunnel_id,
@@ -278,6 +288,15 @@ impl TunnelConfig {
         path: &Path,
         request: TunnelProfileRequest,
     ) -> DesktopResult<TunnelProfileId> {
+        if request.provider != webcodex_environment::TunnelProvider::Openai
+            || request.cloudflare_token.is_some()
+        {
+            return Err(DesktopError::new(
+                "cloudflare_environment_required",
+                "Cloudflare needs a persistent local Environment",
+                "Use Runtime setup or repair to adopt the existing local Server first.",
+            ));
+        }
         if self.invalid {
             return Err(invalid());
         }
@@ -422,6 +441,8 @@ impl TunnelConfig {
                 self.update_profile(
                     path,
                     TunnelProfileRequest {
+                        provider: webcodex_environment::TunnelProvider::Openai,
+                        cloudflare_token: None,
                         id: Some(TunnelProfileId::DEFAULT.to_string()),
                         name,
                         tunnel_id,

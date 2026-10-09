@@ -6,6 +6,9 @@
 
 已发布文件请从 [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases)获取。仓库 [`download/`](../download/README.md) 目录仅包含静态页面源文件；生成的 `manifest.json` 不提交到仓库。[下载页 workflow](https://github.com/yyjeqhc/webcodex/actions/workflows/download-page.yml) 会在 Release 发布后构建基于 manifest 的 GitHub Actions artifact，但不会托管或部署网页。安装包发布前如需预览特定源码修订，请看 [Linux 源码预览](DESKTOP_DEVELOPMENT.zh-CN.md#linux-源码预览与已有-server)。
 
+无需 Desktop 的 Linux 电脑，请参见 [Runtime 安装与 CLI 加入主节点](runtime-installation.zh-CN.md)，了解 Runtime 软件包、受保护的配对输入，以及共享的无界面更新/恢复入口。
+
+
 ## 一台电脑
 
 以下流程适用于对应平台的安装包已经验收并发布之后；源码预览请使用上文单独列出的开发流程。

@@ -4,6 +4,9 @@ use super::*;
 /// they are never executed and need no publisher or package-manager access.
 fn write_candidate(root: &Path) -> UpgradeCandidate {
     ensure_private_directory(root).unwrap();
+    // Secure the intermediate directory explicitly: Windows private-directory
+    // validation rejects an inherited ACL on a recursively-created ancestor.
+    ensure_private_directory(&root.join("artifacts")).unwrap();
     let platform = crate::unified_update::RuntimePlatform::current().unwrap();
     let mut artifacts = serde_json::Map::new();
     let mut sums = String::new();
@@ -15,7 +18,7 @@ fn write_candidate(root: &Path) -> UpgradeCandidate {
     } else {
         "artifacts/webcodex-desktop"
     };
-    for name in COMPONENTS {
+    for &name in PackageFlavor::Full.components() {
         let relative = if name == "webcodex-desktop" {
             desktop_relative.to_string()
         } else {
@@ -28,6 +31,8 @@ fn write_candidate(root: &Path) -> UpgradeCandidate {
         // platform-specific ACL mutation on every intermediate directory.
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, format!("disposable {name} bytes")).unwrap();
+        #[cfg(windows)]
+        crate::storage::secure_windows_path(&path).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -95,8 +100,8 @@ fn write_candidate(root: &Path) -> UpgradeCandidate {
     });
     let bytes = serde_json::to_vec(&manifest).unwrap();
     sums.push_str(&format!("{}  source-manifest.json\n", hex(&bytes)));
-    std::fs::write(root.join("source-manifest.json"), bytes).unwrap();
-    std::fs::write(root.join("SHA256SUMS"), sums).unwrap();
+    crate::storage::atomic_private_write(&root.join("source-manifest.json"), &bytes).unwrap();
+    crate::storage::atomic_private_write(&root.join("SHA256SUMS"), sums.as_bytes()).unwrap();
     verify_upgrade_candidate(root).unwrap()
 }
 

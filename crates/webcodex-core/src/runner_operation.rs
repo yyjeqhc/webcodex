@@ -2466,6 +2466,30 @@ mod tests {
     }
 
     #[test]
+    fn skill_resource_structured_execution_metadata_is_valid() {
+        let request = skill_execution_request();
+        let operation = RunnerJobOperation::StartSkillResource(RunnerJobSkillResourceOperation {
+            job_id: "job-skill-resource-metadata".to_string(),
+            cwd: Some("/repo".to_string()),
+            request: request.clone(),
+            timeout_secs: 60,
+            context: structured_job_context(
+                Some("/repo"),
+                "run_skill_resource",
+                None,
+                None,
+                request.args.len(),
+                true,
+            ),
+        });
+        let metadata = operation
+            .expected_structured_execution()
+            .expect("Skill resource jobs retain structured execution metadata");
+        assert_eq!(metadata.execution_source, "run_skill_resource");
+        assert!(metadata.is_valid());
+    }
+
+    #[test]
     fn omitted_v2_kind_keeps_legacy_run_shell_default() {
         let value = serde_json::json!({
             "request_id": "req-1",

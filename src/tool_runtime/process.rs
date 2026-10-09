@@ -667,6 +667,21 @@ impl ToolRuntime {
                     &job.job_id,
                     job.observation_token.as_deref(),
                 );
+                // Idempotent replay can return an existing terminal Job. Its
+                // original execution truth is not a fresh pending handoff.
+                let terminal = super::jobs::is_terminal_job_status(&job.status);
+                let (execution_state, started, completed) = if terminal {
+                    let state = job
+                        .command_execution_state
+                        .unwrap_or(ShellCommandExecutionState::OutcomeUnknown);
+                    (
+                        command_execution_state_name(state),
+                        command_started(state),
+                        command_completed(state),
+                    )
+                } else {
+                    ("pending", false, false)
+                };
                 ToolResult::ok(json!({
                     "job_id": job.job_id,
                     "kind": job.kind,
@@ -678,10 +693,10 @@ impl ToolRuntime {
                     "cwd": resolved_cwd,
                     "shell": "direct_argv",
                     "executor": "agent",
-                    "execution_state": "pending",
-                    "command_started": false,
-                    "command_completed": false,
-                    "terminal": false,
+                    "execution_state": execution_state,
+                    "command_started": started,
+                    "command_completed": completed,
+                    "terminal": terminal,
                     "requested_timeout_secs": requested_timeout_secs,
                     "effective_timeout_secs": admission_effective_timeout_secs,
                     "runner_policy_max_timeout_secs": runner_policy_max_timeout_secs,

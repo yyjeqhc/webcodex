@@ -3375,6 +3375,166 @@ fn run_skill_resource_success_requires_provenance_and_keeps_lifecycle_constraint
 }
 
 #[test]
+fn node_project_check_success_schema_preserves_unproven_counts_and_native_identity() {
+    let specs = registered_tool_specs();
+    let schema = &spec_named(&specs, "project_validate").output_schema;
+    let rich = json!({
+        "success": true, "error": null,
+        "output": {
+            "source_state":{"freshness":"unproven","observed_mutation_fence":"unknown"},
+            "backend":"node", "action":"check", "adapter":"node:script:check",
+            "validation_target_id":"target:0123456789abcdef01234567",
+            "warnings_count":null, "errors_count":null,
+            "diagnostics":{
+                "available":false,
+                "parser":"structured_validation_parser",
+                "reason":"project script has no trusted structured diagnostics",
+                "diagnostic_count":null,
+                "diagnostics":[],
+                "returned_diagnostic_count":0,
+                "diagnostics_truncated":false,
+                "invalid_diagnostics_omitted":0,
+                "failed_test_details":[],
+                "failed_test_details_truncated":false,
+                "truncated":false
+            }
+        }
+    });
+    test_support::validate_schema_instance(&rich, schema).unwrap();
+    let mut fake_count = rich.clone();
+    fake_count["output"]["warnings_count"] = json!(0);
+    assert!(test_support::validate_schema_instance(&fake_count, schema).is_err());
+    let mut fake_tests = rich.clone();
+    fake_tests["output"]["tests_run_count"] = json!(12);
+    assert!(test_support::validate_schema_instance(&fake_tests, schema).is_err());
+    let mut forged_parser = rich.clone();
+    forged_parser["output"]["diagnostics"]["parser"] = json!("node_script_exit_status_v1");
+    assert!(test_support::validate_schema_instance(&forged_parser, schema).is_err());
+
+    let compact = json!({
+        "success":true, "error":null,
+        "output":{
+            "source_state":{"freshness":"unproven","observed_mutation_fence":"uncrossed"},
+            "adapter":"node:script:check",
+            "validation_target_id":"target:0123456789abcdef01234567"
+        }
+    });
+    test_support::validate_schema_instance(&compact, schema).unwrap();
+    let mut invalid = compact;
+    invalid["output"]["tests_run_count"] = json!(3);
+    assert!(test_support::validate_schema_instance(&invalid, schema).is_err());
+}
+
+#[test]
+fn node_project_check_unavailable_responses_keep_project_validate_schema_closed() {
+    let specs = registered_tool_specs();
+    let schema = &spec_named(&specs, "project_validate").output_schema;
+    for failure_kind in [
+        "validation_manifest_invalid",
+        "validation_check_unavailable",
+        "validation_scope_unsupported",
+        "validation_action_unsupported",
+        "dependency_policy_unsupported",
+    ] {
+        let output = json!({
+            "success": false,
+            "output": {
+                "execution_source": "project_validate",
+                "execution_state": "not_started",
+                "command_started": false,
+                "command_completed": false,
+                "failure_kind": failure_kind,
+                "detected_backend": "node"
+            },
+            "error": "Project validation unavailable"
+        });
+        test_support::validate_schema_instance(&output, schema)
+            .unwrap_or_else(|e| panic!("{failure_kind}: {e}"));
+    }
+    let invalid = json!({
+        "success": false,
+        "output": {
+            "execution_state": "not_started",
+            "command_started": true,
+            "command_completed": false,
+            "failure_kind": "validation_manifest_invalid",
+            "detected_backend": "node"
+        },
+        "error": "invalid lifecycle"
+    });
+    assert!(test_support::validate_schema_instance(&invalid, schema).is_err());
+}
+
+#[test]
+fn project_validate_schema_admits_canonical_planning_and_replan_failures() {
+    let specs = registered_tool_specs();
+    let schema = &spec_named(&specs, "project_validate").output_schema;
+    for failure_kind in [
+        "unknown_project",
+        "invalid_project_path",
+        "validation_recipe_not_found",
+        "validation_recipe_mismatch",
+        "validation_recipe_ambiguous",
+        "validation_manifest_invalid",
+        "validation_adapter_unavailable",
+        "validation_scope_invalid",
+        "validation_scope_unsupported",
+        "validation_scope_unavailable",
+        "validation_action_unsupported",
+        "dependency_policy_unsupported",
+        "test_filter_unsupported",
+        "validation_check_unavailable",
+    ] {
+        let result = json!({
+            "success": false,
+            "output": {
+                "execution_state": "not_started",
+                "command_started": false,
+                "command_completed": false,
+                "failure_kind": failure_kind,
+                "detected_backend": "python"
+            },
+            "error": "project validation planning unavailable"
+        });
+        test_support::validate_schema_instance(&result, schema).unwrap_or_else(|error| {
+            panic!("project_validate schema must admit planning failure {failure_kind}: {error}")
+        });
+    }
+
+    for failure_kind in ["validation_plan_stale", "validation_unavailable"] {
+        let result = json!({
+            "success": false,
+            "output": {
+                "project": "agent:special:demo",
+                "command_summary": "python -I -B -m ruff check",
+                "cwd": ".",
+                "execution_state": "not_started",
+                "exit_code": null,
+                "duration_ms": null,
+                "stdout_tail": "",
+                "stderr_tail": "",
+                "stdout_lines": 0,
+                "stderr_lines": 0,
+                "stdout_truncated": false,
+                "stderr_truncated": false,
+                "promoted_to_job": false,
+                "terminal": true,
+                "command_started": false,
+                "command_completed": false,
+                "passed": false,
+                "effective_timeout_secs": 60,
+                "sync_wait_secs": 5,
+                "failure_kind": failure_kind
+            },
+            "error": "project validation did not start"
+        });
+        test_support::validate_schema_instance(&result, schema).unwrap_or_else(|error| {
+            panic!("project_validate schema must admit fenced failure {failure_kind}: {error}")
+        });
+    }
+}
+
+#[test]
 fn browser_observation_schema_accepts_canonical_runner_output_and_rejects_private_ids() {
     let observe = crate::output_schema_for_tool("observe_browser");
     let act = crate::output_schema_for_tool("control_browser");
@@ -3707,5 +3867,212 @@ fn structured_validation_sparse_assertion_never_weakens_rejection_or_uncertainty
         test_support::validate_schema_instance(&wire, &schema).unwrap();
         wire["output"]["test_count_assertion"] = serde_json::json!({"minimum_tests":1});
         assert!(test_support::validate_schema_instance(&wire, &schema).is_err());
+    }
+}
+
+fn retained_structured_execution_object(tool: &str) -> Value {
+    let schema = output_schema_for_tool(tool);
+    let node = match tool {
+        "list_jobs" => {
+            &schema["properties"]["output"]["properties"]["jobs"]["items"]["properties"]
+                ["structured_execution"]
+        }
+        "observe_jobs" => {
+            &schema["properties"]["output"]["anyOf"][0]["properties"]["items"]["items"]
+                ["properties"]["output"]["anyOf"][0]["properties"]["structured_execution"]
+        }
+        "read_job_tail" => &schema["properties"]["output"]["properties"]["structured_execution"],
+        other => panic!("no retained structured_execution projection for {other}"),
+    };
+    assert_eq!(
+        node["anyOf"][1]["type"],
+        json!("null"),
+        "{tool} structured_execution must stay nullable"
+    );
+    let object = node["anyOf"][0].clone();
+    assert_eq!(
+        object["additionalProperties"],
+        json!(false),
+        "{tool} structured_execution must stay closed"
+    );
+    assert!(
+        object["properties"]["execution_source"]["enum"]
+            .as_array()
+            .is_some_and(|values| values.iter().any(|value| value == "run_script")),
+        "{tool} did not expose the shared structured_execution object"
+    );
+    object
+}
+
+fn list_jobs_result_with_structured_execution(metadata: Value) -> Value {
+    json!({
+        "success": true,
+        "output": {
+            "jobs": [{
+                "job_id": "job_structured",
+                "kind": "structured",
+                "status": "running",
+                "project": "agent:client:demo",
+                "executor": "agent",
+                "created_at": 1,
+                "started_at": null,
+                "ended_at": null,
+                "exit_code": null,
+                "activity": null,
+                "structured_execution": metadata
+            }],
+            "count": 1,
+            "matched_count": 1,
+            "truncated": false
+        },
+        "error": null
+    })
+}
+
+#[test]
+fn job_metadata_schema_accepts_runtime_structured_execution_values() {
+    let tools = ["list_jobs", "observe_jobs", "read_job_tail"];
+    let schemas = tools.map(retained_structured_execution_object);
+    assert_eq!(schemas[0], schemas[1]);
+    assert_eq!(schemas[0], schemas[2]);
+    let object = &schemas[0];
+    let list_jobs = output_schema_for_tool("list_jobs");
+    let language_enum = &object["properties"]["language"]["anyOf"][0];
+
+    let accept = |metadata: Value| {
+        for (tool, schema) in tools.into_iter().zip(schemas.iter()) {
+            test_support::validate_schema_instance(&metadata, schema).unwrap_or_else(|error| {
+                panic!("{tool} rejected retained metadata {metadata}: {error}")
+            });
+        }
+        test_support::validate_schema_instance(
+            &list_jobs_result_with_structured_execution(metadata.clone()),
+            &list_jobs,
+        )
+        .unwrap_or_else(|error| panic!("list_jobs envelope rejected {metadata}: {error}"));
+    };
+
+    for (execution_source, language, script_bytes, stdin_present) in [
+        ("run_process", Value::Null, Value::Null, false),
+        ("run_process_interactive", Value::Null, Value::Null, false),
+        ("run_detached_process", Value::Null, Value::Null, false),
+        ("run_script", json!("sh"), json!(4), false),
+        ("run_script", json!("bash"), json!(4), true),
+        ("run_script", json!("powershell"), json!(4), false),
+        ("run_script", json!("javascript"), json!(4), false),
+        ("run_script", json!("typescript"), json!(4), false),
+    ] {
+        accept(json!({
+            "execution_source": execution_source,
+            "language": language,
+            "script_bytes": script_bytes,
+            "arg_count": 0,
+            "stdin_present": stdin_present
+        }));
+    }
+
+    let run_shell = json!({
+        "execution_source": "run_shell",
+        "language": null,
+        "script_bytes": null,
+        "arg_count": 0,
+        "stdin_present": false
+    });
+    let run_shell_error = test_support::validate_schema_instance(&run_shell, object)
+        .expect_err("run_shell is not retained structured metadata");
+    assert!(
+        run_shell_error.contains("execution_source")
+            && run_shell_error.contains("outside the declared enum"),
+        "{run_shell_error}"
+    );
+    assert!(test_support::validate_schema_instance(
+        &list_jobs_result_with_structured_execution(run_shell),
+        &list_jobs,
+    )
+    .is_err());
+
+    let ruby = json!({
+        "execution_source": "run_script",
+        "language": "ruby",
+        "script_bytes": 4,
+        "arg_count": 0,
+        "stdin_present": false
+    });
+    let ruby_error = test_support::validate_schema_instance(&json!("ruby"), language_enum)
+        .expect_err("ruby is not a script language");
+    assert!(
+        ruby_error.contains("outside the declared enum"),
+        "{ruby_error}"
+    );
+    assert!(test_support::validate_schema_instance(&ruby, object).is_err());
+    assert!(test_support::validate_schema_instance(
+        &list_jobs_result_with_structured_execution(ruby),
+        &list_jobs,
+    )
+    .is_err());
+
+    let project_build = json!({
+        "execution_source": "project_build",
+        "language": null,
+        "script_bytes": null,
+        "arg_count": 2,
+        "stdin_present": false
+    });
+    let run_skill_resource = json!({
+        "execution_source": "run_skill_resource",
+        "language": null,
+        "script_bytes": null,
+        "arg_count": 1,
+        "stdin_present": true
+    });
+    let python = json!({
+        "execution_source": "run_script",
+        "language": "python",
+        "script_bytes": 24,
+        "arg_count": 1,
+        "stdin_present": false
+    });
+    let mut rejected = Vec::new();
+    for (label, metadata) in [
+        ("project_build", &project_build),
+        ("run_skill_resource", &run_skill_resource),
+        ("python", &python),
+    ] {
+        if let Err(error) = test_support::validate_schema_instance(metadata, object) {
+            rejected.push(format!("{label}: {error}"));
+        }
+    }
+    if let Err(error) = test_support::validate_schema_instance(&json!("python"), language_enum) {
+        rejected.push(format!("python language enum: {error}"));
+    }
+    assert!(
+        rejected.is_empty(),
+        "retained job metadata schema rejected runtime values:\n{}",
+        rejected.join("\n")
+    );
+    accept(project_build);
+    accept(run_skill_resource);
+    accept(python);
+}
+
+#[test]
+fn detached_replay_execution_schema_accepts_retained_terminal_states() {
+    let schema = output_schema_for_tool("run_detached_process");
+    let execution = &schema["properties"]["output"]["properties"]["execution_state"];
+    for valid in [
+        "pending",
+        "not_started",
+        "outcome_unknown",
+        "timed_out",
+        "completed",
+    ] {
+        test_support::validate_schema_instance(&json!(valid), execution)
+            .unwrap_or_else(|error| panic!("{valid} rejected: {error}"));
+    }
+    for invalid in ["running", "unknown"] {
+        assert!(
+            test_support::validate_schema_instance(&json!(invalid), execution).is_err(),
+            "{invalid} must not expand the closed detached execution vocabulary"
+        );
     }
 }

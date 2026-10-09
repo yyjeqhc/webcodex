@@ -75,6 +75,39 @@ async fn exercise() {
         .events_total;
     let service = Service::new(build_test_router(config, db.clone(), runtime.clone()));
 
+    // A newly opened conversation has no presentation binding. Opening its
+    // panel must not borrow a Project/Session or create any work evidence.
+    for ui_capabilities in [true, false] {
+        let (status, empty) = call_with_ui_capabilities(
+            &service,
+            "work_result_thread_panel",
+            json!({}),
+            window,
+            ui_capabilities,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{empty}");
+        assert_eq!(
+            empty["result"]["structuredContent"],
+            json!({"success": true, "output": {"work_result": null}, "error": null})
+        );
+        assert_eq!(
+            empty["result"]["_meta"][super::super::super::tools::WORK_RESULT_APP_RESULT_META_KEY],
+            empty["result"]["structuredContent"]
+        );
+        assert_eq!(
+            empty["result"]["_meta"]
+                [super::super::super::tools::WORK_RESULT_THREAD_CONTEXT_META_KEY],
+            json!({"empty": true, "session_id": null})
+        );
+    }
+    let identity =
+        crate::client_window::ClientWindow::from_opaque("openai-session", window).unwrap();
+    assert!(db
+        .list_window_activity_events(identity.key(), None, 20)
+        .unwrap()
+        .is_empty());
+
     for session_id in [None, Some(session.as_str())] {
         let mut arguments = json!({"project": project});
         if let Some(session_id) = session_id {
@@ -148,11 +181,17 @@ async fn exercise() {
         "another-host-window",
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{other_window}");
-    assert!(other_window["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("No presented Work Result"));
+    assert_eq!(status, StatusCode::OK, "{other_window}");
+    assert_eq!(
+        other_window["result"]["structuredContent"]["output"],
+        json!({"work_result": null}),
+        "A different Window must not inherit the presented Project or Session"
+    );
+    assert_eq!(
+        other_window["result"]["_meta"]
+            [super::super::super::tools::WORK_RESULT_THREAD_CONTEXT_META_KEY],
+        json!({"empty": true, "session_id": null})
+    );
     let (status, overridden) = call(
         &service,
         "work_result_thread_panel",
@@ -183,5 +222,6 @@ async fn exercise() {
         session_events,
         "Presentation binding must not become Session work evidence"
     );
+
     executor.abort();
 }

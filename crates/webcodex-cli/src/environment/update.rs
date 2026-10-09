@@ -6,7 +6,7 @@ use webcodex_environment::{EnvironmentStore, NativeEnvironment, UpgradeTarget};
 
 mod launcher;
 
-const USAGE: &str = "webcodex environment update <COMMAND>\n\nstatus\ncheck\ndownload --version VERSION\napply --version VERSION --yes\nresume --operation-id ID --yes\nrollback --operation-id ID --yes\n\nAll commands accept --environment-dir PATH and --json.\nLinux apply/resume/rollback require an interactive terminal and system sudo authorization.\nOnly an existing official unified installation is eligible; bare Runner, source, npm and custom Runtime installations use the manual release path.\nmacOS and Windows headless application is not supported by this entry point.\nThis updates only this machine; remote Runners are unchanged.\n";
+const USAGE: &str = "webcodex environment update <COMMAND>\n\nstatus\ncheck\ndownload --version VERSION\napply --version VERSION --yes\nresume --operation-id ID --yes\nrollback --operation-id ID --yes\n\nAll commands accept --environment-dir PATH and --json.\nLinux apply/resume/rollback require an interactive terminal and system sudo authorization.\nOnly a verified official Full or Linux Runtime installation is eligible. Full contains Desktop, CLI, Server and Runner; Runtime contains CLI, Server and Runner. Package flavor is preserved; bare Runner, source, npm and custom installations use the manual release path.\nmacOS and Windows headless application is not supported by this entry point.\nThis updates only this machine; remote Runners are unchanged.\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Command {
@@ -159,6 +159,22 @@ fn encode(status: &Status, json: bool) -> Result<String, String> {
     }
     let mut lines = vec![
         format!("Installation: {:?}", status.view.download.installation),
+        format!(
+            "Package flavor: {}",
+            status
+                .view
+                .installed_target
+                .map(|target| format!("{:?} (verified)", target.flavor))
+                .unwrap_or_else(|| "not verified".into())
+        ),
+        format!(
+            "Local Server role: {}",
+            super::observed_boolean(status.local_server)
+        ),
+        format!(
+            "Local Runner role: {}",
+            super::observed_boolean(status.local_runner)
+        ),
         format!("Download: {:?}", status.view.download.phase),
     ];
     for component in &status.view.installed {
@@ -179,10 +195,11 @@ fn encode(status: &Status, json: bool) -> Result<String, String> {
     }
     if let Some(candidate) = &status.view.candidate {
         lines.push(format!(
-            "Verified candidate: {} / {} / {}",
+            "Verified candidate: {} / {} / {} / {:?}",
             candidate.version,
             candidate.source_sha,
-            candidate.target.as_str()
+            candidate.target.as_str(),
+            candidate.target.flavor
         ));
     }
     if let Some(latest) = &status.latest {
@@ -206,12 +223,13 @@ fn encode(status: &Status, json: bool) -> Result<String, String> {
             "manual_recovery_required" => "The current installation result is uncertain. Review environment update status/upgrade-preflight and the documented owner recovery procedure. This command will not dispatch another installer or guess that rollback is safe.",
             "upgrade_rolled_back" => "The attempted update did not complete. Core verified that the previous installation was restored; review status before retrying.",
             "headless_dependencies_unavailable" => "The selected installed package format requires trusted system sudo and its existing package tools. Install the missing distribution dependencies; the updater does not switch package managers.",
+            "candidate_target_changed" => "The verified candidate does not match the installed package flavor, platform or format. Download the matching package; this entry point does not convert Full and Runtime installations.",
             "authorization_required" => "System authorization was not obtained. Services were not prepared by this request; explicitly retry after reviewing status.",
             _ => "Review the saved update state and use the documented manual path when this installation is unsupported.",
         }.into());
     }
     if status.view.download.installation != unified::InstallationKind::Managed {
-        lines.push("Automatic replacement requires an existing official unified installation. Preserve this installation type and use the documented manual release path.".into());
+        lines.push("Automatic replacement requires a verified official Full or Runtime installation. Preserve this installation type and use the documented manual release path.".into());
     }
     lines.push("Only this machine is updated; remote Runner installations are unchanged.".into());
     Ok(lines.join("\n"))
@@ -276,8 +294,9 @@ async fn run_at(input: Input, root: PathBuf, data: PathBuf) -> Result<String, St
         }
     }
     manager.set_installation(kind);
+    let verified_target = verified_installed_target(kind, context.as_ref());
     let initial = manager
-        .status_view(&builds)
+        .status_view_for_target(&builds, verified_target)
         .map_err(|error| failure(&update_error(error), json))?;
     let store = EnvironmentStore::open_existing(root.clone())
         .map_err(|_| failure("environment_unavailable", json))?;
@@ -335,7 +354,7 @@ async fn run_at(input: Input, root: PathBuf, data: PathBuf) -> Result<String, St
                 false,
                 true,
                 kind,
-                unified::detected_installer_target(),
+                download_target(kind, context.as_ref(), unified::detected_installer_target()),
                 &cancellation,
             );
             tokio::pin!(download);
@@ -384,11 +403,18 @@ async fn run_at(input: Input, root: PathBuf, data: PathBuf) -> Result<String, St
     // Reobserve authoritative outcome after a download, helper exit or recovery;
     // do not turn a Started acknowledgement into completed installation.
     if !matches!(input.command, Command::Status | Command::Check) {
-        let refreshed_builds = unified::assess_headless_installation(root)
+        let (refreshed_target, refreshed_builds) = unified::assess_headless_installation(root)
             .await
-            .map(|(_, _, builds)| builds)
+            .map(|(refreshed_kind, context, builds)| {
+                let target = if kind == unified::InstallationKind::Managed {
+                    verified_installed_target(refreshed_kind, context.as_ref())
+                } else {
+                    None
+                };
+                (target, builds)
+            })
             .unwrap_or_default();
-        match manager.status_view(&refreshed_builds) {
+        match manager.status_view_for_target(&refreshed_builds, refreshed_target) {
             Ok(view) => status.view = view,
             Err(error) => {
                 status.ok = false;
@@ -426,7 +452,9 @@ async fn reconcile_effect(
     input: &Input,
     initial: &Status,
 ) -> Result<(), String> {
-    let next = manager.status_view(&[]).map_err(update_error)?;
+    let next = manager
+        .status_view_for_target(&[], initial.view.installed_target)
+        .map_err(update_error)?;
     let Some(operation) = next.upgrade.as_ref() else {
         return Err("manual_recovery_required".into());
     };
@@ -470,6 +498,47 @@ async fn reconcile_effect(
         .map_err(update_error)
 }
 
+// Only the shared installed-package assessment admits an installed flavor.
+fn verified_installed_target(
+    kind: unified::InstallationKind,
+    context: Option<&unified::InstallContext>,
+) -> Option<unified::InstallerTarget> {
+    if kind == unified::InstallationKind::Managed {
+        context.map(|value| value.target)
+    } else {
+        None
+    }
+}
+
+fn download_target(
+    kind: unified::InstallationKind,
+    context: Option<&unified::InstallContext>,
+    detected: Option<unified::InstallerTarget>,
+) -> Option<unified::InstallerTarget> {
+    if kind == unified::InstallationKind::Managed {
+        return verified_installed_target(kind, context);
+    }
+    // A manual Full download is not evidence of the installed flavor and does
+    // not grant installation authority. Never guess Runtime from missing UI.
+    detected.map(|target| unified::InstallerTarget::new(target.platform, target.format))
+}
+
+fn checked_candidate<'a>(
+    context: &unified::InstallContext,
+    view: &'a unified::UpdateView,
+    version: &str,
+) -> Result<&'a unified::CandidateIdentity, String> {
+    let candidate = view
+        .candidate
+        .as_ref()
+        .filter(|candidate| candidate.version == version)
+        .ok_or("candidate_not_verified")?;
+    if candidate.target != context.target {
+        return Err("candidate_target_changed".into());
+    }
+    Ok(candidate)
+}
+
 async fn apply(
     manager: &unified::UpdateManager,
     context: Option<&unified::InstallContext>,
@@ -477,11 +546,7 @@ async fn apply(
     version: &str,
 ) -> Result<(), String> {
     let context = context.ok_or("unsupported_installation")?;
-    let candidate = view
-        .candidate
-        .as_ref()
-        .filter(|candidate| candidate.version == version)
-        .ok_or("candidate_not_verified")?;
+    let candidate = checked_candidate(context, view, version)?;
     if view.download.pending_install {
         return Err("manual_recovery_required".into());
     }
@@ -584,6 +649,159 @@ mod tests {
                 .map(str::to_owned)
                 .collect::<Vec<_>>(),
         )
+    }
+    fn context(target: unified::InstallerTarget) -> unified::InstallContext {
+        unified::InstallContext {
+            environment_root: "/private-canary/environment".into(),
+            environment_id: "11111111-1111-4111-8111-111111111111".into(),
+            binaries: webcodex_environment::RuntimeBinaries {
+                cli: "/private-canary/webcodex".into(),
+                server: "/private-canary/webcodex-server".into(),
+                runner: "/private-canary/webcodex-runner".into(),
+            },
+            desktop: target
+                .flavor
+                .is_full()
+                .then(|| "/private-canary/Desktop".into()),
+            build: webcodex_build_info::machine_build_info("webcodex"),
+            target,
+        }
+    }
+    fn target(flavor: unified::PackageFlavor) -> unified::InstallerTarget {
+        unified::InstallerTarget {
+            platform: if cfg!(target_os = "linux") {
+                unified::RuntimePlatform::current().unwrap()
+            } else {
+                unified::RuntimePlatform::LinuxX64
+            },
+            format: unified::PackageFormat::Deb,
+            flavor,
+        }
+    }
+    #[test]
+    fn download_target_uses_verified_flavor_without_guessing_from_missing_desktop() {
+        let runtime = context(target(unified::PackageFlavor::Runtime));
+        let mut full = context(target(unified::PackageFlavor::Full));
+        full.desktop = None;
+        for selected in [&runtime, &full] {
+            assert_eq!(
+                download_target(
+                    unified::InstallationKind::Managed,
+                    Some(selected),
+                    Some(full.target)
+                ),
+                Some(selected.target)
+            );
+            assert_eq!(
+                verified_installed_target(unified::InstallationKind::Managed, Some(selected)),
+                Some(selected.target)
+            );
+        }
+        assert_eq!(
+            verified_installed_target(unified::InstallationKind::Managed, None),
+            None
+        );
+        assert_eq!(
+            verified_installed_target(unified::InstallationKind::SourceBuild, Some(&runtime)),
+            None
+        );
+        assert_eq!(
+            download_target(unified::InstallationKind::Managed, None, Some(full.target)),
+            None
+        );
+        assert_eq!(
+            download_target(
+                unified::InstallationKind::SourceBuild,
+                None,
+                Some(runtime.target)
+            ),
+            Some(full.target)
+        );
+    }
+    #[test]
+    fn apply_binds_candidate_flavor_platform_and_format_before_authorization() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = context(target(unified::PackageFlavor::Runtime));
+        let manager = unified::UpdateManager::with_environment_root(
+            root.path().join("cache"),
+            root.path().join("environment"),
+        );
+        let mut view = manager.status_view(&[]).unwrap();
+        let candidate = unified::CandidateIdentity {
+            version: "1.2.3".into(),
+            target: selected.target,
+            source_sha: "a".repeat(40),
+            manifest_sha256: "b".repeat(64),
+            installer_sha256: "c".repeat(64),
+        };
+        view.candidate = Some(candidate.clone());
+        assert!(checked_candidate(&selected, &view, "1.2.3").is_ok());
+        for changed in [
+            target(unified::PackageFlavor::Full),
+            unified::InstallerTarget::runtime(
+                if selected.target.platform == unified::RuntimePlatform::LinuxX64 {
+                    unified::RuntimePlatform::LinuxArm64
+                } else {
+                    unified::RuntimePlatform::LinuxX64
+                },
+                unified::PackageFormat::Deb,
+            ),
+            unified::InstallerTarget::runtime(
+                selected.target.platform,
+                unified::PackageFormat::Rpm,
+            ),
+        ] {
+            view.candidate = Some(unified::CandidateIdentity {
+                target: changed,
+                ..candidate.clone()
+            });
+            assert_eq!(
+                checked_candidate(&selected, &view, "1.2.3").unwrap_err(),
+                "candidate_target_changed"
+            );
+        }
+        assert_eq!(
+            checked_candidate(&selected, &view, "1.2.4").unwrap_err(),
+            "candidate_not_verified"
+        );
+        assert!(!root.path().join("cache").exists());
+        assert!(!root.path().join("environment").exists());
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn verified_runtime_status_has_three_components_without_private_paths_or_desktop_claims() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = context(target(unified::PackageFlavor::Runtime));
+        let manager = unified::UpdateManager::with_environment_root(
+            root.path().join("cache"),
+            root.path().join("environment"),
+        );
+        manager.set_installation(unified::InstallationKind::Managed);
+        let status = Status {
+            schema_version: 1,
+            ok: true,
+            environment_id: Some(selected.environment_id),
+            local_server: Some(false),
+            local_runner: Some(true),
+            view: manager
+                .status_view_for_target(&[], Some(selected.target))
+                .unwrap(),
+            latest: None,
+            error_kind: None,
+            headless_apply_supported: true,
+        };
+        let encoded = encode(&status, true).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(value["view"]["installed_target"]["flavor"], "runtime");
+        assert_eq!(value["view"]["installed"].as_array().unwrap().len(), 3);
+        assert_eq!(value["local_server"], false);
+        assert_eq!(value["local_runner"], true);
+        assert!(!encoded.contains("webcodex-desktop"));
+        assert!(!encoded.contains("private-canary"));
+        assert!(encoded.len() <= unified::MAX_UPDATE_VIEW_BYTES);
+        let text = encode(&status, false).unwrap();
+        assert!(text.contains("Runtime (verified)"));
+        assert!(text.contains("Local Server role: no"));
     }
     #[test]
     fn parser_binds_only_required_public_targets() {

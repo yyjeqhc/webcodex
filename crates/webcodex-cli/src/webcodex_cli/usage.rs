@@ -433,15 +433,17 @@ For start/stop/restart/logs/uninstall, --service-file PATH targets a custom mana
 }
 
 pub(crate) fn server_tunnel_usage() -> &'static str {
-    "Usage: webcodex server tunnel --provider openai --env-file PATH --json [--stop-on-stdin-eof]\n\n\
-Run the canonical OpenAI Secure Tunnel for an already-running local WebCodex Server.\n\n\
+    "Usage: webcodex server tunnel --provider openai --env-file PATH --json [--stop-on-stdin-eof]\n\
+       webcodex server tunnel --provider cloudflare_named|cloudflare_quick --runtime-binding PATH --json [--stop-on-stdin-eof]\n\n\
+Run an owned Tunnel for an already-running local WebCodex Server.\n\n\
 Options:\n\
-  --provider openai          Required provider; regular Cloudflare remains a separate future contract\n\
-  --env-file PATH            Local Server env file used for loopback address and bootstrap authority\n\
-  --json                     Emit the safe machine readiness event\n\
+  --provider KIND            openai, cloudflare_named or cloudflare_quick\n\
+  --env-file PATH            OpenAI local Server address and bootstrap authority\n\
+  --runtime-binding PATH     Protected Environment Cloudflare launch binding\n\
+  --json                     Emit safe machine lifecycle events\n\
   --stop-on-stdin-eof        Stop when the owning integration closes stdin (default: keep running)\n\
   -h, --help                 Print help and exit\n\n\
-The Tunnel exposes only the local Server MCP endpoint and authenticates it with the effective Server bootstrap credential (process environment overrides the env file). The ready event contains only provider/readiness/clipboard metadata; credentials are never printed.\n"
+OpenAI retains its native Secure Tunnel behavior and effective bootstrap credential precedence. Cloudflare uses the dedicated loopback OAuth/MCP ingress and the selected profile's protected launch binding. Named tokens are passed only through protected token files; Quick origins last only for the current process. Public readiness and authorized OAuth use are separate observations.\n"
 }
 
 pub(crate) fn server_init_usage() -> &'static str {

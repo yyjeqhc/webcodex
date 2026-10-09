@@ -63,5 +63,6 @@ __pycache__/
 /artifacts/desktop-clarity/
 /artifacts/projects-runtime/
 /artifacts/pdf-reader/
+/artifacts/mcp-workspaces/
 /artifacts/runtime-call-stream/
 /scripts/ui-smoke/node_modules/

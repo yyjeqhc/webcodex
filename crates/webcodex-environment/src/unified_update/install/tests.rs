@@ -1,5 +1,6 @@
 use super::super::download::{DownloadPhase, PendingInstall};
 use super::*;
+use crate::unified_update::PackageFlavor;
 
 fn record() -> UpdateRecord {
     let mut record = UpdateRecord::default();
@@ -24,6 +25,7 @@ fn record() -> UpdateRecord {
 }
 fn observation(outcome: UpgradeOutcome) -> UpgradeObservation {
     UpgradeObservation {
+        package_flavor: PackageFlavor::Full,
         environment_id: "environment".into(),
         operation_id: "operation".into(),
         version: "1.2.3".into(),
@@ -253,7 +255,7 @@ async fn loaded_manager_install_rejects_externally_pending_handoff_before_writes
             server: temp.path().join("webcodex-server"),
             runner: temp.path().join("webcodex-runner"),
         },
-        desktop: temp.path().join("webcodex-desktop"),
+        desktop: Some(temp.path().join("webcodex-desktop")),
         build: build("98.0.0"),
         target: identity.target,
     };
@@ -432,4 +434,19 @@ async fn guarded_reconciliation_never_provisions_missing_cache_root_or_fences() 
         before
     );
     assert!(!environment.exists());
+}
+
+#[test]
+fn different_package_flavor_cannot_clear_matching_pending_history() {
+    let mut observed = observation(UpgradeOutcome::RolledBack);
+    observed.package_flavor = PackageFlavor::Runtime;
+    assert_eq!(
+        reconcile(&record(), Some(&observed), Some(&build("1.2.3")), 101),
+        Reconciliation::RecoveryRequired
+    );
+    observed.outcome = UpgradeOutcome::Committed;
+    assert_eq!(
+        reconcile(&record(), Some(&observed), Some(&build("1.2.3")), 101),
+        Reconciliation::RecoveryRequired
+    );
 }

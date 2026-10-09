@@ -286,15 +286,16 @@ impl State {
                 if event["method"].as_str().is_none() || event.get("id").is_some() {
                     return false;
                 }
-                registry
-                    .routes
-                    .values()
-                    .filter(|route| {
-                        route.peer == peer
-                            && route.lease == lease
-                            && route.target.as_deref() == Some(target)
-                    })
-                    .all(|route| self.queue(route, event))
+                // Diagnostic backpressure invalidates only the affected route.
+                // Losing an effect response remains outcome_unknown; no command
+                // is replayed. A collector can reopen under the exact live lease.
+                registry.routes.retain(|_, route| {
+                    route.peer != peer
+                        || route.lease != lease
+                        || route.target.as_deref() != Some(target)
+                        || self.queue(route, event)
+                });
+                true
             }
             Some("pong") => true,
             _ => false,

@@ -362,7 +362,11 @@ fn remove_orphaned_packages(
             continue;
         };
         let Some(version) = name
-            .strip_prefix("webcodex-unified-v")
+            .strip_prefix(if target.flavor.is_full() {
+                "webcodex-unified-v"
+            } else {
+                "webcodex-runtime-v"
+            })
             .and_then(|v| v.strip_suffix(&suffix))
         else {
             continue;
@@ -423,7 +427,8 @@ pub async fn apply_verified_installer(
         return Err(UpdateError::ManifestMissing);
     };
     let entry = release.manifest.entry(target)?;
-    if candidate.manifest_sha256 != entry.source_manifest_sha256
+    if candidate.package_flavor != target.flavor
+        || candidate.manifest_sha256 != entry.source_manifest_sha256
         || candidate.source_sha != release.source.source_sha
     {
         return Err(UpdateError::ProvenanceFailed);
@@ -431,7 +436,33 @@ pub async fn apply_verified_installer(
     let receipt = crate::verify_prepared_installation(receipt_path, candidate_dir)
         .await
         .map_err(|_| UpdateError::UpgradePreflightFailed)?;
+    if receipt.package_flavor != target.flavor
+        || receipt.installer_target.is_some_and(|t| t != target)
+    {
+        return Err(UpdateError::ProvenanceFailed);
+    }
     trusted_installed_cli(&receipt)?;
+    #[cfg(target_os = "linux")]
+    let installed_binaries = crate::RuntimeBinaries {
+        cli: receipt
+            .targets
+            .get("webcodex")
+            .cloned()
+            .ok_or(UpdateError::ProvenanceFailed)?,
+        server: receipt
+            .targets
+            .get("webcodex-server")
+            .cloned()
+            .ok_or(UpdateError::ProvenanceFailed)?,
+        runner: receipt
+            .targets
+            .get("webcodex-runner")
+            .cloned()
+            .ok_or(UpdateError::ProvenanceFailed)?,
+    };
+    #[cfg(target_os = "linux")]
+    super::install::package::verify_installed_target(target, &installed_binaries)
+        .map_err(|_| UpdateError::UpgradePreflightFailed)?;
     let owner_uid = receipt
         .owner_identity
         .parse::<u32>()
@@ -472,7 +503,7 @@ pub async fn apply_verified_installer(
     // Durable launch intent precedes authorization and spawning. Process crash
     // at any following boundary requires transaction reconciliation.
     save_intent(&cache, &intent)?;
-    if crate::authorize_prepared_installation(receipt_path, candidate_dir)
+    if crate::authorize_prepared_installation_for_target(receipt_path, candidate_dir, Some(target))
         .await
         .is_err()
     {
@@ -481,6 +512,14 @@ pub async fn apply_verified_installer(
             let _ = remove_rpm_recovery_candidate();
         }
         return Err(UpdateError::AuthorizationRequired);
+    }
+    #[cfg(target_os = "linux")]
+    if super::install::package::verify_installed_target(target, &installed_binaries).is_err() {
+        retract_before_launch(&cache, &mut intent, &receipt)?;
+        if recovery_candidate.is_some() {
+            let _ = remove_rpm_recovery_candidate();
+        }
+        return Err(UpdateError::UpgradePreflightFailed);
     }
     let mut child = match tokio::process::Command::new(program)
         .args(arguments)

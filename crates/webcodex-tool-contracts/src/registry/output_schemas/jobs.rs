@@ -452,11 +452,28 @@ fn job_structured_execution_metadata_schema() -> Value {
                 "properties": {
                     "execution_source": {
                         "type": "string",
-                        "enum": ["run_process", "run_process_interactive", "run_detached_process", "run_script"]
+                        "enum": [
+                            "run_process",
+                            "run_process_interactive",
+                            "run_detached_process",
+                            "run_script",
+                            "project_build",
+                            "run_skill_resource"
+                        ]
                     },
                     "language": {
                         "anyOf": [
-                            {"type": "string", "enum": ["sh", "bash", "powershell", "javascript", "typescript"]},
+                            {
+                                "type": "string",
+                                "enum": [
+                                    "sh",
+                                    "bash",
+                                    "powershell",
+                                    "python",
+                                    "javascript",
+                                    "typescript"
+                                ]
+                            },
                             {"type": "null"}
                         ]
                     },
@@ -882,7 +899,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             let mut schema = wrapped_output_schema(vec![
                 ("job_id", schema_type("string", "Stable detached Job id when admitted or recovered.")),
                 ("kind", schema_type("string", "Detached Job kind.")),
-                ("status", schema_type("string", "Current detached Job status at admission.")),
+                ("status", schema_type("string", "Current detached Job status at admission or exact keyed replay.")),
                 ("project", schema_type("string", "Configured project id.")),
                 ("execution_source", schema_type("string", "Always run_detached_process on successful admission.")),
                 ("input_normalization", input_normalization_schema()),
@@ -891,14 +908,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ("cwd", schema_type("string", "Resolved project-relative cwd.")),
                 ("shell", schema_type("string", "Always direct_argv for detached process Jobs.")),
                 ("executor", schema_type("string", "Always agent for detached process Jobs.")),
-                ("execution_state", json!({"type": "string", "enum": ["pending", "not_started"]})),
+                ("execution_state", json!({"type": "string", "enum": ["pending", "not_started", "outcome_unknown", "timed_out", "completed"]})),
                 ("command_started", schema_type("boolean", "Whether the payload is known to have started at tool return.")),
                 ("command_completed", schema_type("boolean", "Whether the payload completed before tool return.")),
                 ("command_ok", schema_type("boolean", "False on pre-start tool failures.")),
                 ("exit_code", nullable_schema("integer", "Process exit code; null for detached initiation responses.")),
                 ("failure_kind", nullable_schema("string", "Structured detached initiation failure kind.")),
                 ("tool_failure", schema_type("boolean", "True for WebCodex initiation/runtime failures.")),
-                ("terminal", schema_type("boolean", "False after successful detached Job admission.")),
+                ("terminal", schema_type("boolean", "False for active detached handoff; true when exact keyed replay finds the original Job already terminal.")),
                 ("requested_timeout_secs", schema_type("integer", "Caller-requested detached lifetime before protocol or Runner-policy clamping.")),
                 ("effective_timeout_secs", schema_type("integer", "Admission-effective detached lifetime after protocol and last-registered Runner-policy clamping.")),
                 ("runner_policy_max_timeout_secs", nullable_schema("integer", "Last-registered Runner policy timeout ceiling used for admission visibility; null for legacy Runners.")),

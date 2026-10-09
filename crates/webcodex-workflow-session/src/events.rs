@@ -1121,6 +1121,30 @@ mod handoff_evidence_tests {
     use super::*;
 
     #[test]
+    fn project_validation_ruff_evidence_survives_summary_and_resanitization() {
+        for (adapter, action) in [
+            ("python:ruff:check", "check"),
+            ("python:ruff:format", "format_check"),
+        ] {
+            let output = json!({
+                "adapter": adapter, "action": action, "backend": "python",
+                "validation_target_id": "target:0123456789abcdef01234567",
+                "stdout_tail": "", "stderr_tail": "", "unretained": "payload",
+            });
+            let summary =
+                validation_output_summary_for_tool_result("project_validate", &output).unwrap();
+            let retained =
+                sanitize_persisted_validation_output_summary("project_validate", &summary).unwrap();
+            for value in [&summary, &retained] {
+                for field in ["adapter", "action", "backend", "validation_target_id"] {
+                    assert_eq!(value[field], output[field]);
+                }
+                assert!(value.get("unretained").is_none());
+            }
+        }
+    }
+
+    #[test]
     fn sparse_job_handoff_unknown_retains_incomplete_evidence_without_payload() {
         for tool in ["run_shell", "cargo_check", "cargo_test"] {
             let output = json!({"execution_state": "outcome_unknown", "command_started": true,
@@ -1634,10 +1658,14 @@ fn copy_project_validation_evidence(summary: &mut Value, output: &Value) {
                 "go_vet",
                 "go_test",
                 "python:pytest:test",
+                "python:ruff:check",
+                "python:ruff:format",
+                "node:script:check",
+                "node:tap:test",
             ][..],
         ),
         ("action", &["format_check", "check", "test"][..]),
-        ("backend", &["rust", "go", "python"][..]),
+        ("backend", &["rust", "go", "python", "node"][..]),
     ] {
         if let Some(value) = output
             .get(field)

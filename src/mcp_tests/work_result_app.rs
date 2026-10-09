@@ -40,7 +40,7 @@ fn work_result_pdf_bytes_are_private_and_do_not_enter_structured_or_text_content
 async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v29"
+        "ui://webcodex/work-result/v31"
     );
     let runtime = test_runtime();
 
@@ -182,7 +182,7 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
             );
             assert_eq!(
                 descriptor.pointer("/_meta/openai~1ui/entrypoints"),
-                Some(&json!([{"type":"global"},{"type":"thread"}]))
+                Some(&json!([{"type":"global"}]))
             );
         } else if name != "work_result_thread_panel" {
             assert!(
@@ -299,6 +299,13 @@ fn work_result_thread_binding_is_exact_window_and_principal_scoped() {
                 .is_err()
         );
     }
+    assert!(super::super::tools::work_result_thread_binding_for_test(
+        &runtime,
+        Some(&owner),
+        Some(&window),
+    )
+    .unwrap()
+    .is_none());
 
     let record = |auth: &crate::auth::AuthContext,
                   window: &crate::client_window::ClientWindow,
@@ -406,6 +413,7 @@ fn work_result_thread_binding_is_exact_window_and_principal_scoped() {
             Some(&owner),
             Some(&window),
         )
+        .unwrap()
         .unwrap(),
         (
             "agent:r:expected".to_string(),
@@ -418,6 +426,7 @@ fn work_result_thread_binding_is_exact_window_and_principal_scoped() {
             Some(&other),
             Some(&window),
         )
+        .unwrap()
         .unwrap(),
         (
             "agent:r:other-principal".to_string(),
@@ -430,6 +439,7 @@ fn work_result_thread_binding_is_exact_window_and_principal_scoped() {
             Some(&owner),
             Some(&other_window),
         )
+        .unwrap()
         .unwrap(),
         (
             "agent:r:other-window".to_string(),

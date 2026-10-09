@@ -57,6 +57,8 @@ pub struct UpgradeServiceComponent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpgradeStatus {
+    #[serde(default, skip_serializing_if = "PackageFlavor::is_full")]
+    pub package_flavor: PackageFlavor,
     pub schema_version: u16,
     pub environment_id: String,
     pub operation_id: String,
@@ -95,7 +97,7 @@ pub(super) fn validate_identity(
     journal: &UpgradeJournal,
     record: &EnvironmentRecord,
 ) -> SetupResultValue<()> {
-    if journal.schema_version != 1
+    if journal.schema_version != journal.candidate.package_flavor.source_schema()
         || !bounded_identity(&record.environment_id)
         || journal.record.environment_id != record.environment_id
         || journal.record.request.account != record.request.account
@@ -278,6 +280,7 @@ fn project(
         }
     }
     let status = UpgradeStatus {
+        package_flavor: journal.candidate.package_flavor,
         schema_version: 1,
         environment_id: record.environment_id.clone(),
         operation_id: journal.operation_id.clone(),

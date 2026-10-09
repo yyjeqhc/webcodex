@@ -112,6 +112,14 @@ parallelism; keep the original failing entry point in the final regression evide
 
 ## Explicit High-Cost Local Evidence
 
+Cloudflare's isolated real Server/Runner/CLI acceptance harness is
+`python3 scripts/e2e_cloudflare_oauth.py --bin-dir target/debug`; its required
+native-TLS-root build and verified ephemeral-CA topology are documented in
+[Cloudflare connections](CLOUDFLARE_CONNECTIONS.md#automated-and-manual-validation).
+Run `cargo test --locked -p webcodex --lib cloudflare_transport -- --ignored --test-threads=1`
+for the new Unix process-tree/pipe/version cancellation fixtures. Real
+Cloudflare/ChatGPT and unexecuted native platforms must be reported separately.
+
 Ordinary `cargo test` and ordinary CI intentionally skip ignored timing/real-process
 coverage. Run the smallest relevant group locally when changing one of these boundaries:
 

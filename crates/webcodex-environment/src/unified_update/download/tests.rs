@@ -483,3 +483,46 @@ fn frontend_projection_contains_no_local_path_or_execution_authority() {
         assert!(value.get(key).is_none(), "{key}");
     }
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn same_version_package_flavor_change_invalidates_old_target_cache() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = UpdateManager::new(temp.path().canonicalize().unwrap());
+    let cache = PrivateUpdateCache::open(manager.root.clone()).unwrap();
+    let platform = RuntimePlatform::current().unwrap();
+    let deb = InstallerTarget::for_platform(platform, unified::PackageFormat::Deb).unwrap();
+    let rpm = InstallerTarget::runtime(platform, unified::PackageFormat::Deb);
+    manager.change(|record| {
+        *record = target_record();
+        record.target = Some(deb);
+    });
+    let old = cache.child("99.0.0").unwrap().child(&deb.as_str()).unwrap();
+    old.write("installer.deb", b"stale").unwrap();
+    manager
+        .run_locked(
+            &cache,
+            Some(ReleaseNotice {
+                version: "99.0.0".into(),
+                runtime_version: "99.0.0".into(),
+                release_url: "https://github.com/yyjeqhc/webcodex/releases/tag/v99.0.0".into(),
+                compatibility: UpdateCompatibility::Unknown,
+            }),
+            false,
+            false,
+            InstallationKind::SourceBuild,
+            Some(rpm),
+            &CancellationSignal::new(),
+        )
+        .await
+        .unwrap();
+    let state = manager.current();
+    assert_eq!(state.target, Some(rpm));
+    assert_eq!(state.phase, DownloadPhase::Available);
+    assert!(!cache
+        .child("99.0.0")
+        .unwrap()
+        .file(&deb.as_str())
+        .unwrap()
+        .exists());
+}

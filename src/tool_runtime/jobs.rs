@@ -427,10 +427,12 @@ pub(crate) fn structured_validation_evidence(
     truncated: bool,
 ) -> StructuredValidationEvidence {
     let combined = format!("{stdout}\n{stderr}");
-    let diagnostics = matches!(kind, "check" | "test")
-        .then(|| super::validation_profile::validation_adapter_for_tool(tool))
+    let profile = (matches!(kind, "check" | "test")
+        || (kind == "format" && tool == "python:ruff:format"))
+        .then(|| super::validation_profile::validation_evidence_profile_for_tool(tool))
         .flatten()
-        .map(|adapter| adapter.parse(stdout, stderr, truncated));
+        .filter(|adapter| adapter.validation_kind() == kind);
+    let diagnostics = profile.map(|adapter| adapter.parse(stdout, stderr, truncated));
     let mut evidence = StructuredValidationEvidence {
         diagnostics,
         tests_detected: None,
@@ -442,8 +444,8 @@ pub(crate) fn structured_validation_evidence(
         warnings_count: None,
         errors_count: None,
     };
-    match kind {
-        "test" if tool == "python:pytest:test" => {
+    match profile.map(|adapter| adapter.tool_identity()) {
+        Some("python:pytest:test" | "node:tap:test") => {
             let summary = evidence
                 .diagnostics
                 .as_ref()
@@ -463,7 +465,7 @@ pub(crate) fn structured_validation_evidence(
                 evidence.zero_tests_run = evidence.tests_run_count.map(|count| count == 0);
             }
         }
-        "test" if tool == "go_test" => {
+        Some("go_test") => {
             let test_summary = evidence
                 .diagnostics
                 .as_ref()
@@ -482,7 +484,7 @@ pub(crate) fn structured_validation_evidence(
                 evidence.zero_tests_run = evidence.tests_run_count.map(|count| count == 0);
             }
         }
-        "test" => {
+        Some("cargo_test") => {
             let metadata = super::cargo::parse_cargo_test_run_metadata(&combined);
             evidence.tests_detected = Some(metadata.tests_detected);
             evidence.test_count_evidence_reason = Some(if truncated {
@@ -497,7 +499,9 @@ pub(crate) fn structured_validation_evidence(
                 evidence.zero_tests_run = metadata.zero_tests_run;
             }
         }
-        "check" if !truncated => {
+        // Preserve the existing check counter projection for known Cargo/Go
+        // adapters; unknown check identities must not inherit Rustc parsing.
+        Some("cargo_check" | "go_vet") if !truncated => {
             evidence.warnings_count =
                 Some(super::cargo::count_rustc_diagnostics(&combined, "warning:") as u64);
             evidence.errors_count =
@@ -548,11 +552,8 @@ pub(crate) fn validation_job_projection_with_policy(
     no_run: Option<bool>,
 ) -> Option<Value> {
     let tool = tool?;
-    let kind = kind.unwrap_or(match tool {
-        "cargo_test" | "go_test" | "python:pytest:test" => "test",
-        "cargo_fmt" => "format",
-        _ => "check",
-    });
+    let profile = super::validation_profile::validation_evidence_profile_for_tool(tool);
+    let kind = kind.unwrap_or_else(|| profile.map_or("check", |profile| profile.validation_kind()));
     let lifecycle = RunnerJobLifecycle::from_wire(status).ok();
     if !lifecycle.is_some_and(RunnerJobLifecycle::is_terminal) {
         let mut value = json!({
@@ -610,7 +611,7 @@ pub(crate) fn validation_job_projection_with_policy(
     }
     let process_passed = lifecycle == Some(RunnerJobLifecycle::Completed) && exit_code == Some(0);
     let mut evidence = structured_validation_evidence(tool, kind, stdout, stderr, truncated);
-    if tool == "cargo_test" {
+    if tool == "cargo_test" && kind == "test" {
         if let Some(authoritative) = authoritative_test_count.filter(|evidence| evidence.is_valid())
         {
             evidence.tests_detected = Some(authoritative.tests_detected);
@@ -619,7 +620,7 @@ pub(crate) fn validation_job_projection_with_policy(
             evidence.test_count_evidence_reason = Some(authoritative.status.reason_code());
         }
     }
-    let pytest_contradictory = if tool == "python:pytest:test" {
+    let report_contradictory = if matches!(tool, "python:pytest:test" | "node:tap:test") {
         match (
             evidence.tests_run_count,
             evidence.tests_failed,
@@ -631,13 +632,17 @@ pub(crate) fn validation_job_projection_with_policy(
             (Some(_), Some(failed), Some(1), Some(RunnerJobLifecycle::Failed)) if failed > 0 => {
                 false
             }
-            (Some(0), Some(0), Some(5), Some(RunnerJobLifecycle::Failed)) => false,
+            (Some(0), Some(0), Some(5), Some(RunnerJobLifecycle::Failed))
+                if tool == "python:pytest:test" =>
+            {
+                false
+            }
             _ => true,
         }
     } else {
         false
     };
-    if pytest_contradictory {
+    if report_contradictory {
         evidence.tests_run_count = None;
         evidence.tests_passed = None;
         evidence.tests_failed = None;
@@ -647,10 +652,27 @@ pub(crate) fn validation_job_projection_with_policy(
         if let Some(diagnostics) = evidence.diagnostics.as_mut() {
             diagnostics.test_summary = None;
             diagnostics.available = false;
-            diagnostics.reason = Some("pytest summary contradicts process outcome");
+            diagnostics.reason = Some(if tool == "python:pytest:test" {
+                "pytest summary contradicts process outcome"
+            } else {
+                "Node TAP summary contradicts process outcome"
+            });
         }
     }
-    let mut passed = process_passed && !pytest_contradictory;
+    let profile_mismatch = profile.is_some_and(|profile| profile.validation_kind() != kind);
+    // Canonical Ruff check disables fixes and exit-code overrides: a reported
+    // lint violation cannot agree with a successful native check.
+    let ruff_contradictory = tool == "python:ruff:check"
+        && process_passed
+        && evidence
+            .diagnostics
+            .as_ref()
+            .is_some_and(|diagnostics| !diagnostics.diagnostics.is_empty());
+    let mut passed = process_passed
+        && !report_contradictory
+        && !ruff_contradictory
+        && !profile_mismatch
+        && !(tool == "node:tap:test" && evidence.tests_run_count.is_none());
     let mut value = json!({
         "tool": tool,
         "kind": kind,
@@ -668,37 +690,39 @@ pub(crate) fn validation_job_projection_with_policy(
             value["tests_passed"] = json!(evidence.tests_passed);
             value["tests_failed"] = json!(evidence.tests_failed);
             value["zero_tests_run"] = json!(evidence.zero_tests_run);
-            if matches!(tool, "cargo_test" | "go_test" | "python:pytest:test") && process_passed {
-                if let Some(minimum_tests) = minimum_tests {
-                    let (status, reason_code) = match evidence.tests_run_count {
-                        Some(actual) if actual >= minimum_tests => ("passed", "minimum_satisfied"),
-                        Some(_) => {
-                            passed = false;
-                            ("failed", "minimum_not_met")
-                        }
-                        None => {
-                            passed = false;
-                            ("unproven", "test_count_unproven")
-                        }
-                    };
-                    value["passed"] = json!(passed);
-                    value["test_count_assertion"] = json!({
-                        "minimum_tests": minimum_tests,
-                        "actual_tests_run": evidence.tests_run_count,
-                        "status": status,
-                        "reason_code": reason_code,
-                        "evidence_reason_code": evidence
-                            .test_count_evidence_reason
-                            .unwrap_or("no_complete_summary"),
-                    });
-                }
-            }
         }
         "check" => {
             value["warnings_count"] = json!(evidence.warnings_count);
             value["errors_count"] = json!(evidence.errors_count);
         }
         _ => {}
+    }
+    // A requested minimum requires proven counts, including for unknown tools
+    // or mismatched kinds. Unknown tools without a minimum retain process success.
+    if process_passed {
+        if let Some(minimum_tests) = minimum_tests {
+            let (status, reason_code) = match evidence.tests_run_count {
+                Some(actual) if actual >= minimum_tests => ("passed", "minimum_satisfied"),
+                Some(_) => {
+                    passed = false;
+                    ("failed", "minimum_not_met")
+                }
+                None => {
+                    passed = false;
+                    ("unproven", "test_count_unproven")
+                }
+            };
+            value["passed"] = json!(passed);
+            value["test_count_assertion"] = json!({
+                "minimum_tests": minimum_tests,
+                "actual_tests_run": evidence.tests_run_count,
+                "status": status,
+                "reason_code": reason_code,
+                "evidence_reason_code": evidence
+                    .test_count_evidence_reason
+                    .unwrap_or("no_complete_summary"),
+            });
+        }
     }
     apply_cargo_test_execution_policy(&mut value, tool, require_tests, no_run);
     Some(value)
@@ -710,7 +734,7 @@ fn apply_cargo_test_execution_policy(
     require_tests: Option<bool>,
     no_run: Option<bool>,
 ) {
-    if !matches!(tool, "cargo_test" | "python:pytest:test") {
+    if !matches!(tool, "cargo_test" | "python:pytest:test" | "node:tap:test") {
         return;
     }
     if let Some(require_tests) = require_tests {
@@ -932,7 +956,7 @@ impl ToolRuntime {
         let kind = metadata
             .map(|metadata| metadata.kind.as_str())
             .or_else(|| {
-                super::validation_profile::validation_adapter_for_tool(tool)
+                super::validation_profile::validation_evidence_profile_for_tool(tool)
                     .map(|adapter| adapter.validation_kind())
             })
             .or(job.purpose.as_deref());
@@ -1914,6 +1938,7 @@ impl ToolRuntime {
                 status.as_deref(),
                 project.as_deref(),
                 session_id.as_deref(),
+                None,
                 auth,
             )
             .await
@@ -2159,6 +2184,7 @@ impl ToolRuntime {
             .runner_registry
             .list_jobs_for_auth_filtered(
                 crate::runner_http::runner_access_from_auth(auth).as_ref(),
+                None,
                 project,
                 None,
             )

@@ -7,7 +7,7 @@ mod cancellation;
 pub mod desktop_data_dir;
 pub mod discovery;
 mod download;
-mod install;
+pub(crate) mod install;
 mod view;
 mod windows_handoff;
 pub use cancellation::CancellationSignal;
@@ -45,8 +45,8 @@ pub use cache::PrivateUpdateCache;
 #[cfg(unix)]
 pub use installer::{apply_verified_installer, verify_installed_update_cli, InstallerLaunchNotice};
 pub use network::{fetch_release, http_client, read_response, ReleaseArtifacts};
-pub use source::{verify_source_manifest, UpdateSource};
-pub(crate) use strict_json::parse as strict_json;
+pub use source::{verify_source_manifest, verify_source_manifest_for_flavor, UpdateSource};
+pub(crate) use strict_json::{deserialize_unique, parse as strict_json};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -179,9 +179,52 @@ impl PackageFormat {
     }
 }
 
+/// Installed package composition; never an Environment role. Legacy wire targets
+/// omit this field and retain the exact Full contract.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageFlavor {
+    #[default]
+    Full,
+    Runtime,
+}
+impl PackageFlavor {
+    pub const fn is_full(&self) -> bool {
+        matches!(self, Self::Full)
+    }
+    pub const fn components(self) -> &'static [&'static str] {
+        match self {
+            Self::Full => &[
+                "webcodex",
+                "webcodex-server",
+                "webcodex-runner",
+                "webcodex-desktop",
+            ],
+            Self::Runtime => &RUNTIME_BINARIES,
+        }
+    }
+    pub fn source_filename(self, platform: RuntimePlatform, version: &str) -> String {
+        match self {
+            Self::Full => platform.source_filename(version),
+            Self::Runtime => format!(
+                "webcodex-runtime-source-v{version}-{}.json",
+                platform.as_str()
+            ),
+        }
+    }
+    pub const fn source_schema(self) -> u16 {
+        match self {
+            Self::Full => 1,
+            Self::Runtime => 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InstallerTarget {
+    #[serde(default, skip_serializing_if = "PackageFlavor::is_full")]
+    pub flavor: PackageFlavor,
     pub platform: RuntimePlatform,
     pub format: PackageFormat,
 }
@@ -199,12 +242,17 @@ impl InstallerTarget {
     ];
 
     pub const fn new(platform: RuntimePlatform, format: PackageFormat) -> Self {
-        Self { platform, format }
+        Self {
+            platform,
+            format,
+            flavor: PackageFlavor::Full,
+        }
     }
 
     pub fn parse(value: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
+            .chain(Self::RUNTIME)
             .find(|target| target.as_str() == value)
     }
 
@@ -229,19 +277,58 @@ impl InstallerTarget {
         }
     }
 
+    pub const RUNTIME: [Self; 4] = [
+        Self::runtime(RuntimePlatform::LinuxX64, PackageFormat::Deb),
+        Self::runtime(RuntimePlatform::LinuxX64, PackageFormat::Rpm),
+        Self::runtime(RuntimePlatform::LinuxArm64, PackageFormat::Deb),
+        Self::runtime(RuntimePlatform::LinuxArm64, PackageFormat::Rpm),
+    ];
+    pub const fn runtime(platform: RuntimePlatform, format: PackageFormat) -> Self {
+        Self {
+            platform,
+            format,
+            flavor: PackageFlavor::Runtime,
+        }
+    }
     pub fn as_str(self) -> String {
-        format!("{}-{}", self.platform.as_str(), self.format.extension())
+        let suffix = if self.flavor.is_full() {
+            ""
+        } else {
+            "-runtime"
+        };
+        format!(
+            "{}{suffix}-{}",
+            self.platform.as_str(),
+            self.format.extension()
+        )
+    }
+    pub fn source_filename(self, version: &str) -> String {
+        self.flavor.source_filename(self.platform, version)
     }
 
     pub fn installer_filename(self, version: &str) -> String {
         format!(
-            "webcodex-unified-v{version}-{}.{}",
+            "webcodex-{}-v{version}-{}.{}",
+            if self.flavor.is_full() {
+                "unified"
+            } else {
+                "runtime"
+            },
             self.platform.as_str(),
             self.format.extension()
         )
     }
 
     pub const fn valid(self) -> bool {
+        if !self.flavor.is_full() {
+            return matches!(
+                (self.platform, self.format),
+                (
+                    RuntimePlatform::LinuxX64 | RuntimePlatform::LinuxArm64,
+                    PackageFormat::Deb | PackageFormat::Rpm
+                )
+            );
+        }
         matches!(
             (self.platform, self.format),
             (
@@ -306,6 +393,8 @@ pub struct RuntimeArtifact {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InstallerEntry {
+    #[serde(default, skip_serializing_if = "PackageFlavor::is_full")]
+    pub flavor: PackageFlavor,
     pub platform: RuntimePlatform,
     pub format: PackageFormat,
     pub filename: String,
@@ -318,6 +407,8 @@ pub struct InstallerEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UnifiedInstallerManifest {
+    #[serde(skip)]
+    pub catalog_version: u16,
     pub version: String,
     pub binaries: Vec<String>,
     pub artifacts: BTreeMap<RuntimePlatform, RuntimeArtifact>,
@@ -329,13 +420,65 @@ impl UnifiedInstallerManifest {
             return Err(UpdateError::ManifestInvalid);
         }
         let value = strict_json(bytes).map_err(|_| UpdateError::ManifestInvalid)?;
-        let manifest: Self =
+        Self::parse_value(value, version, 1)
+    }
+    pub fn parse_v2(bytes: &[u8], version: &str) -> UpdateResult<Self> {
+        if bytes.len() as u64 > MAX_MANIFEST_BYTES {
+            return Err(UpdateError::ManifestInvalid);
+        }
+        let mut value = strict_json(bytes).map_err(|_| UpdateError::ManifestInvalid)?;
+        if value
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64)
+            != Some(2)
+        {
+            return Err(UpdateError::ManifestInvalid);
+        }
+        value
+            .as_object_mut()
+            .ok_or(UpdateError::ManifestInvalid)?
+            .remove("schema_version");
+        Self::parse_value(value, version, 2)
+    }
+    /// Deterministic compatibility projection; v2 remains the only catalog
+    /// authority. The generated legacy view contains the unchanged Full set.
+    pub(crate) fn full_compatibility(&self) -> Self {
+        let mut view = self.clone();
+        view.catalog_version = 1;
+        view.installers.retain(|_, entry| entry.flavor.is_full());
+        view
+    }
+    fn parse_value(
+        value: serde_json::Value,
+        version: &str,
+        catalog_version: u16,
+    ) -> UpdateResult<Self> {
+        for target in InstallerTarget::ALL {
+            if value
+                .get("installers")
+                .and_then(|entries| entries.get(target.as_str()))
+                .and_then(|entry| entry.get("flavor"))
+                .is_some()
+            {
+                return Err(UpdateError::ManifestInvalid);
+            }
+        }
+        let mut manifest: Self =
             serde_json::from_value(value).map_err(|_| UpdateError::ManifestInvalid)?;
+        manifest.catalog_version = catalog_version;
+        let targets: Vec<_> = InstallerTarget::ALL
+            .into_iter()
+            .chain(
+                InstallerTarget::RUNTIME
+                    .into_iter()
+                    .filter(|_| catalog_version == 2),
+            )
+            .collect();
         if !stable_version(version)
             || manifest.version != version
             || manifest.binaries != RUNTIME_BINARIES
             || manifest.artifacts.len() != RuntimePlatform::ALL.len()
-            || manifest.installers.len() != InstallerTarget::ALL.len()
+            || manifest.installers.len() != targets.len()
         {
             return Err(UpdateError::ManifestInvalid);
         }
@@ -354,7 +497,7 @@ impl UnifiedInstallerManifest {
                 return Err(UpdateError::ManifestInvalid);
             }
         }
-        for target in InstallerTarget::ALL {
+        for &target in &targets {
             let key = target.as_str();
             let entry = manifest
                 .installers
@@ -362,23 +505,33 @@ impl UnifiedInstallerManifest {
                 .ok_or(UpdateError::ManifestInvalid)?;
             let filename = target.installer_filename(version);
             if !target.valid()
+                || entry.flavor != target.flavor
                 || entry.platform != target.platform
                 || entry.format != target.format
                 || entry.filename != filename
                 || entry.url != release_asset_url(version, &filename)?
                 || entry.source_manifest_url
-                    != release_asset_url(version, &target.platform.source_filename(version))?
+                    != release_asset_url(version, &target.source_filename(version))?
                 || !valid_sha256(&entry.sha256)
                 || !valid_sha256(&entry.source_manifest_sha256)
             {
                 return Err(UpdateError::ManifestInvalid);
             }
         }
-        for platform in RuntimePlatform::ALL {
+        for (platform, flavor) in RuntimePlatform::ALL
+            .into_iter()
+            .map(|p| (p, PackageFlavor::Full))
+            .chain(
+                [RuntimePlatform::LinuxX64, RuntimePlatform::LinuxArm64]
+                    .into_iter()
+                    .filter(|_| catalog_version == 2)
+                    .map(|p| (p, PackageFlavor::Runtime)),
+            )
+        {
             let mut source_sha256 = None;
-            for target in InstallerTarget::ALL
-                .into_iter()
-                .filter(|target| target.platform == platform)
+            for &target in targets
+                .iter()
+                .filter(|target| target.platform == platform && target.flavor == flavor)
             {
                 let digest = manifest.entry(target)?.source_manifest_sha256.as_str();
                 if source_sha256.is_some_and(|expected| expected != digest) {
@@ -418,4 +571,4 @@ pub fn trusted_download_url(url: &url::Url) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

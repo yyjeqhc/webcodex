@@ -11,7 +11,7 @@ fn docx_document_app_binds_to_the_generic_private_artifact_reader() {
         .unwrap();
     assert_eq!(
         present["_meta"]["ui"]["resourceUri"],
-        "ui://webcodex/docx/v1"
+        "ui://webcodex/docx/v2"
     );
     assert!(tools.iter().all(|tool| tool["name"] != "read_docx_chunk"));
     let read = tools

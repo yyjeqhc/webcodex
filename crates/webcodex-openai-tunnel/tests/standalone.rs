@@ -118,7 +118,18 @@ async fn settled_cli(address: &str) {
     .unwrap();
 }
 fn markers(root: &Path) -> usize {
-    std::fs::read_dir(root).unwrap().count()
+    // Stable .lock files carry mutual exclusion, not unconfirmed execution.
+    std::fs::read_dir(root)
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "active")
+        })
+        .count()
 }
 fn no_secret(output: &std::process::Output) {
     for bytes in [&output.stdout, &output.stderr] {

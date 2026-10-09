@@ -413,3 +413,36 @@ PID. Other managers currently fail closed when an exact PID cannot be verified.
 `tunnel_restart_uncertain` requires reconciling prior effects; diagnostics never clear a
 restart fence or replay a write. Readiness schema v1 gains optional `state` and `diagnostic`
 metadata; older files remain readable, with unavailable state omitted.
+
+### Guarded Tunnel recovery
+
+`webcodex environment recover-tunnel primary --environment-dir /absolute/environment --json`
+is diagnostic by default. It reports the exact run, profile revision, Environment identity,
+and the existing owner/standalone service observations. It never stops a running service.
+After reconciling prior effects and stopping the owner using its existing service lifecycle,
+apply the **observed** identifiers:
+
+```
+webcodex environment recover-tunnel primary --environment-dir /absolute/environment \
+  --apply --accept-uncertain-effects --expected-environment-id ENVIRONMENT_ID \
+  --expected-revision REVISION --expected-run-id RUN_ID
+```
+
+Apply retains the Environment lock, validates the private binding and exact owner, and takes
+an identity-wide lock shared by embedded and standalone Tunnel clients. A live or reused
+owner PID, unknown ownership, competing standalone service, changed profile, or changed run
+fails closed. Only the exact old marker is atomically archived with its original bytes.
+The existing service manager starts the stopped owner, and completion requires fresh
+PID/revision-matched Tunnel and local MCP readiness. Failure retains the archive and reports
+a next action; repeating the same stale request cannot archive a new run or replay a write.
+Starting a Server uses its ordinary lifecycle and loads its saved profiles; no other profile's
+fence or configuration is modified. There is no temporary launchctl job or parallel supervisor.
+
+Automatic recovery currently supports Unix user-managed OpenAI Tunnel owners in a complete
+Environment, using the same per-user state directory as their runtime. Catalog-only setups
+are diagnostic only. New runs write a version 2 marker with PID and opaque run ID; older
+binaries still see the existing `.active` latch and cannot overwrite it. Version 1 markers
+are preserved and reported as `tunnel_legacy_owner_unverifiable`: they contain no owner
+identity, so even risk acknowledgment cannot prove that no old executor remains alive.
+They require separate operator reconciliation; this command does not silently migrate or
+remove them. No credential or public execution scope is added.

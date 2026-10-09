@@ -343,3 +343,25 @@ CLI 请求默认遵循标准代理环境变量（`HTTP_PROXY`、`HTTPS_PROXY`、
 Linux/macOS 托管服务需要匹配服务管理器的当前 PID；暂不能验证精确 PID 的其他管理器保守返回未就绪。
 `tunnel_restart_uncertain` 需要先核对历史执行效果；诊断不会重放写操作。
 readiness v1 增加可选的 `state`、`diagnostic` 字段，旧文件仍可读取，缺失状态保持未知。
+
+### 单 Profile 受控恢复
+
+`webcodex environment recover-tunnel primary --environment-dir /absolute/environment --json`
+默认只诊断，返回 run ID、Profile revision、Environment ID 和 owner/standalone 服务观察。
+核对历史执行结果并通过原有服务生命周期停止 owner 后，才可使用诊断返回的精确标识：
+
+```
+webcodex environment recover-tunnel primary --environment-dir /absolute/environment \
+  --apply --accept-uncertain-effects --expected-environment-id ENVIRONMENT_ID \
+  --expected-revision REVISION --expected-run-id RUN_ID
+```
+
+执行持有 Environment 配置锁和 Tunnel 身份锁；活跃/复用 PID、其他 owner、旧 revision 或 run ID 均拒绝。
+只原子归档精确标记并保留原内容，随后使用现有 Service Manager 启动已停止的 owner，验证当前 PID、revision、
+Tunnel 和本地 MCP readiness。重复旧请求不会再次归档新 run 或重放写操作。Server 按原有生命周期载入其配置，
+其他 Profile 的 fence 和配置不修改；没有第二套 supervisor 或临时 launchctl 任务。
+
+当前自动恢复限于完整 Environment 中的 Unix 用户托管 OpenAI Tunnel；catalog-only 配置仅诊断。
+新 run 使用含 PID 和 run ID 的 v2 标记；旧二进制仍受同名 `.active` 文件阻挡。
+旧 v1 标记没有 owner 证据，保留原样并返回 `tunnel_legacy_owner_unverifiable`。即使确认风险，也不能证明旧执行者
+已经结束，因此仍需单独人工核对，命令不会自动迁移或删除。没有新增凭据或模型执行权限。

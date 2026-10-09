@@ -5297,6 +5297,7 @@ dependencies = [
  "url",
  "uuid",
  "webcodex-core",
+ "webcodex-openai-tunnel",
  "webcodex-process",
  "webcodex-runner-config",
  "windows-sys 0.61.2",
@@ -5323,8 +5324,10 @@ dependencies = [
 name = "webcodex-openai-tunnel"
 version = "0.1.0"
 dependencies = [
+ "fs2",
  "futures-util",
  "httpdate",
+ "libc",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

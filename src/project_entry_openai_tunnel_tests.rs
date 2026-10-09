@@ -8,11 +8,12 @@ async fn cancelled_stop_retains_the_owned_task_for_drop_cleanup() {
     // A task that cannot complete before this owner observes it or aborts it.
     let task = tokio::spawn(std::future::pending::<Result<(), Error>>());
     let abort = task.abort_handle();
+    let marker_path = guard.path().to_path_buf();
     let mut tunnel = OpenAiTunnel {
         task: Some(task),
         stop: Some(stop),
         health: Health::default(),
-        guard: guard.clone(),
+        guard,
         terminal: None,
     };
     tokio::select! {
@@ -33,7 +34,7 @@ async fn cancelled_stop_retains_the_owned_task_for_drop_cleanup() {
     .await
     .unwrap();
     assert!(
-        guard.exists(),
+        marker_path.exists(),
         "unobserved shutdown must retain the restart fence"
     );
 }
@@ -61,11 +62,13 @@ fn restart_guard_blocks_concurrent_owner_and_unclean_restart() {
     );
     assert!(acquire_guard(&root, "tunnel_another").is_ok());
     assert_eq!(
-        std::fs::read_to_string(&marker).unwrap(),
-        "native-tunnel-run-v1\n"
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(marker.path()).unwrap())
+            .unwrap()["version"],
+        2
     );
     // Only an observed clean stop or explicit operator resolution clears this latch.
-    std::fs::remove_file(&marker).unwrap();
+    marker.finish().unwrap();
+    drop(marker);
     assert!(acquire_guard(&root, "tunnel_fixture").is_ok());
 }
 #[test]
@@ -239,7 +242,7 @@ async fn startup_timeout_settles_idle_owner_before_reporting_failure() {
 async fn observed_idle_shutdown_clears_restart_marker() {
     let temp = tempfile::tempdir().unwrap();
     let mut tunnel = idle_tunnel(temp.path()).await;
-    let marker = tunnel.guard.clone();
+    let marker = tunnel.guard.path().to_path_buf();
     tunnel.stop().await;
     assert!(!marker.exists());
     assert!(!tunnel.health.is_ready());
@@ -249,16 +252,20 @@ async fn observed_task_error_is_not_a_clean_join_and_keeps_restart_fence() {
     let temp = tempfile::tempdir().unwrap();
     let guard = acquire_guard(temp.path(), "failed-fixture").unwrap();
     let task = tokio::spawn(async { Err(Error::Protocol) });
+    let marker_path = guard.path().to_path_buf();
     let mut tunnel = OpenAiTunnel {
         task: Some(task),
         stop: None,
         health: Health::default(),
-        guard: guard.clone(),
+        guard,
         terminal: None,
     };
     assert!(tunnel.wait_for_exit().await.is_err());
     assert!(tunnel.stop_with_outcome().await.is_err());
-    assert!(guard.exists(), "Ok(Err(...)) is not a clean task result");
+    assert!(
+        marker_path.exists(),
+        "Ok(Err(...)) is not a clean task result"
+    );
 }
 
 #[tokio::test]
@@ -274,7 +281,7 @@ async fn clean_owner_stop_allows_reacquiring_the_same_identity() {
 async fn dropping_owner_retains_restart_marker() {
     let temp = tempfile::tempdir().unwrap();
     let tunnel = idle_tunnel(temp.path()).await;
-    let marker = tunnel.guard.clone();
+    let marker = tunnel.guard.path().to_path_buf();
     drop(tunnel);
     assert!(marker.exists());
     assert_eq!(

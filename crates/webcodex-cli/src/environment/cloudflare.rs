@@ -43,7 +43,12 @@ pub(super) fn validate_input(input: &Input) -> Result<(), String> {
     if input.expected_revision.is_some()
         && !matches!(
             input.command.as_str(),
-            "configure-tunnel" | "cloudflare-start" | "start" | "restart" | "remove-tunnel"
+            "configure-tunnel"
+                | "cloudflare-start"
+                | "start"
+                | "restart"
+                | "remove-tunnel"
+                | "recover-tunnel"
         )
     {
         return Err(

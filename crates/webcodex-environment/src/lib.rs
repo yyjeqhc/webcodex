@@ -40,6 +40,8 @@ pub mod service;
 pub mod session_service;
 mod storage;
 mod tunnel;
+mod tunnel_recovery;
+pub use tunnel_recovery::{TunnelRecoveryObservation, TunnelRecoveryRequest};
 mod types;
 pub use local_status::{ComponentObservation, LocalEnvironmentStatus};
 pub use upgrade::{upgrade_observation, UpgradeObservation, UpgradeOutcome};

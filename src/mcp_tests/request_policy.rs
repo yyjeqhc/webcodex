@@ -57,6 +57,57 @@ fn request_policy_is_explicit_bounded_and_never_sticky() {
 }
 
 #[test]
+fn request_headers_cannot_escape_explicit_deployment_timing_caps() {
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS", "8");
+    env.set("WEBCODEX_MCP_HOST_CONTINUATION_WAIT_MAX_SECS", "12");
+    let base = deployment()
+        .with_timing_overrides(crate::mcp_host::McpHostTimingOverrides::from_env().unwrap());
+    assert_eq!(
+        (base.max_sync_wait_secs, base.continuation_wait_secs),
+        (8, 12)
+    );
+    assert_eq!(base.initial_job_handoff_secs, 5);
+
+    let mut headers = HeaderMap::new();
+    headers.insert(PROFILE_HEADER, HeaderValue::from_static("direct"));
+    let swapped = resolve(&headers, base).unwrap().effective;
+    assert_eq!(swapped.profile, McpHostProfile::Direct);
+    assert_eq!(
+        (swapped.max_sync_wait_secs, swapped.continuation_wait_secs),
+        (8, 12)
+    );
+    assert_eq!(swapped.initial_job_handoff_secs, 10);
+
+    headers.insert(BUDGET_HEADER, HeaderValue::from_static("9"));
+    let narrowed = resolve(&headers, base).unwrap().effective;
+    assert_eq!(
+        (narrowed.max_sync_wait_secs, narrowed.continuation_wait_secs),
+        (4, 4)
+    );
+    headers.insert(BUDGET_HEADER, HeaderValue::from_static("99999"));
+    let attempted_raise = resolve(&headers, base).unwrap().effective;
+    assert_eq!(attempted_raise.host_budget_secs, 55);
+    assert_eq!(
+        (
+            attempted_raise.max_sync_wait_secs,
+            attempted_raise.continuation_wait_secs
+        ),
+        (8, 12)
+    );
+    headers.clear();
+    assert_eq!(resolve(&headers, base).unwrap().effective, base);
+
+    // Legacy profile switching stays unchanged when deployment did not opt in.
+    headers.insert(PROFILE_HEADER, HeaderValue::from_static("direct"));
+    let legacy = resolve(&headers, deployment()).unwrap().effective;
+    assert_eq!(
+        (legacy.max_sync_wait_secs, legacy.continuation_wait_secs),
+        (50, 50)
+    );
+}
+
+#[test]
 fn request_policy_rejects_ambiguous_or_malformed_headers_without_echoing_values() {
     for (name, value) in [
         (PROFILE_HEADER, "PRIVATE_BAD_PROFILE"),

@@ -8,6 +8,8 @@ use webcodex_process::SpawnOptions;
 use winreg::enums::HKEY_CURRENT_USER;
 use winreg::RegKey;
 
+pub(super) mod session_shutdown;
+
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn managed_spawn_options(silent_child_breakaway: bool) -> SpawnOptions {

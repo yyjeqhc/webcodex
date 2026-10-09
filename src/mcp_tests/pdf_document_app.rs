@@ -11,7 +11,7 @@ fn pdf_document_app_has_a_distinct_direct_binding_and_private_read_tool() {
         .unwrap();
     assert_eq!(
         present["_meta"]["ui"]["resourceUri"],
-        "ui://webcodex/pdf/v6"
+        "ui://webcodex/pdf/v7"
     );
     let read = tools
         .iter()

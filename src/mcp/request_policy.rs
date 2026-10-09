@@ -56,6 +56,7 @@ pub(super) fn resolve(
                 ),
             }
             .runtime_policy()
+            .with_timing_overrides(default.request_timing_overrides())
         };
     Ok(McpHostPolicySelection {
         effective,

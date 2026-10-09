@@ -4,6 +4,7 @@ use super::{
 };
 use sha2::{Digest, Sha256};
 use std::{
+    future::Future,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -218,6 +219,27 @@ pub(super) async fn start_openai_tunnel(
     local_token: &str,
     deadline: Instant,
 ) -> Result<OpenAiTunnel, ProductError> {
+    start_openai_tunnel_with_stop(
+        prerequisites,
+        mcp_url,
+        local_token,
+        deadline,
+        std::future::pending(),
+    )
+    .await?
+    .ok_or_else(|| tunnel_error(Error::Uncertain))
+}
+
+/// Cancellation must settle an already-launched owner rather than drop it.
+/// None means shutdown was observed before readiness; uncertainty stays fenced.
+pub(super) async fn start_openai_tunnel_with_stop(
+    prerequisites: &OpenAiTunnelPrerequisites,
+    mcp_url: &str,
+    local_token: &str,
+    deadline: Instant,
+    stop: impl Future<Output = ()>,
+) -> Result<Option<OpenAiTunnel>, ProductError> {
+    tokio::pin!(stop);
     let mcp_url = local_mcp_url(mcp_url)?;
     let probe = reqwest::Client::builder()
         .no_proxy()
@@ -226,12 +248,14 @@ pub(super) async fn start_openai_tunnel(
         .timeout(Duration::from_secs(2))
         .build()
         .map_err(|_| tunnel_error(Error::Configuration))?;
-    let local_ready = tokio::time::timeout_at(
-        deadline.into(),
-        super::regular_tunnel_service::probe_local_mcp(&probe, &mcp_url, local_token),
-    )
-    .await
-    .unwrap_or(false);
+    let local_ready = tokio::select! {
+        biased;
+        _ = &mut stop => return Ok(None),
+        result = tokio::time::timeout_at(
+            deadline.into(),
+            super::regular_tunnel_service::probe_local_mcp(&probe, &mcp_url, local_token),
+        ) => result.unwrap_or(false),
+    };
     if !local_ready {
         return Err(ProductError::new(
             "local_mcp_unavailable",
@@ -239,21 +263,40 @@ pub(super) async fn start_openai_tunnel(
             Some("Start the local WebCodex Server and verify its credential."),
         ));
     }
-    let mut tunnel = OpenAiTunnel::launch(prerequisites, &mcp_url, local_token)?;
-    let ready = async {
-        loop {
-            if tunnel.health.is_ready() {
-                return Ok(());
+    let tunnel = OpenAiTunnel::launch(prerequisites, &mcp_url, local_token)?;
+    finish_openai_tunnel_startup(tunnel, deadline, &mut stop).await
+}
+
+async fn finish_openai_tunnel_startup(
+    mut tunnel: OpenAiTunnel,
+    deadline: Instant,
+    stop: impl Future<Output = ()>,
+) -> Result<Option<OpenAiTunnel>, ProductError> {
+    let readiness = {
+        let ready = async {
+            loop {
+                if tunnel.health.is_ready() {
+                    return Ok(());
+                }
+                tokio::select! {
+                    result = tunnel.wait_for_exit() => return result,
+                    _ = tokio::time::sleep(Duration::from_millis(20)) => {},
+                }
             }
-            tokio::select! {
-                result = tunnel.wait_for_exit() => return result,
-                _ = tokio::time::sleep(Duration::from_millis(20)) => {},
-            }
+        };
+        tokio::select! {
+            biased;
+            _ = stop => None,
+            result = tokio::time::timeout_at(deadline.into(), ready) => Some(result),
         }
     };
-    match tokio::time::timeout_at(deadline.into(), ready).await {
-        Ok(Ok(())) => Ok(tunnel),
-        result => {
+    match readiness {
+        None => {
+            tunnel.stop_with_outcome().await?;
+            Ok(None)
+        }
+        Some(Ok(Ok(()))) => Ok(Some(tunnel)),
+        Some(result) => {
             tunnel.stop().await;
             Err(result
                 .unwrap_or_else(|_| Err(tunnel_error(Error::Transport)))

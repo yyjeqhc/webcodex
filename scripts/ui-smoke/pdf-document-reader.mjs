@@ -309,6 +309,41 @@ try {
     } finally { await page.close(); }
   });
 
+  await run('page render failure remains visible through navigation, zoom, resize and recovery', async () => {
+    const mounted = await mount('renderFailure'); const { page, frame } = mounted;
+    try {
+      await painted(frame, 1);
+      const status = frame.locator('.pdf-status');
+      await status.filter({ hasText: '16 million pixel limit' }).waitFor();
+      const failure = await status.textContent();
+      const partial = frame.locator('[data-page-number="2"]');
+      await frame.waitForFunction(() => document.querySelector('[data-page-number="2"] canvas')?.width === 0);
+      assert.equal(await partial.locator('.textLayer span').count(), 0);
+      await frame.getByRole('button', { name: 'Next', exact: true }).click();
+      assert.equal(await status.textContent(), failure);
+      await frame.getByRole('button', { name: 'Next', exact: true }).click();
+      await painted(frame, 3);
+      assert.equal(await status.textContent(), failure);
+      await frame.getByRole('button', { name: 'Zoom in', exact: true }).click();
+      await painted(frame, 3); assert.equal(await status.textContent(), failure);
+      await frame.evaluate(() => { window.beforeFailureResizeText = document.querySelector('[data-page-number="3"] .textLayer span'); });
+      await page.setViewportSize({ width: 600, height: 720 });
+      await frame.waitForFunction(() => !window.beforeFailureResizeText.isConnected);
+      await painted(frame, 3); assert.equal(await status.textContent(), failure);
+      await frame.getByRole('button', { name: 'Retry preview' }).click();
+      await frame.waitForFunction(() => pdfWorkerStats.created === 2);
+      await painted(frame, 1);
+      await status.filter({ hasText: '16 million pixel limit' }).waitFor();
+      await page.evaluate(() => deliverPdf('chinese'));
+      await painted(frame, 1);
+      await frame.waitForFunction(() => document.querySelector('.textLayer').textContent.includes('中文'));
+      assert.ok(!(await status.textContent()).includes('unavailable'));
+      assert.equal(await frame.getByRole('button', { name: 'Retry preview' }).isVisible(), false);
+      bounded(await cache(frame)); await verified(mounted, 'render-failure-recovered');
+      await close(mounted); return { pages: 3 };
+    } finally { await page.close(); }
+  });
+
   for (const [name, options, reason] of [
     ['malformed', {}, 'PDF unavailable'], ['mixed', { changed: true }, 'version changed'],
   ]) await run(`actionable ${name === 'mixed' ? 'changed version' : 'invalid PDF'} failure`, async () => {

@@ -169,6 +169,18 @@ WEBCODEX_MCP_HOST_PROFILE=host_code_mode
 WEBCODEX_MCP_HOST_BUDGET_SECS=55
 ```
 
+如果需要独立测试有界的 **Server 端等待上限**，可以显式配置以下两个可选变量；不配置时维持当前默认行为：
+
+```text
+# 可选；未设置时 host_code_mode 仍采用原有的 5 秒派生值。
+WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS=8
+WEBCODEX_MCP_HOST_CONTINUATION_WAIT_MAX_SECS=5
+```
+
+前者控制已启动的 structured Job 同步等待多久后移交续接（整数 1–60 秒）；后者控制普通 `observe_jobs`／`job_tail` 等待及生成的续接等待（整数 1–100 秒）。变量无效或超出范围时，Server 在启动阶段明确报错，错误文本只包含变量名称和合法范围，不回显输入值。两个数值还受到所选请求的 Host budget 减去 5 秒返回预留时间的约束；客户端通过请求头切换 profile 或缩小预算，不会绕过部署上限。`wait_for_job_readiness` 仍独立按照 Host budget 计算。
+
+这两个设置在 Server 重启后生效，不改变 Job 真实执行超时，也不是模型工具参数。上述数值仅用于**实验**，不是推荐的全局默认值；评估时应同时观察 Host 请求耗时及最终 Job 结果。`get_runtime_status.effective_config.mcp_host` 展示非敏感的部署生效值，而不是每次请求头缩小后的值。
+
 `WEBCODEX_MCP_HOST_BUDGET_SECS` 表示 Host 侧单次 MCP call / composition 的预算，不是 command runtime。工具的 `timeout_secs` 仍表示真实 execution lifetime，可以远大于 Host budget。WebCodex 不会根据 `clientInfo`、User-Agent 或 Host 产品名自动推断 profile。
 
 `host_code_mode` 表示外部 MCP Host 提供的 orchestration，与 WebCodex experimental internal Code Mode 及其自身 nested-execution 防护不是同一个概念。`runtime_status.effective_config.mcp_host` 报告的是非敏感的**部署默认值**。同服混用时，在每个客户端连接上配置 `X-WebCodex-MCP-Profile`，并可用 `X-WebCodex-MCP-Budget-Secs` 缩短等待预算；不是模型工具参数。详见 [MCP 客户端策略](MCP.zh-CN.md#同一-server-的客户端策略)。省略 header 才使用部署默认值，不按品牌自动识别。

@@ -3423,4 +3423,55 @@ fn node_native_test_evidence_requires_complete_tap_and_agrees_with_process_resul
     .unwrap();
     assert!(!contradiction["passed"].as_bool().unwrap());
     assert!(contradiction["tests_run_count"].is_null());
+
+    let with_plain_diagnostics = output.replacen(
+        "\n1..1\n# tests",
+        "\n# pass phase complete\n# skipped optional setup\n1..1\n# tests",
+        1,
+    );
+    let accepted = validation_job_projection_with_policy(
+        Some("node:tap:test"),
+        Some("test"),
+        "completed",
+        Some(0),
+        &with_plain_diagnostics,
+        "",
+        false,
+        None,
+        Some(1),
+        Some(true),
+        None,
+    )
+    .unwrap();
+    assert_eq!(accepted["passed"], true);
+    assert_eq!(accepted["tests_run_count"], 1);
+
+    // A canonical exit cannot make malformed TAP accounting authoritative,
+    // including when the caller does not require a positive test count.
+    for forged in [
+        output.replace("\n1..1\n# tests", "\n    1..1\n# tests"),
+        output.replace("\n1..1\n# tests", "\n# pass 1\n1..1\n# tests"),
+        output.replace("# Subtest: works\nok 1 - works\n1..1", "1..0"),
+    ] {
+        for require_tests in [Some(true), Some(false)] {
+            let unproven = validation_job_projection_with_policy(
+                Some("node:tap:test"),
+                Some("test"),
+                "completed",
+                Some(0),
+                &forged,
+                "",
+                false,
+                None,
+                None,
+                require_tests,
+                None,
+            )
+            .unwrap();
+            assert_eq!(unproven["passed"], false);
+            assert_eq!(unproven["tests_detected"], false);
+            assert!(unproven["tests_run_count"].is_null());
+            assert!(unproven["tests_passed"].is_null());
+        }
+    }
 }

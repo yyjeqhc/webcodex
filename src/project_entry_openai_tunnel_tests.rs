@@ -78,8 +78,8 @@ fn diagnostics_do_not_contain_authority_material() {
 }
 
 // Dedicated adapter lifecycle fixture. The crate's domain tests own wire behavior.
-async fn idle_tunnel(root: &Path) -> OpenAiTunnel {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+async fn pending_tunnel(root: &Path) -> (OpenAiTunnel, tokio::net::TcpStream) {
+    use tokio::io::AsyncReadExt;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let client = TunnelClient::new(
         ControlPlaneIdentity::new(
@@ -103,32 +103,136 @@ async fn idle_tunnel(root: &Path) -> OpenAiTunnel {
     let task = tokio::spawn(client.run(async {
         let _ = rx.await;
     }));
-    let mut tunnel = OpenAiTunnel {
+    let tunnel = OpenAiTunnel {
         task: Some(task),
         stop: Some(tx),
         health,
         guard,
         terminal: None,
     };
-    let observed = tokio::time::timeout(Duration::from_secs(5), async {
+    let socket = tokio::time::timeout(Duration::from_secs(5), async {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut buf = [0; 8192];
         let n = socket.read(&mut buf).await.unwrap();
         assert!(n > 0);
         socket
-            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-            .await
-            .unwrap();
+    })
+    .await
+    .expect("fixture did not begin the first control-plane poll");
+    assert!(!tunnel.health.is_ready());
+    (tunnel, socket)
+}
+
+async fn idle_tunnel(root: &Path) -> OpenAiTunnel {
+    use tokio::io::AsyncWriteExt;
+    let (mut tunnel, mut socket) = pending_tunnel(root).await;
+    socket
+        .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    if tokio::time::timeout(Duration::from_secs(5), async {
         while !tunnel.health.is_ready() {
             tokio::task::yield_now().await;
         }
     })
-    .await;
-    if observed.is_err() {
+    .await
+    .is_err()
+    {
         tunnel.stop().await;
         panic!("fixture did not reach poll readiness");
     }
     tunnel
+}
+
+#[tokio::test]
+async fn parent_shutdown_during_initial_poll_settles_startup_owner() {
+    let temp = tempfile::tempdir().unwrap();
+    // Hold the first real control-plane request without a response. No command
+    // has been admitted, and readiness cannot win this cancellation race.
+    let (tunnel, _socket) = pending_tunnel(temp.path()).await;
+    let marker = tunnel.guard.clone();
+    let abort = tunnel.task.as_ref().unwrap().abort_handle();
+    let (polled_tx, polled_rx) = oneshot::channel();
+    let (stop_tx, stop_rx) = oneshot::channel();
+    let startup = tokio::spawn(finish_openai_tunnel_startup(
+        tunnel,
+        Instant::now() + Duration::from_secs(60),
+        async {
+            polled_tx.send(()).unwrap();
+            let _ = stop_rx.await;
+        },
+    ));
+    polled_rx.await.unwrap();
+    stop_tx.send(()).unwrap();
+    let outcome = tokio::time::timeout(Duration::from_secs(2), startup)
+        .await
+        .expect("parent shutdown must not await initial poll readiness")
+        .unwrap()
+        .unwrap();
+    assert!(outcome.is_none());
+    assert!(abort.is_finished(), "shutdown must observe task completion");
+    assert!(
+        !marker.exists(),
+        "clean startup shutdown must retire its fence"
+    );
+    assert!(acquire_guard(temp.path(), "fixture").is_ok());
+}
+
+#[tokio::test]
+async fn startup_shutdown_retains_fence_when_task_cannot_settle_cleanly() {
+    let temp = tempfile::tempdir().unwrap();
+    let guard = acquire_guard(temp.path(), "uncertain-startup").unwrap();
+    let (stop, rx) = oneshot::channel();
+    let task = tokio::spawn(async {
+        let _ = rx.await;
+        Err(Error::Uncertain)
+    });
+    let tunnel = OpenAiTunnel {
+        task: Some(task),
+        stop: Some(stop),
+        health: Health::default(),
+        guard: guard.clone(),
+        terminal: None,
+    };
+    let result = finish_openai_tunnel_startup(
+        tunnel,
+        Instant::now() + Duration::from_secs(60),
+        std::future::ready(()),
+    )
+    .await;
+    assert_eq!(result.err().unwrap().code, "tunnel_restart_uncertain");
+    assert!(guard.exists(), "uncertain startup must stay fenced");
+}
+
+#[tokio::test]
+async fn startup_readiness_transfers_owner_until_observed_shutdown() {
+    let temp = tempfile::tempdir().unwrap();
+    let tunnel = idle_tunnel(temp.path()).await;
+    let marker = tunnel.guard.clone();
+    let mut tunnel = finish_openai_tunnel_startup(
+        tunnel,
+        Instant::now() + Duration::from_secs(5),
+        std::future::pending(),
+    )
+    .await
+    .unwrap()
+    .expect("a ready connection should transfer its owner");
+    assert!(marker.exists());
+    tunnel.stop_with_outcome().await.unwrap();
+    assert!(!marker.exists());
+}
+
+#[tokio::test]
+async fn startup_timeout_settles_idle_owner_before_reporting_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let (tunnel, _socket) = pending_tunnel(temp.path()).await;
+    let marker = tunnel.guard.clone();
+    let result = finish_openai_tunnel_startup(tunnel, Instant::now(), std::future::pending()).await;
+    assert_eq!(
+        result.err().unwrap().code,
+        "tunnel_control_plane_unreachable"
+    );
+    assert!(!marker.exists());
 }
 
 #[tokio::test]

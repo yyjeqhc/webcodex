@@ -1,7 +1,7 @@
 # Dedicated PDF document viewer
 
 `present_pdf(project, path)` binds a direct model tool to the self-contained
-`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v6`. It selects one
+`src/mcp_pdf_app.html` resource, `ui://webcodex/pdf/v7`. It selects one
 authorized project-relative `.pdf`, independent of Git changes, a Work Result
 card, or a Workflow Session. The App contains only document controls and the
 reading area; the Host owns the surrounding chrome and display mode.
@@ -75,6 +75,12 @@ for each page, and its canvas and text layer share that page's scale.
 Zoom, fit-width and container-width changes preserve the current page and the
 relative vertical position within it while page heights are recalculated.
 
+A page render failure keeps its actionable error and Retry visible through page
+navigation, other pages finishing, zoom and container resize. Incomplete canvas
+and text output is released, and that failed page is not retried by background
+viewport scheduling. Other pages can still render. Explicit Retry or a new
+source creates a fresh preview; late work from the old preview cannot replace it.
+
 Offline fonts/CMaps, the 8-million-pixel canvas cap, disabled scripting/eval,
 XFA/Wasm/external fetches, the 16-million-pixel embedded-image limit, and
 bounded Worker cleanup remain in place. Work Result keeps its compact
@@ -117,7 +123,7 @@ Run:
 
 ```sh
 npm --prefix frontend run build:work-result
-node --test frontend/test/pdf-document-reader.test.mjs
+node --test frontend/test/pdf-document-reader.test.mjs frontend/test/pdf-continuous-preview.test.mjs
 cargo test --locked -p webcodex --lib pdf_document
 cargo test --locked -p webcodex --lib pdf_document_app
 npm --prefix scripts/ui-smoke ci
@@ -132,8 +138,8 @@ existing PDF document test modules.
 The Playwright check loads the shipped HTML and real PDF.js Blob Worker through
 an isolated MCP Host fixture. Original, deterministic PDF samples cover mixed
 page sizes, rotation, embedded Type3 Chinese glyphs with ToUnicode mapping, a
-scan-only image, a 32-page document, oversized pages at DPR 2, and invalid PDF
-bytes. Assertions check image pixels, glyph painting, text selection/alignment,
+scan-only image, a 32-page document, oversized pages at DPR 2, a valid document
+with one page exceeding the image limit, and invalid PDF bytes. Assertions check image pixels, glyph painting, text selection/alignment,
 page navigation, reading-position preservation, zoom/resize cancellation, lazy
 loading, cache limits, duplicate delivery, version changes, cancellation on
 replacement/invalid selection, and teardown during transfer. It blocks external

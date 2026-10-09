@@ -5,9 +5,12 @@
 The current tree has advanced beyond the historical slice documented below. Rust/Go
 `project_validate` now supports shared package scope, `all_packages=true` where the
 Runner can prove the complete project unit, and `dependency_policy.mode=locked`.
-Python `project_validate` supports `action=test` through pytest, including bounded
-`test.filter` mapped to pytest `-k`; Python still rejects package scope and dependency
-policy. Node remains unavailable. `project_build` remains a separate Rust/Go gateway.
+Python `project_validate` supports pytest tests (including bounded `test.filter`
+mapped to pytest `-k`) and project-local Ruff `check` / `format_check`; Python
+still rejects package scope and dependency policy. Node supports Runner-owned
+script `check` (#995) and exact-opt-in native TAP `test` (#997), but not Jest,
+Vitest, arbitrary test scripts, test filters or package scope. `project_build`
+remains a separate Rust/Go gateway.
 The historical implementation record below is retained as the state of that slice.
 
 ## Status and bounded scope
@@ -21,9 +24,9 @@ Direct descriptor, adapter registry, crate, external dependency or scheduler.
 That validation slice deferred `project_build`. The current tree now has a
 separate Rust/Go `project_build` v1 gateway with Runner-owned recipe planning,
 typed `StartBuild`, manifest/lock provenance, and same-Job admission fencing.
-Build profile/target/artifact identity, mutating `project_format`, lint,
-production Node and additional Python adapters, workspace/exclude, and offline/network
-policies are tracked as additive lifecycle extensions in #962. Existing lower-level Cargo/Go tools retain
+Build profile/target/artifact identity, mutating `project_format`, broader lint
+and formatting adapters, workspace/exclude and offline/network policies remain
+tracked as additive lifecycle extensions in #962. Existing lower-level Cargo/Go tools retain
 their options and default behavior. No claim of complete CLI parity is made.
 
 ## Request and planning

@@ -333,3 +333,13 @@ CLI 请求默认遵循标准代理环境变量（`HTTP_PROXY`、`HTTPS_PROXY`、
 `NO_PROXY`）。用 `--proxy http://HOST:PORT` 为单次调用覆盖，或用
 `--no-system-proxy` 忽略代理环境直连。这些 flag 只影响 CLI 自身的 HTTP 请求；
 `webcodex connect` 不会把它们持久化或注入 Runner 配置。
+
+### Tunnel 离线诊断
+
+`webcodex environment tunnel-diagnose primary --environment-dir /absolute/environment --json`
+只读取指定 Profile 的 catalog、私有 binding 和 readiness；不会伪造 Environment、启动服务或清除保护标记。
+结果包含已观察状态、安全失败码及两项 readiness，并区分缺失/无效、过期、配置 revision 或 owner PID 不匹配。
+只有 catalog 的配置返回 `owner_unverified`，历史 heartbeat 不证明当前 ready。
+Linux/macOS 托管服务需要匹配服务管理器的当前 PID；暂不能验证精确 PID 的其他管理器保守返回未就绪。
+`tunnel_restart_uncertain` 需要先核对历史执行效果；诊断不会重放写操作。
+readiness v1 增加可选的 `state`、`diagnostic` 字段，旧文件仍可读取，缺失状态保持未知。

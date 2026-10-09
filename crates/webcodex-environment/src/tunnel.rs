@@ -1115,7 +1115,14 @@ impl NativeEnvironment {
         let server_restart_required = profile.host_mode == TunnelHostMode::Embedded
             && owner_running
             && applied_revision != Some(configured_revision);
-        let (tunnel_ready, local_mcp_ready) = if owner_running && !server_restart_required {
+        let owner_pid = ServiceManager::running_pid(&owner_spec).map_err(service_error)?;
+        let (tunnel_ready, local_mcp_ready) = if owner_running
+            && !server_restart_required
+            && owner_pid.is_some()
+            && health
+                .as_ref()
+                .is_some_and(|value| value.service_pid == owner_pid)
+        {
             health
                 .as_ref()
                 .map(|value| (value.tunnel_ready, value.local_mcp_ready))
@@ -1537,6 +1544,144 @@ fn tunnel_install_required(status: &service::ServiceStatus) -> SetupResultValue<
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelState {
+    Starting,
+    Running,
+    Draining,
+    Stopped,
+    Failed,
+}
+
+fn safe_tunnel_diagnostic(code: &str) -> &str {
+    match code {
+        "tunnel_restart_uncertain"
+        | "tunnel_health_unavailable"
+        | "tunnel_profile_configuration"
+        | "tunnel_probe_configuration"
+        | "local_mcp_unavailable"
+        | "tunnel_auth_rejected"
+        | "tunnel_capacity_exhausted"
+        | "tunnel_control_plane_unreachable"
+        | "tunnel_protocol_failed"
+        | "tunnel_unexpected_exit"
+        | "tunnel_startup_timeout" => code,
+        _ => "tunnel_protocol_failed",
+    }
+}
+
+pub fn write_embedded_tunnel_observation(
+    path: &std::path::Path,
+    revision: u64,
+    state: TunnelState,
+    tunnel_ready: bool,
+    local_mcp_ready: bool,
+    diagnostic: Option<&str>,
+) -> SetupResultValue<()> {
+    write_tunnel_health_inner(
+        path,
+        Some(revision.max(1)),
+        tunnel_ready,
+        local_mcp_ready,
+        Some(state),
+        diagnostic,
+    )
+}
+
+/// Read-only offline receipt. A saved heartbeat is evidence, never owner authority.
+#[derive(Debug, Serialize)]
+pub struct TunnelDiagnosticObservation {
+    pub profile_id: String,
+    pub configured_revision: u64,
+    pub applied_revision: Option<u64>,
+    pub observed_owner_pid: Option<u32>,
+    pub observed_state: Option<TunnelState>,
+    pub diagnostic: Option<String>,
+    pub readiness_status: &'static str,
+    pub tunnel_ready: bool,
+    pub local_mcp_ready: bool,
+    pub next_action: &'static str,
+}
+
+pub(crate) fn health_status(
+    health: Option<&TunnelHealthObservation>,
+    revision: Option<u64>,
+    owner_pid: Option<u32>,
+) -> &'static str {
+    match health {
+        None => "missing_or_invalid",
+        Some(h) if revision.is_some() && h.profile_revision != revision => "revision_mismatch",
+        Some(h) if owner_pid.is_some() && h.service_pid != owner_pid => "owner_pid_mismatch",
+        Some(h) if !h.fresh => "stale",
+        Some(_) if owner_pid.is_none() => "owner_unverified",
+        Some(_) => "current",
+    }
+}
+
+impl NativeEnvironment {
+    pub fn diagnose_tunnel(
+        &self,
+        store: &EnvironmentStore,
+        profile_id: &str,
+    ) -> SetupResultValue<TunnelDiagnosticObservation> {
+        validate_id(profile_id)?;
+        let _lock = store.lock()?;
+        let profiles = tunnel_profiles(store)?;
+        validate_catalog(&profiles)?;
+        let profile = profiles
+            .iter()
+            .find(|p| p.profile_id == profile_id)
+            .ok_or_else(|| diagnostic("tunnel_profile", "Tunnel profile does not exist"))?;
+        // Validate the authoritative private binding without disclosing credentials.
+        let _ = tunnel_profile_binding(store, profile_id)?;
+        let health = read_tunnel_health(
+            &store
+                .root()
+                .join("server/tunnels")
+                .join(profile_id)
+                .join("readiness.json"),
+        )
+        .ok();
+        let owner_pid = if let Some(environment) = store.load_environment()? {
+            let spec = if profile.host_mode == TunnelHostMode::Embedded {
+                crate::service_spec(store, &environment, Component::Server)?
+            } else {
+                tunnel_service_spec(store, &environment, profile_id)?
+            };
+            ServiceManager::running_pid(&spec).map_err(service_error)?
+        } else {
+            None
+        };
+        let readiness_status = health_status(
+            health.as_ref(),
+            (profile.host_mode == TunnelHostMode::Embedded)
+                .then(|| profile.effective_runtime_revision()),
+            owner_pid,
+        );
+        let current = readiness_status == "current";
+        let diagnostic = health.as_ref().and_then(|h| h.diagnostic.clone());
+        Ok(TunnelDiagnosticObservation {
+            profile_id: profile_id.to_owned(),
+            configured_revision: profile.effective_runtime_revision(),
+            applied_revision: health.as_ref().and_then(|h| h.profile_revision),
+            observed_owner_pid: health.as_ref().and_then(|h| h.service_pid),
+            observed_state: health.as_ref().and_then(|h| h.state),
+            tunnel_ready: current && health.as_ref().is_some_and(|h| h.tunnel_ready),
+            local_mcp_ready: current && health.as_ref().is_some_and(|h| h.local_mcp_ready),
+            readiness_status,
+            next_action: if diagnostic.as_deref() == Some("tunnel_restart_uncertain") {
+                "Inspect prior effects and the exact profile restart fence; do not automatically restart or replay work"
+            } else if !current {
+                "Verify the owning service and its current configuration; saved readiness does not prove a live Tunnel"
+            } else {
+                "Inspect the reported owner state and both readiness checks"
+            },
+            diagnostic,
+        })
+    }
+}
+
 /// Service heartbeat contains no Tunnel ID, key or authorization header. This
 /// precreated file keeps the installer-selected ACL when a virtual account writes.
 pub fn write_tunnel_health(
@@ -1544,7 +1689,7 @@ pub fn write_tunnel_health(
     tunnel_ready: bool,
     local_mcp_ready: bool,
 ) -> SetupResultValue<()> {
-    write_tunnel_health_inner(path, None, tunnel_ready, local_mcp_ready)
+    write_tunnel_health_inner(path, None, tunnel_ready, local_mcp_ready, None, None)
 }
 
 /// Embedded owners bind their heartbeat to the exact startup configuration
@@ -1561,6 +1706,8 @@ pub fn write_embedded_tunnel_health(
         Some(profile_revision.max(1)),
         tunnel_ready,
         local_mcp_ready,
+        None,
+        None,
     )
 }
 
@@ -1569,6 +1716,8 @@ fn write_tunnel_health_inner(
     profile_revision: Option<u64>,
     tunnel_ready: bool,
     local_mcp_ready: bool,
+    state: Option<TunnelState>,
+    diagnostic_code: Option<&str>,
 ) -> SetupResultValue<()> {
     use std::io::Write;
     let metadata = std::fs::symlink_metadata(path).map_err(|_| SetupDiagnostic::io())?;
@@ -1603,7 +1752,9 @@ fn write_tunnel_health_inner(
         "service_pid": std::process::id(),
         "profile_revision": profile_revision,
         "tunnel_ready": tunnel_ready,
-        "local_mcp_ready": local_mcp_ready
+        "local_mcp_ready": local_mcp_ready,
+        "state": state,
+        "diagnostic": diagnostic_code.map(safe_tunnel_diagnostic)
     });
     file.set_len(0)
         .and_then(|_| file.write_all(value.to_string().as_bytes()))
@@ -1623,8 +1774,14 @@ pub(crate) async fn wait_tunnel_readiness(spec: &ServiceSpec) -> SetupResultValu
             ));
         }
         if status.running == Some(true) {
-            let value = read_health(&path);
-            if value.is_ok_and(|(tunnel, mcp)| tunnel && mcp) {
+            let pid = ServiceManager::running_pid(spec).map_err(service_error)?;
+            let value = read_tunnel_health(&path);
+            if value.is_ok_and(|value| {
+                pid.is_some()
+                    && value.service_pid == pid
+                    && value.tunnel_ready
+                    && value.local_mcp_ready
+            }) {
                 return Ok(());
             }
         }
@@ -1637,16 +1794,15 @@ pub(crate) async fn wait_tunnel_readiness(spec: &ServiceSpec) -> SetupResultValu
         .await;
     }
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct TunnelHealthObservation {
+    pub fresh: bool,
+    pub service_pid: Option<u32>,
+    pub state: Option<TunnelState>,
+    pub diagnostic: Option<String>,
     pub tunnel_ready: bool,
     pub local_mcp_ready: bool,
     pub profile_revision: Option<u64>,
-}
-
-pub(crate) fn read_health(path: &std::path::Path) -> SetupResultValue<(bool, bool)> {
-    let value = read_tunnel_health(path)?;
-    Ok((value.tunnel_ready, value.local_mcp_ready))
 }
 
 pub(crate) fn read_tunnel_health(
@@ -1659,7 +1815,18 @@ pub(crate) fn read_tunnel_health(
     }
     #[cfg(windows)]
     crate::runtime_entry::validate_windows_env_acl(path).map_err(|_| SetupDiagnostic::io())?;
-    let file = std::fs::File::open(path).map_err(|_| SetupDiagnostic::io())?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o077 != 0 || meta.nlink() != 1
+        {
+            return Err(SetupDiagnostic::io());
+        }
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let file = options.open(path).map_err(|_| SetupDiagnostic::io())?;
     fs2::FileExt::try_lock_shared(&file).map_err(|_| SetupDiagnostic::io())?;
     let mut bytes = Vec::new();
     file.take(4097)
@@ -1676,7 +1843,20 @@ pub(crate) fn read_tunnel_health(
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0) as u128;
     let fresh = time <= now && now.saturating_sub(time) < 7000;
+    if value["schema_version"] != 1 || bytes.len() > 4096 {
+        return Err(SetupDiagnostic::io());
+    }
     Ok(TunnelHealthObservation {
+        fresh,
+        service_pid: value["service_pid"]
+            .as_u64()
+            .and_then(|pid| u32::try_from(pid).ok())
+            .filter(|pid| *pid > 0),
+        state: serde_json::from_value(value["state"].clone()).ok(),
+        diagnostic: value["diagnostic"]
+            .as_str()
+            .map(safe_tunnel_diagnostic)
+            .map(str::to_owned),
         tunnel_ready: fresh
             && value
                 .get("tunnel_ready")

@@ -400,3 +400,16 @@ CLI requests follow the standard proxy environment by default
 `--no-system-proxy` to ignore proxy environment and connect directly. These
 flags affect only the CLI's own HTTP requests; `webcodex connect` does not
 persist or inject them into the Runner configuration.
+
+### Offline Tunnel diagnostics
+
+`webcodex environment tunnel-diagnose primary --environment-dir /absolute/environment --json`
+reads the selected catalog and private binding without creating an Environment or starting services.
+It reports saved owner state and allowlisted failure codes, both readiness checks, and whether
+the heartbeat is missing/invalid, stale, from another configuration revision or owner PID.
+Catalog-only configurations report `owner_unverified`; saved state is historical evidence,
+not proof of current readiness. Managed Linux/macOS owners must match the manager's current
+PID. Other managers currently fail closed when an exact PID cannot be verified.
+`tunnel_restart_uncertain` requires reconciling prior effects; diagnostics never clear a
+restart fence or replay a write. Readiness schema v1 gains optional `state` and `diagnostic`
+metadata; older files remain readable, with unavailable state omitted.

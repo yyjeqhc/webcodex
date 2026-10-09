@@ -727,3 +727,17 @@ fn named_projectless_join_forwards_label_without_creating_a_server_or_changing_i
     assert!(unnamed.runner_display_name.is_none());
     assert_eq!(unnamed.mode, EnvironmentMode::Join);
 }
+
+#[test]
+fn tunnel_diagnosis_requires_an_explicit_environment_and_profile() {
+    assert!(input(&["tunnel-diagnose"]).is_err());
+    assert!(input(&["tunnel-diagnose", "primary"]).is_err());
+    assert!(input(&[
+        "tunnel-diagnose",
+        "primary",
+        "--environment-dir",
+        "/fixture",
+        "--json"
+    ])
+    .is_ok());
+}

@@ -293,6 +293,22 @@ impl ServiceManager {
         platform::inspect(spec)
     }
 
+    /// Current manager-owned process only. Unsupported managers fail closed.
+    pub fn running_pid(spec: &ServiceSpec) -> Result<Option<u32>, ServiceError> {
+        let status = Self::inspect(spec)?;
+        if status.ownership != Ownership::Owned || status.running != Some(true) {
+            return Ok(None);
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            platform::running_pid(spec)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            Ok(None)
+        }
+    }
+
     pub fn preflight(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
         validate_spec(spec)?;
         #[cfg(windows)]

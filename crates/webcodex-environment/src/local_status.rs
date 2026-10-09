@@ -12,6 +12,8 @@ pub struct ComponentObservation {
     pub profile: Option<String>,
     pub service: Option<ServiceStatus>,
     pub diagnostic: Option<SetupDiagnostic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_tunnel_state: Option<TunnelState>,
     pub tunnel_ready: Option<bool>,
     pub local_mcp_ready: Option<bool>,
 }
@@ -82,16 +84,32 @@ pub(crate) fn collect(
                     let state = spec.as_ref().map_err(Clone::clone).and_then(|spec| {
                         ServiceManager::inspect(spec).map_err(crate::native::service_error)
                     });
-                    let mut row = observation("tunnel", Some(profile.profile_id), state);
+                    let mut row = observation("tunnel", Some(profile.profile_id.clone()), state);
                     row.host_mode = Some(profile.host_mode);
-                    if row.service.as_ref().is_some_and(running_owned) {
-                        match crate::tunnel::read_health(&health_path) {
-                            Ok((tunnel, local)) => {
-                                row.tunnel_ready = Some(tunnel);
-                                row.local_mcp_ready = Some(local);
-                            }
-                            Err(error) => row.diagnostic = Some(error),
-                        }
+                    let owner_pid = spec
+                        .as_ref()
+                        .ok()
+                        .and_then(|spec| ServiceManager::running_pid(spec).ok().flatten());
+                    let health = crate::tunnel::read_tunnel_health(&health_path).ok();
+                    let health_status = crate::tunnel::health_status(
+                        health.as_ref(),
+                        (profile.host_mode == TunnelHostMode::Embedded)
+                            .then(|| profile.effective_runtime_revision()),
+                        owner_pid,
+                    );
+                    row.observed_tunnel_state = health.as_ref().and_then(|h| h.state);
+                    row.tunnel_ready = Some(
+                        health_status == "current"
+                            && health.as_ref().is_some_and(|h| h.tunnel_ready),
+                    );
+                    row.local_mcp_ready = Some(
+                        health_status == "current"
+                            && health.as_ref().is_some_and(|h| h.local_mcp_ready),
+                    );
+                    if let Some(code) = health.as_ref().and_then(|h| h.diagnostic.as_deref()) {
+                        row.diagnostic = Some(SetupDiagnostic::new(code, "Saved Tunnel owner diagnostic", "Run environment tunnel-diagnose PROFILE --environment-dir PATH; do not clear an uncertain restart fence"));
+                    } else if health_status != "current" {
+                        row.diagnostic = Some(SetupDiagnostic::new(health_status, "Tunnel readiness is not verified", "Inspect the exact owner PID and profile revision using tunnel-diagnose"));
                     }
                     result.components.push(row);
                 }
@@ -126,6 +144,7 @@ fn observation(
         profile,
         service,
         diagnostic,
+        observed_tunnel_state: None,
         tunnel_ready: None,
         local_mcp_ready: None,
     }

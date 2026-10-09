@@ -11,6 +11,9 @@ const allowedDomains = new Set(['Accessibility', 'DOM', 'DOMSnapshot', 'Input', 
 let native = null;
 let connecting = null;
 let generation = 0;
+// A later explicit Revoke cancels every earlier in-flight Share, even if its
+// Chrome tab lookup or native handshake has not completed yet.
+let consentRevision = 0;
 const offers = new Map();
 const leases = new Map();
 const tabLease = new Map();
@@ -75,10 +78,13 @@ function connect() {
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || !['status', 'share', 'revoke'].includes(message?.action)) return false;
+  const revision = consentRevision;
+  if (message.action === 'revoke') consentRevision += 1;
   (async () => {
     const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
     if (!tab?.id) throw new Error('no_active_tab');
     if (message.action === 'status') return tabStatus(tab.id);
+    if (message.action === 'share' && revision !== consentRevision) throw new Error('share_superseded');
     if (message.action === 'share' && native && (tabLease.has(tab.id) || offers.get(tab.id)?.expires > Date.now())) return tabStatus(tab.id);
     if (message.action === 'revoke') {
       // Invalidate consent before awaiting cleanup, including attach operations
@@ -96,7 +102,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     }
     if (!/^https?:\/\//i.test(tab.url ?? '') || offers.size >= 16) throw new Error('tab_not_shareable');
     const port = await connect();
-    if (native !== port) throw new Error('connection_lost');
+    if (native !== port || revision !== consentRevision) throw new Error('share_superseded');
     if (tabLease.has(tab.id) || offers.get(tab.id)?.expires > Date.now()) return tabStatus(tab.id);
     if (offers.size >= 16) throw new Error('tab_not_shareable');
     offers.set(tab.id, {window: tab.windowId, expires: Date.now() + 600000});
@@ -255,8 +261,12 @@ function diagnosticText(value, limit) {
 function consoleText(args = []) {
   let text = '', seen = false;
   for (const arg of args) {
-    const value = arg.value !== undefined
-      ? (typeof arg.value === 'string' ? arg.value : JSON.stringify(arg.value)) : arg.description;
+    // Never stringify page-controlled object graphs just to clip them later:
+    // their nested data can be unbounded and include remote object previews.
+    const primitive = arg.value;
+    const value = primitive !== undefined
+      ? (primitive !== null && typeof primitive === 'object' ? '[complex value omitted]' : String(primitive))
+      : (arg.type === 'object' || arg.type === 'function' ? '[complex value omitted]' : arg.description);
     if (typeof value !== 'string') continue;
     const combined = text + (seen ? ' ' : '') + value;
     text = diagnosticText(combined, 2048);

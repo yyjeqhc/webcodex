@@ -48,12 +48,12 @@ function event() {
 }
 function fixture() {
   const calls = [], sent = [], tabs = new Map([[7, {id:7, windowId:9, title:'Signed in', url:'https://example.test/account'}]]);
-  let activeTab = 7, nextTab = 8, attachHook = null, getHook = null, commandHook = null, detachHook = null;
+  let activeTab = 7, nextTab = 8, attachHook = null, getHook = null, queryHook = null, readyHook = null, commandHook = null, detachHook = null;
   const port = {onMessage:event(), onDisconnect:event(), postMessage(value) { sent.push(value); }, disconnect() { calls.push(['disconnect']); }};
   const chrome = {
-    runtime:{id:ID, onMessage:event(), connectNative(host) { assert.equal(host, 'com.webcodex.browser_bridge'); queueMicrotask(() => port.onMessage.emit({kind:'ready',version:1})); return port; }},
+    runtime:{id:ID, onMessage:event(), connectNative(host) { assert.equal(host, 'com.webcodex.browser_bridge'); queueMicrotask(() => { if(readyHook) readyHook(port); else port.onMessage.emit({kind:'ready',version:1}); }); return port; }},
     windows:{async get(id) { assert.equal(id,9); return {id, left:40, top:60, width:800, height:600}; }},
-    tabs:{onRemoved:event(), async query() { return [tabs.get(activeTab)]; }, async get(id) { if(getHook) await getHook(); if (!tabs.has(id)) throw Error('missing'); return tabs.get(id); },
+    tabs:{onRemoved:event(), async query() { if(queryHook) await queryHook(); return [tabs.get(activeTab)]; }, async get(id) { if(getHook) await getHook(); if (!tabs.has(id)) throw Error('missing'); return tabs.get(id); },
       async create(options) { const tab={id:nextTab++,windowId:options.windowId,url:options.url,title:'New'};tabs.set(tab.id,tab);calls.push(['create',tab.id]);return tab; },
       async remove(id) { calls.push(['remove',id]);tabs.delete(id);chrome.tabs.onRemoved.emit(id); }},
     debugger:{onEvent:event(),onDetach:event(),async attach(debuggee) { calls.push(['attach',debuggee.tabId]);if(attachHook) await attachHook(); },
@@ -68,7 +68,7 @@ function fixture() {
   };
   const request=action => new Promise(resolve => chrome.runtime.onMessage.listeners[0]({action},{id:ID},resolve));
   const share=() => request('share');
-  return {calls,sent,tabs,chrome,port,context,command,share,status:()=>request('status'),setActiveTab(id){activeTab=id;},revoke:()=>request('revoke'),setCommandHook(fn){commandHook=fn;},setDetachHook(fn){detachHook=fn;},setGetHook(fn){getHook=fn;},setAttachHook(fn){attachHook=fn;},async cleanup(){await vm.runInContext('disconnect()',context);}};
+  return {calls,sent,tabs,chrome,port,context,command,share,status:()=>request('status'),setActiveTab(id){activeTab=id;},revoke:()=>request('revoke'),setCommandHook(fn){commandHook=fn;},setDetachHook(fn){detachHook=fn;},setGetHook(fn){getHook=fn;},setQueryHook(fn){queryHook=fn;},setReadyHook(fn){readyHook=fn;},setAttachHook(fn){attachHook=fn;},async cleanup(){await vm.runInContext('disconnect()',context);}};
 }
 test('manifest public key fixes the exact native caller identity',()=>{
   const digest=createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest('hex').slice(0,32);
@@ -309,6 +309,50 @@ test('oversized network identities still mark loss; display-only payloads are UT
     assert.equal(f.sent.at(-1).message.params.requestId,'exact');
     assert.equal(Buffer.byteLength(f.sent.at(-1).message.params.request.url),8192);
     await f.cleanup(); await f.share(); await f.command('attach');
+    assert.equal(vm.runInContext('leases.size',f.context),1);
+  } finally {await f.cleanup();}
+});
+
+test('Revoke wins against an earlier Share awaiting Chrome tab lookup', async () => {
+  const f=fixture(); try {
+    let release, queries=0;
+    f.setQueryHook(() => ++queries === 1 ? new Promise(resolve => { release=resolve; }) : Promise.resolve());
+    const pendingShare=f.share();
+    for(let n=0;n<10 && !release;n++) await Promise.resolve();
+    assert(release);
+    assert.equal((await f.revoke()).ok, true);
+    release();
+    await pendingShare;
+    assert.equal(f.sent.filter(m=>m.kind==='offer').length,0);
+    assert.equal((await f.status()).state,'unshared');
+    assert.equal((await f.share()).state,'offered');
+  } finally {await f.cleanup();}
+});
+
+test('Revoke wins against an earlier Share awaiting native readiness', async () => {
+  const f=fixture(); try {
+    let release;
+    f.setReadyHook(port => { release=() => port.onMessage.emit({kind:'ready',version:1}); });
+    const pendingShare=f.share();
+    for(let n=0;n<10 && !release;n++) await Promise.resolve();
+    assert(release);
+    assert.equal((await f.revoke()).ok, true);
+    release();
+    await pendingShare;
+    assert.equal(f.sent.filter(m=>m.kind==='offer').length,0);
+    assert.equal((await f.status()).state,'unshared');
+    assert.equal((await f.share()).state,'offered');
+  } finally {await f.cleanup();}
+});
+
+test('large console object values are bounded before serialization', async () => {
+  const f=fixture(); try {
+    await f.share(); await f.command('attach');
+    const object={nested:{private:'sensitive'.repeat(100000)}};
+    f.chrome.debugger.onEvent.emit({tabId:7},'Runtime.consoleAPICalled',{args:[{value:object}]});
+    const data=JSON.stringify(f.sent.at(-1));
+    assert(!data.includes('sensitive'));
+    assert(data.includes('omitted') || f.sent.at(-1).message.method==='WebCodex.eventsDiscarded');
     assert.equal(vm.runInContext('leases.size',f.context),1);
   } finally {await f.cleanup();}
 });

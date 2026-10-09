@@ -12,6 +12,13 @@ fn test_tempdir() -> std::io::Result<tempfile::TempDir> {
     tempfile::tempdir()
 }
 
+mod cloudflare_tunnel;
+pub use cloudflare_tunnel::{
+    cloudflare_ingress_port, cloudflare_tunnel_profile, cloudflare_tunnel_profiles,
+    load_cloudflare_server_ingress_port, load_cloudflare_server_materializations,
+    load_cloudflare_tunnel_materialization, materialize_cloudflare_tunnel_profiles,
+    CloudflareTunnelProfileRequest, CloudflareTunnelRuntimeProfile, TunnelProvider,
+};
 mod embedded_tunnel;
 mod engine;
 pub use embedded_tunnel::{embedded_tunnel_profiles, EmbeddedTunnelProfile};
@@ -58,8 +65,9 @@ pub use storage::{default_environment_dir, EnvironmentLock, EnvironmentStore};
 pub use types::*;
 
 pub use installer_authorization::{
-    authorize_prepared_installation, cancel_installer_authorization,
-    verify_installer_authorization, verify_installer_targets,
+    authorize_prepared_installation, authorize_prepared_installation_for_target,
+    cancel_installer_authorization, verify_installer_authorization,
+    verify_installer_package_target, verify_installer_targets,
 };
 #[cfg(unix)]
 pub use installer_unix::{finish_authorized_installation, run_installer_upgrade_child};

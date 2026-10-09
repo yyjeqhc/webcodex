@@ -14,6 +14,8 @@ pub enum UpgradeOutcome {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UpgradeObservation {
+    #[serde(default, skip_serializing_if = "PackageFlavor::is_full")]
+    pub package_flavor: PackageFlavor,
     pub environment_id: String,
     pub operation_id: String,
     pub version: String,
@@ -52,7 +54,7 @@ pub(crate) fn upgrade_observation_under_lock(
             "The upgrade's original environment is unavailable",
         )
     })?;
-    if journal.schema_version != 1
+    if journal.schema_version != journal.candidate.package_flavor.source_schema()
         || journal.record.environment_id != record.environment_id
         || journal.record.request.account != record.request.account
         || record.request.account.identity != crate::current_account()?.identity
@@ -67,6 +69,7 @@ pub(crate) fn upgrade_observation_under_lock(
         ));
     }
     Ok(Some(UpgradeObservation {
+        package_flavor: journal.candidate.package_flavor,
         environment_id: record.environment_id,
         operation_id: journal.operation_id,
         version: journal.candidate.version,

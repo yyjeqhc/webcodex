@@ -15,6 +15,12 @@ const contentOnly = output => ({ content:[{type:"text",text:JSON.stringify({succ
 const refs = view => view.sent.filter(request=>request.method === "ui/update-model-context");
 const readRequests = view => view.calls("read_webcodex_resource");
 const search = (view, kind) => view.calls("search_webcodex_resources").filter(request=>request.params.arguments.kind===kind);
+
+test("empty reference selection does not show a blank manual-copy field", async () => {
+  const view = app("mcp_workbench_app.html");
+  await initialize(view);
+  assert.equal(view.nodes.copyLabel.hidden, true);
+});
 async function initialize(view, modalities = {}, context = undefined, extension = false) {
   await view.reply(view.sent[0], {protocolVersion:"2026-01-26",hostCapabilities:{updateModelContext:modalities,...(extension ? {experimental:{"openai/modelContext":{}}} : {})},...(context===undefined ? {} : {hostContext:{"openai/modelContext":context}})});
 }

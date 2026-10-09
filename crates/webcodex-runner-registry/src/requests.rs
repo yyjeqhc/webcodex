@@ -2680,8 +2680,28 @@ impl RunnerRegistry {
         access: Option<&crate::RunnerAccess>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         payload.validate()?;
-        let requires_python =
-            payload.adapter == webcodex_core::project_validation::ProjectValidationAdapter::Python;
+        let python_capability = (payload.adapter
+            == webcodex_core::project_validation::ProjectValidationAdapter::Python)
+            .then_some(
+                if payload.action
+                    == webcodex_core::project_validation::ProjectValidationAction::Test
+                {
+                    RunnerFeature::ProjectValidationPythonPytest
+                } else {
+                    RunnerFeature::ProjectValidationPythonRuff
+                },
+            );
+        let node_capability = (payload.adapter
+            == webcodex_core::project_validation::ProjectValidationAdapter::Node)
+            .then_some(
+                if payload.action
+                    == webcodex_core::project_validation::ProjectValidationAction::Test
+                {
+                    RunnerFeature::ProjectValidationNodeTap
+                } else {
+                    RunnerFeature::ProjectValidationNodeScriptCheck
+                },
+            );
         let requires_package_scope = payload
             .scope
             .as_ref()
@@ -2713,15 +2733,15 @@ impl RunnerRegistry {
                 RunnerFeature::ProjectValidation,
             ));
         }
-        if requires_python
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectValidationPythonPytest)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectValidationPythonPytest,
-            ));
+        if let Some(capability) = python_capability {
+            if !runner.runner_features.supports(capability) {
+                return Err(capability_upgrade_error(&client_id, capability));
+            }
+        }
+        if let Some(capability) = node_capability {
+            if !runner.runner_features.supports(capability) {
+                return Err(capability_upgrade_error(&client_id, capability));
+            }
         }
         if requires_all_packages
             && !runner

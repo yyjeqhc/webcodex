@@ -7,6 +7,30 @@ pub(super) fn configured_script_interpreter(
     profile: Option<&PreparedShellProfile>,
     language: ShellScriptLanguage,
 ) -> Result<OsString, String> {
+    select_script_interpreter(shell, profile, language, false)
+}
+
+/// Pin a configured Node interpreter for the production project-check path.
+pub(super) fn configured_validation_node_interpreter(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+) -> Result<OsString, String> {
+    select_script_interpreter(shell, profile, ShellScriptLanguage::Javascript, true)
+}
+
+pub(super) fn configured_validation_python_interpreter(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+) -> Result<OsString, String> {
+    select_script_interpreter(shell, profile, ShellScriptLanguage::Python, true)
+}
+
+fn select_script_interpreter(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+    language: ShellScriptLanguage,
+    pin_configured: bool,
+) -> Result<OsString, String> {
     let configured_program = profile
         .map(|profile| profile.program.as_str())
         .unwrap_or(shell.program.as_str());
@@ -59,6 +83,9 @@ pub(super) fn configured_script_interpreter(
         ShellScriptLanguage::Javascript | ShellScriptLanguage::Typescript => {
             candidates.push("node".to_string())
         }
+    }
+    if pin_configured && configured_matches {
+        candidates.truncate(1);
     }
     candidates.dedup_by(|left, right| {
         if cfg!(windows) {

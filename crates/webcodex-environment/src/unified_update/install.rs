@@ -1,4 +1,5 @@
 pub(crate) mod context;
+pub(crate) mod package;
 #[cfg(any(unix, test))]
 mod prepare;
 pub use context::detected_installer_target;
@@ -171,7 +172,8 @@ impl UpdateManager {
             let candidate = prepare::extract_candidate(&target_cache, &package, target).await?;
             let checked = crate::verify_upgrade_candidate(&candidate)
                 .map_err(|_| UpdateError::ProvenanceFailed)?;
-            if checked.version != version
+            if checked.package_flavor != target.flavor
+                || checked.version != version
                 || checked.manifest_sha256 != entry.source_manifest_sha256
                 || checked.source_sha != release.source.source_sha
             {
@@ -463,10 +465,11 @@ impl UpdateManager {
                     .target_cache(cache)?
                     .read("source-manifest.json", unified::MAX_SOURCE_BYTES)?
                     .and_then(|bytes| {
-                        unified::verify_source_manifest(
+                        unified::verify_source_manifest_for_flavor(
                             &bytes,
                             &observed.version,
                             record.target?.platform,
+                            record.target?.flavor,
                         )
                         .ok()
                     })
@@ -560,13 +563,17 @@ fn terminal_matches_guard(
 }
 
 fn matches_target(record: &UpdateRecord, observed: &UpgradeObservation) -> bool {
-    record.pending.as_ref().is_some_and(|pending| {
-        pending.environment_id == observed.environment_id
-            && pending
-                .operation_id
-                .as_ref()
-                .is_none_or(|operation| *operation == observed.operation_id)
-    }) && record.version.as_deref() == Some(observed.version.as_str())
+    record
+        .target
+        .is_some_and(|target| target.flavor == observed.package_flavor)
+        && record.pending.as_ref().is_some_and(|pending| {
+            pending.environment_id == observed.environment_id
+                && pending
+                    .operation_id
+                    .as_ref()
+                    .is_none_or(|operation| *operation == observed.operation_id)
+        })
+        && record.version.as_deref() == Some(observed.version.as_str())
         && record.source_sha.as_deref() == Some(observed.source_sha.as_str())
         && record.source_manifest_sha256.as_deref() == Some(observed.manifest_sha256.as_str())
 }

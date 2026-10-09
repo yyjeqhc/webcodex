@@ -1734,6 +1734,87 @@ fn powershell_plan_uses_ps1_file_and_never_command_text_mode() {
     }));
 }
 
+#[cfg(unix)]
+#[test]
+fn native_node_runner_probe_pins_version_and_strips_ambient_options() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = crate::tests::executable_tempdir();
+    let node = temp.path().join("node");
+    let install_stub = |version: &str| {
+        std::fs::write(
+            &node,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = '--version' ] || exit 9\nprintf '{}\\n'\n",
+                version
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o700)).unwrap();
+    };
+    let mut shell = ShellConfig::default();
+    shell.program = node.to_string_lossy().into_owned();
+    shell
+        .env
+        .insert("PATH".into(), temp.path().to_string_lossy().into_owned());
+    shell
+        .env
+        .insert("NODE_OPTIONS".into(), "--require=./unsafe.cjs".into());
+    let step = webcodex_core::runner_protocol::ShellJobValidationStep {
+        name: "check".into(),
+        program: "node".into(),
+        args: vec!["--run".into(), "check".into()],
+        env: vec![],
+    };
+    install_stub("v22.2.0");
+    assert!(
+        configured_node_project_check_job_command(&shell, None, &step, temp.path(), None).is_err()
+    );
+
+    install_stub("v22.3.0");
+    let command =
+        configured_node_project_check_job_command(&shell, None, &step, temp.path(), None).unwrap();
+    assert_eq!(PathBuf::from(command.get_program()), node);
+    assert_eq!(
+        command.get_args().collect::<Vec<_>>(),
+        [std::ffi::OsStr::new("--run"), std::ffi::OsStr::new("check")]
+    );
+    assert!(command
+        .get_envs()
+        .any(|(key, value)| { key == std::ffi::OsStr::new("NODE_OPTIONS") && value.is_none() }));
+    let native_test = webcodex_core::runner_protocol::ShellJobValidationStep {
+        name: "test".into(),
+        program: "node".into(),
+        args: vec!["--test".into(), "--test-reporter=tap".into()],
+        env: vec![],
+    };
+    let native =
+        configured_node_project_check_job_command(&shell, None, &native_test, temp.path(), None)
+            .unwrap();
+    assert_eq!(PathBuf::from(native.get_program()), node);
+    assert_eq!(
+        native.get_args().collect::<Vec<_>>(),
+        [
+            std::ffi::OsStr::new("--test"),
+            std::ffi::OsStr::new("--test-reporter=tap"),
+        ]
+    );
+    assert!(native
+        .get_envs()
+        .any(|(key, value)| key == std::ffi::OsStr::new("NODE_OPTIONS") && value.is_none()));
+    let mut injected = native_test.clone();
+    injected.args.push("--eval".into());
+    assert!(
+        configured_node_project_check_job_command(&shell, None, &injected, temp.path(), None)
+            .is_err()
+    );
+    let mut forged = step.clone();
+    forged.args.push("--eval".into());
+    assert!(
+        configured_node_project_check_job_command(&shell, None, &forged, temp.path(), None)
+            .is_err()
+    );
+}
+
 #[test]
 fn javascript_temp_file_uses_mjs_and_exact_script_bytes() {
     let payload = ShellScriptPayload {
@@ -2452,6 +2533,51 @@ fn project_validation_pytest_probe_uses_profile_python3_and_pins_spawn_program()
 
 #[cfg(unix)]
 #[test]
+fn project_validation_pytest_missing_configured_python3_uses_profile_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = crate::tests::executable_tempdir();
+    let python = temp.path().join("python3");
+    let capture = temp.path().join("probe");
+    std::fs::write(&python,"#!/bin/sh\nif [ \"$1\" = '-c' ]; then printf 'probe' > \"$CAPTURE\"; exit 0; fi\nif [ -n \"${PYTEST_ADDOPTS+x}\" ]; then printf 'leaked' >> \"$CAPTURE\"; else printf 'spawn' >> \"$CAPTURE\"; fi\n").unwrap();
+    std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let profile = PreparedShellProfile {
+        profile_name: "python-profile".into(),
+        program: temp
+            .path()
+            .join("missing/python3")
+            .to_string_lossy()
+            .into_owned(),
+        args: vec![],
+        dialect: ShellDialect::Posix,
+        env_snapshot: std::collections::HashMap::from([
+            ("PATH".into(), temp.path().to_string_lossy().into_owned()),
+            ("CAPTURE".into(), capture.to_string_lossy().into_owned()),
+            (
+                "PYTEST_ADDOPTS".into(),
+                "-c ../../outside/pytest.ini".into(),
+            ),
+        ]),
+    };
+    let mut command = configured_pytest_job_command(
+        &ShellConfig::default(),
+        Some(&profile),
+        &["-m", "pytest", "--color=no", "-rA"].map(str::to_string),
+        temp.path(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(command.get_program(), python.as_os_str());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = ManagedChild::spawn(&mut command).unwrap();
+    assert!(child.wait().unwrap().success());
+    assert_eq!(std::fs::read_to_string(capture).unwrap(), "probespawn");
+}
+
+#[cfg(unix)]
+#[test]
 fn project_validation_pytest_missing_module_never_falls_back_or_spawns_tests() {
     use std::os::unix::fs::PermissionsExt;
     let temp = crate::tests::executable_tempdir();
@@ -2482,4 +2608,234 @@ fn project_validation_pytest_missing_module_never_falls_back_or_spawns_tests() {
         webcodex_core::runner_protocol::VALIDATION_TOOL_UNAVAILABLE_CODE
     );
     assert_eq!(std::fs::read_to_string(capture).unwrap(), "probe");
+}
+
+// These are interpreter/argv fixtures implemented by a shell stub, not Ruff CLI proof.
+#[cfg(unix)]
+#[test]
+fn project_validation_ruff_probe_and_spawn_pin_profile_python_and_environment() {
+    use std::os::unix::fs::PermissionsExt;
+    use webcodex_core::runner_protocol::ShellJobValidationStep;
+    let temp = crate::tests::executable_tempdir();
+    let python = temp.path().join("python3");
+    let capture = temp.path().join("probe");
+    std::fs::write(
+        &python,
+        r#"#!/bin/sh
+[ "$1" = '-I' ] || exit 40
+[ "$2" = '-B' ] || exit 41
+[ "$PYTHONDONTWRITEBYTECODE" = '1' ] || exit 42
+[ "$PYTHONPATH" = 'configured-module-path' ] || exit 43
+[ -z "${RUFF_OUTPUT_FILE+x}" ] || exit 44
+if [ "$3" = '-c' ]; then
+  case "$4" in *"find_spec('ruff')"*) printf 'probe' > "$CAPTURE";; *) exit 45;; esac
+else
+  printf 'spawn' >> "$CAPTURE"
+fi
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let profile = PreparedShellProfile {
+        profile_name: "ruff-profile".into(),
+        program: "bash".into(),
+        args: vec![],
+        dialect: ShellDialect::Posix,
+        env_snapshot: std::collections::HashMap::from([
+            ("PATH".into(), temp.path().to_string_lossy().into_owned()),
+            ("CAPTURE".into(), capture.to_string_lossy().into_owned()),
+            ("PYTHONPATH".into(), "configured-module-path".into()),
+            ("RUFF_OUTPUT_FILE".into(), "must-not-write".into()),
+            ("PYTHONDONTWRITEBYTECODE".into(), "0".into()),
+        ]),
+    };
+    for kind in ["check", "format"] {
+        let step = ShellJobValidationStep::python_ruff(kind).unwrap();
+        let mut command = configured_ruff_job_command(
+            &ShellConfig::default(),
+            Some(&profile),
+            &step,
+            temp.path(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(command.get_program(), python.as_os_str());
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            step.args
+                .iter()
+                .map(std::ffi::OsStr::new)
+                .collect::<Vec<_>>()
+        );
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = ManagedChild::spawn(&mut command).unwrap();
+        assert!(child.wait().unwrap().success());
+        assert_eq!(std::fs::read_to_string(&capture).unwrap(), "probespawn");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn project_validation_python_invalid_configured_interpreter_and_missing_ruff_never_fall_back() {
+    use std::os::unix::fs::PermissionsExt;
+    use webcodex_core::runner_protocol::ShellJobValidationStep;
+    let temp = crate::tests::executable_tempdir();
+    let capture = temp.path().join("fallback");
+    for (name, script) in [
+        (
+            "python3",
+            "#!/bin/sh\nprintf probe > \"$CAPTURE\"\nexit 42\n",
+        ),
+        (
+            "python",
+            "#!/bin/sh\nprintf fallback > \"$CAPTURE\"\nexit 0\n",
+        ),
+    ] {
+        let path = temp.path().join(name);
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let mut profile = PreparedShellProfile {
+        profile_name: "ruff-profile".into(),
+        program: temp
+            .path()
+            .join("missing/python3")
+            .to_string_lossy()
+            .into_owned(),
+        args: vec![],
+        dialect: ShellDialect::Posix,
+        env_snapshot: std::collections::HashMap::from([
+            ("PATH".into(), temp.path().to_string_lossy().into_owned()),
+            ("CAPTURE".into(), capture.to_string_lossy().into_owned()),
+        ]),
+    };
+    for configured in [true, false] {
+        if !configured {
+            profile.program = "bash".into();
+        }
+        let result = configured_ruff_job_command(
+            &ShellConfig::default(),
+            Some(&profile),
+            &ShellJobValidationStep::python_ruff("check").unwrap(),
+            temp.path(),
+            None,
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            webcodex_core::runner_protocol::VALIDATION_TOOL_UNAVAILABLE_CODE
+        );
+        if configured {
+            assert!(!capture.exists());
+        } else {
+            assert_eq!(std::fs::read_to_string(&capture).unwrap(), "probe");
+            std::fs::remove_file(&capture).unwrap();
+        }
+    }
+    // Ruff keeps configured Python authoritative even with a PATH alternative.
+    profile.program = temp
+        .path()
+        .join("missing/python")
+        .to_string_lossy()
+        .into_owned();
+    assert!(configured_ruff_job_command(
+        &ShellConfig::default(),
+        Some(&profile),
+        &ShellJobValidationStep::python_ruff("check").unwrap(),
+        temp.path(),
+        None
+    )
+    .is_err());
+    assert!(!capture.exists());
+}
+
+#[cfg(all(unix, feature = "runner-real-process-tests"))]
+#[test]
+#[ignore = "requires explicitly supplied existing Python 3 environment; never installs tooling"]
+fn runner_real_process_project_validation_ruff_module_isolation() {
+    use webcodex_core::runner_protocol::ShellJobValidationStep;
+    // Optional real-process fixture. Keep ordinary unit tests toolchain-neutral.
+    let python = std::env::var("WEBCODEX_TEST_RUFF_PYTHON")
+        .expect("set WEBCODEX_TEST_RUFF_PYTHON to an existing Python 3 interpreter");
+    assert!(
+        Path::new(&python).is_file(),
+        "configured Python interpreter must exist"
+    );
+    let installed_ruff = Command::new(&python)
+        .args(["-I", "-B", "-c", "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('ruff') else 42)"])
+        .env_clear()
+        .output().unwrap().status.success();
+    for (on_pythonpath, package) in [(false, false), (false, true), (true, false), (true, true)] {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let injected = temp.path().join("injected");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&injected).unwrap();
+        let marker = project.join("impostor-executed");
+        let root = if on_pythonpath { &injected } else { &project };
+        let malicious =
+            "from pathlib import Path\nPath('impostor-executed').touch()\nraise SystemExit(0)\n";
+        if package {
+            std::fs::create_dir(root.join("ruff")).unwrap();
+            std::fs::write(root.join("ruff/__init__.py"), malicious).unwrap();
+            std::fs::write(root.join("ruff/__main__.py"), malicious).unwrap();
+        } else {
+            std::fs::write(root.join("ruff.py"), malicious).unwrap();
+        }
+        // An installed genuine Ruff must fail too; an impostor would falsely succeed.
+        std::fs::write(project.join("pyproject.toml"), "[invalid TOML").unwrap();
+        let profile = PreparedShellProfile {
+            profile_name: "system-python".into(),
+            program: python.clone(),
+            args: vec![],
+            dialect: ShellDialect::Posix,
+            env_snapshot: std::collections::HashMap::from([(
+                "PYTHONPATH".into(),
+                injected.to_string_lossy().into_owned(),
+            )]),
+        };
+        for kind in ["check", "format"] {
+            let step = ShellJobValidationStep::python_ruff(kind).unwrap();
+            match configured_ruff_job_command(
+                &ShellConfig::default(),
+                Some(&profile),
+                &step,
+                &project,
+                None,
+            ) {
+                Ok(mut command) => {
+                    assert!(installed_ruff, "impostor caused false probe success");
+                    assert!(!command
+                        .current_dir(&project)
+                        .output()
+                        .unwrap()
+                        .status
+                        .success());
+                }
+                Err(error) => {
+                    assert!(!installed_ruff);
+                    assert_eq!(
+                        error,
+                        webcodex_core::runner_protocol::VALIDATION_TOOL_UNAVAILABLE_CODE
+                    );
+                }
+            }
+            // Exercise canonical spawn argv even when this system has no installed Ruff.
+            assert!(!Command::new(&python)
+                .args(&step.args)
+                .env_clear()
+                .env("PYTHONPATH", &injected)
+                .current_dir(&project)
+                .output()
+                .unwrap()
+                .status
+                .success());
+            assert!(
+                !marker.exists(),
+                "project/PYTHONPATH Ruff impostor executed"
+            );
+        }
+    }
 }

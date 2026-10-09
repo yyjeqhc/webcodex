@@ -14,6 +14,12 @@ let generation = 0;
 const offers = new Map();
 const leases = new Map();
 const tabLease = new Map();
+// Chrome callbacks identify only a tab, not an attach generation. Keep it busy
+// until pending attach and detach completions can no longer affect a new lease.
+const attaching = new Set();
+const detaching = new Set();
+const diagnosticEvents = new Set(['Runtime.consoleAPICalled', 'Runtime.exceptionThrown', 'Log.entryAdded',
+  'Network.requestWillBeSent', 'Network.responseReceived', 'Network.loadingFailed', 'Network.loadingFinished']);
 const encoder = new TextEncoder();
 let admitted = 0;
 
@@ -26,12 +32,17 @@ async function detachLease(id) {
   const lease = leases.get(id);
   if (!lease) return;
   leases.delete(id);
-  // Detach only. There is intentionally no Browser.close/window-close/process API.
+  // Invalidate every tab synchronously before the first asynchronous detach.
   for (const tab of lease.tabs) {
     tabLease.delete(tab);
-    try { await chrome.debugger.detach({tabId: tab}); } catch { /* Already detached. */ }
+    detaching.add(tab);
   }
+  await Promise.all([...lease.tabs].map(async tab => {
+    try { await chrome.debugger.detach({tabId: tab}); } catch { /* Already detached. */ }
+    finally { detaching.delete(tab); }
+  }));
 }
+
 async function disconnect() {
   const current = native;
   native = null;
@@ -51,7 +62,7 @@ function connect() {
       void chrome.runtime.lastError;
       clearTimeout(timer);
       reject(new Error('bridge_disconnected'));
-      if (native === port) void disconnect();
+      if (native === port) { console.info('browser_bridge: native_disconnected'); void disconnect(); }
     });
     port.onMessage.addListener(message => {
       if (native !== port) return;
@@ -70,10 +81,15 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (message.action === 'revoke') {
       // Invalidate consent before awaiting cleanup, including attach operations
       // that have reserved a lease but have not obtained the debugger yet.
-      offers.delete(tab.id);
+      console.info('browser_bridge: explicit_revoke');
       const revoked = [...leases.values()].filter(lease => lease.originalTab === tab.id || lease.tabs.has(tab.id));
-      await Promise.all(revoked.map(lease => detachLease(lease.id)));
-      if (native) send({kind: 'revoke', tab: tab.id});
+      const sharedTabs = new Set([tab.id, ...revoked.map(lease => lease.originalTab)]);
+      for (const sharedTab of sharedTabs) offers.delete(sharedTab);
+      const cleanup = Promise.all(revoked.map(lease => detachLease(lease.id)));
+      for (const sharedTab of sharedTabs) {
+        if (native) { try { send({kind: 'revoke', tab: sharedTab}); } catch { await disconnect(); } }
+      }
+      await cleanup;
       return {ok: true, message: 'Tab revoked. Chrome and its login data remain unchanged.'};
     }
     if (!/^https?:\/\//i.test(tab.url ?? '') || offers.size >= 16) throw new Error('tab_not_shareable');
@@ -90,17 +106,25 @@ function requireLease(lease) {
 }
 async function attachTab(lease, tab) {
   requireLease(lease);
-  if (tabLease.has(tab)) throw new Error('tab_already_attached');
-  await chrome.debugger.attach({tabId: tab}, '1.3');
-  // The connection may disappear while attach was in flight. Do not retain an
-  // unowned debugger after disconnect or reattach on a replacement native port.
-  if (!native || lease.generation !== generation || leases.get(lease.id) !== lease) {
-    try { await chrome.debugger.detach({tabId: tab}); } catch { /* Detached already. */ }
-    throw new Error('lease_lost');
-  }
+  if (tabLease.has(tab) || attaching.has(tab) || detaching.has(tab)) throw new Error('tab_already_attached');
+  attaching.add(tab);
   lease.tabs.add(tab);
   tabLease.set(tab, lease.id);
+  try {
+    await chrome.debugger.attach({tabId: tab}, '1.3');
+    // Reservation makes onDetach visible even before attach's promise resolves.
+    try { requireLease(lease); }
+    catch (error) {
+      try { await chrome.debugger.detach({tabId: tab}); } catch { /* Already detached. */ }
+      throw error;
+    }
+  } catch (error) {
+    lease.tabs.delete(tab);
+    if (tabLease.get(tab) === lease.id) tabLease.delete(tab);
+    throw error;
+  } finally { attaching.delete(tab); }
 }
+
 async function control(message, epoch) {
   if (!native || epoch !== generation) throw new Error('connection_lost');
   const request = message.request;
@@ -196,25 +220,37 @@ async function command(message) {
 }
 chrome.debugger.onEvent.addListener((source, method, params) => {
   const lease = tabLease.get(source.tabId);
-  if (!lease || source.sessionId) return;
-  const event = {kind: 'event', lease, target: `tab_${source.tabId}`, message: {method, params}};
-  if (size(event) > MAX_EVENT_BYTES) { void disconnect(); return; }
+  if (!lease || source.sessionId || !diagnosticEvents.has(method)) return;
+  let event = {kind: 'event', lease, target: `tab_${source.tabId}`, message: {method, params}};
+  // Page-controlled diagnostic payloads are not loss of user consent. Preserve
+  // the wire bound and explicitly mark missing evidence; never forward the body.
+  if (size(event) > MAX_EVENT_BYTES) {
+    event = {kind: 'event', lease, target: `tab_${source.tabId}`,
+      message: {method: 'WebCodex.eventsDiscarded', params: {domain: method.split('.')[0]}}};
+  }
   try { send(event); } catch { void disconnect(); }
 });
-chrome.debugger.onDetach.addListener(source => {
-  const leaseId = tabLease.get(source.tabId);
-  if (!leaseId) return;
-  void detachLease(leaseId);
-  offers.delete(source.tabId);
-  if (native) { try { send({kind: 'revoke', tab: source.tabId}); } catch { void disconnect(); } }
-});
-chrome.tabs.onRemoved.addListener(tabId => {
+function revokeTab(tabId, reason) {
   const leaseId = tabLease.get(tabId);
   const lease = leases.get(leaseId);
-  lease?.tabs.delete(tabId);
-  tabLease.delete(tabId);
-  if (offers.delete(tabId)) {
-    if (leaseId) void detachLease(leaseId);
-    if (native) { try { send({kind: 'revoke', tab: tabId}); } catch { void disconnect(); } }
+  const originalTab = lease?.originalTab ?? tabId;
+  if (lease && originalTab !== tabId && ['tab_closed', 'debugger_target_closed'].includes(reason)) {
+    lease.tabs.delete(tabId);
+    tabLease.delete(tabId);
+    return;
   }
+  const offered = offers.delete(originalTab);
+  if (!lease && !offered) return;
+  console.info(`browser_bridge: ${reason}`);
+  // Rust indexes consent by the original shared tab, including detach of a
+  // tool-created child. Invalidate the same lease on both sides.
+  if (lease) void detachLease(leaseId);
+  if (native) { try { send({kind: 'revoke', tab: originalTab}); } catch { void disconnect(); } }
+}
+chrome.debugger.onDetach.addListener((source, reason) => {
+  if (source.sessionId || detaching.has(source.tabId)) return;
+  const diagnostic = reason === 'target_closed' ? 'debugger_target_closed'
+    : reason === 'canceled_by_user' ? 'debugger_canceled_by_user' : 'debugger_detached';
+  revokeTab(source.tabId, diagnostic);
 });
+chrome.tabs.onRemoved.addListener(tabId => revokeTab(tabId, 'tab_closed'));

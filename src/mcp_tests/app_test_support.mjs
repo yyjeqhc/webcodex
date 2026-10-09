@@ -28,6 +28,7 @@ export function app(filename, { deliverToolMeta = true, deliverToolStructuredCon
       parentNode: null,
       get ownerDocument() { return document; },
       style: { setProperty() {} },
+      getBoundingClientRect() { return { height: 400, width: 800, top: 0, bottom: 400 }; },
       get isConnected() { return !!this.documentNode || !!this.parentNode?.isConnected; },
       contains(node) { return node === this || this.children.some(child => child.contains(node)); },
       focus() { document.activeElement = this; },
@@ -55,6 +56,7 @@ export function app(filename, { deliverToolMeta = true, deliverToolStructuredCon
   const document = {
     hidden: false,
     body: element("body"),
+    documentElement: element("html"),
     getElementById: id => nodes[id] ||= Object.assign(element(), { documentNode: true }),
     createElement: tagName => element(tagName),
   };

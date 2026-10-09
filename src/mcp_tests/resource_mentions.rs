@@ -20,7 +20,7 @@ async fn workbench_native_metadata_and_mentions_match_extension_contract() {
         );
         assert_eq!(
             launcher.pointer("/_meta/openai~1ui/entrypoints"),
-            app.then_some(&json!([{"type":"global"},{"type":"thread"}]))
+            app.then_some(&json!([{"type":"global"}]))
         );
         let mentions = tools.iter().find(|tool| tool["name"] == "search_mentions");
         assert_eq!(mentions.is_some(), app);

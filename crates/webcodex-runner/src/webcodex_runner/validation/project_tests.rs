@@ -36,6 +36,163 @@ fn request(action: ProjectValidationAction) -> ProjectValidationRequest {
 }
 
 #[test]
+fn project_node_auto_and_explicit_reject_nonregular_nested_marker() {
+    let (_tmp, root, registry, policy) = fixture("package.json");
+    fs::write(
+        root.join("package.json"),
+        r#"{"scripts":{"check":"echo ancestor"}}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("frontend/src")).unwrap();
+    fs::create_dir(root.join("frontend/package.json")).unwrap();
+    for adapter in [
+        ProjectValidationAdapter::Auto,
+        ProjectValidationAdapter::Node,
+    ] {
+        let mut req = request(ProjectValidationAction::Check);
+        req.adapter = adapter;
+        req.cwd = Some("frontend/src".into());
+        assert!(matches!(
+            project::plan(&policy, &registry, &req),
+            Err(ProjectValidationPlanningResult::Unavailable { code, .. })
+                if code == "validation_manifest_invalid"
+        ));
+    }
+}
+
+#[test]
+fn project_node_script_check_plan_identity_and_queue_fence() {
+    use webcodex_core::runner_operation::{RunnerJobOperation, RunnerJobValidationOperation};
+    use webcodex_core::runner_protocol::{ShellJobContext, ShellJobValidationMetadata};
+
+    let (_tmp, root, registry, policy) = fixture("package.json");
+    fs::write(
+        root.join("package.json"),
+        r#"{"packageManager":"yarn@4","scripts":{"check":"node one.js","lint":"node lint.js"}}"#,
+    )
+    .unwrap();
+    // No lockfile or installed package manager needed for Node's built-in
+    // runner; the native script selection is Runner-owned.
+    let auto = request(ProjectValidationAction::Check);
+    let (baseline, cwd) = project::plan(&policy, &registry, &auto).unwrap();
+    assert_eq!(baseline.adapter, "node:script:check");
+    assert_eq!(baseline.step.args, ["--run", "check"]);
+    assert!(baseline.step.is_structured_node_check());
+    let mut explicit = auto.clone();
+    explicit.adapter = ProjectValidationAdapter::Node;
+    let (selected, _) = project::plan(&policy, &registry, &explicit).unwrap();
+    assert_eq!(baseline.step, selected.step);
+    assert_eq!(baseline.validation_target_id, selected.validation_target_id);
+    let metadata = ShellJobValidationMetadata {
+        project_validation: Some(baseline.provenance.clone()),
+        tool: "project_validate".into(),
+        kind: "check".into(),
+        adapter: baseline.adapter.clone(),
+        steps: vec![baseline.step.clone()],
+        effective_timeout_secs: 60,
+        sync_wait_secs: 1,
+        validation_target_id: Some(baseline.validation_target_id.clone()),
+        source_fence: None,
+        minimum_tests: None,
+        require_tests: None,
+        no_run: None,
+    };
+    assert!(metadata.is_valid());
+    let operation = RunnerJobOperation::StartValidation(RunnerJobValidationOperation {
+        job_id: "node-job".into(),
+        cwd: Some(cwd.to_string_lossy().into_owned()),
+        steps: metadata.steps.clone(),
+        timeout_secs: 60,
+        context: ShellJobContext {
+            runtime_project_id: Some("agent:runner:demo".into()),
+            validation: Some(metadata),
+            workflow_session_id: None,
+            ssh_resource: None,
+            project_cwd: Some(".".into()),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            purpose: Some("validation".into()),
+            shell: None,
+            command_preview: "node --run check".into(),
+            validation_steps: vec!["check".into()],
+            structured_execution: None,
+        },
+    });
+    project::fence(&policy, &registry, &operation).unwrap();
+
+    // Changed body: same target, different source digest and failed old fence.
+    fs::write(
+        root.join("package.json"),
+        r#"{"packageManager":"yarn@4","scripts":{"check":"node two.js","lint":"node lint.js"}}"#,
+    )
+    .unwrap();
+    let (changed, _) = project::plan(&policy, &registry, &auto).unwrap();
+    assert_eq!(changed.validation_target_id, baseline.validation_target_id);
+    assert_ne!(
+        changed.provenance.manifest_digest,
+        baseline.provenance.manifest_digest
+    );
+    assert!(project::fence(&policy, &registry, &operation)
+        .unwrap_err()
+        .contains("validation_plan_stale"));
+
+    fs::write(
+        root.join("package.json"),
+        r#"{"scripts":{"lint":"node lint.js"}}"#,
+    )
+    .unwrap();
+    let (lint, _) = project::plan(&policy, &registry, &auto).unwrap();
+    assert_eq!(lint.step.args, ["--run", "lint"]);
+    assert_ne!(lint.validation_target_id, baseline.validation_target_id);
+    fs::remove_file(root.join("package.json")).unwrap();
+    assert!(project::fence(&policy, &registry, &operation).is_err());
+}
+
+#[test]
+fn project_node_validation_rejects_other_actions_and_options() {
+    let (_tmp, root, registry, policy) = fixture("package.json");
+    fs::write(
+        root.join("package.json"),
+        r#"{"scripts":{"check":"node check.js"}}"#,
+    )
+    .unwrap();
+    for (action, expected_code) in [
+        (
+            ProjectValidationAction::Test,
+            "validation_check_unavailable",
+        ),
+        (
+            ProjectValidationAction::FormatCheck,
+            "validation_action_unsupported",
+        ),
+    ] {
+        let request = request(action);
+        assert!(matches!(
+            project::plan(&policy, &registry, &request),
+            Err(ProjectValidationPlanningResult::Unavailable { code, .. })
+                if code == expected_code
+        ));
+    }
+    let mut request = request(ProjectValidationAction::Check);
+    request.scope = Some(ProjectValidationScope {
+        packages: vec!["app".into()],
+        all_packages: false,
+    });
+    assert!(matches!(
+        project::plan(&policy, &registry, &request),
+        Err(ProjectValidationPlanningResult::Unavailable { code, .. })
+            if code == "validation_scope_unsupported"
+    ));
+    request.scope = None;
+    request.dependency_policy = Some(ProjectDependencyPolicy {
+        mode: ProjectDependencyMode::Locked,
+    });
+    assert!(matches!(
+        project::plan(&policy, &registry, &request),
+        Err(ProjectValidationPlanningResult::Unavailable { code, .. })
+            if code == "dependency_policy_unsupported"
+    ));
+}
+#[test]
 fn project_validation_runner_plans_locked_dependency_policy_for_rust_and_go() {
     for (marker, adapter, expected) in [
         (
@@ -90,6 +247,12 @@ fn project_validation_runner_resolves_all_production_actions() {
         ("Cargo.toml", Test, "cargo_test", vec!["test"]),
         ("go.mod", Check, "go_vet", vec!["vet", "./..."]),
         ("go.mod", Test, "go_test", vec!["test", "-json", "./..."]),
+        (
+            "pyproject.toml",
+            Test,
+            "python:pytest:test",
+            vec!["-m", "pytest", "--color=no", "-rA"],
+        ),
     ] {
         let (_tmp, root, registry, policy) = fixture(marker);
         let (plan, cwd) = project::plan(&policy, &registry, &request(action)).unwrap();
@@ -102,31 +265,25 @@ fn project_validation_runner_resolves_all_production_actions() {
             Check => webcodex_validation::SemanticCheck::Check,
             Test => webcodex_validation::SemanticCheck::Test,
         };
-        let canonical_adapter = webcodex_validation::validation_adapter_for_recipe(
-            plan.provenance.backend.as_str(),
-            semantic_check,
+        let resolved = webcodex_validation::resolve_project_validation_recipe(
+            &root,
+            None,
+            None,
+            &[semantic_check],
+            None,
+            None,
+            false,
+            None,
         )
         .unwrap();
-        let canonical_options = if plan.provenance.backend == "rust" && action == FormatCheck {
-            webcodex_validation::ValidationCommandOptions {
-                check: true,
-                ..Default::default()
-            }
-        } else {
-            webcodex_validation::ValidationCommandOptions::default()
-        };
-        let canonical_plan = canonical_adapter
-            .build_readonly_plan(canonical_options)
-            .unwrap();
         assert_eq!(
-            plan.step, canonical_plan.structured_step,
-            "{adapter} gateway plan must use the canonical adapter step"
+            std::slice::from_ref(&plan.step),
+            resolved.steps.as_slice(),
+            "{adapter} gateway plan must use the resolved recipe step"
         );
         let invocation_digest = format!(
             "{:x}",
-            sha2::Sha256::digest(
-                serde_json::to_vec(&vec![canonical_plan.structured_step]).unwrap()
-            )
+            sha2::Sha256::digest(serde_json::to_vec(&resolved.steps).unwrap())
         );
         assert_eq!(
             plan.provenance.invocation_digest, invocation_digest,
@@ -138,6 +295,109 @@ fn project_validation_runner_resolves_all_production_actions() {
             .contains(root.to_str().unwrap()));
     }
 }
+#[test]
+fn project_validation_recipe_step_and_identity_preserve_normalized_selection() {
+    for (marker, backend, tool, filter, packages) in [
+        (
+            "Cargo.toml",
+            "rust",
+            "cargo_test",
+            "selected",
+            vec!["b", "a", "a"],
+        ),
+        (
+            "go.mod",
+            "go",
+            "go_test",
+            " ^TestA/sub$ ",
+            vec!["./b", "./a", "./a"],
+        ),
+        (
+            "pyproject.toml",
+            "python",
+            "python:pytest:test",
+            " selected and not slow ",
+            vec![],
+        ),
+    ] {
+        let (_tmp, root, registry, policy) = fixture(marker);
+        let mut req = request(ProjectValidationAction::Test);
+        req.test = Some(ProjectValidationTestOptions {
+            filter: Some(if backend == "rust" {
+                format!("  {filter}  ")
+            } else {
+                filter.into()
+            }),
+            ..Default::default()
+        });
+        if !packages.is_empty() {
+            req.scope = Some(ProjectValidationScope {
+                packages: packages.into_iter().map(str::to_string).collect(),
+                all_packages: false,
+            });
+            req.dependency_policy = Some(ProjectDependencyPolicy {
+                mode: ProjectDependencyMode::Locked,
+            });
+        }
+        let (plan, _) = project::plan(&policy, &registry, &req).unwrap();
+        let resolved = webcodex_validation::resolve_project_validation_recipe(
+            &root,
+            None,
+            None,
+            &[webcodex_validation::SemanticCheck::Test],
+            req.test.as_ref().unwrap().filter.as_deref(),
+            req.scope
+                .as_ref()
+                .and_then(ProjectValidationScope::explicit_packages),
+            false,
+            req.dependency_policy,
+        )
+        .unwrap();
+        assert_eq!(std::slice::from_ref(&plan.step), resolved.steps.as_slice());
+        assert_eq!(plan.adapter, tool);
+        assert_eq!(
+            plan.provenance.invocation_digest,
+            resolved.invocation_digest
+        );
+
+        req.test.as_mut().unwrap().filter = Some(filter.into());
+        if backend == "rust" {
+            let scope = req.scope.as_mut().unwrap();
+            scope.packages.sort();
+            scope.packages.dedup();
+        }
+        let (normalized, _) = project::plan(&policy, &registry, &req).unwrap();
+        assert_eq!(plan.step, normalized.step);
+        assert_eq!(plan.validation_target_id, normalized.validation_target_id);
+        let operation = webcodex_validation::project_validation_operation(
+            backend,
+            webcodex_validation::SemanticCheck::Test,
+            req.scope
+                .as_ref()
+                .and_then(ProjectValidationScope::explicit_packages)
+                .map(<[String]>::to_vec),
+            false,
+        )
+        .unwrap()
+        .with_dependency_policy(req.dependency_policy)
+        .unwrap()
+        .with_test_filter(Some(filter))
+        .unwrap();
+        let identity = operation
+            .validation_target_id(Some(&resolved.recipe_root_relative))
+            .unwrap();
+        let expected = if backend == "go" {
+            webcodex_core::validation_identity::contextualize_structured_validation_target_identity(
+                &identity,
+                webcodex_core::validation_identity::StructuredValidationExecutionContext::GoProjectSingleModuleV1,
+            ).unwrap()
+        } else {
+            identity
+        };
+        assert_eq!(plan.validation_target_id, expected);
+    }
+}
+
 #[test]
 fn go_project_validation_identity_is_single_module_domain_separated() {
     for action in [
@@ -322,17 +582,37 @@ fn project_validation_nearest_root_hint_and_ambiguity() {
     );
 }
 #[test]
-fn project_validation_deferred_backends_do_not_resolve_scripts() {
-    for (marker, backend) in [("package.json", "node")] {
-        let (_tmp, _root, registry, policy) = fixture(marker);
+fn project_validation_node_unsupported_actions_do_not_resolve_scripts() {
+    let (_tmp, root, registry, policy) = fixture("package.json");
+    fs::write(root.join("package.json"), "{}").unwrap();
+    // The bounded native test profile requires an exact opt-in test script.
+    // A missing script is unavailable; formatting remains unsupported.
+    for (action, expected_code) in [
+        (
+            ProjectValidationAction::Test,
+            "validation_check_unavailable",
+        ),
+        (
+            ProjectValidationAction::FormatCheck,
+            "validation_action_unsupported",
+        ),
+    ] {
         assert_eq!(
-            project::plan(&policy, &registry, &request(ProjectValidationAction::Test)).unwrap_err(),
+            project::plan(&policy, &registry, &request(action)).unwrap_err(),
             ProjectValidationPlanningResult::Unavailable {
-                code: "validation_adapter_unavailable".into(),
-                detected_backend: Some(backend.into())
+                code: expected_code.into(),
+                detected_backend: Some("node".into())
             }
         );
     }
+    // No check/typecheck/lint script remains definitely unavailable.
+    assert_eq!(
+        project::plan(&policy, &registry, &request(ProjectValidationAction::Check)).unwrap_err(),
+        ProjectValidationPlanningResult::Unavailable {
+            code: "validation_check_unavailable".into(),
+            detected_backend: Some("node".into())
+        }
+    );
     let (_tmp, _root, registry, policy) = fixture("go.mod");
     assert!(
         matches!(project::plan(&policy, &registry, &request(ProjectValidationAction::FormatCheck)), Err(ProjectValidationPlanningResult::Unavailable { code, .. }) if code == "validation_action_unsupported")
@@ -524,7 +804,7 @@ fn project_validation_python_pytest_detects_explicit_and_auto_and_fences_config(
         req.action = action;
         req.test = None;
         assert!(
-            matches!(project::plan(&policy, &registry, &req), Err(ProjectValidationPlanningResult::Unavailable {code,..}) if code == "validation_action_unsupported")
+            matches!(project::plan(&policy, &registry, &req), Err(ProjectValidationPlanningResult::Unavailable {code,..}) if code == "validation_check_unavailable")
         );
     }
     fs::remove_file(root.join("pyproject.toml")).unwrap();
@@ -758,4 +1038,111 @@ fn project_validation_all_packages_rejects_excluded_recipe_cwd() {
         req.cwd = Some("app".into());
         assert!(project::plan(&policy, &registry, &req).is_ok());
     }
+}
+
+#[test]
+fn project_validation_ruff_auto_and_explicit_plans_share_target_and_fence_configuration() {
+    let (_temp, root, registry, policy) = fixture("pyproject.toml");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[tool.ruff]\ntarget-version='py311'\n",
+    )
+    .unwrap();
+    for action in [
+        ProjectValidationAction::Check,
+        ProjectValidationAction::FormatCheck,
+    ] {
+        let auto = request(action);
+        let (baseline, _) = project::plan(&policy, &registry, &auto).unwrap();
+        let mut explicit = auto.clone();
+        explicit.adapter = ProjectValidationAdapter::Python;
+        let (explicit_plan, _) = project::plan(&policy, &registry, &explicit).unwrap();
+        assert_eq!(baseline.step, explicit_plan.step);
+        assert!(baseline.step.is_structured_ruff());
+        assert_eq!(
+            baseline.validation_target_id,
+            explicit_plan.validation_target_id
+        );
+        fs::write(
+            root.join("pyproject.toml"),
+            "[tool.ruff]\ntarget-version='py311'\nline-length=99\n",
+        )
+        .unwrap();
+        let (changed, _) = project::plan(&policy, &registry, &auto).unwrap();
+        assert_ne!(
+            baseline.provenance.manifest_digest,
+            changed.provenance.manifest_digest
+        );
+        assert_eq!(baseline.validation_target_id, changed.validation_target_id);
+        fs::write(
+            root.join("pyproject.toml"),
+            "[tool.ruff]\ntarget-version='py311'\n",
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn project_validation_node_native_test_has_exact_plan_and_stale_source_fence() {
+    let (_tmp, root, registry, policy) = fixture("package.json");
+    fs::write(
+        root.join("package.json"),
+        r#"{"scripts":{"test":"node --test"}}"#,
+    )
+    .unwrap();
+    let test_request = request(ProjectValidationAction::Test);
+    let (plan, cwd) = project::plan(&policy, &registry, &test_request).unwrap();
+    assert_eq!(cwd.canonicalize().unwrap(), root.canonicalize().unwrap());
+    assert_eq!(plan.provenance.backend, "node");
+    assert_eq!(plan.adapter, "node:tap:test");
+    assert_eq!(plan.step.program, "node");
+    assert_eq!(plan.step.args, ["--test", "--test-reporter=tap"]);
+    assert!(plan.step.is_canonical());
+    assert!(plan.provenance.is_valid());
+    assert!(plan.validation_target_id.starts_with("target:"));
+    let again = project::plan(&policy, &registry, &test_request).unwrap().0;
+    assert_eq!(plan, again);
+    fs::write(
+        root.join("package.json"),
+        r#"{"scripts":{"test":"node --test --test-reporter=tap"}}"#,
+    )
+    .unwrap();
+    assert_ne!(
+        project::plan(&policy, &registry, &test_request)
+            .unwrap()
+            .0
+            .provenance,
+        plan.provenance
+    );
+    assert!(project::plan(&policy, &registry, &test_request)
+        .unwrap()
+        .0
+        .step
+        .is_canonical());
+    fs::write(
+        root.join("package.json"),
+        r#"{"scripts":{"test":"vitest run"}}"#,
+    )
+    .unwrap();
+    assert!(
+        project::plan(&policy, &registry, &test_request).is_err(),
+        "opaque scripts must not claim native TAP evidence"
+    );
+    fs::write(
+        root.join("package.json"),
+        r#"{"scripts":{"test":"node --test"}}"#,
+    )
+    .unwrap();
+    for action in [
+        ProjectValidationAction::FormatCheck,
+        ProjectValidationAction::Check,
+    ] {
+        assert!(project::plan(&policy, &registry, &request(action)).is_err());
+    }
+    let mut filtered = test_request.clone();
+    filtered.test = Some(ProjectValidationTestOptions {
+        filter: Some("selected".into()),
+        ..Default::default()
+    });
+    assert!(project::plan(&policy, &registry, &filtered).is_err());
 }

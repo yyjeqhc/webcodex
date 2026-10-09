@@ -808,3 +808,36 @@ fn pytest_summary_proves_only_complete_executed_results() {
         );
     }
 }
+
+#[test]
+fn node_native_tap_counts_only_complete_conservative_reporter_trailers() {
+    use crate::validation_evidence::parse_node_native_test_diagnostics;
+    let transcript = "TAP version 13\n# Subtest: passes\nok 1 - passes\n1..2\n# tests 3\n# suites 0\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 1\n# todo 0\n# duration_ms 42.41\n";
+    let summary = parse_node_native_test_diagnostics(transcript, false)
+        .test_summary
+        .expect("complete native TAP footer");
+    assert_eq!(
+        (summary.passed, summary.failed, summary.ignored),
+        (Some(2), Some(0), Some(1))
+    );
+    for invalid in [
+        transcript.replace("# pass 2", "# pass 3"),
+        transcript.replace("# cancelled 0", "# cancelled 1"),
+        transcript.replace("# duration_ms 42.41", "# duration_ms NaN"),
+        transcript.replace("# tests 3", "# tests 3\n# tests 3"),
+        transcript.replace("TAP version 13", "fake TAP version"),
+        transcript.replace("# todo 0\n", ""),
+    ] {
+        assert!(parse_node_native_test_diagnostics(&invalid, false)
+            .test_summary
+            .is_none());
+    }
+    assert!(parse_node_native_test_diagnostics(transcript, true)
+        .test_summary
+        .is_none());
+    assert!(
+        parse_node_native_test_diagnostics("TAP version 13\n1..0\n# tests 0", false)
+            .test_summary
+            .is_none()
+    );
+}

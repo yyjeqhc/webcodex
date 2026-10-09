@@ -23,6 +23,8 @@ fn remote_hosts_cannot_be_observed_as_local_server() {
 #[test]
 fn update_service_inventory_matches_core_tunnel_ownership() {
     let profile = |host_mode, installed| webcodex_environment::TunnelRecord {
+        configuration_id: None,
+        provider: webcodex_environment::TunnelProvider::Openai,
         profile_id: "profile".into(),
         name: "Profile".into(),
         host_mode,
@@ -197,6 +199,7 @@ fn aggregate_local_projection_enforces_a_cap_including_adapter_fields() {
             schema_version: 1,
             download: Default::default(),
             installed: vec![],
+            installed_target: None,
             candidate: None,
             candidate_components: vec![],
             upgrade: None,

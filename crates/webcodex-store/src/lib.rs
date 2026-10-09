@@ -48,7 +48,13 @@ mod memory;
 mod model_reference;
 pub mod models;
 mod oauth;
+mod public_ingress;
+pub use public_ingress::{
+    PublicIngressEntry, PublicIngressEntrySpec, PublicIngressFence, PublicIngressMode,
+};
 mod peer_collaboration;
+#[cfg(test)]
+mod public_ingress_tests;
 mod window_collaboration;
 #[cfg(test)]
 mod window_collaboration_tests;

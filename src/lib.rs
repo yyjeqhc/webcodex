@@ -34,7 +34,11 @@ mod mcp_host;
 mod model_surface;
 mod model_workflow;
 pub(crate) use webcodex_store::models;
+mod cloudflare_host;
+mod cloudflare_ingress;
 mod oauth_http;
+mod public_ingress_auth;
+pub use cloudflare_host::run_cloudflare_tunnel_with_stop;
 
 mod pairing_http;
 mod plugin_gateway;
@@ -277,7 +281,7 @@ pub async fn run_server_with_shutdown(
     let (acceptor, listener_mode, listener_addr) = server_listener::server_acceptor(&config.addr)
         .await
         .map_err(std::io::Error::other)?;
-    let tunnels = server_tunnels::TunnelSupervisor::from_env(listener_addr)?;
+    let mut tunnels = server_tunnels::TunnelSupervisor::from_env(listener_addr)?;
     let console_asset_source = Arc::new(
         console_web::ConsoleAssetSource::from_env(&config.addr).map_err(std::io::Error::other)?,
     );
@@ -448,8 +452,24 @@ explicitly allow remote shared-key auth."
         }
     }
 
+    let cloudflare_owner = cloudflare_ingress::CloudflareOwner::from_env(
+        config.clone(),
+        db.clone(),
+        runner_registry.clone(),
+        tool_runtime.clone(),
+        authorize_session_store.clone(),
+        shutdown_coordinator.clone(),
+    )
+    .await?;
+    let cloudflare_control = cloudflare_owner.as_ref().map(|owner| owner.control());
+    tunnels.attach_cloudflare(cloudflare_owner);
+
     let authed_api_router = Router::new()
         .hoop(AuthMiddleware)
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::CloudflareControl))
+                .post(cloudflare_ingress::cloudflare_control_handler),
+        )
         .push(runtime_console_http::routes())
         .push(admin_http::routes())
         .push(
@@ -691,6 +711,7 @@ explicitly allow remote shared-key auth."
         .hoop(affix_state::inject(authorize_session_store.clone()))
         .hoop(affix_state::inject(runner_registry.clone()))
         .hoop(affix_state::inject(tool_runtime.clone()))
+        .hoop(affix_state::inject(cloudflare_control))
         .hoop(affix_state::inject(project_auth.clone()))
         .hoop(affix_state::inject(console_asset_source))
         .hoop(cors.into_handler())
@@ -703,10 +724,12 @@ explicitly allow remote shared-key auth."
         // client_id + client_secret in the form body.
         .push(
             Router::with_path(route_metadata::root_path(RouteId::OAuthToken))
+                .hoop(public_ingress_auth::ClientIngressGate::ClientId)
                 .post(oauth_http::oauth_token),
         )
         .push(
             Router::with_path(route_metadata::root_path(RouteId::OAuthRevoke))
+                .hoop(public_ingress_auth::ClientIngressGate::ClientId)
                 .post(oauth_http::oauth_revoke),
         )
         // /oauth/authorize is NOT behind AuthMiddleware: the handler accepts
@@ -718,14 +741,17 @@ explicitly allow remote shared-key auth."
             Router::new()
                 .push(
                     Router::with_path(route_metadata::root_path(RouteId::OAuthAuthorize))
+                        .hoop(public_ingress_auth::ClientIngressGate::ClientId)
                         .get(oauth_http::oauth_authorize),
                 )
                 .push(
                     Router::with_path(route_metadata::root_path(RouteId::OAuthAuthorizeLogin))
+                        .hoop(public_ingress_auth::ClientIngressGate::LoginReturnTo)
                         .post(oauth_http::oauth_authorize_login),
                 )
                 .push(
                     Router::with_path(route_metadata::root_path(RouteId::OAuthAuthorizeConsent))
+                        .hoop(public_ingress_auth::ClientIngressGate::ClientId)
                         .post(oauth_http::oauth_authorize_consent),
                 )
                 .push(

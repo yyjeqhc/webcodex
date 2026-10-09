@@ -60,6 +60,7 @@ impl TunnelStatus {
 
 #[derive(Default)]
 pub(crate) struct TunnelSupervisor {
+    cloudflare: Option<crate::cloudflare_ingress::CloudflareOwner>,
     profiles: Vec<EmbeddedTunnelProfile>,
     mcp_url: String,
     status: TunnelStatus,
@@ -101,10 +102,17 @@ impl TunnelSupervisor {
                 .collect(),
         )));
         Ok(Self {
+            cloudflare: None,
             profiles,
             mcp_url,
             status,
         })
+    }
+    pub(crate) fn attach_cloudflare(
+        &mut self,
+        owner: Option<crate::cloudflare_ingress::CloudflareOwner>,
+    ) {
+        self.cloudflare = owner;
     }
     pub(crate) fn status(&self) -> TunnelStatus {
         self.status.clone()
@@ -113,31 +121,40 @@ impl TunnelSupervisor {
     /// This future is polled alongside HTTP. Dropping it drops every profile owner,
     /// aborting its owned client and retaining its marker, never detaching a poller.
     pub(crate) async fn run(self, stop: watch::Receiver<bool>) {
-        let mut profiles = FuturesUnordered::new();
-        for (index, profile) in self.profiles.into_iter().enumerate() {
-            if profile.autostart {
-                profiles.push(run_profile(
-                    index,
-                    profile,
-                    self.mcp_url.clone(),
-                    self.status.clone(),
-                    stop.clone(),
-                ));
-            } else if write_embedded_tunnel_health(
-                &profile.readiness_path,
-                profile.runtime_revision,
-                false,
-                false,
-            )
-            .is_err()
-            {
-                self.status.update(index, |state| {
-                    state.state = TunnelState::Failed;
-                    state.diagnostic = Some("tunnel_health_unavailable".into());
-                });
+        let cloudflare_stop = stop.clone();
+        let cloudflare = self.cloudflare;
+        let openai = async move {
+            let mut profiles = FuturesUnordered::new();
+            for (index, profile) in self.profiles.into_iter().enumerate() {
+                if profile.autostart {
+                    profiles.push(run_profile(
+                        index,
+                        profile,
+                        self.mcp_url.clone(),
+                        self.status.clone(),
+                        stop.clone(),
+                    ));
+                } else if write_embedded_tunnel_health(
+                    &profile.readiness_path,
+                    profile.runtime_revision,
+                    false,
+                    false,
+                )
+                .is_err()
+                {
+                    self.status.update(index, |state| {
+                        state.state = TunnelState::Failed;
+                        state.diagnostic = Some("tunnel_health_unavailable".into());
+                    });
+                }
             }
-        }
-        while profiles.next().await.is_some() {}
+            while profiles.next().await.is_some() {}
+        };
+        tokio::join!(openai, async move {
+            if let Some(owner) = cloudflare {
+                owner.run(cloudflare_stop).await;
+            }
+        });
     }
 }
 

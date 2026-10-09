@@ -29,6 +29,8 @@ fn native_connection_observations_survive_desktop_state_reads() {
     published.persistent_environment = Some("fixture-environment".into());
     published.connections.profiles = vec![TunnelConnectionSnapshot {
         config: TunnelProfileConfigSnapshot {
+            provider: webcodex_environment::TunnelProvider::Openai,
+            configuration_id: None,
             id: TunnelProfileId::new().to_string(),
             name: "ChatGPT".into(),
             tunnel_id: Some("fixture".into()),
@@ -84,6 +86,8 @@ async fn connection_resume_uses_current_profile_preferences_without_enabling_sto
                 .update_profile(
                     &path,
                     TunnelProfileRequest {
+                        provider: webcodex_environment::TunnelProvider::Openai,
+                        cloudflare_token: None,
                         id: None,
                         name: format!("Manual-{autostart}"),
                         tunnel_id: format!("fixture-{autostart}"),
@@ -141,6 +145,9 @@ fn environment_profile(
     autostart: bool,
 ) -> webcodex_environment::TunnelProfileSnapshot {
     webcodex_environment::TunnelProfileSnapshot {
+        configuration_id: None,
+        provider: webcodex_environment::TunnelProvider::Openai,
+        ingress_port: None,
         profile_id: "work".into(),
         name: "Work".into(),
         tunnel_id: "tunnel_work".into(),

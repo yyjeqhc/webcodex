@@ -148,6 +148,12 @@ fn runner_concurrency_counts_jobs_across_projects_for_one_client() {
             "running",
         ),
         job(
+            "project-a-stopping",
+            "shared-runner",
+            "agent:shared:a",
+            "stop_requested",
+        ),
+        job(
             "project-b-queued",
             "shared-runner",
             "agent:shared:b",
@@ -172,9 +178,9 @@ fn runner_concurrency_counts_jobs_across_projects_for_one_client() {
         ),
     ];
 
-    assert_eq!(active_jobs_for_client(&jobs, "shared-runner"), 3);
+    assert_eq!(active_jobs_for_client(&jobs, "shared-runner"), 4);
     let counts = runtime_job_counts(&jobs);
-    assert_eq!(counts["active_count"], 4);
+    assert_eq!(counts["active_count"], 5);
     assert_eq!(counts["recovering_count"], 1);
     assert_eq!(counts["lost_after_reconcile_count"], 1);
     let sparse = sparse_job_counts(&counts);
@@ -185,7 +191,7 @@ fn runner_concurrency_counts_jobs_across_projects_for_one_client() {
     assert!(serde_json::to_vec(&sparse).unwrap().len() < 130);
     assert_eq!(
         job_concurrency_for_client(&client, &jobs),
-        json!({"limit": 2, "running": 1, "queued": 1})
+        json!({"limit": 2, "running": 2, "queued": 1})
     );
 }
 

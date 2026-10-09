@@ -95,7 +95,7 @@ h1 { margin: 0; font-size: 14px; font-weight: 650; line-height: 1.25; letter-spa
   cursor: pointer;
   font-size: 11px;
   font-weight: 550;
-  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+  transition: transform 140ms ease;
 }
 .refresh:hover:not(:disabled) { background: var(--surface-hover); border-color: color-mix(in srgb, var(--accent) 28%, var(--card-border)); }
 .refresh:active:not(:disabled) { transform: translateY(1px); }
@@ -225,8 +225,6 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   .actions { margin-left: auto; }
   .status-grid { grid-template-columns: 1fr; }
   .brand-icon { width: 36px; height: 36px; }
-  .activity-call > summary { grid-template-columns: minmax(0, 1fr); }
-  .call-outcome { justify-self: start; }
   .detail-grid { grid-template-columns: 1fr; }
 }
 [hidden] { display: none !important; }
@@ -300,6 +298,40 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 .thread-review .section:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 620px) { .thread-review .check-summary { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
+.empty-state { padding: 36px 24px; max-width: 560px; margin: auto; }
+.empty-state h2 { color: CanvasText; font-size: 20px; text-transform: none; }
+.empty-state p { color: var(--muted); font-size: 14px; line-height: 1.6; }
+:root[data-display-mode="fullscreen"] body { padding: 24px; background: var(--surface); }
+:root[data-display-mode="fullscreen"] .card { max-width: 1200px; min-height: calc(100dvh - 48px); margin: auto; display: flex; flex-direction: column; box-shadow: none; }
+:root[data-display-mode="fullscreen"] .content { flex: 1; align-content: start; gap: 16px; padding: 24px; }
+:root[data-display-mode="fullscreen"] .app-header { padding: 18px 24px; }
+:root[data-display-mode="fullscreen"] h1 { font-size: 18px; }
+:root[data-display-mode="fullscreen"] .section { padding: 18px; gap: 12px; }
+:root[data-display-mode="fullscreen"] .card-tabs { padding: 0 24px; }
+:root[data-display-mode="fullscreen"] .card-tabs button { flex: 0 1 auto; padding: 10px 20px; }
+/* One document scroll in both the conversation card and full-page workspace. */
+.workflow-activity, .workspace-files, .conversation { max-height: none; overflow: visible; padding-right: 0; scrollbar-gutter: auto; }
+.activity-history { display: block; }
+.activity-history > summary { cursor: pointer; }
+.activity-history > summary h2::before { content: "▸ "; }
+.activity-history[open] > summary h2::before { content: "▾ "; }
+.activity-history > :not(summary) { margin-top: 10px; }
+@media (min-width: 900px) {
+  :root[data-display-mode="fullscreen"] #panelActivity { grid-template-columns: minmax(230px, .7fr) minmax(0, 1.3fr); align-items: start; gap: 16px; }
+  :root[data-display-mode="fullscreen"] #viewResults { grid-column: 1 / -1; justify-self: start; }
+}
+@media (max-width: 620px) {
+  .activity-call > summary { grid-template-columns: minmax(0, 1fr); }
+  .call-outcome { justify-self: start; text-align: left; }
+  :root[data-display-mode="fullscreen"] body { padding: 12px; }
+  :root[data-display-mode="fullscreen"] .card { min-height: calc(100dvh - 24px); }
+  :root[data-display-mode="fullscreen"] .content { padding: 12px; }
+  :root[data-display-mode="fullscreen"] .app-header { padding: 14px; }
+  :root[data-display-mode="fullscreen"] .section { padding: 12px; }
+  :root[data-display-mode="fullscreen"] .card-tabs { padding: 0 8px; }
+  :root[data-display-mode="fullscreen"] .card-tabs button { flex: 1; padding: 10px 4px; }
+}
+@media (pointer: coarse) { .refresh, .file-toggle { min-height: 44px; } }
 </style>
 </head>
 <body>
@@ -311,13 +343,18 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     </div>
     <div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div>
   </header>
+  <section id="emptyState" class="empty-state" hidden>
+    <h2>No work result in this chat yet</h2>
+    <p>Ask WebCodex to work on a project in this chat. Its progress and changed files will appear here after a work result is presented.</p>
+    <p>Use Projects &amp; Resources to browse projects and choose context for your message.</p>
+  </section>
   <div id="taskContext" class="task-context"><span id="projectIdentity" class="diagnostic-identity"></span><span id="windowIdentity" class="diagnostic-identity"></span><span id="sessionIdentity" class="diagnostic-identity"></span><span id="windowSource"></span></div>
   <nav id="viewTabs" class="card-tabs" role="tablist" aria-label="Window views">
     <button id="tabActivity" type="button" role="tab" aria-selected="true" aria-controls="panelActivity">Activity</button>
     <button id="tabResults" type="button" role="tab" aria-selected="false" aria-controls="panelResults" tabindex="-1">Results</button>
     <button id="tabCollaboration" type="button" role="tab" aria-selected="false" aria-controls="panelCollaboration" tabindex="-1">Collaboration</button>
   </nav>
-  <div class="content">
+  <div id="workResultContent" class="content">
     <div id="panelActivity" class="card-panel" role="tabpanel" aria-labelledby="tabActivity">
       <section class="section progress-section">
         <div class="section-head"><h2>Current activity</h2><span id="activityAge" class="secondary"></span></div>
@@ -334,12 +371,12 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
           <p id="jobsMeta" class="secondary"></p>
         </div>
       </section>
-      <section class="section">
-        <div class="section-head"><h2>Window activity</h2><span id="windowCoverage" class="secondary"></span></div>
+      <details id="activityHistory" class="section activity-history">
+        <summary class="section-head"><h2>Window activity</h2><span id="windowCoverage" class="secondary"></span></summary>
         <p class="secondary">Calls in this chat, earliest first. Expand a call for technical details. Background work above belongs to this task.</p>
         <div id="windowActivity" class="workflow-activity"></div>
         <button id="askActivity" class="refresh" type="button">Send an instruction</button>
-      </section>
+      </details>
       <button id="viewResults" class="refresh" type="button">View changed files</button>
     </div>
     <div id="panelResults" class="card-panel" role="tabpanel" aria-labelledby="tabResults" hidden>
@@ -1332,6 +1369,26 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   let selectedPane = "Activity";
   const pending = new Map();
   const el = id => document.getElementById(id);
+  let lastHeight = 0;
+  function reportSize() {
+    if (!hostInitialized || tornDown || document.documentElement.getAttribute("data-display-mode") === "fullscreen") return;
+    const height = Math.ceil(document.body.getBoundingClientRect().height);
+    if (Number.isFinite(height) && height > 0 && height !== lastHeight) {
+      lastHeight = height; notify("ui/notifications/size-changed", {height});
+    }
+  }
+  const sizeObserver = new ResizeObserver(reportSize);
+  sizeObserver.observe(document.body);
+  function syncDisplay(context) {
+    if (!context || typeof context !== "object" || tornDown) return;
+    if (context.theme === "light" || context.theme === "dark") document.documentElement.style.colorScheme = context.theme;
+    if ((context.displayMode === "inline" || context.displayMode === "fullscreen")
+      && context.displayMode !== document.documentElement.getAttribute("data-display-mode")) {
+      document.documentElement.setAttribute("data-display-mode", context.displayMode); lastHeight = 0;
+      el("activityHistory").open = context.displayMode === "fullscreen";
+    }
+    reportSize();
+  }
   const { renderValidation, renderReview, renderJobs, renderWindowCurrentActivity, renderActivityDetail } =
     WebCodexWorkResultSections.createWorkResultSections({
       document, el, safeCount, activityIdleElapsed, formatDuration, formatAge,
@@ -1380,10 +1437,23 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     return validProject(project) ? { project } : null;
   }
 
-  function failClosed(_message) {
+  // Only these hardcoded codes are user-visible. Never render arbitrary
+  // failure text, identities, or Host-delivered payloads into diagnostics.
+  const FAIL_CLOSED_CODES = Object.freeze({
+    "Invalid or conflicting Work identity": "WR-IDENTITY-INVALID",
+    "Conflicting sealed Work identity": "WR-FROZEN-IDENTITY-CONFLICT",
+    "Invalid file changes": "WR-FILE-CHANGES-INVALID",
+    "Work Result state unavailable": "WR-STATE-INVALID",
+    "Thread binding unavailable": "WR-THREAD-BINDING-MISSING",
+    "Conflicting Workflow Session": "WR-SESSION-CONFLICT",
+    "Conflicting thread binding": "WR-THREAD-BINDING-CONFLICT",
+  });
+  function failClosed(reason) {
+    const code = Object.prototype.hasOwnProperty.call(FAIL_CLOSED_CODES, reason)
+      ? FAIL_CLOSED_CODES[reason] : "WR-UNKNOWN";
     teardown();
     el("badge").textContent = "Unavailable";
-    el("status").textContent = "This Work Result card is unavailable";
+    el("status").textContent = "This Work Result card is unavailable · " + code;
     conversationPage = null; readingHistory = false; historyGeneration++;
     el("messages").replaceChildren();
     el("finalChanges").hidden = true;
@@ -3109,6 +3179,21 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   function acceptToolResult(result) {
     if (tornDown) return;
     const structured = structuredOf(result);
+    const context = callToolResultOf(result)?._meta?.[THREAD_CONTEXT_META_KEY];
+    if (structured?.success === true && structured.output?.work_result === null
+      && context?.empty === true && context.session_id === null && Object.keys(context).length === 2
+      && !identity && !lastRenderedState && !explicitSession && threadSession === undefined) {
+      el("emptyState").hidden = false;
+      el("workResultContent").hidden = true;
+      el("viewTabs").hidden = true;
+      for (const pane of panes) el("panel" + pane).hidden = true;
+      el("diagnostics").hidden = true;
+      el("taskTitle").textContent = "WebCodex Work Result";
+      el("branch").textContent = "Current chat";
+      el("badge").textContent = "No result";
+      el("status").textContent = "Waiting for a work result in this chat";
+      return;
+    }
     if (!structured) {
       // Production Hosts may omit structuredContent from a ToolResult delivered
       // to the View. Preserve exact identity from tool-input and recover once
@@ -3122,7 +3207,10 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
       if (!tornDown) failClosed("Work Result state unavailable");
       return;
     }
-    const context = callToolResultOf(result)?._meta?.[THREAD_CONTEXT_META_KEY];
+    el("emptyState").hidden = true;
+    el("workResultContent").hidden = false;
+    el("viewTabs").hidden = false;
+    selectPane(selectedPane);
     if (context !== undefined) {
       const session = context?.session_id;
       if (!context || Array.isArray(context) || Object.keys(context).length !== 1
@@ -3160,6 +3248,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   function teardown() {
     if (tornDown) return;
     tornDown = true;
+    sizeObserver.disconnect();
     if (activeContentPreview) { activeContentPreview(); activeContentPreview = null; }
     finalDiffReads.dispose(); workspaceDiffReads.dispose(); activityDetails.dispose();
     contentCache.clear(); contentPending.clear();
@@ -3180,6 +3269,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     if (event.source !== parent) return;
     const msg = event.data;
     if (!msg || msg.jsonrpc !== "2.0") return;
+    if (tornDown && msg.method !== "ui/resource-teardown") return;
     if (Object.prototype.hasOwnProperty.call(msg, "id") && pending.has(msg.id)) {
       const entry = pending.get(msg.id);
       pending.delete(msg.id);
@@ -3197,6 +3287,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
       return;
     }
     if (msg.method === "ui/notifications/host-context-changed") {
+      syncDisplay(msg.params);
       syncQuoteContext(msg.params);
       return;
     }
@@ -3250,6 +3341,9 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   };
   el("quoteRetry").onclick = () => { if (quotePending && !quoteBusy) void updateQuoteContext(quotePending); };
   selectPane("Activity");
+  el("emptyState").hidden = true;
+  el("diagnosticContent").append(el("taskContext"));
+  el("diagnostics").hidden = false;
   el("refresh").onclick = () => { void refresh(false); };
   el("frozenMore").onclick = () => { void showMoreFiles(true); };
   el("frozenLess").onclick = () => appendFrozenFiles(INITIAL_FROZEN_FILES);
@@ -3323,11 +3417,12 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
       quoteTextSupported = object(result?.hostCapabilities?.updateModelContext?.text);
       quoteAdapter = object(result?.hostCapabilities?.experimental?.["openai/modelContext"]);
       hostInitialized = true;
+      notify("ui/notifications/initialized", {});
+      syncDisplay(result?.hostContext);
       renderQuoteControls(); syncQuoteContext(result?.hostContext);
-      el("status").textContent = lastStateVersion !== null
+      el("status").textContent = !el("emptyState").hidden ? "Waiting for a work result in this chat" : lastStateVersion !== null
         ? "Live"
         : identity ? "Waiting for Window activity" : "Ready";
-      notify("ui/notifications/initialized", {});
       updateRefreshControl();
       updateComposerControl();
       if (initialResultTransportMissing && identity && lastStateVersion === null) void refresh(false);

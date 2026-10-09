@@ -11,6 +11,13 @@ import re
 import tarfile
 from pathlib import Path
 
+try:
+    from . import runtime_installer_manifest as runtime_contract
+    from . import package_unified_installer as packaging
+except ImportError:
+    import runtime_installer_manifest as runtime_contract
+    import package_unified_installer as packaging
+
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME_PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 PLATFORMS = RUNTIME_PLATFORMS
@@ -42,29 +49,37 @@ def source_manifest_filename(version: str, platform: str) -> str:
     return f"webcodex-source-v{version}-{platform}.json"
 
 
-def validate_source_manifest(path: Path, version: str, platform: str, source_sha: str, run_id: int, workflow_ref: str) -> dict:
+def validate_source_manifest(path: Path, version: str, platform: str, source_sha: str, run_id: int, workflow_ref: str, *, package_flavor: str = "full") -> dict:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        with path.open("rb") as stream:
+            raw = stream.read(packaging.MAX_BYTES + 1)
+        if len(raw) > packaging.MAX_BYTES:
+            raise ValueError("source manifest exceeds its size limit")
+        value = runtime_contract.parse(raw)
+    except (OSError, UnicodeError, ValueError) as exc:
         raise SystemExit(f"invalid source manifest: {path}") from exc
     required = {
         "schema_version", "version", "source_sha", "source_workflow_run_id",
         "source_workflow_ref", "platform", "target", "architecture",
         "desktop_runtime_contract", "artifacts", "desktop_payload",
     }
+    runtime = package_flavor == "runtime"
+    if runtime:
+        required.remove("desktop_payload")
+        required.add("package_flavor")
     if not isinstance(value, dict) or set(value) != required:
         raise SystemExit(f"source manifest has an unexpected schema: {path}")
-    if value["schema_version"] != 1 or value["version"] != version or value["platform"] != platform:
+    if type(value["schema_version"]) is not int or value["schema_version"] != (2 if runtime else 1) or value["version"] != version or value["platform"] != platform:
         raise SystemExit(f"source manifest identity mismatch: {path}")
     if (value["source_sha"], value["source_workflow_run_id"], value["source_workflow_ref"]) != (source_sha, run_id, workflow_ref):
         raise SystemExit(f"source manifest CI provenance mismatch: {path}")
     if not isinstance(value["source_sha"], str) or not __import__("re").fullmatch(r"[0-9a-f]{40,64}", value["source_sha"]):
         raise SystemExit(f"source manifest source SHA is invalid: {path}")
-    if not isinstance(value["source_workflow_run_id"], int) or value["source_workflow_run_id"] <= 0:
+    if type(value["source_workflow_run_id"]) is not int or value["source_workflow_run_id"] <= 0:
         raise SystemExit(f"source manifest workflow run ID is invalid: {path}")
     if not isinstance(value["source_workflow_ref"], str) or not value["source_workflow_ref"]:
         raise SystemExit(f"source manifest workflow ref is invalid: {path}")
-    if not isinstance(value["artifacts"], dict) or set(value["artifacts"]) != {"webcodex", "webcodex-server", "webcodex-runner", "webcodex-desktop"}:
+    if not isinstance(value["artifacts"], dict) or set(value["artifacts"]) != set(BINARIES if runtime else (*BINARIES, "webcodex-desktop")):
         raise SystemExit(f"source manifest component set is invalid: {path}")
     for name, record in value["artifacts"].items():
         if not isinstance(record, dict) or not isinstance(record.get("build_info"), dict):
@@ -73,11 +88,42 @@ def validate_source_manifest(path: Path, version: str, platform: str, source_sha
         if (info.get("version") != version or info.get("git_commit") != value["source_sha"]
                 or info.get("git_dirty") is not False or info.get("environment_data_format") != 1):
             raise SystemExit(f"source manifest component provenance/data format mismatch: {path}: {name}")
+    if runtime:
+        if value.get("package_flavor") != "runtime" or platform not in ("linux-x64", "linux-arm64"):
+            raise SystemExit("invalid Runtime source flavor/platform")
+        _, target, architecture, _ = packaging.PLATFORMS[platform]
+        if (value["target"], value["architecture"]) != (target, architecture):
+            raise SystemExit("Runtime source architecture mismatch")
+        for name, record in value["artifacts"].items():
+            if set(record) != {"path", "sha256", "build_info", "build_info_sha256", "probe"} or record["path"] != f"artifacts/bin/{name}" or record["probe"] != "native-build-job":
+                raise SystemExit("Runtime source requires exact native component attestations")
+            if not isinstance(record["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) or record["build_info_sha256"] != packaging.canonical_digest(record["build_info"]):
+                raise SystemExit("Runtime source artifact/build-info hash mismatch")
+            try:
+                packaging.validate_build_info(record["build_info"], name, value)
+            except packaging.PackageError as exc:
+                raise SystemExit(str(exc)) from exc
     return value
 
 
+def validate_runtime_archive(source: dict, path: Path) -> None:
+    """Bind the Runtime attestations to the unchanged three-component archive."""
+    if normalized_members(path) != set(BINARIES):
+        raise ValueError("Runtime native archive component set mismatch")
+    with tarfile.open(path, "r:gz") as archive:
+        for member in archive:
+            if member.isfile():
+                stream = archive.extractfile(member)
+                assert stream is not None
+                digest = hashlib.sha256()
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                if source["artifacts"][member.name.removeprefix("./")]["sha256"] != digest.hexdigest():
+                    raise ValueError("Runtime source differs from retained native archive bytes")
+
+
 def validate_installer(path: Path, target: str) -> None:
-    platform, package_format = INSTALLER_TARGETS[target]
+    platform, package_format = (INSTALLER_TARGETS | runtime_contract.RUNTIME_TARGETS)[target]
     with path.open("rb") as handle:
         magic = handle.read(8)
     expected = {
@@ -154,6 +200,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
     parser.add_argument("--require-unified-installers", action="store_true")
+    parser.add_argument("--require-runtime-installers", action="store_true")
     parser.add_argument("--artifact-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--repo", default="yyjeqhc/webcodex")
@@ -167,6 +214,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.require_runtime_installers and not args.require_unified_installers:
+        raise SystemExit("Runtime installers require explicit Full installer selection")
     version = args.version.removeprefix("v")
     if not version or any(ch.isspace() for ch in version):
         raise SystemExit("invalid release version")
@@ -295,6 +344,36 @@ def main() -> int:
                 "source_manifest_sha256": source_digests[platform],
             }
 
+    runtime_installers = {}
+    runtime_names = {runtime_contract.installer_filename(version, target) for target in runtime_contract.RUNTIME_TARGETS}
+    runtime_names.update(runtime_contract.source_filename(version, platform) for platform in ("linux-x64", "linux-arm64"))
+    present_runtime = {path.name for path in args.artifact_dir.glob(f"webcodex-runtime-*v{version}-*") if path.is_file() and not path.name.endswith(".sha256")}
+    if not args.require_runtime_installers and present_runtime:
+        raise SystemExit("Runtime artifacts require explicit Runtime installer selection")
+    if args.require_runtime_installers:
+        if present_runtime != runtime_names:
+            raise SystemExit("Runtime installer/source set is missing, incomplete or unexpected")
+        runtime_sources = {}
+        for platform in ("linux-x64", "linux-arm64"):
+            path = args.artifact_dir / runtime_contract.source_filename(version, platform)
+            source = validate_source_manifest(path, version, platform, args.source_sha, args.workflow_run_id, args.workflow_ref, package_flavor="runtime")
+            try:
+                validate_runtime_archive(source, args.artifact_dir / archive_filename(version, platform))
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+            runtime_sources[platform] = sha256(path)
+            checksum_lines.append(f"{runtime_sources[platform]}  {path.name}")
+        for target, (platform, fmt) in runtime_contract.RUNTIME_TARGETS.items():
+            path = args.artifact_dir / runtime_contract.installer_filename(version, target)
+            validate_installer(path, target)
+            digest = sha256(path)
+            source_name = runtime_contract.source_filename(version, platform)
+            checksum_lines.append(f"{digest}  {path.name}")
+            runtime_installers[target] = {"platform": platform, "format": fmt, "flavor": "runtime", "filename": path.name,
+                "url": f"https://github.com/{args.repo}/releases/download/v{version}/{path.name}", "sha256": digest,
+                "source_manifest_url": f"https://github.com/{args.repo}/releases/download/v{version}/{source_name}",
+                "source_manifest_sha256": runtime_sources[platform]}
+
     manifest = {
         "version": version,
         "binaries": list(BINARIES),
@@ -303,12 +382,20 @@ def main() -> int:
     if installers:
         manifest["installers"] = installers
 
+    if runtime_installers:
+        canonical = {"schema_version": 2, **manifest, "installers": {**installers, **runtime_installers}}
+        canonical_path = args.output_dir / "manifest-v2.json"
+        atomic_write(canonical_path, runtime_contract.encode(canonical))
+        checksum_lines.append(f"{sha256(canonical_path)}  manifest-v2.json")
+        manifest = runtime_contract.legacy_projection(canonical)
     manifest_path = args.output_dir / "manifest.json"
     atomic_write(manifest_path, json.dumps(manifest, indent=2) + "\n")
     if installers:
         # The same retained bytes serve npm, the download page, and Desktop.
         # Legacy runtime-only manifests remain outside the public asset set.
         checksum_lines.append(f"{sha256(manifest_path)}  manifest.json")
+    if runtime_installers and len(checksum_lines) + 1 != 32:
+        raise SystemExit("Runtime release requires exactly 32 primary checksum records including Runtime contract")
     atomic_write(args.output_dir / "SHA256SUMS", "\n".join(checksum_lines) + "\n")
 
     print(f"release metadata prepared for {version}")

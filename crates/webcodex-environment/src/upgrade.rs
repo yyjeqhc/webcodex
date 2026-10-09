@@ -16,7 +16,10 @@ use webcodex_core::desktop_runtime_contract::{MachineBuildInfo, DESKTOP_RUNTIME_
 mod candidate_relocation_tests;
 #[cfg(unix)]
 mod desktop_tree;
+mod journal_codec;
 mod observation;
+#[cfg(all(test, target_os = "linux"))]
+mod runtime_package_tests;
 mod status;
 pub mod windows_package;
 pub(crate) use observation::upgrade_observation_under_lock;
@@ -26,16 +29,14 @@ pub use status::{
     UpgradeServiceKind, UpgradeStatus, UpgradeTarget,
 };
 
-const COMPONENTS: [&str; 4] = [
-    "webcodex",
-    "webcodex-server",
-    "webcodex-runner",
-    "webcodex-desktop",
-];
+use crate::unified_update::install::package::{self, PackageInspection};
+use crate::unified_update::{InstallerTarget, PackageFlavor};
 const DATA_FORMAT: u16 = 1;
 const SNAPSHOT_LIMIT: u64 = 16 * 1024 * 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UpgradeCandidate {
+    #[serde(default, skip_serializing_if = "PackageFlavor::is_full")]
+    pub package_flavor: PackageFlavor,
     pub version: String,
     pub source_sha: String,
     pub platform: String,
@@ -91,7 +92,10 @@ struct ProgramBackup {
     name: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "UpgradeJournal")]
 struct UpgradeJournal {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    installer_target: Option<crate::unified_update::InstallerTarget>,
     schema_version: u16,
     operation_id: String,
     candidate: UpgradeCandidate,
@@ -247,6 +251,10 @@ fn snapshot_desktop(
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct PreparedInstallationReceipt {
+    #[serde(default, skip_serializing_if = "PackageFlavor::is_full")]
+    pub package_flavor: PackageFlavor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installer_target: Option<crate::unified_update::InstallerTarget>,
     pub schema_version: u16,
     pub operation_id: String,
     pub environment_id: String,
@@ -261,7 +269,9 @@ const PREPARED_RECEIPT: &str = "upgrade-prepared.json";
 
 fn prepared_receipt(root: &Path, journal: &UpgradeJournal) -> PreparedInstallationReceipt {
     PreparedInstallationReceipt {
-        schema_version: 1,
+        package_flavor: journal.candidate.package_flavor,
+        installer_target: journal.installer_target,
+        schema_version: journal.candidate.package_flavor.source_schema(),
         operation_id: journal.operation_id.clone(),
         environment_id: journal.record.environment_id.clone(),
         environment_dir: root.to_path_buf(),
@@ -389,6 +399,15 @@ pub async fn verify_prepared_installation(
     receipt_path: &Path,
     candidate_dir: &Path,
 ) -> SetupResultValue<PreparedInstallationReceipt> {
+    verify_prepared_installation_for(receipt_path, candidate_dir, PackageInspection::Installed)
+        .await
+}
+
+pub(crate) async fn verify_prepared_installation_for(
+    receipt_path: &Path,
+    candidate_dir: &Path,
+    inspection: PackageInspection,
+) -> SetupResultValue<PreparedInstallationReceipt> {
     if !receipt_path.is_absolute()
         || receipt_path.file_name().and_then(|name| name.to_str()) != Some(PREPARED_RECEIPT)
     {
@@ -411,7 +430,7 @@ pub async fn verify_prepared_installation(
             "The prepared installation receipt is invalid",
         )
     })?;
-    if receipt.schema_version != 1
+    if receipt.schema_version != receipt.package_flavor.source_schema()
         || receipt.environment_dir != root
         || receipt.operation_id.is_empty()
         || receipt.environment_id.is_empty()
@@ -461,6 +480,12 @@ pub async fn verify_prepared_installation(
     let mut prepared_candidate = journal.candidate.clone();
     prepared_candidate.provenance_verified = false;
     verify_relocated_candidate_identity(&prepared_candidate, &candidate)?;
+    let installed = package::verify_candidate_flavor(
+        receipt.package_flavor,
+        &current.request.binaries,
+        inspection,
+    )?;
+    package::verify_candidate_target(receipt.package_flavor, installed, receipt.installer_target)?;
     verify_published_provenance(&candidate).await?;
     // The user-side prepare already ran the bounded metadata probe. Elevated
     // installer verification must never execute a candidate as administrator.
@@ -495,6 +520,10 @@ pub async fn verify_prepared_installation(
 #[cfg(unix)]
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct FrozenInstallerUpgrade {
+    #[serde(default, skip_serializing_if = "PackageFlavor::is_full")]
+    pub package_flavor: PackageFlavor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installer_target: Option<crate::unified_update::InstallerTarget>,
     pub root: PathBuf,
     pub operation_id: String,
     pub owner: LocalAccount,
@@ -597,7 +626,12 @@ pub(crate) fn freeze_installer_upgrade(
         ));
     }
     if journal.desktop.as_ref().map(|item| &item.target) != receipt.desktop_target.as_ref()
-        || managed_desktop_target(&journal.record.request.binaries).as_ref()
+        || (if journal.candidate.package_flavor.is_full() {
+            managed_desktop_target(&journal.record.request.binaries)
+        } else {
+            None
+        })
+        .as_ref()
             != receipt.desktop_target.as_ref()
     {
         return Err(error(
@@ -637,6 +671,8 @@ pub(crate) fn freeze_installer_upgrade(
             )
         })?;
     Ok(FrozenInstallerUpgrade {
+        package_flavor: receipt.package_flavor,
+        installer_target: receipt.installer_target,
         root: root.clone(),
         operation_id: journal.operation_id,
         owner: current.request.account,
@@ -678,7 +714,9 @@ pub(crate) fn check_frozen_installer_transition(
             )
         })
         .collect();
-    if journal.operation_id != frozen.operation_id
+    if journal.installer_target != frozen.installer_target
+        || journal.candidate.package_flavor != frozen.package_flavor
+        || journal.operation_id != frozen.operation_id
         || journal.record.environment_id != frozen.environment_id
         || journal.record.request.account != frozen.owner
         || journal.candidate.manifest_sha256 != frozen.manifest_sha256
@@ -1042,13 +1080,32 @@ pub fn verify_upgrade_candidate(root: &Path) -> SetupResultValue<UpgradeCandidat
         .canonicalize()
         .map_err(|_| error("candidate_path", "Candidate directory is unavailable"))?;
     let bytes = bounded_file(&root.join("source-manifest.json"))?;
-    let manifest: Value = serde_json::from_slice(&bytes).map_err(|_| {
+    let manifest: Value = crate::unified_update::strict_json(&bytes).map_err(|_| {
         error(
             "candidate_manifest",
             "Candidate release manifest is invalid",
         )
     })?;
-    if manifest.get("schema_version").and_then(Value::as_u64) != Some(1) {
+    let flavor: PackageFlavor = match manifest.get("package_flavor") {
+        None if manifest.get("schema_version").and_then(Value::as_u64) == Some(1) => {
+            PackageFlavor::Full
+        }
+        Some(Value::String(value))
+            if value == "runtime"
+                && cfg!(target_os = "linux")
+                && manifest.get("schema_version").and_then(Value::as_u64) == Some(2) =>
+        {
+            PackageFlavor::Runtime
+        }
+        _ => {
+            return Err(error(
+                "candidate_schema",
+                "Candidate package flavor or schema is unsupported",
+            ))
+        }
+    };
+    if manifest.get("schema_version").and_then(Value::as_u64) != Some(flavor.source_schema() as u64)
+    {
         return Err(error(
             "candidate_schema",
             "Candidate release schema is unsupported",
@@ -1129,14 +1186,14 @@ pub fn verify_upgrade_candidate(root: &Path) -> SetupResultValue<UpgradeCandidat
         .get("artifacts")
         .and_then(Value::as_object)
         .ok_or_else(|| error("candidate_manifest", "Component manifest is missing"))?;
-    if declared.len() != COMPONENTS.len() {
+    if declared.len() != flavor.components().len() {
         return Err(error(
             "candidate_components",
-            "A unified candidate must contain exactly four components",
+            "The candidate must contain exactly its declared package components",
         ));
     }
     let mut artifacts = BTreeMap::new();
-    for name in COMPONENTS {
+    for &name in flavor.components() {
         let item = declared.get(name).ok_or_else(|| {
             error(
                 "candidate_components",
@@ -1196,6 +1253,12 @@ pub fn verify_upgrade_candidate(root: &Path) -> SetupResultValue<UpgradeCandidat
             ));
         }
         let relative = string(item, "path")?;
+        if !flavor.is_full() && relative != format!("artifacts/bin/{name}") {
+            return Err(error(
+                "candidate_components",
+                "Runtime components must use their canonical candidate paths",
+            ));
+        }
         let path = artifact_path(&root, relative)?;
         let expected = string(item, "sha256")?;
         if checksums.get(relative).copied() != Some(expected) || digest(&path)? != expected {
@@ -1213,8 +1276,19 @@ pub fn verify_upgrade_candidate(root: &Path) -> SetupResultValue<UpgradeCandidat
             },
         );
     }
-    let desktop = parse_desktop_payload(&root, &manifest, &artifacts)?;
+    let desktop = if flavor.is_full() {
+        Some(parse_desktop_payload(&root, &manifest, &artifacts)?)
+    } else {
+        if manifest.get("desktop_payload").is_some() {
+            return Err(error(
+                "candidate_components",
+                "Runtime packages cannot declare Desktop payload",
+            ));
+        }
+        None
+    };
     Ok(UpgradeCandidate {
+        package_flavor: flavor,
         version: version.into(),
         source_sha: source.into(),
         platform,
@@ -1224,7 +1298,7 @@ pub fn verify_upgrade_candidate(root: &Path) -> SetupResultValue<UpgradeCandidat
         provenance_verified: false,
         root,
         artifacts,
-        desktop: Some(desktop),
+        desktop,
     })
 }
 
@@ -1233,6 +1307,7 @@ pub fn verify_upgrade_candidate(root: &Path) -> SetupResultValue<UpgradeCandidat
 pub async fn verify_same_installed_package(
     candidate_dir: &Path,
     expected_runtime_dir: &Path,
+    expected_target: Option<InstallerTarget>,
 ) -> SetupResultValue<()> {
     let candidate = verify_upgrade_candidate(candidate_dir)?;
     verify_published_provenance(&candidate).await?;
@@ -1273,10 +1348,17 @@ pub async fn verify_same_installed_package(
             "The Windows package runtime target differs",
         ));
     }
-    let desktop = candidate
-        .desktop
-        .as_ref()
-        .ok_or_else(|| error("candidate_manifest", "Desktop payload evidence is missing"))?;
+    let installed = package::verify_candidate_flavor(
+        candidate.package_flavor,
+        &RuntimeBinaries {
+            cli: expected_runtime_dir.join("webcodex"),
+            server: expected_runtime_dir.join("webcodex-server"),
+            runner: expected_runtime_dir.join("webcodex-runner"),
+        },
+        PackageInspection::InstallerHook,
+    )?;
+    package::verify_candidate_target(candidate.package_flavor, installed, expected_target)?;
+    let desktop = candidate.desktop.as_ref();
     for (name, target) in [
         (
             "webcodex",
@@ -1305,6 +1387,11 @@ pub async fn verify_same_installed_package(
             ));
         }
     }
+    if !candidate.package_flavor.is_full() {
+        return Ok(());
+    }
+    let desktop = desktop
+        .ok_or_else(|| error("candidate_manifest", "Desktop payload evidence is missing"))?;
     #[cfg(target_os = "linux")]
     let desktop_target = PathBuf::from("/usr/lib/webcodex/webcodex-desktop");
     #[cfg(target_os = "macos")]
@@ -1456,6 +1543,11 @@ impl NativeEnvironment {
                 active_tasks: 0,
             });
         };
+        package::verify_candidate_flavor(
+            candidate.package_flavor,
+            &record.request.binaries,
+            PackageInspection::Installed,
+        )?;
         let mut diagnostics = Vec::new();
         for spec in configured_specs(store, &record)? {
             let status = ServiceManager::inspect(&spec).map_err(crate::native::service_error)?;
@@ -1571,6 +1663,13 @@ impl NativeEnvironment {
             verify_published_provenance(&candidate).await?;
             candidate.provenance_verified = true;
         }
+        if let Some(record) = store.load_environment()? {
+            package::verify_candidate_flavor(
+                candidate.package_flavor,
+                &record.request.binaries,
+                PackageInspection::Installed,
+            )?;
+        }
         verify_candidate_executables(&candidate).await?;
         let previous = if target.is_some() {
             previous
@@ -1654,7 +1753,11 @@ impl NativeEnvironment {
                     name: name.into(),
                 });
             }
-            let desktop = snapshot_desktop(&record.request.binaries, &backup)?;
+            let desktop = if candidate.package_flavor.is_full() {
+                snapshot_desktop(&record.request.binaries, &backup)?
+            } else {
+                None
+            };
             let mut running = Vec::new();
             let all_services = configured_specs(store, &record)?;
             for spec in &all_services {
@@ -1683,8 +1786,23 @@ impl NativeEnvironment {
             } else {
                 None
             };
+            let installer_target = if candidate.package_flavor.is_full() {
+                None
+            } else {
+                Some(
+                    crate::unified_update::install::package::installed_package().ok_or_else(
+                        || {
+                            error(
+                                "upgrade_package_ownership",
+                                "Runtime package ownership cannot be confirmed",
+                            )
+                        },
+                    )?,
+                )
+            };
             let journal = UpgradeJournal {
-                schema_version: 1,
+                installer_target,
+                schema_version: candidate.package_flavor.source_schema(),
                 operation_id,
                 candidate: candidate.clone(),
                 phase: Phase::Prepared,
@@ -2820,7 +2938,7 @@ fn native_executable_architecture(bytes: &[u8]) -> SetupResultValue<&'static str
 
 async fn verify_candidate_executables(candidate: &UpgradeCandidate) -> SetupResultValue<()> {
     verify_candidate_executable_headers(candidate)?;
-    for name in COMPONENTS {
+    for &name in candidate.package_flavor.components() {
         let artifact = candidate
             .artifacts
             .get(name)
@@ -2899,7 +3017,7 @@ async fn verify_candidate_executables(candidate: &UpgradeCandidate) -> SetupResu
 }
 
 fn verify_candidate_executable_headers(candidate: &UpgradeCandidate) -> SetupResultValue<()> {
-    for name in COMPONENTS {
+    for &name in candidate.package_flavor.components() {
         let artifact = candidate
             .artifacts
             .get(name)
@@ -2994,16 +3112,21 @@ async fn verify_published_provenance(candidate: &UpgradeCandidate) -> SetupResul
     } else {
         "Xiiiing/webcodex"
     };
+    let platform = crate::unified_update::RuntimePlatform::ALL
+        .into_iter()
+        .find(|p| p.as_str() == candidate.platform)
+        .ok_or_else(|| error("candidate_provenance", "Unknown candidate platform"))?;
     let mut url = url::Url::parse(&format!("https://github.com/{repo}/releases/download/"))
         .map_err(|_| SetupDiagnostic::io())?;
     url.path_segments_mut()
         .map_err(|_| SetupDiagnostic::io())?
         .pop_if_empty()
         .push(&format!("v{}", candidate.version))
-        .push(&format!(
-            "webcodex-source-v{}-{}.json",
-            candidate.version, candidate.platform
-        ));
+        .push(
+            &candidate
+                .package_flavor
+                .source_filename(platform, &candidate.version),
+        );
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(20))
@@ -3078,9 +3201,11 @@ mod tests {
             runner: root.join("webcodex-runner"),
         };
         UpgradeJournal {
+            installer_target: None,
             schema_version: 1,
             operation_id: uuid::Uuid::new_v4().to_string(),
             candidate: UpgradeCandidate {
+                package_flavor: PackageFlavor::Full,
                 version: "1.0.0".into(),
                 source_sha: "a".repeat(40),
                 platform: "linux-x64".into(),

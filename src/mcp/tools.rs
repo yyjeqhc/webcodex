@@ -41,13 +41,17 @@ fn filter_specs_for_oauth(mut specs: Vec<ToolSpec>, auth: Option<&AuthContext>) 
 }
 
 fn work_result_thread_entrypoint_tool_spec() -> ToolSpec {
-    let state = crate::tool_runtime::work_result_app_tool_specs()
+    let mut state = crate::tool_runtime::work_result_app_tool_specs()
         .into_iter()
         .find(|spec| spec.name == "get_work_result_state")
         .expect("Work Result state App tool must exist");
+    // Only this Host launcher can succeed without a selected Work Result.
+    // Canonical state reads retain their exact Project-bound output contract.
+    state.output_schema["properties"]["output"]["properties"]["work_result"]["type"] =
+        json!(["object", "null"]);
     ToolSpec {
         name: WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME.to_string(),
-        description: "Host UI entrypoint only; models should use present_work_result, not call this tool. Opens the Work Result already presented in this exact Host Window. The Host invokes this entrypoint with an empty object; WebCodex resolves only a prior successful present_work_result binding from the same authenticated Window and then reuses the normal work_result_state authorization and projection path.".to_string(),
+        description: "Host UI entrypoint only; models should use present_work_result, not call this tool. Opens the Work Result already presented in this exact Host Window, or an empty panel when none has been presented. The Host invokes this entrypoint with an empty object; WebCodex resolves only a prior successful present_work_result binding from the same authenticated Window and then reuses the normal work_result_state authorization and projection path. An empty panel selects no Project or Session and creates no binding.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {},
@@ -853,7 +857,7 @@ fn work_result_thread_binding(
     runtime: &ToolRuntime,
     auth: Option<&AuthContext>,
     window: Option<&crate::client_window::ClientWindow>,
-) -> Result<WorkResultThreadBinding, String> {
+) -> Result<Option<WorkResultThreadBinding>, String> {
     let window = window.ok_or_else(|| {
         "Work Result thread panel requires a stable Host Window identity".to_string()
     })?;
@@ -877,20 +881,19 @@ fn work_result_thread_binding(
             "present_work_result",
         )
         .map_err(|_| "Work Result thread panel activity lookup failed".to_string())?;
-    event
-        .into_iter()
-        .find_map(|event| {
-            event.project.map(|project| WorkResultThreadBinding {
-                project,
-                // This comes from the exact selected present_work_result event's
-                // canonical ActionAudit correlation. Never substitute Window
-                // affinity from another action or Session.
-                session_id: event.business_session_id,
-            })
-        })
-        .ok_or_else(|| {
-            "No presented Work Result is bound to this conversation Window yet".to_string()
-        })
+    let Some(event) = event else {
+        return Ok(None);
+    };
+    let project = event
+        .project
+        .ok_or_else(|| "Work Result thread panel presentation binding is invalid".to_string())?;
+    Ok(Some(WorkResultThreadBinding {
+        project,
+        // This comes from the exact selected present_work_result event's
+        // canonical ActionAudit correlation. Never substitute Window
+        // affinity from another action or Session.
+        session_id: event.business_session_id,
+    }))
 }
 
 #[cfg(test)]
@@ -898,9 +901,9 @@ pub(super) fn work_result_thread_binding_for_test(
     runtime: &ToolRuntime,
     auth: Option<&AuthContext>,
     window: Option<&crate::client_window::ClientWindow>,
-) -> Result<(String, Option<String>), String> {
+) -> Result<Option<(String, Option<String>)>, String> {
     work_result_thread_binding(runtime, auth, window)
-        .map(|binding| (binding.project, binding.session_id))
+        .map(|binding| binding.map(|binding| (binding.project, binding.session_id)))
 }
 
 fn attach_app_visibility(value: &mut Value) {
@@ -2802,7 +2805,43 @@ pub(super) async fn handle_call(
             ));
         }
         let binding = match work_result_thread_binding(runtime, auth, window) {
-            Ok(binding) => binding,
+            Ok(Some(binding)) => binding,
+            Ok(None) => {
+                // There is no domain target to read, but absence must not bypass
+                // the same canonical scope required by a bound state read.
+                match check_runtime_tool_scope(auth, "get_work_result_state") {
+                    Ok(()) => {}
+                    Err(ToolCallErrorStatus::InsufficientScope {
+                        required_scope,
+                        description,
+                    }) => {
+                        if let Some(lc) = lifecycle.as_deref() {
+                            lc.dispatch_failed("forbidden");
+                            lc.dispatch_finished(false, Some(false), "forbidden");
+                        }
+                        return scope_forbidden(auth, required_scope, description);
+                    }
+                    Err(ToolCallErrorStatus::InvalidArguments { message }) => {
+                        if let Some(lc) = lifecycle.as_deref() {
+                            lc.dispatch_failed("invalid_arguments");
+                            lc.dispatch_finished(false, Some(false), "invalid_arguments");
+                        }
+                        return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+                    }
+                }
+                let mut result = mcp_runtime_tool_result_fallback(
+                    ToolResult::ok(json!({"work_result": null})),
+                    runtime.runtime_info.mcp_text_json_compat_enabled,
+                    result_presentation,
+                );
+                attach_work_result_app_private_result(&mut result);
+                result["_meta"][WORK_RESULT_THREAD_CONTEXT_META_KEY] =
+                    json!({"empty": true, "session_id": null});
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_finished(true, Some(true), "success");
+                }
+                return McpOutcome::Ok(rpc_result(id, mcp_stateless_result(result, false)));
+            }
             Err(message) => {
                 if let Some(lc) = lifecycle.as_deref() {
                     lc.dispatch_failed("invalid_context");

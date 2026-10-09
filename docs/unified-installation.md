@@ -6,6 +6,9 @@ This guide describes the unified installer workflow being developed on this bran
 
 Get published files from [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases). The tracked [`download/`](../download/README.md) directory contains only the static page source; its generated `manifest.json` is intentionally not committed. The [download-page workflow](https://github.com/yyjeqhc/webcodex/actions/workflows/download-page.yml) builds a manifest-based GitHub Actions artifact after a release, but does not host or deploy it. To preview a source revision before installer release, follow [Linux source preview](DESKTOP_DEVELOPMENT.md#linux-source-preview-against-an-existing-server).
 
+For Linux machines without Desktop, see [Runtime installation and CLI join](runtime-installation.md) for the Runtime package, protected pairing input and the shared headless update/recovery entry point.
+
+
 ## One computer
 
 The following workflow applies when a validated installer for your platform is available; source previews are documented separately above.

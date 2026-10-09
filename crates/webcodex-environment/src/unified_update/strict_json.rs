@@ -64,3 +64,9 @@ impl<'de> Deserialize<'de> for Unique {
 pub(crate) fn parse(bytes: &[u8]) -> Result<Value, serde_json::Error> {
     serde_json::from_slice::<Unique>(bytes).map(|value| value.0)
 }
+
+pub(crate) fn deserialize_unique<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Value, D::Error> {
+    Unique::deserialize(deserializer).map(|value| value.0)
+}

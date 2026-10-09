@@ -3,7 +3,8 @@
 `project_validate(action=test, adapter=python)` plans a bounded pytest run on the
 owning Runner. `auto` uses the existing nearest `pyproject.toml` recipe root;
 explicit Python also works without a manifest. Ambiguous recipes, escaping paths,
-check/format actions, package scope (including `scope.all_packages`) and dependency policy fail closed. `cwd`
+package scope (including `scope.all_packages`) and dependency policy fail closed.
+Python check/format actions use the separate [Ruff project contract](python-ruff-project-validation.md). `cwd`
 selects a recipe root, not a free pytest positional argument. Ordinary recipe
 workflows retain their existing Python unittest/Ruff/mypy choices.
 
@@ -50,7 +51,7 @@ target and policy; existing Cargo/Go sparse receipts are unchanged.
 
 `project_validation_python_pytest_v1` is additive and false when omitted. The
 running binary advertises it independently of local Python/pytest installation.
-Explicit Python planning and every Python Job admission check that capability;
+Explicit Python test planning and every pytest Job admission check that capability;
 Auto may discover Python on the Runner but cannot enqueue it without current
 support. Admission and post-queue replan fences cover pytest configuration from
 the selected Python cwd through the registered Project root. If no recognized

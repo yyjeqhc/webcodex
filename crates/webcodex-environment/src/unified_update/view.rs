@@ -54,6 +54,8 @@ pub struct UpdateView {
     pub schema_version: u16,
     pub download: DownloadStatus,
     pub installed: Vec<ComponentBuild>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_target: Option<InstallerTarget>,
     pub candidate: Option<CandidateIdentity>,
     pub candidate_components: Vec<ComponentBuild>,
     pub upgrade: Option<crate::UpgradeStatus>,
@@ -61,9 +63,13 @@ pub struct UpdateView {
     pub restart_required: bool,
 }
 
-fn components(builds: &[MachineBuildInfo]) -> Vec<ComponentBuild> {
+fn components_for_flavor(
+    builds: &[MachineBuildInfo],
+    flavor: PackageFlavor,
+) -> Vec<ComponentBuild> {
     UPDATE_COMPONENTS
         .into_iter()
+        .filter(|name| flavor.components().contains(name))
         .map(|binary| ComponentBuild {
             binary: binary.into(),
             build: builds
@@ -71,6 +77,11 @@ fn components(builds: &[MachineBuildInfo]) -> Vec<ComponentBuild> {
                 .find_map(|build| safe_component_build(build, binary)),
         })
         .collect()
+}
+
+#[cfg(test)]
+fn components(builds: &[MachineBuildInfo]) -> Vec<ComponentBuild> {
+    components_for_flavor(builds, PackageFlavor::Full)
 }
 
 /// Build probes are diagnostic input and may describe custom programs. Only
@@ -146,7 +157,8 @@ impl UpdateManager {
         let Some(bytes) = cache.read("source-manifest.json", MAX_SOURCE_BYTES)? else {
             return Ok(None);
         };
-        let source = verify_source_manifest(&bytes, version, target.platform)?;
+        let source =
+            verify_source_manifest_for_flavor(&bytes, version, target.platform, target.flavor)?;
         let identity = CandidateIdentity {
             version: version.into(),
             target,
@@ -162,6 +174,21 @@ impl UpdateManager {
     /// One private cache fence covers record and candidate identity. Observation
     /// never overwrites a concurrently active in-memory download.
     pub fn status_view(&self, installed: &[MachineBuildInfo]) -> UpdateResult<UpdateView> {
+        self.status_view_for_target(installed, None)
+    }
+    /// The adapter may supply only a target admitted by installation assessment.
+    /// Missing files or an arbitrary build probe cannot establish Runtime flavor.
+    pub fn status_view_for_target(
+        &self,
+        installed: &[MachineBuildInfo],
+        verified_installed_target: Option<InstallerTarget>,
+    ) -> UpdateResult<UpdateView> {
+        if verified_installed_target
+            .is_some_and(|t| !t.valid() || Some(t.platform) != RuntimePlatform::current())
+        {
+            return Err(UpdateError::UnsupportedPlatform);
+        }
+        let installed_flavor = verified_installed_target.map_or(PackageFlavor::Full, |t| t.flavor);
         let attempt = self.attempt.try_lock();
         if attempt.is_err() {
             let mut download = self.snapshot();
@@ -169,9 +196,10 @@ impl UpdateManager {
             return bounded_view(UpdateView {
                 schema_version: 1,
                 download,
-                installed: components(installed),
+                installed: components_for_flavor(installed, installed_flavor),
+                installed_target: verified_installed_target,
                 candidate: None,
-                candidate_components: components(&[]),
+                candidate_components: components_for_flavor(&[], installed_flavor),
                 upgrade: None,
                 blockers: vec![UpdateBlocker::UpgradeInProgress],
                 restart_required: false,
@@ -206,7 +234,10 @@ impl UpdateManager {
             .map(|cache| Self::candidate_locked(cache, &record))
             .transpose()?
             .flatten();
-        let candidate_components = components(
+        let candidate_flavor = candidate
+            .as_ref()
+            .map_or(installed_flavor, |(identity, _)| identity.target.flavor);
+        let candidate_components = components_for_flavor(
             &candidate
                 .as_ref()
                 .map(|(_, source)| {
@@ -216,6 +247,7 @@ impl UpdateManager {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default(),
+            candidate_flavor,
         );
         let guarded_handoff_available = candidate.as_ref().is_none_or(|(identity, source)| {
             identity.target.format != PackageFormat::Exe
@@ -237,6 +269,12 @@ impl UpdateManager {
                 blockers.push(UpdateBlocker::UnsupportedPlatform)
             }
             _ => blockers.push(UpdateBlocker::UnsupportedInstallation),
+        }
+        if candidate
+            .as_ref()
+            .is_some_and(|c| verified_installed_target.is_some_and(|t| t != c.target))
+        {
+            blockers.push(UpdateBlocker::UnsupportedInstallation);
         }
         if candidate.is_none() {
             blockers.push(UpdateBlocker::CandidateNotVerified);
@@ -306,7 +344,8 @@ impl UpdateManager {
         let view = UpdateView {
             schema_version: 1,
             download,
-            installed: components(installed),
+            installed: components_for_flavor(installed, installed_flavor),
+            installed_target: verified_installed_target,
             candidate,
             candidate_components,
             upgrade,

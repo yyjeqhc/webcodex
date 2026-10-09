@@ -12,7 +12,7 @@ use webcodex_tool_runtime_contracts::tool_audit::{
     is_validation_execution_identity,
 };
 use webcodex_validation::{
-    event_is_job_acceptance_only, validation_adapter_for_tool,
+    event_is_job_acceptance_only, validation_evidence_profile_for_tool,
     validation_summary_for_session_events,
 };
 use webcodex_workflow_session::{
@@ -394,7 +394,7 @@ impl ToolRuntime {
                         .and_then(Value::as_str)
                         .filter(|tool| {
                             *tool == "project_validate"
-                                || validation_adapter_for_tool(tool).is_some()
+                                || validation_evidence_profile_for_tool(tool).is_some()
                         })
                 else {
                     continue;
@@ -406,8 +406,8 @@ impl ToolRuntime {
                 } else {
                     Some(tool_name)
                 };
-                let Some(adapter) =
-                    adapter.filter(|adapter| validation_adapter_for_tool(adapter).is_some())
+                let Some(adapter) = adapter
+                    .filter(|adapter| validation_evidence_profile_for_tool(adapter).is_some())
                 else {
                     continue;
                 };
@@ -446,7 +446,7 @@ impl ToolRuntime {
                 let validation_tool = metadata
                     .get("validation_tool")
                     .and_then(Value::as_str)
-                    .filter(|tool| validation_adapter_for_tool(tool).is_some());
+                    .filter(|tool| validation_evidence_profile_for_tool(tool).is_some());
                 let assertion_name = metadata
                     .get("assertion_name")
                     .and_then(Value::as_str)

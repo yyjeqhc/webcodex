@@ -11,6 +11,14 @@ import argparse, hashlib, json, os, platform, re, shutil, stat, subprocess, sys,
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+try:
+    from . import runtime_installer_manifest as runtime_contract
+except ImportError:
+    try:
+        from scripts import runtime_installer_manifest as runtime_contract
+    except ImportError:
+        import runtime_installer_manifest as runtime_contract
+
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner", "webcodex-desktop")
 RUNTIMES = BINARIES[:3]
 VERSION_RE = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
@@ -84,7 +92,8 @@ def safe_relative(value: object, label: str) -> PurePosixPath:
 
 def parse_sha256sums(path: Path) -> dict[str, str]:
     try:
-        raw = path.read_bytes()
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_BYTES + 1)
         if len(raw) > MAX_BYTES:
             raise PackageError("source SHA256SUMS exceeds its size limit")
         lines = raw.decode("ascii").splitlines()
@@ -136,11 +145,14 @@ def validate_build_info(value: object, name: str, manifest: dict[str, Any]) -> d
         raise PackageError(f"{name} environment data format is missing or unsupported")
     return value
 
-def validate_manifest(manifest_path: Path, sums_path: Path, input_root: Path, platform_name: str) -> dict[str, Any]:
+def validate_manifest(manifest_path: Path, sums_path: Path, input_root: Path, platform_name: str, package_flavor: str = "full") -> dict[str, Any]:
+    if package_flavor not in ("full", "runtime"):
+        raise PackageError("unsupported package flavor")
     if platform_name not in PLATFORMS:
         raise PackageError(f"unsupported platform: {platform_name}")
     try:
-        raw = manifest_path.read_bytes()
+        with manifest_path.open("rb") as stream:
+            raw = stream.read(MAX_BYTES + 1)
     except OSError as exc:
         raise PackageError("source manifest is unavailable") from exc
     if len(raw) > MAX_BYTES:
@@ -149,12 +161,18 @@ def validate_manifest(manifest_path: Path, sums_path: Path, input_root: Path, pl
     if sums.get(manifest_path.name) != hashlib.sha256(raw).hexdigest():
         raise PackageError("source manifest SHA-256 does not match SHA256SUMS")
     try:
-        manifest = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        manifest = runtime_contract.parse(raw)
+    except (UnicodeDecodeError, ValueError) as exc:
         raise PackageError("source manifest is not valid JSON") from exc
+    if not isinstance(manifest, dict):
+        raise PackageError("source manifest must be an object")
     required = {"schema_version", "version", "source_sha", "platform", "target", "architecture",
-        "source_workflow_run_id", "source_workflow_ref", "desktop_runtime_contract", "artifacts", "desktop_payload"}
-    if not isinstance(manifest, dict) or set(manifest) != required or manifest.get("schema_version") != 1:
+        "source_workflow_run_id", "source_workflow_ref", "desktop_runtime_contract", "artifacts"}
+    runtime = package_flavor == "runtime"
+    required.add("package_flavor" if runtime else "desktop_payload")
+    if runtime and (not platform_name.startswith("linux-") or manifest.get("package_flavor") != "runtime"):
+        raise PackageError("Runtime packages require an exact Linux Runtime source")
+    if not isinstance(manifest, dict) or set(manifest) != required or type(manifest.get("schema_version")) is not int or manifest.get("schema_version") != (2 if runtime else 1):
         raise PackageError("unsupported unified source manifest schema")
     os_name, target, architecture, _ = PLATFORMS[platform_name]
     if (manifest.get("platform"), manifest.get("target"), manifest.get("architecture")) != (platform_name, target, architecture):
@@ -174,7 +192,7 @@ def validate_manifest(manifest_path: Path, sums_path: Path, input_root: Path, pl
         raise PackageError("source manifest Desktop Runtime contract is invalid")
     root = input_root.resolve(strict=True)
     artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict) or set(artifacts) != set(BINARIES):
+    if not isinstance(artifacts, dict) or set(artifacts) != set(RUNTIMES if runtime else BINARIES):
         raise PackageError("source manifest must describe CLI, Server, Runner, and Desktop")
     host_platform = None
     if platform.system() == "Linux":
@@ -183,7 +201,7 @@ def validate_manifest(manifest_path: Path, sums_path: Path, input_root: Path, pl
         host_platform = {"x86_64": "darwin-x64", "arm64": "darwin-arm64"}.get(platform.machine())
     host = platform_name == host_platform
     resolved_artifacts = {}
-    for name in BINARIES:
+    for name in (RUNTIMES if runtime else BINARIES):
         item = artifacts[name]
         fields = {"path", "sha256", "build_info", "build_info_sha256", "probe"}
         if not isinstance(item, dict) or set(item) != fields:
@@ -213,6 +231,10 @@ def validate_manifest(manifest_path: Path, sums_path: Path, input_root: Path, pl
             raise PackageError(f"{name} cross-target build-info must come from its native build job")
         validate_build_info(info, name, manifest)
         resolved_artifacts[name] = resolved
+    if runtime:
+        manifest["_input_root"] = root
+        manifest["_artifacts"] = resolved_artifacts
+        return manifest
     desktop = manifest["desktop_payload"]
     if not isinstance(desktop, dict) or set(desktop) != {"path", "sha256", "executable"}:
         raise PackageError("Desktop payload manifest entry is malformed")
@@ -261,7 +283,8 @@ def _copy_upgrade_candidate(input_root: Path, destination: Path, manifest: dict[
     for name in ("source-manifest.json", "SHA256SUMS"):
         shutil.copyfile(input_root / name, destination / name)
     paths = {item["path"] for item in manifest["artifacts"].values()}
-    paths.add(manifest["desktop_payload"]["path"])
+    if "desktop_payload" in manifest:
+        paths.add(manifest["desktop_payload"]["path"])
     roots = sorted(paths, key=lambda value: (value.count("/"), value))
     paths = {value for value in roots if not any(value.startswith(parent + "/") for parent in roots if parent != value)}
     for value in paths:
@@ -275,7 +298,14 @@ def _copy_upgrade_candidate(input_root: Path, destination: Path, manifest: dict[
             shutil.copy2(source, target, follow_symlinks=False)
 
 
-def _upgrade_preinstall(candidate_rel: str, transaction_dir: str, authorization_file: str, runtime_dir: str, ownership_checks: str = "", recovery_dir: str = "", same_marker_file: str = "", candidate_cli_sha256: str = "", hash_checker: str = "", installed_cli: str = "") -> str:
+def _installer_target_option(target: str) -> str:
+    if target and target not in runtime_contract.RUNTIME_TARGETS:
+        raise PackageError("installer hook target must be a supported Runtime package")
+    return f" --installer-target {target}" if target else ""
+
+
+def _upgrade_preinstall(candidate_rel: str, transaction_dir: str, authorization_file: str, runtime_dir: str, ownership_checks: str = "", recovery_dir: str = "", same_marker_file: str = "", candidate_cli_sha256: str = "", hash_checker: str = "", installed_cli: str = "", installer_target: str = "") -> str:
+    target_option = _installer_target_option(installer_target)
     return f"""#!/bin/sh
 set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -289,7 +319,7 @@ cli="$candidate_cli"
 if [ -x '{installed_cli}' ]; then cli='{installed_cli}'; fi
 {ownership_checks}
 if [ -f '{authorization_file}' ]; then
-  "$cli" environment installer-verify --candidate-dir "$candidate" --expected-runtime-dir '{runtime_dir}' --json
+  "$cli" environment installer-verify --candidate-dir "$candidate" --expected-runtime-dir '{runtime_dir}'{target_option} --json
   if [ -n '{recovery_dir}' ]; then
     recovery='{recovery_dir}'
     mkdir -p "$recovery"
@@ -303,7 +333,7 @@ if [ -f '{authorization_file}' ]; then
     fi
   fi
 elif [ "$existing_install" -eq 1 ]; then
-  if ! "$cli" environment installer-verify-same --candidate-dir "$candidate" --expected-runtime-dir '{runtime_dir}' --json; then
+  if ! "$cli" environment installer-verify-same --candidate-dir "$candidate" --expected-runtime-dir '{runtime_dir}'{target_option} --json; then
     echo "WebCodex upgrade needs a prepared owner receipt. Prepare from the original user account, then authorize that receipt before retrying this package." >&2
     exit 1
   fi
@@ -331,7 +361,8 @@ fi
 """
 
 
-def _upgrade_postinstall(installed_cli: str, transaction_dir: str, authorization_file: str, recovery_dir: str = "", runtime_dir: str = "", same_marker_file: str = "") -> str:
+def _upgrade_postinstall(installed_cli: str, transaction_dir: str, authorization_file: str, recovery_dir: str = "", runtime_dir: str = "", same_marker_file: str = "", installer_target: str = "") -> str:
+    target_option = _installer_target_option(installer_target)
     return f"""#!/bin/sh
 set -eu
 if [ -f '{authorization_file}' ]; then
@@ -344,7 +375,7 @@ if [ -f '{authorization_file}' ]; then
   exit 0
 fi
 if [ -f '{same_marker_file}' ]; then
-  if ! '{installed_cli}' environment installer-verify-same --candidate-dir '{recovery_dir}/candidate' --expected-runtime-dir '{runtime_dir}' --json; then
+  if ! '{installed_cli}' environment installer-verify-same --candidate-dir '{recovery_dir}/candidate' --expected-runtime-dir '{runtime_dir}'{target_option} --json; then
     echo "WebCodex installed files changed after idempotency preflight; the verification marker and candidate are retained." >&2
     exit 1
   fi
@@ -361,17 +392,20 @@ fi
 
 def stage_linux_payload(manifest: dict[str, Any], stage: Path) -> None:
     resolved = manifest["_artifacts"]
-    _copy_exec(manifest["_desktop_payload"], stage / "usr/lib/webcodex/webcodex-desktop")
+    runtime = manifest.get("package_flavor") == "runtime"
+    if not runtime:
+        _copy_exec(manifest["_desktop_payload"], stage / "usr/lib/webcodex/webcodex-desktop")
     for name in RUNTIMES:
         _copy_exec(resolved[name], stage / f"usr/lib/webcodex/webcodex-runtime/{name}")
     (stage / "usr/bin").mkdir(parents=True, exist_ok=True)
     for name in RUNTIMES:
         (stage / "usr/bin" / name).symlink_to(f"../lib/webcodex/webcodex-runtime/{name}")
-    apps = stage / "usr/share/applications"
-    apps.mkdir(parents=True)
-    (apps / "webcodex.desktop").write_text("[Desktop Entry]\nType=Application\nName=WebCodex Desktop\n"
-        "Exec=/usr/lib/webcodex/webcodex-desktop\nTerminal=false\nCategories=Development;\n", encoding="utf-8")
-    doc = stage / "usr/share/doc/webcodex"
+    if not runtime:
+        apps = stage / "usr/share/applications"
+        apps.mkdir(parents=True)
+        (apps / "webcodex.desktop").write_text("[Desktop Entry]\nType=Application\nName=WebCodex Desktop\n"
+            "Exec=/usr/lib/webcodex/webcodex-desktop\nTerminal=false\nCategories=Development;\n", encoding="utf-8")
+    doc = stage / ("usr/share/doc/webcodex-runtime" if runtime else "usr/share/doc/webcodex")
     doc.mkdir(parents=True)
     (doc / "unified-source-manifest.json").write_text(json.dumps(public_manifest(manifest), indent=2) + "\n", encoding="utf-8")
 
@@ -381,11 +415,16 @@ def stage_deb_metadata(manifest: dict[str, Any], stage: Path, input_root: Path) 
     control = stage / "DEBIAN"
     control.mkdir()
     arch = PLATFORMS[manifest["platform"]][3]
+    runtime = manifest.get("package_flavor") == "runtime"
+    package_name = "webcodex-runtime" if runtime else "webcodex"
+    dependencies = "libc6, libgcc-s1, libssl3"
+    if not runtime:
+        dependencies += ", libgtk-3-0, libwebkit2gtk-4.1-0, libayatana-appindicator3-1, librsvg2-2"
+    description = "WebCodex CLI, Server and Runner runtime" if runtime else "WebCodex Desktop and unified Server/Runner runtime"
     (control / "control").write_text(
-        f"Package: webcodex\nVersion: {manifest['version']}\nArchitecture: {arch}\nMaintainer: WebCodex\n"
-        "Depends: libc6, libgcc-s1, libssl3, libgtk-3-0, libwebkit2gtk-4.1-0, libayatana-appindicator3-1, librsvg2-2\n"
-        "Description: WebCodex Desktop and unified Server/Runner runtime\n"
-        " Includes Desktop, CLI, Server and Runner. Installation does not start services.\n", encoding="utf-8")
+        f"Package: {package_name}\nVersion: {manifest['version']}\nArchitecture: {arch}\nMaintainer: WebCodex\n"
+        f"Conflicts: {'webcodex' if runtime else 'webcodex-runtime'}\nDepends: {dependencies}\n"
+        f"Description: {description}\n Installation does not start services.\n", encoding="utf-8")
     _copy_upgrade_candidate(input_root, control / "upgrade-candidate", manifest)
     preinst = control / "preinst"
     ownership = """existing_install=0
@@ -393,14 +432,16 @@ if [ "$(dpkg-query -W -f='""" + "$" + """{db:Status-Status}' webcodex 2>/dev/nul
 for pattern in /usr/lib/webcodex/webcodex-desktop /usr/lib/webcodex/webcodex-runtime/webcodex /usr/lib/webcodex/webcodex-runtime/webcodex-server /usr/lib/webcodex/webcodex-runtime/webcodex-runner /usr/bin/webcodex /usr/bin/webcodex-server /usr/bin/webcodex-runner /usr/share/applications/webcodex.desktop /etc/systemd/system/webcodex* /lib/systemd/system/webcodex* /usr/lib/systemd/system/webcodex*; do
   if [ -e "$pattern" ] || [ -L "$pattern" ]; then existing_install=1; fi
 done"""
-    preinst.write_text(_upgrade_preinstall("upgrade-candidate", "/var/lib/webcodex-installer/transaction", "/var/lib/webcodex-installer/authorization.json", "/usr/lib/webcodex/webcodex-runtime", ownership, "/var/lib/webcodex-installer/recovery", "/var/lib/webcodex-installer/same-package.pending", artifacts["webcodex"]["sha256"], "/usr/bin/sha256sum", "/usr/lib/webcodex/webcodex-runtime/webcodex"), encoding="utf-8")
+    ownership = ownership.replace("webcodex 2>/dev/null", f"{package_name} 2>/dev/null")
+    preinst.write_text(_upgrade_preinstall("upgrade-candidate", "/var/lib/webcodex-installer/transaction", "/var/lib/webcodex-installer/authorization.json", "/usr/lib/webcodex/webcodex-runtime", ownership, "/var/lib/webcodex-installer/recovery", "/var/lib/webcodex-installer/same-package.pending", artifacts["webcodex"]["sha256"], "/usr/bin/sha256sum", "/usr/lib/webcodex/webcodex-runtime/webcodex", installer_target=f"{manifest['platform']}-runtime-deb" if runtime else ""), encoding="utf-8")
     preinst.chmod(0o755)
     postinst = control / "postinst"
-    postinst.write_text(_upgrade_postinstall("/usr/lib/webcodex/webcodex-runtime/webcodex", "/var/lib/webcodex-installer/transaction", "/var/lib/webcodex-installer/authorization.json", "/var/lib/webcodex-installer/recovery", "/usr/lib/webcodex/webcodex-runtime", "/var/lib/webcodex-installer/same-package.pending"), encoding="utf-8")
+    postinst.write_text(_upgrade_postinstall("/usr/lib/webcodex/webcodex-runtime/webcodex", "/var/lib/webcodex-installer/transaction", "/var/lib/webcodex-installer/authorization.json", "/var/lib/webcodex-installer/recovery", "/usr/lib/webcodex/webcodex-runtime", "/var/lib/webcodex-installer/same-package.pending", installer_target=f"{manifest['platform']}-runtime-deb" if runtime else ""), encoding="utf-8")
     postinst.chmod(0o755)
 
 
-def rpm_preinstall() -> str:
+def rpm_preinstall(installer_target: str = "") -> str:
+    target_option = _installer_target_option(installer_target)
     return """set -eu
 if [ "$1" -eq 1 ]; then
   # RPM only knows that no older *RPM package* is installed. A DEB, manual,
@@ -423,9 +464,9 @@ if [ ! -x "$cli" ] || [ ! -d "$candidate" ]; then
   exit 1
 fi
 if [ -f "$authorization" ]; then
-  "$cli" environment installer-verify --candidate-dir "$candidate" --expected-runtime-dir /usr/lib/webcodex/webcodex-runtime --json
+  "$cli" environment installer-verify --candidate-dir "$candidate" --expected-runtime-dir /usr/lib/webcodex/webcodex-runtime""" + target_option + """ --json
 elif [ -f "$same_marker" ]; then
-  "$cli" environment installer-verify-same --candidate-dir "$candidate" --expected-runtime-dir /usr/lib/webcodex/webcodex-runtime --json
+  "$cli" environment installer-verify-same --candidate-dir "$candidate" --expected-runtime-dir /usr/lib/webcodex/webcodex-runtime""" + target_option + """ --json
 else
   echo "WebCodex RPM upgrade requires a prepared owner receipt or same-package marker." >&2
   exit 1
@@ -433,7 +474,8 @@ fi
 """
 
 
-def rpm_postinstall() -> str:
+def rpm_postinstall(installer_target: str = "") -> str:
+    target_option = _installer_target_option(installer_target)
     return """set -eu
 if [ "$1" -eq 1 ]; then
   exit 0
@@ -449,7 +491,7 @@ if [ -f "$authorization" ]; then
   exit 0
 fi
 if [ -f "$same_marker" ]; then
-  "$cli" environment installer-verify-same --candidate-dir "$candidate" --expected-runtime-dir /usr/lib/webcodex/webcodex-runtime --json
+  "$cli" environment installer-verify-same --candidate-dir "$candidate" --expected-runtime-dir /usr/lib/webcodex/webcodex-runtime""" + target_option + """ --json
   rm -f "$same_marker"
   rm -rf "$candidate"
   exit 0
@@ -477,10 +519,21 @@ def rpm_spec(manifest: dict[str, Any], payload_root: Path) -> str:
         "/usr/share/webcodex/unified-source-manifest.json",
         "/usr/share/webcodex/upgrade-candidate",
     ]
-    return f"""Name: webcodex
+    runtime = manifest.get("package_flavor") == "runtime"
+    if runtime:
+        files = [item for item in files if item not in ("/usr/lib/webcodex/webcodex-desktop", "/usr/share/applications/webcodex.desktop")]
+        files = [item.replace("/usr/share/doc/webcodex/", "/usr/share/doc/webcodex-runtime/").replace("/usr/share/webcodex/", "/usr/share/webcodex-runtime/") for item in files]
+    package_name = "webcodex-runtime" if runtime else "webcodex"
+    return f"""# These prebuilt binaries and recovery candidates are bound to source SHA-256.
+# RPM buildroot stripping/debug rewriting would invalidate those identities.
+%global __os_install_post %{{nil}}
+%global debug_package %{{nil}}
+
+Name: {package_name}
+Conflicts: {'webcodex' if runtime else 'webcodex-runtime'}
 Version: {version}
 Release: 1
-Summary: WebCodex Desktop and unified Server/Runner runtime
+Summary: {"WebCodex CLI Server Runner runtime" if runtime else "WebCodex Desktop and unified Server/Runner runtime"}
 License: Apache-2.0
 URL: https://github.com/yyjeqhc/webcodex
 BuildArch: {arch}
@@ -489,7 +542,7 @@ Requires: cpio
 Requires: polkit
 
 %description
-WebCodex Desktop, CLI, Server and Runner. Installation does not start services.
+{"WebCodex CLI, Server and Runner." if runtime else "WebCodex Desktop, CLI, Server and Runner."} Installation does not start services.
 
 %install
 set -eu
@@ -498,9 +551,9 @@ mkdir -p "%{{buildroot}}"
 cp -a "{payload_root}/." "%{{buildroot}}/"
 
 %pre
-{rpm_preinstall()}
+{rpm_preinstall(f"{manifest['platform']}-runtime-rpm" if runtime else "")}
 %post
-{rpm_postinstall()}
+{rpm_postinstall(f"{manifest['platform']}-runtime-rpm" if runtime else "")}
 %files
 """ + "\n".join(files) + "\n"
 
@@ -545,7 +598,7 @@ def stage_macos(manifest: dict[str, Any], stage: Path, scripts_dir: Path, input_
     postinstall.chmod(0o755)
 
 def package(args: argparse.Namespace) -> dict[str, Any]:
-    manifest = validate_manifest(args.manifest, args.checksums, args.input_root, args.platform)
+    manifest = validate_manifest(args.manifest, args.checksums, args.input_root, args.platform, getattr(args, "package_flavor", "full"))
     os_name = PLATFORMS[args.platform][0]
     suffix = args.output.suffix.lower()
     if os_name == "linux":
@@ -571,15 +624,16 @@ def package(args: argparse.Namespace) -> dict[str, Any]:
             if package_kind == "deb":
                 stage_deb_metadata(manifest, stage, args.input_root.resolve(strict=True))
             else:
-                provenance = stage / "usr/share/webcodex/unified-source-manifest.json"
+                share = "usr/share/webcodex-runtime" if manifest.get("package_flavor") == "runtime" else "usr/share/webcodex"
+                provenance = stage / share / "unified-source-manifest.json"
                 provenance.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(
-                    stage / "usr/share/doc/webcodex/unified-source-manifest.json",
+                    stage / ("usr/share/doc/webcodex-runtime/unified-source-manifest.json" if manifest.get("package_flavor") == "runtime" else "usr/share/doc/webcodex/unified-source-manifest.json"),
                     provenance,
                 )
                 _copy_upgrade_candidate(
                     args.input_root.resolve(strict=True),
-                    stage / "usr/share/webcodex/upgrade-candidate",
+                    stage / share / "upgrade-candidate",
                     manifest,
                 )
             if args.dry_run:
@@ -623,6 +677,7 @@ def package(args: argparse.Namespace) -> dict[str, Any]:
 
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--package-flavor", choices=("full", "runtime"), default="full")
     parser.add_argument("--platform", choices=tuple(PLATFORMS), required=True)
     parser.add_argument("--input-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)

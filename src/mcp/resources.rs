@@ -1319,7 +1319,7 @@ pub(super) fn handle_list(
     app_enabled: bool,
 ) -> McpOutcome {
     let result = if app_enabled {
-        app_registry::resources_list(runtime.runtime_info.configured_public_url.as_deref())
+        app_registry::resources_list(super::app_public_origin(runtime).as_deref())
     } else {
         json!({ "resources": [] })
     };
@@ -1426,10 +1426,8 @@ pub(super) async fn handle_read(
     let Some(app) = app_registry::for_uri(uri) else {
         return resource_not_found(id, uri);
     };
-    let mut result = mcp_stateless_result(
-        app.read(runtime.runtime_info.configured_public_url.as_deref()),
-        true,
-    );
+    let mut result =
+        mcp_stateless_result(app.read(super::app_public_origin(runtime).as_deref()), true);
     if let Some(ttl_ms) = app.cache_ttl_ms {
         result["ttlMs"] = Value::from(ttl_ms);
     }

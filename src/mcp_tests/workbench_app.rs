@@ -6,6 +6,42 @@ fn stateless_ui_meta() -> Value {
     })
 }
 
+#[test]
+fn workspace_launchers_have_one_entrypoint_per_scope() {
+    for compact in [false, true] {
+        for apps in [false, true] {
+            for stateless in [false, true] {
+                let listed = super::super::tools::mcp_tools_list_payload_with_features_for_auth(
+                    compact, apps, stateless, None,
+                );
+                let tools = listed["tools"].as_array().unwrap();
+                let names: std::collections::BTreeSet<_> = tools
+                    .iter()
+                    .map(|tool| tool["name"].as_str().unwrap())
+                    .collect();
+                assert_eq!(names.len(), tools.len(), "duplicate tool descriptor");
+                let launchers: Vec<_> = tools
+                    .iter()
+                    .filter_map(|tool| {
+                        tool.pointer("/_meta/openai~1ui/entrypoints")
+                            .map(|entries| json!({"tool": tool["name"], "entries": entries}))
+                    })
+                    .collect();
+                let mut expected = Vec::new();
+                if apps {
+                    expected.push(
+                        json!({"tool": "open_webcodex_workbench", "entries": [{"type": "global"}]}),
+                    );
+                    if stateless {
+                        expected.push(json!({"tool": "work_result_thread_panel", "entries": [{"type": "thread"}]}));
+                    }
+                }
+                assert_eq!(launchers, expected);
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn workbench_app_descriptor_accepts_empty_input_and_preserves_existing_card() {
     let runtime = ToolRuntime::new_for_tests();
@@ -52,7 +88,7 @@ async fn workbench_app_descriptor_accepts_empty_input_and_preserves_existing_car
     };
     assert_eq!(
         value["result"]["contents"][0]["_meta"]["openai/ui"],
-        json!({"availableDisplayModes":["inline","fullscreen"],"preferredDisplayMode":"inline"})
+        json!({"availableDisplayModes":["fullscreen","inline"],"preferredDisplayMode":"fullscreen"})
     );
     let html = value["result"]["contents"][0]["text"].as_str().unwrap();
     assert!(html.contains("ui/update-model-context"));

@@ -22,6 +22,7 @@ def _state(root: Path, *, phase: str) -> dict:
     now = 1_900_000_000
     state = {
         "schema_version": plan.STATE_SCHEMA_VERSION,
+        "require_runtime_installers": False,
         "require_unified_installers": True,
         "kind": plan.KIND,
         "repo": "yyjeqhc/webcodex",
@@ -78,7 +79,7 @@ class ReleasePlanStateTests(unittest.TestCase):
             state = _state(root, phase=plan.PHASE_PREFLIGHT)
             state["schema_version"] = plan.LEGACY_STATE_SCHEMA_VERSION
             state.pop("source_ref")
-            state.pop("require_unified_installers")
+            state.pop("require_unified_installers"); state.pop("require_runtime_installers")
             state_path = root / "legacy.json"
             plan._write_state(state_path, state)
             loaded = plan._load_state(state_path)
@@ -91,7 +92,7 @@ class ReleasePlanStateTests(unittest.TestCase):
             path = root / "state.json"
             state = _state(root, phase=plan.PHASE_PREFLIGHT)
             state["schema_version"] = 2
-            state.pop("require_unified_installers")
+            state.pop("require_unified_installers"); state.pop("require_runtime_installers")
             plan._write_state(path, state)
             self.assertFalse(plan._load_state(path)["require_unified_installers"])
             state["schema_version"] = plan.STATE_SCHEMA_VERSION
@@ -256,7 +257,7 @@ class ReleasePlanResumeTests(unittest.TestCase):
                 root = Path(temp); path = self._write(root, phase)
                 nested = Path(plan._load_state(path)["build_state_file"])
                 build = publication._load_state(nested)
-                build["schema_version"] = 1; build.pop("include_unified_installers")
+                build["schema_version"] = 1; build.pop("include_unified_installers"); build.pop("include_runtime_installers")
                 publication._write_state(nested, build)
                 with mock.patch.object(plan.collector, "collect_bundle") as collect:
                     with self.assertRaisesRegex(plan.ReleasePlanError, "did not request required unified installers"):

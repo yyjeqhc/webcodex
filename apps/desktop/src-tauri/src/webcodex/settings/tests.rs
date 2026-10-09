@@ -348,3 +348,54 @@ fn settings_refuse_symlink_and_write_private_permissions() {
     f.runtime.runner_config = Some(link);
     assert!(inspect(&f.runtime, false).is_err());
 }
+
+#[test]
+fn job_concurrency_save_preserves_config_and_requires_exact_saved_value() {
+    let f = Fixture::new();
+    assert_eq!(inspect(&f.runtime, true).unwrap().max_concurrent_jobs, None);
+    let request = |expected, limit| JobConcurrencyUpdate {
+        target: target(&f.runtime).unwrap(),
+        expected,
+        limit,
+    };
+    save_job_concurrency(&f.runtime, request(None, 12)).unwrap();
+    assert_eq!(
+        inspect(&f.runtime, true).unwrap().max_concurrent_jobs,
+        Some(12)
+    );
+    let text = read(f.runtime.runner_config.as_ref().unwrap()).unwrap();
+    for preserved in [
+        "# keep this comment",
+        "token = 'fixture-secret'",
+        "allowed_roots = ['/exact']",
+        "args = ['fixture-secret']",
+    ] {
+        assert!(text.contains(preserved));
+    }
+    assert!(save_job_concurrency(&f.runtime, request(None, 8)).is_err());
+    for limit in [0, 65] {
+        assert!(save_job_concurrency(&f.runtime, request(Some(12), limit)).is_err());
+    }
+    let mut wrong = request(Some(12), 8);
+    wrong.target.client_id = "other".into();
+    assert!(save_job_concurrency(&f.runtime, wrong).is_err());
+    assert_eq!(
+        read(f.runtime.runner_config.as_ref().unwrap()).unwrap(),
+        text
+    );
+    for limit in [1, 64] {
+        let expected = inspect(&f.runtime, true).unwrap().max_concurrent_jobs;
+        save_job_concurrency(&f.runtime, request(expected, limit)).unwrap();
+    }
+}
+
+#[test]
+fn malformed_saved_job_concurrency_is_not_treated_as_default() {
+    let f = Fixture::new();
+    let path = f.runtime.runner_config.as_ref().unwrap();
+    let original = read(path).unwrap();
+    for value in ["0", "65", "-1", "1.5", "'4'"] {
+        std::fs::write(path, format!("max_concurrent_jobs = {value}\n{original}")).unwrap();
+        assert!(inspect(&f.runtime, true).is_err());
+    }
+}

@@ -1552,7 +1552,7 @@ pub enum ToolCall {
         #[serde(default)]
         cwd: Option<String>,
         action: webcodex_core::project_validation::ProjectValidationAction,
-        /// Omission means auto. Rust and Go are supported; Python supports test through pytest; Node returns unavailable.
+        /// Omission means auto. Rust and Go are supported; Python supports test through pytest and check/format_check through project-local Ruff with explicit target-version; Node returns unavailable.
         #[serde(default)]
         adapter: Option<webcodex_core::project_validation::ProjectValidationAdapter>,
         /// Optional portable scope. Explicit packages narrow Rust/Go selection; all_packages=true selects the

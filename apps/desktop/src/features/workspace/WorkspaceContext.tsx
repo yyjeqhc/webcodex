@@ -60,7 +60,7 @@ function authorizationFailed(reason: WorkspaceErrorReason | null | undefined): b
 }
 interface WorkspaceValue {
   contextKey: string;
-  runners: ServerRunnerSummary[]; fleetStale: boolean;
+  runners: ServerRunnerSummary[]; fleetStale: boolean; fleetObservedAt: number | null;
   state: DesktopState; runner: RunnerOverview | null; projects: WorkspaceProject[]; windows: WindowSummary[];
   sessions: WorkflowSession[]; loading: boolean; busy: boolean; error: boolean; errorReason: WorkspaceErrorReason; windowsError: boolean; windowsErrorReason: WorkspaceErrorReason; refresh: () => void; removeProject: (id: string) => void; revision: number;
   selection: { kind: "session"; project: string; id: string } | { kind: "window"; id: string } | null;
@@ -69,7 +69,7 @@ interface WorkspaceValue {
 const WorkspaceContext = createContext<WorkspaceValue | null>(null);
 export function WorkspaceProvider({ state, suspended = false, preservePollDeadline = false, children }: { state: DesktopState; suspended?: boolean; preservePollDeadline?: boolean; children: ReactNode }) {
   const key = JSON.stringify([state.topology?.server, state.workspace_runner, state.persistent_environment]);
-  const [snapshot, setSnapshot] = useState<{ key: string; runners: ServerRunnerSummary[]; runner: RunnerOverview | null; windows: WindowSummary[]; error: boolean; errorReason: WorkspaceErrorReason | null; windowsError: boolean; windowsErrorReason: WorkspaceErrorReason | null } | null>(null);
+  const [snapshot, setSnapshot] = useState<{ key: string; runners: ServerRunnerSummary[]; fleetObservedAt: number | null; runner: RunnerOverview | null; windows: WindowSummary[]; error: boolean; errorReason: WorkspaceErrorReason | null; windowsError: boolean; windowsErrorReason: WorkspaceErrorReason | null } | null>(null);
   const [loading, setLoading] = useState(false);
   const [revision, setRevision] = useState(0);
   const [selection, setSelection] = useState<WorkspaceValue["selection"]>(null);
@@ -88,6 +88,11 @@ export function WorkspaceProvider({ state, suspended = false, preservePollDeadli
   const operationBusy = Boolean(state.current_operation);
   const busy = suspended || operationBusy;
   const ready = state.readiness.server === "ready";
+  useEffect(() => {
+    // Service operations and Server disconnects invalidate capacity until a new
+    // fleet observation, including the gap before recovery polling completes.
+    if (operationBusy || !ready) setSnapshot(current => current && ({ ...current, fleetObservedAt: null }));
+  }, [operationBusy, ready]);
   useEffect(() => {
     nextPollAt.current = null;
     preservePollDeadlineOnResume.current = false;
@@ -114,8 +119,12 @@ export function WorkspaceProvider({ state, suspended = false, preservePollDeadli
     const poll = async () => {
       if (disposed) return;
       setLoading(true);
+      let fleetObservedAt: number | null = null;
       const [overview, projectInventory, windows] = await Promise.allSettled([
-        workspaceQuery<ServerOverview>({ kind: "overview" }),
+        workspaceQuery<ServerOverview>({ kind: "overview" }).then(value => {
+          fleetObservedAt = Date.now();
+          return value;
+        }),
         workspaceQuery<ServerProjects>({ kind: "projects" }),
         workspaceQuery<{ windows: WindowSummary[] }>({ kind: "windows" }),
       ]);
@@ -140,6 +149,7 @@ export function WorkspaceProvider({ state, suspended = false, preservePollDeadli
         : null;
       setSnapshot(old => ({
         key,
+        fleetObservedAt: denied ? null : overview.status === "fulfilled" ? fleetObservedAt : old?.key === key ? old.fleetObservedAt : null,
         runners: denied ? [] : overview.status === "fulfilled" ? overview.value.runners || [] : old?.key === key ? old.runners : [],
         runner: denied ? null : runner || (old?.key === key ? old.runner : null),
         windows: denied || authorizationFailed(windowsFailure) ? [] : windows.status === "fulfilled" ? windows.value.windows : old?.key === key ? old.windows : [],
@@ -176,7 +186,7 @@ export function WorkspaceProvider({ state, suspended = false, preservePollDeadli
     setSelection(current => current?.kind === "session" && !projects.some(project => project.id === current.project) ? null : current);
   }, [projects]);
   const ids = new Set(projects.map(project => project.id));
-  return <WorkspaceContext.Provider value={{ contextKey: key, state, runners: current?.runners || [], fleetStale: !ready || Boolean(current?.error), runner: current?.runner || null, projects,
+  return <WorkspaceContext.Provider value={{ contextKey: key, state, runners: current?.runners || [], fleetObservedAt: current?.fleetObservedAt ?? null, fleetStale: !ready || Boolean(current?.error), runner: current?.runner || null, projects,
     windows: (current?.windows || []).filter(row => !row.last_project || ids.has(row.last_project)),
     sessions: (current?.runner?.recent_sessions?.sessions || []).filter(session => !session.project_id || ids.has(session.project_id)), loading: ready && !busy && (loading || !current),
     busy, error: Boolean(current?.error), errorReason: current?.errorReason || "loadError", windowsError: Boolean(current?.windowsError), windowsErrorReason: current?.windowsErrorReason || "loadError", refresh, removeProject, revision, selection, setSelection,

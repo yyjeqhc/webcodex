@@ -6,6 +6,7 @@ use webcodex_core::desktop_runtime_contract::{DesktopRuntimeContract, MachineBui
 
 #[derive(Debug, Clone)]
 pub struct UpdateSource {
+    pub flavor: PackageFlavor,
     pub version: String,
     pub source_sha: String,
     pub platform: RuntimePlatform,
@@ -62,6 +63,8 @@ struct DesktopPayload {
 #[serde(deny_unknown_fields)]
 struct Source {
     schema_version: u16,
+    #[serde(default)]
+    package_flavor: PackageFlavor,
     version: String,
     source_sha: String,
     platform: RuntimePlatform,
@@ -71,7 +74,8 @@ struct Source {
     source_workflow_ref: String,
     desktop_runtime_contract: DesktopRuntimeContract,
     artifacts: BTreeMap<String, Component>,
-    desktop_payload: DesktopPayload,
+    #[serde(default)]
+    desktop_payload: Option<DesktopPayload>,
 }
 
 fn relative_path(value: &str) -> bool {
@@ -90,13 +94,29 @@ pub fn verify_source_manifest(
     version: &str,
     platform: RuntimePlatform,
 ) -> UpdateResult<UpdateSource> {
+    verify_source_manifest_for_flavor(bytes, version, platform, PackageFlavor::Full)
+}
+
+pub fn verify_source_manifest_for_flavor(
+    bytes: &[u8],
+    version: &str,
+    platform: RuntimePlatform,
+    flavor: PackageFlavor,
+) -> UpdateResult<UpdateSource> {
     let bad = UpdateError::SourceManifestInvalid;
     if bytes.len() as u64 > MAX_SOURCE_BYTES {
         return Err(bad);
     }
     let raw = strict_json(bytes).map_err(|_| bad)?;
     let source: Source = serde_json::from_value(raw.clone()).map_err(|_| bad)?;
-    if source.schema_version != 1
+    if (flavor.is_full() && raw.get("package_flavor").is_some())
+        || source.schema_version != flavor.source_schema()
+        || source.package_flavor != flavor
+        || (!flavor.is_full()
+            && !matches!(
+                platform,
+                RuntimePlatform::LinuxX64 | RuntimePlatform::LinuxArm64
+            ))
         || !stable_version(version)
         || source.version != version
         || source.platform != platform
@@ -109,26 +129,22 @@ pub fn verify_source_manifest(
                 "{OFFICIAL_REPOSITORY}/.github/workflows/release-build.yml@refs/tags/v{version}"
             )
         || !source.desktop_runtime_contract.is_valid()
-        || source.artifacts.len() != 4
+        || source.artifacts.len() != flavor.components().len()
     {
         return Err(bad);
     }
     let mut windows_guarded_bootstrap_contract = None;
     let mut data_format = None;
     let mut runner_generation = None;
-    for name in [
-        "webcodex",
-        "webcodex-server",
-        "webcodex-runner",
-        "webcodex-desktop",
-    ] {
+    for &name in flavor.components() {
         let component = source.artifacts.get(name).ok_or(bad)?;
         let info = &component.build_info;
         info.validate(name).map_err(|_| bad)?;
         // Hash the original JSON object, not a reserialized wire struct that
         // might omit additive fields. This matches Core's candidate verifier.
         let encoded = serde_json::to_vec(&raw["artifacts"][name]["build_info"]).map_err(|_| bad)?;
-        if !relative_path(&component.path)
+        if (!flavor.is_full() && component.path != format!("artifacts/bin/{name}"))
+            || !relative_path(&component.path)
             || !valid_sha256(&component.sha256)
             || !valid_sha256(&component.build_info_sha256)
             || sha256(&encoded) != component.build_info_sha256
@@ -178,7 +194,21 @@ pub fn verify_source_manifest(
             runner_generation = info.agent_protocol_generation;
         }
     }
-    let payload = &source.desktop_payload;
+    if !flavor.is_full() {
+        if source.desktop_payload.is_some() || raw.get("desktop_payload").is_some() {
+            return Err(bad);
+        }
+        return Ok(UpdateSource {
+            flavor,
+            version: source.version,
+            source_sha: source.source_sha,
+            platform,
+            manifest_sha256: sha256(bytes),
+            components: source.artifacts,
+            windows_guarded_bootstrap_contract,
+        });
+    }
+    let payload = source.desktop_payload.as_ref().ok_or(bad)?;
     if !relative_path(&payload.path)
         || !relative_path(&payload.executable)
         || !valid_sha256(&payload.sha256)
@@ -241,6 +271,7 @@ pub fn verify_source_manifest(
         }
     }
     Ok(UpdateSource {
+        flavor,
         version: source.version,
         source_sha: source.source_sha,
         platform,

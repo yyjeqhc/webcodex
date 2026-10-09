@@ -74,7 +74,7 @@ scope requirement. Discovery still retains the existing discovery scope checks.
 
 ## App and OpenAI adapter
 
-`ui://webcodex/workbench/v2` is a separate App from the existing Project-bound
+`ui://webcodex/workbench/v3` is a separate App from the existing Project-bound
 Work Result card. With `{}`, the Workbench presents a Project chooser even when
 only one Project is visible. Named launch selectors are authorized and returned
 canonically. Overview reuses Work Result; files and outputs require explicit
@@ -93,8 +93,10 @@ activates OpenAI remount/removal synchronization through
 `hostContext["openai/modelContext"]`, context-change notifications, and the
 response `_meta["openai/modelContext"].updateId`.
 
-The launcher advertises `_meta["openai/ui"].entrypoints` for `global` and `thread`,
-with tool title **Projects & Resources**. The host-only `search_mentions({query})`
+The launcher advertises one `global` entrypoint through
+`_meta["openai/ui"].entrypoints`, with tool title **Projects & Resources**.
+The current chat's Work Result has its own `thread` entrypoint; the Workbench
+does not add a second chat panel. The host-only `search_mentions({query})`
 descriptor uses `_meta["openai/extensions"]["mentions/search"]` and
 `_meta.ui.visibility=["app"]`. Its result is exactly `structuredContent.items`
 containing standard resource links. It searches Projects and Goals only, skips

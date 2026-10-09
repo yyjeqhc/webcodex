@@ -32,6 +32,7 @@ normal = [
     "webcodex-core",
     "webcodex-environment",
     "webcodex-openai-tunnel",
+    "webcodex-process",
     "webcodex-runner-config",
     "webcodex-runner-registry",
     "webcodex-store",

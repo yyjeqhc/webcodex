@@ -32,3 +32,16 @@ changes, and reject escaping paths, altered bytes and links. They execute no
 candidate, package manager or service and make no network requests. Bundle paths
 and Windows managed-file mappings have comparison coverage; native installation
 acceptance remains separate.
+## Follow-up CI fixture correction
+
+The initial Windows Core CI run failed before verification while constructing
+three candidate fixtures: their recursively-created intermediate directory had
+an inherited ACL. The fixture now creates the private intermediate directory
+explicitly, secures disposable Windows artifacts and uses the existing private
+writer for its manifest and checksum file. Production ownership checks are
+unchanged. The three focused Linux tests pass after this correction; the new
+Windows CI result must be checked separately.
+
+That initial run also failed the unrelated existing Server npm-config query
+test (expected proxy versus `None`). No cause or native acceptance is inferred
+from that failure; it is tracked separately from the candidate relocation fix.

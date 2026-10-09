@@ -11,7 +11,13 @@ const MAX_EXPANDED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 #[cfg(target_os = "linux")]
 const MAX_RPM_INVENTORY_BYTES: u64 = 4 * 1024 * 1024;
 #[cfg(target_os = "linux")]
-const RPM_CANDIDATE_ROOT: &str = "/usr/share/webcodex/upgrade-candidate";
+fn rpm_candidate_root(flavor: crate::unified_update::PackageFlavor) -> &'static str {
+    if flavor.is_full() {
+        "/usr/share/webcodex/upgrade-candidate"
+    } else {
+        "/usr/share/webcodex-runtime/upgrade-candidate"
+    }
+}
 
 #[cfg(unix)]
 fn extraction_plan(
@@ -49,12 +55,15 @@ fn extraction_plan(
 }
 
 #[cfg(target_os = "linux")]
-fn rpm_candidate_patterns_from_inventory(bytes: &[u8]) -> UpdateResult<Vec<std::ffi::OsString>> {
+fn rpm_candidate_patterns_from_inventory(
+    bytes: &[u8],
+    flavor: crate::unified_update::PackageFlavor,
+) -> UpdateResult<Vec<std::ffi::OsString>> {
     if bytes.len() as u64 > MAX_RPM_INVENTORY_BYTES {
         return Err(UpdateError::DownloadTooLarge);
     }
     let text = std::str::from_utf8(bytes).map_err(|_| UpdateError::UpgradePreflightFailed)?;
-    let root = Path::new(RPM_CANDIDATE_ROOT);
+    let root = Path::new(rpm_candidate_root(flavor));
     let mut seen = std::collections::BTreeSet::new();
     let mut patterns = Vec::new();
     let mut has_manifest = false;
@@ -104,7 +113,10 @@ fn rpm_candidate_patterns_from_inventory(bytes: &[u8]) -> UpdateResult<Vec<std::
 }
 
 #[cfg(target_os = "linux")]
-async fn rpm_inventory(package: &Path) -> UpdateResult<Vec<std::ffi::OsString>> {
+async fn rpm_inventory(
+    package: &Path,
+    flavor: crate::unified_update::PackageFlavor,
+) -> UpdateResult<Vec<std::ffi::OsString>> {
     use tokio::io::AsyncReadExt;
     let mut command = tokio::process::Command::new("/usr/bin/rpm");
     command
@@ -146,7 +158,7 @@ async fn rpm_inventory(package: &Path) -> UpdateResult<Vec<std::ffi::OsString>> 
     if !status.success() {
         return Err(UpdateError::UpgradePreflightFailed);
     }
-    rpm_candidate_patterns_from_inventory(&bytes)
+    rpm_candidate_patterns_from_inventory(&bytes, flavor)
 }
 
 #[cfg(target_os = "linux")]
@@ -226,8 +238,9 @@ async fn extract_rpm_candidate(
     cache: &PrivateUpdateCache,
     package: &Path,
     destination: &Path,
+    flavor: crate::unified_update::PackageFlavor,
 ) -> UpdateResult<PathBuf> {
-    let patterns = rpm_inventory(package).await?;
+    let patterns = rpm_inventory(package, flavor).await?;
     write_rpm_cpio(cache, package).await?;
     let archive = cache.open_file("payload.cpio")?;
     let mut command = tokio::process::Command::new("/usr/bin/cpio");
@@ -256,7 +269,7 @@ async fn extract_rpm_candidate(
     if !status.success() {
         return Err(UpdateError::UpgradePreflightFailed);
     }
-    let candidate = destination.join("usr/share/webcodex/upgrade-candidate");
+    let candidate = destination.join(rpm_candidate_root(flavor).trim_start_matches('/'));
     bound_tree(destination, 0, &mut 0, &mut 0)?;
     let exact = candidate
         .canonicalize()
@@ -313,7 +326,7 @@ pub(super) async fn extract_candidate(
     #[cfg(target_os = "linux")]
     if target.format == PackageFormat::Rpm {
         PrivateUpdateCache::open(destination.clone())?;
-        return extract_rpm_candidate(cache, installer, &destination).await;
+        return extract_rpm_candidate(cache, installer, &destination, target.flavor).await;
     }
     let (program, arguments, candidate) = extraction_plan(target, installer, &destination)?;
     // Native archive inspection does not execute package pre/postinstall hooks.
@@ -408,14 +421,40 @@ mod tests {
     #[test]
     fn rpm_inventory_is_bounded_relative_and_link_free() {
         let valid = b"/usr/share/webcodex/upgrade-candidate\tdrwxr-xr-x\t\n/usr/share/webcodex/upgrade-candidate/source-manifest.json\t-rw-r--r--\t\n/usr/share/webcodex/upgrade-candidate/SHA256SUMS\t-rw-r--r--\t\n/usr/lib/webcodex/webcodex-desktop\t-rwxr-xr-x\t\n";
-        let patterns = rpm_candidate_patterns_from_inventory(valid).unwrap();
+        let patterns = rpm_candidate_patterns_from_inventory(
+            valid,
+            crate::unified_update::PackageFlavor::Full,
+        )
+        .unwrap();
         assert_eq!(patterns.len(), 3);
+        let runtime = String::from_utf8(valid.to_vec())
+            .unwrap()
+            .replace("/usr/share/webcodex/", "/usr/share/webcodex-runtime/");
+        let runtime_patterns = rpm_candidate_patterns_from_inventory(
+            runtime.as_bytes(),
+            crate::unified_update::PackageFlavor::Runtime,
+        )
+        .unwrap();
+        assert_eq!(runtime_patterns.len(), 3);
+        assert!(runtime_patterns.iter().all(|p| p
+            .to_string_lossy()
+            .starts_with("./usr/share/webcodex-runtime/upgrade-candidate")));
+        assert!(rpm_candidate_patterns_from_inventory(
+            valid,
+            crate::unified_update::PackageFlavor::Runtime
+        )
+        .is_err());
+        assert!(rpm_candidate_patterns_from_inventory(
+            runtime.as_bytes(),
+            crate::unified_update::PackageFlavor::Full
+        )
+        .is_err());
         for invalid in [
             b"/usr/share/webcodex/upgrade-candidate\tdrwxr-xr-x\t\n/usr/share/webcodex/upgrade-candidate/source-manifest.json\tlrwxrwxrwx\t/etc/passwd\n/usr/share/webcodex/upgrade-candidate/SHA256SUMS\t-rw-r--r--\t\n".as_slice(),
             b"/usr/share/webcodex/upgrade-candidate\tdrwxr-xr-x\t\n/usr/share/webcodex/upgrade-candidate/../escape\t-rw-r--r--\t\n/usr/share/webcodex/upgrade-candidate/source-manifest.json\t-rw-r--r--\t\n/usr/share/webcodex/upgrade-candidate/SHA256SUMS\t-rw-r--r--\t\n".as_slice(),
             b"/usr/share/webcodex/upgrade-candidate/source-manifest.json\t-rw-r--r--\t\n".as_slice(),
         ] {
-            assert!(rpm_candidate_patterns_from_inventory(invalid).is_err());
+            assert!(rpm_candidate_patterns_from_inventory(invalid, crate::unified_update::PackageFlavor::Full).is_err());
         }
     }
 

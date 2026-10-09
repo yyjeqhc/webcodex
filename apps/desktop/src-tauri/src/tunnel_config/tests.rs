@@ -22,6 +22,8 @@ impl Drop for Fixture {
 }
 fn create(name: &str, tunnel_id: &str, key: &str) -> TunnelProfileRequest {
     TunnelProfileRequest {
+        provider: webcodex_environment::TunnelProvider::Openai,
+        cloudflare_token: None,
         id: None,
         name: name.into(),
         tunnel_id: tunnel_id.into(),
@@ -38,6 +40,8 @@ fn edit(
     key: Option<&str>,
 ) -> TunnelProfileRequest {
     TunnelProfileRequest {
+        provider: webcodex_environment::TunnelProvider::Openai,
+        cloudflare_token: None,
         id: Some(id.to_string()),
         name: name.into(),
         tunnel_id: tunnel_id.into(),
@@ -445,6 +449,8 @@ fn write_environment_profile_fixture(
     let records = profiles
         .iter()
         .map(|(profile_id, _, _)| webcodex_environment::TunnelRecord {
+            configuration_id: None,
+            provider: webcodex_environment::TunnelProvider::Openai,
             profile_id: (*profile_id).to_owned(),
             name: format!("Profile {profile_id}"),
             host_mode: webcodex_environment::TunnelHostMode::Standalone,
@@ -504,6 +510,8 @@ fn persistent_environment_reconciles_exact_legacy_claims_and_fails_closed_on_con
         .update_profile(
             &fixture.path(),
             TunnelProfileRequest {
+                provider: webcodex_environment::TunnelProvider::Openai,
+                cloudflare_token: None,
                 id: Some(TunnelProfileId::DEFAULT.to_string()),
                 name: "ChatGPT".into(),
                 tunnel_id: "tunnel_default".into(),
@@ -611,4 +619,30 @@ fn persistent_environment_rejects_a_missing_legacy_profile_without_deleting_eith
         fs::read(store.root().join("tunnel.json")).unwrap(),
         catalog_before
     );
+}
+
+#[test]
+fn cloudflare_profile_never_uses_the_legacy_private_tunnel_store() {
+    let fixture = Fixture::new();
+    let mut config = TunnelConfig::default();
+    let request: TunnelProfileRequest = serde_json::from_value(serde_json::json!({
+        "provider":{"kind":"cloudflare_quick"},"id":null,"name":"Quick",
+        "tunnel_id":"","api_key":null,"autostart":true,"host_mode":"standalone",
+        "expected_revision":null
+    }))
+    .unwrap();
+    let error = config.update_profile(&fixture.path(), request).unwrap_err();
+    assert_eq!(error.code, "cloudflare_environment_required");
+    assert!(!fixture.path().exists());
+    assert!(config.profiles().is_empty());
+    let legacy: TunnelProfileRequest = serde_json::from_value(serde_json::json!({
+        "id":null,"name":"OpenAI","tunnel_id":"legacy","api_key":"write-only",
+        "autostart":true,"host_mode":"standalone","expected_revision":null
+    }))
+    .unwrap();
+    assert_eq!(
+        legacy.provider,
+        webcodex_environment::TunnelProvider::Openai
+    );
+    assert!(legacy.cloudflare_token.is_none());
 }

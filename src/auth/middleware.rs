@@ -292,6 +292,32 @@ impl Handler for AuthMiddleware {
         };
 
         let db = get_db(depot);
+        if crate::public_ingress_auth::entry(depot).is_some() {
+            let context =
+                crate::public_ingress_auth::authenticate_mcp(req, depot, &config, db.as_ref())
+                    .await;
+            let Some(context) = context else {
+                res.status_code(StatusCode::UNAUTHORIZED);
+                if let Some(challenge) = oauth2_bearer_challenge(&config) {
+                    if let Ok(value) = salvo::http::HeaderValue::from_str(&challenge) {
+                        res.headers_mut().insert("www-authenticate", value);
+                    }
+                }
+                res.render(Json(serde_json::json!({"error":"invalid_token"})));
+                ctrl.skip_rest();
+                return;
+            };
+            if let Err((scope, description)) =
+                scopes::enforce_route_scope(&context, req.method().as_str(), req.uri().path())
+            {
+                render_scope_forbidden(res, Some(&context), scope, description);
+                ctrl.skip_rest();
+                return;
+            }
+            depot.inject(context);
+            ctrl.call_next(req, depot, res).await;
+            return;
+        }
         let project_auth = project_auth_state(depot);
         let project_mode = project_auth
             .as_deref()

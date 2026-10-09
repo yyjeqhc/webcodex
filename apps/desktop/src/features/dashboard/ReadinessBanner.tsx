@@ -39,7 +39,7 @@ export function ReadinessBanner({ state, onState, onDiagnostics, onRuntime, onCo
     {!healthy && <div className="shell-actions">
       {!runtimeReady && (stopped || Boolean(failure)) && !state.configuration_issue && <button type="button" className="primary-button" disabled={disabled} onClick={() => void run(desktopApi.resumeSavedRuntime)}>{s("Start Runtime")}</button>}
       {(runnerProblem || (failure && providerKind && runtimeReady)) && <button type="button" className="primary-button" disabled={disabled} onClick={() => void restartRunner()}>{s("Restart Runner")}</button>}
-      {failedConnections.length === 1 && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(() => desktopApi.tunnelProfileAction(failedConnections[0].id, "restart"))}>{s("Restart Tunnel")}</button>}
+      {failedConnections.length === 1 && (!failedConnections[0].provider || failedConnections[0].provider.kind === "openai") && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(() => desktopApi.tunnelProfileAction(failedConnections[0].id, "restart"))}>{s("Restart Tunnel")}</button>}
       {connectionProblem && <button type="button" className="secondary-button" disabled={disabled} onClick={onConnection}>{s("Check connection")}</button>}
       {(!runtimeReady || failure) && !providerKind && <button type="button" className="secondary-button" onClick={onRuntime}>{s("Select Runtime folder…")}</button>}
       <button type="button" className="secondary-button" onClick={onDiagnostics}>{s("Diagnostics")}</button>

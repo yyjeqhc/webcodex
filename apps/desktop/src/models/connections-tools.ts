@@ -1,8 +1,25 @@
+export type TunnelProvider = { kind: "openai" } | { kind: "cloudflare_named"; public_origin: string; tunnel_id: string } | { kind: "cloudflare_quick" };
+export interface CloudflareConnectionStatus {
+  profile_id: string; server_instance_id: string; process_generation: number;
+  lifecycle: "stopped" | "starting" | "running" | "disconnected" | "error";
+  public_origin: string | null; oauth_configured: boolean; observed_authorization: boolean;
+  configured_revision: number; applied_revision: number | null; local_target: string; reason_code: string | null;
+}
+export type CloudflareConnectionRequest =
+  | { action: "status"; profile_id: string }
+  | { action: "start"; profile_id: string; server_instance_id: string; expected_revision: number }
+  | { action: "stop"; profile_id: string; server_instance_id: string; process_generation: number }
+  | { action: "configure_oauth"; profile_id: string; server_instance_id: string; process_generation: number; redirect_uri: string; scopes: string[]; replace?: boolean };
+// Only the explicit handoff response carries a secret; never add it to DesktopState.
+export interface CloudflareOAuthHandoff { client_id: string; client_secret: string | null; already_configured?: boolean }
 // Private values appear only in write-only requests, never in public snapshots.
 export type ConnectionLifecycle = "stopped" | "starting" | "running" | "stopping" | "error";
 export type TunnelHostMode = "standalone" | "embedded";
 export type ConnectionError = "start_failed" | "startup_timeout" | "process_exited" | "protocol_invalid" | "health_stale" | "tunnel_unavailable" | "local_mcp_unavailable" | "stop_failed";
 export interface TunnelConnection {
+  /** Missing on legacy native snapshots means OpenAI. */
+  provider?: TunnelProvider;
+  configuration_id?: string | null;
   id: string;
   name: string;
   tunnel_id: string | null;
@@ -37,6 +54,8 @@ export interface ConnectionsSnapshot {
   server_restart_required: boolean;
 }
 export interface TunnelProfileRequest {
+  provider?: TunnelProvider;
+  cloudflare_token?: string | null;
   id: string | null;
   name: string;
   tunnel_id: string;

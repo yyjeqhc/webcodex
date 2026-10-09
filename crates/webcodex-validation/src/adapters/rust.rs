@@ -1,6 +1,7 @@
 use super::{
     read_only_validation_plan, validate_package_scope_exclusivity, ReadOnlyValidationPlan,
-    ValidationAdapter, ValidationCommandOptions, ValidationFailureEvidence, ValidationPlanArg,
+    ValidationAdapter, ValidationCommandOptions, ValidationEvidenceProfile,
+    ValidationFailureEvidence, ValidationPlanArg,
 };
 use webcodex_core::runner_protocol::{
     normalize_cargo_packages, normalize_cargo_value, normalize_rust_test_filter,
@@ -43,19 +44,7 @@ pub(super) fn validation_adapters() -> &'static [&'static dyn ValidationAdapter]
     &RUST_ADAPTERS
 }
 
-pub(super) fn format_adapter() -> &'static dyn ValidationAdapter {
-    &CARGO_FMT_ADAPTER
-}
-
-pub(super) fn check_adapter() -> &'static dyn ValidationAdapter {
-    &CARGO_CHECK_ADAPTER
-}
-
-pub(super) fn test_adapter() -> &'static dyn ValidationAdapter {
-    &CARGO_TEST_ADAPTER
-}
-
-impl ValidationAdapter for RustValidationAdapter {
+impl ValidationEvidenceProfile for RustValidationAdapter {
     fn validation_kind(&self) -> &'static str {
         match self.kind {
             RustAdapterKind::Format => "format",
@@ -66,44 +55,6 @@ impl ValidationAdapter for RustValidationAdapter {
 
     fn tool_identity(&self) -> &'static str {
         self.tool_identity
-    }
-
-    fn build_readonly_plan(
-        &self,
-        options: ValidationCommandOptions,
-    ) -> Result<ReadOnlyValidationPlan, String> {
-        if options.go_packages.is_some() {
-            return Err("Cargo validation does not accept go_test packages".to_string());
-        }
-        match self.kind {
-            RustAdapterKind::Format => {
-                if !options.check {
-                    return Err("cargo_fmt mutation is not read-only validation".to_string());
-                }
-                read_only_validation_plan(
-                    "format",
-                    "cargo",
-                    vec![
-                        ValidationPlanArg::Literal("fmt"),
-                        ValidationPlanArg::Literal("--"),
-                        ValidationPlanArg::Literal("--check"),
-                    ],
-                )
-            }
-            RustAdapterKind::Check => cargo_check_plan(options),
-            RustAdapterKind::Test => cargo_test_plan(options),
-        }
-    }
-
-    fn build_command(&self, options: ValidationCommandOptions) -> Result<String, String> {
-        if self.kind == RustAdapterKind::Format && !options.check {
-            if options.go_packages.is_some() {
-                return Err("Cargo validation does not accept go_test packages".to_string());
-            }
-            return Ok("cargo fmt".to_string());
-        }
-        self.build_readonly_plan(options)
-            .map(|plan| plan.compatibility_command)
     }
 
     fn parse(
@@ -186,6 +137,46 @@ impl ValidationAdapter for RustValidationAdapter {
 
     fn reports_test_run_metadata(&self) -> bool {
         self.kind == RustAdapterKind::Test
+    }
+}
+
+impl ValidationAdapter for RustValidationAdapter {
+    fn build_readonly_plan(
+        &self,
+        options: ValidationCommandOptions,
+    ) -> Result<ReadOnlyValidationPlan, String> {
+        if options.go_packages.is_some() {
+            return Err("Cargo validation does not accept go_test packages".to_string());
+        }
+        match self.kind {
+            RustAdapterKind::Format => {
+                if !options.check {
+                    return Err("cargo_fmt mutation is not read-only validation".to_string());
+                }
+                read_only_validation_plan(
+                    "format",
+                    "cargo",
+                    vec![
+                        ValidationPlanArg::Literal("fmt"),
+                        ValidationPlanArg::Literal("--"),
+                        ValidationPlanArg::Literal("--check"),
+                    ],
+                )
+            }
+            RustAdapterKind::Check => cargo_check_plan(options),
+            RustAdapterKind::Test => cargo_test_plan(options),
+        }
+    }
+
+    fn build_command(&self, options: ValidationCommandOptions) -> Result<String, String> {
+        if self.kind == RustAdapterKind::Format && !options.check {
+            if options.go_packages.is_some() {
+                return Err("Cargo validation does not accept go_test packages".to_string());
+            }
+            return Ok("cargo fmt".to_string());
+        }
+        self.build_readonly_plan(options)
+            .map(|plan| plan.compatibility_command)
     }
 }
 

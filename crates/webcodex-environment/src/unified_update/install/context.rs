@@ -13,7 +13,7 @@ pub struct InstallContext {
     pub environment_root: PathBuf,
     pub environment_id: String,
     pub binaries: RuntimeBinaries,
-    pub desktop: PathBuf,
+    pub desktop: Option<PathBuf>,
     pub build: MachineBuildInfo,
     pub target: InstallerTarget,
 }
@@ -99,7 +99,9 @@ fn os_release_path_family(path: &Path) -> Option<PackageFormat> {
 fn current_installer_target(platform: RuntimePlatform) -> Option<InstallerTarget> {
     #[cfg(target_os = "linux")]
     {
-        return InstallerTarget::for_platform(platform, installed_linux_package_format()?);
+        return super::package::installed_package().or_else(|| {
+            InstallerTarget::for_platform(platform, installed_linux_package_format()?)
+        });
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -152,7 +154,9 @@ fn package_layout(target: InstallerTarget, executable: &Path, runtime: &Path) ->
             PackageFormat::Rpm => Path::new("/usr/share/webcodex/unified-source-manifest.json"),
             _ => return false,
         };
-        executable == Path::new("/usr/lib/webcodex/webcodex-desktop")
+        super::package::installed_package() == Some(target)
+            && target.flavor.is_full()
+            && executable == Path::new("/usr/lib/webcodex/webcodex-desktop")
             && runtime == Path::new("/usr/lib/webcodex/webcodex-runtime")
             && provenance.is_file()
     }
@@ -202,6 +206,9 @@ pub fn assess_installation(
     let Some(target) = detected_installer_target() else {
         return (InstallationKind::UnsupportedPlatform, None);
     };
+    if !target.flavor.is_full() {
+        return (InstallationKind::UnmanagedInstallation, None);
+    }
     if build.git_dirty != Some(false) || !bundled_source {
         return (InstallationKind::SourceBuild, None);
     }
@@ -254,7 +261,7 @@ pub fn assess_installation(
             environment_root: root,
             environment_id,
             binaries: record.request.binaries,
-            desktop,
+            desktop: Some(desktop),
             build,
             target,
         })
@@ -297,7 +304,17 @@ pub(super) async fn verify_installed_generation(
         .cli
         .parent()
         .ok_or(UpdateError::ProvenanceFailed)?;
-    if !package_layout(target, &context.desktop, runtime) {
+    let valid_layout = if target.flavor.is_full() {
+        context
+            .desktop
+            .as_ref()
+            .is_some_and(|desktop| package_layout(target, desktop, runtime))
+    } else {
+        context.desktop.is_none()
+            && super::package::installed_package() == Some(target)
+            && super::package::owned_layout(target, &context.binaries)
+    };
+    if !valid_layout {
         return Err(UpdateError::ProvenanceFailed);
     }
     #[cfg(unix)]
@@ -311,11 +328,13 @@ pub(super) async fn verify_installed_generation(
         return Err(UpdateError::ProvenanceFailed);
     }
     for (name, path) in [
-        ("webcodex-desktop", &context.desktop),
         ("webcodex", &context.binaries.cli),
         ("webcodex-server", &context.binaries.server),
         ("webcodex-runner", &context.binaries.runner),
-    ] {
+    ]
+    .into_iter()
+    .chain(context.desktop.as_ref().map(|p| ("webcodex-desktop", p)))
+    {
         let expected = published
             .source
             .component_sha256(name)
@@ -617,6 +636,9 @@ pub async fn assess_headless_installation(
     {
         return Ok((InstallationKind::EnvironmentNotConfigured, None, vec![]));
     }
+    if !target.flavor.is_full() {
+        return assess_runtime_installation(root, record, target).await;
+    }
     let desktop = installed_desktop_path(target).ok_or(UpdateError::UnsupportedPlatform)?;
     let runtime = record
         .request
@@ -675,6 +697,8 @@ pub(super) async fn verify_observed_generation(
     let context = context
         .filter(|context| {
             kind == InstallationKind::Managed
+                && context.target == target
+                && context.target.flavor == observed.package_flavor
                 && context.environment_id == observed.environment_id
                 && context.build.version == observed.version
                 && context.build.git_commit.as_deref() == Some(observed.source_sha.as_str())
@@ -690,7 +714,9 @@ pub(super) async fn verify_observed_generation(
             &published.source
         }
     };
-    if source.manifest_sha256 != observed.manifest_sha256
+    if source.flavor != observed.package_flavor
+        || source.flavor != target.flavor
+        || source.manifest_sha256 != observed.manifest_sha256
         || source.source_sha != observed.source_sha
     {
         return Err(UpdateError::ProvenanceFailed);
@@ -698,14 +724,85 @@ pub(super) async fn verify_observed_generation(
     #[cfg(unix)]
     unified::verify_installed_update_cli(&context.binaries.cli)?;
     for (name, path) in [
-        ("webcodex-desktop", &context.desktop),
         ("webcodex", &context.binaries.cli),
         ("webcodex-server", &context.binaries.server),
         ("webcodex-runner", &context.binaries.runner),
-    ] {
+    ]
+    .into_iter()
+    .chain(context.desktop.as_ref().map(|p| ("webcodex-desktop", p)))
+    {
         if source.component_sha256(name) != Some(hash_program(path).await?.as_str()) {
             return Err(UpdateError::ProvenanceFailed);
         }
     }
     Ok(context.build)
+}
+
+#[cfg(target_os = "linux")]
+async fn assess_runtime_installation(
+    root: PathBuf,
+    record: crate::EnvironmentRecord,
+    target: InstallerTarget,
+) -> UpdateResult<(
+    InstallationKind,
+    Option<InstallContext>,
+    Vec<MachineBuildInfo>,
+)> {
+    use std::io::Read;
+    if super::package::installed_package() != Some(target)
+        || !super::package::owned_layout(target, &record.request.binaries)
+    {
+        return Ok((InstallationKind::UnmanagedInstallation, None, vec![]));
+    }
+    let mut builds = Vec::new();
+    for (name, path) in [
+        ("webcodex", &record.request.binaries.cli),
+        ("webcodex-server", &record.request.binaries.server),
+        ("webcodex-runner", &record.request.binaries.runner),
+    ] {
+        match probe_installed_build(path, name).await {
+            Ok(info) => builds.push(info),
+            Err(_) => return Ok((InstallationKind::UnmanagedInstallation, None, builds)),
+        }
+    }
+    let path = super::package::provenance_path(target).ok_or(UpdateError::ProvenanceFailed)?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|_| UpdateError::ProvenanceFailed)?
+        .take(unified::MAX_SOURCE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| UpdateError::ProvenanceFailed)?;
+    let source = unified::verify_source_manifest_for_flavor(
+        &bytes,
+        &builds[0].version,
+        target.platform,
+        target.flavor,
+    )?;
+    if builds
+        .iter()
+        .any(|build| source.component_build(&build.binary) != Some(build))
+    {
+        return Ok((InstallationKind::UnmanagedInstallation, None, builds));
+    }
+    let context = InstallContext {
+        environment_root: root,
+        environment_id: record.environment_id,
+        binaries: record.request.binaries,
+        desktop: None,
+        build: builds[0].clone(),
+        target,
+    };
+    Ok((InstallationKind::Managed, Some(context), builds))
+}
+#[cfg(not(target_os = "linux"))]
+async fn assess_runtime_installation(
+    _: PathBuf,
+    _: crate::EnvironmentRecord,
+    _: InstallerTarget,
+) -> UpdateResult<(
+    InstallationKind,
+    Option<InstallContext>,
+    Vec<MachineBuildInfo>,
+)> {
+    Err(UpdateError::UnsupportedPlatform)
 }

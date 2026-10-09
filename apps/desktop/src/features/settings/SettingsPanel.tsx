@@ -11,6 +11,7 @@ import { RunnerFileAccess } from "./RunnerFileAccess";
 import { PowerShellInstallGuidance } from "./PowerShellInstallGuidance";
 import { APPEARANCES, useAppearance } from "../../hooks/useAppearance";
 import { AccentPicker } from "../../components/AccentPicker";
+import { RunnerCapacityPanel } from "./RunnerCapacityPanel";
 import { RuntimePanel } from "./RuntimePanel";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { AboutPanel } from "./AboutPanel";
@@ -160,6 +161,7 @@ export function SettingsPanel({
         {proxyError && <SettingsError error={proxyError} />}
       </div>
       <div id="desktop-settings-runtime" hidden={section !== "runtime"}>
+        {visited.includes("runtime") && <RunnerCapacityPanel state={state} onState={onState} active={section === "runtime"} />}
         <section className="settings-section">
         <h2>{p("serviceControls")}</h2><p className="field-help">{p("serviceControlsHelp")}</p>
         {visited.includes("runtime") && <LocalServicesPanel state={state} onState={onState} />}

@@ -6,6 +6,8 @@
 
 #[path = "project_entry_client_handoff.rs"]
 mod client_handoff_service;
+#[path = "cloudflare_transport.rs"]
+pub(crate) mod cloudflare_transport;
 #[path = "project_entry_cloudflared.rs"]
 mod cloudflared_service;
 #[path = "project_entry_openai_tunnel.rs"]
@@ -24,7 +26,8 @@ pub(crate) use openai_tunnel_service::{OpenAiTunnel, OpenAiTunnelPrerequisites};
 pub(crate) use regular_tunnel_service::probe_local_mcp;
 
 pub(crate) use regular_tunnel_service::{
-    run_regular_server_tunnel_with_stop, RegularServerTunnelOptions,
+    run_regular_server_tunnel_with_stop, wait_for_regular_tunnel_stop_signal,
+    RegularServerTunnelOptions,
 };
 pub(crate) use setup_service::setup;
 use setup_service::{

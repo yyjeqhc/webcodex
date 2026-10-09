@@ -74,6 +74,68 @@ function threadResult(state, selectedSession = null) {
   return result;
 }
 
+function emptyThreadResult() {
+  const result = toolResult({ work_result: null });
+  result._meta = { "webcodex/workResultThread": { empty: true, session_id: null } };
+  return result;
+}
+
+for (const resultFirst of [false, true]) test(`first-open thread is an empty panel without inferred identity (result-first=${resultFirst})`, async () => {
+  const view = app("mcp_work_result_app.html");
+  if (!resultFirst) view.toolInput({});
+  view.notification("ui/notifications/tool-result", emptyThreadResult());
+  if (resultFirst) view.toolInput({});
+  await view.initialize();
+  assert.equal(view.nodes.emptyState.hidden, false);
+  assert.equal(view.nodes.viewTabs.hidden, true);
+  assert.equal(view.nodes.workResultContent.hidden, true);
+  assert.equal(view.nodes.refresh.disabled, true);
+  assert.match(view.nodes.status.textContent, /Waiting for a work result/);
+  await view.fireTimers(10000);
+  assert.equal(view.calls("get_work_result_state").length, 0);
+  assert.equal(view.calls("list_sessions").length, 0);
+  view.notification("ui/notifications/tool-result", threadResult(baseState, session_id));
+  assert.equal(view.nodes.emptyState.hidden, true);
+  assert.equal(view.nodes.workResultContent.hidden, false);
+  assert.equal(view.nodes.viewTabs.hidden, false);
+  assert.equal(view.nodes.refresh.disabled, false);
+});
+
+test("empty thread can initialize from the private result fallback", async () => {
+  const view = app("mcp_work_result_app.html");
+  const result = emptyThreadResult();
+  result._meta["webcodex/workResult"] = result.structuredContent;
+  delete result.structuredContent;
+  view.notification("ui/notifications/tool-result", result);
+  await view.initialize();
+  assert.equal(view.nodes.emptyState.hidden, false);
+  assert.equal(view.calls("get_work_result_state").length, 0);
+});
+
+test("a mounted result cannot be erased by an empty thread result", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput({});
+  view.notification("ui/notifications/tool-result", threadResult(baseState, session_id));
+  await view.initialize();
+  view.notification("ui/notifications/tool-result", emptyThreadResult());
+  assert.equal(view.nodes.emptyState.hidden, true);
+  assert.equal(view.nodes.refresh.disabled, true);
+  assert.match(view.nodes.status.textContent, /unavailable/);
+});
+
+for (const context of [undefined, { empty: true, session_id }, { empty: true, session_id: null, project }]) {
+  test(`malformed empty context fails closed: ${JSON.stringify(context)}`, async () => {
+    const view = app("mcp_work_result_app.html");
+    const result = emptyThreadResult();
+    result._meta["webcodex/workResultThread"] = context;
+    view.notification("ui/notifications/tool-result", result);
+    await view.initialize();
+    assert.equal(view.nodes.emptyState.hidden, true);
+    assert.equal(view.calls("get_work_result_state").length, 0);
+    assert.equal(view.nodes.refresh.disabled, true);
+  });
+}
+
 for (const resultFirst of [false, true]) test(`thread initialization preserves the explicit Session on refresh (result-first=${resultFirst})`, async () => {
   const view = app("mcp_work_result_app.html");
   if (!resultFirst) view.toolInput({});
@@ -105,6 +167,8 @@ for (const context of [undefined, {}, { session_id: "invalid" }, { session_id: `
     view.notification("ui/notifications/tool-result", result);
     await view.initialize();
     assert.equal(view.nodes.badge.textContent, "Unavailable");
+    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · " +
+      (context === undefined ? "WR-THREAD-BINDING-MISSING" : "WR-THREAD-BINDING-CONFLICT"));
     assert.equal(view.calls("get_work_result_state").length, 0);
   });
 }
@@ -116,6 +180,8 @@ test("a mounted thread cannot be retargeted by a later presentation", async () =
   await view.initialize();
   view.notification("ui/notifications/tool-result", threadResult({ ...baseState, session_id: `wc_sess_${"2".repeat(32)}` }, `wc_sess_${"2".repeat(32)}`));
   assert.equal(view.nodes.badge.textContent, "Unavailable");
+  // The internally inconsistent state is rejected before binding comparison.
+  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-STATE-INVALID");
 });
 
 test("thread review puts checks before long file lists while keeping diagnostics folded", async () => {
@@ -763,7 +829,7 @@ for (const first of ["input", "result"]) {
     else view.toolInput(foreign);
     await flush();
     assert.equal(view.calls("get_work_result_state").length, 0);
-    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable");
+    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-IDENTITY-INVALID");
     assert.equal(view.nodes.refresh.disabled, true);
     assert.equal(view.timers.size, 0);
   });
@@ -777,7 +843,7 @@ test("malformed authoritative Refresh state fails closed", async () => {
   view.nodes.refresh.onclick();
   await flush();
   await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: { ...baseState, state_version: "bad" } }));
-  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable");
+  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-STATE-INVALID");
   assert.equal(view.nodes.refresh.disabled, true);
 });
 
@@ -805,7 +871,7 @@ test("collaboration context_project rejects controls and unbounded identities", 
       },
     } });
     await view.initialize();
-    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable");
+    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-STATE-INVALID");
     assert.equal(view.nodes.refresh.disabled, true);
   }
 });
@@ -853,7 +919,7 @@ test("invalid Project input never refreshes", async () => {
     view.toolInput(bad);
     await flush();
     assert.equal(view.calls("get_work_result_state").length, 0);
-    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable");
+    assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-IDENTITY-INVALID");
     assert.equal(view.nodes.refresh.disabled, true);
     assert.equal(view.timers.size, 0);
   }
@@ -1051,7 +1117,7 @@ test("a file page cannot replace its Project and sealed changes cannot retarget 
   assert.equal(view.calls("get_work_result_state").length, 1);
   view.toolResult({ work_result: { ...frozenWork(), session_id: `wc_sess_${"3".repeat(32)}` } });
   await flush();
-  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable");
+  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-FROZEN-IDENTITY-CONFLICT");
   assert.equal(view.nodes.refresh.disabled, true);
   assert.equal(view.calls("read_changed_file_diff").length, 0);
 });
@@ -1675,6 +1741,7 @@ test("result-first Job state cannot be rebound by a different explicit Session",
   view.toolInput({ project, session_id: `wc_sess_${"2".repeat(32)}` });
   await view.initialize();
   assert.equal(view.nodes.badge.textContent, "Unavailable");
+  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-SESSION-CONFLICT");
   assert.equal(view.calls("get_work_result_state").length, 0);
 });
 
@@ -2459,4 +2526,31 @@ test("activity preserves raw outcomes and distinguishes expected failures and mi
     const summary = view.nodes.windowActivity.children[0].children[0];
     assert.equal(summary.children[1].textContent, label);
   }
+});
+
+test("fail-closed Work Result displays only a bounded diagnostic code for invalid identity", async () => {
+  const view = app("mcp_work_result_app.html");
+  const sensitive = "agent:special:private-project";
+  view.toolInput({ project: sensitive + "\nprivate-token" });
+  await view.initialize();
+  assert.equal(view.nodes.badge.textContent, "Unavailable");
+  assert.equal(view.nodes.status.textContent, "This Work Result card is unavailable · WR-IDENTITY-INVALID");
+  assert(!view.nodes.status.textContent.includes("private"));
+  assert.equal(view.nodes.refresh.disabled, true);
+  assert.equal(view.calls("get_work_result_state").length, 0);
+});
+
+test("fail-closed Work Result distinguishes invalid state from thread binding loss", async () => {
+  const invalidState = app("mcp_work_result_app.html");
+  invalidState.toolResult({ work_result: { ...baseState, state_version: "bad" } });
+  await invalidState.initialize();
+  assert.equal(invalidState.nodes.status.textContent, "This Work Result card is unavailable · WR-STATE-INVALID");
+  assert.equal(invalidState.nodes.refresh.disabled, true);
+
+  const missingThread = app("mcp_work_result_app.html");
+  missingThread.toolInput({});
+  missingThread.notification("ui/notifications/tool-result", toolResult({ work_result: baseState }));
+  await missingThread.initialize();
+  assert.equal(missingThread.nodes.status.textContent, "This Work Result card is unavailable · WR-THREAD-BINDING-MISSING");
+  assert.equal(missingThread.nodes.refresh.disabled, true);
 });

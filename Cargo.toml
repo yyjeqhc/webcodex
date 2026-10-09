@@ -62,6 +62,7 @@ webcodex-runner-config = { path = "crates/webcodex-runner-config" }
 webcodex-runner-registry = { path = "crates/webcodex-runner-registry" }
 webcodex-core = { path = "crates/webcodex-core" }
 webcodex-environment = { path = "crates/webcodex-environment" }
+webcodex-process = { path = "crates/webcodex-process" }
 webcodex-tool-contracts = { path = "crates/webcodex-tool-contracts" }
 webcodex-tool-runtime-contracts = { path = "crates/webcodex-tool-runtime-contracts" }
 webcodex-validation = { path = "crates/webcodex-validation", features = ["session-evidence"] }

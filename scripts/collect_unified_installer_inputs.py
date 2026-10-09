@@ -20,7 +20,10 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-import package_unified_installer as package
+try:
+    from . import package_unified_installer as package
+except ImportError:
+    import package_unified_installer as package
 
 BINARIES = package.BINARIES
 RUNTIMES = package.RUNTIMES
@@ -131,23 +134,32 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     output = args.output_dir.absolute()
     if output.exists() or output.is_symlink():
         raise CollectionError("manifest output directory already exists")
+    runtime = getattr(args, "package_flavor", "full") == "runtime"
+    if runtime and not args.platform.startswith("linux-"):
+        raise CollectionError("Runtime collection supports Linux only")
+    names = package.RUNTIMES if runtime else BINARIES
+    if not runtime and any(not getattr(args, key, None) for key in ("webcodex_desktop", "desktop_payload", "desktop_executable")):
+        raise CollectionError("Full collection requires Desktop inputs")
+    if runtime and any(getattr(args, key, None) for key in ("webcodex_desktop", "desktop_payload", "desktop_executable")):
+        raise CollectionError("Runtime collection cannot include Desktop inputs")
     paths = {
         name: resolve_input(root, getattr(args, name.replace("-", "_")), name)
-        for name in BINARIES
+        for name in names
     }
-    desktop_payload = resolve_input(root, args.desktop_payload, "Desktop payload")
-    executable_rel = safe_relative(args.desktop_executable)
-    if os_name == "darwin":
-        if desktop_payload.suffix != ".app" or executable_rel.parts[:2] != ("Contents", "MacOS"):
-            raise CollectionError("macOS Desktop payload must be an .app with Contents/MacOS executable")
-        desktop_executable = desktop_payload.joinpath(*executable_rel.parts)
-    else:
-        if desktop_payload.is_dir() or executable_rel.as_posix() != desktop_payload.name:
-            raise CollectionError("non-macOS Desktop payload must be its executable file")
-        desktop_executable = desktop_payload
-    if paths["webcodex-desktop"] != desktop_executable.resolve(strict=True):
-        raise CollectionError("Desktop executable path does not match the supplied Desktop binary")
-    infos = {name: probe(paths[name], name) for name in BINARIES}
+    if not runtime:
+        desktop_payload = resolve_input(root, args.desktop_payload, "Desktop payload")
+        executable_rel = safe_relative(args.desktop_executable)
+        if os_name == "darwin":
+            if desktop_payload.suffix != ".app" or executable_rel.parts[:2] != ("Contents", "MacOS"):
+                raise CollectionError("macOS Desktop payload must be an .app with Contents/MacOS executable")
+            desktop_executable = desktop_payload.joinpath(*executable_rel.parts)
+        else:
+            if desktop_payload.is_dir() or executable_rel.as_posix() != desktop_payload.name:
+                raise CollectionError("non-macOS Desktop payload must be its executable file")
+            desktop_executable = desktop_payload
+        if paths["webcodex-desktop"] != desktop_executable.resolve(strict=True):
+            raise CollectionError("Desktop executable path does not match the supplied Desktop binary")
+    infos = {name: probe(paths[name], name) for name in names}
     contracts = [info.get("desktop_runtime_contract") for info in infos.values()]
     contract = contracts[0]
     if not isinstance(contract, dict) or set(contract) != {"min_generation", "max_generation"}:
@@ -159,20 +171,22 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         raise CollectionError("requested version does not match native build metadata")
     if not package.VERSION_RE.fullmatch(args.version):
         raise CollectionError("requested version is invalid")
-    source_tree_digest = package.tree_digest(desktop_payload)
+    source_tree_digest = package.tree_digest(desktop_payload) if not runtime else None
 
     output.mkdir(parents=True, mode=0o700)
     try:
         staged = output / "artifacts"
         binary_dir = staged / "bin"
         artifact_paths: dict[str, Path] = {}
-        for name in BINARIES:
+        for name in names:
             if name == "webcodex-desktop" and os_name == "darwin":
                 continue
             destination = binary_dir / f"{name}.exe" if os_name == "windows" else binary_dir / name
             copy_file(paths[name], destination)
             artifact_paths[name] = destination
-        if os_name == "darwin":
+        if runtime:
+            payload_rel = None
+        elif os_name == "darwin":
             staged_app = staged / "desktop" / "WebCodexDesktop.app"
             staged_app.parent.mkdir(parents=True)
             shutil.copytree(desktop_payload, staged_app, symlinks=True)
@@ -189,7 +203,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             payload_rel = artifact_paths["webcodex-desktop"].relative_to(output).as_posix()
         artifacts = {}
         checksum_lines = []
-        for name in BINARIES:
+        for name in names:
             path = artifact_paths[name]
             relative = path.relative_to(output).as_posix()
             digest = package.sha256_file(path)
@@ -202,21 +216,22 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                 "probe": "native-build-job",
             }
             checksum_lines.append(f"{digest}  {relative}")
-        desktop_payload_record = {
-            "path": payload_rel,
-            "sha256": package.tree_digest(output.joinpath(*PurePosixPath(payload_rel).parts)),
-            # The manifest describes the staged install payload. The source
-            # executable may have a different name (for example WebCodex.exe
-            # before it is staged as webcodex-desktop.exe).
-            "executable": executable_rel.as_posix() if os_name == "darwin" else Path(payload_rel).name,
-        }
-        if os_name == "windows":
-            desktop_payload_record["managed_files"] = [
-                {"path": relative, "sha256": package.sha256_file(artifact_paths[name])}
-                for relative, name in sorted(WINDOWS_MANAGED_INSTALL_FILES.items())
-            ]
+        if not runtime:
+            desktop_payload_record = {
+                "path": payload_rel,
+                "sha256": package.tree_digest(output.joinpath(*PurePosixPath(payload_rel).parts)),
+                # The manifest describes the staged install payload. The source
+                # executable may have a different name (for example WebCodex.exe
+                # before it is staged as webcodex-desktop.exe).
+                "executable": executable_rel.as_posix() if os_name == "darwin" else Path(payload_rel).name,
+            }
+            if os_name == "windows":
+                desktop_payload_record["managed_files"] = [
+                    {"path": relative, "sha256": package.sha256_file(artifact_paths[name])}
+                    for relative, name in sorted(WINDOWS_MANAGED_INSTALL_FILES.items())
+                ]
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2 if runtime else 1,
             "version": args.version,
             "source_sha": args.source_sha,
             "source_workflow_run_id": args.workflow_run_id,
@@ -226,8 +241,11 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             "architecture": architecture,
             "desktop_runtime_contract": contract,
             "artifacts": artifacts,
-            "desktop_payload": desktop_payload_record,
         }
+        if runtime:
+            manifest["package_flavor"] = "runtime"
+        else:
+            manifest["desktop_payload"] = desktop_payload_record
         manifest_path = output / "source-manifest.json"
         encoded = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
         manifest_path.write_bytes(encoded)
@@ -248,14 +266,15 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
 
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--package-flavor", choices=("full", "runtime"), default="full")
     parser.add_argument("--platform", choices=tuple(NATIVE_TARGETS), required=True)
     parser.add_argument("--input-root", type=Path, required=True)
     parser.add_argument("--webcodex", required=True, help="relative path to CLI executable")
     parser.add_argument("--webcodex-server", required=True)
     parser.add_argument("--webcodex-runner", required=True)
-    parser.add_argument("--webcodex-desktop", required=True, help="relative path to Desktop executable")
-    parser.add_argument("--desktop-payload", required=True, help="relative path to Desktop file or .app tree")
-    parser.add_argument("--desktop-executable", required=True, help="path relative to Desktop payload")
+    parser.add_argument("--webcodex-desktop", help="relative path to Desktop executable")
+    parser.add_argument("--desktop-payload", help="relative path to Desktop file or .app tree")
+    parser.add_argument("--desktop-executable", help="path relative to Desktop payload")
     parser.add_argument("--version", required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--workflow-run-id", required=True, type=int)

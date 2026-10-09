@@ -119,6 +119,46 @@ impl NativeEnvironment {
                 "This component is not configured on this machine",
             ));
         }
+        if component == Component::Server
+            && matches!(
+                operation,
+                ServiceOperation::Install | ServiceOperation::Start | ServiceOperation::Restart
+            )
+            && tunnel_profiles(store)?
+                .iter()
+                .any(|profile| profile.provider != TunnelProvider::Openai)
+        {
+            #[cfg(windows)]
+            if record.request.service_scope.is_system() && operation != ServiceOperation::Install {
+                let spec = service_spec(store, &record, component)?;
+                if operation == ServiceOperation::Restart {
+                    crate::privilege::service_operation(
+                        store,
+                        &record,
+                        component,
+                        ServiceOperation::Stop,
+                        None,
+                    )
+                    .await?;
+                }
+                let status = ServiceManager::inspect(&spec).map_err(service_error)?;
+                if status.ownership != Ownership::Owned || status.running != Some(false) {
+                    return Err(diagnostic("tunnel_host_busy", "Stop the owning Server before applying private Cloudflare runtime bindings"));
+                }
+                materialize_cloudflare_tunnel_profiles(store)?;
+                crate::service::grant_service_directory(&spec, &spec.working_directory)
+                    .map_err(service_error)?;
+                return crate::privilege::service_operation(
+                    store,
+                    &record,
+                    component,
+                    ServiceOperation::Start,
+                    None,
+                )
+                .await;
+            }
+            materialize_cloudflare_tunnel_profiles(store)?;
+        }
         crate::privilege::service_operation(store, &record, component, operation, None).await
     }
 

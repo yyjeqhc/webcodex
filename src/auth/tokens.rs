@@ -189,6 +189,17 @@ impl TokenVerifier for OAuth2Verifier {
         db: Option<&Arc<Database>>,
         token: &str,
     ) -> Result<Option<AuthContext>, String> {
+        Self::verify_for_ingress(config, db, token, None).await
+    }
+}
+
+impl OAuth2Verifier {
+    pub(crate) async fn verify_for_ingress(
+        config: &Config,
+        db: Option<&Arc<Database>>,
+        token: &str,
+        ingress: Option<&webcodex_store::PublicIngressFence>,
+    ) -> Result<Option<AuthContext>, String> {
         // Only handle wc_oat_* tokens. Non-matching tokens are not recognized by
         // this verifier — let PatVerifier try.
         if !token.starts_with(OAUTH2_ACCESS_TOKEN_PREFIX) {
@@ -207,6 +218,13 @@ impl TokenVerifier for OAuth2Verifier {
 
         let token_hash = hash_token(token);
         let now = chrono::Utc::now().timestamp();
+
+        if !db
+            .oauth_access_token_matches_public_ingress(&token_hash, ingress)
+            .map_err(|_| "OAuth2 ingress verification unavailable".to_string())?
+        {
+            return Err("OAuth2 token is not valid for this ingress".to_string());
+        }
 
         // Look up the access token (revoked_at IS NULL is enforced by the
         // query).

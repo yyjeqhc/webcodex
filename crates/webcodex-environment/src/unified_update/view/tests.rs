@@ -82,3 +82,30 @@ async fn active_download_projection_keeps_live_progress_without_saved_state_muta
     assert!(!view.download.can_install);
     assert!(!data.exists());
 }
+
+#[test]
+fn verified_runtime_target_projects_three_components_without_inference() {
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().join("desktop");
+    let manager =
+        UpdateManager::with_environment_root(data.clone(), temp.path().join("environment"));
+    let platform = RuntimePlatform::current().unwrap();
+    let target = InstallerTarget::runtime(platform, PackageFormat::Deb);
+    if cfg!(target_os = "linux") {
+        let view = manager.status_view_for_target(&[], Some(target)).unwrap();
+        assert_eq!(view.installed_target, Some(target));
+        assert_eq!(view.installed.len(), 3);
+        assert_eq!(view.candidate_components.len(), 3);
+        assert!(view
+            .installed
+            .iter()
+            .all(|c| c.binary != "webcodex-desktop"));
+        assert!(view.installed.iter().all(|c| c.build.is_none()));
+    } else {
+        assert!(manager.status_view_for_target(&[], Some(target)).is_err());
+    }
+    let unknown = manager.status_view(&[]).unwrap();
+    assert!(unknown.installed_target.is_none());
+    assert_eq!(unknown.installed.len(), 4);
+    assert!(!data.exists());
+}

@@ -50,6 +50,7 @@ impl ToolRuntime {
         status: Option<&str>,
         project: Option<&str>,
         session_id: Option<&str>,
+        client_id: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> Result<JobInventoryPage, ToolResult> {
         let max = limit.unwrap_or(20).clamp(1, 100);
@@ -70,6 +71,7 @@ impl ToolRuntime {
             .runner_registry
             .list_jobs_for_auth_filtered(
                 crate::runner_http::runner_access_from_auth(auth).as_ref(),
+                client_id,
                 project,
                 session_id,
             )

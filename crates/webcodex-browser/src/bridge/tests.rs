@@ -248,3 +248,7 @@ fn queued_bytes_have_one_global_bound_and_are_released_on_receiver_drop() {
     drop(rx);
     assert_eq!(state.queued.load(Ordering::Acquire), 0);
 }
+
+mod navigation;
+
+mod continuity;

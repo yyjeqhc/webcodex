@@ -17,6 +17,41 @@ test("DOCX renders Chinese text, tables, image, header/footer and explicit page 
   assert.equal(stage.querySelectorAll("table td").length, 4); assert.match(stage.querySelector("img").src, /^data:image\/png;/);
   assert.ok(stage.querySelector("style").textContent.includes(".docx-stage")); instance.window.close();
 });
+for (const state of ["current", "superseded", "closed"]) {
+  test(`DOCX preparation completed with a ${state} reader only starts a current renderer`, { timeout: 5000 }, async t => {
+    const instance = dom(), stage = document.querySelector(".docx-stage"), bytes = await docxFixture();
+    const started = Promise.withResolvers(), release = Promise.withResolvers();
+    const generateAsync = JSZip.prototype.generateAsync;
+    const loads = t.mock.method(JSZip, "loadAsync");
+    t.mock.method(JSZip.prototype, "generateAsync", async function (...args) {
+      started.resolve();
+      await release.promise;
+      return generateAsync.apply(this, args);
+    });
+    let generation = 0, disposed = false;
+    const current = () => !disposed && generation === 0;
+    const rendering = renderDocx(bytes, stage, current);
+    try {
+      await started.promise;
+      assert.equal(loads.mock.callCount(), 1, "only preparation has loaded the ZIP while repackaging is pending");
+      if (state === "superseded") generation++;
+      if (state === "closed") disposed = true;
+      release.resolve();
+      if (state === "current") {
+        assert.equal(await rendering, 2);
+        assert.equal(loads.mock.callCount(), 2, "the current renderer loads the prepared ZIP");
+      } else {
+        await assert.rejects(rendering, /DOCX reader closed/);
+        assert.equal(loads.mock.callCount(), 1, "an invalidated reader must not start the renderer's ZIP load");
+        assert.equal(stage.childElementCount, 0);
+      }
+    } finally {
+      release.resolve();
+      await rendering.catch(() => {});
+      instance.window.close();
+    }
+  });
+}
 test("DOCX strips external relationships and never renders altChunk HTML", async () => {
   const instance = dom(), bytes = await docxFixture({ unsafe: true });
   const prepared = await prepareDocx(bytes, window), zip = await JSZip.loadAsync(prepared);

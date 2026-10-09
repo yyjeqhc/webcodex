@@ -394,6 +394,7 @@ struct AuthorizeSession {
     user_id: String,
     scopes: Vec<String>,
     expires_at: i64,
+    ingress_binding: Option<(String, i64)>,
 }
 
 impl AuthorizeSessionStore {
@@ -404,20 +405,49 @@ impl AuthorizeSessionStore {
     /// Create a new session and return the opaque plaintext session id. Only
     /// the SHA-256 hash of the id is stored in the map. PAT/bootstrap
     /// plaintext/hash is never stored — only identity and credential scopes.
+    #[cfg(test)]
     fn create_session(&self, user_id: String, scopes: Vec<String>) -> String {
+        self.create_bound_session(user_id, scopes, None)
+    }
+
+    fn create_bound_session(
+        &self,
+        user_id: String,
+        scopes: Vec<String>,
+        ingress_binding: Option<(String, i64)>,
+    ) -> String {
         let now = chrono::Utc::now().timestamp();
         let session = AuthorizeSession {
             user_id,
             scopes,
             expires_at: now + AUTHORIZE_SESSION_TTL_SECS,
+            ingress_binding,
         };
         let id = generate_authorize_session_id();
         let hash = hash_token(&id);
         let mut guard = self.inner.lock().unwrap();
         // Opportunistic cleanup of expired sessions to bound growth.
         guard.retain(|_, s| s.expires_at > now);
+        if guard.len() >= 1024 {
+            if let Some(oldest) = guard
+                .iter()
+                .min_by_key(|(_, session)| session.expires_at)
+                .map(|(key, _)| key.clone())
+            {
+                guard.remove(&oldest);
+            }
+        }
         guard.insert(hash, session);
         id
+    }
+
+    fn get_bound_session(
+        &self,
+        id: &str,
+        binding: Option<(String, i64)>,
+    ) -> Option<AuthorizeSession> {
+        self.get_session(id)
+            .filter(|session| session.ingress_binding == binding)
     }
 
     /// Look up a session by its opaque plaintext id. Returns `None` when the
@@ -648,7 +678,20 @@ pub(crate) async fn oauth_authorize_login(
         return;
     };
 
-    let session_id = session_store.create_session(user_id, ctx.scopes.clone());
+    if crate::public_ingress_auth::entry(depot).is_some_and(|entry| entry.owner_user_id != user_id)
+    {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Text::Html(authorize_login_html(
+            &return_to_owned,
+            Some("this user does not own the connection"),
+        )));
+        return;
+    }
+    let session_id = session_store.create_bound_session(
+        user_id,
+        ctx.scopes.clone(),
+        crate::public_ingress_auth::binding(depot),
+    );
     let secure = is_secure_authorize(&config);
     res.headers_mut().append(
         salvo::http::header::SET_COOKIE,
@@ -702,7 +745,9 @@ pub(crate) async fn oauth_authorize_consent(
         )));
         return;
     };
-    let Some(session) = session_store.get_session(&session_cookie) else {
+    let Some(session) = session_store
+        .get_bound_session(&session_cookie, crate::public_ingress_auth::binding(depot))
+    else {
         res.status_code(StatusCode::UNAUTHORIZED);
         // Clear the stale cookie.
         let secure = is_secure_authorize(&config);
@@ -876,10 +921,7 @@ pub(crate) async fn oauth_authorize_consent(
         used_at: None,
         revoked_at: None,
     };
-    if db
-        .insert_oauth_authorization_code(&record, &record.code_hash)
-        .is_err()
-    {
+    if insert_authorization_code(&db, &record, crate::public_ingress_auth::entry(depot)).is_err() {
         oauth_authorize_direct_error(
             res,
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1028,8 +1070,27 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
         match crate::auth::authenticate(&config, Some(&db), &token).await {
             Ok(Some(ctx)) if is_authorize_identity_allowed(&ctx) && ctx.user_id.is_some() => {
                 let user_id = ctx.user_id.clone().unwrap();
-                authorize_issue_with_context(res, &config, &db, &user_id, &ctx.scopes, &query)
-                    .await;
+                if crate::public_ingress_auth::entry(depot)
+                    .is_some_and(|entry| entry.owner_user_id != user_id)
+                {
+                    oauth_authorize_direct_error(
+                        res,
+                        StatusCode::FORBIDDEN,
+                        "access_denied",
+                        "this user does not own the connection",
+                    );
+                    return;
+                }
+                authorize_issue_with_context(
+                    res,
+                    &config,
+                    &db,
+                    &user_id,
+                    &ctx.scopes,
+                    &query,
+                    crate::public_ingress_auth::entry(depot),
+                )
+                .await;
                 return;
             }
             Ok(Some(_)) => {
@@ -1057,7 +1118,10 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
 
     // Path 2: browser first-party session cookie.
     if let Some(session_cookie) = authorize_session_id_from_request(req) {
-        if session_store.get_session(&session_cookie).is_some() {
+        if session_store
+            .get_bound_session(&session_cookie, crate::public_ingress_auth::binding(depot))
+            .is_some()
+        {
             authorize_render_consent(res, &config, &db, &query);
             return;
         }
@@ -1078,6 +1142,26 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
 /// to `user_id` and redirect with the plaintext code. Used by the Bearer PAT
 /// path of [`oauth_authorize`] (bootstrap is rejected upstream because it has
 /// no `user_id`).
+fn insert_authorization_code(
+    db: &crate::Database,
+    record: &crate::models::OAuthAuthorizationCodeRecord,
+    ingress: Option<&webcodex_store::PublicIngressEntry>,
+) -> Result<(), ()> {
+    match ingress {
+        Some(entry) => match db.insert_public_ingress_oauth_authorization_code(
+            record,
+            &record.code_hash,
+            &entry.fence(),
+        ) {
+            Ok(true) => Ok(()),
+            _ => Err(()),
+        },
+        None => db
+            .insert_oauth_authorization_code(record, &record.code_hash)
+            .map_err(|_| ()),
+    }
+}
+
 async fn authorize_issue_with_context(
     res: &mut Response,
     config: &crate::Config,
@@ -1085,6 +1169,7 @@ async fn authorize_issue_with_context(
     user_id: &str,
     authority_scopes: &[String],
     query: &str,
+    ingress: Option<&webcodex_store::PublicIngressEntry>,
 ) {
     let parsed = parse_authorize_query(query);
 
@@ -1347,10 +1432,7 @@ async fn authorize_issue_with_context(
         revoked_at: None,
     };
 
-    if db
-        .insert_oauth_authorization_code(&record, &record.code_hash)
-        .is_err()
-    {
+    if insert_authorization_code(db, &record, ingress).is_err() {
         oauth_authorize_direct_error(
             res,
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1471,6 +1553,7 @@ mod authority_snapshot_tests {
             user_id,
             scopes: stored,
             expires_at,
+            ingress_binding: _,
         } = store.get_session(&id).unwrap();
         assert_eq!(user_id, "user-id");
         assert_eq!(stored, scopes);

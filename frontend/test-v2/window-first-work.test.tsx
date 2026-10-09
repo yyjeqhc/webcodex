@@ -648,6 +648,9 @@ it("keeps collaboration history and draft on the same Window across Runner chang
   });
   render(<WindowWorkbench client={client} projects={[source, next]} language="en" surface="windows" onSurfaceChange={vi.fn()} onUnauthorized={vi.fn()} />);
   await screen.findByRole("heading", { name: "WebCodex" });
+  // Inventory can render the heading before the initial Window selection settles.
+  // Wait for its activity to render before activating the collaboration pane.
+  await screen.findByTestId("window-workflow-step");
   fireEvent.click(screen.getByRole("tab", { name: "Collaboration" }));
   await screen.findByText("Retained instruction");
   const composer = screen.getByRole("textbox", { name: "Message this Window" });

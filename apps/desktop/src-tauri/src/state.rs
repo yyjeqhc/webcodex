@@ -17,6 +17,8 @@ mod projectless_tests;
 mod reconfiguration_tests;
 mod runner_capability_grant;
 mod runtime_shell;
+#[cfg(test)]
+mod shutdown_tests;
 mod ssh_resources;
 pub(crate) mod updates;
 mod workspace;
@@ -64,7 +66,10 @@ const PROJECT_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const QUICK_SHARE_READY_TIMEOUT: Duration = Duration::from_secs(90);
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
 const READINESS_CLEANUP_SLACK: Duration = Duration::from_secs(2);
+#[cfg(not(windows))]
 const SHUTDOWN_OPERATION_WAIT: Duration = Duration::from_secs(5);
+#[cfg(windows)]
+pub(crate) const SESSION_SHUTDOWN_BUDGET: Duration = Duration::from_secs(4);
 const DESKTOP_STATE_MAX_BYTES: u64 = 256 * 1024;
 const DESKTOP_SERVER_ENV_MAX_BYTES: u64 = 256 * 1024;
 const DESKTOP_MCP_HOST_PROFILE: &str = "host_code_mode";
@@ -92,6 +97,7 @@ pub struct AppState {
     operations: OperationController,
     shutdown_signal: CancellationSignal,
     shutdown_started: AtomicBool,
+    shutdown_complete: CancellationSignal,
     connections: ConnectionRuntimes,
     update_check: tokio::sync::Mutex<()>,
     updates: Arc<crate::updates::UpdateManager>,

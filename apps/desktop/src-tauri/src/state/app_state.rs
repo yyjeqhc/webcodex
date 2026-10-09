@@ -34,6 +34,7 @@ impl AppState {
             activity,
             shutdown_signal: CancellationSignal::new(),
             shutdown_started: AtomicBool::new(false),
+            shutdown_complete: CancellationSignal::new(),
             update_check: tokio::sync::Mutex::new(()),
             updates,
         })
@@ -376,18 +377,38 @@ impl AppState {
     }
 
     pub async fn shutdown(&self) {
+        #[cfg(windows)]
+        let budget = SESSION_SHUTDOWN_BUDGET;
+        #[cfg(not(windows))]
+        let budget = SHUTDOWN_OPERATION_WAIT;
+        self.shutdown_until(Deadline::after(budget)).await;
+    }
+
+    pub(crate) async fn shutdown_until(&self, deadline: Deadline) {
         if self.shutdown_started.swap(true, Ordering::SeqCst) {
+            // Tauri's window notification and the tray-independent native
+            // observer can arrive concurrently. Neither may announce exit
+            // while the first owner is still draining the child leases.
+            let _ = tokio::time::timeout_at(deadline.instant(), self.shutdown_complete.cancelled())
+                .await;
             return;
         }
         self.shutdown_signal.cancel();
         self.updates.cancel_download(false);
         self.operations.cancel_active_for_shutdown();
         self.connections.cancel_all();
-        self.supervisor.lock().await.stop_all().await;
+        // Session ending has an OS-owned budget. Lock acquisition, process
+        // cleanup and operation settlement must consume the same deadline.
+        if let Ok(mut supervisor) =
+            tokio::time::timeout_at(deadline.instant(), self.supervisor.lock()).await
+        {
+            supervisor.stop_all_until(deadline).await;
+        }
         let _ = self
             .operations
-            .wait_until_idle(tokio::time::Instant::now() + SHUTDOWN_OPERATION_WAIT)
+            .wait_until_idle(deadline.instant())
             .await;
+        self.shutdown_complete.cancel();
     }
 
     async fn begin_operation(

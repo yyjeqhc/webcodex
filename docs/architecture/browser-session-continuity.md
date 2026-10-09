@@ -232,3 +232,10 @@ worker restart, ambiguous opener provenance, or attach failure must never rearm 
 The ordinary Share action must not imply this broader consent. Tests must cover
 multiple simultaneous popups, opener replacement, expired leases and consumption
 racing revocation before shipping it.
+
+Native Messaging installer backups use `.json.previous.<sha256>` names. Existing
+`.previous` history is retained. Complete backup bytes are published without
+replacement and synced before replacing the manifest; identical backups are reused,
+while conflicts, symlinks or failed backups stop installation. Inputs are bounded to
+64 KiB. No installed Native Messaging Host update is required solely for this backup
+change; it applies the next time the operator explicitly runs the installer.

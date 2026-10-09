@@ -74,10 +74,12 @@ function connect() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  if (sender.id !== chrome.runtime.id || !['share', 'revoke'].includes(message?.action)) return false;
+  if (sender.id !== chrome.runtime.id || !['status', 'share', 'revoke'].includes(message?.action)) return false;
   (async () => {
     const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
     if (!tab?.id) throw new Error('no_active_tab');
+    if (message.action === 'status') return tabStatus(tab.id);
+    if (message.action === 'share' && native && (tabLease.has(tab.id) || offers.get(tab.id)?.expires > Date.now())) return tabStatus(tab.id);
     if (message.action === 'revoke') {
       // Invalidate consent before awaiting cleanup, including attach operations
       // that have reserved a lease but have not obtained the debugger yet.
@@ -96,10 +98,24 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     await connect();
     offers.set(tab.id, {window: tab.windowId, expires: Date.now() + 600000});
     send({kind: 'offer', tab: tab.id, window: tab.windowId, title: (tab.title ?? '').slice(0, 256), url: tab.url});
-    return {ok: true, message: 'Tab offered. WebCodex can now discover and attach it.'};
+    return tabStatus(tab.id);
   })().then(respond, () => respond({ok: false}));
   return true;
 });
+
+// Read only: opening the popup never creates consent or connects a native host.
+function tabStatus(tab) {
+  if (native && tabLease.has(tab)) {
+    return attaching.has(tab)
+      ? {ok:true, state:'offered', message:'Tab authorized; Attach is in progress.'}
+      : {ok:true, state:'attached', message:'Tab attached. Use WebCodex browsers/pages; sharing again is unnecessary.'};
+  }
+  if (native && offers.get(tab)?.expires > Date.now())
+    return {ok:true, state:'offered', message:'Tab authorized and waiting for Attach. Use WebCodex discover, then attach.'};
+  if (!native && generation > 0)
+    return {ok:true, state:'disconnected', message:'Bridge connection lost. Check the Runner, then Share this tab again.'};
+  return {ok:true, state:'unshared', message:'Tab is not shared. Share authorizes only this tab; new website tabs require their own Share.'};
+}
 
 function requireLease(lease) {
   if (!native || lease.generation !== generation || leases.get(lease.id) !== lease) throw new Error('lease_lost');

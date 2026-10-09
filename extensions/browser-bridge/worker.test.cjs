@@ -68,7 +68,7 @@ function fixture() {
   };
   const request=action => new Promise(resolve => chrome.runtime.onMessage.listeners[0]({action},{id:ID},resolve));
   const share=() => request('share');
-  return {calls,sent,tabs,chrome,port,context,command,share,setActiveTab(id){activeTab=id;},revoke:()=>request('revoke'),setCommandHook(fn){commandHook=fn;},setDetachHook(fn){detachHook=fn;},setGetHook(fn){getHook=fn;},setAttachHook(fn){attachHook=fn;},async cleanup(){await vm.runInContext('disconnect()',context);}};
+  return {calls,sent,tabs,chrome,port,context,command,share,status:()=>request('status'),setActiveTab(id){activeTab=id;},revoke:()=>request('revoke'),setCommandHook(fn){commandHook=fn;},setDetachHook(fn){detachHook=fn;},setGetHook(fn){getHook=fn;},setAttachHook(fn){attachHook=fn;},async cleanup(){await vm.runInContext('disconnect()',context);}};
 }
 test('manifest public key fixes the exact native caller identity',()=>{
   const digest=createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest('hex').slice(0,32);
@@ -271,3 +271,27 @@ for (const method of ['Network.requestWillBeSent', 'Network.responseReceived', '
     } finally { await f.cleanup(); }
   });
 }
+
+test('popup status is read only and repeated Share is idempotent', async () => {
+  const f = fixture(); try {
+    assert.equal((await f.status()).state, 'unshared');
+    assert.equal(f.sent.length, 0);
+    assert.equal((await f.share()).state, 'offered');
+    const offered = f.sent.length;
+    assert.equal((await f.share()).state, 'offered');
+    assert.equal(f.sent.length, offered);
+    await f.command('attach');
+    assert.equal((await f.status()).state, 'attached');
+    assert.equal((await f.share()).state, 'attached');
+    assert.equal(f.sent.filter(m => m.kind === 'offer').length, 1);
+    f.tabs.set(8,{id:8,windowId:9,openerTabId:7,url:'https://example.test/child'});
+    f.setActiveTab(8);
+    assert.equal((await f.status()).state, 'unshared');
+    f.setActiveTab(7);
+    await f.cleanup();
+    assert.equal((await f.status()).state, 'disconnected');
+    assert.equal((await f.share()).state, 'offered');
+    await f.revoke();
+    assert.equal((await f.status()).state, 'unshared');
+  } finally { await f.cleanup(); }
+});

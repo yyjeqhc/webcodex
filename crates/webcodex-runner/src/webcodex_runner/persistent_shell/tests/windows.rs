@@ -115,6 +115,7 @@ fn runner_windows_local_persistent_shell_preserves_state_and_existing_protocol()
     let shell = ShellConfig::default();
     let manager = PersistentShellManager::new(&shell, SshConnectionPool::default());
 
+    let opened_at = std::time::Instant::now();
     let opened = manager.handle(
         &policy,
         &shell,
@@ -123,7 +124,14 @@ fn runner_windows_local_persistent_shell_preserves_state_and_existing_protocol()
         &projects,
         &request("open", "wc_shell_windows_runner", None),
     );
-    assert_eq!(opened.shell_state, "running");
+    assert_eq!(
+        opened.shell_state,
+        "running",
+        "initial open failed: error_code={:?}, error={:?}, elapsed_ms={}",
+        opened.error_code,
+        opened.error,
+        opened_at.elapsed().as_millis(),
+    );
     assert_eq!(opened.shell.as_deref(), Some("powershell"));
 
     let set = manager.handle(

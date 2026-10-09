@@ -31,4 +31,4 @@ export interface PathInventory {
     environment_data_format: number | null;
   } }[];
 }
-export type InventoryDocumentKind = "inventory" | "backup_manifest";
+export type InventoryDocumentKind = "inventory" | "backup_manifest" | "settings_export";

@@ -241,6 +241,10 @@ pub const fn local_shell_supported() -> bool {
     cfg!(any(unix, windows))
 }
 
+#[cfg(test)]
+#[path = "tests/opening.rs"]
+mod opening_tests;
+
 #[cfg(all(test, unix))]
 #[path = "tests/unix.rs"]
 mod tests;

@@ -2,6 +2,8 @@ use super::*;
 use crate::{EnvironmentMode, EnvironmentStore, LocalAccount, RuntimeBinaries, SetupRequest};
 use std::path::PathBuf;
 
+mod settings_export;
+
 fn fixture(local_server: bool, runner: bool) -> (tempfile::TempDir, EnvironmentRecord) {
     let temp = crate::test_tempdir().unwrap();
     let root = temp.path().join("environment");

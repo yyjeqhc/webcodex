@@ -367,7 +367,7 @@ async fn same_package_verification_rejects_an_invalid_installer_target_before_ca
 async fn path_commands_are_read_only_and_manifest_is_explicitly_metadata_only() {
     let temp = tempfile::tempdir().unwrap();
     let directory = temp.path().join("absent-environment");
-    for command in ["paths", "backup-manifest"] {
+    for command in ["paths", "backup-manifest", "settings-export"] {
         let args = vec![
             command.to_string(),
             "--environment-dir".into(),
@@ -378,9 +378,14 @@ async fn path_commands_are_read_only_and_manifest_is_explicitly_metadata_only() 
         let json: serde_json::Value = serde_json::from_str(&result).unwrap();
         if command == "paths" {
             assert_eq!(json["roots"][0]["status"], "missing");
-        } else {
+        } else if command == "backup-manifest" {
             assert_eq!(json["kind"], "manifest_only");
             assert_eq!(json["cannot_restore"], true);
+        } else {
+            assert_eq!(json["kind"], "settings_export");
+            assert_eq!(json["environment"]["service_scope"]["state"], "unknown");
+            assert_eq!(json["desktop_preferences"]["state"], "not_applicable");
+            assert!(json.get("inventory").is_none());
         }
         assert!(!directory.exists());
     }
@@ -393,6 +398,23 @@ async fn path_commands_are_read_only_and_manifest_is_explicitly_metadata_only() 
     ];
     assert!(run(&args).await.is_err());
     assert!(!directory.exists());
+}
+
+#[tokio::test]
+async fn settings_export_rejects_mutation_and_secret_options_before_any_state_creation() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("absent-environment");
+    for option in ["--token-file", "--runner", "--scope", "--include-secrets"] {
+        let args = vec![
+            "settings-export".into(),
+            "--environment-dir".into(),
+            directory.display().to_string(),
+            option.into(),
+            "private-canary".into(),
+        ];
+        assert!(run(&args).await.is_err());
+        assert!(!directory.exists());
+    }
 }
 
 #[test]

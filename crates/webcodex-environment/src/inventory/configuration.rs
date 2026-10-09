@@ -175,6 +175,7 @@ pub struct RunnerLocations {
     pub client_id: Option<String>,
     pub owner: Option<String>,
     pub server_url: Option<String>,
+    pub display_name: Setting<Option<String>>,
 }
 /// TOML parsing matches the Environment's existing Runner-binding projections;
 /// no runtime initialization, registry enumeration or credential projection.
@@ -192,6 +193,7 @@ pub fn inspect_runner_locations(config: &Path, default_registry: &Path) -> Runne
         client_id: None,
         owner: None,
         server_url: None,
+        display_name: Setting::Unknown,
     };
     let text = match configuration_text(config) {
         Ok(text) => text,
@@ -226,11 +228,21 @@ pub fn inspect_runner_locations(config: &Path, default_registry: &Path) -> Runne
         .and_then(toml::Value::as_str)
         .filter(|v| safe_identifier(v))
         .map(str::to_string);
+    result.display_name = match value.get("display_name") {
+        None => Setting::Known { value: None },
+        Some(value) => value
+            .as_str()
+            .filter(|value| settings::safe_display_name(value))
+            .map_or(Setting::Unknown, |value| Setting::Known {
+                value: Some(value.into()),
+            }),
+    };
     let registry = match value.get("project_registry_dir") {
         Some(value) => match value.as_str() {
             Some(value) if !value.is_empty() => PathBuf::from(value),
             _ => {
                 result.registry.status = PathStatus::Invalid;
+                result.display_name = Setting::Unknown;
                 return result;
             }
         },
@@ -340,7 +352,9 @@ pub fn append_runner_configuration_paths(
         locations.registry.status = PathStatus::Unconfirmed;
         locations.registry.canonical_path = None;
         locations.registry.directory_to_open = None;
+        locations.display_name = Setting::Unknown;
     }
+    inventory.settings.device_display_name = locations.display_name;
     add(inventory, locations.registry);
 }
 

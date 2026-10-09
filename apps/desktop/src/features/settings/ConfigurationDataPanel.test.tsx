@@ -73,6 +73,27 @@ describe("configuration location observations", () => {
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "webcodex-path-inventory.json" }));
     expect(desktopApi.exportInventoryDocument).not.toHaveBeenCalled();
   });
+  it("exports selected nonsecret settings using the observed revision and native save chooser", async () => {
+    vi.mocked(save).mockResolvedValue("/selected/settings.json");
+    render(view()); const button = await screen.findByRole("button", { name: "Export nonsecret settings" });
+    expect(screen.getByText(/Unknown values stay unknown/)).toBeVisible();
+    button.focus(); expect(button).toHaveFocus();
+    fireEvent.click(button);
+    await screen.findByText("Nonsecret settings exported");
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "webcodex-settings.json" }));
+    expect(desktopApi.exportInventoryDocument).toHaveBeenCalledExactlyOnceWith("settings_export", "/selected/settings.json", "revision-1");
+  });
+  it("settings export cancellation and stale native revision leave no successful export", async () => {
+    render(view()); const button = await screen.findByRole("button", { name: "Export nonsecret settings" });
+    fireEvent.click(button);
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(desktopApi.exportInventoryDocument).not.toHaveBeenCalled();
+    vi.mocked(save).mockResolvedValue("/selected/settings.json");
+    vi.mocked(desktopApi.exportInventoryDocument).mockRejectedValue({ code: "inventory_changed" });
+    fireEvent.click(button); await screen.findByRole("alert");
+    expect(screen.queryByText("Nonsecret settings exported")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export nonsecret settings" })).not.toBeInTheDocument();
+  });
   it("discards late context responses and clears old paths before the new observation resolves", async () => {
     const pending = deferred<PathInventory>(); vi.mocked(desktopApi.pathInventory).mockReturnValueOnce(pending.promise);
     const rendered = render(view());
@@ -118,6 +139,7 @@ describe("configuration location observations", () => {
     render(view()); await screen.findByRole("button", { name: "Export backup manifest" });
     expect(screen.getByRole("button", { name: "Export backup manifest" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Export path inventory" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Export nonsecret settings" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Refresh locations" })).toBeEnabled();
     expect(screen.getAllByRole("button", { name: "Open location" })[0]).toBeEnabled();
     expect(screen.getByText(/Some locations could not be confirmed/)).toBeVisible();
@@ -133,6 +155,7 @@ describe("configuration location observations", () => {
   it.each(LANGUAGES.map(language => language.value))("renders translated controls in %s", async locale => {
     localStorage.setItem("webcodex.desktop.locale", locale); render(view());
     await screen.findByRole("button", { name: configurationDataText(locale, "manifest") });
+    expect(screen.getByRole("button", { name: configurationDataText(locale, "settings_export") })).toBeVisible();
     for (const row of Object.values(CONFIGURATION_DATA_MESSAGES)) expect(row).toHaveLength(7);
     expect(screen.getByRole("heading", { name: configurationDataText(locale, "title") })).toBeVisible();
   });

@@ -297,6 +297,158 @@ fn context_and_environment_changes_fence_old_actions() {
 }
 
 #[test]
+fn settings_export_uses_only_owned_preferences_and_existing_native_export_guards() {
+    use crate::desktop_locale::DesktopLocale;
+    let mut fixture = Fixture::new();
+    fixture.save_environment(false, true);
+    fixture.config.extra.insert(
+        "secret_extension".into(),
+        serde_json::json!({"token":"secret-canary"}),
+    );
+    fixture.config.update_cache.automatic_download = false;
+    fixture.config.update_cache.latest = Some(crate::updates::ReleaseNotice {
+        version: "secret-canary".into(),
+        runtime_version: "secret-canary".into(),
+        release_url: "https://user:secret-canary@private.invalid".into(),
+        compatibility: webcodex_environment::unified_update::UpdateCompatibility::Unknown,
+    });
+    std::fs::write(&fixture.path, b"secret-canary-raw-file").unwrap();
+    let before = fixture.observe();
+    let request = ExportInventoryRequest {
+        kind: InventoryDocument::SettingsExport,
+        expected_revision: before.revision.clone(),
+        path: fixture.exported("settings.json"),
+    };
+    let preferences = || desktop_preferences(&fixture.config, false, DesktopLocale::EnUs);
+    export_document(&before, &request, preferences).unwrap();
+    let bytes = std::fs::read(&request.path).unwrap();
+    let settings: webcodex_environment::inventory::SettingsExport =
+        serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        settings.desktop_preferences,
+        Setting::Known {
+            value: DesktopPreferences {
+                language: SettingsLanguage::EnUs,
+                automatic_update_download: false,
+            }
+        }
+    );
+    assert!(!String::from_utf8(bytes.clone())
+        .unwrap()
+        .contains("secret-canary"));
+    assert!(export_document(&before, &request, preferences).is_err());
+    assert!(export::write_document(&fixture.path, &bytes, &before).is_err());
+    assert_eq!(
+        std::fs::read(&fixture.path).unwrap(),
+        b"secret-canary-raw-file"
+    );
+    assert!(!fixture.root.join("setup.lock").exists());
+}
+
+#[test]
+fn preference_changes_keep_location_actions_valid_and_export_current_values() {
+    use crate::desktop_locale::DesktopLocale;
+    let mut fixture = Fixture::new();
+    let before = fixture.observe();
+    fixture.config.update_cache.automatic_download =
+        !fixture.config.update_cache.automatic_download;
+    let changed = fixture.observe();
+    assert_eq!(changed.revision, before.revision);
+    assert_eq!(
+        confirmed_location(
+            &changed,
+            &OpenInventoryRequest {
+                entry_id: "desktop.root".into(),
+                expected_revision: before.revision.clone(),
+            }
+        )
+        .unwrap(),
+        fixture.data
+    );
+    for (kind, name) in [
+        (InventoryDocument::Inventory, "inventory.json"),
+        (InventoryDocument::BackupManifest, "manifest.json"),
+    ] {
+        let request = ExportInventoryRequest {
+            kind,
+            expected_revision: before.revision.clone(),
+            path: fixture.exported(name),
+        };
+        export_document(&changed, &request, || {
+            panic!("location documents must not collect Desktop preferences")
+        })
+        .unwrap();
+    }
+    let request = ExportInventoryRequest {
+        kind: InventoryDocument::SettingsExport,
+        expected_revision: before.revision.clone(),
+        path: fixture.exported("current-settings.json"),
+    };
+    export_document(&changed, &request, || {
+        desktop_preferences(&fixture.config, false, DesktopLocale::ZhCn)
+    })
+    .unwrap();
+    let settings: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&request.path).unwrap()).unwrap();
+    assert_eq!(settings["inventory_revision"], before.revision);
+    assert_eq!(
+        settings["desktop_preferences"]["value"]["language"],
+        "zh-CN"
+    );
+    assert_eq!(
+        settings["desktop_preferences"]["value"]["automatic_update_download"],
+        fixture.config.update_cache.automatic_download
+    );
+    fixture.config.runtime_selection_revision += 1;
+    let stale = ExportInventoryRequest {
+        path: fixture.exported("stale-settings.json"),
+        ..request
+    };
+    assert_eq!(
+        export_document(&fixture.observe(), &stale, || {
+            panic!("stale context must fail before preference collection")
+        })
+        .unwrap_err()
+        .code,
+        "inventory_changed"
+    );
+    assert!(!stale.path.exists());
+}
+
+#[test]
+fn all_native_locales_project_constrained_export_values() {
+    use crate::desktop_locale::DesktopLocale;
+    let fixture = Fixture::new();
+    let inventory = fixture.observe();
+    for (locale, language) in [
+        (DesktopLocale::EnUs, "en-US"),
+        (DesktopLocale::ZhCn, "zh-CN"),
+        (DesktopLocale::ZhTw, "zh-TW"),
+        (DesktopLocale::DeDe, "de-DE"),
+        (DesktopLocale::FrFr, "fr-FR"),
+        (DesktopLocale::JaJp, "ja-JP"),
+        (DesktopLocale::KoKr, "ko-KR"),
+    ] {
+        let request = ExportInventoryRequest {
+            kind: InventoryDocument::SettingsExport,
+            expected_revision: inventory.revision.clone(),
+            path: fixture.exported(&format!("settings-{language}.json")),
+        };
+        export_document(&inventory, &request, || {
+            desktop_preferences(&fixture.config, false, locale)
+        })
+        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&request.path).unwrap()).unwrap();
+        assert_eq!(json["desktop_preferences"]["value"]["language"], language);
+    }
+    assert_eq!(
+        desktop_preferences(&fixture.config, true, DesktopLocale::EnUs),
+        Setting::Unknown
+    );
+}
+
+#[test]
 fn build_metadata_uses_allowlisted_fields_and_never_probes_programs() {
     let fixture = Fixture::new();
     let mut build = crate::commands::get_desktop_build_info();

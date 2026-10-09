@@ -73,10 +73,15 @@ export function ConfigurationDataPanel({ state }: { state: DesktopState }) {
     finally { if (valid()) { inFlight.current = null; setBusy(false); } }
   };
   const exportDocument = (kind: InventoryDocumentKind) => act(async valid => {
-    const path = await save({ title: c(kind === "inventory" ? "inventory" : "manifest"), defaultPath: kind === "inventory" ? "webcodex-path-inventory.json" : "webcodex-backup-manifest.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+    const options = {
+      inventory: { title: c("inventory"), defaultPath: "webcodex-path-inventory.json" },
+      backup_manifest: { title: c("manifest"), defaultPath: "webcodex-backup-manifest.json" },
+      settings_export: { title: c("settings_export"), defaultPath: "webcodex-settings.json" },
+    };
+    const path = await save({ ...options[kind], filters: [{ name: "JSON", extensions: ["json"] }] });
     if (!path || !valid()) return null;
     await desktopApi.exportInventoryDocument(kind, path, data!.revision);
-    return "exported";
+    return kind === "settings_export" ? "settings_exported" : "exported";
   });
   const renderEntry = (entry: PathEntry) => {
     const local = entry.status === "present" && (entry.kind === "file" || entry.kind === "directory");
@@ -113,9 +118,11 @@ export function ConfigurationDataPanel({ state }: { state: DesktopState }) {
       <section aria-labelledby="configuration-roots-title"><h3 id="configuration-roots-title">{c("roots")}</h3>{data.roots.length ? data.roots.map(renderEntry) : <p>{c("empty")}</p>}</section>
       <section aria-labelledby="configuration-entries-title"><h3 id="configuration-entries-title">{c("entries")}</h3>{data.entries.length ? data.entries.map(renderEntry) : <p>{c("empty")}</p>}</section>
       <p className="workspace-notice" id="configuration-export-notice">{c("privacy")}</p>
+      <p className="field-help" id="configuration-settings-notice">{c("settings_notice")}</p>
       <div className="shell-actions" aria-describedby="configuration-export-notice">
         <button type="button" className="secondary-button" disabled={exportDisabled} onClick={() => void exportDocument("inventory")}>{c("inventory")}</button>
         <button type="button" className="secondary-button" disabled={exportDisabled} onClick={() => void exportDocument("backup_manifest")}>{c("manifest")}</button>
+        <button type="button" className="secondary-button" disabled={exportDisabled} aria-describedby="configuration-settings-notice" onClick={() => void exportDocument("settings_export")}>{c("settings_export")}</button>
       </div>
     </>}
     {notice && <p role="status">{c(notice)}</p>}

@@ -723,8 +723,9 @@ pub async fn open_inventory_location(
 pub async fn export_inventory_document(
     request: crate::state::ExportInventoryRequest,
     state: State<'_, AppState>,
+    locale: State<'_, crate::desktop_locale::DesktopLocaleState>,
 ) -> DesktopResult<()> {
-    state.export_inventory_document(request).await
+    state.export_inventory_document(request, &locale).await
 }
 
 #[tauri::command]

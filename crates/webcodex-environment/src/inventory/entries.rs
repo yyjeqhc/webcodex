@@ -35,6 +35,7 @@ pub(super) fn role_entries(
             locations.registry.status = PathStatus::Unconfirmed;
             locations.registry.canonical_path = None;
             locations.registry.directory_to_open = None;
+            locations.display_name = Setting::Unknown;
         } else if let Some(relative) = locations
             .registry
             .configured_path
@@ -53,6 +54,7 @@ pub(super) fn role_entries(
             entry.configured_path = Some(relative.clone());
             locations.registry = entry;
         }
+        inventory.settings.device_display_name = locations.display_name;
         add(inventory, locations.registry);
         add(
             inventory,
@@ -68,6 +70,7 @@ pub(super) fn role_entries(
         );
         service_log(inventory, root, "runner", record);
     } else {
+        inventory.settings.device_display_name = Setting::NotApplicable;
         add(
             inventory,
             reference_entry(

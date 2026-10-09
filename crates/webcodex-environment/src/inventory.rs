@@ -5,6 +5,7 @@ mod entries;
 mod manifest;
 mod model;
 mod paths;
+mod settings;
 use crate::storage::{read_private, validate_existing_private_directory};
 use crate::{EnvironmentRecord, SetupJournal};
 pub use configuration::{
@@ -16,6 +17,7 @@ pub use model::*;
 pub use paths::local_path_entry;
 use paths::{admissible_display_path, admissible_path, reference_entry};
 use serde::de::DeserializeOwned;
+pub use settings::*;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
@@ -43,6 +45,7 @@ pub fn empty_environment_inventory() -> PathInventory {
         issues: vec![],
         builds: vec![],
         identities: vec![],
+        settings: SettingsObservation::default(),
     }
 }
 
@@ -53,7 +56,8 @@ pub(super) fn safe_identifier(value: &str) -> bool {
         && !webcodex_core::sensitive_text::secret_like_value(value)
 }
 
-/// Stable revision of the complete projection, excluding observation time. Desktop
+/// Stable revision of the serialized path projection, excluding observation time.
+/// Internal settings observations do not revise location/manifest actions. Desktop
 /// calls this again after adding its own authoritative metadata. Not a capability.
 pub fn recompute_revision(inventory: &mut PathInventory) {
     // Public adapter additions share one bound. Fixed metadata callers can never

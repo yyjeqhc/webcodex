@@ -123,7 +123,9 @@ fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
             "readOnlyHint": false,
             "destructiveHint": true,
             "idempotentHint": false,
-            "openWorldHint": false
+            // The gateway also admits open-world native execution targets.
+            // Its descriptor must conservatively cover their possible effects.
+            "openWorldHint": true
         }),
     }
 }

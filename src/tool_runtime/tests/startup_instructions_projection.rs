@@ -130,7 +130,10 @@ fn instruction_sidecar_budget_preserves_sources_and_local_guidance() {
 #[test]
 fn repository_root_agents_and_builtin_workflow_fit_standard_startup_without_truncation() {
     let body = include_str!("../../../AGENTS.md");
-    let projected_body = body.trim_end_matches('\n');
+    // Instruction projection normalizes lines; Git may check this fixture out
+    // with CRLF on Windows. Keep the complete-content and byte-budget checks.
+    let normalized_body = body.replace("\r\n", "\n");
+    let projected_body = normalized_body.trim_end_matches('\n');
     let snapshot = ProjectInstructionsSnapshot::from_candidates(
         vec![LoadedInstructionCandidate {
             source_scope: InstructionSourceScope::Project,

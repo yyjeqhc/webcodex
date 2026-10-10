@@ -511,6 +511,10 @@ used by the regular Desktop Tunnel. That Tunnel derives the credential from the 
 The flag is ignored for non-loopback binds and all other credential classes; leave it
 unset on network-accessible Servers.
 
+For import-stage diagnostics and exact-host Fake-IP DNS troubleshooting, see
+[Conversation attachment import](CONVERSATION_FILE_IMPORT.md). Resolver changes
+must retain the import trust gates and public-address/pinning protections.
+
 List and revoke clients with `POST /api/oauth/clients/list` and
 `POST /api/oauth/clients/revoke`. OAuth uses the authorization-code flow;
 dynamic client registration, OIDC, and the device-code flow are not

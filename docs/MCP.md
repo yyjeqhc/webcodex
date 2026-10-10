@@ -595,6 +595,9 @@ payloads through model text:
   them as file parameters. The Control downloads the referenced bytes and
   commits them through the existing bounded artifact-write path; callers should
   not construct download URLs or manually Base64-transfer those files.
+  Create document links only from confirmed imported paths after checking
+  destination bytes and SHA-256. See [attachment import](CONVERSATION_FILE_IMPORT.md)
+  for partial-success handling, safe diagnostics and Fake-IP DNS troubleshooting.
 - `inspect_project_artifact` is the preferred Project-to-model/host read surface. Use
   `action=metadata` for existence/size/MIME/digest/image/archive facts,
   `action=inspect` for one bounded snapshot-fenced Base64 segment,

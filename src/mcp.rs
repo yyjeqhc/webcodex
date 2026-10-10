@@ -841,6 +841,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         auth.as_ref(),
         config.as_deref(),
         db.as_deref(),
+        Some(&server_trace_id),
     );
     // Defense-in-depth backstop: every tool bounds its own agent/subprocess
     // waits at <= 124s, so this outer limit never preempts a legitimate inner

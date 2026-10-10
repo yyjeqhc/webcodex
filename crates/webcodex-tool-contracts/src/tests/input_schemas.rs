@@ -1333,7 +1333,7 @@ fn job_terminal_continuation_app_contract_is_exact_wait_plus_private_view_fence_
     )
     .is_ok());
 
-    assert!(!registered_tool_specs()
+    assert!(registered_tool_specs()
         .iter()
         .any(|spec| spec.name == "present_job_terminal_continuation"));
     let present = input_schema_for_tool("present_job_terminal_continuation");

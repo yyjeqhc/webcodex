@@ -69,6 +69,11 @@ must create one; current context owns the recommendation.
 ## Continuation truth and durable boundaries
 
 An MCP App binding proves a message channel, not that confirmation is unnecessary.
+The two continuation presentation tools use static dedicated Direct descriptors;
+their exposure does not enable unattended capability. After arming a card, produce
+a normal final assistant response and let the current turn finalize promptly.
+The card/tool result alone does not end the assistant turn. Observe readiness on
+a later turn rather than waiting in the presenting turn.
 The existing Agent `production_auto_resume_available` and Job terminal
 `automatic_resume_available` booleans are conservative projections: an MCP App
 needs the explicit unattended declaration **and** its existing exact live,
@@ -95,3 +100,12 @@ and conservative Agent/Job readiness without modifying durable records.
 Run focused workflow, context, Agent continuation, Goal and Job terminal tests;
 keep the existing tool-list size/contract checks. No end-to-end claim about the
 Host's current confirmation UI can be made by these local regression tests.
+
+Before an implementation PR claiming restored auto-resume, test the actual branch
+with a real ChatGPT MCP App connection: about 30 seconds, about five minutes in
+the foreground, and about five minutes in a background tab. Preserve timestamps
+and logs for the original final response, durable wake readiness, mounted App
+observation, `ui/message` acceptance, fresh model turn, usable tool runtime, and
+exact consume. Verify no user click or duplicate wake/consume. Preserve any
+`previous Code Mode continuation is no longer available` sequence without a
+silent retry. Host behavior observed in another deployment is not branch acceptance.

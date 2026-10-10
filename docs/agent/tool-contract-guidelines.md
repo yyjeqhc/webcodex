@@ -557,28 +557,35 @@ Runner protocol and domain authority must not churn when that policy changes.
 
 ### Current continuation surface
 
-The current static Host surface does not advertise fresh-turn continuation:
-`wait_for_job_terminal` and `wait_for_agent_events` keep their canonical names,
-input/output contracts, keyed replay, authorization and durable state, but are
-Gateway tools. `present_agent_continuation` and
-`present_job_terminal_continuation` are ModelHidden, never generic Gateway
-presentation targets. Their ToolCalls, handlers, resources and existing hidden
-App protocol remain intact. A cached presentation descriptor follows existing
-admission rules; no old-schema compatibility bypass is added.
+`present_agent_continuation` and `present_job_terminal_continuation` are dedicated
+Direct tools with Continuation reason. On an App-enabled MCP 2026 request their
+descriptors associate the existing Agent and Job continuation resources. Call
+them directly so the Host can mount the card; the generic Gateway rejects App
+presentation. `wait_for_job_terminal` and `wait_for_agent_events` remain Gateway
+tools with their canonical input/output contracts, keyed replay, authorization
+and durable state. App-only binding/dispatch helpers remain ModelHidden and
+protocol-capability gated.
 
 `present_work_result` and `present_goal_plan` remain Direct with Presentation
 reason. `import_host_files` remains Direct with HostIntegration
-reason. No current Direct definition needs Continuation reason. Restore that
-policy explicitly (and presentation visibility), then refresh Host schema if
-fresh-turn support returns; do not couple registration to
-`WEBCODEX_MCP_APP_RESUME_MODE` or `ModelWorkflowPolicy`.
+reason. Refresh cached Host schemas for this static descriptor change. Do not
+couple registration to `WEBCODEX_MCP_APP_RESUME_MODE` or `ModelWorkflowPolicy`.
 
-Generated wait edges use the canonical Gateway wrapper; unavailable presentation
-edges are omitted from schema and value. MCP-added Job carrier suggestions also
-check the canonical Direct policy because they are outside the domain output
-schema. Retained recommended recipes are projected through current static
-visibility so dormant continuation recipes do not recommend unavailable tools.
-App-only protocol descriptors are not ordinary model-tool savings.
+Generated wait edges use the canonical Gateway wrapper; continuation presentation
+edges retain their exact Direct call in schema and value. MCP-added Job carrier
+suggestions require the advertised Direct carrier and a still-waiting, unbound
+wait; triggered or uncertain delivery is not rearmed. Recommended recipes follow
+current static visibility. App-only protocol descriptors are not ordinary
+model-tool savings.
+
+After presenting either card, the model must produce a normal final assistant
+response and let the current turn finalize promptly. The card/tool result alone
+does not end the assistant turn. Do not wait for wake readiness or a follow-up in
+that presenting turn. A later exact read can observe readiness. An operator must
+separately validate the actual Host before declaring `unattended`; the default
+remains `unknown`, and a live binding alone does not establish confirmation-free
+continuation. Dispatch acceptance, a fresh model turn, and exact consume remain
+distinct observations. Preserve uncertain delivery rather than blindly resending.
 
 ### Stable schemas and optional workflow guidance
 

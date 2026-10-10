@@ -802,11 +802,11 @@ mod tests {
     #[test]
     fn continuation_follow_ups_use_current_routes_in_both_schema_and_value() {
         use webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery;
-        for (target, arguments, available) in [
+        for (target, arguments, expected_route) in [
             (
                 "wait_for_job_terminal",
                 json!({"job_id":"wc_job_exact", "idempotency_key":"wait-once"}),
-                true,
+                SuggestedToolCallRoute::Gateway(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME),
             ),
             (
                 "wait_for_agent_events",
@@ -815,19 +815,19 @@ mod tests {
                     "expected_controller_generation":1, "events":[{"kind":"agent_task_terminal", "task_id":"wc_agent_task_qqqqqqqqqqqqqqqq"}],
                     "idempotency_key":"wait-once"
                 }),
-                true,
+                SuggestedToolCallRoute::Gateway(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME),
             ),
             (
                 "present_job_terminal_continuation",
                 json!({"wait_id":"wc_job_wait_qqqqqqqqqqqqqqqq"}),
-                false,
+                SuggestedToolCallRoute::Direct,
             ),
             (
                 "present_agent_continuation",
                 json!({
                     "agent_id":"wc_dagent_qqqqqqqqqqqqqqqq", "endpoint_id":"wc_endpoint_qqqqqqqqqqqqqqqq", "expected_controller_generation":1
                 }),
-                false,
+                SuggestedToolCallRoute::Direct,
             ),
         ] {
             let input = webcodex_tool_contracts::input_schema_for_tool(target);
@@ -844,7 +844,8 @@ mod tests {
             project_suggested_tool_call_schema(&mut schema, &|name| {
                 suggested_tool_call_route(name, false)
             });
-            if available {
+            assert_eq!(suggested_tool_call_route(target, false), expected_route);
+            if matches!(expected_route, SuggestedToolCallRoute::Gateway(_)) {
                 assert_eq!(value["next"]["tool"], ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME);
                 assert_eq!(value["next"]["arguments"]["tool"], target);
                 assert_eq!(value["next"]["arguments"]["arguments"], arguments);
@@ -853,9 +854,12 @@ mod tests {
                     ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
                 );
             } else {
-                assert!(value.get("next").is_none(), "{target}");
-                assert!(schema["properties"].get("next").is_none(), "{target}");
-                assert_eq!(schema["required"], json!([]));
+                assert_eq!(value["next"]["tool"], target);
+                assert_eq!(value["next"]["arguments"], arguments);
+                assert_eq!(
+                    schema["properties"]["next"]["properties"]["tool"]["const"],
+                    target
+                );
             }
             crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&value, &schema)
                 .unwrap();

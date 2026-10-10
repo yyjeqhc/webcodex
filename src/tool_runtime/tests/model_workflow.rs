@@ -85,6 +85,15 @@ fn model_workflow_preferences_fit_the_unchanged_workflow_schema_and_keep_goal_ru
                 assert_eq!(projection["authority"], "model_guidance_only");
                 assert_eq!(projection["guidance"], base["guidance"]);
                 assert_eq!(projection["roles"], base["roles"]);
+                let continuation = projection["model_protocol"]["goal_continuation"]
+                    .as_str()
+                    .unwrap();
+                assert!(continuation.contains("normal final assistant response"));
+                assert!(continuation.contains("let the current turn finalize promptly"));
+                assert!(
+                    continuation.contains("card/tool result alone does not end the assistant turn")
+                );
+                assert!(continuation.contains("Do not wait for wake readiness"));
                 assert!(projection["model_protocol"]["goal_checkpoint"]
                     .as_str()
                     .unwrap()

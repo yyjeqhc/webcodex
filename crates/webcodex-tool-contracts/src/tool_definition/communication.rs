@@ -1,7 +1,7 @@
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_WRITE,
-    TOOL_CATEGORY_COMMUNICATION,
+    adaptive_runtime_direct, def, model_spec, permission_risk, require_all_scopes, ToolDefinition,
+    PERMISSION_RISK_WRITE, TOOL_CATEGORY_COMMUNICATION,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
@@ -192,7 +192,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
 
     require_all_scopes(
-        model_spec(
+        adaptive_runtime_direct(model_spec(
                 def(
                     "present_agent_continuation",
                     super::ToolAuditPolicy::typed_fields(&[
@@ -205,7 +205,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         super::ToolAuditResultField::pointer("dispatch_observation", "/agent_continuation/dispatch_observation"),
                         super::ToolAuditResultField::value("error_kind"),
                     ]),
-                    ModelHidden,
+                    ModelVisible,
                     TOOL_CATEGORY_COMMUNICATION,
                     None,
                     TOOL_PROVIDER_CONTROL,
@@ -222,8 +222,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     false,
                     super::ToolSessionEvidencePolicy::NONE,
                 ),
-                "Present one explicit durable Agent/Endpoint generation as a sparse MCP App continuation controller card. Pass either agent_continuation_ref from rotate_agent_continuation_endpoint or list_agent_identities, or the exact agent_id, endpoint_id, and expected_controller_generation. The ref only names that pinned tuple; it is not a credential, and this read still rechecks owner, lifecycle, and generation. New durable Agent window setup is create_agent_identity -> rotate_agent_continuation_endpoint -> present_agent_continuation; after presentation, yield/end the current model turn promptly so the MCP App can establish and maintain the Host binding. Presentation success is not production auto-resume readiness: verify list_agent_identities.production_auto_resume_available afterward. Presentation is read-only and never itself establishes Host binding or execution authority.",
-            ),
+                "Present one explicit durable Agent/Endpoint generation as a sparse MCP App continuation controller card through this dedicated callable, not call_runtime_tool. Pass either agent_continuation_ref from rotate_agent_continuation_endpoint or list_agent_identities, or the exact agent_id, endpoint_id, and expected_controller_generation. The ref only names that pinned tuple; it is not a credential, and this read still rechecks owner, lifecycle, and generation. New durable Agent window setup is create_agent_identity -> rotate_agent_continuation_endpoint -> present_agent_continuation. After successful presentation, produce a normal final assistant response and let the current turn finalize promptly; the card/tool result alone does not end the assistant turn. Do not wait for readiness in that presenting turn. Presentation success is not production auto-resume readiness: verify list_agent_identities.production_auto_resume_available on a later turn. Readiness requires a separately verified unattended Host and the exact live authorized binding; dispatch acceptance is not a fresh turn or Wake consume. Presentation is read-only and never itself establishes Host binding or execution authority.",
+            ), 146, super::ToolDirectReason::Continuation),
         COMMUNICATION_READ_SCOPES,
     ),
     require_all_scopes(

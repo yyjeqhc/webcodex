@@ -135,7 +135,7 @@ fn tool_recommended_flows_reference_visible_defined_tools() {
 }
 
 #[test]
-fn inactive_continuation_recipes_are_retained_but_not_recommended() {
+fn continuation_recipes_reference_admitted_model_tools() {
     for flow in TOOL_RECOMMENDED_FLOWS {
         assert!(flow
             .tools
@@ -145,7 +145,7 @@ fn inactive_continuation_recipes_are_retained_but_not_recommended() {
     for name in ["agent_continuation_setup", "goal_agent_wait_orchestration"] {
         assert!(TOOL_RECOMMENDED_FLOWS.iter().any(|flow| flow.name == name));
         assert!(
-            !crate::tool_catalog::model_visible_recommended_flows().any(|flow| flow.name == name)
+            crate::tool_catalog::model_visible_recommended_flows().any(|flow| flow.name == name)
         );
     }
 }
@@ -168,7 +168,10 @@ fn agent_continuation_setup_flow_is_focused_and_keeps_resume_tools_separate() {
     let guidance = format!("{}\n{}", flow.summary, flow.manifest_purpose).to_lowercase();
     for phrase in [
         "new durable agent window setup",
-        "yield/end",
+        "normal final assistant response",
+        "let the current turn finalize promptly",
+        "card/tool result alone does not end it",
+        "on a later turn",
         "production_auto_resume_available",
         "presentation success is not host readiness",
     ] {

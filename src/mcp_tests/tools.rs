@@ -2259,16 +2259,25 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
             "present_agent_continuation",
             vec![
                 "create_agent_identity",
-                "yield/end promptly",
+                "normal final assistant response",
+                "card/tool result alone does not finalize the turn",
                 "not wake readiness",
                 "production_auto_resume_available",
             ],
         ),
+        (
+            "present_job_terminal_continuation",
+            vec![
+                "normal final assistant response",
+                "card/tool result alone does not finalize the turn",
+                "never starts or retries execution",
+            ],
+        ),
     ] {
-        let descriptor = if matches!(name, "wait_for_job_terminal" | "present_agent_continuation") {
+        let descriptor = if name == "wait_for_job_terminal" {
             assert!(!tools.iter().any(|tool| tool["name"] == name));
-            // Keep testing dormant/gateway compact copy without asserting that
-            // these tools still occupy the ordinary direct inventory.
+            // Durable wait remains a gateway tool; its exact compact copy
+            // still needs the current-turn guidance.
             let definition = webcodex_tool_contracts::lookup_tool_definition(name).unwrap();
             let mut descriptor = json!({
                 "name": name,

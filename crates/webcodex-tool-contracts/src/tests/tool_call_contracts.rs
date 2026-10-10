@@ -2265,7 +2265,7 @@ fn retired_start_coding_task_is_a_canonical_unknown_tool() {
 
 #[test]
 fn present_agent_continuation_parses_ref_or_explicit_tuple_without_session() {
-    assert!(!registered_tool_specs()
+    assert!(registered_tool_specs()
         .iter()
         .any(|spec| spec.name == "present_agent_continuation"));
     let schema = input_schema_for_tool("present_agent_continuation");

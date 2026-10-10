@@ -721,7 +721,14 @@ fn agent_continuation_setup_descriptions_are_self_guiding_without_direct_expansi
     assert!(present.contains(
         "create_agent_identity -> rotate_agent_continuation_endpoint -> present_agent_continuation"
     ));
-    assert!(present.contains("yield/end the current model turn promptly"));
+    assert!(present.contains("normal final assistant response"));
+    assert!(present.contains("let the current turn finalize promptly"));
+    assert!(present.contains("card/tool result alone does not end the assistant turn"));
+    assert!(present.contains("Do not wait for readiness in that presenting turn"));
+    let job = description("present_job_terminal_continuation");
+    assert!(job.contains("normal final assistant response"));
+    assert!(job.contains("card/tool result alone does not end the assistant turn"));
+    assert!(job.contains("Uncertain delivery is not permission to resend"));
     assert!(present.contains("production_auto_resume_available"));
     assert!(present.contains("not production auto-resume readiness"));
 
@@ -735,8 +742,8 @@ fn agent_continuation_setup_descriptions_are_self_guiding_without_direct_expansi
     assert_eq!(
         lookup_tool_definition("present_agent_continuation")
             .unwrap()
-            .adaptive_runtime_direct_rank(),
-        None
+            .adaptive_runtime_direct_reason(),
+        Some(crate::tool_definition::ToolDirectReason::Continuation)
     );
     assert_eq!(
         lookup_tool_definition("rotate_agent_continuation_endpoint")
@@ -759,7 +766,8 @@ fn retired_endpoint_name_is_absent_from_every_tool_surface() {
 }
 
 #[test]
-fn inactive_continuation_surface_preserves_domain_definitions() {
+fn continuation_presentations_are_direct_without_promoting_durable_waits() {
+    use crate::tool_definition::ToolDirectReason;
     for (name, visible, category, effect) in [
         (
             "wait_for_agent_events",
@@ -775,20 +783,30 @@ fn inactive_continuation_surface_preserves_domain_definitions() {
         ),
         (
             "present_agent_continuation",
-            false,
+            true,
             TOOL_CATEGORY_COMMUNICATION,
             ToolEffect::Observe,
         ),
         (
             "present_job_terminal_continuation",
-            false,
+            true,
             TOOL_CATEGORY_JOB,
             ToolEffect::Observe,
         ),
     ] {
         let definition = lookup_tool_definition(name).expect("retained continuation definition");
         assert_eq!(definition.visibility.is_model_visible(), visible, "{name}");
-        assert_eq!(definition.adaptive_runtime_direct, None, "{name}");
+        let presentation = name.starts_with("present_");
+        assert_eq!(
+            definition.adaptive_runtime_direct_reason(),
+            presentation.then_some(ToolDirectReason::Continuation),
+            "{name}"
+        );
+        assert_eq!(
+            definition.adaptive_runtime_direct_rank().is_some(),
+            presentation,
+            "{name}"
+        );
         assert_eq!(definition.category, category, "{name}");
         assert_eq!(definition.metadata.effect, effect, "{name}");
         assert!(
@@ -802,10 +820,10 @@ fn inactive_continuation_surface_preserves_domain_definitions() {
         );
         assert_eq!(
             definition.metadata.idempotency,
-            if visible {
-                ToolIdempotency::Keyed
-            } else {
+            if presentation {
                 ToolIdempotency::PureRead
+            } else {
+                ToolIdempotency::Keyed
             },
             "{name}"
         );
@@ -822,6 +840,11 @@ fn adaptive_direct_reason_is_independent_of_domain_and_authority() {
         ("import_host_files", ToolDirectReason::HostIntegration),
         ("present_work_result", ToolDirectReason::Presentation),
         ("present_goal_plan", ToolDirectReason::Presentation),
+        ("present_agent_continuation", ToolDirectReason::Continuation),
+        (
+            "present_job_terminal_continuation",
+            ToolDirectReason::Continuation,
+        ),
     ] {
         let definition = lookup_tool_definition(name).unwrap();
         assert_eq!(

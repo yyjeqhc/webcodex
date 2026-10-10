@@ -153,7 +153,7 @@ async fn parent_shutdown_during_initial_poll_settles_startup_owner() {
     // Hold the first real control-plane request without a response. No command
     // has been admitted, and readiness cannot win this cancellation race.
     let (tunnel, _socket) = pending_tunnel(temp.path()).await;
-    let marker = tunnel.guard.clone();
+    let marker = tunnel.guard.path().to_path_buf();
     let abort = tunnel.task.as_ref().unwrap().abort_handle();
     let (polled_tx, polled_rx) = oneshot::channel();
     let (stop_tx, stop_rx) = oneshot::channel();
@@ -190,11 +190,12 @@ async fn startup_shutdown_retains_fence_when_task_cannot_settle_cleanly() {
         let _ = rx.await;
         Err(Error::Uncertain)
     });
+    let marker_path = guard.path().to_path_buf();
     let tunnel = OpenAiTunnel {
         task: Some(task),
         stop: Some(stop),
         health: Health::default(),
-        guard: guard.clone(),
+        guard,
         terminal: None,
     };
     let result = finish_openai_tunnel_startup(
@@ -204,14 +205,14 @@ async fn startup_shutdown_retains_fence_when_task_cannot_settle_cleanly() {
     )
     .await;
     assert_eq!(result.err().unwrap().code, "tunnel_restart_uncertain");
-    assert!(guard.exists(), "uncertain startup must stay fenced");
+    assert!(marker_path.exists(), "uncertain startup must stay fenced");
 }
 
 #[tokio::test]
 async fn startup_readiness_transfers_owner_until_observed_shutdown() {
     let temp = tempfile::tempdir().unwrap();
     let tunnel = idle_tunnel(temp.path()).await;
-    let marker = tunnel.guard.clone();
+    let marker = tunnel.guard.path().to_path_buf();
     let mut tunnel = finish_openai_tunnel_startup(
         tunnel,
         Instant::now() + Duration::from_secs(5),
@@ -229,7 +230,7 @@ async fn startup_readiness_transfers_owner_until_observed_shutdown() {
 async fn startup_timeout_settles_idle_owner_before_reporting_failure() {
     let temp = tempfile::tempdir().unwrap();
     let (tunnel, _socket) = pending_tunnel(temp.path()).await;
-    let marker = tunnel.guard.clone();
+    let marker = tunnel.guard.path().to_path_buf();
     let result = finish_openai_tunnel_startup(tunnel, Instant::now(), std::future::pending()).await;
     assert_eq!(
         result.err().unwrap().code,

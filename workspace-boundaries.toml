@@ -124,6 +124,7 @@ layer = "runtime"
 role = "Shared environment setup, recovery, and persistent service lifecycle."
 normal = [
     "webcodex-core",
+    "webcodex-openai-tunnel",
     "webcodex-process",
     "webcodex-runner-config",
 ]

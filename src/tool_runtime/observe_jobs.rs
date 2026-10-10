@@ -1482,7 +1482,7 @@ mod tests {
             crate::model_surface::adaptive_runtime_gateway_target_route(
                 suggested["tool"].as_str().unwrap()
             ),
-            crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Gateway
+            crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Direct
         );
 
         let invalid_token = batch_item(ObservedJob {

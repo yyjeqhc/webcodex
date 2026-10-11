@@ -34,7 +34,7 @@ impl McpAppResumeMode {
 
     pub(crate) fn guidance(self) -> String {
         let interaction = match self {
-            Self::Unknown => "Host confirmation behavior is unknown. Do not promise unattended continuation. A message channel or dispatch acceptance does not prove a fresh turn; do not create Goal/Agent/Endpoint state just to test it. Preserve pending execution and use exact recovery when the user resumes.",
+            Self::Unknown => "Host confirmation is unknown; do not promise unattended continuation. A channel/dispatch acceptance does not prove a fresh turn. Do not create Goal/Agent/Endpoint state to test it; preserve pending execution and exact recovery on user resume.",
             Self::UserConfirmed => "Host follow-up requires user confirmation. Do not promise unattended continuation or bypass confirmation. Message dispatch acceptance is not a fresh turn. Preserve the existing Job/Wake and its exact recovery path rather than re-dispatching work or repeatedly sending a follow-up.",
             Self::Unattended => "Unattended MCP App follow-up is operator-declared for this deployment, not dynamically proven or guaranteed. Automatic continuation still needs exact authorized controller/Endpoint binding and current readiness; dispatch acceptance is not a fresh turn. Never bypass Host confirmation or retry an uncertain prior effect.",
         };

@@ -1,6 +1,6 @@
 use super::protocol::{
-    bounded_json_summary, bounded_text, wait_outbound_write, AcpOutboundWriter,
-    OutboundInterruption, OutboundWriteOutcome,
+    bounded_text, wait_outbound_write, AcpOutboundWriter, OutboundInterruption,
+    OutboundWriteOutcome,
 };
 #[cfg(unix)]
 use super::protocol::{notification_frame, request_frame};
@@ -584,6 +584,7 @@ fn prompt_count(temp: &TempDir) -> usize {
         .count()
 }
 mod admission;
+mod diagnostics;
 #[cfg(unix)]
 mod dogfood;
 #[cfg(unix)]

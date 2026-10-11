@@ -55,12 +55,15 @@ impl CodingAgentManager {
         entry.snapshot().state.terminal()
     }
 
-    pub(super) fn setup_timeout(&self, run_id: &str, entry: &Arc<RunEntry>) {
+    pub(super) fn setup_timeout(&self, run_id: &str, entry: &Arc<RunEntry>, stage: &'static str) {
+        tracing::warn!(run_id, stage, "ACP setup total deadline expired");
         self.setup_failure(
             run_id,
             entry,
             "coding_agent_setup_timeout",
-            "CodingAgentRun total deadline expired before ACP prompt dispatch",
+            &format!(
+                "CodingAgentRun total deadline expired during ACP {stage} before prompt dispatch"
+            ),
         );
     }
 

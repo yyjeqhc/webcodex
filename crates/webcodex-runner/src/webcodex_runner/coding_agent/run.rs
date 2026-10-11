@@ -1,9 +1,9 @@
 //! One ACP turn, prompt-dispatch fencing, and owned process I/O cleanup.
 
 use super::protocol::{
-    bounded_json_summary, error_frame, normalize_update, notification_frame, permission_event,
-    remaining_run_budget, request_frame, result_frame, wait_outbound_write, AcpOutboundWriter,
-    OutboundInterruption, OutboundWriteOutcome, ReaderEvent,
+    error_frame, normalize_update, notification_frame, permission_event, remaining_run_budget,
+    request_frame, result_frame, wait_outbound_write, AcpFailure, AcpOutboundWriter,
+    OutboundWriteOutcome, ReaderEvent,
 };
 use super::store::DurableDispatchPhase;
 use super::*;
@@ -63,6 +63,11 @@ impl CodingAgentManager {
         let frame = match frame {
             Ok(frame) => frame,
             Err(_) => {
+                AcpFailure::InvalidFrame.diagnose(
+                    run_id,
+                    uncertainty_code,
+                    child.try_wait().ok().flatten(),
+                );
                 self.terminate_run_io(child, outbound);
                 self.mark_lost(run_id, entry, uncertainty_code);
                 return false;
@@ -70,7 +75,8 @@ impl CodingAgentManager {
         };
         let pending = match outbound.start_frame(frame) {
             Ok(pending) => pending,
-            Err(_) => {
+            Err(error) => {
+                error.diagnose(run_id, uncertainty_code, child.try_wait().ok().flatten());
                 self.terminate_run_io(child, outbound);
                 self.mark_lost(run_id, entry, uncertainty_code);
                 return false;
@@ -79,12 +85,9 @@ impl CodingAgentManager {
         let cancelled = observe_cancel.then_some(&entry.cancel_requested);
         match wait_outbound_write(pending, deadline, cancelled, Some(&self.accepting)) {
             OutboundWriteOutcome::Written => true,
-            OutboundWriteOutcome::Failed(_)
-            | OutboundWriteOutcome::Interrupted(
-                OutboundInterruption::Cancelled
-                | OutboundInterruption::Shutdown
-                | OutboundInterruption::Deadline,
-            ) => {
+            outcome => {
+                let failure = outcome.failure().expect("non-written outcome");
+                failure.diagnose(run_id, uncertainty_code, child.try_wait().ok().flatten());
                 self.terminate_run_io(child, outbound);
                 self.mark_lost(run_id, entry, uncertainty_code);
                 false
@@ -100,7 +103,7 @@ impl CodingAgentManager {
         entry: Arc<RunEntry>,
     ) {
         let run_deadline = Instant::now() + Duration::from_secs(request.timeout_secs);
-        if self.pre_prompt_should_stop(&request.run_id, &entry, run_deadline) {
+        if self.pre_prompt_should_stop(&request.run_id, &entry, run_deadline, "initialize") {
             return;
         }
         let mut command = Command::new(&provider.config.executable);
@@ -116,16 +119,21 @@ impl CodingAgentManager {
         let mut child = match ManagedChild::spawn(&mut command) {
             Ok(child) => child,
             Err(error) => {
+                let failure = AcpFailure::SpawnIo(error.kind()).diagnose(
+                    &request.run_id,
+                    "coding_agent_spawn_failed",
+                    None,
+                );
                 self.setup_failure(
                     &request.run_id,
                     &entry,
                     "coding_agent_spawn_failed",
-                    &error.to_string(),
+                    failure.safe_message(),
                 );
                 return;
             }
         };
-        if self.pre_prompt_should_stop(&request.run_id, &entry, run_deadline) {
+        if self.pre_prompt_should_stop(&request.run_id, &entry, run_deadline, "initialize") {
             let _ = child.terminate_tree();
             let _ = child.wait();
             return;
@@ -167,11 +175,12 @@ impl CodingAgentManager {
         let mut outbound = match AcpOutboundWriter::spawn(stdin, &self.worker_threads) {
             Ok(outbound) => outbound,
             Err(error) => {
-                self.setup_failure(
+                self.setup_transport_failure(
                     &request.run_id,
                     &entry,
+                    &mut child,
                     "coding_agent_writer_unavailable",
-                    &error.to_string(),
+                    AcpFailure::WorkerIo(error.kind()),
                 );
                 let _ = child.terminate_tree();
                 let _ = child.wait_tree_exit(ACP_IO_CLEANUP_TIMEOUT);
@@ -203,8 +212,8 @@ impl CodingAgentManager {
                             let _ = tx.send(ReaderEvent::TooLarge);
                             break;
                         }
-                        Err(_) => {
-                            let _ = tx.send(ReaderEvent::Io);
+                        Err(error) => {
+                            let _ = tx.send(ReaderEvent::Io(error.kind()));
                             break;
                         }
                     }
@@ -212,11 +221,12 @@ impl CodingAgentManager {
             }) {
             Ok(handle) => handle,
             Err(error) => {
-                self.setup_failure(
+                self.setup_transport_failure(
                     &request.run_id,
                     &entry,
+                    &mut child,
                     "coding_agent_reader_unavailable",
-                    &error.to_string(),
+                    AcpFailure::WorkerIo(error.kind()),
                 );
                 self.terminate_run_io(&mut child, &mut outbound);
                 return;
@@ -252,12 +262,13 @@ impl CodingAgentManager {
             }),
         ) {
             Ok(frame) => frame,
-            Err(error) => {
-                self.setup_failure(
+            Err(_) => {
+                self.setup_transport_failure(
                     &request.run_id,
                     &entry,
+                    &mut child,
                     "coding_agent_prompt_write_failed",
-                    &error.to_string(),
+                    AcpFailure::InvalidFrame,
                 );
                 self.terminate_run_io(&mut child, &mut outbound);
                 return;
@@ -278,7 +289,7 @@ impl CodingAgentManager {
         }
 
         if remaining_run_budget(run_deadline).is_none() {
-            self.setup_timeout(&request.run_id, &entry);
+            self.setup_timeout(&request.run_id, &entry, "session/prompt");
             drop(prompt_gate);
             self.terminate_run_io(&mut child, &mut outbound);
             return;
@@ -286,19 +297,22 @@ impl CodingAgentManager {
 
         // Irreversible uncertainty barrier: durable state is committed before the
         // first byte of session/prompt can be handed to the sole stdin writer.
-        if let Err(error) = self.persist_phase(
-            &request.run_id,
-            &entry,
-            DurableDispatchPhase::PromptDispatchMayHaveOccurred,
-            CodingAgentRunState::Running,
-            CodingAgentExecutionState::OutcomeUnknown,
-            None,
-        ) {
+        if self
+            .persist_phase(
+                &request.run_id,
+                &entry,
+                DurableDispatchPhase::PromptDispatchMayHaveOccurred,
+                CodingAgentRunState::Running,
+                CodingAgentExecutionState::OutcomeUnknown,
+                None,
+            )
+            .is_err()
+        {
             self.setup_failure(
                 &request.run_id,
                 &entry,
                 "coding_agent_dispatch_barrier_failed",
-                &error,
+                "ACP prompt dispatch barrier could not be persisted",
             );
             drop(prompt_gate);
             self.terminate_run_io(&mut child, &mut outbound);
@@ -312,7 +326,7 @@ impl CodingAgentManager {
             }
         }
         if remaining_run_budget(run_deadline).is_none() {
-            self.setup_timeout(&request.run_id, &entry);
+            self.setup_timeout(&request.run_id, &entry, "session/prompt");
             drop(prompt_gate);
             self.terminate_run_io(&mut child, &mut outbound);
             return;
@@ -336,11 +350,12 @@ impl CodingAgentManager {
             Ok(pending) => pending,
             Err(error) => {
                 *prompt_gate = PromptDispatchGateState::PrePrompt;
-                self.setup_failure(
+                self.setup_transport_failure(
                     &request.run_id,
                     &entry,
+                    &mut child,
                     "coding_agent_prompt_write_failed",
-                    &error,
+                    error,
                 );
                 drop(prompt_gate);
                 self.terminate_run_io(&mut child, &mut outbound);
@@ -366,12 +381,13 @@ impl CodingAgentManager {
                     DurableDispatchPhase::PromptDispatchMayHaveOccurred,
                 );
             }
-            OutboundWriteOutcome::Failed(_)
-            | OutboundWriteOutcome::Interrupted(
-                OutboundInterruption::Cancelled
-                | OutboundInterruption::Shutdown
-                | OutboundInterruption::Deadline,
-            ) => {
+            outcome => {
+                let failure = outcome.failure().expect("non-written outcome");
+                failure.diagnose(
+                    &request.run_id,
+                    "session/prompt",
+                    child.try_wait().ok().flatten(),
+                );
                 self.terminate_run_io(&mut child, &mut outbound);
                 self.mark_lost(
                     &request.run_id,
@@ -551,11 +567,16 @@ impl CodingAgentManager {
                     }
                     if message.get("id").and_then(Value::as_u64) == Some(prompt_id) {
                         if let Some(error) = message.get("error") {
+                            let failure = AcpFailure::rpc_rejected(error).diagnose(
+                                &request.run_id,
+                                "session/prompt",
+                                child.try_wait().ok().flatten(),
+                            );
                             self.finish_failed(
                                 &request.run_id,
                                 &entry,
                                 "prompt_error",
-                                bounded_json_summary(error),
+                                failure.safe_message().to_string(),
                             );
                             self.cleanup_run_io(&mut child, &mut outbound);
                             return;
@@ -630,18 +651,23 @@ impl CodingAgentManager {
                         return;
                     }
                 }
-                Ok(
-                    ReaderEvent::Eof
-                    | ReaderEvent::Malformed
-                    | ReaderEvent::TooLarge
-                    | ReaderEvent::Io,
-                ) => {
+                Ok(event) => {
+                    AcpFailure::from_reader(event).diagnose(
+                        &request.run_id,
+                        "session/prompt",
+                        child.try_wait().ok().flatten(),
+                    );
                     self.terminate_run_io(&mut child, &mut outbound);
                     self.mark_lost(&request.run_id, &entry, "coding_agent_transport_lost");
                     return;
                 }
                 Err(RecvTimeoutError::Timeout) => {
-                    if child.try_wait().ok().flatten().is_some() {
+                    if let Some(status) = child.try_wait().ok().flatten() {
+                        AcpFailure::ProcessExited.diagnose(
+                            &request.run_id,
+                            "session/prompt",
+                            Some(status),
+                        );
                         outbound.close();
                         let _ =
                             outbound.wait_finished_until(Instant::now() + ACP_IO_CLEANUP_TIMEOUT);
@@ -651,6 +677,11 @@ impl CodingAgentManager {
                     }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
+                    AcpFailure::Disconnected.diagnose(
+                        &request.run_id,
+                        "session/prompt",
+                        child.try_wait().ok().flatten(),
+                    );
                     self.terminate_run_io(&mut child, &mut outbound);
                     self.mark_lost(&request.run_id, &entry, "coding_agent_transport_lost");
                     return;

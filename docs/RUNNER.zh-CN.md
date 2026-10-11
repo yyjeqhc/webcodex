@@ -249,6 +249,45 @@ Instruction projection 按共享 sidecar 的 20 KiB 剩余预算裁剪：先移�
 heading 索引，再缩短正文；保留 source identity 和 Project 规则，避免仅因新增全局
 source 就丢弃整份 context material。
 
+## ACP 编程代理：显式启动环境
+
+ACP 代理使用 Runner 启动时配置，子进程先清空环境（`env_clear()`），然后仅通过
+`env_from_env` 复制显式映射的变量。对于已安装的 npm `codex-acp` 适配器，使用其
+已安装可执行文件的绝对路径，并显式选择运行环境，例如：
+
+```toml
+[acp]
+max_concurrent_runs = 1
+
+[[acp.agents]]
+id = "codex"
+name = "Codex"
+executable = "/absolute/path/to/codex-acp"
+args = []
+env_from_env = { PATH = "PATH", HOME = "HOME" }
+```
+
+Runner 自身的 `PATH` 必须包含实际 Node 可执行文件。Homebrew 或 NVM 安装路径
+可能不在默认搜索目录内；映射 `PATH` 无法修复 Runner 自身不完整的环境。请用所需
+环境启动 Runner，修改配置或环境后重启 Runner。Desktop 编辑器提供 **添加缺少的
+PATH/HOME 映射** 操作：仅在用户选择时添加名称，并保留已有来源映射。
+
+`PATH` 和 `HOME` 只是起点，不能保证环境完整。需要用户配置/认证状态时显式映射
+`HOME`；使用自定义 Codex home 时映射 `CODEX_HOME`；按需映射 `HTTPS_PROXY`、
+`SSL_CERT_FILE` 或 `NODE_EXTRA_CA_CERTS` 等代理/证书变量。每个 source 必须存在
+于 Runner 环境，否则会在代理启动前失败。映射私密状态或凭据会将相应访问权限
+委托给该代理；变量值不会进入 Desktop 配置或 Server 通告。
+
+npm 适配器默认使用包内 Codex，它与系统 `codex` 命令不同。若通过 `CODEX_PATH`
+选择其他 Codex，必须显式添加 `CODEX_PATH = "CODEX_PATH"` 映射，并在 Runner
+环境中提供该 source。
+
+Linux 等价复现中，`codex-acp` **2.1.1** 搭配包内 Codex **0.159.3**，缺少 `PATH`
+时在 ACP `initialize` 之前以 **127** 退出；显式映射包含 Node 的 Runner `PATH`
+后初始化通过。这没有确定原报告者的环境，也未验证 macOS，不能据此认定所有
+启动失败均已解决。生命周期与配置边界见
+[ACP run contract](agent/acp-coding-agent-run.md#6-runner-owned-acp-provider-configuration)。
+
 ## 本地 MCP provider
 
 Runner 可以直接托管供 WebCodex 内建 MCP gateway 使用的 persistent stdio MCP provider：

@@ -4,11 +4,11 @@ use super::*;
 
 struct OutboundWriteRequest {
     frame: Vec<u8>,
-    completion: mpsc::SyncSender<Result<(), String>>,
+    completion: mpsc::SyncSender<Result<(), AcpFailure>>,
 }
 
 pub(super) struct PendingOutboundWrite {
-    completion: Receiver<Result<(), String>>,
+    completion: Receiver<Result<(), AcpFailure>>,
 }
 
 pub(super) struct AcpOutboundWriter {
@@ -45,7 +45,7 @@ impl AcpOutboundWriter {
                     let result = sink
                         .write_all(&request.frame)
                         .and_then(|_| sink.flush())
-                        .map_err(|error| error.to_string());
+                        .map_err(|error| AcpFailure::WriteIo(error.kind()));
                     let failed = result.is_err();
                     let _ = request.completion.send(result);
                     if failed {
@@ -60,19 +60,17 @@ impl AcpOutboundWriter {
         })
     }
 
-    pub(super) fn start_frame(&self, frame: Vec<u8>) -> Result<PendingOutboundWrite, String> {
+    pub(super) fn start_frame(&self, frame: Vec<u8>) -> Result<PendingOutboundWrite, AcpFailure> {
         let requests = self
             .requests
             .as_ref()
-            .ok_or_else(|| "ACP outbound writer is closed".to_string())?;
+            .ok_or(AcpFailure::WriterUnavailable)?;
         let (completion, receiver) = mpsc::sync_channel(1);
         requests
             .try_send(OutboundWriteRequest { frame, completion })
             .map_err(|error| match error {
-                mpsc::TrySendError::Full(_) => "ACP outbound writer is busy".to_string(),
-                mpsc::TrySendError::Disconnected(_) => {
-                    "ACP outbound writer is unavailable".to_string()
-                }
+                mpsc::TrySendError::Full(_) => AcpFailure::WriterBusy,
+                mpsc::TrySendError::Disconnected(_) => AcpFailure::WriterUnavailable,
             })?;
         Ok(PendingOutboundWrite {
             completion: receiver,
@@ -120,8 +118,19 @@ pub(super) enum OutboundInterruption {
 
 pub(super) enum OutboundWriteOutcome {
     Written,
-    Failed(String),
+    Failed(AcpFailure),
     Interrupted(OutboundInterruption),
+}
+
+impl OutboundWriteOutcome {
+    pub(super) fn failure(self) -> Option<AcpFailure> {
+        match self {
+            Self::Written => None,
+            Self::Failed(failure) => Some(failure),
+            Self::Interrupted(OutboundInterruption::Deadline) => Some(AcpFailure::TimedOut),
+            Self::Interrupted(_) => Some(AcpFailure::Interrupted),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -130,7 +139,106 @@ pub(super) enum ReaderEvent {
     Eof,
     Malformed,
     TooLarge,
-    Io,
+    Io(std::io::ErrorKind),
+}
+
+/// Runner-private diagnostic causes. Provider text and raw OS errors never
+/// become terminal messages, durable records, or Server observations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AcpFailure {
+    ProcessExited,
+    OutputClosed,
+    Malformed,
+    TooLarge,
+    ReadIo(std::io::ErrorKind),
+    WriteIo(std::io::ErrorKind),
+    SpawnIo(std::io::ErrorKind),
+    WorkerIo(std::io::ErrorKind),
+    WriterUnavailable,
+    WriterBusy,
+    TimedOut,
+    Interrupted,
+    Disconnected,
+    RpcRejected(Option<i64>),
+    MissingResult,
+    InvalidFrame,
+}
+
+impl AcpFailure {
+    pub(super) fn from_reader(event: ReaderEvent) -> Self {
+        match event {
+            ReaderEvent::Eof => Self::OutputClosed,
+            ReaderEvent::Malformed => Self::Malformed,
+            ReaderEvent::TooLarge => Self::TooLarge,
+            ReaderEvent::Io(kind) => Self::ReadIo(kind),
+            ReaderEvent::Message(_) => unreachable!("messages are handled before transport faults"),
+        }
+    }
+
+    pub(super) fn rpc_rejected(error: &Value) -> Self {
+        Self::RpcRejected(error.get("code").and_then(Value::as_i64))
+    }
+
+    pub(super) fn safe_message(self) -> &'static str {
+        match self {
+            Self::ProcessExited => "ACP process exited before responding; check the executable and explicit Runner environment mappings",
+            Self::OutputClosed => "ACP stdout closed before responding; check the executable and explicit Runner environment mappings",
+            Self::Malformed => "ACP returned malformed JSON",
+            Self::TooLarge => "ACP message exceeded the size limit",
+            Self::ReadIo(_) => "ACP stdout read failed",
+            Self::WriteIo(_) => "ACP stdin write failed",
+            Self::SpawnIo(_) => "ACP process could not start; check the executable and explicit Runner environment mappings",
+            Self::WorkerIo(_) => "ACP I/O worker could not start",
+            Self::WriterUnavailable => "ACP stdin writer is unavailable",
+            Self::WriterBusy => "ACP stdin writer is busy",
+            Self::TimedOut => "ACP request timed out",
+            Self::Interrupted => "ACP setup interrupted",
+            Self::Disconnected => "ACP transport reader disconnected",
+            Self::RpcRejected(_) => "ACP provider rejected the request",
+            Self::MissingResult => "ACP response is missing its result",
+            Self::InvalidFrame => "ACP request could not be encoded within the message limit",
+        }
+    }
+
+    /// Record only bounded, controlled facts on the Runner, before cleanup can
+    /// create an exit status of its own. EOF alone does not prove process exit.
+    pub(super) fn diagnose(
+        self,
+        run_id: &str,
+        stage: &str,
+        status: Option<std::process::ExitStatus>,
+    ) -> Self {
+        let failure = if status.is_some()
+            && matches!(
+                self,
+                Self::OutputClosed | Self::WriterUnavailable | Self::WriteIo(_)
+            ) {
+            Self::ProcessExited
+        } else {
+            self
+        };
+        let io_kind = match self {
+            Self::ReadIo(kind)
+            | Self::WriteIo(kind)
+            | Self::SpawnIo(kind)
+            | Self::WorkerIo(kind) => Some(kind),
+            _ => None,
+        };
+        let rpc_code = match self {
+            Self::RpcRejected(code) => code,
+            _ => None,
+        };
+        #[cfg(unix)]
+        let exit_signal = {
+            use std::os::unix::process::ExitStatusExt;
+            status.and_then(|status| status.signal())
+        };
+        #[cfg(not(unix))]
+        let exit_signal: Option<i32> = None;
+        tracing::warn!(run_id, stage, reason = failure.safe_message(), ?io_kind, ?rpc_code,
+            exit_code = ?status.and_then(|status| status.code()), ?exit_signal, "ACP request failed");
+        failure
+    }
 }
 
 pub(super) fn remaining_run_budget(run_deadline: Instant) -> Option<Duration> {
@@ -153,9 +261,7 @@ pub(super) fn wait_outbound_write(
             Ok(Ok(())) => return OutboundWriteOutcome::Written,
             Ok(Err(error)) => return OutboundWriteOutcome::Failed(error),
             Err(mpsc::TryRecvError::Disconnected) => {
-                return OutboundWriteOutcome::Failed(
-                    "ACP outbound writer disconnected before acknowledgement".to_string(),
-                );
+                return OutboundWriteOutcome::Failed(AcpFailure::WriterUnavailable);
             }
             Err(mpsc::TryRecvError::Empty) => {}
         }
@@ -174,9 +280,7 @@ pub(super) fn wait_outbound_write(
             Ok(Err(error)) => return OutboundWriteOutcome::Failed(error),
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => {
-                return OutboundWriteOutcome::Failed(
-                    "ACP outbound writer disconnected before acknowledgement".to_string(),
-                );
+                return OutboundWriteOutcome::Failed(AcpFailure::WriterUnavailable);
             }
         }
     }
@@ -187,15 +291,15 @@ pub(super) fn wait_response(
     id: u64,
     timeout: Duration,
     interrupted: Option<&AtomicBool>,
-) -> Result<Value, String> {
+) -> Result<Value, AcpFailure> {
     let deadline = Instant::now() + timeout;
     loop {
         if interrupted.is_some_and(|flag| flag.load(Ordering::Acquire)) {
-            return Err("ACP setup interrupted".to_string());
+            return Err(AcpFailure::Interrupted);
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            return Err("ACP request timed out".to_string());
+            return Err(AcpFailure::TimedOut);
         }
         match rx.recv_timeout(remaining.min(Duration::from_millis(200))) {
             Ok(ReaderEvent::Message(message)) => {
@@ -203,23 +307,16 @@ pub(super) fn wait_response(
                     continue;
                 }
                 if let Some(error) = message.get("error") {
-                    return Err(format!(
-                        "ACP request failed: {}",
-                        bounded_json_summary(error)
-                    ));
+                    return Err(AcpFailure::rpc_rejected(error));
                 }
                 return message
                     .get("result")
                     .cloned()
-                    .ok_or_else(|| "ACP response missing result".to_string());
+                    .ok_or(AcpFailure::MissingResult);
             }
-            Ok(
-                ReaderEvent::Eof | ReaderEvent::Malformed | ReaderEvent::TooLarge | ReaderEvent::Io,
-            ) => return Err("ACP transport failed".to_string()),
+            Ok(event) => return Err(AcpFailure::from_reader(event)),
             Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err("ACP transport disconnected".to_string())
-            }
+            Err(RecvTimeoutError::Disconnected) => return Err(AcpFailure::Disconnected),
         }
     }
 }
@@ -360,8 +457,4 @@ pub(super) fn bounded_text(value: &str) -> String {
     bounded.push_str(SUFFIX);
     debug_assert!(bounded.len() <= MAX);
     bounded
-}
-pub(super) fn bounded_json_summary(value: &Value) -> String {
-    let text = serde_json::to_string(value).unwrap_or_else(|_| "invalid_json".to_string());
-    bounded_text(&text)
 }

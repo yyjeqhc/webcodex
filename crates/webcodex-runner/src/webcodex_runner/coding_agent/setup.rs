@@ -2,7 +2,7 @@
 
 use super::protocol::{
     bounded_setup_wait, remaining_run_budget, request_frame, wait_outbound_write, wait_response,
-    AcpOutboundWriter, OutboundInterruption, OutboundWriteOutcome, ReaderEvent,
+    AcpFailure, AcpOutboundWriter, OutboundInterruption, OutboundWriteOutcome, ReaderEvent,
 };
 use super::*;
 
@@ -72,17 +72,31 @@ fn config_params(session_id: &str, key: &str, value: &CodingAgentConfigValue) ->
     }
 }
 impl CodingAgentManager {
+    pub(super) fn setup_transport_failure(
+        &self,
+        run_id: &str,
+        entry: &Arc<RunEntry>,
+        child: &mut ManagedChild,
+        code: &str,
+        failure: AcpFailure,
+    ) {
+        let status = child.try_wait().ok().flatten();
+        let failure = failure.diagnose(run_id, code, status);
+        self.setup_failure(run_id, entry, code, failure.safe_message());
+    }
+
     pub(super) fn pre_prompt_should_stop(
         &self,
         run_id: &str,
         entry: &Arc<RunEntry>,
         run_deadline: Instant,
+        stage: &'static str,
     ) -> bool {
         if self.pre_prompt_interrupted(run_id, entry) {
             return true;
         }
         if remaining_run_budget(run_deadline).is_none() {
-            self.setup_timeout(run_id, entry);
+            self.setup_timeout(run_id, entry, stage);
             return true;
         }
         false
@@ -97,16 +111,17 @@ impl CodingAgentManager {
         frame: std::io::Result<Vec<u8>>,
         run_deadline: Instant,
         failure_code: &str,
-        failure_message: &str,
+        stage: &'static str,
     ) -> bool {
         let frame = match frame {
             Ok(frame) => frame,
-            Err(error) => {
+            Err(_) => {
+                let failure = AcpFailure::InvalidFrame.diagnose(run_id, failure_code, None);
                 self.setup_failure(
                     run_id,
                     entry,
                     failure_code,
-                    &format!("{failure_message}: {error}"),
+                    &format!("ACP {stage}: {}", failure.safe_message()),
                 );
                 self.terminate_run_io(child, outbound);
                 return false;
@@ -115,12 +130,17 @@ impl CodingAgentManager {
         let pending = match outbound.start_frame(frame) {
             Ok(pending) => pending,
             Err(error) => {
-                if !self.pre_prompt_should_stop(run_id, entry, run_deadline) {
+                if !self.pre_prompt_should_stop(run_id, entry, run_deadline, stage) {
                     self.setup_failure(
                         run_id,
                         entry,
                         failure_code,
-                        &format!("{failure_message}: {error}"),
+                        &format!(
+                            "ACP {stage}: {}",
+                            error
+                                .diagnose(run_id, failure_code, child.try_wait().ok().flatten())
+                                .safe_message()
+                        ),
                     );
                 }
                 self.terminate_run_io(child, outbound);
@@ -135,19 +155,24 @@ impl CodingAgentManager {
         ) {
             OutboundWriteOutcome::Written => true,
             OutboundWriteOutcome::Failed(error) => {
-                if !self.pre_prompt_should_stop(run_id, entry, run_deadline) {
+                if !self.pre_prompt_should_stop(run_id, entry, run_deadline, stage) {
                     self.setup_failure(
                         run_id,
                         entry,
                         failure_code,
-                        &format!("{failure_message}: {error}"),
+                        &format!(
+                            "ACP {stage}: {}",
+                            error
+                                .diagnose(run_id, failure_code, child.try_wait().ok().flatten())
+                                .safe_message()
+                        ),
                     );
                 }
                 self.terminate_run_io(child, outbound);
                 false
             }
             OutboundWriteOutcome::Interrupted(OutboundInterruption::Deadline) => {
-                self.setup_timeout(run_id, entry);
+                self.setup_timeout(run_id, entry, stage);
                 self.terminate_run_io(child, outbound);
                 false
             }
@@ -177,7 +202,7 @@ impl CodingAgentManager {
         value: &CodingAgentConfigValue,
         forced: bool,
     ) -> bool {
-        if self.pre_prompt_should_stop(run_id, entry, run_deadline) {
+        if self.pre_prompt_should_stop(run_id, entry, run_deadline, "session/set_config_option") {
             self.terminate_run_io(child, outbound);
             return false;
         }
@@ -253,16 +278,12 @@ impl CodingAgentManager {
             } else {
                 "coding_agent_config_write_failed"
             },
-            if forced {
-                "failed to write Runner-enforced session/set_config_option"
-            } else {
-                "failed to write session/set_config_option"
-            },
+            "session/set_config_option",
         ) {
             return false;
         }
         let Some(config_wait) = bounded_setup_wait(run_deadline) else {
-            self.setup_timeout(run_id, entry);
+            self.setup_timeout(run_id, entry, "session/set_config_option");
             self.terminate_run_io(child, outbound);
             return false;
         };
@@ -270,23 +291,29 @@ impl CodingAgentManager {
         {
             Ok(result) => result,
             Err(error) => {
-                if !self.pre_prompt_should_stop(run_id, entry, run_deadline) {
-                    self.setup_failure(
+                if !self.pre_prompt_should_stop(
+                    run_id,
+                    entry,
+                    run_deadline,
+                    "session/set_config_option",
+                ) {
+                    self.setup_transport_failure(
                         run_id,
                         entry,
+                        child,
                         if forced {
                             "coding_agent_forced_config_failed"
                         } else {
                             "coding_agent_config_failed"
                         },
-                        &error,
+                        error,
                     );
                 }
                 self.terminate_run_io(child, outbound);
                 return false;
             }
         };
-        if self.pre_prompt_should_stop(run_id, entry, run_deadline) {
+        if self.pre_prompt_should_stop(run_id, entry, run_deadline, "session/set_config_option") {
             self.terminate_run_io(child, outbound);
             return false;
         }
@@ -345,7 +372,7 @@ impl CodingAgentManager {
         run_deadline: Instant,
     ) -> Option<(String, u64)> {
         let mut next_id = 1u64;
-        if self.pre_prompt_should_stop(&request.run_id, entry, run_deadline) {
+        if self.pre_prompt_should_stop(&request.run_id, entry, run_deadline, "initialize") {
             self.terminate_run_io(child, outbound);
             return None;
         }
@@ -367,12 +394,12 @@ impl CodingAgentManager {
             ),
             run_deadline,
             "coding_agent_initialize_write_failed",
-            "failed to write initialize",
+            "initialize",
         ) {
             return None;
         }
         let Some(initialize_wait) = bounded_setup_wait(run_deadline) else {
-            self.setup_timeout(&request.run_id, entry);
+            self.setup_timeout(&request.run_id, entry, "initialize");
             self.terminate_run_io(child, outbound);
             return None;
         };
@@ -384,19 +411,21 @@ impl CodingAgentManager {
         ) {
             Ok(value) => value,
             Err(error) => {
-                if !self.pre_prompt_should_stop(&request.run_id, entry, run_deadline) {
-                    self.setup_failure(
+                if !self.pre_prompt_should_stop(&request.run_id, entry, run_deadline, "initialize")
+                {
+                    self.setup_transport_failure(
                         &request.run_id,
                         entry,
+                        child,
                         "coding_agent_initialize_failed",
-                        &error,
+                        error,
                     );
                 }
                 self.terminate_run_io(child, outbound);
                 return None;
             }
         };
-        if self.pre_prompt_should_stop(&request.run_id, entry, run_deadline) {
+        if self.pre_prompt_should_stop(&request.run_id, entry, run_deadline, "initialize") {
             self.terminate_run_io(child, outbound);
             return None;
         }
@@ -411,7 +440,7 @@ impl CodingAgentManager {
             return None;
         }
 
-        if self.pre_prompt_should_stop(&request.run_id, entry, run_deadline) {
+        if self.pre_prompt_should_stop(&request.run_id, entry, run_deadline, "initialize") {
             self.terminate_run_io(child, outbound);
             return None;
         }
@@ -433,12 +462,12 @@ impl CodingAgentManager {
             ),
             run_deadline,
             "coding_agent_session_new_write_failed",
-            "failed to write session/new",
+            "session/new",
         ) {
             return None;
         }
         let Some(session_new_wait) = bounded_setup_wait(run_deadline) else {
-            self.setup_timeout(&request.run_id, entry);
+            self.setup_timeout(&request.run_id, entry, "session/new");
             self.terminate_run_io(child, outbound);
             return None;
         };
@@ -446,19 +475,25 @@ impl CodingAgentManager {
             match wait_response(rx, new_id, session_new_wait, Some(&entry.cancel_requested)) {
                 Ok(value) => value,
                 Err(error) => {
-                    if !self.pre_prompt_should_stop(&request.run_id, entry, run_deadline) {
-                        self.setup_failure(
+                    if !self.pre_prompt_should_stop(
+                        &request.run_id,
+                        entry,
+                        run_deadline,
+                        "session/new",
+                    ) {
+                        self.setup_transport_failure(
                             &request.run_id,
                             entry,
+                            child,
                             "coding_agent_session_new_failed",
-                            &error,
+                            error,
                         );
                     }
                     self.terminate_run_io(child, outbound);
                     return None;
                 }
             };
-        if self.pre_prompt_should_stop(&request.run_id, entry, run_deadline) {
+        if self.pre_prompt_should_stop(&request.run_id, entry, run_deadline, "session/new") {
             self.terminate_run_io(child, outbound);
             return None;
         }

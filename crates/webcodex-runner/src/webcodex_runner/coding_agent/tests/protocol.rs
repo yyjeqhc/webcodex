@@ -292,11 +292,6 @@ fn bounded_text_never_exceeds_utf8_byte_budget() {
             assert!(output.ends_with('…'));
         }
     }
-
-    let json = json!({"body": "界".repeat(max * 2)});
-    let summary = bounded_json_summary(&json);
-    assert!(summary.len() <= max);
-    assert!(summary.ends_with('…'));
 }
 
 #[test]

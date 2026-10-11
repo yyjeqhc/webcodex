@@ -58,7 +58,7 @@ fn setup_timeout_persistence_failure_is_failed_not_started() {
     );
     manager.store.fail_next_terminal_writes(1);
 
-    manager.setup_timeout(run, &entry);
+    manager.setup_timeout(run, &entry, "initialize");
 
     assert_terminal_persistence_uncertain(
         &entry,

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, queryHelpers, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LocaleProvider } from "../i18n/locale";
 import { DesktopMantineProvider } from "../components/DesktopMantineProvider";
@@ -84,6 +84,79 @@ describe("Desktop Coding Agents", () => {
     await waitFor(() => expect(api.restartOwnedRunner).toHaveBeenCalledExactlyOnceWith(target));
     await waitFor(() => expect(within(screen.getByRole("article", { name: "Pi Agent" })).getByText("Configured · Active")).toBeInTheDocument());
     expect(query).toHaveBeenLastCalledWith({ kind: "runner_details" });
+  });
+
+  it("leaves environment empty until the user chooses the PATH/HOME shortcut and saves only names", async () => {
+    const initial = state(); initial.coding_agents = { ...EMPTY_CODING_AGENTS, profiles: [profile] };
+    api.saveCodingAgent.mockResolvedValue(initial);
+    render(<Harness initial={initial} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Pi Agent" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/ACP agents start with a cleared environment/)).toBeVisible();
+    expect(within(dialog).queryByLabelText("Child Environment Variable 1")).not.toBeInTheDocument();
+    expect(api.saveCodingAgent).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Missing PATH/HOME Mappings" }));
+    expect(within(dialog).getByLabelText("Child Environment Variable 1")).toBeVisible();
+    expect(within(dialog).getByLabelText("Child Environment Variable 1")).toHaveValue("PATH");
+    expect(within(dialog).getByLabelText("Runner Environment Variable 2")).toHaveValue("HOME");
+    expect(within(dialog).getByRole("button", { name: "Add Missing PATH/HOME Mappings" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.saveCodingAgent).toHaveBeenCalledWith(expect.objectContaining({ profile: { ...profile, env_from_env: { PATH: "PATH", HOME: "HOME" } } })));
+    expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+  });
+
+  it("saves no implicit environment mappings when the shortcut is not selected", async () => {
+    const initial = state(); initial.coding_agents = { ...EMPTY_CODING_AGENTS, profiles: [profile] };
+    api.saveCodingAgent.mockResolvedValue(initial);
+    render(<Harness initial={initial} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Pi Agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.saveCodingAgent).toHaveBeenCalledWith(expect.objectContaining({ profile })));
+  });
+
+  it("preserves case-insensitive destinations and user-entered Runner sources while adding only missing names", async () => {
+    const initial = state(); initial.coding_agents = { ...EMPTY_CODING_AGENTS, profiles: [{ ...profile, env_from_env: { path: "CUSTOM_PATH" } }] };
+    api.saveCodingAgent.mockResolvedValue(initial);
+    render(<Harness initial={initial} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Pi Agent" }));
+    fireEvent.click(screen.getByText("Advanced"));
+    fireEvent.change(screen.getByLabelText("Runner Environment Variable 1"), { target: { value: "MY_NODE_PATH" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Missing PATH/HOME Mappings" }));
+    expect(screen.getByLabelText("Child Environment Variable 1")).toHaveValue("path");
+    expect(screen.getByLabelText("Runner Environment Variable 1")).toHaveValue("MY_NODE_PATH");
+    expect(screen.getByLabelText("Child Environment Variable 2")).toHaveValue("HOME");
+    expect(screen.queryByLabelText("Child Environment Variable 3")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.saveCodingAgent).toHaveBeenCalledWith(expect.objectContaining({ profile: { ...profile, env_from_env: { path: "MY_NODE_PATH", HOME: "HOME" } } })));
+  });
+
+  it("adds only the available mapping slot, then allows the remaining name after a row is removed", async () => {
+    const env = Object.fromEntries(Array.from({ length: 63 }, (_, i) => [`VAR_${i}`, `SOURCE_${i}`]));
+    const initial = state(); initial.coding_agents = { ...EMPTY_CODING_AGENTS, profiles: [{ ...profile, env_from_env: env }] };
+    api.saveCodingAgent.mockResolvedValue(initial);
+    render(<Harness initial={initial} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Pi Agent" }));
+    const dialog = screen.getByRole("dialog");
+    // getByLabelText rebuilds jsdom's document-wide label associations after each
+    // row mutation. Query the existing aria-labels directly for this large form.
+    const queryControl = (label: string) => queryHelpers.queryByAttribute("aria-label", dialog, label);
+    const control = (label: string) => {
+      const element = queryControl(label);
+      if (!element) throw queryHelpers.getElementError(`Missing control: ${label}`, dialog);
+      return element;
+    };
+    fireEvent.click(control("Add Missing PATH/HOME Mappings"));
+    expect(control("Child Environment Variable 64")).toHaveValue("PATH");
+    expect(queryControl("Child Environment Variable 65")).not.toBeInTheDocument();
+    expect(control("Add Missing PATH/HOME Mappings")).toBeDisabled();
+    expect(control("Add Environment Mapping")).toBeDisabled();
+    fireEvent.click(control("Remove Environment Mapping 1"));
+    fireEvent.click(control("Add Missing PATH/HOME Mappings"));
+    expect(control("Child Environment Variable 65")).toHaveValue("HOME");
+    expect(control("Add Missing PATH/HOME Mappings")).toBeDisabled();
+    fireEvent.click(control("Save"));
+    const { VAR_0: _removed, ...remaining } = env;
+    await waitFor(() => expect(api.saveCodingAgent).toHaveBeenCalledWith(expect.objectContaining({ profile: { ...profile, env_from_env: { ...remaining, PATH: "PATH", HOME: "HOME" } } })));
   });
 
   it("never invents Active from desired state, another Runner or a stale provider name", async () => {

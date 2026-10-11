@@ -31,6 +31,16 @@ export function CodingAgentEditor({ profile, revision, target, globals, onState,
   const [timeout, setTimeout] = useState(globals?.permission_timeout_secs ?? 5);
   const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false); const nextRow = useRef(mapping.length);
+  const advanced = useRef<HTMLDetailsElement>(null);
+  const missingEnvironment = ["PATH", "HOME"].filter(variable => !mapping.some(field => field.child.trim().toUpperCase() === variable));
+  const addRuntimeEnvironment = () => {
+    if (busy) return;
+    setMapping(fields => {
+      const missing = ["PATH", "HOME"].filter(variable => !fields.some(field => field.child.trim().toUpperCase() === variable));
+      return [...fields, ...missing.slice(0, Math.max(0, 64 - fields.length)).map(variable => ({ row: nextRow.current++, child: variable, runner: variable }))];
+    });
+    if (advanced.current) advanced.current.open = true;
+  };
   const updateMapping = (row: number, patch: Partial<Mapping>) => setMapping(fields => fields.map(field => field.row === row ? { ...field, ...patch } : field));
   const submit = async (event: FormEvent) => {
     event.preventDefault(); if (submitting.current) return;
@@ -70,7 +80,9 @@ export function CodingAgentEditor({ profile, revision, target, globals, onState,
       <div className="field-group"><label htmlFor="coding-agent-executable">{r("executable")}</label><input id="coding-agent-executable" aria-label="Executable" value={executable} onChange={event => setExecutable(event.target.value)} maxLength={1024} required disabled={busy} spellCheck={false} /><button type="button" className="text-button" aria-label="Choose Executable" disabled={busy} onClick={() => void chooseExecutable()}>{p("open")}</button></div>
       <div className="field-group"><label htmlFor="coding-agent-arguments">{c("arguments")}</label><textarea id="coding-agent-arguments" aria-label="Arguments" value={args} onChange={event => setArgs(event.target.value)} maxLength={65536} rows={3} required disabled={busy} spellCheck={false} aria-describedby="coding-arguments-help" /><small id="coding-arguments-help">{r("agentArgsHelp")}</small></div>
       <label className="profile-checkbox" htmlFor="coding-agent-enabled"><input id="coding-agent-enabled" type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} disabled={busy} />{c("enabled")}</label>
-      <details><summary>{p("advanced")}</summary>
+      <p id="coding-runtime-env-help" className="workspace-notice">{r("agentEnvironmentHelp")}</p>
+      <button type="button" className="secondary-button" aria-label="Add Missing PATH/HOME Mappings" aria-describedby="coding-runtime-env-help" disabled={busy || mapping.length >= 64 || missingEnvironment.length === 0} onClick={addRuntimeEnvironment}>{r("addRuntimeEnvironment")}</button>
+      <details ref={advanced}><summary>{p("advanced")}</summary>
         <fieldset className="mcp-environment" disabled={busy}><legend>{r("envMapping")}</legend><p id="coding-env-help">{r("envHelp")}</p>
           {mapping.map(field => <div className="mcp-environment-row" key={field.row}>
             <div className="field-group"><label htmlFor={`coding-env-child-${field.row}`}>{r("childVariable")} {field.row + 1}</label><input id={`coding-env-child-${field.row}`} aria-label={`Child Environment Variable ${field.row + 1}`} value={field.child} onChange={event => updateMapping(field.row, { child: event.target.value })} maxLength={256} required spellCheck={false} aria-describedby="coding-env-help" /></div>

@@ -376,6 +376,10 @@ impl AppState {
         Ok(self.get_state())
     }
 
+    pub(crate) fn record_lifecycle(&self, event: crate::lifecycle_log::LifecycleEvent) {
+        self.activity.record_lifecycle(event);
+    }
+
     pub async fn shutdown(&self) {
         // Windows exit can race with the native session-ending notification.
         // Preserve its bounded owner deadline in both paths. Other platforms
@@ -407,6 +411,7 @@ impl AppState {
             }
             return;
         }
+        self.record_lifecycle(crate::lifecycle_log::LifecycleEvent::ShutdownStarted);
         self.shutdown_signal.cancel();
         self.updates.cancel_download(false);
         self.operations.cancel_active_for_shutdown();
@@ -427,6 +432,7 @@ impl AppState {
             .map(Deadline::instant)
             .unwrap_or_else(|| tokio::time::Instant::now() + SHUTDOWN_OPERATION_WAIT);
         let _ = self.operations.wait_until_idle(settle_deadline).await;
+        self.record_lifecycle(crate::lifecycle_log::LifecycleEvent::ShutdownWaitFinished);
         self.shutdown_complete.cancel();
     }
 

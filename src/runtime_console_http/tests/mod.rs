@@ -189,9 +189,9 @@ fn record_window_event_with_activity(
             action_name: "toolsCall".to_string(),
             operation: Some(operation.to_string()),
             project: project.map(str::to_string),
-            principal_kind: None,
-            principal_user_id: None,
-            oauth_client_id: None,
+            principal_kind: Some(auth.principal_kind().to_string()),
+            principal_user_id: auth.user_id.clone(),
+            oauth_client_id: auth.allowed_client_id.clone(),
             status: "success".to_string(),
             http_status: Some(200),
             started_at: at_ms / 1000,
@@ -252,9 +252,9 @@ fn record_timed_window_event(
             action_name: "toolsCall".to_string(),
             operation: Some("read_files".to_string()),
             project: project.map(str::to_string),
-            principal_kind: None,
-            principal_user_id: None,
-            oauth_client_id: None,
+            principal_kind: Some(auth.principal_kind().to_string()),
+            principal_user_id: auth.user_id.clone(),
+            oauth_client_id: auth.allowed_client_id.clone(),
             status: "success".to_string(),
             http_status: Some(200),
             started_at: request_observed_at_ms / 1000,
@@ -290,6 +290,8 @@ fn scoped_oauth(scopes: &[&str]) -> AuthContext {
     let mut auth = AuthContext::new(AuthKind::OAuth2Token);
     auth.user_id = Some("runtime-console-test-user".to_string());
     auth.username = Some("runtime-console-test-user".to_string());
+    auth.token_kind = Some("oauth2".to_string());
+    auth.allowed_client_id = Some("runtime-console-test-client".to_string());
     auth.scopes = scopes.iter().map(|scope| (*scope).to_string()).collect();
     auth
 }

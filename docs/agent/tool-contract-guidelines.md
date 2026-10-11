@@ -686,6 +686,12 @@ ready Job ids/status/outcomes and pending ids remain, including terminal failure
 Passive `job_attention` presence with nonempty `items` represents changed delivery
 without a second `changed=true` flag.
 
+Host-native Code Mode may compact an MCP result again after this Server-owned
+projection. Its `text(...)` output must still forward nonempty attention;
+otherwise a Server projection count is not a model-consumption receipt. See
+[Host-native Sidecar consumption](host-code-mode-sidecar-consumption.md) for a
+bounded output recipe and controlled A/B/C verification.
+
 Execution/validation success compaction shares this late boundary: Session and
 source consumers see canonical results, then definition-owned privacy projections
 and generic telemetry capture bounded facts, then the model receipt is compacted.

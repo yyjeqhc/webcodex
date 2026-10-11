@@ -798,3 +798,79 @@ async fn http_mcp_execution_compaction_keeps_sparse_serialization() {
         .unwrap();
     }
 }
+
+#[tokio::test]
+async fn http_mcp_execution_control_direct_gateway_success_and_failure() {
+    for gateway in [false, true] {
+        for exit_code in [0, 1] {
+            let (_tmp, db) = test_db();
+            let runtime = Arc::new(test_runtime());
+            register_failure_runner(&runtime).await;
+            let service = Service::new(build_test_router(
+                test_config(Some("secret")),
+                db,
+                runtime.clone(),
+            ));
+            let runner = async {
+                let request = wait_for_failure_request(&runtime).await;
+                assert_eq!(request.kind, "run_process");
+                runtime
+                    .runner_registry
+                    .complete(RunnerResultPayload {
+                        result: RunnerResultRequest {
+                            client_id: "failure-runner".into(),
+                            runner_instance_id: "inst".into(),
+                            request_id: request.request_id,
+                            exit_code: Some(exit_code),
+                            stdout: Some("control output witness".into()),
+                            stderr: Some("diagnostic witness".into()),
+                            stdout_truncated: false,
+                            stderr_truncated: false,
+                            duration_ms: Some(1),
+                            error: None,
+                        },
+                        command_execution_state: Some(ShellCommandExecutionState::Completed),
+                        mcp_gateway: None,
+                        plugin_gateway: None,
+                        coding_agent: None,
+                    })
+                    .await
+                    .unwrap();
+            };
+            let arguments = json!({"project":"agent:failure-runner:probe","executable":"probe",
+                "args":[],"timeout_secs":30,"sync_wait_secs":30});
+            let mut params = if gateway {
+                adaptive_runtime_gateway_params("run_process", arguments)
+            } else {
+                json!({"name":"run_process","arguments":arguments})
+            };
+            params["arguments"]["_wc"] = json!({"compact_execution":true});
+            let ((status, body), ()) = tokio::join!(
+                http_call(&service, params, client_meta("openai-mcp", "2"), true),
+                runner
+            );
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let result = &body["result"]["structuredContent"];
+            assert_eq!(result["success"], exit_code == 0, "{body}");
+            assert_eq!(
+                result["output"]["execution"]["outcome"],
+                if exit_code == 0 { "passed" } else { "failed" },
+                "{body}"
+            );
+            assert_eq!(result["output"]["execution"]["exit_code"], exit_code);
+            assert_eq!(
+                result["output"]["details"]["stdout_tail"],
+                "control output witness"
+            );
+            assert_eq!(
+                result["output"]["details"]["stderr_tail"],
+                "diagnostic witness"
+            );
+            if exit_code != 0 {
+                let error = result["error"].as_str().unwrap();
+                assert!(error.contains("output.details.stdout_tail"), "{error}");
+                assert!(!error.contains("diagnostic witness"));
+            }
+        }
+    }
+}

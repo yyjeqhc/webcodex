@@ -43,7 +43,7 @@ pub(crate) async fn websocket_session(
 
 pub(super) async fn websocket_session_classified(
     cfg: &RunnerConfig,
-    projects: Vec<RunnerProjectSummary>,
+    projects: impl Into<InitialProjectInventory>,
     runner_instance_id: &str,
     runtime: &RunnerRuntimeState,
 ) -> Result<RunnerSessionExit, RunnerTransportError> {
@@ -59,7 +59,7 @@ pub(super) async fn websocket_session_classified(
 
 pub(super) async fn websocket_session_with_shutdown<F>(
     cfg: &RunnerConfig,
-    projects: Vec<RunnerProjectSummary>,
+    projects: impl Into<InitialProjectInventory>,
     runner_instance_id: &str,
     runtime: &RunnerRuntimeState,
     shutdown: F,
@@ -93,7 +93,13 @@ where
     // Register over the socket. The prepared-profile cache is empty at
     // registration time (snapshots are prepared lazily on first use), so
     // `prepared_cache_count` is reported as 0 here.
-    let projects_count = enabled_projects_count(&projects);
+    let projects = projects.into();
+    let projects_count = match &projects {
+        InitialProjectInventory::Snapshot(projects) => enabled_projects_count(projects).to_string(),
+        InitialProjectInventory::Scan => "pending".to_string(),
+        #[cfg(test)]
+        InitialProjectInventory::Disabled => "unavailable".to_string(),
+    };
     let registered_jobs = runtime.jobs.inventory();
     let (register_payload, provider, provider_revision) =
         build_register_request_with_provider_status(
@@ -135,7 +141,6 @@ where
     let ack = RunnerEnvelope::from_slice(ack_text.as_bytes())
         .map_err(|e| format!("register ack is not a valid envelope: {}", e))?;
     let _inventory_status = registered_ack(ack)?;
-    let mut project_inventory_sync = Some(paged_sync_after_registration(projects));
     provider.mark_status_reported(provider_revision);
     eprintln!(
         "{}",
@@ -145,11 +150,6 @@ where
     // Split socket into writer (drains outgoing envelopes) and reader.
     let (mut sink, stream) = ws_stream.split();
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<RunnerEnvelope>(WS_OUTGOING_CAPACITY);
-    try_queue_project_inventory_page(
-        StreamTransport::WebSocket,
-        &mut project_inventory_sync,
-        &out_tx,
-    );
     let writer_task = tokio::spawn(async move {
         while let Some(env) = out_rx.recv().await {
             let envelope_kind = env.kind();
@@ -200,7 +200,7 @@ where
         out_tx,
         RegisteredStream::WebSocket { reader: stream },
         writer_task,
-        project_inventory_sync,
+        projects,
         runtime,
         shutdown,
     )

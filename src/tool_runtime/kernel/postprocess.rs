@@ -16,6 +16,7 @@ use serde_json::Value;
 /// Borrow only already-established request facts. No raw business arguments or
 /// permission evaluator are accepted; a Window/recorder cannot retarget a call.
 pub(super) struct PostRecordResponse<'a> {
+    pub compact_execution: bool,
     pub tool_name: &'a str,
     pub context: ToolCallContext<'a>,
     pub capabilities: ToolProtocolCapabilities,
@@ -45,6 +46,15 @@ impl PostRecordResponse<'_> {
         }
         crate::tool_request_trace::capture_execution_evidence(self.tool_name, &result.output);
         let canonical_audit_output = canonical_audit_output(self.tool_name, &result.output);
+        let execution_control = self
+            .compact_execution
+            .then(|| {
+                crate::tool_runtime::execution_control::ExecutionControlProjection::capture(
+                    self.tool_name,
+                    &result,
+                )
+            })
+            .flatten();
         plan.project(&mut result);
         self.add_recorder_gap_hint(&mut result);
         if self.tool_name == "read_tool_manifest" {
@@ -141,6 +151,9 @@ impl PostRecordResponse<'_> {
                 enrichment_deadline,
             )
             .await;
+        if let Some(projection) = execution_control {
+            projection.project(&mut result);
+        }
         PostRecordResult {
             result,
             canonical_audit_output,

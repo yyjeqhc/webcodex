@@ -91,7 +91,7 @@ pub(super) fn stream_transport_plan(
 pub(super) async fn run_stream_session(
     transport: StreamTransport,
     cfg: &RunnerConfig,
-    projects: Vec<RunnerProjectSummary>,
+    projects: InitialProjectInventory,
     runner_instance_id: &str,
     once: bool,
     runtime: &RunnerRuntimeState,
@@ -113,7 +113,6 @@ pub(super) async fn supervise_stream_transports(
     runtime: &RunnerRuntimeState,
     mode: StreamSupervisorMode,
 ) -> Result<StreamSupervisorExit, String> {
-    let mut project_cache = RunnerProjectCache::default();
     let mut backoff = RetryBackoff::new(&RECONNECT_BACKOFF_STEPS);
     'supervisor: loop {
         if mode == StreamSupervisorMode::Auto && cfg.quic.is_none() {
@@ -123,12 +122,16 @@ pub(super) async fn supervise_stream_transports(
             if mode == StreamSupervisorMode::Auto {
                 eprintln!("{}", auto_trying_log_line(transport.name()));
             }
-            let projects = runtime.project_summaries(&mut project_cache, cfg);
             let session_started = Instant::now();
-            let result =
-                run_stream_session(transport, cfg, projects, runner_instance_id, once, runtime)
-                    .await;
-            project_cache.invalidate();
+            let result = run_stream_session(
+                transport,
+                cfg,
+                InitialProjectInventory::Scan,
+                runner_instance_id,
+                once,
+                runtime,
+            )
+            .await;
             match decide_stream_session(mode, transport, once, result) {
                 StreamSessionDecision::Complete { shutdown } => {
                     if shutdown {

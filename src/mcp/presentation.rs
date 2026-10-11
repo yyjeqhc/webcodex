@@ -57,8 +57,12 @@ fn copy_scalar(source: &Value, target: &mut Map<String, Value>, key: &str) {
 }
 
 fn presentation_from_call_result(tool_name: &str, call_result: &Value) -> Option<Value> {
-    let renderer = registry::for_tool(tool_name)?;
     let output = call_result.get("structuredContent")?.get("output")?;
+    result_app_presentation(tool_name, output)
+}
+
+pub(super) fn result_app_presentation(tool_name: &str, output: &Value) -> Option<Value> {
+    let renderer = registry::for_tool(tool_name)?;
     (renderer.project)(tool_name, output)
 }
 
@@ -66,6 +70,10 @@ pub(super) fn attach_result_app_presentation(tool_name: &str, call_result: &mut 
     let Some(presentation) = presentation_from_call_result(tool_name, call_result) else {
         return;
     };
+    attach_presentation(call_result, presentation);
+}
+
+pub(super) fn attach_presentation(call_result: &mut Value, presentation: Value) {
     let Some(result) = call_result.as_object_mut() else {
         return;
     };

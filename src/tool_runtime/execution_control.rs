@@ -108,6 +108,13 @@ fn job_control(item: &Value) -> Value {
         && output
             .get("validation")
             .is_none_or(|v| v.is_null() || v["passed"] == true)
+        && output.get("failure_kind").is_none_or(Value::is_null)
+        && output.get("error_kind").is_none_or(Value::is_null)
+        && output.get("tool_failure").is_none_or(|v| v == false)
+        && output.get("passed").is_none_or(|v| v == true)
+        && item.get("error").is_none_or(Value::is_null)
+        && item.get("error_kind").is_none_or(Value::is_null)
+        && item.get("recovery_kind").is_none_or(Value::is_null)
     {
         "passed"
     } else if output["terminal"] == true
@@ -204,9 +211,11 @@ fn split_output(output: &mut Value) {
     for key in [
         "context_projection",
         "control",
+        "session_hint",
         "session_attention",
         "operator_messages",
         "peer_messages",
+        "peer_awareness",
         "job_attention",
         "workflow_recording_attention",
         "window_reply",

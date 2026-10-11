@@ -72,8 +72,9 @@ Job from which it could be recovered. This first version separates control from
 data; it does not promise smaller total wire responses. Hosts can keep details
 inside their cell and emit only decision-relevant evidence to the model.
 
-Collaboration messages, ACK obligations, explicitly requested context, control
-sidecar results and passive Job attention remain visible at the outer level.
+Collaboration messages, ACK obligations, Session hints, Peer awareness,
+explicitly requested context, control sidecar results and passive Job attention
+remain visible at the outer level.
 `execution` is deliberately separate from the already-existing `control` sidecar.
 A Host must surface these obligations even when it only needs command control facts.
 

@@ -70,7 +70,9 @@ fn execution_control_pending_preserves_exact_identity_and_follow_up_posture() {
 fn execution_control_keeps_logs_loss_evidence_and_collaboration_visible() {
     let mut result = completed();
     result.output["stdout_truncated"] = json!(true);
+    result.output["session_hint"] = json!({"attention_required":true});
     result.output["operator_messages"] = json!({"requires_ack":true});
+    result.output["peer_awareness"] = json!({"new_peers":[{"peer_id":"peer-1"}]});
     result.output["job_attention"] = json!({"failed_jobs":["job-other"]});
     result.output["control"] = json!({"after_failed":true});
     let plan = ExecutionControlProjection::capture("run_script", &result).unwrap();
@@ -81,7 +83,14 @@ fn execution_control_keeps_logs_loss_evidence_and_collaboration_visible() {
         "result that cannot be re-read"
     );
     assert_eq!(result.output["details"]["stdout_truncated"], true);
+    assert_eq!(result.output["session_hint"]["attention_required"], true);
     assert_eq!(result.output["operator_messages"]["requires_ack"], true);
+    assert_eq!(
+        result.output["peer_awareness"]["new_peers"][0]["peer_id"],
+        "peer-1"
+    );
+    assert!(result.output["details"].get("session_hint").is_none());
+    assert!(result.output["details"].get("peer_awareness").is_none());
     assert!(result.output.get("job_attention").is_some());
     assert_eq!(result.output["control"]["after_failed"], true);
     assert!(result.output["details"].get("execution_state").is_none());
@@ -131,6 +140,25 @@ fn execution_control_observation_does_not_confuse_success_with_job_success() {
     let mut item = observed("completed", true, json!(0));
     item["success"] = json!(false);
     assert_eq!(job_control(&item)["outcome"], "unknown");
+    // A zero exit code cannot override contradictory persisted diagnostics.
+    for (key, value) in [
+        ("failure_kind", json!("outcome_unknown")),
+        ("error_kind", json!("observation_failed")),
+        ("tool_failure", json!(true)),
+        ("passed", json!(false)),
+    ] {
+        let mut item = observed("completed", true, json!(0));
+        item["output"][key] = value;
+        assert_eq!(job_control(&item)["outcome"], "unknown", "{key}");
+    }
+    let mut item = observed("completed", true, json!(0));
+    item["error"] = json!("inconsistent observation");
+    assert_eq!(job_control(&item)["outcome"], "unknown");
+    for key in ["error_kind", "recovery_kind"] {
+        let mut item = observed("completed", true, json!(0));
+        item[key] = json!("inconsistent observation");
+        assert_eq!(job_control(&item)["outcome"], "unknown", "{key}");
+    }
 }
 
 #[test]

@@ -1150,7 +1150,7 @@ async fn read_register(
     }
 }
 
-async fn send_registered_ack(ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) {
+async fn send_registered_ack_only(ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) {
     let client = serde_json::from_value(serde_json::json!({
         "client_id": "oe",
         "agent_instance_id": "inst-test",
@@ -1181,6 +1181,10 @@ async fn send_registered_ack(ws: &mut tokio_tungstenite::WebSocketStream<tokio::
     ws.send(WsMessage::Text(ack.to_json().unwrap().into()))
         .await
         .unwrap();
+}
+
+async fn send_registered_ack(ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) {
+    send_registered_ack_only(ws).await;
 
     loop {
         let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())

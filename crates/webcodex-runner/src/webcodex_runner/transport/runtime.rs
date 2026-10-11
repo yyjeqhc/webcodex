@@ -36,6 +36,7 @@ impl RunnerRuntimeState {
             coordinator: Arc::new(ShutdownCoordinator::new(budget)),
             reload_threads: Arc::new(BackgroundThreads::default()),
             background_threads: Arc::new(BackgroundThreads::default()),
+            initial_project_scan: Arc::new(std::sync::Mutex::new(None)),
             dispatches: ActivityTracker::default(),
             #[cfg(windows)]
             exit_diagnostics: None,
@@ -44,6 +45,13 @@ impl RunnerRuntimeState {
 
     pub(super) fn request_shutdown_signal(&self) {
         self.coordinator.request_signal();
+        // Close scanner admission and wait for any already admitted spawn to
+        // enter the owned worker registry before cleanup can drain that registry.
+        drop(
+            self.initial_project_scan
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        );
         #[cfg(windows)]
         if let Some(diagnostics) = self.exit_diagnostics.as_ref() {
             // Persist signal provenance before any cleanup work. If the process
@@ -75,6 +83,44 @@ impl RunnerRuntimeState {
     ) -> Vec<RunnerProjectSummary> {
         let shutdown = self.shutdown_flag();
         cache.get_with_shutdown(cfg, Some(shutdown.as_ref()))
+    }
+
+    /// Registration and keepalive must not wait for serial Git probes. Reuse
+    /// an in-flight scan across reconnects, so only one scanner can run per
+    /// process. The existing shutdown flag, Git tree ownership, and bounded
+    /// background-thread drain still own cancellation and cleanup.
+    pub(super) fn initial_project_scan(
+        &self,
+        cfg: &RunnerConfig,
+    ) -> Result<ProjectScanReceiver, String> {
+        let mut scan = self
+            .initial_project_scan
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if self.shutdown_requested() {
+            return Err("project_inventory_scan_stopped".to_string());
+        }
+        if let Some(receiver) = scan.as_ref() {
+            if receiver.borrow().is_none() && receiver.has_changed().is_ok() {
+                return Ok(receiver.clone());
+            }
+        }
+        self.background_threads.reap_finished();
+        let (sender, receiver) = tokio::sync::watch::channel(None);
+        let runtime = self.clone();
+        let cfg = cfg.clone();
+        let handle = std::thread::Builder::new()
+            .name("runner-project-inventory".into())
+            .spawn(move || {
+                let projects = runtime.project_summaries(&mut RunnerProjectCache::default(), &cfg);
+                if !runtime.shutdown_requested() {
+                    let _ = sender.send(Some(Arc::new(projects)));
+                }
+            })
+            .map_err(|_| "project_inventory_scan_start_failed".to_string())?;
+        self.register_background_thread(handle);
+        *scan = Some(receiver.clone());
+        Ok(receiver)
     }
 
     pub(super) fn transport_runtime_shutdown_timeout(&self) -> Duration {

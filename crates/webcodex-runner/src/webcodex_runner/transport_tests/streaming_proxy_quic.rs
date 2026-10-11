@@ -532,7 +532,7 @@ async fn streaming_writer_failure_terminates_pending_reader_for_ws_and_quic() {
                 out_tx,
                 RegisteredStream::Test { reader: read_rx },
                 writer_task,
-                None,
+                InitialProjectInventory::Disabled,
                 &runtime,
                 std::future::pending::<()>(),
             ),
@@ -572,7 +572,7 @@ async fn streaming_graceful_writer_completion_is_not_a_failure_signal() {
         out_tx,
         RegisteredStream::Test { reader: read_rx },
         writer_task,
-        None,
+        InitialProjectInventory::Disabled,
         &runtime,
         async {},
     )

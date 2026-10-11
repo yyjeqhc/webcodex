@@ -131,7 +131,7 @@ pub(super) fn classify_quic_runner_connect_error(error: &str) -> &'static str {
 /// completes one ping/pong after the ack then returns.
 pub(super) async fn quic_session(
     cfg: &RunnerConfig,
-    projects: Vec<RunnerProjectSummary>,
+    projects: InitialProjectInventory,
     runner_instance_id: &str,
     once: bool,
     runtime: &RunnerRuntimeState,
@@ -222,7 +222,12 @@ pub(super) async fn quic_session(
 
     // Credential ownership stays outside the transport-neutral registration payload.
     // The token is never logged.
-    let projects_count = enabled_projects_count(&projects);
+    let projects_count = match &projects {
+        InitialProjectInventory::Snapshot(projects) => enabled_projects_count(projects).to_string(),
+        InitialProjectInventory::Scan => "pending".to_string(),
+        #[cfg(test)]
+        InitialProjectInventory::Disabled => "unavailable".to_string(),
+    };
     let registered_jobs = runtime.jobs.inventory();
     let (register_payload, provider, provider_revision) =
         build_register_request_with_provider_status(
@@ -260,7 +265,6 @@ pub(super) async fn quic_session(
         .map_err(|_| "quic register ack timed out".to_string())?
         .map_err(|e| format!("failed to read quic register ack: {}", e))?;
     let _inventory_status = registered_ack(ack)?;
-    let mut project_inventory_sync = Some(paged_sync_after_registration(projects));
     provider.mark_status_reported(provider_revision);
     eprintln!(
         "{}",
@@ -331,7 +335,6 @@ pub(super) async fn quic_session(
     // Outgoing envelopes share one writer so future QUIC multistream work can
     // change the transport adapter without duplicating the session lifecycle.
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<RunnerEnvelope>(WS_OUTGOING_CAPACITY);
-    try_queue_project_inventory_page(StreamTransport::Quic, &mut project_inventory_sync, &out_tx);
     let writer_task = tokio::spawn(async move {
         while let Some(env) = out_rx.recv().await {
             let envelope_kind = env.kind();
@@ -378,7 +381,7 @@ pub(super) async fn quic_session(
             endpoint: client_endpoint,
         },
         writer_task,
-        project_inventory_sync,
+        projects,
         runtime,
         runtime.wait_for_shutdown(),
     )

@@ -65,6 +65,7 @@ async fn post_record_store_contention_omits_only_optional_sidecars_without_consu
     .unwrap();
     let started = Instant::now();
     let completed = PostRecordResponse {
+        compact_execution: false,
         tool_name: "read_files",
         context: ToolCallContext {
             auth: Some(&auth),
@@ -141,6 +142,7 @@ async fn post_record_captures_canonical_audit_and_telemetry_before_model_compact
         let mut telemetry =
             ModelErgonomicsTimer::start_with_arguments("run_process", &json!({})).unwrap();
         let completed = PostRecordResponse {
+            compact_execution: false,
             tool_name: "run_process",
             context: context(transport),
             capabilities: ToolProtocolCapabilities::default(),
@@ -192,6 +194,7 @@ async fn post_record_preserves_effect_uncertainty_and_retry_identity() {
         result.output["job_id"] = json!("wc_job_exact-existing");
         result.output["direct_retry_safe"] = json!(false);
         let completed = PostRecordResponse {
+            compact_execution: false,
             tool_name: "run_process",
             context: context(ToolTransport::Mcp),
             capabilities: ToolProtocolCapabilities::default(),
@@ -235,6 +238,7 @@ async fn post_record_omits_redundant_or_over_budget_gap_without_changing_busines
         };
         let result = ToolResult::ok(json!({"payload":payload}));
         let completed = PostRecordResponse {
+            compact_execution: false,
             tool_name: "list_tools",
             context: context(ToolTransport::Mcp),
             capabilities: ToolProtocolCapabilities::default(),
@@ -259,5 +263,39 @@ async fn post_record_omits_redundant_or_over_budget_gap_without_changing_busines
         assert!(completed.result.success);
         assert_eq!(completed.result.output, json!({"payload":payload}));
         assert!(completed.canonical_audit_output.is_none());
+    }
+}
+
+#[tokio::test]
+async fn execution_control_is_captured_before_compaction_without_changing_audit() {
+    let runtime = ToolRuntime::new_for_tests();
+    let recorder = ToolCallRecorderMetadata::default();
+    let correlation = ToolCallCorrelation::default();
+    let mut ordinary_audit = None;
+    for compact_execution in [false, true] {
+        let completed = PostRecordResponse {
+            compact_execution,
+            tool_name: "run_process",
+            context: context(ToolTransport::Mcp),
+            capabilities: ToolProtocolCapabilities::default(),
+            recorder: &recorder,
+            correlation: &correlation,
+            business_session_id: None,
+            window_reply: None,
+        }
+        .finish(&runtime, process_result(), plan(), None)
+        .await;
+        if compact_execution {
+            assert_eq!(completed.canonical_audit_output, ordinary_audit);
+            let mut result = completed.result;
+            crate::tool_runtime::execution_control::split_result(&mut result);
+            assert_eq!(result.output["execution"]["outcome"], "passed");
+            assert_eq!(result.output["execution"]["exit_code"], 0);
+            assert_eq!(result.output["details"]["stdout_tail"], "PRIVATE_OUTPUT");
+        } else {
+            ordinary_audit = completed.canonical_audit_output;
+            assert!(completed.result.output.get("execution").is_none());
+            assert_eq!(completed.result.output["stdout_tail"], "PRIVATE_OUTPUT");
+        }
     }
 }

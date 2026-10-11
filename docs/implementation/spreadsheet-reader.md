@@ -2,7 +2,7 @@
 
 `present_spreadsheet(project, path)` is the only added model-visible tool. It is a
 Direct Presentation tool with `project:read` and the owning Runner's FileRead
-capability. It opens `ui://webcodex/spreadsheet/v1`, an independent MCP App with no
+capability. It opens `ui://webcodex/spreadsheet/v3`, an independent MCP App with no
 Activity, Results or Collaboration tabs. Viewing a spreadsheet alone requires
 neither a Workflow Session nor `present_work_result`.
 
@@ -57,6 +57,14 @@ reader does not need. Both axes render only the visible window plus one-item
 overscan. The viewer supports cell selection and arrow-key navigation. When the
 selected cell scrolls outside the rendered window, the grid container retains
 the keyboard entry and focus without changing the selection.
+Each worksheet retains its selection and both scroll offsets while the current
+workbook is open. Returning to a worksheet restores its viewport without forcing
+an off-screen selection into view; clicking the active tab leaves it untouched.
+Selection content is updated before measuring the viewport for scroll restoration,
+since a taller value/formula area can add a document scrollbar and narrow the grid.
+Positions are keyed by worksheet index and cleared when the source changes,
+becomes invalid or fails, or the reader closes. They are not persisted across
+presentations of different file versions.
 
 Parsing runs in a disposable Blob Worker with a ten-second deadline. XLSX ZIP
 directories are checked before inflation: no encryption, ZIP64 or multi-volume

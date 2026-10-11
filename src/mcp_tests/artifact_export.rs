@@ -2444,7 +2444,7 @@ fn present_spreadsheet_descriptor_has_an_independent_capability_scoped_app() {
             .unwrap();
         assert_eq!(
             descriptor["_meta"]["ui"]["resourceUri"],
-            "ui://webcodex/spreadsheet/v1"
+            "ui://webcodex/spreadsheet/v3"
         );
         let disabled = crate::mcp::tools::mcp_tools_list_payload_with_features_for_auth(
             compact, false, true, None,

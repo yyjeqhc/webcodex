@@ -512,3 +512,27 @@ pub(super) fn render_plist(spec: &ServiceSpec) -> Result<String, ServiceError> {
     out.push_str("</dict></plist>\n");
     Ok(out)
 }
+
+pub(super) fn running_pid(spec: &ServiceSpec) -> Result<Option<u32>, ServiceError> {
+    let output = Command::new("/bin/launchctl")
+        .args(["print", &target(spec)?])
+        .bounded_output()
+        .map_err(|_| {
+            ServiceError::new(
+                ServiceErrorCode::OwnershipUnknown,
+                "cannot inspect owner PID",
+            )
+        })?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let pids: Vec<u32> = text
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("pid = ")?.parse().ok())
+        .collect();
+    Ok(match pids.as_slice() {
+        [pid] if *pid > 0 => Some(*pid),
+        _ => None,
+    })
+}

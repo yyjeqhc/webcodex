@@ -35,6 +35,7 @@ pub struct WindowInventoryRow {
 pub struct WindowInventoryQuery<'a> {
     pub principal: Option<(&'a str, &'a str)>,
     pub caller: Option<(&'a str, &'a str)>,
+    pub managed_oauth_identity: Option<(&'a str, &'a str)>,
     /// Ordinary management credentials restrict projectless unanchored events
     /// to their caller principal. Admin/scoped-principal reads use native links.
     pub management: bool,
@@ -56,15 +57,22 @@ pub struct WindowInventoryPage {
 pub(crate) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     tx.execute_batch(SCHEMA)?;
+    let has_oauth_identity: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('window_inventory_meta') WHERE name='oauth_identity_indexed')",
+        [], |row| row.get(0),
+    )?;
+    if !has_oauth_identity {
+        tx.execute_batch("ALTER TABLE window_inventory_meta ADD COLUMN oauth_identity_indexed INTEGER NOT NULL DEFAULT 0;")?;
+    }
     let initialized: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM window_inventory_meta WHERE version = 1)",
+        "SELECT EXISTS(SELECT 1 FROM window_inventory_meta WHERE version = 1 AND oauth_identity_indexed = 1)",
         [],
         |r| r.get(0),
     )?;
     if !initialized {
         tx.execute_batch("INSERT OR IGNORE INTO window_inventory_dirty SELECT DISTINCT client_window_key FROM action_events WHERE client_window_key IS NOT NULL;")?;
         repair_dirty(&tx)?;
-        tx.execute("INSERT INTO window_inventory_meta(version) VALUES (1)", [])?;
+        tx.execute("INSERT INTO window_inventory_meta(version,oauth_identity_indexed) VALUES (1,1) ON CONFLICT(version) DO UPDATE SET oauth_identity_indexed=1", [])?;
     }
     tx.commit()?;
     Ok(())
@@ -200,10 +208,13 @@ impl Database {
         let (ck, ci) = query
             .caller
             .map_or((None, None), |(k, i)| (Some(k), Some(i)));
+        let (oauth_user, oauth_client) = query.managed_oauth_identity
+            .filter(|(user, client)| !user.trim().is_empty() && !client.trim().is_empty())
+            .map_or((None, None), |(user, client)| (Some(user), Some(client)));
         let limit = query.limit.clamp(1, 2000) as i64;
         let offset = i64::try_from(query.offset).unwrap_or(i64::MAX);
         let params = named_params! {":allowed": allowed, ":projects": projects, ":pk": pk, ":pi": pi,
-        ":ck": ck, ":ci": ci, ":management": query.management, ":live": live,
+        ":ck": ck, ":ci": ci, ":oauth_user": oauth_user, ":oauth_client": oauth_client, ":management": query.management, ":live": live,
         ":key": query.window_key, ":query": query.query, ":limit": limit, ":offset": offset};
         let mut page = WindowInventoryPage {
             rows: Vec::new(),

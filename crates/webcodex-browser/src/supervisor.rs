@@ -2537,6 +2537,22 @@ mod tests {
         assert_eq!(error.kind, "stale_element");
         assert_eq!(error.execution_state, ExecutionState::NotStarted);
         assert_eq!(error.recovery_action, Some("snapshot"));
+        let current = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+        assert_eq!(current.page_id, page.page_id);
+        let refreshed = supervisor
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
+            .unwrap();
+        let fresh_element = refreshed.nodes[0].element_id.as_ref().unwrap();
+        assert_ne!(fresh_element, &element);
+        supervisor
+            .click(&browser.browser_id, &page.page_id, fresh_element)
+            .unwrap();
     }
 
     #[test]
@@ -2566,6 +2582,22 @@ mod tests {
         assert_eq!(error.kind, "stale_element");
         assert_eq!(error.execution_state, ExecutionState::NotStarted);
         assert_eq!(error.recovery_action, Some("snapshot"));
+        let current = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+        assert_eq!(current.page_id, page.page_id);
+        let refreshed = supervisor
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
+            .unwrap();
+        let fresh_element = refreshed.nodes[0].element_id.as_ref().unwrap();
+        assert_ne!(fresh_element, &element);
+        supervisor
+            .click(&browser.browser_id, &page.page_id, fresh_element)
+            .unwrap();
     }
 
     #[test]

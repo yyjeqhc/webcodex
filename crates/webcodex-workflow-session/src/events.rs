@@ -1660,10 +1660,12 @@ fn copy_project_validation_evidence(summary: &mut Value, output: &Value) {
                 "python:pytest:test",
                 "python:ruff:check",
                 "python:ruff:format",
+                "node:script:check",
+                "node:tap:test",
             ][..],
         ),
         ("action", &["format_check", "check", "test"][..]),
-        ("backend", &["rust", "go", "python"][..]),
+        ("backend", &["rust", "go", "python", "node"][..]),
     ] {
         if let Some(value) = output
             .get(field)

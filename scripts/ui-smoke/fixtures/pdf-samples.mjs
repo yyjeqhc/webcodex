@@ -26,13 +26,19 @@ function document(pageSpecs, { chinese = false, image = false } = {}) {
     }
     raster = add(stream('/Type /XObject /Subtype /Image /Width 32 /Height 32 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode', deflateSync(rgb)));
   }
-  const ids = pageSpecs.map(({ width = 400, height = 600, rotate = 0, label }, index) => {
+  // The document/page tree is valid; only this page's image operator exceeds
+  // the production renderer limit. No huge allocation or corrupt PDF is needed.
+  const oversizedImage = pageSpecs.some(page => page.oversizedImage)
+    ? add(stream('/Type /XObject /Subtype /Image /Width 4001 /Height 4000 /ColorSpace /DeviceRGB /BitsPerComponent 8', Buffer.from([0])))
+    : null;
+  const ids = pageSpecs.map(({ width = 400, height = 600, rotate = 0, label, oversizedImage: oversized }, index) => {
     const commands = image
       ? 'q 200 0 0 200 100 200 cm /Im1 Do Q'
       : `0.15 0.45 0.8 rg 35 35 ${width - 70} 25 re f 0 g BT /F1 20 Tf 40 ${height - 60} Td (${label || `PAGE ${index + 1}`}) Tj ET`
-        + (chinese ? ` BT /F2 48 Tf 40 ${height - 140} Td <0102> Tj ET` : '');
+        + (chinese ? ` BT /F2 48 Tf 40 ${height - 140} Td <0102> Tj ET` : '')
+        + (oversized ? ' q 100 0 0 100 40 200 cm /TooLarge Do Q' : '');
     const content = add(stream('', Buffer.from(commands)));
-    return add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${width} ${height}] /Rotate ${rotate} /Resources << /Font << /F1 ${font} 0 R ${cjkFont ? `/F2 ${cjkFont} 0 R` : ''} >> ${raster ? `/XObject << /Im1 ${raster} 0 R >>` : ''} >> /Contents ${content} 0 R >>`);
+    return add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${width} ${height}] /Rotate ${rotate} /Resources << /Font << /F1 ${font} 0 R ${cjkFont ? `/F2 ${cjkFont} 0 R` : ''} >> ${raster || oversized ? `/XObject << ${raster ? `/Im1 ${raster} 0 R` : ''} ${oversized ? `/TooLarge ${oversizedImage} 0 R` : ''} >>` : ''} >> /Contents ${content} 0 R >>`);
   });
   put(catalog, `<< /Type /Catalog /Pages ${pages} 0 R >>`);
   put(pages, `<< /Type /Pages /Count ${ids.length} /Kids [${ids.map(id => `${id} 0 R`).join(' ')}] >>`);
@@ -53,5 +59,6 @@ export const pdfSamples = {
   scan: document([{}], { image: true }),
   long: document(Array.from({ length: 32 }, () => ({}))),
   wide: document(Array.from({ length: 8 }, () => ({ width: 30000, height: 1500 }))),
+  renderFailure: document([{ label: 'VALID FIRST PAGE' }, { label: 'PARTIAL SECOND PAGE', oversizedImage: true }, { label: 'VALID THIRD PAGE' }]),
   malformed: Buffer.from('%PDF-1.7\nnot a valid document'),
 };

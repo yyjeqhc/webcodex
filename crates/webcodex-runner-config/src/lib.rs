@@ -299,6 +299,7 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             project_validation_python_pytest_v1: false,
             project_validation_python_ruff_v1: false,
             project_validation_node_script_check_v1: false,
+            project_validation_node_tap_v1: false,
             // Like JSON parsing, first-class durable go_test support is
             // advertised by the running binary, never by generated static config.
             structured_go_test_tool: false,

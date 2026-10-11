@@ -1,10 +1,50 @@
 use serde::Serialize;
-use webcodex_core::runtime_contract::MAX_JOB_OBSERVATION_WAIT_SECS;
+use webcodex_core::runtime_contract::{
+    MAX_JOB_OBSERVATION_WAIT_SECS, STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS,
+};
 use webcodex_tool_contracts::tool_inputs::CodingGuidanceProfile;
 
 pub(crate) const HOST_RETURN_GUARD_SECS: u64 = 5;
 const DIRECT_DEFAULT_HOST_BUDGET_SECS: u64 = 60;
 const HOST_CODE_MODE_DEFAULT_HOST_BUDGET_SECS: u64 = 55;
+
+/// Optional deployment-owned latency caps. They never change Job execution
+/// lifetimes or the protocol limits for structured and observation requests.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct McpHostTimingOverrides {
+    sync_wait_secs: Option<u64>,
+    continuation_wait_secs: Option<u64>,
+}
+
+impl McpHostTimingOverrides {
+    pub(crate) fn from_env() -> Result<Self, String> {
+        fn read(name: &str, maximum: u64) -> Result<Option<u64>, String> {
+            match std::env::var(name) {
+                Err(std::env::VarError::NotPresent) => Ok(None),
+                Ok(value) => value
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|seconds| (1..=maximum).contains(seconds))
+                    .map(Some)
+                    .ok_or_else(|| format!("{name} must be an integer between 1 and {maximum}")),
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    Err(format!("{name} must be an integer between 1 and {maximum}"))
+                }
+            }
+        }
+        Ok(Self {
+            sync_wait_secs: read(
+                "WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS",
+                STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS,
+            )?,
+            continuation_wait_secs: read(
+                "WEBCODEX_MCP_HOST_CONTINUATION_WAIT_MAX_SECS",
+                MAX_JOB_OBSERVATION_WAIT_SECS,
+            )?,
+        })
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -94,6 +134,7 @@ impl McpHostConfig {
             initial_job_handoff_secs,
             max_sync_wait_secs,
             continuation_wait_secs,
+            timing_overrides: McpHostTimingOverrides::default(),
         }
     }
 }
@@ -102,9 +143,16 @@ impl McpHostConfig {
 pub(crate) struct McpHostRuntimePolicy {
     pub(crate) profile: McpHostProfile,
     pub(crate) host_budget_secs: u64,
+    /// Legacy diagnostic-only projection. No execution path reads this field;
+    /// synchronous handoff uses max_sync_wait_secs instead. Retained for
+    /// existing runtime_status consumers, not a new operator tuning knob.
     pub(crate) initial_job_handoff_secs: u64,
     pub(crate) max_sync_wait_secs: u64,
     pub(crate) continuation_wait_secs: u64,
+    /// Internal deployment authority carried through request profile changes.
+    /// Never serialize into model-facing status or request-policy receipts.
+    #[serde(skip)]
+    timing_overrides: McpHostTimingOverrides,
 }
 
 /// Request-local diagnostic receipt. It records selection, not Host capability,
@@ -126,6 +174,33 @@ pub(crate) enum McpHostPolicySource {
 }
 
 impl McpHostRuntimePolicy {
+    /// Apply deployment choices to this request's profile/budget-derived policy.
+    /// The explicit override can be above a profile's historical 5s default,
+    /// but never above the request's safe Host budget or protocol caps.
+    /// Reapply on each header-selected profile to prevent authority bypass.
+    pub(crate) fn with_timing_overrides(mut self, overrides: McpHostTimingOverrides) -> Self {
+        let safe_wait_secs = self
+            .host_budget_secs
+            .saturating_sub(HOST_RETURN_GUARD_SECS)
+            .max(1);
+        if let Some(limit) = overrides.sync_wait_secs {
+            self.max_sync_wait_secs = limit
+                .min(safe_wait_secs)
+                .min(STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS);
+        }
+        if let Some(limit) = overrides.continuation_wait_secs {
+            self.continuation_wait_secs =
+                limit.min(safe_wait_secs).min(MAX_JOB_OBSERVATION_WAIT_SECS);
+        }
+        self.timing_overrides = overrides;
+        self
+    }
+
+    /// Request-local strategy resolution must keep the deployment's caps.
+    pub(crate) fn request_timing_overrides(self) -> McpHostTimingOverrides {
+        self.timing_overrides
+    }
+
     /// One SSOT for model guidance defaults. Explicit request selection always
     /// wins; only MCP omission inherits the configured Host capability profile.
     pub(crate) const fn effective_guidance_profile(
@@ -166,6 +241,7 @@ mod tests {
                 initial_job_handoff_secs: 10,
                 max_sync_wait_secs: 55,
                 continuation_wait_secs: 55,
+                timing_overrides: McpHostTimingOverrides::default(),
             }
         );
         assert_eq!(
@@ -180,6 +256,7 @@ mod tests {
                 initial_job_handoff_secs: 5,
                 max_sync_wait_secs: 5,
                 continuation_wait_secs: 5,
+                timing_overrides: McpHostTimingOverrides::default(),
             }
         );
     }
@@ -249,6 +326,87 @@ mod tests {
             .initial_job_handoff_secs,
             1
         );
+    }
+
+    #[test]
+    fn explicit_deployment_waits_are_bounded_and_never_modify_legacy_handoff_hint() {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS", "8");
+        env.set("WEBCODEX_MCP_HOST_CONTINUATION_WAIT_MAX_SECS", "12");
+        let overrides = McpHostTimingOverrides::from_env().unwrap();
+
+        let host = McpHostConfig {
+            profile: McpHostProfile::HostCodeMode,
+            host_budget_secs: None,
+        }
+        .runtime_policy()
+        .with_timing_overrides(overrides);
+        assert_eq!(
+            (host.max_sync_wait_secs, host.continuation_wait_secs),
+            (8, 12)
+        );
+        assert_eq!(
+            (host.host_budget_secs, host.initial_job_handoff_secs),
+            (55, 5)
+        );
+        assert_eq!(host.request_timing_overrides(), overrides);
+        let serde_value = serde_json::to_value(host).unwrap();
+        assert_eq!(serde_value["max_sync_wait_secs"], 8);
+        assert_eq!(serde_value["continuation_wait_secs"], 12);
+        assert!(serde_value.get("timing_overrides").is_none());
+
+        let small = McpHostConfig {
+            profile: McpHostProfile::HostCodeMode,
+            host_budget_secs: Some(9),
+        }
+        .runtime_policy()
+        .with_timing_overrides(overrides);
+        assert_eq!(
+            (small.max_sync_wait_secs, small.continuation_wait_secs),
+            (4, 4)
+        );
+        assert_eq!(small.host_budget_secs, 9);
+
+        let direct = McpHostConfig {
+            profile: McpHostProfile::Direct,
+            host_budget_secs: None,
+        }
+        .runtime_policy()
+        .with_timing_overrides(overrides);
+        assert_eq!(
+            (direct.max_sync_wait_secs, direct.continuation_wait_secs),
+            (8, 12)
+        );
+        assert_eq!(direct.host_budget_secs, 60);
+    }
+
+    #[test]
+    fn invalid_deployment_waits_fail_explicitly_without_echoing_secret_values() {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.remove("WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS");
+        env.remove("WEBCODEX_MCP_HOST_CONTINUATION_WAIT_MAX_SECS");
+        assert_eq!(
+            McpHostTimingOverrides::from_env().unwrap(),
+            McpHostTimingOverrides::default()
+        );
+
+        for invalid in ["0", "61", "-1", "1.5", "PRIVATE_INVALID_WAIT"] {
+            env.set("WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS", invalid);
+            let message = McpHostTimingOverrides::from_env().unwrap_err();
+            assert!(message.contains("WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS"));
+            if invalid.starts_with("PRIVATE_") {
+                assert!(!message.contains(invalid));
+            }
+        }
+        env.set("WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS", "60");
+        for invalid in ["0", "101", "NaN", "PRIVATE_INVALID_WAIT"] {
+            env.set("WEBCODEX_MCP_HOST_CONTINUATION_WAIT_MAX_SECS", invalid);
+            let message = McpHostTimingOverrides::from_env().unwrap_err();
+            assert!(message.contains("WEBCODEX_MCP_HOST_CONTINUATION_WAIT_MAX_SECS"));
+            if invalid.starts_with("PRIVATE_") {
+                assert!(!message.contains(invalid));
+            }
+        }
     }
 
     #[test]

@@ -1541,8 +1541,8 @@ pub enum ToolCall {
         timeout_secs: Option<u64>,
     },
 
-    /// Run portable read-only project validation. The Runner resolves the nearest
-    /// supported Rust/Go or Python recipe and admits one canonical structured validation Job.
+    /// Run bounded project validation; project-authored tests/scripts can modify files or use network.
+    /// The Runner resolves a Rust/Go/Python/Node recipe and admits a canonical Job.
     ProjectValidate {
         /// Exact registered Runner Project.
         project: String,
@@ -1552,7 +1552,10 @@ pub enum ToolCall {
         #[serde(default)]
         cwd: Option<String>,
         action: webcodex_core::project_validation::ProjectValidationAction,
-        /// Omission means auto. Rust and Go are supported; Python supports test through pytest and check/format_check through project-local Ruff with explicit target-version; Node returns unavailable.
+        /// Omission means auto. Rust and Go are supported; Python supports test through pytest and
+        /// check/format_check through project-local Ruff with explicit target-version.
+        /// Node supports native script check and opt-in native TAP test; no caller-selected
+        /// script names or argv.
         #[serde(default)]
         adapter: Option<webcodex_core::project_validation::ProjectValidationAdapter>,
         /// Optional portable scope. Explicit packages narrow Rust/Go selection; all_packages=true selects the
@@ -1564,8 +1567,8 @@ pub enum ToolCall {
         #[serde(default)]
         dependency_policy: Option<webcodex_core::project_validation::ProjectDependencyPolicy>,
         /// Test-only selector and count postconditions. Rust uses a libtest substring,
-        /// Go uses native -run regexp, and Python pytest uses -k. Omission preserves
-        /// unfiltered positive-test proof.
+        /// Go uses native -run regexp, and Python pytest uses -k. Node TAP supports
+        /// count requirements but rejects test filters. Omission keeps unfiltered positive-test proof by default.
         #[serde(default)]
         test: Option<webcodex_core::project_validation::ProjectValidationTestOptions>,
         /// Total execution budget, clamped to 3600 seconds. Host grace never starts another execution.

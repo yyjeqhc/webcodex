@@ -173,6 +173,7 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "run_shell",
         "project_validate",
         "review_changes",
+        "list_jobs",
         "observe_jobs",
         "wait_for_job_readiness",
         "present_work_result",
@@ -187,6 +188,148 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
             crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(required),
             "{required} must derive direct admission from ToolDefinition rank"
         );
+    }
+}
+
+#[tokio::test]
+async fn list_jobs_direct_and_gateway_preserve_caller_visibility_and_validation() {
+    use crate::runner_protocol::ShellJobOpRequest;
+    use webcodex_runner_registry::ShellJobStartMetadata;
+    let runtime = test_runtime();
+    let auth = crate::auth::shared_key_context("job-inventory-owner");
+    let foreign = crate::auth::shared_key_context("job-inventory-foreign");
+    let mut owned_job = None;
+    for (client, owner) in [("inventory-owner", &auth), ("inventory-foreign", &foreign)] {
+        let registration = serde_json::from_value::<RunnerRegisterRequest>(json!({
+            "client_id":client, "agent_instance_id":"inst",
+            "agent_protocol_generation":crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            "capabilities":{"shell":true,"jobs":true,"async_jobs":true,"async_shell_jobs":true}
+        }))
+        .unwrap();
+        let access = crate::test_support::runner_access(owner);
+        runtime
+            .runner_registry
+            .register_with_auth(
+                crate::test_support::current_runner_registration(registration),
+                Some(&access),
+            )
+            .await
+            .unwrap();
+        let job = runtime
+            .runner_registry
+            .start_job_with_metadata_for_access(
+                serde_json::from_value::<ShellJobOpRequest>(json!({
+                    "op":"start", "client_id":client, "command":"fixture", "timeout_secs":60
+                }))
+                .unwrap(),
+                "fixture".into(),
+                ShellJobStartMetadata::default(),
+                Some(&access),
+                None,
+            )
+            .await
+            .unwrap();
+        if client == "inventory-owner" {
+            owned_job = Some(job.job_id);
+        }
+    }
+    for stateless in [false, true] {
+        for arguments in [json!({}), json!({"project":" "})] {
+            let mut outputs = Vec::new();
+            for params in [
+                json!({"name":"list_jobs", "arguments":arguments}),
+                adaptive_runtime_gateway_params("list_jobs", arguments.clone()),
+            ] {
+                let params = if stateless {
+                    mcp_2026_params(params)
+                } else {
+                    params
+                };
+                let McpOutcome::Ok(value) = handle_mcp_request(
+                    &runtime,
+                    rpc("tools/call", Some(json!(1)), params),
+                    Some(&auth),
+                )
+                .await
+                else {
+                    panic!("list_jobs");
+                };
+                outputs.push(value["result"]["structuredContent"].clone());
+            }
+            assert_eq!(outputs[0], outputs[1]);
+            if arguments.get("project").is_none() {
+                assert_eq!(outputs[0]["success"], true);
+                assert_eq!(outputs[0]["output"]["count"], 1);
+                assert_eq!(
+                    outputs[0]["output"]["jobs"][0]["job_id"],
+                    owned_job.as_ref().unwrap().as_str()
+                );
+            } else {
+                assert_eq!(outputs[0]["success"], false);
+                assert_eq!(outputs[0]["output"]["error_kind"], "invalid_project_filter");
+            }
+        }
+    }
+    let McpOutcome::Ok(manifest) = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(2)),
+            mcp_2026_params(json!({
+                "name":"read_tool_manifest", "arguments":{"tool_name":"list_jobs"}
+            })),
+        ),
+        Some(&auth),
+    )
+    .await
+    else {
+        panic!("manifest");
+    };
+    let route = &manifest["result"]["structuredContent"]["output"]["route"];
+    assert_eq!(route["primary"]["mode"], "direct");
+    assert_eq!(route["fallback"]["tool"], "call_runtime_tool");
+}
+
+#[tokio::test]
+async fn adaptive_gateway_annotations_cover_admitted_runtime_tool_effects() {
+    for stateless in [false, true] {
+        for compact in [false, true] {
+            let McpOutcome::Ok(value) =
+                crate::mcp::tools::handle_list(Some(json!(1)), None, stateless, compact, false)
+                    .await
+            else {
+                panic!("tools/list");
+            };
+            let gateway = &value["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == "call_runtime_tool")
+                .expect("gateway descriptor")["annotations"];
+            let mut open_world_targets = Vec::new();
+            for spec in registered_tool_specs() {
+                if !crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(
+                    &spec.name, stateless,
+                ) {
+                    continue;
+                }
+                for (hint, conservative) in [
+                    ("readOnlyHint", false),
+                    ("destructiveHint", true),
+                    ("idempotentHint", false),
+                    ("openWorldHint", true),
+                ] {
+                    if spec.annotations[hint] == conservative {
+                        assert_eq!(gateway[hint], conservative, "{}: {hint}", spec.name);
+                    }
+                }
+                if spec.annotations["openWorldHint"] == true {
+                    open_world_targets.push(spec.name);
+                }
+            }
+            assert!(open_world_targets.iter().any(|name| name == "run_process"));
+            assert!(open_world_targets.iter().any(|name| name == "run_script"));
+        }
     }
 }
 
@@ -600,7 +743,6 @@ async fn call_runtime_tool_rejects_direct_app_presentation_targets_when_apps_are
 async fn pruned_tools_keep_exact_manifest_and_canonical_gateway_validation() {
     let runtime = test_runtime();
     for (name, arguments) in [
-        ("list_jobs", json!({})),
         (
             "wait_for_job_terminal",
             json!({"job_id":"missing", "idempotency_key":"surface-parity"}),

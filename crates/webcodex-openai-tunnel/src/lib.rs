@@ -10,6 +10,7 @@ pub mod policy;
 mod poller;
 mod proxy;
 mod response;
+pub mod run_fence;
 pub mod wire;
 
 pub use error::Error;

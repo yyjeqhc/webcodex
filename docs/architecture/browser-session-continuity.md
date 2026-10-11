@@ -46,8 +46,9 @@ The internal protocol is version 1, length-prefixed bounded JSON: little-endian
 32-bit lengths for local TCP and native-endian lengths for Chrome stdio. Limits
 are checked before allocating bodies: 256 KiB commands, 4 MiB responses, 64 KiB
 events, 4 peers including unverified handshakes, 16 ten-minute offers, 64 channels,
-32 queued commands per peer, and 16 MiB total queued response/event data. Queue
-exhaustion closes the peer and invalidates leases, never retries an effect. The
+32 queued commands per peer, and 16 MiB total queued response/event data. Command
+or response queue exhaustion closes the peer and invalidates leases. Diagnostic
+event queue exhaustion closes only each affected route; it never retries an effect. The
 native host handshake is bounded at two seconds. Socket timeouts retain partial
 frame state instead of interpreting a truncated body as a new header.
 
@@ -65,6 +66,73 @@ deadlines, diagnostics and result/image bounds. The extension is not a second
 unfenced Browser tool API. Out-of-process iframe support remains bounded by the
 existing same-origin/frame policy; extension attachment does not grant privileged
 Chrome pages or bypass debugger restrictions.
+
+## Navigation continuity and failure diagnosis
+
+A normal navigation or reload replaces the document, not the user's tab consent.
+The external target remains `tab_<id>` within its exact authenticated peer/lease;
+the Supervisor keeps its Browser and Page identities while fencing old elements
+with the new loader/document identity. Snapshot reads a fresh frame tree and DOM.
+Same-document changes continue to use the existing snapshot and element checks.
+Neither the Runner Browser adapter nor Supervisor expiry is driven by collector
+errors: expiry still follows the existing idle and maximum-lifetime bounds.
+
+The October 2026 investigation starts at `67126b56` (PR #989). That change handles
+`Page.navigate.errorText`, preserving completed/unknown execution semantics; it
+does not change consent or transport lifetimes. Deterministic fixtures established
+three separate defects in the preceding continuity path:
+
+- A single CDP event over 64 KiB caused the extension to disconnect Native
+  Messaging, clear every offer/lease and detach all tabs. A large console argument
+  reproduces this without a real site. Network events can also carry large bodies
+  or metadata during navigation. The reported Xiaomi failure has no captured
+  event/disconnect trace here, so attribution of that particular incident remains
+  unverified.
+- Diagnostic event queue overflow in Rust returned peer failure, invalidating all
+  of its offers, leases and routes. It now invalidates only overflowing routes.
+- A debugger detach between attach dispatch and Promise completion was invisible
+  because tab ownership was registered only after completion. Ownership is now
+  reserved before dispatch, all tabs are invalidated before asynchronous cleanup,
+  and pending attach/detach blocks replacement attachment to that exact tab.
+
+The extension forwards only the seven diagnostic events consumed by
+`record_cdp_event`. Oversized diagnostics become a bounded internal
+`WebCodex.eventsDiscarded` marker rather than a disconnect. Console/network
+observations report truncation; lost Network events make stability explicitly
+false with `diagnostic_events_discarded` until diagnostics are cleared. Snapshot
+and page operations remain available. Event bodies, Chrome exception strings,
+URLs and native credentials are never included in lifecycle logging. Wire and
+queue limits have not increased. Malformed or oversized wire messages received
+by Rust still fail closed.
+
+| Observation | Meaning and recovery |
+|---|---|
+| New loader/document | Refresh Snapshot; old element authority is invalid. No Share or attach is needed. |
+| `collector_recovering` / diagnostic stream error | A collector route was lost. The next observation may recreate only that route through `ExternalLease::socket`, which rechecks peer, lease and exact admitted target. The recovered collector retains its bounded diagnostic-loss marker, so network quiet is not asserted until an explicit `clear_diagnostics` barrier. No debugger reattach or effect replay. |
+| `attachment_lost` | Post-effect collection found the external lease no longer live. Stop collector recovery; Share is required. The acknowledged effect is not replayed. |
+| `diagnostic_events_discarded` | Network diagnostic evidence is incomplete; do not claim network quiet. Snapshot remains usable. |
+| Extension `debugger_target_closed`, `debugger_canceled_by_user`, `debugger_detached` | Actual debugger detach, not document replacement. Original-tab detach invalidates consent; no automatic reattach. Unknown Chrome reasons are mapped to the fixed generic code. |
+| Extension `native_disconnected` | Native Messaging lost its trusted connection. Clear consent and detach; a reconnect is a new peer requiring Share. |
+| Extension `explicit_revoke` | Invalidate local consent before asynchronous detach. Rust receives revocation of the original shared tab. |
+| Extension `tab_closed` | Closing the shared original tab invalidates its lease. Closing a tool-created child removes only that child. Chrome may emit target-closed detach first. |
+
+Chrome's [debugger API](https://developer.chrome.com/docs/extensions/reference/api/debugger)
+documents `target_closed` and `canceled_by_user`; it does not provide a reliable
+separate reason for every form of external debugger takeover. Do not interpret
+any detach reason as permission to reattach. Fixed diagnostic codes describe the
+observed signal rather than claiming an unobserved human action.
+
+If route loss races a dispatched write, its result stays `outcome_unknown` and
+must be reconciled by observation. If its completion was already acknowledged,
+subsequent collector trouble cannot retroactively replay it. A real revoke,
+Tab close, peer disconnect, Runner restart or expired lease cannot be recovered
+by the collector path. A page-created popup does not inherit consent merely from
+its opener or origin; explicit tool `new_page` retains its existing narrow scope.
+
+The Node VM fixtures and authenticated Rust transport fixtures cover these
+boundaries without operating the user's Chrome. They do not establish real-site
+dogfood success. Review/deployment and a separately authorized live navigation
+smoke remain necessary to validate the reported Xiaomi case.
 
 ## Tool sequence and capability admission
 
@@ -132,3 +200,42 @@ VM fixtures test consent, unsupported process commands, exact tabs, attach races
 and disconnect cleanup. Neither fixture suite is a claim of real Chrome dogfood;
 real deployment, profile persistence, screenshots and live external attach are
 recorded separately with their observed limitations.
+
+## Dogfood sharing and diagnostics
+
+The extension popup reads the current offer/lease state without creating consent:
+not shared, authorized and waiting for Attach, attached, or disconnected. Repeated
+Share retains an existing offer/lease; reconnect requires fresh explicit Share.
+Empty discover lists pending offers only: inspect browsers/pages for an existing
+attached_external Browser. A stale element needs a new Snapshot; a stale attachment
+needs explicit sharing recovery. Website-opened tabs remain unshared. When authorized,
+Computer Use can select the new tab and operate the extension Share UI, followed by
+Browser discover/attach. The original Browser remains independently usable.
+
+The extension projects CDP diagnostics onto the fields consumed by record_cdp_event.
+Display text uses the same UTF-8 budgets as Rust; exact network request IDs are never
+clipped. Bodies, headers, cookies, object previews and stacks are not forwarded.
+The 64 KiB event ceiling remains; an unrepresentable event emits an explicit loss
+marker. Network loss still prevents a network-quiet claim. Neither navigation nor
+reconnect silently clears the retained gap; clear_diagnostics remains the explicit
+barrier. Extension reload is required for these worker/popup changes; no new Chrome
+permission, automatic child-tab sharing or Native Messaging wire version is added.
+
+### Possible future single-use child-tab consent
+
+A separate explicit action could authorize exactly one next child of the current
+attached tab. This is worth a future design review, but is not implemented here.
+It must bind to the exact opener tab, live attachment lease and bridge generation;
+expire after a short visible interval; admit only a positively identified child;
+and consume consent atomically before dispatching Attach. Revocation, lease loss,
+worker restart, ambiguous opener provenance, or attach failure must never rearm it.
+The ordinary Share action must not imply this broader consent. Tests must cover
+multiple simultaneous popups, opener replacement, expired leases and consumption
+racing revocation before shipping it.
+
+Native Messaging installer backups use `.json.previous.<sha256>` names. Existing
+`.previous` history is retained. Complete backup bytes are published without
+replacement and synced before replacing the manifest; identical backups are reused,
+while conflicts, symlinks or failed backups stop installation. Inputs are bounded to
+64 KiB. No installed Native Messaging Host update is required solely for this backup
+change; it applies the next time the operator explicitly runs the installer.

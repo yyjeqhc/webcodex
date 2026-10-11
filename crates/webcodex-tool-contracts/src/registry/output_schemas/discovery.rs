@@ -64,7 +64,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                             "properties": {
                                 "profile": {"type": "string", "enum": ["direct", "host_code_mode"]},
                                 "host_budget_secs": {"type": "integer", "minimum": 1},
-                                "initial_job_handoff_secs": {"type": "integer", "minimum": 1},
+                                "initial_job_handoff_secs": {"type": "integer", "minimum": 1, "deprecated": true, "description": "Legacy compatibility-only timing hint. No independent execution consumer; max_sync_wait_secs controls structured handoff."},
                                 "max_sync_wait_secs": {"type": "integer", "minimum": 1},
                                 "continuation_wait_secs": {"type": "integer", "minimum": 1}
                             },

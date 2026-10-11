@@ -232,6 +232,32 @@ fn runner_status_profile_derives_config_and_token_paths() {
     assert!(opts.local_state_dir.is_none());
 }
 
+#[test]
+fn runner_run_without_flags_leaves_config_resolution_to_the_runner() {
+    let args = runner_run_forwarded_args(None, None).unwrap();
+    assert!(
+        args.is_empty(),
+        "bare runner run must not pin a config path, got {args:?}"
+    );
+}
+
+#[test]
+fn runner_run_forwards_explicit_config_and_profile() {
+    let _guard = env_test_guard();
+    let _env = deterministic_user_env();
+    let config = runner_run_forwarded_args(None, Some(PathBuf::from("/tmp/agent.toml"))).unwrap();
+    assert_eq!(
+        config,
+        vec!["--config".to_string(), "/tmp/agent.toml".to_string()]
+    );
+    let profile = runner_run_forwarded_args(Some("special"), None).unwrap();
+    let expected = client_profile_runner_config("special").unwrap();
+    assert_eq!(
+        profile,
+        vec!["--config".to_string(), expected.display().to_string()]
+    );
+}
+
 /// Unix-only: derives systemd service paths, which require Unix
 /// absolute-path semantics (`/etc/systemd/system/...`). On Windows the
 /// Runner service feature fails closed instead.

@@ -214,6 +214,118 @@ fn pytest_summary_line(line: &str) -> Option<CargoTestSummary> {
     })
 }
 
+/// Node's own TAP reporter emits a fixed trailing accounting block. Never
+/// infer executed tests from a package-manager script's exit status or an
+/// arbitrary progress line. Incomplete/truncated/conflicting trailers prove
+/// nothing.
+pub fn parse_node_native_test_diagnostics(stdout: &str, truncated: bool) -> ValidationDiagnostics {
+    let summary = (!truncated)
+        .then(|| node_native_test_summary(stdout))
+        .flatten();
+    ValidationDiagnostics {
+        available: summary.is_some(),
+        parser: PARSER_KIND,
+        reason: summary.is_none().then_some("no complete Node TAP summary"),
+        diagnostic_count: Some(0),
+        diagnostics: Vec::new(),
+        returned_diagnostic_count: 0,
+        diagnostics_truncated: false,
+        invalid_diagnostics_omitted: 0,
+        test_summary: summary,
+        failed_test_details: Vec::new(),
+        failed_test_details_truncated: false,
+        truncated: Some(truncated),
+    }
+}
+
+fn node_native_test_summary(stdout: &str) -> Option<CargoTestSummary> {
+    // Preserve indentation: Node emits nested TAP plans and assertions inside
+    // suites, and those cannot authorize a root-level test-count summary.
+    let lines: Vec<_> = stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if lines.len() < 10 || lines.first().copied() != Some("TAP version 13") {
+        return None;
+    }
+    let (body, tail) = lines.split_at(lines.len().checked_sub(8)?);
+    // Native Node appends the root plan immediately before the fixed trailer.
+    // Its N counts top-level assertions, not all nested tests in # tests.
+    let root_count = body.last()?.strip_prefix("1..")?.parse::<u64>().ok()?;
+    let mut root_assertions = 0u64;
+    let fields = [
+        "# tests ",
+        "# suites ",
+        "# pass ",
+        "# fail ",
+        "# cancelled ",
+        "# skipped ",
+        "# todo ",
+    ];
+    for line in body.iter().skip(1).take(body.len().saturating_sub(2)) {
+        // Reject duplicate root plans and numeric accounting while allowing
+        // ordinary t.diagnostic prose such as "# pass phase complete".
+        let repeated_count = fields.iter().any(|prefix| {
+            line.strip_prefix(prefix)
+                .and_then(|value| value.parse::<u64>().ok())
+                .is_some()
+        });
+        let repeated_duration = line
+            .strip_prefix("# duration_ms ")
+            .and_then(|value| value.parse::<f64>().ok())
+            .is_some_and(|value| value.is_finite() && value >= 0.0);
+        if line.starts_with("1..")
+            || line.starts_with("TAP version ")
+            || repeated_count
+            || repeated_duration
+        {
+            return None;
+        }
+        let ordinal = line
+            .strip_prefix("ok ")
+            .or_else(|| line.strip_prefix("not ok "));
+        if let Some(ordinal) = ordinal {
+            root_assertions = root_assertions.checked_add(1)?;
+            if ordinal.split_whitespace().next()?.parse::<u64>().ok()? != root_assertions {
+                return None;
+            }
+        }
+    }
+    if root_assertions != root_count {
+        return None;
+    }
+    // Accounting lines must themselves be top-level (unindented).
+    let duration = tail[7]
+        .strip_prefix("# duration_ms ")?
+        .parse::<f64>()
+        .ok()?;
+    if !duration.is_finite() || duration < 0.0 {
+        return None;
+    }
+    let mut values = [0_u64; 7];
+    for (i, prefix) in fields.iter().enumerate() {
+        values[i] = tail[i].strip_prefix(prefix)?.parse::<u64>().ok()?;
+    }
+    let [total, suites, passed, failed, cancelled, skipped, todo] = values;
+    // With no root assertions, neither nested tests nor suites can exist.
+    // An empty suite remains valid: Node emits one root suite assertion.
+    if (root_count == 0 && (total != 0 || suites != 0))
+        || cancelled != 0
+        || passed
+            .checked_add(failed)?
+            .checked_add(skipped)?
+            .checked_add(todo)?
+            != total
+    {
+        return None;
+    }
+    Some(CargoTestSummary {
+        passed: Some(passed),
+        failed: Some(failed),
+        ignored: skipped.checked_add(todo),
+    })
+}
+
 /// Parse Go vet's stable relative-file:line:column diagnostics. Compiler prose
 /// without a stable location is not invented into structured evidence.
 pub fn parse_go_vet_diagnostics(stderr: &str, truncated: bool) -> ValidationDiagnostics {

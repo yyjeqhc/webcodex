@@ -620,6 +620,7 @@ mod tests {
             project_validation_python_pytest_v1: false,
             project_validation_python_ruff_v1: false,
             project_validation_node_script_check_v1: false,
+            project_validation_node_tap_v1: false,
             structured_go_test_tool: true,
             structured_go_test_packages: true,
             structured_process_argv: true,

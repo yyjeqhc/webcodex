@@ -82,6 +82,19 @@ struct ManagedProcess {
     logs: Arc<Mutex<VecDeque<String>>>,
 }
 
+impl ManagedProcess {
+    fn snapshot(&self, kind: ProcessKey) -> ProcessSnapshot {
+        ProcessSnapshot {
+            kind,
+            generation: self.generation,
+            phase: self.phase,
+            pid: Some(self.child.id()),
+            exit_code: self.exit_code,
+            owned_by_desktop: true,
+        }
+    }
+}
+
 #[derive(Default)]
 struct MachineEventState {
     queue: VecDeque<Value>,
@@ -364,6 +377,10 @@ impl ProcessSupervisor {
                 logs,
             },
         );
+        self.activity
+            .record_lifecycle(crate::lifecycle_log::LifecycleEvent::ProcessObserved {
+                snapshot: self.processes[&kind].snapshot(kind),
+            });
         Ok(machine_rx)
     }
 
@@ -383,6 +400,7 @@ impl ProcessSupervisor {
             ) {
                 continue;
             }
+            let previous_phase = process.phase;
             match process.child.try_wait() {
                 Ok(Some(status)) => {
                     process.exit_code = status.code();
@@ -415,19 +433,21 @@ impl ProcessSupervisor {
                     );
                 }
             }
+            if process.phase != previous_phase {
+                self.activity.record_lifecycle(
+                    crate::lifecycle_log::LifecycleEvent::ProcessObserved {
+                        snapshot: process.snapshot(*kind),
+                    },
+                );
+            }
         }
     }
 
     pub fn snapshot(&mut self, kind: ProcessKey) -> Option<ProcessSnapshot> {
         self.refresh();
-        self.processes.get(&kind).map(|process| ProcessSnapshot {
-            kind,
-            generation: process.generation,
-            phase: process.phase,
-            pid: Some(process.child.id()),
-            exit_code: process.exit_code,
-            owned_by_desktop: true,
-        })
+        self.processes
+            .get(&kind)
+            .map(|process| process.snapshot(kind))
     }
 
     pub async fn stop(&mut self, kind: ProcessKey) {
@@ -461,6 +481,10 @@ impl ProcessSupervisor {
             ProcessPhase::Starting | ProcessPhase::Running
         ) {
             process.phase = ProcessPhase::Stopping;
+            self.activity
+                .record_lifecycle(crate::lifecycle_log::LifecycleEvent::ProcessObserved {
+                    snapshot: process.snapshot(kind),
+                });
             self.activity.push_for_profile(
                 kind.tunnel_profile_id(),
                 ActivityEventKind::ProcessStopping,
@@ -510,6 +534,18 @@ impl ProcessSupervisor {
             );
             return;
         }
+        if let Ok(Some(status)) = process.child.try_wait() {
+            process.exit_code = status.code();
+            process.phase = if status.success() {
+                ProcessPhase::Exited
+            } else {
+                ProcessPhase::Failed
+            };
+        }
+        self.activity
+            .record_lifecycle(crate::lifecycle_log::LifecycleEvent::ProcessStopped {
+                snapshot: process.snapshot(kind),
+            });
         finish_drain_task(process.stdout_task, deadline.instant()).await;
         finish_drain_task(process.stderr_task, deadline.instant()).await;
         self.activity.push_for_profile(
@@ -538,6 +574,20 @@ impl ProcessSupervisor {
     }
 
     pub async fn stop_all(&mut self) {
+        // Ordinary application exit keeps the established per-process grace;
+        // only OS session shutdown uses one absolute deadline.
+        for key in self.prepare_stopping_all() {
+            self.stop(key).await;
+        }
+    }
+
+    pub(crate) async fn stop_all_until(&mut self, deadline: Deadline) {
+        for key in self.prepare_stopping_all() {
+            self.stop_until(key, deadline).await;
+        }
+    }
+
+    fn prepare_stopping_all(&mut self) -> Vec<ProcessKey> {
         // Stop exposures before the shared runtime, including every profile.
         let mut keys = self.keys();
         keys.sort_by_key(|key| match key {
@@ -546,9 +596,18 @@ impl ProcessSupervisor {
             ProcessKey::LocalRunner => 2,
             ProcessKey::LocalServer => 3,
         });
-        for key in keys {
-            self.stop(key).await;
+        // All exposures receive their generation-scoped EOF lease together.
+        // Waiting on a busy profile first must not leave the other profiles
+        // connected until Windows has exhausted the owner's shutdown budget.
+        // Keep the shared Server available while admitted tunnel work drains.
+        for key in &keys {
+            if matches!(key, ProcessKey::QuickShare | ProcessKey::RegularTunnel(_)) {
+                if let Some(process) = self.processes.get_mut(key) {
+                    drop(process.child.child_mut().stdin.take());
+                }
+            }
         }
+        keys
     }
 }
 

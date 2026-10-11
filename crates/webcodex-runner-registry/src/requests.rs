@@ -2693,7 +2693,15 @@ impl RunnerRegistry {
             );
         let node_capability = (payload.adapter
             == webcodex_core::project_validation::ProjectValidationAdapter::Node)
-            .then_some(RunnerFeature::ProjectValidationNodeScriptCheck);
+            .then_some(
+                if payload.action
+                    == webcodex_core::project_validation::ProjectValidationAction::Test
+                {
+                    RunnerFeature::ProjectValidationNodeTap
+                } else {
+                    RunnerFeature::ProjectValidationNodeScriptCheck
+                },
+            );
         let requires_package_scope = payload
             .scope
             .as_ref()

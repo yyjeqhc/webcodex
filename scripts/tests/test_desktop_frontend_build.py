@@ -2,6 +2,7 @@
 import json
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -11,6 +12,43 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class DesktopFrontendBuildTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt" and shutil.which("rustc"), "Windows and rustc are required")
+    def test_windows_desktop_is_gui_with_and_without_debug_assertions(self):
+        # Compile the real binary entry point without WebView dependencies. The
+        # subsystem is a linker contract; libtests do not exercise main.rs.
+        entry = (ROOT / "apps/desktop/src-tauri/src/main.rs").read_text()
+        stubs = """
+mod webcodex_desktop_lib {
+    pub fn desktop_build_info() {}
+    pub fn run() {}
+}
+mod serde_json {
+    pub fn to_string(_: &()) -> Result<String, ()> { Ok("{}".into()) }
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "desktop_entry.rs"
+            source.write_text(entry + stubs)
+            for assertions in ("yes", "no"):
+                with self.subTest(debug_assertions=assertions):
+                    program = Path(temporary) / f"desktop-{assertions}.exe"
+                    compiled = subprocess.run(
+                        ["rustc", str(source), "-C", f"debug-assertions={assertions}", "-o", str(program)],
+                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+                    self.assertEqual(compiled.returncode, 0, compiled.stderr.decode(errors="replace"))
+                    image = program.read_bytes()
+                    pe_offset = struct.unpack_from("<I", image, 0x3c)[0]
+                    self.assertEqual(image[pe_offset:pe_offset + 4], b"PE\x00\x00")
+                    subsystem = struct.unpack_from("<H", image, pe_offset + 24 + 68)[0]
+                    self.assertEqual(subsystem, 2, "Desktop must not share its launcher's console lifetime")
+                    # GUI binaries must retain the redirected machine identity
+                    # path used by installers and runtime compatibility checks.
+                    result = subprocess.run(
+                        [str(program), "--build-info-json"], stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+                    self.assertEqual(result.returncode, 0)
+                    self.assertEqual(json.loads(result.stdout), {})
+
     @unittest.skipUnless(shutil.which("npm") and shutil.which("rustc"), "npm and rustc are required")
     def test_direct_production_cargo_build_rebuilds_dist_and_failed_build_is_fatal(self):
         with tempfile.TemporaryDirectory() as temporary:

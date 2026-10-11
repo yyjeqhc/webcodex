@@ -1025,3 +1025,32 @@ fn ruff_evidence_profiles_have_no_static_command_authority_or_borrowed_counts() 
     assert_eq!(oversized.truncated, Some(true));
     assert!(oversized.diagnostic_count.is_none());
 }
+
+#[test]
+#[ignore = "opt-in real Node.js test process; requires Node.js installed locally"]
+fn node_native_tap_parser_matches_real_node_process() {
+    use std::process::Command;
+    use webcodex_core::validation_evidence::parse_node_native_test_diagnostics;
+    for (body, expected_exit, passed, failed) in [
+        ("const t=require('node:test');t('ok',()=>{});", 0, 1, 0),
+        ("const t=require('node:test');t('bad',()=>{throw Error('example')});", 1, 0, 1),
+        ("const t=require('node:test');t.skip('skip',()=>{});", 0, 0, 0),
+        ("const {describe,it}=require('node:test');describe('s',()=>{it('a',()=>{});it('b',()=>{})});", 0, 2, 0),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        std::fs::write(temporary.path().join("example.test.cjs"), body).unwrap();
+        let output = Command::new("node")
+            .args(["--test", "--test-reporter=tap"])
+            .current_dir(temporary.path())
+            .output()
+            .expect("Node.js is required for this opt-in test");
+        assert_eq!(output.status.code(), Some(expected_exit), "{output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let report = parse_node_native_test_diagnostics(&stdout, false);
+        let summary = report.test_summary.as_ref().expect("Node native TAP footer");
+        assert_eq!(summary.passed, Some(passed), "{report:?}");
+        assert_eq!(summary.failed, Some(failed), "{report:?}");
+        assert!(parse_node_native_test_diagnostics(&stdout, true)
+            .test_summary.is_none());
+    }
+}

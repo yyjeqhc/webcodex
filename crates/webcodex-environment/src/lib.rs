@@ -40,6 +40,8 @@ pub mod service;
 pub mod session_service;
 mod storage;
 mod tunnel;
+mod tunnel_recovery;
+pub use tunnel_recovery::{TunnelRecoveryObservation, TunnelRecoveryRequest};
 mod types;
 pub use local_status::{ComponentObservation, LocalEnvironmentStatus};
 pub use upgrade::{upgrade_observation, UpgradeObservation, UpgradeOutcome};
@@ -81,7 +83,8 @@ pub use upgrade::{
 
 pub use tunnel::{
     tunnel_profile_credentials, tunnel_profile_snapshots, tunnel_profiles, tunnel_service_spec,
-    write_embedded_tunnel_health, write_tunnel_health, TunnelConfigurationNextAction,
-    TunnelConfigurationResult, TunnelCredentials, TunnelHostMode, TunnelProfileSnapshot,
-    TunnelRecord, TunnelRuntimeObservation,
+    write_embedded_tunnel_health, write_embedded_tunnel_observation, write_tunnel_health,
+    TunnelConfigurationNextAction, TunnelConfigurationResult, TunnelCredentials,
+    TunnelDiagnosticObservation, TunnelHostMode, TunnelProfileSnapshot, TunnelRecord,
+    TunnelRuntimeObservation, TunnelState,
 };

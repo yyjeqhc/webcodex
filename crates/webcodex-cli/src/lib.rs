@@ -1395,7 +1395,7 @@ fn parse_runner_subcommand(args: &[String]) -> CliAction {
         let help = match command {
             "init" => runner_init_usage(),
             "install" => runner_install_service_usage(),
-            "run" => "Usage: webcodex runner run [--profile NAME|--config PATH]\n\nRun webcodex-runner directly in the foreground.\n",
+            "run" => "Usage: webcodex runner run [--profile NAME|--config PATH]\n\nRun webcodex-runner directly in the foreground. Without --profile or --config, webcodex-runner resolves its own config, including WEBCODEX_RUNNER_CONFIG.\n",
             "restart" => "Usage: webcodex runner restart [--profile NAME] [--bin PATH] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webcodex connect`, omitting --scope manages its user-level background Runner; --bin selects an explicit Runner binary for that hosted profile. An explicit scope manages the matching systemd service and does not accept --bin.\n",
             "start" | "stop" => "Usage: webcodex runner <start|stop> [--profile NAME] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webcodex connect`, omitting --scope manages its user-level background Runner. An explicit scope manages the matching systemd service.\n",
             "status" => runner_status_usage(),
@@ -1936,6 +1936,24 @@ fn parse_server_tunnel(args: &[String]) -> Result<ServerTunnelOptions, String> {
     })
 }
 
+fn runner_run_forwarded_args(
+    profile: Option<&str>,
+    config: Option<PathBuf>,
+) -> Result<Vec<String>, String> {
+    let profile = profile.map(validate_client_profile).transpose()?;
+    let config = match config {
+        Some(config) => config,
+        None => match profile.as_deref() {
+            Some(profile) => client_profile_runner_config(profile)?,
+            // webcodex-runner owns this search: WEBCODEX_RUNNER_CONFIG, then an
+            // existing user config, then an existing system config. Passing
+            // --config here would hide that search.
+            None => return Ok(Vec::new()),
+        },
+    };
+    Ok(vec!["--config".to_string(), config.display().to_string()])
+}
+
 fn parse_runner_run(args: &[String]) -> Result<InternalRunOptions, String> {
     let mut profile: Option<String> = None;
     let mut config: Option<PathBuf> = None;
@@ -1947,25 +1965,13 @@ fn parse_runner_run(args: &[String]) -> Result<InternalRunOptions, String> {
             other => return Err(format!("unknown runner run option: {other}")),
         }
     }
-    let profile = profile
-        .as_deref()
-        .map(validate_client_profile)
-        .transpose()?;
-    let config = match config {
-        Some(config) => config,
-        None => match profile.as_deref() {
-            Some(profile) => client_profile_runner_config(profile)?,
-            None => webcodex_runner_config::paths::resolve_runner_config_path(Path::new(
-                "/etc/webcodex",
-            ))?,
-        },
-    };
+    let args = runner_run_forwarded_args(profile.as_deref(), config)?;
     let bin = discover_internal_binary("webcodex-runner").ok_or_else(|| {
         "webcodex-runner was not found beside webcodex or in an absolute PATH entry".to_string()
     })?;
     Ok(InternalRunOptions {
         bin,
-        args: vec!["--config".to_string(), config.display().to_string()],
+        args,
         env: Vec::new(),
     })
 }

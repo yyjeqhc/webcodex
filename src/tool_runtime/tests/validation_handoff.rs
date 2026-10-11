@@ -109,7 +109,20 @@ pub(super) async fn complete_project_validation_plan_request(
     )
     .unwrap();
     let adapter = operation.evidence_profile();
-    let step = if backend == "python" && check != webcodex_validation::SemanticCheck::Test {
+    let step = if backend == "node" && check == webcodex_validation::SemanticCheck::Test {
+        // The production Runner resolves Node tests only through a validated
+        // project-local manifest; model-facing adapters cannot synthesize argv.
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("package.json"),
+            r#"{"scripts":{"test":"node --test"}}"#,
+        )
+        .unwrap();
+        webcodex_validation::resolve_node_native_project_test(root.path(), None)
+            .unwrap()
+            .steps
+            .remove(0)
+    } else if backend == "python" && check != webcodex_validation::SemanticCheck::Test {
         // Mock Runner planning still resolves a real local manifest. The Server
         // fixture is not proof of a real Ruff execution.
         let root = tempfile::tempdir().unwrap();

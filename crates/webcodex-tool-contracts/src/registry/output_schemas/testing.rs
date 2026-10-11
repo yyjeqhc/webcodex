@@ -192,7 +192,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ("execution_source", json!({"const":"project_validate"})),
             ("backend", json!({"type":"string", "enum":["rust","go","python","node"]})),
             ("action", json!({"type":"string", "enum":["format_check","check","test"]})),
-            ("adapter", json!({"type":"string", "enum":["cargo_fmt","cargo_check","cargo_test","go_vet","go_test","python:pytest:test","python:ruff:check","python:ruff:format","node:script:check"]})),
+            ("adapter", json!({"type":"string", "enum":["cargo_fmt","cargo_check","cargo_test","go_vet","go_test","python:pytest:test","python:ruff:check","python:ruff:format","node:script:check","node:tap:test"]})),
             ("validation_target_id", schema_type("string", "Canonical resolved validation target, independent of source freshness.")),
             ("detected_backend", json!({"type":["string","null"], "enum":["rust","go","node","python",null]})),
         ]);

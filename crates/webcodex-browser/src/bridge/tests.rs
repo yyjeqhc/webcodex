@@ -250,3 +250,5 @@ fn queued_bytes_have_one_global_bound_and_are_released_on_receiver_drop() {
 }
 
 mod navigation;
+
+mod continuity;

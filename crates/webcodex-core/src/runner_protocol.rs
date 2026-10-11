@@ -623,6 +623,13 @@ runner_capabilities! {
         #[serde(default, skip_serializing_if = "is_false")]
         pub project_validation_node_script_check_v1: bool = false;
     }
+    /// Dedicated Node native TAP project-test execution; never inferred from
+    /// Node script-check support or generic Project Validation capability.
+    ProjectValidationNodeTap => RUNNER_CAPABILITY_PROJECT_VALIDATION_NODE_TAP("project_validation_node_tap_v1"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub project_validation_node_tap_v1: bool = false;
+    }
     /// The Runner understands the first-class model-facing `go_test` tool identity
     /// and its durable `ShellJobValidationMetadata` contract. This is deliberately
     /// separate from Go JSON parsing support: older Runners may advertise
@@ -2848,6 +2855,7 @@ mod envelope_tests {
                 project_validation_python_pytest_v1: false,
                 project_validation_python_ruff_v1: false,
                 project_validation_node_script_check_v1: false,
+                project_validation_node_tap_v1: false,
                 structured_go_test_tool: true,
                 structured_go_test_packages: true,
                 structured_process_argv: true,

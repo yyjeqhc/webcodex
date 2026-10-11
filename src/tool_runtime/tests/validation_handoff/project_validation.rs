@@ -20,6 +20,7 @@ async fn setup(grace_ms: u64) -> ToolRuntime {
             project_validation_test_options_v1: true,
             project_validation_python_pytest_v1: true,
             project_validation_python_ruff_v1: true,
+            project_validation_node_tap_v1: true,
             structured_go_test_json: true,
             structured_go_test_tool: true,
             structured_go_test_packages: true,
@@ -605,6 +606,8 @@ async fn project_validation_readonly_adapters_preserve_source_fence_through_hand
         ("go", ProjectValidationAction::Check, "go_vet", ""),
         ("go", ProjectValidationAction::Test, "go_test", "{\"Action\":\"run\",\"Package\":\"example/pkg\",\"Test\":\"TestOne\"}\n{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Test\":\"TestOne\"}\n{\"Action\":\"pass\",\"Package\":\"example/pkg\"}\n"),
         ("python", ProjectValidationAction::Test, "python:pytest:test", "1 passed in 0.01s\n"),
+        ("node", ProjectValidationAction::Test, "node:tap:test",
+            "TAP version 13\n# Subtest: example\nok 1 - example\n1..1\n# tests 1\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 5.0\n"),
         ("python", ProjectValidationAction::Check, "python:ruff:check", ""),
         ("python", ProjectValidationAction::FormatCheck, "python:ruff:format", "1 file already formatted\n"),
     ] {

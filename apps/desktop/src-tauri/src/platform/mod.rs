@@ -5,6 +5,42 @@ pub mod permissions;
 #[cfg(target_os = "windows")]
 mod windows;
 
+pub(crate) fn install_session_shutdown(app: &tauri::AppHandle) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+        let handle = app.clone();
+        let observer = windows::session_shutdown::SessionShutdownObserver::start(move || {
+            // Complete cleanup before returning WM_ENDSESSION: Windows may
+            // terminate us immediately afterwards. A cancelled query does
+            // not stop the runtime, and no WebView is needed in tray mode.
+            let state = handle.state::<crate::state::AppState>();
+            tauri::async_runtime::block_on(state.shutdown_until(crate::deadline::Deadline::after(
+                crate::state::SESSION_SHUTDOWN_BUDGET,
+            )));
+            handle.exit(0);
+        })?;
+        app.manage(observer);
+    }
+    #[cfg(not(windows))]
+    let _ = app;
+    Ok(())
+}
+
+pub(crate) fn stop_session_shutdown(app: &tauri::AppHandle) {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+        if let Some(observer) =
+            app.try_state::<windows::session_shutdown::SessionShutdownObserver>()
+        {
+            observer.close();
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = app;
+}
+
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::PowerShellRuntimeSnapshot;
 use webcodex_process::SpawnOptions;

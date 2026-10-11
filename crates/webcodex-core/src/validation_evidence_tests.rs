@@ -808,3 +808,141 @@ fn pytest_summary_proves_only_complete_executed_results() {
         );
     }
 }
+
+#[test]
+fn node_native_tap_counts_only_complete_conservative_reporter_trailers() {
+    use crate::validation_evidence::parse_node_native_test_diagnostics;
+    let transcript = "TAP version 13\n# Subtest: first\nok 1 - first\n# Subtest: second\nok 2 - second\n# Subtest: skipped\nok 3 - skipped # SKIP\n1..3\n# tests 3\n# suites 0\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 1\n# todo 0\n# duration_ms 42.41\n";
+    let summary = parse_node_native_test_diagnostics(transcript, false)
+        .test_summary
+        .expect("complete native TAP footer");
+    assert_eq!(
+        (summary.passed, summary.failed, summary.ignored),
+        (Some(2), Some(0), Some(1))
+    );
+    for invalid in [
+        transcript.replace("# pass 2", "# pass 3"),
+        transcript.replace("# cancelled 0", "# cancelled 1"),
+        transcript.replace("# duration_ms 42.41", "# duration_ms NaN"),
+        transcript.replace("# tests 3", "# tests 3\n# tests 3"),
+        transcript.replace("TAP version 13", "fake TAP version"),
+        transcript.replace("# todo 0\n", ""),
+    ] {
+        assert!(parse_node_native_test_diagnostics(&invalid, false)
+            .test_summary
+            .is_none());
+    }
+    assert!(parse_node_native_test_diagnostics(transcript, true)
+        .test_summary
+        .is_none());
+    assert!(
+        parse_node_native_test_diagnostics("TAP version 13\n1..0\n# tests 0", false)
+            .test_summary
+            .is_none()
+    );
+}
+
+#[test]
+fn node_native_tap_root_plan_and_footer_are_authoritative() {
+    use crate::validation_evidence::parse_node_native_test_diagnostics;
+    // Native Node v26.10.0 TAP indentation and trailer shape.
+    const SIMPLE: &str = "TAP version 13\n# Subtest: passes\nok 1 - passes\n1..1\n# tests 1\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 42.41\n";
+    const NESTED: &str = "TAP version 13\n# Subtest: group\n    # Subtest: first\n    ok 1 - first\n    # Subtest: second\n    ok 2 - second\n    1..2\nok 1 - group\n1..1\n# tests 3\n# suites 0\n# pass 3\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 43.1\n";
+    const SKIP_TODO: &str = "TAP version 13\n# Subtest: pass\nok 1 - pass\n# Subtest: skip\nok 2 - skip # SKIP\n# Subtest: todo\nok 3 - todo # TODO\n1..3\n# tests 3\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 1\n# todo 1\n# duration_ms 53.0\n";
+    const FAILURE: &str = "TAP version 13\n# Subtest: failure\nnot ok 1 - failure\n1..1\n# tests 1\n# suites 0\n# pass 0\n# fail 1\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 30.5\n";
+    const ZERO: &str = "TAP version 13\n1..0\n# tests 0\n# suites 0\n# pass 0\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 0.0\n";
+    // Node describe/it has one root suite plan and counts nested test leaves.
+    const SUITE: &str = "TAP version 13\n# Subtest: group\n    # Subtest: first\n    ok 1 - first\n    # Subtest: second\n    ok 2 - second\n    1..2\nok 1 - group\n1..1\n# tests 2\n# suites 1\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 35.1\n";
+    // An empty Node suite has one root suite assertion but zero tests.
+    const EMPTY_SUITE: &str = "TAP version 13\n# Subtest: empty\nok 1 - empty\n1..1\n# tests 0\n# suites 1\n# pass 0\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 20.0\n";
+    for (output, passed, failed, ignored) in [
+        (SIMPLE, 1, 0, 0),
+        (NESTED, 3, 0, 0),
+        (SUITE, 2, 0, 0),
+        (EMPTY_SUITE, 0, 0, 0),
+        (SKIP_TODO, 1, 0, 2),
+        (FAILURE, 0, 1, 0),
+        (ZERO, 0, 0, 0),
+    ] {
+        let summary = parse_node_native_test_diagnostics(output, false)
+            .test_summary
+            .expect("complete native TAP evidence");
+        assert_eq!(
+            (summary.passed, summary.failed, summary.ignored),
+            (Some(passed), Some(failed), Some(ignored))
+        );
+    }
+
+    // Real Node t.diagnostic text can begin with an accounting word.
+    let legitimate_diagnostics = SIMPLE.replacen(
+        "\n1..1\n# tests",
+        "\n# pass phase complete\n# skipped optional setup\n1..1\n# tests",
+        1,
+    );
+    assert!(
+        parse_node_native_test_diagnostics(&legitimate_diagnostics, false)
+            .test_summary
+            .is_some(),
+        "non-numeric Node diagnostics must not erase proven tests"
+    );
+    for (case, invalid) in [
+        (
+            "zero root plan but positive test count",
+            ZERO.replace("# tests 0", "# tests 1")
+                .replace("# pass 0", "# pass 1"),
+        ),
+        (
+            "zero root plan but nonzero suite count",
+            ZERO.replace("# suites 0", "# suites 1"),
+        ),
+        (
+            "nested-only plan",
+            SIMPLE.replace("1..1\n# tests", "    1..1\n# tests"),
+        ),
+        (
+            "duplicate root plan",
+            SIMPLE.replace("1..1\n# tests", "1..1\n1..1\n# tests"),
+        ),
+        (
+            "displaced root plan",
+            SIMPLE.replace("1..1\n# tests", "1..1\nok 2 - unexpected\n# tests"),
+        ),
+        (
+            "inconsistent root plan",
+            SIMPLE.replace("1..1\n# tests", "1..9\n# tests"),
+        ),
+        (
+            "out-of-order assertion",
+            SIMPLE.replace("ok 1 - passes", "ok 2 - passes"),
+        ),
+    ] {
+        assert!(
+            parse_node_native_test_diagnostics(&invalid, false)
+                .test_summary
+                .is_none(),
+            "must not prove tests from {case}"
+        );
+    }
+    for (field, value) in [
+        ("tests", "1"),
+        ("suites", "0"),
+        ("pass", "1"),
+        ("fail", "0"),
+        ("cancelled", "0"),
+        ("skipped", "0"),
+        ("todo", "0"),
+        ("duration_ms", "42.41"),
+    ] {
+        let duplicate = SIMPLE.replacen(
+            "\n1..1\n# tests",
+            &format!("\n# {field} {value}\n1..1\n# tests"),
+            1,
+        );
+        assert!(
+            parse_node_native_test_diagnostics(&duplicate, false)
+                .test_summary
+                .is_none(),
+            "must reject duplicated accounting field {field}"
+        );
+    }
+}

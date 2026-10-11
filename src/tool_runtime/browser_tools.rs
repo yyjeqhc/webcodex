@@ -1129,6 +1129,10 @@ impl ToolRuntime {
         {
             let reason = if execution_state == "outcome_unknown" {
                 "effect outcome is uncertain; observe current Browser state and do not blindly retry"
+            } else if kind == "stale_element" {
+                "Element identity is stale; take a fresh snapshot before acting"
+            } else if kind == "stale_attachment" {
+                "Attachment consent is stale; Share the exact tab in the extension, then discover and attach"
             } else if kind.starts_with("stale_") {
                 "Browser identity is stale; observe current state before acting"
             } else if execution_state == "completed" {

@@ -6,8 +6,13 @@ Start with the goal that matches what you are trying to do.
 
 ## I want to use WebCodex normally
 
-- [README](../README.md) — what WebCodex does and the difference between full use and a temporary trial
-- [Desktop installation](desktop-install.md) — **recommended Windows/macOS entry**: Desktop + official OpenAI Secure Tunnel
+- [README](../README.md) — what WebCodex does and how to choose a setup
+- [Unified installation](unified-installation.md) — persistent main-node and multi-computer setup; check [deployment validation](unified-deployment-validation.md) before choosing an installer
+- [Runtime installation and CLI join](runtime-installation.md) — headless Linux Runner setup and package update/recovery
+- [Desktop installation](desktop-install.md) — release-specific Windows/macOS installation and OpenAI Secure Tunnel details
+- [Using Desktop](desktop-guide.md) — projects, device invitations, connections, activity, and service controls
+- [Desktop Runtime compatibility](DESKTOP_RUNTIME_COMPATIBILITY.md) — Runtime selection, diagnostics, updates, and rollback
+- [Runtime Console](runtime-console.md) — browser activity, projects, Sessions, and Agent communication
 - [Full Setup](PERSONAL_SETUP.md) — CLI, existing Server, Linux, and advanced regular Server + Runner setup
 - [AI-assisted setup](AI_ONBOARDING.md) — have an AI agent configure WebCodex using ordinary user language
 - [MCP](MCP.md) — ChatGPT, Claude, and other MCP clients
@@ -45,23 +50,28 @@ Start with the goal that matches what you are trying to do.
 
 ## I want to contribute or release WebCodex
 
-- [Desktop development](DESKTOP_DEVELOPMENT.md) — run Desktop from source and build/test native Windows/macOS packages
+- [Contributing](../CONTRIBUTING.md) — issue evidence, focused fixes, validation, and pull requests
+- [Desktop development](DESKTOP_DEVELOPMENT.md) — run Desktop from source and build/test local platform packages
 - [Sponsorship and project support](SPONSORSHIP.md) — community sponsorship, infrastructure support, partnerships, and recognition principles
 
-The `docs/agent/` pages below are maintainer/internal contracts. They intentionally
-contain protocol fields, compatibility names, and implementation invariants that
-ordinary users should not need to learn.
+The references below cover repository policy and maintainer/internal contracts.
+The contract pages intentionally contain protocol fields, compatibility names,
+and implementation invariants that ordinary users should not need to learn.
 
 - [AGENTS.md](../AGENTS.md) — repository instructions for coding/AI agents
 - [Maintenance](MAINTENANCE.md) — maintenance queue, dependency cadence, PR/CI expectations, and bilingual-doc policy
 - [Testing](TESTING.md) — testing strategy
 - [Release checklist](RELEASE_CHECKLIST.md) — release readiness
+- [Compatibility policy](compatibility-policy.md) — supported published formats, upgrade bridges, and named protocol consumers
 - [Architecture decisions](agent/architecture-decisions.md)
+- [Tool contract guidelines](agent/tool-contract-guidelines.md) — model-facing selection, authority, effects, continuation, and recovery
+- [Durable Agent runtime](architecture/durable-agent-runtime.md) — durable identity and asynchronous work architecture
+- [Durable Agent/Conversation/Wake contract](architecture/durable-agent-conversation.md) — current communication implementation
 - [Runtime host context](agent/runtime-host-context.md) — Runner-configured planning context and runtime diagnostics
 - [Job reliability and Runner concurrency](agent/job-reliability-and-concurrency.md) — restart recovery, observation semantics, shared Job capacity, and tool-description requirements
 - [Tool request tracing](agent/tool-request-tracing.md) — maintainer forensic payload/correlation contract
 - [Authority model](agent/permission-model.md)
 - [Session model](agent/session-model.md)
 - [Manual multi-window collaboration](agent/manual-window-collaboration.md)
-- [OpenAPI guidelines](agent/runtime-api-guidelines.md)
+- [Runtime API guidelines](agent/runtime-api-guidelines.md)
 - [Release process](agent/release-process.md)

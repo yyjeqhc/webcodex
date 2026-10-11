@@ -1694,6 +1694,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
+
+[[package]]
 name = "hyper"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5097,10 +5103,27 @@ dependencies = [
  "url",
  "uuid",
  "webcodex-core",
+ "webcodex-openai-tunnel",
  "webcodex-process",
  "webcodex-runner-config",
  "windows-sys 0.61.2",
  "winreg 0.55.0",
+]
+
+[[package]]
+name = "webcodex-openai-tunnel"
+version = "0.1.0"
+dependencies = [
+ "fs2",
+ "futures-util",
+ "httpdate",
+ "libc",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

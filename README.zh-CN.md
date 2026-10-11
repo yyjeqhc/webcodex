@@ -14,7 +14,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2563EB?labelColor=1E40AF&amp;style=flat-square" alt="Apache 2.0 许可证"></a>
 </p>
 
-你可以直接让 AI 理解项目、修改代码、运行测试、检查 Git 或排查问题。仓库仍然留在原来的机器上，不需要为了使用 WebCodex 把整个项目搬到托管环境里。
+WebCodex 是自托管工具运行时：Server 认证请求，并将请求路由到仓库所在机器上的 Runner。你可以直接让 AI 理解项目、修改代码、运行测试、检查 Git 或排查问题。无需把整个项目搬到托管环境里；按请求读取的文件内容和其他工具结果仍可能返回给 AI 客户端。
 
 <p align="center">
   <a href="https://trendshift.io/repositories/121867">
@@ -24,14 +24,14 @@
 
 ## 开始使用 WebCodex
 
-以下统一安装流程仍在开发中，请先查看[验收状态](docs/unified-deployment-validation.md)。对应安装包通过验收并发布后，按代码所在位置选择安装方式：
+临时体验单个仓库可先查看[快速试用](docs/QUICK_START.zh-CN.md)，使用 `webcodex share`。长期使用的统一安装流程仍在开发中，请先查看[验收状态](docs/unified-deployment-validation.md)。对应安装包通过验收并发布后，按代码所在位置选择安装方式：
 
 - **一台电脑：**在个人工作站安装 WebCodex，打开 Desktop，并按[统一安装指南](docs/unified-installation.zh-CN.md)操作。每个平台的统一安装包包含 Desktop、CLI、Server 和 Runner。
 - **多台电脑：**在承载 WebCodex Server 的机器以及持有代码仓库的每台机器上安装相同平台安装包。按[统一安装指南](docs/unified-installation.zh-CN.md#多台电脑)和[部署验收清单](docs/unified-deployment-validation.md)操作。
 
-面向 Windows NSIS、macOS 安装包和 Debian 12 / Ubuntu 22.04+ `.deb` 的 x64、arm64 统一安装包是**本分支构建流程定义的交付目标**，六类安装文件仍需完成原生构建和安装验收后才能发布。三种平台的真实机器安装、重启持久性、GUI 行为和升级尚未全部验收；本分支不宣称跨平台体验一致。已发布文件见 [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases)。仓库 [`download/`](download/README.md) 目录仅包含静态页面源文件；[下载页 workflow](https://github.com/yyjeqhc/webcodex/actions/workflows/download-page.yml) 会在 Release 发布后根据 manifest 构建 GitHub Actions artifact，但不会托管或部署网页。源码预览请检出要验证的功能分支或发布修订，再按 [Desktop 开发指南](docs/DESKTOP_DEVELOPMENT.zh-CN.md#linux-源码预览与已有-server)操作。
+面向 Windows NSIS、macOS 安装包和 Debian 12 / Ubuntu 22.04+ `.deb` 的 x64、arm64 统一安装包是**构建流程定义的交付目标**，六类安装文件仍需完成原生构建和安装验收后才能发布。三种平台的真实机器安装、重启持久性、GUI 行为和升级尚未全部验收；本文档不宣称跨平台体验一致。已发布文件见 [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases)。仓库 [`download/`](download/README.md) 目录仅包含静态页面源文件；[下载页 workflow](https://github.com/yyjeqhc/webcodex/actions/workflows/download-page.yml) 会在 Release 发布后根据 manifest 构建 GitHub Actions artifact，但不会托管或部署网页。源码预览请检出要验证的功能分支或发布修订，再按 [Desktop 开发指南](docs/DESKTOP_DEVELOPMENT.zh-CN.md#linux-源码预览与已有-server)操作。
 
-临时单仓库试用、高级自托管、npm/runtime 压缩包、Docker 和历史版本请看[部署指南](docs/DEPLOYMENT.zh-CN.md)。
+Linux 机器不安装 Desktop 而加入已有 Server，请看 [Runtime 安装与 CLI 加入](docs/runtime-installation.zh-CN.md)。高级自托管、npm/runtime 压缩包、Docker 和历史版本请看[部署指南](docs/DEPLOYMENT.zh-CN.md)。
 
 ## 能做什么？
 
@@ -39,7 +39,7 @@
 - **使用真实开发环境** —— 在仓库所在机器上运行命令、测试、格式化、编译器和项目自己的工具。
 - **检查 Git** —— 查看状态和差异，让代码变化保持可见、可审查。
 - **处理长时间任务** —— 任务可以持续运行并保持可观察，不需要一次模型回复一直等待到底。
-- **保留人工审查** —— 可以通过运行时控制台、任务状态和 Git 差异查看工作结果。
+- **保留人工审查** —— 通过 [Runtime Console](docs/runtime-console.md)、Workflow Session 证据、Job 和 Git 差异审查工作，无需额外的任务/结果验收子系统。
 
 ## 为什么用 WebCodex？
 
@@ -55,10 +55,11 @@ AI 客户端
    |
    | MCP / HTTPS
    v
-WebCodex
+WebCodex Server
    |
+   | 经过认证的 Runner 连接
    v
-你的机器
+你机器上的 Runner
    |
    +-- 代码仓库
    +-- Git
@@ -80,14 +81,18 @@ WebCodex
 
 ## 平台安装包
 
-统一安装包目标平台为 Windows NSIS、macOS 和 Debian 12 / Ubuntu 22.04+ `.deb`，支持 x64 与 arm64。本分支定义了构建流程；六类安装文件仍需完成原生构建和安装验收后才能发布。详见[统一安装指南](docs/unified-installation.zh-CN.md)和[验收清单](docs/unified-deployment-validation.md)。现有 Release artifact 与 npm/Docker 部署路径仍作为高级历史/兼容参考保留在[部署指南](docs/DEPLOYMENT.zh-CN.md)。
+统一安装包目标平台为 Windows NSIS、macOS 和 Debian 12 / Ubuntu 22.04+ `.deb`，支持 x64 与 arm64。构建流程定义了这些目标；六类安装文件仍需完成原生构建和安装验收后才能发布。详见[统一安装指南](docs/unified-installation.zh-CN.md)和[验收清单](docs/unified-deployment-validation.md)。现有 Release artifact 与 npm/Docker 部署路径仍作为高级历史/兼容参考保留在[部署指南](docs/DEPLOYMENT.zh-CN.md)。
 
 ## 文档
 
 - [统一安装指南](docs/unified-installation.zh-CN.md) —— 统一安装包的个人与多机配置
 - [部署验收清单](docs/unified-deployment-validation.md) —— 各平台验收状态与真实机器检查项
+- [Runtime 安装与 CLI 加入](docs/runtime-installation.zh-CN.md) —— 无 Desktop 的 Linux Runner 配置与安装包更新/恢复
 - [旧版 Desktop 安装指南](docs/desktop-install.zh-CN.md) —— 现有 Release 的详细说明
 - [Desktop 日常使用](docs/desktop-guide.zh-CN.md) —— 项目、连接、活动与后台运行
+- [Desktop Runtime 兼容说明](docs/DESKTOP_RUNTIME_COMPATIBILITY.zh-CN.md) —— 兼容 Runtime 选择、诊断与回滚
+- [Runtime Console](docs/runtime-console.md) —— 浏览器中的活动、项目、Session 与 Agent 通信
+- [任务接续](docs/SESSION_CONTINUITY.zh-CN.md) —— 显式保存并跨对话继续有权访问的工作
 - [Desktop 开发与打包](docs/DESKTOP_DEVELOPMENT.zh-CN.md) —— 在 Linux、Windows、macOS 从源码运行，以及本地打包
 - [完整使用指南](docs/PERSONAL_SETUP.zh-CN.md) —— CLI、已有 Server、Linux 与高级普通 Server + Runner 配置
 - [快速试用](docs/QUICK_START.zh-CN.md) —— 用 `share` 临时体验一个仓库

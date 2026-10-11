@@ -26959,7 +26959,7 @@ var yn = {
   "OAuth2 shared key bridge": "OAuth2 共享密钥桥接",
   "MCP host profile": "MCP 主机配置",
   "Host request budget": "主机请求预算",
-  "Initial job handoff wait": "首次任务交接等待",
+  "Legacy handoff hint (unused)": "旧版交接提示值（未参与执行）",
   "Maximum synchronous wait": "同步等待上限",
   "Continuation wait": "后续等待时长",
   "Some running calls are not shown.": "运行中调用仅显示部分记录。",

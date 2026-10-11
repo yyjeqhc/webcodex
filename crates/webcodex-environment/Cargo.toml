@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+webcodex-openai-tunnel = { path = "../webcodex-openai-tunnel", default-features = false }
 webcodex-core = { path = "../webcodex-core" }
 webcodex-runner-config = { path = "../webcodex-runner-config" }
 fs2 = "0.4"

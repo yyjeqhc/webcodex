@@ -1,9 +1,6 @@
-use super::{
-    setup_service::{create_private_dir, write_new_private},
-    ProductError,
-};
-use sha2::{Digest, Sha256};
+use super::ProductError;
 use std::{
+    future::Future,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -45,7 +42,7 @@ pub(crate) struct OpenAiTunnel {
     task: Option<JoinHandle<Result<(), Error>>>,
     stop: Option<oneshot::Sender<()>>,
     health: Health,
-    guard: PathBuf,
+    guard: webcodex_openai_tunnel::run_fence::RunFence,
     terminal: Option<Result<(), Error>>,
 }
 impl OpenAiTunnel {
@@ -104,21 +101,8 @@ impl OpenAiTunnel {
         if self.health.has_uncertain_work() {
             result = Err(Error::Uncertain);
         }
-        if result.is_ok() {
-            if std::fs::remove_file(&self.guard).is_err() {
-                result = Err(Error::Uncertain);
-            } else {
-                #[cfg(unix)]
-                if std::fs::File::open(self.guard.parent().expect("guard parent"))
-                    .and_then(|file| file.sync_all())
-                    .is_err()
-                {
-                    // Preserve a visible fence when the unlink's durability could
-                    // not be confirmed. Do not report uncertainty with no latch.
-                    let _ = write_new_private(&self.guard, b"native-tunnel-run-v1\n");
-                    result = Err(Error::Uncertain);
-                }
-            }
+        if result.is_ok() && self.guard.finish().is_err() {
+            result = Err(Error::Uncertain);
         }
         self.terminal = Some(result);
         result
@@ -218,6 +202,27 @@ pub(super) async fn start_openai_tunnel(
     local_token: &str,
     deadline: Instant,
 ) -> Result<OpenAiTunnel, ProductError> {
+    start_openai_tunnel_with_stop(
+        prerequisites,
+        mcp_url,
+        local_token,
+        deadline,
+        std::future::pending(),
+    )
+    .await?
+    .ok_or_else(|| tunnel_error(Error::Uncertain))
+}
+
+/// Cancellation must settle an already-launched owner rather than drop it.
+/// None means shutdown was observed before readiness; uncertainty stays fenced.
+pub(super) async fn start_openai_tunnel_with_stop(
+    prerequisites: &OpenAiTunnelPrerequisites,
+    mcp_url: &str,
+    local_token: &str,
+    deadline: Instant,
+    stop: impl Future<Output = ()>,
+) -> Result<Option<OpenAiTunnel>, ProductError> {
+    tokio::pin!(stop);
     let mcp_url = local_mcp_url(mcp_url)?;
     let probe = reqwest::Client::builder()
         .no_proxy()
@@ -226,12 +231,14 @@ pub(super) async fn start_openai_tunnel(
         .timeout(Duration::from_secs(2))
         .build()
         .map_err(|_| tunnel_error(Error::Configuration))?;
-    let local_ready = tokio::time::timeout_at(
-        deadline.into(),
-        super::regular_tunnel_service::probe_local_mcp(&probe, &mcp_url, local_token),
-    )
-    .await
-    .unwrap_or(false);
+    let local_ready = tokio::select! {
+        biased;
+        _ = &mut stop => return Ok(None),
+        result = tokio::time::timeout_at(
+            deadline.into(),
+            super::regular_tunnel_service::probe_local_mcp(&probe, &mcp_url, local_token),
+        ) => result.unwrap_or(false),
+    };
     if !local_ready {
         return Err(ProductError::new(
             "local_mcp_unavailable",
@@ -239,21 +246,40 @@ pub(super) async fn start_openai_tunnel(
             Some("Start the local WebCodex Server and verify its credential."),
         ));
     }
-    let mut tunnel = OpenAiTunnel::launch(prerequisites, &mcp_url, local_token)?;
-    let ready = async {
-        loop {
-            if tunnel.health.is_ready() {
-                return Ok(());
+    let tunnel = OpenAiTunnel::launch(prerequisites, &mcp_url, local_token)?;
+    finish_openai_tunnel_startup(tunnel, deadline, &mut stop).await
+}
+
+async fn finish_openai_tunnel_startup(
+    mut tunnel: OpenAiTunnel,
+    deadline: Instant,
+    stop: impl Future<Output = ()>,
+) -> Result<Option<OpenAiTunnel>, ProductError> {
+    let readiness = {
+        let ready = async {
+            loop {
+                if tunnel.health.is_ready() {
+                    return Ok(());
+                }
+                tokio::select! {
+                    result = tunnel.wait_for_exit() => return result,
+                    _ = tokio::time::sleep(Duration::from_millis(20)) => {},
+                }
             }
-            tokio::select! {
-                result = tunnel.wait_for_exit() => return result,
-                _ = tokio::time::sleep(Duration::from_millis(20)) => {},
-            }
+        };
+        tokio::select! {
+            biased;
+            _ = stop => None,
+            result = tokio::time::timeout_at(deadline.into(), ready) => Some(result),
         }
     };
-    match tokio::time::timeout_at(deadline.into(), ready).await {
-        Ok(Ok(())) => Ok(tunnel),
-        result => {
+    match readiness {
+        None => {
+            tunnel.stop_with_outcome().await?;
+            Ok(None)
+        }
+        Some(Ok(Ok(()))) => Ok(Some(tunnel)),
+        Some(result) => {
             tunnel.stop().await;
             Err(result
                 .unwrap_or_else(|_| Err(tunnel_error(Error::Transport)))
@@ -270,47 +296,15 @@ fn valid_tunnel_id(value: &str) -> bool {
     })
 }
 fn guard_root() -> Result<PathBuf, ProductError> {
-    let base = super::setup_service::default_state_base_from(
-        std::env::var_os("XDG_STATE_HOME").as_deref(),
-        std::env::var_os("HOME").as_deref(),
-        if cfg!(windows) {
-            std::env::var_os("LOCALAPPDATA")
-        } else {
-            None
-        }
-        .as_deref(),
-    )?;
-    if !base.is_absolute() {
-        return Err(tunnel_error(Error::Configuration));
-    }
-    Ok(base
-        .parent()
-        .ok_or_else(|| tunnel_error(Error::Configuration))?
-        .join("tunnel-runs"))
+    webcodex_openai_tunnel::run_fence::default_root()
+        .map_err(|_| tunnel_error(Error::Configuration))
 }
-fn acquire_guard(root: &Path, tunnel: &str) -> Result<PathBuf, ProductError> {
-    if std::fs::symlink_metadata(root).is_ok_and(|m| !m.file_type().is_dir()) {
-        return Err(tunnel_error(Error::Configuration));
-    }
-    create_private_dir(root)?;
-    let key = format!("{:x}", Sha256::digest(format!("{CONTROL_PLANE}/{tunnel}")));
-    let path = root.join(format!("{key}.active"));
-    // Exclusive creation blocks another owner and every unconfirmed previous run.
-    // This is one coarse latch, not a per-command durable dedupe database.
-    write_new_private(&path, b"native-tunnel-run-v1\n")
-        .map_err(|_| tunnel_error(Error::Uncertain))?;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .open(&path)
-        .and_then(|f| f.sync_all())
-        .map_err(|_| tunnel_error(Error::Uncertain))?;
-    #[cfg(unix)]
-    for directory in root.ancestors() {
-        std::fs::File::open(directory)
-            .and_then(|f| f.sync_all())
-            .map_err(|_| tunnel_error(Error::Uncertain))?;
-    }
-    Ok(path)
+fn acquire_guard(
+    root: &Path,
+    tunnel: &str,
+) -> Result<webcodex_openai_tunnel::run_fence::RunFence, ProductError> {
+    webcodex_openai_tunnel::run_fence::RunFence::acquire(root, CONTROL_PLANE, tunnel)
+        .map_err(|_| tunnel_error(Error::Uncertain))
 }
 fn missing_configuration() -> ProductError {
     ProductError::new(
@@ -328,7 +322,7 @@ fn tunnel_error(error: Error) -> ProductError {
         _ => "tunnel_protocol_failed",
     };
     ProductError::new(code, error.to_string(), Some(match error {
-        Error::Uncertain => "Do not automatically restart. Resolve prior effects and pending work, then remove the matching marker in the private webcodex/tunnel-runs directory, or use a new Tunnel identity.",
+        Error::Uncertain => "Do not automatically restart. Use environment recover-tunnel with the exact Environment and Profile to diagnose the fence. Resolve prior effects and pending work before explicit recovery; legacy ownerless fences remain blocked.",
         _ => "Check the fixed local MCP endpoint, Tunnel runtime credential and control-plane connectivity.",
     }))
 }

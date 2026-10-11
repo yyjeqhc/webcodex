@@ -18,6 +18,11 @@ pub(crate) struct ValidationRuntimeProfile {
 
 pub(crate) fn runtime_profile(operation: &ReadOnlyValidationOperation) -> ValidationRuntimeProfile {
     match operation {
+        ReadOnlyValidationOperation::NodeNativeTest => ValidationRuntimeProfile {
+            default_timeout_secs: DEFAULT_CARGO_TEST_TIMEOUT_SECS,
+            force_agent_handoff: true,
+            invalid_argument_guidance: "Native node:test TAP only; no custom scripts, filter or package scope.",
+        },
         ReadOnlyValidationOperation::NodeScriptCheck => ValidationRuntimeProfile {
             default_timeout_secs: DEFAULT_CARGO_CHECK_TIMEOUT_SECS,
             force_agent_handoff: false,

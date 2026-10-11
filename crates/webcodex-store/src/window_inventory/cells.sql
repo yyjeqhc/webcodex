@@ -8,7 +8,9 @@ WITH source AS (
         AND e.window_started_at_ms IS NOT NULL AND e.window_ended_at_ms IS NOT NULL
         AND COALESCE(e.operation,'') NOT IN ('present_work_result','get_work_result_state','send_work_result_message','read_changed_file_diff')
 ), scoped AS (
-    SELECT *, json_array(principal_correlation_kind,principal_correlation_id,project,json(anchors)) AS scope_key FROM source
+    SELECT *, json_array(principal_correlation_kind,principal_correlation_id,project,json(anchors),
+        CASE WHEN principal_kind='oauth2' AND principal_correlation_kind='oauth2' THEN principal_user_id END,
+        CASE WHEN principal_kind='oauth2' AND principal_correlation_kind='oauth2' THEN oauth_client_id END) AS scope_key FROM source
 ), ranked AS (
     SELECT *, ROW_NUMBER() OVER(PARTITION BY client_window_key,scope_key
         ORDER BY window_ended_at_ms DESC, COALESCE(request_observed_at_ms,window_started_at_ms) DESC,event_id DESC) AS position FROM scoped

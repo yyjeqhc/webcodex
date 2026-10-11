@@ -232,6 +232,14 @@ impl ShellJobValidationStep {
             && matches!(self.args[1].as_str(), "check" | "typecheck" | "lint")
     }
 
+    /// Exact native Node test executor; manifest and Runner capability are separate fences.
+    pub fn is_structured_node_tap_test(&self) -> bool {
+        self.name == "test"
+            && self.program == "node"
+            && self.env.is_empty()
+            && self.args == ["--test", "--test-reporter=tap"]
+    }
+
     fn is_canonical_with_project_workspace(&self, allow_project_workspace: bool) -> bool {
         if self
             .args
@@ -257,6 +265,7 @@ impl ShellJobValidationStep {
             ("check", "go") => is_canonical_go_vet_args(&args),
             ("test", "go") => args == ["test", "./..."] || self.is_structured_go_test_json(),
             ("check", "node") => self.is_structured_node_check(),
+            ("test", "node") => self.env.is_empty() && args == ["--test", "--test-reporter=tap"],
             ("format", "python") => {
                 args == ["-m", "ruff", "format", "--check"]
                     || args == ["-m", "black", "--check"]
@@ -903,7 +912,7 @@ impl ShellJobValidationMetadata {
         if self.minimum_tests.is_some()
             && !matches!(
                 self.adapter.as_str(),
-                "cargo_test" | "go_test" | "python:pytest:test"
+                "cargo_test" | "go_test" | "python:pytest:test" | "node:tap:test"
             )
         {
             return false;
@@ -911,7 +920,7 @@ impl ShellJobValidationMetadata {
         if (self.require_tests.is_some() || self.no_run.is_some())
             && !matches!(
                 self.adapter.as_str(),
-                "cargo_test" | "go_test" | "python:pytest:test"
+                "cargo_test" | "go_test" | "python:pytest:test" | "node:tap:test"
             )
         {
             return false;
@@ -941,14 +950,22 @@ impl ShellJobValidationMetadata {
                             "python",
                             "python:pytest:test" | "python:ruff:check" | "python:ruff:format"
                         )
-                        | ("node", "node:script:check")
+                        | ("node", "node:script:check" | "node:tap:test")
                 )
                 || (provenance.backend == "node"
-                    && (provenance.request.action
-                        != crate::project_validation::ProjectValidationAction::Check
-                        || provenance.request.scope.is_some()
+                    && (!matches!(
+                        (self.adapter.as_str(), provenance.request.action),
+                        (
+                            "node:script:check",
+                            crate::project_validation::ProjectValidationAction::Check
+                        ) | (
+                            "node:tap:test",
+                            crate::project_validation::ProjectValidationAction::Test
+                        )
+                    ) || provenance.request.scope.is_some()
                         || provenance.request.dependency_policy.is_some()
-                        || provenance.request.test.is_some()))
+                        || (self.adapter == "node:script:check"
+                            && provenance.request.test.is_some())))
                 || (self.require_tests, self.minimum_tests)
                     != provenance.request.test_requirements()
                 || self.no_run.is_some()
@@ -980,6 +997,14 @@ impl ShellJobValidationMetadata {
                     && step.is_structured_ruff()
             }
             "go_vet" => self.kind == "check" && step.name == "check" && step.program == "go",
+            "node:tap:test" => {
+                self.tool == "project_validate"
+                    && self.kind == "test"
+                    && step.name == "test"
+                    && step.program == "node"
+                    && step.args == ["--test", "--test-reporter=tap"]
+                    && step.env.is_empty()
+            }
             "node:script:check" => {
                 self.tool == "project_validate"
                     && self.kind == "check"

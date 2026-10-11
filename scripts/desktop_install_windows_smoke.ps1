@@ -117,6 +117,13 @@ function Get-PeMachine([string]$binary) {
     ) {
         throw "installed Desktop executable has an invalid PE signature: $binary"
     }
+    $optionalOffset = $peOffset + 24
+    if ($optionalOffset -gt $bytes.Length - 70) {
+        throw "installed Desktop executable has a truncated PE optional header: $binary"
+    }
+    if ([BitConverter]::ToUInt16($bytes, $optionalOffset + 68) -ne 2) {
+        throw "installed Desktop must use the Windows GUI subsystem to survive closing its launcher's terminal: $binary"
+    }
     return [BitConverter]::ToUInt16($bytes, $peOffset + 4)
 }
 

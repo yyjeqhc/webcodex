@@ -121,6 +121,7 @@ impl JobManager {
                 !step.is_structured_pytest()
                     && !step.is_structured_ruff()
                     && !step.is_structured_node_check()
+                    && !step.is_structured_node_tap_test()
                     && !validation_module_available(
                         &shell,
                         prepared_profile.as_deref(),
@@ -152,7 +153,10 @@ impl JobManager {
                     &cwd_path,
                     Some(self.shutting_down.as_ref()),
                 )
-            } else if validation && steps[index].is_structured_node_check() {
+            } else if validation
+                && (steps[index].is_structured_node_check()
+                    || steps[index].is_structured_node_tap_test())
+            {
                 crate::webcodex_runner::shell::configured_node_project_check_job_command(
                     &shell,
                     prepared_profile.as_deref(),
@@ -233,7 +237,7 @@ impl JobManager {
         if validation
             && steps
                 .iter()
-                .any(ShellJobValidationStep::is_structured_node_check)
+                .any(|step| step.is_structured_node_check() || step.is_structured_node_tap_test())
         {
             if let Err(error) = crate::webcodex_runner::validation::project::fence(
                 &policy,

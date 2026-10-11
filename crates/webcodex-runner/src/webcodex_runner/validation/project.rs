@@ -8,7 +8,8 @@ use webcodex_core::validation_identity::{
 };
 use webcodex_validation::{
     detect_validation_recipe, project_validation_operation, resolve_node_native_project_check,
-    resolve_project_validation_recipe, validate_node_project_markers, RecipeId, SemanticCheck,
+    resolve_node_native_project_test, resolve_project_validation_recipe,
+    validate_node_project_markers, RecipeId, SemanticCheck,
 };
 
 pub(crate) fn plan(
@@ -70,7 +71,11 @@ pub(crate) fn plan(
         .map_err(|code| unavailable(code, Some(backend.as_str())))?;
     let profile = operation.compatibility_profile();
     let resolved = if backend == RecipeId::Node {
-        resolve_node_native_project_check(&root, request.cwd.as_deref())
+        if action == SemanticCheck::Test {
+            resolve_node_native_project_test(&root, request.cwd.as_deref())
+        } else {
+            resolve_node_native_project_check(&root, request.cwd.as_deref())
+        }
     } else {
         resolve_project_validation_recipe(
             &root,
@@ -87,7 +92,7 @@ pub(crate) fn plan(
         )
     }
     .map_err(|e| unavailable(e.code, Some(backend.as_str())))?;
-    let identity = if backend == RecipeId::Node {
+    let identity = if backend == RecipeId::Node && action == SemanticCheck::Check {
         let script = resolved
             .steps
             .first()

@@ -521,6 +521,7 @@ async fn register_agent_projects_for_auth(
                         project_validation_python_pytest_v1: false,
                         project_validation_python_ruff_v1: false,
                         project_validation_node_script_check_v1: false,
+                        project_validation_node_tap_v1: false,
                         structured_go_test_tool: true,
                         structured_go_test_packages: true,
                         structured_process_argv: true,
@@ -2709,6 +2710,35 @@ async fn runtime_status_reports_effective_mcp_host_budget_override() {
     assert_eq!(mcp_host["initial_job_handoff_secs"], 4);
     assert_eq!(mcp_host["max_sync_wait_secs"], 4);
     assert_eq!(mcp_host["continuation_wait_secs"], 4);
+}
+
+#[tokio::test]
+async fn runtime_status_reports_deployment_timing_overrides_without_exposing_source_env() {
+    let policy = {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS", "8");
+        env.set("WEBCODEX_MCP_HOST_CONTINUATION_WAIT_MAX_SECS", "12");
+        crate::mcp_host::McpHostConfig {
+            profile: crate::mcp_host::McpHostProfile::HostCodeMode,
+            host_budget_secs: None,
+        }
+        .runtime_policy()
+        .with_timing_overrides(crate::mcp_host::McpHostTimingOverrides::from_env().unwrap())
+    };
+    let runtime = test_runtime().with_mcp_host_policy(policy);
+    let result = runtime.dispatch(runtime_status_call()).await;
+    assert!(result.success, "{:?}", result.error);
+    let host = &result.output["effective_config"]["mcp_host"];
+    assert_eq!(host["host_budget_secs"], 55);
+    assert_eq!(host["max_sync_wait_secs"], 8);
+    assert_eq!(host["continuation_wait_secs"], 12);
+    assert_eq!(host["initial_job_handoff_secs"], 5);
+    assert!(host.get("timing_overrides").is_none());
+    assert!(result
+        .output
+        .to_string()
+        .find("WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS")
+        .is_none());
 }
 
 #[tokio::test]

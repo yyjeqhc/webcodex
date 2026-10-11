@@ -1781,6 +1781,32 @@ fn native_node_runner_probe_pins_version_and_strips_ambient_options() {
     assert!(command
         .get_envs()
         .any(|(key, value)| { key == std::ffi::OsStr::new("NODE_OPTIONS") && value.is_none() }));
+    let native_test = webcodex_core::runner_protocol::ShellJobValidationStep {
+        name: "test".into(),
+        program: "node".into(),
+        args: vec!["--test".into(), "--test-reporter=tap".into()],
+        env: vec![],
+    };
+    let native =
+        configured_node_project_check_job_command(&shell, None, &native_test, temp.path(), None)
+            .unwrap();
+    assert_eq!(PathBuf::from(native.get_program()), node);
+    assert_eq!(
+        native.get_args().collect::<Vec<_>>(),
+        [
+            std::ffi::OsStr::new("--test"),
+            std::ffi::OsStr::new("--test-reporter=tap"),
+        ]
+    );
+    assert!(native
+        .get_envs()
+        .any(|(key, value)| key == std::ffi::OsStr::new("NODE_OPTIONS") && value.is_none()));
+    let mut injected = native_test.clone();
+    injected.args.push("--eval".into());
+    assert!(
+        configured_node_project_check_job_command(&shell, None, &injected, temp.path(), None)
+            .is_err()
+    );
     let mut forged = step.clone();
     forged.args.push("--eval".into());
     assert!(

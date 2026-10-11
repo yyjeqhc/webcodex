@@ -236,6 +236,23 @@ async fn call_in_window(
     outcome.result.expect("tool result")
 }
 
+fn project_peer_result(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    window: &ClientWindow,
+    ack_message_ids: &[String],
+) -> ToolResult {
+    let mut result = ToolResult::ok(json!({"success": true}));
+    project_peer_semantics(
+        runtime,
+        &mut result,
+        Some(auth),
+        Some(window),
+        None,
+        ack_message_ids,
+    );
+    result
+}
 async fn call_in_window_with_control(
     runtime: &ToolRuntime,
     auth: &AuthContext,
@@ -352,7 +369,7 @@ async fn control_communication_peer_message_uses_canonical_replay_path() {
 }
 
 #[tokio::test]
-async fn ordinary_peer_message_is_projected_once_on_the_next_tool_result() {
+async fn ordinary_peer_message_is_projected_once_when_peer_attention_runs() {
     let (_temp, _db, runtime) = runtime_with_peer_db();
     let auth = shared_key_auth_context("peer-owner");
     let sender = ClientWindow::for_test("peer-sender-once");
@@ -386,15 +403,7 @@ async fn ordinary_peer_message_is_projected_once_on_the_next_tool_result() {
     assert!(posted.success, "{:?}", posted.error);
     let message_id = posted.output["message_id"].as_str().unwrap().to_string();
 
-    let first = call_in_window(
-        &runtime,
-        &auth,
-        &recipient,
-        "get_runtime_status",
-        json!({"compact": true}),
-        ToolInvocationMetadata::default(),
-    )
-    .await;
+    let first = project_peer_result(&runtime, &auth, &recipient, &[]);
     assert!(first.success, "{:?}", first.error);
     assert_eq!(
         first.output["peer_messages"]["messages"][0]["message_id"],
@@ -413,15 +422,7 @@ async fn ordinary_peer_message_is_projected_once_on_the_next_tool_result() {
         1
     );
 
-    let second = call_in_window(
-        &runtime,
-        &auth,
-        &recipient,
-        "get_runtime_status",
-        json!({"compact": true}),
-        ToolInvocationMetadata::default(),
-    )
-    .await;
+    let second = project_peer_result(&runtime, &auth, &recipient, &[]);
     assert!(second.success, "{:?}", second.error);
     assert!(second.output.get("peer_messages").is_none());
 }
@@ -463,15 +464,7 @@ async fn ack_required_peer_message_repeats_on_omission_and_current_ack_suppresse
     let message_id = posted.output["message_id"].as_str().unwrap().to_string();
 
     for expected_projection_count in [1, 2] {
-        let result = call_in_window(
-            &runtime,
-            &auth,
-            &recipient,
-            "get_runtime_status",
-            json!({"compact": true}),
-            ToolInvocationMetadata::default(),
-        )
-        .await;
+        let result = project_peer_result(&runtime, &auth, &recipient, &[]);
         assert_eq!(
             result.output["peer_messages"]["messages"][0]["message_id"],
             message_id
@@ -482,33 +475,19 @@ async fn ack_required_peer_message_repeats_on_omission_and_current_ack_suppresse
         );
     }
 
-    let acknowledged = call_in_window(
+    let acknowledged = project_peer_result(
         &runtime,
         &auth,
         &recipient,
-        "get_runtime_status",
-        json!({"compact": true}),
-        ToolInvocationMetadata {
-            ack_session_message_ids: vec![message_id.clone()],
-            ..Default::default()
-        },
-    )
-    .await;
+        std::slice::from_ref(&message_id),
+    );
     assert_eq!(
         acknowledged.output["peer_messages"]["ack"]["accepted_ids"],
         json!([message_id.clone()])
     );
     assert_eq!(acknowledged.output["peer_messages"]["messages"], json!([]));
 
-    let omitted_again = call_in_window(
-        &runtime,
-        &auth,
-        &recipient,
-        "get_runtime_status",
-        json!({"compact": true}),
-        ToolInvocationMetadata::default(),
-    )
-    .await;
+    let omitted_again = project_peer_result(&runtime, &auth, &recipient, &[]);
     assert_eq!(
         omitted_again.output["peer_messages"]["messages"][0]["message_id"],
         message_id
@@ -676,15 +655,7 @@ async fn peer_discovery_is_same_project_but_contact_survives_project_change() {
     )
     .await;
     assert!(durable_contact.success, "{:?}", durable_contact.error);
-    let delivered_after_prune = call_in_window(
-        &runtime,
-        &auth,
-        &peer,
-        "get_runtime_status",
-        json!({"compact": true}),
-        ToolInvocationMetadata::default(),
-    )
-    .await;
+    let delivered_after_prune = project_peer_result(&runtime, &auth, &peer, &[]);
     assert_eq!(
         delivered_after_prune.output["peer_messages"]["messages"][0]["message"],
         "contact survives ActionAudit retention after discovery"
@@ -713,15 +684,7 @@ async fn peer_discovery_is_same_project_but_contact_survives_project_change() {
     .await;
     assert!(posted_after_move.success, "{:?}", posted_after_move.error);
 
-    let received_after_move = call_in_window(
-        &runtime,
-        &auth,
-        &peer,
-        "get_runtime_status",
-        json!({"compact": true}),
-        ToolInvocationMetadata::default(),
-    )
-    .await;
+    let received_after_move = project_peer_result(&runtime, &auth, &peer, &[]);
     assert_eq!(
         received_after_move.output["peer_messages"]["messages"][0]["message"],
         "did the worktree task change your current scope?"
@@ -767,7 +730,7 @@ async fn specialized_mcp_structured_content_receives_peer_projection_without_rew
         "structuredContent": {"providerField": "preserved"},
         "isError": false
     });
-    runtime.add_peer_collaboration_to_mcp_call_result(
+    runtime.add_peer_collaboration_to_mcp_call_result_for_tests(
         &mut native_result,
         Some(&auth),
         Some(&recipient),
@@ -792,7 +755,7 @@ async fn specialized_mcp_structured_content_receives_peer_projection_without_rew
         "structuredContent": {"providerField": "still-preserved"},
         "isError": false
     });
-    runtime.add_peer_collaboration_to_mcp_call_result(
+    runtime.add_peer_collaboration_to_mcp_call_result_for_tests(
         &mut acknowledged_result,
         Some(&auth),
         Some(&recipient),
@@ -843,15 +806,7 @@ async fn peer_message_input_is_trimmed_deduplicated_and_empty_rejected() {
     .await;
     assert!(posted.success, "{:?}", posted.error);
 
-    let received = call_in_window(
-        &runtime,
-        &auth,
-        &recipient,
-        "get_runtime_status",
-        json!({"compact": true}),
-        ToolInvocationMetadata::default(),
-    )
-    .await;
+    let received = project_peer_result(&runtime, &auth, &recipient, &[]);
     assert_eq!(
         received.output["peer_messages"]["messages"][0]["message"],
         "bounded hello"

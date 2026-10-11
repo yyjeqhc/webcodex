@@ -751,151 +751,6 @@ fn stateless_workflow_recorder_metadata_adds_protocol_projection() {
 }
 
 #[test]
-fn stateless_ack_wrapper_normalizes_and_is_removed_before_concrete_tool_parsing() {
-    let mut arguments = json!({
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: [
-            "wc_msg_abcd-efgh_ijklmn",
-            "wc_msg_abcd-efgh_ijklmn",
-            "wc_msg_0123456789abcdef"
-        ]
-    });
-    let normalized = strip_stateless_ack_session_message_ids(&mut arguments).unwrap();
-    assert_eq!(
-        normalized,
-        vec!["wc_msg_abcd-efgh_ijklmn", "wc_msg_0123456789abcdef"]
-    );
-    assert!(arguments
-        .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD)
-        .is_none());
-    assert_eq!(
-        normalized,
-        vec!["wc_msg_abcd-efgh_ijklmn", "wc_msg_0123456789abcdef"]
-    );
-    crate::tool_runtime::ToolCall::from_tool_name("list_tools", arguments)
-        .expect("wrapper ACK metadata must be gone before concrete parsing");
-
-    let mut malformed = json!({
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: ["not-a-message-id"]
-    });
-    assert!(strip_stateless_ack_session_message_ids(&mut malformed).is_err());
-    let mut oversized = json!({
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD:
-            (0..=crate::tool_runtime::sessions::MAX_TOOL_CALL_ACK_MESSAGE_IDS)
-                .map(|index| format!("wc_msg_{index}"))
-                .collect::<Vec<_>>()
-    });
-    assert!(strip_stateless_ack_session_message_ids(&mut oversized).is_err());
-}
-
-#[test]
-fn stateless_ack_ref_wrapper_is_bounded_and_removed_before_concrete_parsing() {
-    let mut arguments = json!({
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD: "  wc_ack1_example  "
-    });
-    let ack_ref = strip_stateless_ack_ref(&mut arguments).unwrap();
-    assert_eq!(ack_ref.as_deref(), Some("wc_ack1_example"));
-    assert!(arguments
-        .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD)
-        .is_none());
-    crate::tool_runtime::ToolCall::from_tool_name("list_tools", arguments)
-        .expect("ACK ref wrapper metadata must be gone before concrete parsing");
-
-    let mut wrong_type = json!({
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD: ["wc_ack1_example"]
-    });
-    assert!(strip_stateless_ack_ref(&mut wrong_type).is_err());
-
-    let mut oversized = json!({
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD:
-            "x".repeat(crate::tool_runtime::sessions::MAX_TOOL_CALL_ACK_REF_CHARS + 1)
-    });
-    assert!(strip_stateless_ack_ref(&mut oversized).is_err());
-}
-
-#[test]
-fn stateless_message_resolution_wrapper_is_validated_and_removed_before_concrete_parsing() {
-    let mut arguments = json!({
-        crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
-            "message_id": "wc_msg_abcd-efgh_ijklmn",
-            "resolution": "  handled in the current model turn  "
-        }
-    });
-    let resolution = strip_stateless_session_message_resolution(&mut arguments)
-        .unwrap()
-        .expect("message resolution wrapper");
-    assert_eq!(resolution.message_id, "wc_msg_abcd-efgh_ijklmn");
-    assert_eq!(resolution.resolution, "handled in the current model turn");
-    assert!(arguments
-        .get(crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD)
-        .is_none());
-    crate::tool_runtime::ToolCall::from_tool_name("list_tools", arguments)
-        .expect("message resolution wrapper metadata must be gone before concrete parsing");
-
-    for malformed in [
-        json!({
-            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
-                "message_id": "not-a-message-id",
-                "resolution": "handled"
-            }
-        }),
-        json!({
-            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
-                "message_id": "wc_msg_beta",
-                "resolution": "   "
-            }
-        }),
-        json!({
-            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
-                "message_id": "wc_msg_beta",
-                "resolution": "handled",
-                "extra": true
-            }
-        }),
-    ] {
-        let mut malformed = malformed;
-        assert!(strip_stateless_session_message_resolution(&mut malformed).is_err());
-    }
-}
-
-#[test]
-fn stateless_context_request_is_deduped_open_ended_and_removed_before_parsing() {
-    let mut arguments = json!({
-        crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: [
-            "project.instructions",
-            "future.material",
-            "project.instructions"
-        ]
-    });
-    let normalized = strip_stateless_context_request(&mut arguments).unwrap();
-    assert_eq!(
-        normalized,
-        vec![
-            "project.instructions".to_string(),
-            "future.material".to_string()
-        ]
-    );
-    assert!(arguments
-        .get(crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD)
-        .is_none());
-    crate::tool_runtime::ToolCall::from_tool_name("list_tools", arguments)
-        .expect("context_request wrapper metadata must be gone before concrete parsing");
-
-    for malformed in [
-        json!({crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: "project.instructions"}),
-        json!({crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: ["bad key"]}),
-        json!({crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: [""]}),
-        json!({crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD:
-            (0..=crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_ITEMS)
-                .map(|index| format!("future.material.{index}"))
-                .collect::<Vec<_>>()
-        }),
-    ] {
-        let mut malformed = malformed;
-        assert!(strip_stateless_context_request(&mut malformed).is_err());
-    }
-}
-
-#[test]
 fn stateless_invocation_metadata_stays_typed_and_business_arguments_stay_clean() {
     let mut arguments = json!({
         "project": "proj",
@@ -2654,6 +2509,53 @@ async fn mcp_text_json_compat_uses_runtime_snapshot() {
         off["result"]["structuredContent"], on["result"]["structuredContent"],
         "the snapshot changes only the compatibility text projection"
     );
+}
+
+#[tokio::test]
+async fn list_jobs_direct_descriptor_preserves_read_only_contract_and_recovery_guidance() {
+    let canonical = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "list_jobs")
+        .unwrap();
+    for stateless in [false, true] {
+        for compact in [false, true] {
+            let McpOutcome::Ok(value) =
+                crate::mcp::tools::handle_list(Some(json!(1)), None, stateless, compact, false)
+                    .await
+            else {
+                panic!("tools/list");
+            };
+            let descriptor = value["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == "list_jobs")
+                .expect("list_jobs must have a dedicated descriptor");
+            assert_eq!(descriptor["annotations"], canonical.annotations);
+            assert_eq!(descriptor["annotations"]["readOnlyHint"], true);
+            assert_eq!(descriptor["annotations"]["destructiveHint"], false);
+            assert_eq!(descriptor["annotations"]["idempotentHint"], true);
+            assert_eq!(descriptor["annotations"]["openWorldHint"], false);
+            let mut input = descriptor["inputSchema"].clone();
+            input["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove(DISCOVERY_INVOCATION_ENVELOPE);
+            let mut expected = canonical.input_schema.clone();
+            strip_description_text(&mut input);
+            strip_description_text(&mut expected);
+            assert_eq!(input, expected);
+            let description = descriptor["description"].as_str().unwrap();
+            for phrase in [
+                "continue independent work",
+                "observe_jobs",
+                "stdout/stderr",
+                "AND",
+            ] {
+                assert!(description.contains(phrase), "{description}");
+            }
+        }
+    }
 }
 
 #[tokio::test]

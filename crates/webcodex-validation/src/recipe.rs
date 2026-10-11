@@ -581,6 +581,21 @@ pub fn resolve_node_native_project_check(
     execution_root: &Path,
     cwd: Option<&str>,
 ) -> Result<ResolvedValidationRecipe, RecipeError> {
+    resolve_node_native_project_action(execution_root, cwd, SemanticCheck::Check)
+}
+
+pub fn resolve_node_native_project_test(
+    execution_root: &Path,
+    cwd: Option<&str>,
+) -> Result<ResolvedValidationRecipe, RecipeError> {
+    resolve_node_native_project_action(execution_root, cwd, SemanticCheck::Test)
+}
+
+fn resolve_node_native_project_action(
+    execution_root: &Path,
+    cwd: Option<&str>,
+    action: SemanticCheck,
+) -> Result<ResolvedValidationRecipe, RecipeError> {
     use std::io::Read;
     const MAX_NODE_MANIFEST_BYTES: u64 = 1024 * 1024;
 
@@ -612,7 +627,7 @@ pub fn resolve_node_native_project_check(
         .get("scripts")
         .map(|value| value.as_object().ok_or_else(manifest_invalid))
         .transpose()?;
-    let selected = select_node_script(scripts, SemanticCheck::Check)?;
+    let selected = select_node_script(scripts, action)?;
     if scripts
         .and_then(|scripts| scripts.get(selected))
         .and_then(Value::as_str)
@@ -620,13 +635,29 @@ pub fn resolve_node_native_project_check(
     {
         return Err(manifest_invalid());
     }
-    let step = ShellJobValidationStep {
-        name: "check".into(),
-        program: "node".into(),
-        args: vec!["--run".into(), selected.into()],
-        env: Vec::new(),
+    let step = if action == SemanticCheck::Test {
+        let body = scripts
+            .and_then(|scripts| scripts.get(selected))
+            .and_then(Value::as_str)
+            .ok_or_else(manifest_invalid)?;
+        if !matches!(body, "node --test" | "node --test --test-reporter=tap") {
+            return Err(check_unavailable());
+        }
+        ShellJobValidationStep {
+            name: "test".into(),
+            program: "node".into(),
+            args: vec!["--test".into(), "--test-reporter=tap".into()],
+            env: Vec::new(),
+        }
+    } else {
+        ShellJobValidationStep {
+            name: "check".into(),
+            program: "node".into(),
+            args: vec!["--run".into(), selected.into()],
+            env: Vec::new(),
+        }
     };
-    debug_assert!(step.is_structured_node_check());
+    debug_assert!(step.is_canonical());
     let mut hasher = Sha256::new();
     let relative = canonical
         .strip_prefix(&resolved.execution_root)

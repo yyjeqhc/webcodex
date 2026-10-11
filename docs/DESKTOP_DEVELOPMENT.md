@@ -80,6 +80,49 @@ cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
 On Windows, process-tree/lifecycle work may also need the ignored real-process
 suite documented in [Testing](TESTING.md).
 
+Windows session shutdown uses a hidden native top-level window, including tray
+startup without opening the UI. The Desktop owner receives shutdown before its
+ordinary children, accepts queries without stopping connections, and performs
+cleanup only for a confirmed `WM_ENDSESSION`. All exposure stdin leases close
+together, while the shared Server remains available for admitted work to drain.
+Concurrent Tauri/native exit notifications wait for the same cleanup attempt;
+lock acquisition, process cleanup and operation settlement share a four-second
+Windows budget. Work that cannot settle retains the tunnel restart fence.
+Managed tunnel children observe parent stdin EOF throughout preparation and
+startup, including the first control-plane poll. Startup cancellation retains
+the task owner until its shutdown result is observed, so an idle connection can
+retire its fence without first becoming ready. Persistent daemon mode continues
+to ignore stdin EOF.
+Abrupt termination or power loss still requires uncertainty resolution; reboot
+alone is never permission to remove a fence or replay work.
+
+Desktop retains best-effort lifecycle metadata under its effective data root in
+`desktop-lifecycle-v1/current.jsonl` and `previous.jsonl` (256 KiB each). Settings'
+Configuration and data inventory lists both locations. Records contain a Desktop
+session UUID/PID, timestamp, typed exit/shutdown events, and canonical owned-process
+snapshots with generation, phase, PID and exit code. Activity messages, command
+lines, child stdout/stderr and credentials remain outside these files.
+
+A bounded background queue keeps disk I/O off the session-shutdown path. Each
+written record is synced; rotation retains only two files. Disk failures disable
+journaling without changing runtime ownership or recovery. Queue overflow is
+reported as `dropped_before` on the next accepted record. Recent events can be
+missing after abrupt termination, and an absent exit event does not prove a crash.
+A partial last line is preserved and separated from subsequent records. These
+files are diagnostic evidence only: they never authorize restart, remove tunnel
+fences, or replay work.
+
+The focused native regression sends session messages only to a disposable
+fixture window and checks four real child leases plus shared Server ordering:
+
+```powershell
+cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib desktop_real_process_windows_session_shutdown_drains_all_profiles -- --ignored --test-threads=1
+cargo test --locked -p webcodex --lib regular_tunnel_real_process_parent_eof_during_local_probe -- --ignored --test-threads=1
+```
+
+This tests the native notification and cleanup boundary, not an actual system
+reboot. Qualify installed autostart separately when doing a real Windows reboot.
+
 ## Build the local WebCodex runtime
 
 Desktop debug builds look for the three binaries in the repository's

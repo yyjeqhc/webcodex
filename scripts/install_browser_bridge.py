@@ -41,6 +41,38 @@ def destination() -> Path:
         return Path(os.environ['LOCALAPPDATA']) / 'webcodex/native-messaging' / f'{HOST}.json'
     return home / '.config/google-chrome/NativeMessagingHosts' / f'{HOST}.json'
 
+def preserve_backup(target: Path, previous: bytes) -> Path:
+    # Existing .previous files remain untouched. Content-addressed backups make
+    # repeated installation idempotent without overwriting any historical bytes.
+    if len(previous) > 64 * 1024:
+        raise ValueError('native host manifest exceeds the 64 KiB backup limit')
+    digest = hashlib.sha256(previous).hexdigest()
+    backup = target.with_suffix(f'.json.previous.{digest}')
+    fd, temporary = tempfile.mkstemp(prefix='.webcodex-native-backup-', dir=target.parent)
+    try:
+        with os.fdopen(fd, 'wb') as output:
+            output.write(previous)
+            output.flush()
+            os.fsync(output.fileno())
+        try:
+            # Publish complete bytes without replacing an existing backup. Two
+            # installers can never observe each other's partial backup writes.
+            os.link(temporary, backup)
+        except FileExistsError:
+            info = backup.lstat()
+            if (not stat.S_ISREG(info.st_mode) or info.st_size != len(previous)
+                    or backup.read_bytes() != previous):
+                raise ValueError('native host backup conflicts; original manifest was not replaced')
+        if os.name != 'nt':
+            directory_fd = os.open(backup.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    return backup
+
 def install(binary: Path, extension: Path) -> Path:
     data = manifest_for(binary, extension)
     target = destination()
@@ -51,12 +83,10 @@ def install(binary: Path, extension: Path) -> Path:
     if target.is_symlink():
         raise ValueError('native host manifest must not be a symbolic link')
     content = json.dumps(data, indent=2) + '\n'
+    if target.exists() and (not target.is_file() or target.stat().st_size > 64 * 1024):
+        raise ValueError('native host manifest must be a regular file no larger than 64 KiB')
     if target.exists() and target.read_text(encoding='utf-8') != content:
-        backup = target.with_suffix('.json.previous')
-        if backup.exists():
-            raise ValueError('inspect the existing native host backup before replacing the manifest')
-        backup.write_bytes(target.read_bytes())
-        if os.name != 'nt': backup.chmod(0o600)
+        preserve_backup(target, target.read_bytes())
     fd, temporary = tempfile.mkstemp(prefix='.webcodex-native-', dir=target.parent)
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as output:

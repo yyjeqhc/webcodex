@@ -445,7 +445,7 @@ pub(crate) fn structured_validation_evidence(
         errors_count: None,
     };
     match profile.map(|adapter| adapter.tool_identity()) {
-        Some("python:pytest:test") => {
+        Some("python:pytest:test" | "node:tap:test") => {
             let summary = evidence
                 .diagnostics
                 .as_ref()
@@ -620,7 +620,7 @@ pub(crate) fn validation_job_projection_with_policy(
             evidence.test_count_evidence_reason = Some(authoritative.status.reason_code());
         }
     }
-    let pytest_contradictory = if tool == "python:pytest:test" {
+    let report_contradictory = if matches!(tool, "python:pytest:test" | "node:tap:test") {
         match (
             evidence.tests_run_count,
             evidence.tests_failed,
@@ -632,13 +632,17 @@ pub(crate) fn validation_job_projection_with_policy(
             (Some(_), Some(failed), Some(1), Some(RunnerJobLifecycle::Failed)) if failed > 0 => {
                 false
             }
-            (Some(0), Some(0), Some(5), Some(RunnerJobLifecycle::Failed)) => false,
+            (Some(0), Some(0), Some(5), Some(RunnerJobLifecycle::Failed))
+                if tool == "python:pytest:test" =>
+            {
+                false
+            }
             _ => true,
         }
     } else {
         false
     };
-    if pytest_contradictory {
+    if report_contradictory {
         evidence.tests_run_count = None;
         evidence.tests_passed = None;
         evidence.tests_failed = None;
@@ -648,7 +652,11 @@ pub(crate) fn validation_job_projection_with_policy(
         if let Some(diagnostics) = evidence.diagnostics.as_mut() {
             diagnostics.test_summary = None;
             diagnostics.available = false;
-            diagnostics.reason = Some("pytest summary contradicts process outcome");
+            diagnostics.reason = Some(if tool == "python:pytest:test" {
+                "pytest summary contradicts process outcome"
+            } else {
+                "Node TAP summary contradicts process outcome"
+            });
         }
     }
     let profile_mismatch = profile.is_some_and(|profile| profile.validation_kind() != kind);
@@ -660,8 +668,11 @@ pub(crate) fn validation_job_projection_with_policy(
             .diagnostics
             .as_ref()
             .is_some_and(|diagnostics| !diagnostics.diagnostics.is_empty());
-    let mut passed =
-        process_passed && !pytest_contradictory && !ruff_contradictory && !profile_mismatch;
+    let mut passed = process_passed
+        && !report_contradictory
+        && !ruff_contradictory
+        && !profile_mismatch
+        && !(tool == "node:tap:test" && evidence.tests_run_count.is_none());
     let mut value = json!({
         "tool": tool,
         "kind": kind,
@@ -723,7 +734,7 @@ fn apply_cargo_test_execution_policy(
     require_tests: Option<bool>,
     no_run: Option<bool>,
 ) {
-    if !matches!(tool, "cargo_test" | "python:pytest:test") {
+    if !matches!(tool, "cargo_test" | "python:pytest:test" | "node:tap:test") {
         return;
     }
     if let Some(require_tests) = require_tests {

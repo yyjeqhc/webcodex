@@ -1,4 +1,6 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Desktop owns background runtime processes. Sharing a launcher's console in
+// dev/dogfood builds lets closing that console bypass the tray shutdown path.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {
     let mut args = std::env::args_os().skip(1);

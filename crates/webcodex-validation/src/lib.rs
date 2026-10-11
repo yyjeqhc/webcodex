@@ -37,10 +37,10 @@ pub use evidence::{
     validation_summary_from_events, CurrentValidationEvidenceProjection, ValidationEvent,
 };
 pub use recipe::{
-    detect_validation_recipe, resolve_node_native_project_check, resolve_project_validation_recipe,
-    resolve_validation_recipe, resolve_validation_recipe_with_packages,
-    resolve_validation_recipe_with_project_policy, validate_node_project_markers, RecipeError,
-    RecipeId, ResolvedValidationRecipe, SemanticCheck,
+    detect_validation_recipe, resolve_node_native_project_check, resolve_node_native_project_test,
+    resolve_project_validation_recipe, resolve_validation_recipe,
+    resolve_validation_recipe_with_packages, resolve_validation_recipe_with_project_policy,
+    validate_node_project_markers, RecipeError, RecipeId, ResolvedValidationRecipe, SemanticCheck,
 };
 pub use webcodex_core::cargo_test_count::{
     parse_cargo_test_run_metadata, CargoTestRunMetadata, CargoTestRunMetadataAccumulator,

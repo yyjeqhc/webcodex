@@ -824,3 +824,11 @@ mod tests {
         assert_eq!(socket_name(&spec), "webcodex.socket");
     }
 }
+
+pub(super) fn running_pid(spec: &ServiceSpec) -> Result<Option<u32>, ServiceError> {
+    let value = systemctl(
+        spec,
+        &["show", &unit_name(spec), "--property=MainPID", "--value"],
+    )?;
+    Ok(value.trim().parse::<u32>().ok().filter(|pid| *pid > 0))
+}

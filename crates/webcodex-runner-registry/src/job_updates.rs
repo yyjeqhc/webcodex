@@ -1448,6 +1448,22 @@ impl RunnerRegistry {
                 RunnerFeature::ProjectValidationPythonPytest,
             ));
         }
+        let node_test = validation
+            .as_ref()
+            .is_some_and(|v| v.adapter == "node:tap:test")
+            || validation_steps
+                .iter()
+                .any(|step| step.program == "node" && step.name == "test");
+        if node_test
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectValidationNodeTap)
+        {
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectValidationNodeTap,
+            ));
+        }
         // Recheck at admission, not only during the earlier planning round trip:
         // a replacement/older Runner must never reinterpret new filters or counts.
         let project_test_options = validation

@@ -502,7 +502,7 @@ The Runner is the machine that executes project work for the full daily setup.\n
 Commands:\n\
   init        Generate a Runner config (`runner.toml`)\n\
   install     Install, enable, and start the Linux systemd Runner service\n\
-  run         Run webcodex-runner directly in the foreground (all supported platforms)\n\
+  run         Run webcodex-runner directly in the foreground (all supported platforms). Without --profile or --config, the Runner resolves its own config, including WEBCODEX_RUNNER_CONFIG.\n\
   start       Start a hosted background Runner or installed Linux service\n\
   stop        Stop a hosted background Runner or installed Linux service\n\
   restart     Restart a hosted background Runner or installed Linux service\n\

@@ -200,7 +200,7 @@ pub(crate) fn configured_node_project_check_job_command(
     cwd: &Path,
     stop_requested: Option<&AtomicBool>,
 ) -> Result<Command, String> {
-    if !step.is_structured_node_check() {
+    if !step.is_structured_node_check() && !step.is_structured_node_tap_test() {
         return Err("invalid Node project validation step".into());
     }
     let unavailable =

@@ -9,6 +9,7 @@ mod desktop_locale;
 mod desktop_shell;
 mod diagnostics;
 mod error;
+mod lifecycle_log;
 mod managed_instructions;
 mod mcp_providers;
 mod models;
@@ -73,6 +74,7 @@ fn desktop_builder() -> tauri::Builder<tauri::Wry> {
             app.manage(AppState::new_resolved(data_dir, resource_dir)?);
             app.manage(desktop_shell::DesktopShellState::default());
             app.manage(tray::TrayPresentationCache::default());
+            platform::install_session_shutdown(app.handle())?;
             tray::setup(app.handle())?;
             tray::start_background_observer(app.handle());
 
@@ -199,7 +201,11 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
         }
         tauri::RunEvent::ExitRequested { api, code, .. } => {
             let shell = app_handle.state::<desktop_shell::DesktopShellState>();
-            if shell.prevent_implicit_exit(code) {
+            let prevented = shell.prevent_implicit_exit(code);
+            app_handle
+                .state::<AppState>()
+                .record_lifecycle(lifecycle_log::LifecycleEvent::ExitRequested { code, prevented });
+            if prevented {
                 api.prevent_exit();
             } else {
                 shell.mark_exit_requested();
@@ -208,6 +214,10 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
             }
         }
         tauri::RunEvent::Exit => {
+            app_handle
+                .state::<AppState>()
+                .record_lifecycle(lifecycle_log::LifecycleEvent::DesktopExiting);
+            platform::stop_session_shutdown(app_handle);
             let state = app_handle.state::<AppState>();
             tauri::async_runtime::block_on(state.shutdown());
         }

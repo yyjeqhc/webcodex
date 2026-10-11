@@ -155,15 +155,21 @@ fn project_node_validation_rejects_other_actions_and_options() {
         r#"{"scripts":{"check":"node check.js"}}"#,
     )
     .unwrap();
-    for action in [
-        ProjectValidationAction::Test,
-        ProjectValidationAction::FormatCheck,
+    for (action, expected_code) in [
+        (
+            ProjectValidationAction::Test,
+            "validation_check_unavailable",
+        ),
+        (
+            ProjectValidationAction::FormatCheck,
+            "validation_action_unsupported",
+        ),
     ] {
         let request = request(action);
         assert!(matches!(
             project::plan(&policy, &registry, &request),
             Err(ProjectValidationPlanningResult::Unavailable { code, .. })
-                if code == "validation_action_unsupported"
+                if code == expected_code
         ));
     }
     let mut request = request(ProjectValidationAction::Check);
@@ -579,16 +585,22 @@ fn project_validation_nearest_root_hint_and_ambiguity() {
 fn project_validation_node_unsupported_actions_do_not_resolve_scripts() {
     let (_tmp, root, registry, policy) = fixture("package.json");
     fs::write(root.join("package.json"), "{}").unwrap();
-    // Node now has a bounded native check adapter, but never silently runs a
-    // project-authored test or formatting script as validation evidence.
-    for action in [
-        ProjectValidationAction::Test,
-        ProjectValidationAction::FormatCheck,
+    // The bounded native test profile requires an exact opt-in test script.
+    // A missing script is unavailable; formatting remains unsupported.
+    for (action, expected_code) in [
+        (
+            ProjectValidationAction::Test,
+            "validation_check_unavailable",
+        ),
+        (
+            ProjectValidationAction::FormatCheck,
+            "validation_action_unsupported",
+        ),
     ] {
         assert_eq!(
             project::plan(&policy, &registry, &request(action)).unwrap_err(),
             ProjectValidationPlanningResult::Unavailable {
-                code: "validation_action_unsupported".into(),
+                code: expected_code.into(),
                 detected_backend: Some("node".into())
             }
         );
@@ -1068,4 +1080,69 @@ fn project_validation_ruff_auto_and_explicit_plans_share_target_and_fence_config
         )
         .unwrap();
     }
+}
+
+#[test]
+fn project_validation_node_native_test_has_exact_plan_and_stale_source_fence() {
+    let (_tmp, root, registry, policy) = fixture("package.json");
+    fs::write(
+        root.join("package.json"),
+        r#"{"scripts":{"test":"node --test"}}"#,
+    )
+    .unwrap();
+    let test_request = request(ProjectValidationAction::Test);
+    let (plan, cwd) = project::plan(&policy, &registry, &test_request).unwrap();
+    assert_eq!(cwd.canonicalize().unwrap(), root.canonicalize().unwrap());
+    assert_eq!(plan.provenance.backend, "node");
+    assert_eq!(plan.adapter, "node:tap:test");
+    assert_eq!(plan.step.program, "node");
+    assert_eq!(plan.step.args, ["--test", "--test-reporter=tap"]);
+    assert!(plan.step.is_canonical());
+    assert!(plan.provenance.is_valid());
+    assert!(plan.validation_target_id.starts_with("target:"));
+    let again = project::plan(&policy, &registry, &test_request).unwrap().0;
+    assert_eq!(plan, again);
+    fs::write(
+        root.join("package.json"),
+        r#"{"scripts":{"test":"node --test --test-reporter=tap"}}"#,
+    )
+    .unwrap();
+    assert_ne!(
+        project::plan(&policy, &registry, &test_request)
+            .unwrap()
+            .0
+            .provenance,
+        plan.provenance
+    );
+    assert!(project::plan(&policy, &registry, &test_request)
+        .unwrap()
+        .0
+        .step
+        .is_canonical());
+    fs::write(
+        root.join("package.json"),
+        r#"{"scripts":{"test":"vitest run"}}"#,
+    )
+    .unwrap();
+    assert!(
+        project::plan(&policy, &registry, &test_request).is_err(),
+        "opaque scripts must not claim native TAP evidence"
+    );
+    fs::write(
+        root.join("package.json"),
+        r#"{"scripts":{"test":"node --test"}}"#,
+    )
+    .unwrap();
+    for action in [
+        ProjectValidationAction::FormatCheck,
+        ProjectValidationAction::Check,
+    ] {
+        assert!(project::plan(&policy, &registry, &request(action)).is_err());
+    }
+    let mut filtered = test_request.clone();
+    filtered.test = Some(ProjectValidationTestOptions {
+        filter: Some("selected".into()),
+        ..Default::default()
+    });
+    assert!(project::plan(&policy, &registry, &filtered).is_err());
 }

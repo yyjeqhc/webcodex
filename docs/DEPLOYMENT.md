@@ -194,6 +194,18 @@ WEBCODEX_MCP_HOST_PROFILE=host_code_mode
 WEBCODEX_MCP_HOST_BUDGET_SECS=55
 ```
 
+To independently experiment with bounded **Server-owned** waiting ceilings without changing existing defaults, optionally set:
+
+```text
+# Optional; absence retains current profile-derived timing (5s in host_code_mode).
+WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS=8
+WEBCODEX_MCP_HOST_CONTINUATION_WAIT_MAX_SECS=5
+```
+
+The first value bounds the synchronous wait before an already-started structured Job returns for continuation (integer 1–60 seconds). The second bounds ordinary `observe_jobs` / `job_tail` waits and generated continuations (integer 1–100 seconds). Invalid or out-of-range values fail Server startup with a variable-name-only error. Both are also limited by the selected request's Host budget minus the 5-second return guard. The configured bounds remain authoritative when an MCP client changes profiles or narrows its budget through request headers. `wait_for_job_readiness` still uses its distinct Host-budget policy. These settings require a Server restart, never change actual Job execution timeouts, and are not model-facing tool arguments.
+
+Example values above are **experimental overrides**, not recommended defaults. Review both Host request duration and final Job outcomes before changing a deployment policy. `get_runtime_status.effective_config.mcp_host` shows the nonsecret deployment-effective values, not request-local narrowed values.
+
 `WEBCODEX_MCP_HOST_BUDGET_SECS` describes the Host-side MCP call/composition budget, not command runtime. Tool `timeout_secs` remains the execution lifetime and may be much larger. WebCodex never infers the profile from `clientInfo`, User-Agent, or a Host product name.
 
 `host_code_mode` describes orchestration supplied by the external MCP Host. It is separate from WebCodex's experimental internal Code Mode feature and its own nested-execution safeguards. `runtime_status.effective_config.mcp_host` reports the non-secret **deployment default**. Mixed clients can override their request strategy with `X-WebCodex-MCP-Profile` and reduce their waiting budget with `X-WebCodex-MCP-Budget-Secs`; configure these headers on each client connection, not as model arguments. See [request-local client policy](MCP.md#request-local-client-policy). No header means the deployment default; client brand is never auto-detected.

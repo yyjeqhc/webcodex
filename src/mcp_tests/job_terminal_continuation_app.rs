@@ -53,7 +53,7 @@ async fn handle_with_apps(
 }
 
 #[test]
-fn job_terminal_wait_does_not_suggest_an_unadvertised_host_carrier() {
+fn job_terminal_wait_suggests_only_an_admitted_still_waiting_host_carrier() {
     let base = json!({
         "wait_id": "wc_job_wait_q6urq6urq6urq6ur",
         "job_id": "wc_job_exact",
@@ -71,14 +71,14 @@ fn job_terminal_wait_does_not_suggest_an_unadvertised_host_carrier() {
     let mut capable = ToolResult::ok(base.clone());
     super::super::tools::project_job_terminal_resume_suggested_call(true, &mut capable);
     assert_eq!(
-        capable.output, base,
-        "hidden carrier must not create a dead follow-up"
+        capable.output["suggested_call"],
+        json!({"follow_up_kind":"fallback_recovery", "tool":"present_job_terminal_continuation", "arguments":{"wait_id":base["wait_id"]}})
     );
     crate::tool_runtime::ToolCall::from_tool_name(
         "present_job_terminal_continuation",
         json!({"wait_id": "wc_job_wait_q6urq6urq6urq6ur"}),
     )
-    .expect("hidden domain ToolCall is retained");
+    .expect("Direct domain ToolCall stays parser-ready");
 
     let mut no_carrier = ToolResult::ok(base.clone());
     super::super::tools::project_job_terminal_resume_suggested_call(false, &mut no_carrier);
@@ -138,7 +138,15 @@ async fn job_terminal_continuation_app_surface_is_explicit_sparse_and_app_only()
         panic!("expected UI tools/list")
     };
 
-    assert!(tool(&ui["result"], "present_job_terminal_continuation").is_none());
+    let present =
+        tool(&ui["result"], "present_job_terminal_continuation").expect("Direct Job card");
+    assert_eq!(
+        present.pointer("/_meta/ui/resourceUri"),
+        Some(&json!(MCP_JOB_TERMINAL_CONTINUATION_UI_RESOURCE_URI))
+    );
+    assert_eq!(present["annotations"]["readOnlyHint"], true);
+    assert_eq!(present["annotations"]["idempotentHint"], true);
+    assert!(present.pointer("/_meta/ui/visibility").is_none());
     assert!(tool(&ui["result"], "wait_for_job_terminal").is_none());
     for apps in [false, true] {
         let full = super::super::tools::mcp_tools_list_payload_with_features_for_auth(
@@ -148,7 +156,8 @@ async fn job_terminal_continuation_app_surface_is_explicit_sparse_and_app_only()
             Some(&auth),
         );
         assert!(tool(&full, "wait_for_job_terminal").is_none());
-        assert!(tool(&full, "present_job_terminal_continuation").is_none());
+        let present = tool(&full, "present_job_terminal_continuation").unwrap();
+        assert_eq!(present.pointer("/_meta/ui/resourceUri").is_some(), apps);
     }
     for name in JOB_APP_TOOLS {
         let descriptor = tool(&ui["result"], name).unwrap_or_else(|| panic!("missing {name}"));
@@ -182,7 +191,10 @@ async fn job_terminal_continuation_app_surface_is_explicit_sparse_and_app_only()
     let McpOutcome::Ok(plain) = plain else {
         panic!("expected plain tools/list")
     };
-    assert!(tool(&plain["result"], "present_job_terminal_continuation").is_none());
+    assert!(tool(&plain["result"], "present_job_terminal_continuation")
+        .unwrap()
+        .pointer("/_meta/ui/resourceUri")
+        .is_none());
     for name in JOB_APP_TOOLS {
         assert!(tool(&plain["result"], name).is_none());
     }
@@ -201,7 +213,12 @@ async fn job_terminal_continuation_app_surface_is_explicit_sparse_and_app_only()
     let McpOutcome::Ok(disabled) = disabled else {
         panic!("expected disabled tools/list")
     };
-    assert!(tool(&disabled["result"], "present_job_terminal_continuation").is_none());
+    assert!(
+        tool(&disabled["result"], "present_job_terminal_continuation")
+            .unwrap()
+            .pointer("/_meta/ui/resourceUri")
+            .is_none()
+    );
     for name in JOB_APP_TOOLS {
         assert!(tool(&disabled["result"], name).is_none());
     }

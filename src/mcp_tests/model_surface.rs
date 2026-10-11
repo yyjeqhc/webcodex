@@ -428,7 +428,7 @@ async fn specialist_tools_remain_discoverable_with_canonical_gateway_contracts()
 }
 
 #[tokio::test]
-async fn inactive_continuation_presentations_are_unavailable_not_gateway_tools() {
+async fn continuation_presentations_use_dedicated_direct_app_descriptors() {
     let runtime = test_runtime();
     for apps in [false, true] {
         for name in [
@@ -437,47 +437,64 @@ async fn inactive_continuation_presentations_are_unavailable_not_gateway_tools()
         ] {
             assert_eq!(
                 crate::model_surface::suggested_tool_call_route(name, false),
-                crate::model_surface::SuggestedToolCallRoute::Unavailable
+                crate::model_surface::SuggestedToolCallRoute::Direct
             );
             assert!(
-                !crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(name, true)
+                crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(name, true)
             );
             let listed = crate::mcp::tools::mcp_tools_list_payload_with_features_for_auth(
                 false, apps, true, None,
             );
-            assert!(!listed["tools"]
+            let descriptor = listed["tools"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|tool| tool["name"] == name));
-            for (gateway, params) in [
-                (false, json!({"name": name, "arguments": {}})),
-                (true, adaptive_runtime_gateway_params(name, json!({}))),
-            ] {
-                let params = if apps {
-                    mcp_2026_ui_params(params)
-                } else {
-                    mcp_2026_params(params)
+                .find(|tool| tool["name"] == name)
+                .expect("Direct continuation descriptor");
+            let resource = if name == "present_agent_continuation" {
+                MCP_AGENT_CONTINUATION_UI_RESOURCE_URI
+            } else {
+                MCP_JOB_TERMINAL_CONTINUATION_UI_RESOURCE_URI
+            };
+            assert_eq!(
+                descriptor.pointer("/_meta/ui/resourceUri"),
+                apps.then_some(&json!(resource))
+            );
+            let params = json!({"name":"read_tool_manifest", "arguments":{"tool_name":name}});
+            let params = if apps {
+                mcp_2026_ui_params(params)
+            } else {
+                mcp_2026_params(params)
+            };
+            let McpOutcome::Ok(manifest) =
+                handle_mcp_request(&runtime, rpc("tools/call", Some(json!(68)), params), None)
+                    .await
+            else {
+                panic!("manifest {name}");
+            };
+            let output = &manifest["result"]["structuredContent"]["output"];
+            assert_eq!(output["route"]["primary"]["mode"], "direct", "{name}");
+            assert_eq!(output["route"]["primary"]["tool"], name);
+            assert_eq!(output["effect"], "observe");
+            assert_eq!(output["idempotency"], "pure_read");
+            if apps {
+                let outcome = handle_mcp_request(
+                    &runtime,
+                    rpc(
+                        "tools/call",
+                        Some(json!(69)),
+                        mcp_2026_ui_params(adaptive_runtime_gateway_params(name, json!({}))),
+                    ),
+                    None,
+                )
+                .await;
+                let McpOutcome::BadRequest(error) = outcome else {
+                    panic!("{name}: {outcome:?}");
                 };
-                let outcome =
-                    handle_mcp_request(&runtime, rpc("tools/call", Some(json!(68)), params), None)
-                        .await;
-                if gateway {
-                    let McpOutcome::Ok(value) = outcome else {
-                        panic!("{name}: {outcome:?}")
-                    };
-                    let result = &value["result"]["structuredContent"];
-                    assert_eq!(result["success"], false);
-                    assert_eq!(result["output"]["error_kind"], "unknown_tool");
-                    assert_eq!(result["output"]["execution_state"], "not_started");
-                    assert_eq!(result["output"]["state_changed"], false);
-                    assert!(result["output"].get("suggested_call").is_none());
-                } else {
-                    assert!(
-                        matches!(outcome, McpOutcome::BadRequest(_)),
-                        "{name}: {outcome:?}"
-                    );
-                }
+                assert!(error["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("call_runtime_tool cannot invoke MCP App presentation tool"));
             }
         }
     }

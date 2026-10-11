@@ -233,10 +233,137 @@ fn post_message(
 }
 
 #[tokio::test]
+async fn agent_continuation_direct_presentation_reauthorizes_without_binding_or_retargeting() {
+    let (_temp, _db, runtime) = continuation_runtime();
+    let auth = continuation_auth("direct-presentation");
+    let agent = create_agent(&runtime, &auth, "direct", "Direct", "direct-agent");
+    let (endpoint, generation) = attach(&runtime, &auth, &agent, "direct-endpoint");
+    let arguments = json!({
+        "agent_id": agent, "endpoint_id": endpoint,
+        "expected_controller_generation": generation,
+    });
+    let request = |arguments| {
+        rpc(
+            "tools/call",
+            Some(json!(5100)),
+            mcp_2026_ui_params(json!({
+                "name":"present_agent_continuation", "arguments":arguments,
+            })),
+        )
+    };
+    for _ in 0..2 {
+        let McpOutcome::Ok(result) =
+            handle_with_app_policy(&runtime, request(arguments.clone()), Some(&auth), true).await
+        else {
+            panic!("direct presentation");
+        };
+        let result = &result["result"]["structuredContent"];
+        assert_eq!(result["success"], true, "{result}");
+        let projection = &result["output"]["agent_continuation"];
+        assert_eq!(projection["agent_id"], agent);
+        assert_eq!(projection["endpoint_id"], endpoint);
+        assert_eq!(projection["controller_generation"], generation);
+        assert_eq!(projection["host_binding"]["bound"], false);
+        assert_eq!(
+            projection["host_binding"]["production_auto_resume_available"],
+            false
+        );
+    }
+    let mut wrong_generation = arguments.clone();
+    wrong_generation["expected_controller_generation"] = json!(generation + 1);
+    let McpOutcome::Ok(stale_generation) =
+        handle_with_app_policy(&runtime, request(wrong_generation), Some(&auth), true).await
+    else {
+        panic!("stale generation presentation");
+    };
+    assert_eq!(
+        stale_generation["result"]["structuredContent"]["success"],
+        false
+    );
+    assert_eq!(
+        stale_generation["result"]["structuredContent"]["output"]["error_kind"],
+        "endpoint_generation_stale"
+    );
+    let foreign = continuation_auth("foreign-presentation");
+    let McpOutcome::Ok(denied) =
+        handle_with_app_policy(&runtime, request(arguments.clone()), Some(&foreign), true).await
+    else {
+        panic!("foreign presentation");
+    };
+    assert_eq!(denied["result"]["structuredContent"]["success"], false);
+    assert!(denied["result"]["structuredContent"]["output"]
+        .get("agent_continuation")
+        .is_none());
+
+    let (_next_endpoint, next_generation) = attach(&runtime, &auth, &agent, "rotated-endpoint");
+    assert_eq!(next_generation, generation + 1);
+    let McpOutcome::Ok(stale) =
+        handle_with_app_policy(&runtime, request(arguments.clone()), Some(&auth), true).await
+    else {
+        panic!("stale presentation");
+    };
+    assert_eq!(stale["result"]["structuredContent"]["success"], false);
+    assert_eq!(
+        stale["result"]["structuredContent"]["output"]["error_kind"],
+        "endpoint_expired"
+    );
+
+    let mut no_communication_read = auth;
+    no_communication_read
+        .scopes
+        .retain(|scope| scope != crate::auth::SCOPE_COMMUNICATION_READ);
+    let listed = super::super::tools::mcp_tools_list_payload_with_features_for_auth(
+        false,
+        true,
+        true,
+        Some(&no_communication_read),
+    );
+    // Non-OAuth catalogs retain the canonical descriptor; invocation still
+    // rechecks scope before looking up the endpoint or exposing its state.
+    assert!(tool(&listed, "present_agent_continuation").is_some());
+    let denied = handle_with_app_policy(
+        &runtime,
+        request(arguments.clone()),
+        Some(&no_communication_read),
+        true,
+    )
+    .await;
+    assert!(matches!(
+        denied,
+        McpOutcome::Forbidden {
+            required_scope: Some(crate::auth::SCOPE_COMMUNICATION_READ),
+            ..
+        }
+    ));
+    no_communication_read.kind = crate::auth::AuthKind::OAuth2Token;
+    let oauth_listed = super::super::tools::mcp_tools_list_payload_with_features_for_auth(
+        false,
+        true,
+        true,
+        Some(&no_communication_read),
+    );
+    assert!(tool(&oauth_listed, "present_agent_continuation").is_none());
+    let denied = handle_with_app_policy(
+        &runtime,
+        request(arguments),
+        Some(&no_communication_read),
+        true,
+    )
+    .await;
+    assert!(matches!(
+        denied,
+        McpOutcome::Forbidden {
+            required_scope: Some(crate::auth::SCOPE_COMMUNICATION_READ),
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
 async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bindings() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v18"
+        "ui://webcodex/agent-continuation/v19"
     );
     let (_temp, _db, adaptive) = continuation_runtime();
     let auth = continuation_auth("continuation-surface");
@@ -254,7 +381,14 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
     let McpOutcome::Ok(ui) = ui else {
         panic!("expected UI tools/list")
     };
-    assert!(tool(&ui["result"], "present_agent_continuation").is_none());
+    let present = tool(&ui["result"], "present_agent_continuation").expect("Direct Agent card");
+    assert_eq!(
+        present.pointer("/_meta/ui/resourceUri"),
+        Some(&json!(MCP_AGENT_CONTINUATION_UI_RESOURCE_URI))
+    );
+    assert_eq!(present["annotations"]["readOnlyHint"], true);
+    assert_eq!(present["annotations"]["idempotentHint"], true);
+    assert!(present.pointer("/_meta/ui/visibility").is_none());
     assert!(tool(&ui["result"], "wait_for_agent_events").is_none());
     let bound_tools: Vec<_> = ui["result"]["tools"]
         .as_array()
@@ -267,7 +401,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
         })
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert!(bound_tools.is_empty());
+    assert_eq!(bound_tools, vec!["present_agent_continuation"]);
     for name in APP_TOOLS {
         let descriptor = tool(&ui["result"], name).unwrap_or_else(|| panic!("missing {name}"));
         assert_eq!(
@@ -320,7 +454,10 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
     let McpOutcome::Ok(plain) = plain else {
         panic!("expected plain tools/list")
     };
-    assert!(tool(&plain["result"], "present_agent_continuation").is_none());
+    assert!(tool(&plain["result"], "present_agent_continuation")
+        .unwrap()
+        .pointer("/_meta/ui/resourceUri")
+        .is_none());
     assert!(tool(&plain["result"], "wait_for_agent_events").is_none());
     for name in APP_TOOLS {
         assert!(tool(&plain["result"], name).is_none());
@@ -340,7 +477,10 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
     let McpOutcome::Ok(disabled) = disabled else {
         panic!("expected disabled tools/list")
     };
-    assert!(tool(&disabled["result"], "present_agent_continuation").is_none());
+    assert!(tool(&disabled["result"], "present_agent_continuation")
+        .unwrap()
+        .pointer("/_meta/ui/resourceUri")
+        .is_none());
     assert!(tool(&disabled["result"], "wait_for_agent_events").is_none());
     for name in APP_TOOLS {
         assert!(tool(&disabled["result"], name).is_none());
@@ -522,8 +662,8 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
         "v17 successor recovery must remain explicitly bounded"
     );
     assert!(
-        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"17.0.0\""),
-        "App protocol version must advance with the v17 resource"
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"19.0.0\""),
+        "App protocol version must advance with the current resource"
     );
     assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("const DEBUG_DIAGNOSTICS = false;"),

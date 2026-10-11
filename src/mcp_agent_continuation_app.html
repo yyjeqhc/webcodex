@@ -43,6 +43,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const DEBUG_DIAGNOSTICS = false;
   const AGENT_ID = /^wc_dagent_[A-Za-z0-9_-]{16}$/;
   const ENDPOINT_ID = /^wc_endpoint_[A-Za-z0-9_-]{16}$/;
+  const CONTINUATION_REF = /^~ac[1-9][0-9]{0,18}$/;
   const WAIT_ID = /^wc_agent_wait_[A-Za-z0-9_-]{16}$/;
   const WAKE_ID = /^wc_wake_[A-Za-z0-9_-]{16}$/;
   const ATTEMPT_ID = /^wc_wake_attempt_[A-Za-z0-9_-]{16}$/;
@@ -73,6 +74,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let appCallPrefix = null;
   const resultAppCallIds = new WeakMap();
   let identity = null;
+  let presentationRef = null;
   let identityEpoch = 0;
   let endpointRecoveryProbeEpoch = -1;
   let bindingId = null;
@@ -840,6 +842,22 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     // MCP Apps 2026-01-26: complete tool input is params.arguments.
     // This is an exact selector only; every tool call is reauthorized by Server.
     const args = params && params.arguments;
+    if (args && !Array.isArray(args) && args.agent_continuation_ref != null) {
+      const reference = args.agent_continuation_ref;
+      if (typeof reference !== "string" || reference.trim() !== reference
+        || !CONTINUATION_REF.test(reference)
+        || args.agent_id != null || args.endpoint_id != null
+        || args.expected_controller_generation != null
+        || (presentationRef !== null && presentationRef !== reference)) {
+        acceptIdentity(null);
+        return;
+      }
+      // The reference has no client-resolvable identity or authority. Await the
+      // exact authorized Server projection on this presentation's tool-result;
+      // it is also authoritative when the Host delivers result before input.
+      presentationRef = reference;
+      return;
+    }
     if (!acceptIdentity(args && !Array.isArray(args) && {
       agent_id: args.agent_id,
       endpoint_id: args.endpoint_id,
@@ -964,7 +982,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "17.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "19.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;

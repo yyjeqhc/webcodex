@@ -935,8 +935,8 @@ fn tool_manifest_recommended_flows_reference_visible_defined_tools() {
         .as_array()
         .expect("read_tool_manifest recommended_flows");
     assert_eq!(flows.len(), model_visible_recommended_flows().count());
-    for inactive in ["agent_continuation_setup", "goal_agent_wait_orchestration"] {
-        assert!(!flows.iter().any(|flow| flow["name"] == inactive));
+    for restored in ["agent_continuation_setup", "goal_agent_wait_orchestration"] {
+        assert!(flows.iter().any(|flow| flow["name"] == restored));
     }
 
     for (actual, expected) in flows.iter().zip(model_visible_recommended_flows()) {

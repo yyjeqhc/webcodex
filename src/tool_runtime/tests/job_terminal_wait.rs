@@ -391,7 +391,7 @@ async fn presentation_reauthorizes_exact_wait_and_exposes_no_ambient_authority_s
     assert!(!denied.success);
     assert_eq!(denied.output["error_kind"], "job_terminal_wait_not_found");
 
-    assert!(!crate::tool_runtime::registered_tool_specs()
+    assert!(crate::tool_runtime::registered_tool_specs()
         .iter()
         .any(|spec| spec.name == "present_job_terminal_continuation"));
     let schema =

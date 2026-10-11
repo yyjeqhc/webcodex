@@ -30,7 +30,8 @@ pub(super) fn compact_tool(tool: &mut Value) {
             "wait_for_job_readiness" => "Bounded current-turn join for 1..8 exact Jobs, 1..45s. Finish independent work first. Use any when one terminal Job unlocks work; all only when every dependency is needed. Budget the largest safe remaining wait. At deadline reassess work/set; never mechanically refill. Terminal is readiness, not success. Logs/details: observe_jobs. No automatic next turn.",
             "wait_for_job_terminal" => "Optional durable terminal attention for an explicitly selected continuation workflow. Not a blocking wait and does not start a model turn. Ordinary work uses wait_for_job_readiness in the current turn and observe_jobs for results. Reuse exact keyed waits; never redispatch the Job.",
             "present_docx" => "View one authorized project DOCX in a dedicated read-only reader. Supply project and relative path; unchanged/untracked files supported, no Git/Session required. Pins size/SHA (10 MiB max); private App reads fail on version changes. Common styles only; automatic Word pagination/editing unsupported. Rendering requires MCP Apps Host. Reopen to select a new version.",
-            "present_agent_continuation" => "Present one exact Agent/Endpoint generation as the persistent MCP App continuation card. Pass agent_continuation_ref or the exact tuple. New window setup: create_agent_identity -> rotate_agent_continuation_endpoint -> present_agent_continuation, then yield/end promptly. Presentation success is not wake readiness; later verify list_agent_identities.production_auto_resume_available.",
+            "present_agent_continuation" => "Present one exact Agent/Endpoint MCP App card directly. Setup: create_agent_identity -> rotate_agent_continuation_endpoint -> this tool. Give a normal final assistant response; card/tool result alone does not finalize the turn. Presentation is not wake readiness; later check list_agent_identities.production_auto_resume_available.",
+            "present_job_terminal_continuation" => "Present an exact owned waiting wait_id as an MCP App card after independent work. Give a normal final assistant response; card/tool result alone does not finalize the turn. Reauthorizes wait/Job; never starts or retries execution. Triggered waits stay in this turn; auto-resume needs a verified unattended Host and exact binding.",
             "start_agent_task_attempt" => "Create one leased fenced Attempt for the explicit current assignee. Returns attempt_id, attempt_fence, and attempt_ref. Exact keyed retry returns that same Attempt. Does not dispatch CodingAgent, Job, Wake, or Endpoint work.",
             "start_agent_task_endpoint_continuation" => "Select the Endpoint continuation for one exact live AgentTaskAttempt. Pass attempt_ref or task, attempt, assignee, fence, and controller generation. Does not choose an Endpoint or grant CodingAgent authority. A stale ref fails closed and is not rewritten onto a later attempt or generation.",
             _ => description,
@@ -219,6 +220,14 @@ fn common_input_description(tool: &str, field: &str) -> Option<&'static str> {
             "Catalog true fresh/first Project; false only with its complete/sufficient retained catalog.",
         ("work_on_project", "session_id") =>
             "Omit fresh; exact active id/ref resumes its bound Project.",
+        ("present_agent_continuation", "agent_continuation_ref") =>
+            "Server ~ac ref pins Agent/Endpoint/generation, never authority. Use ref or full tuple, never both.",
+        ("present_agent_continuation", "agent_id") =>
+            "Exact Agent id, with endpoint_id and expected_controller_generation; omit with ref. No fallback.",
+        ("present_agent_continuation", "endpoint_id") =>
+            "Exact Endpoint id in the tuple; omit with ref. Rechecks ownership.",
+        ("present_agent_continuation", "expected_controller_generation") =>
+            "Exact Endpoint generation in tuple; omit with ref. Stale input fails closed; never follows rotation.",
         _ => return None,
     })
 }

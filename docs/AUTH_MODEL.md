@@ -124,7 +124,12 @@ Authentication answers **who the caller is**. Scopes answer **which classes of o
 
 A token having a scope does not bypass project boundaries or native safety checks. Conversely, knowing a Project/Session/Job identifier does not create the missing scope.
 
-The Server's `WEBCODEX_AUTHORITY_MODE` is also separate from authentication. It controls whether consequential operations auto-execute after hard safety checks or require the configured human-authorization path; it does not change credential identity or scope membership. See [Authority model](agent/permission-model.md) for maintainer-level detail.
+The Server's `WEBCODEX_AUTHORITY_MODE` is also separate from authentication.
+`trusted_agent` auto-authorizes consequential operations after hard safety checks;
+`restricted` denies them and does not create an approval queue. Invalid settings
+fail closed. The mode does not change credential identity or scope membership,
+and does not grant permission to publish or deploy outside the user's authorized
+task. See [Authority model](agent/permission-model.md) for maintainer-level detail.
 
 ## Computer observation and control authorization
 

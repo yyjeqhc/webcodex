@@ -307,14 +307,31 @@ impl ToolRuntime {
         project: Option<&str>,
         ack_message_ids: &[String],
     ) {
+        self.add_peer_collaboration_to_mcp_call_result_until(
+            call_result,
+            auth,
+            window,
+            project,
+            ack_message_ids,
+            super::optional_enrichment::deadline(),
+        );
+    }
+
+    fn add_peer_collaboration_to_mcp_call_result_until(
+        &self,
+        call_result: &mut Value,
+        auth: Option<&AuthContext>,
+        window: Option<&ClientWindow>,
+        project: Option<&str>,
+        ack_message_ids: &[String],
+        deadline: std::time::Instant,
+    ) {
         let Some(structured) = call_result
             .get_mut("structuredContent")
             .and_then(Value::as_object_mut)
         else {
             return;
         };
-
-        let deadline = super::optional_enrichment::deadline();
         let standard_tool_result = structured.get("success").is_some_and(Value::is_boolean)
             && structured.get("output").is_some_and(Value::is_object);
         if standard_tool_result {
@@ -376,6 +393,24 @@ impl ToolRuntime {
         if let Value::Object(output) = result.output {
             *structured = output;
         }
+    }
+    #[cfg(test)]
+    pub(crate) fn add_peer_collaboration_to_mcp_call_result_for_tests(
+        &self,
+        call_result: &mut Value,
+        auth: Option<&AuthContext>,
+        window: Option<&ClientWindow>,
+        project: Option<&str>,
+        ack_message_ids: &[String],
+    ) {
+        self.add_peer_collaboration_to_mcp_call_result_until(
+            call_result,
+            auth,
+            window,
+            project,
+            ack_message_ids,
+            std::time::Instant::now() + std::time::Duration::from_secs(10),
+        );
     }
 }
 

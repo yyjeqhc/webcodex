@@ -23,7 +23,7 @@ pub struct DesktopCore {
 
 impl DesktopCore {
     fn new(data_dir: PathBuf, resource_dir: PathBuf) -> DesktopResult<Self> {
-        let activity = ActivityLog::default();
+        let activity = ActivityLog::with_lifecycle(&data_dir);
         let config_path = data_dir.join("desktop-state.json");
         // Keep Diagnostics usable if migration fails; admission below prevents
         // replacing the operator's files with a default configuration.

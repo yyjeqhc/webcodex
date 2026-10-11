@@ -29,7 +29,8 @@ Full naming, lifecycle, compatibility, and non-goals:
 
 Do **not** change `wc_sess_*` ID format, ledger event shape, or lifecycle
 semantics casually. Session / guard / explicit-targeting work must preserve the
-invariants linked from `AGENTS.md` §6 (domain rules) and the Session model.
+invariants linked from [AGENTS.md's domain sources of truth](../../AGENTS.md#5-domain-sources-of-truth)
+and the Session model.
 
 ### Durable Agent and collaboration boundary (standing)
 
@@ -394,7 +395,15 @@ unless the user task explicitly requires that scope.
 
 ---
 
-## 11. 0.4 compatibility floor
+## 11. Compatibility boundaries
+
+The current v0.5 installation and published-data policy is
+[Compatibility policy](../compatibility-policy.md): v0.4.6 is the minimum direct
+Environment upgrade source, and older installations must first cross that bridge.
+The 0.4 history below explains retained protocol/data decisions; it does not grant
+a direct v0.5 upgrade path from every 0.4 release.
+
+### Historical 0.4 baseline and retained contracts
 
 `v0.4.0` is the compatibility floor for **concrete compatibility domains** such
 as durable persisted state, mixed-version Server/Runner operation, shipped

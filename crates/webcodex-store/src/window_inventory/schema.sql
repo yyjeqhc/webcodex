@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS window_inventory_meta(version INTEGER PRIMARY KEY CHECK(version=1));
+CREATE TABLE IF NOT EXISTS window_inventory_meta(version INTEGER PRIMARY KEY CHECK(version=1), oauth_identity_indexed INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS window_inventory_dirty(window_key TEXT PRIMARY KEY) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS window_inventory_cells(
     window_key TEXT NOT NULL, scope_key TEXT NOT NULL,

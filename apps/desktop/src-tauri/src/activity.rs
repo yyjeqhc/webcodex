@@ -56,6 +56,7 @@ pub struct ActivityEntry {
 #[derive(Clone, Default)]
 pub struct ActivityLog {
     inner: Arc<Mutex<ActivityInner>>,
+    pub(crate) lifecycle: Option<crate::lifecycle_log::LifecycleLog>,
 }
 
 #[derive(Default)]
@@ -65,6 +66,25 @@ struct ActivityInner {
 }
 
 impl ActivityLog {
+    pub(crate) fn with_lifecycle(data_dir: &std::path::Path) -> Self {
+        match crate::lifecycle_log::LifecycleLog::start(data_dir) {
+            Ok(lifecycle) => Self {
+                lifecycle: Some(lifecycle),
+                ..Default::default()
+            },
+            Err(_) => {
+                eprintln!("WebCodex Desktop lifecycle metadata logging is unavailable");
+                Self::default()
+            }
+        }
+    }
+
+    pub(crate) fn record_lifecycle(&self, event: crate::lifecycle_log::LifecycleEvent) {
+        if let Some(log) = &self.lifecycle {
+            log.record(event);
+        }
+    }
+
     pub fn push(
         &self,
         event_kind: ActivityEventKind,

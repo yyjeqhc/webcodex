@@ -193,7 +193,7 @@ pub(super) fn enabled_projects_count(projects: &[RunnerProjectSummary]) -> usize
 pub(super) fn registered_log_line(
     cfg: &RunnerConfig,
     actual_transport: &str,
-    projects_count: usize,
+    projects_count: impl std::fmt::Display,
 ) -> String {
     format!(
         "webcodex-runner registered client_id={} server={} preferred_transport={} actual_transport={} projects={}",

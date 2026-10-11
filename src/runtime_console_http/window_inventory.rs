@@ -290,10 +290,14 @@ pub(super) async fn inventory_for_auth(
     let query = query.to_string();
     let management = principal.is_none() && !auth.is_admin_caller();
     let query_allowed = allowed.clone();
+    let managed_oauth_identity = auth
+        .managed_oauth_window_identity()
+        .map(|(user, client)| (user.to_string(), client.to_string()));
     let page = super::store_read::run(db, move |db| {
         db.read_window_inventory(WindowInventoryQuery {
             principal: window_principal_ref(&owned_principal),
             caller: window_principal_ref(&caller),
+            managed_oauth_identity: window_principal_ref(&managed_oauth_identity),
             management,
             visible_projects: &query_allowed,
             projects: owned_projects.as_deref(),

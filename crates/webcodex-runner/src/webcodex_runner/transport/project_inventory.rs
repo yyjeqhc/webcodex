@@ -28,6 +28,24 @@ pub(super) const POLLING_PROJECT_REFRESH_INTERVAL: Duration = Duration::from_sec
 
 static NEXT_PROJECT_INVENTORY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
+/// Fixtures can supply an exact snapshot; production scans only after the
+/// authenticated registration acknowledgement, off the transport thread.
+pub(super) enum InitialProjectInventory {
+    Snapshot(Vec<RunnerProjectSummary>),
+    Scan,
+    #[cfg(test)]
+    Disabled,
+}
+
+pub(super) type ProjectScanReceiver =
+    tokio::sync::watch::Receiver<Option<std::sync::Arc<Vec<RunnerProjectSummary>>>>;
+
+impl From<Vec<RunnerProjectSummary>> for InitialProjectInventory {
+    fn from(projects: Vec<RunnerProjectSummary>) -> Self {
+        Self::Snapshot(projects)
+    }
+}
+
 fn next_project_inventory_sequence() -> u64 {
     NEXT_PROJECT_INVENTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
 }

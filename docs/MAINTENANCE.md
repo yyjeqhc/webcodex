@@ -15,7 +15,7 @@ If a non-sensitive actionable item will not be completed in the current change, 
 
 ## Branches, pull requests, and validation
 
-- Refresh `origin/main` before starting non-trivial work and prefer an isolated branch or worktree for one coherent change.
+- Fetch the intended target repository's `main` before starting non-trivial work and prefer a focused branch or suitable worktree for one coherent change. In a fork checkout, distinguish the fork remote from the upstream PR target; fetching the target does not require changing or publishing the fork's `main`.
 - Link the pull request to the relevant Issue. Use a closing keyword only when the merged pull request fully satisfies that Issue's acceptance criteria.
 - Follow [`AGENTS.md`](../AGENTS.md) for focused validation. Documentation-only changes normally require `python3 scripts/check_markdown_links.py`, not Cargo compilation or broad test suites.
 - Follow [`TESTING.md`](TESTING.md) for the current pull-request and `main` CI mapping. Keep workflow trigger details there instead of duplicating them in maintenance policy.
@@ -33,6 +33,13 @@ For user-facing documentation that already has a tracked `*.zh-CN.md` peer, the 
 - Changes to commands, configuration, installation, deployment, security, or user-visible runtime contracts should update the English and Chinese peers in the same pull request.
 - Purely editorial prose may defer translation only when the pull request records the deferral and links a durable GitHub Issue before merge; do not leave silent contract drift.
 - Internal or agent-facing documents without an existing translated peer do not need a new translation solely for symmetry.
+
+## Documentation scope and verification
+
+- README and the documentation index explain the product and route users to current setup and reference guides. Repository contribution rules live in `AGENTS.md` and `CONTRIBUTING.md`; runtime caller guidance lives in `CODING_WORKFLOW.md` and its linked domain contracts.
+- Keep current commands, tool names, defaults, and authority claims aligned with their owning schemas, manifests, implementation, and focused tests. If code and approved policy disagree, identify the conflict rather than silently weakening the policy to match code.
+- Distinguish published-release behavior, current development contracts, future designs, and historical acceptance reports. Link to the owning current contract instead of copying a second normative version. Preserve source revisions and validation limits in historical reports.
+- Run `python3 scripts/check_markdown_links.py` and `git diff --check` for documentation changes. The link checker checks tracked repository-local file destinations; it does not verify heading anchors, external URLs, commands, or factual accuracy. Review those separately for the changed text.
 
 ## Lightweight maintenance sweep
 

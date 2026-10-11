@@ -65,6 +65,14 @@ When upgrading an older installation across the 0.4 boundary, upgrade the first-
 
 The exact protocol-generation field names, baseline capability list, registration grammar, and compatibility-test matrix are maintainer/wire-contract details and are intentionally omitted from this operations guide.
 
+Streaming Runners register before gathering project Git metadata. The initial
+project catalog is scanned in one process-owned background worker, then sent
+through the usual acknowledged inventory pages. Registration, keepalive and
+shutdown remain responsive while a large or slow catalog is being inspected;
+project inventory can still be pending just after the Runner connects. Reconnects
+reuse an in-flight scan, and process shutdown cancels its Git probes through the
+existing owned-tree cleanup path.
+
 A ChatGPT Host message that the current conversation does not support developer
 MCPs is not a Runner heartbeat or reconnect result. If ChatGPT cannot dispatch
 `get_runtime_status`, first run `webcodex runner status` locally (and inspect bounded

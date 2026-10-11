@@ -1,6 +1,6 @@
-# AGENTS.md — WebCodex Repository Delta
+# AGENTS.md — WebCodex Repository Rules
 
-These rules supplement the builtin `webcodex.workflow`; they are the WebCodex-specific delta, not a second generic coding workflow. A deeper `AGENTS.md` governs its directory. Load linked domain guidance only when the task reaches that boundary.
+These rules govern work on the WebCodex source repository with the current host's available tools. A deeper `AGENTS.md` governs its directory. Load linked domain guidance only when the task reaches that boundary. The builtin `webcodex.workflow` guides callers of a connected WebCodex runtime; it is not a prerequisite for local checkout work. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contributor setup and validation.
 
 WebCodex is actively developed. Features, fixes, and reliability work are welcome, but preserve credential, process-tree, transport, durability, authority, replay-safety, and boundedness contracts.
 
@@ -32,6 +32,7 @@ Product direction: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 ## 3. Rust, tests, and validation
 
 - Use the `dogfood` Cargo profile for optimized development builds. Reserve `release` for formal release/publication artifacts.
+- Documentation-only changes use `python3 scripts/check_markdown_links.py` and diff review, not Cargo builds. Keep existing English/Chinese peers aligned under [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md).
 - Rust changes normally use the smallest package/focused tests that detect the changed behavior. Full workspace/library runs, `--all-targets`, ignored tests, real-process harnesses, and E2E are for explicit need, release/deployment, cross-cutting boundaries, broad conflict resolution, or a focused-coverage gap.
 - Treat `cargo fmt` as finalization after Rust source stabilizes, not a mutation-by-mutation loop. CI/release formatting remains a final-state gate.
 - Put tests in the existing domain test tree. Keep inline private-helper tests small; process/network/integration fixtures belong in dedicated modules.
@@ -45,6 +46,7 @@ Testing guidance: [`docs/TESTING.md`](docs/TESTING.md).
 ## 4. Git, deployment, and release authority
 
 - Push, publish, tag, release, deploy, restart services, or otherwise mutate external systems only when the user explicitly authorizes that action and target.
+- Honor existing explicit authorization for the same action and target; do not ask again at each step. Runtime authority mode does not itself authorize repository publication or deployment.
 - Do not force-push, move published tags, overwrite releases, or rewrite published history without explicit authorization naming that operation and target. Failed pre-publication tag recovery is allowed only through the documented guarded reclaim path.
 - A named development/dogfood deployment is not a release. Deploy the reviewed source commit, preserve rollback, record build identity without hiding dirty state, and run focused smoke; this does not authorize version bumps, tags, or publication.
 - Release/publication must obey immutable artifact and signing/provenance contracts. Follow [`docs/agent/release-process.md`](docs/agent/release-process.md) and [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).

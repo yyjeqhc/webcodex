@@ -96,7 +96,106 @@ const OPERATOR_SELECT: &str = "SELECT message_id, 'operator', 'inbound', NULL, m
     created_at_ms, NULL, kind, priority, context_session_id, context_project, requires_ack,
     first_projected_at_ms, first_ack_observed_at_ms FROM window_operator_messages";
 
+/// Stable, domain-separated Window Operator mailbox identity for managed OAuth
+/// credentials. The Window key is a separate required predicate on every read,
+/// ACK, write and reply; neither component is authority by itself.
+pub fn managed_oauth_operator_principal(
+    user_id: &str,
+    oauth_client_id: &str,
+) -> Option<(String, String)> {
+    if user_id.trim().is_empty() || oauth_client_id.trim().is_empty() {
+        return None;
+    }
+    let mut digest = Sha256::new();
+    digest.update(b"webcodex.window-operator.oauth-managed.v1\0");
+    for part in [user_id, oauth_client_id] {
+        digest.update((part.len() as u64).to_be_bytes());
+        digest.update(part.as_bytes());
+    }
+    Some((
+        "oauth2-window-operator".to_string(),
+        format!("{:x}", digest.finalize()),
+    ))
+}
+
+/// The caller owns the read/transaction snapshot. No credential material leaves
+/// this lookup; only the storage namespace is returned.
+pub(super) fn oauth_window_operator_principal(
+    conn: &rusqlite::Connection,
+    window: &str,
+    access_token_id: &str,
+) -> anyhow::Result<Option<(String, String)>> {
+    let grant: Option<(String, String, Option<String>, String, Option<String>)> = conn
+        .query_row(
+            "SELECT subject_kind, subject_id, user_id, client_id, shared_key_hash
+             FROM oauth_access_tokens WHERE id=?1",
+            params![access_token_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((kind, subject, user, client, shared_key)) = grant {
+        if client.trim().is_empty()
+            || crate::oauth::validate_oauth_subject(
+                &kind,
+                &subject,
+                user.as_deref(),
+                shared_key.as_deref(),
+            )
+            .is_err()
+        {
+            return Ok(None);
+        }
+        return Ok(if kind == "managed_user" {
+            managed_oauth_operator_principal(user.as_deref().unwrap_or_default(), &client)
+        } else {
+            Some(("oauth2".into(), access_token_id.into()))
+        });
+    }
+    // An expired grant may have been pruned. Only exact server-authored Window
+    // attribution can recover a managed identity; absence is not proof of a
+    // shared-key/project-share grant.
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT principal_user_id, oauth_client_id FROM action_events
+         WHERE client_window_key=?1 AND principal_correlation_kind='oauth2'
+         AND principal_correlation_id=?2 AND principal_kind='oauth2'
+         AND principal_user_id IS NOT NULL AND principal_user_id != ''
+         AND oauth_client_id IS NOT NULL AND oauth_client_id != ''
+         LIMIT 2",
+    )?;
+    let mut rows = stmt.query(params![window, access_token_id])?;
+    let Some(row) = rows.next()? else {
+        return Ok(None);
+    };
+    let (user, client): (String, String) = (row.get(0)?, row.get(1)?);
+    Ok(if rows.next()?.is_none() {
+        managed_oauth_operator_principal(&user, &client)
+    } else {
+        None
+    })
+}
+
 impl Database {
+    /// Resolve an exact OAuth observation to its Operator namespace. Missing or
+    /// ambiguous managed-user attribution is unavailable, never a token mailbox.
+    /// Non-managed credentials keep their original namespace only when the
+    /// retained grant proves their subject kind.
+    pub fn oauth_window_operator_principal(
+        &self,
+        window: &str,
+        access_token_id: &str,
+    ) -> anyhow::Result<Option<(String, String)>> {
+        let conn = self.lock_connection(StoreDomain::WindowActivity);
+        oauth_window_operator_principal(&conn, window, access_token_id)
+    }
+
     pub fn window_has_session_context(
         &self,
         kind: &str,

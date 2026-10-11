@@ -79,7 +79,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "agent_continuation_setup",
-        summary: "New durable Agent window setup: identity -> Endpoint -> card -> final -> later readiness.",
+        summary: "New durable Agent window setup: create identity -> create/rotate Endpoint -> present continuation card -> normal final assistant response -> later verify production_auto_resume_available.",
         manifest_purpose: "Use create_agent_identity, then rotate_agent_continuation_endpoint, then present_agent_continuation. Presentation success is not Host readiness. Produce a normal final assistant response and let the current turn finalize promptly; the card/tool result alone does not end it. On a later turn verify the exact Agent through list_agent_identities.production_auto_resume_available. Keep durable Agent identity independent from the Host window.",
         tools: &[
             "create_agent_identity",
@@ -99,7 +99,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "goal_agent_wait_orchestration",
-        summary: "Goal-scoped AgentWait: ready Agents -> controlled Goal/Tasks -> register Wait before terminalization -> execute -> bootstrap/consume Wake -> reconcile.",
+        summary: "Goal-scoped AgentWait orchestration: ready Coordinator/Workers -> create controlled Goal -> create/associate exact Tasks -> register any|all Wait before workers terminalize -> start Attempt + Endpoint continuation -> on resume bootstrap/consume Wake and reconcile Wait/Goal/Tasks.",
         manifest_purpose: "For bounded Goal fan-in, keep identities explicit. First establish exact Coordinator/Worker Agents and continuation readiness. Create the Goal with an explicit controller, create exact AgentTasks with explicit workers, and associate each selected Task to that exact Goal. Then call wait_for_agent_events with goal_id plus an explicit 1..8 Task selector list before any selected worker can terminalize; use any for first-result continuation or all for fan-in. Only after registration start each worker with start_agent_task_attempt followed by start_agent_task_endpoint_continuation. On a fresh resumed Coordinator turn bootstrap the exact Wake, consume it immediately, read_agent_wait(wait_id), get_goal(goal_id), re-read every authoritative source Task, and explicitly decide/update Goal state from current durable truth. Never derive the Wait source list from Goal correlations and do not treat this flow as a scheduler, dependency DAG, auto-spawn rule, or automatic Goal progression.",
         tools: &[
             "create_agent_identity",

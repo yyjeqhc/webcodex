@@ -20,6 +20,11 @@ impl Database {
         let state_path = std::fs::canonicalize(db_path).context("resolve database state path")?;
         let db = Self::from_connection(conn, state_path);
         db.init_tables()?;
+        // Re-key only provably owned legacy managed-OAuth Operator rows before
+        // access-token cleanup. An ambiguous or missing attribution remains
+        // untouched. Page-bounded reads finish the retained startup snapshot
+        // before cleanup can remove the only grant attribution for later rows.
+        db.migrate_legacy_managed_oauth_operator_messages()?;
         // Personal-use instance: reclaim dead auth rows on every open rather
         // than running a background reaper.
         let now = chrono::Utc::now().timestamp();
@@ -556,6 +561,8 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_window_operator_messages_recipient
                 ON window_operator_messages(principal_kind, principal_id, recipient_window_key, created_at_ms);
+            CREATE INDEX IF NOT EXISTS idx_window_operator_legacy_migration
+                ON window_operator_messages(principal_kind);
 
             CREATE TABLE IF NOT EXISTS window_model_replies (
                 message_id TEXT PRIMARY KEY,
@@ -571,6 +578,13 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_window_model_replies_window
                 ON window_model_replies(principal_kind, principal_id, window_key, created_at_ms);
+            CREATE INDEX IF NOT EXISTS idx_window_model_reply_migration
+                ON window_model_replies(principal_kind, principal_id, window_key, reply_to_message_id, message_id);
+            CREATE INDEX IF NOT EXISTS idx_action_events_oauth_window_identity
+                ON action_events(client_window_key, principal_correlation_id, principal_user_id, oauth_client_id)
+                WHERE principal_correlation_kind='oauth2' AND principal_kind='oauth2'
+                  AND principal_user_id IS NOT NULL AND principal_user_id!=''
+                  AND oauth_client_id IS NOT NULL AND oauth_client_id!='';
 
             CREATE TABLE IF NOT EXISTS window_peer_messages (
                 message_id TEXT PRIMARY KEY,

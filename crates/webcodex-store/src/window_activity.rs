@@ -178,6 +178,10 @@ impl Database {
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
                     e.window_continuity_eligible, e.http_status, e.ids_json,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.principal_user_id END AS oauth_user,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.oauth_client_id END AS oauth_client,
                     CASE WHEN json_valid(e.summary_json) THEN
                       CASE json_extract(e.summary_json, '$.failure_expectation_result')
                         WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
@@ -230,6 +234,10 @@ impl Database {
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
                     e.window_continuity_eligible, e.http_status, e.ids_json,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.principal_user_id END AS oauth_user,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.oauth_client_id END AS oauth_client,
                     CASE WHEN json_valid(e.summary_json) THEN
                       CASE json_extract(e.summary_json, '$.failure_expectation_result')
                         WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
@@ -276,6 +284,10 @@ impl Database {
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
                     e.window_continuity_eligible, e.http_status, e.ids_json,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.principal_user_id END AS oauth_user,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.oauth_client_id END AS oauth_client,
                     CASE WHEN json_valid(e.summary_json) THEN
                       CASE json_extract(e.summary_json, '$.failure_expectation_result')
                         WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
@@ -366,6 +378,10 @@ impl Database {
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming, e.window_continuity_eligible, e.http_status,
                     e.ids_json,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.principal_user_id END AS oauth_user,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.oauth_client_id END AS oauth_client,
                     CASE WHEN json_valid(e.summary_json) THEN
                       CASE json_extract(e.summary_json, '$.failure_expectation_result')
                         WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
@@ -414,6 +430,10 @@ impl Database {
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
                     e.window_continuity_eligible, e.http_status, e.ids_json,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.principal_user_id END AS oauth_user,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.oauth_client_id END AS oauth_client,
                     CASE WHEN json_valid(e.summary_json) THEN
                       CASE json_extract(e.summary_json, '$.failure_expectation_result')
                         WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
@@ -440,11 +460,11 @@ impl Database {
                 drop(stmt);
                 let mut stmt = conn.prepare(&sql)?;
                 let records =
-                    collect_window_events(&conn, &mut stmt, params![window_key, limit], Some(23))?;
+                    collect_window_events(&conn, &mut stmt, params![window_key, limit], Some(25))?;
                 return Ok(records);
             }
         };
-        collect_window_event_rows(&conn, &mut rows, Some(23))
+        collect_window_event_rows(&conn, &mut rows, Some(25))
     }
 
     /// Latest authoritative Window/Session relation for diagnostic continuity.
@@ -712,7 +732,7 @@ fn collect_window_event_rows(
             operation: row.get(8)?,
             project: row.get(9)?,
             status: row.get(10)?,
-            failure_expectation_result: row.get(22)?,
+            failure_expectation_result: row.get(24)?,
             meaningful: row.get(11)?,
             async_job_id,
             observed_job_ids,
@@ -721,6 +741,13 @@ fn collect_window_event_rows(
             workflow_links: Vec::new(),
             principal_correlation_kind: row.get(13)?,
             principal_correlation_id: row.get(14)?,
+            managed_oauth_identity: row
+                .get::<_, Option<String>>("oauth_user")?
+                .filter(|value| !value.trim().is_empty())
+                .zip(
+                    row.get::<_, Option<String>>("oauth_client")?
+                        .filter(|value| !value.trim().is_empty()),
+                ),
             request_observed_at_ms: row.get(15)?,
             response_handed_at_ms: row.get(16)?,
             window_transition_kind: row.get(17)?,

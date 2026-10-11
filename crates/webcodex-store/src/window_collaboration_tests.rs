@@ -30,6 +30,112 @@ fn delivered(outcome: WindowOperatorDeliveryOutcome, expected_replay: bool) -> S
 }
 
 #[test]
+fn window_history_keeps_peer_identity_separate_from_stable_operator_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("operator-scope-split.db")).unwrap();
+    let window = "a".repeat(64);
+    let mut operator = input();
+    operator.principal_kind = "oauth2-window-operator".into();
+    operator.principal_id = "stable-managed-user-and-client".into();
+    operator.recipient_window_key = window.clone();
+    let operator_id = delivered(
+        db.post_window_operator_message(operator, "op-1").unwrap(),
+        false,
+    );
+    let first_projection = db
+        .take_window_operator_attention(
+            "oauth2-window-operator",
+            "stable-managed-user-and-client",
+            &window,
+            &[],
+            11,
+            4,
+        )
+        .unwrap();
+    assert_eq!(first_projection.messages.len(), 1);
+    assert_eq!(first_projection.messages[0].message_id, operator_id);
+
+    let reply = NewWindowModelReply {
+        principal_kind: "oauth2-window-operator".into(),
+        principal_id: "stable-managed-user-and-client".into(),
+        window_key: window.clone(),
+        reply_to_message_id: operator_id.clone(),
+        message: "operator reply".into(),
+        created_at_ms: 15,
+    };
+    assert!(matches!(
+        db.post_window_model_reply(reply, "reply-1").unwrap(),
+        WindowModelReplyDeliveryOutcome::Delivered { .. }
+    ));
+
+    let peer_id = db
+        .post_peer_message(NewPeerMessage {
+            principal_kind: "oauth2".into(),
+            principal_id: "old-access-token".into(),
+            sender_window_key: "b".repeat(64),
+            recipient_window_key: window.clone(),
+            sender_peer_id: format!("wc_peer_{}", "b".repeat(32)),
+            recipient_peer_id: format!("wc_peer_{}", "a".repeat(32)),
+            kind: "note".into(),
+            priority: "normal".into(),
+            message: "peer history under old access token".into(),
+            tags: vec![],
+            requires_ack: false,
+            sender_session_id: None,
+            sender_project: None,
+            created_at_ms: 20,
+        })
+        .unwrap()
+        .message_id;
+
+    let page = |peer: &str, before: Option<&str>, limit: usize| {
+        db.window_collaboration_page_scoped(
+            "oauth2-window-operator",
+            "stable-managed-user-and-client",
+            "oauth2",
+            peer,
+            &window,
+            limit,
+            before,
+        )
+        .unwrap()
+    };
+    let (newest, more) = page("old-access-token", None, 2).unwrap();
+    assert!(more);
+    assert_eq!(newest.len(), 2);
+    assert!(newest
+        .iter()
+        .any(|row| row.source == "peer" && row.message_id == peer_id));
+    assert!(newest.iter().any(|row| row.source == "window"));
+    let (older, more) = page("old-access-token", Some(&newest[0].message_id), 2).unwrap();
+    assert!(!more);
+    assert_eq!(older.len(), 1);
+    assert_eq!(older[0].message_id, operator_id);
+
+    let (renewed_peer, _) = page("another-access-token", None, 10).unwrap();
+    assert_eq!(renewed_peer.len(), 2);
+    assert!(renewed_peer.iter().all(|row| row.source != "peer"));
+    assert!(
+        page("another-access-token", Some(&peer_id), 10).is_none(),
+        "a cursor from another Peer credential must not cross the history scope"
+    );
+    let (other_operator, _) = db
+        .window_collaboration_page_scoped(
+            "oauth2-window-operator",
+            "another-user",
+            "oauth2",
+            "old-access-token",
+            &window,
+            10,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(other_operator.len(), 1);
+    assert_eq!(other_operator[0].message_id, peer_id);
+}
+
+#[test]
 fn window_history_encoded_pages_are_bounded_without_cutting_message_bodies() {
     let temp = tempfile::tempdir().unwrap();
     let db = Database::open(&temp.path().join("bounded-history.db")).unwrap();

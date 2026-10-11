@@ -20,6 +20,10 @@ impl Database {
         let state_path = std::fs::canonicalize(db_path).context("resolve database state path")?;
         let db = Self::from_connection(conn, state_path);
         db.init_tables()?;
+        // Re-key only provably owned legacy managed-OAuth Operator rows before
+        // access-token cleanup. An ambiguous or missing attribution remains
+        // untouched; subsequent opens may migrate additional bounded rows.
+        db.migrate_legacy_managed_oauth_operator_messages()?;
         // Personal-use instance: reclaim dead auth rows on every open rather
         // than running a background reaper.
         let now = chrono::Utc::now().timestamp();

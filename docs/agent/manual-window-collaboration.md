@@ -18,6 +18,28 @@ Exact retries return the same message ID; changing recipient, context, or conten
 with the same key conflicts.
 An uncertain write must retain the complete payload and key when retried.
 
+For managed-user OAuth2, Operator delivery is scoped to the **exact Window**
+plus a domain-separated stable **user + OAuth client** identity, not the
+short-lived access-token ID. Runtime Console still authorizes the recipient
+through the latest visible Window activity and Project boundaries; when routing
+to a rotated or pruned access-token observation, it uses only server-authored
+OAuth grant or exact Window ActionAudit attribution to derive that stable
+Operator mailbox. The current credential must still carry `session:collaborate`
+to read, ACK, or reply to Operator messages.
+
+This does not make a Window key an authorization credential. Different users,
+OAuth clients, Windows, missing identity fields, or reduced scopes do not gain
+one another's Operator messages. Peer histories continue to use their own
+existing principal, even when the Work Result transcript combines Peer and
+Operator rows; both scopes fence history cursors. Legacy Operator messages
+already persisted under per-access-token principals are migrated on Server
+startup only when an exact OAuth grant or matching Window ActionAudit supplies
+a unique managed-user + OAuth-client attribution. The migration preserves
+message/reply IDs, ACK state and replay keys, and is bounded and idempotent;
+ambiguous or conflicting records remain under their original namespace. Session/Peer ACK semantics, Goal identity,
+and generic observation principals are unchanged.
+
+
 `POST /api/runtime-console/window-collaboration` accepts `client_window_key` and
 optional `limit` (1–100) and `before_message_id`. The read-only transcript merges
 Operator messages, model replies and both peer directions in one database snapshot.

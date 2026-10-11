@@ -59,6 +59,8 @@ pub(crate) struct ToolCallRequest {
 /// input and the kernel continues to own all authority checks.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ToolInvocationMetadata {
+    /// Explicit presentation request; never dispatch or continuation authority.
+    pub(crate) compact_execution: bool,
     pub(crate) control: Option<super::control_sidecar::ControlSidecars>,
     // Historical wrapper name retained for protocol compatibility. Exact IDs may
     // acknowledge either legacy Session-board messages or Window collaboration
@@ -1306,6 +1308,7 @@ impl ToolRuntime {
             result,
             canonical_audit_output,
         } = postprocess::PostRecordResponse {
+            compact_execution: invocation_metadata.compact_execution,
             tool_name: &request.tool_name,
             context,
             capabilities,

@@ -53,7 +53,7 @@ fn sources() -> Vec<(String, &'static str)> {
                     "SELECT message_id, 'peer', '{direction}', {peer}, message, created_at_ms,
                     NULL, kind, priority, {context}, requires_ack,
                     first_projected_at_ms, first_ack_observed_at_ms
-                 FROM {table} WHERE principal_kind=?1 AND principal_id=?2 AND {key}=?3{extra}"
+                 FROM {table} WHERE principal_kind=?7 AND principal_id=?8 AND {key}=?3{extra}"
                 ),
                 "created_at_ms, message_id",
             ));
@@ -73,6 +73,24 @@ impl Database {
         limit: usize,
         before: Option<&str>,
     ) -> anyhow::Result<Option<(Vec<WindowCollaborationMessage>, bool)>> {
+        self.window_collaboration_page_scoped(
+            kind, principal, kind, principal, window, limit, before,
+        )
+    }
+
+    /// Operator and Peer transcripts are independently principal-scoped.
+    /// Managed OAuth token renewal stabilizes only the Operator namespace;
+    /// Peer history retains the exact original principal/Window boundary.
+    pub fn window_collaboration_page_scoped(
+        &self,
+        operator_kind: &str,
+        operator_principal: &str,
+        peer_kind: &str,
+        peer_principal: &str,
+        window: &str,
+        limit: usize,
+        before: Option<&str>,
+    ) -> anyhow::Result<Option<(Vec<WindowCollaborationMessage>, bool)>> {
         let conn = self.lock_connection(StoreDomain::Communication);
         // One read snapshot also protects against another process moving peer rows
         // between the delivery table and archive while these six pages merge.
@@ -87,7 +105,7 @@ impl Database {
                 .join(" UNION ALL ");
             let cursor: Option<(i64, String)> = conn.query_row(
                 &format!("SELECT created_at_ms, message_id FROM ({union}) WHERE message_id=?4 LIMIT 1"),
-                params![kind, principal, window, before], |row| Ok((row.get(0)?, row.get(1)?)),
+                params![operator_kind, operator_principal, window, before, None::<String>, None::<String>, peer_kind, peer_principal], |row| Ok((row.get(0)?, row.get(1)?)),
             ).optional()?;
             let Some(cursor) = cursor else {
                 return Ok(None);
@@ -98,21 +116,37 @@ impl Database {
         };
         let limit = limit.clamp(1, 100);
         let mut messages = Vec::with_capacity((limit + 1) * sources.len());
-        for (sql, order) in sources {
+        for (source_index, (sql, order)) in sources.into_iter().enumerate() {
             let query = format!(
                 "{sql} AND ({order}) < (?4, ?5) ORDER BY {} DESC, {} DESC LIMIT ?6",
                 order.split(", ").next().unwrap(),
                 order.split(", ").nth(1).unwrap()
             );
             let mut statement = conn.prepare(&query)?;
-            messages.extend(
-                statement
-                    .query_map(
-                        params![kind, principal, window, at, id, (limit + 1) as i64],
-                        transcript_row,
-                    )?
-                    .collect::<rusqlite::Result<Vec<_>>>()?,
-            );
+            let mut rows = if source_index < 2 {
+                statement.query(params![
+                    operator_kind,
+                    operator_principal,
+                    window,
+                    at,
+                    id,
+                    (limit + 1) as i64
+                ])?
+            } else {
+                statement.query(params![
+                    operator_kind,
+                    operator_principal,
+                    window,
+                    at,
+                    id,
+                    (limit + 1) as i64,
+                    peer_kind,
+                    peer_principal
+                ])?
+            };
+            while let Some(row) = rows.next()? {
+                messages.push(transcript_row(row)?);
+            }
         }
         messages.sort_by(|a, b| {
             (b.created_at_ms, &b.message_id).cmp(&(a.created_at_ms, &a.message_id))

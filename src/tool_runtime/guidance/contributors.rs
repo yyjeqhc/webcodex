@@ -53,7 +53,7 @@ pub(super) static DIRECT: GuidanceContributor = GuidanceContributor {
 pub(super) static HOST_BATCHING: GuidanceContributor = GuidanceContributor {
     target: GuidanceTarget::Strategy(CodingGuidanceProfile::HostCodeMode),
     items: &[
-        "Host-native Code Mode is model guidance only. It grants no WebCodex capability/authority, changes no effects/retry/idempotency, and does not require WebCodex nested Code Mode. Host support is not verified by WebCodex; emit compact evidence.",
+        "Host-native Code Mode is model guidance only: no new authority/effects/retry/idempotency; does not require WebCodex nested Code Mode. Host support is not verified by WebCodex; emit compact evidence. Forward nonempty session_attention/operator_messages/peer_messages/job_attention in text(...) output; never drop.",
         "Same-kind: batch read_files(items), search_project_texts(queries), project_validate with scope.packages, or one edit_project_files batch; do not Promise.all same-kind micro-calls. Never per-Job waits, Promise.race, or automatic redispatch.",
         "Independent cross-tool read-only observations: native batches first; then Promise.allSettled for partial evidence or Promise.all for all-or-nothing. Prefer search_file_context for search→read; keep mechanically determined dependent chains in one Host cell. Never use observe_jobs heartbeat polling.",
     ],

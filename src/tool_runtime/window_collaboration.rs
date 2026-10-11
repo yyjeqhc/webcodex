@@ -45,7 +45,56 @@ fn valid_window_message_priority(value: &str) -> bool {
     matches!(value, "low" | "normal" | "high")
 }
 
+/// Operator transcripts are Window-scoped and authorization-scoped, not
+/// access-token-scoped. Keep this identity separate from the legacy observation
+/// principal used by Goals, Peers, Sessions, and other durable resources.
+pub(crate) fn operator_principal_for_auth(
+    auth: Option<&AuthContext>,
+) -> Result<(String, String), String> {
+    if let Some(auth) = auth.filter(|auth| {
+        matches!(auth.kind, crate::auth::AuthKind::OAuth2Token)
+            && auth.token_kind.as_deref() == Some("oauth2")
+    }) {
+        return auth
+            .managed_oauth_window_identity()
+            .and_then(|(user, client)| {
+                webcodex_store::managed_oauth_operator_principal(user, client)
+            })
+            .ok_or_else(|| "managed OAuth operator identity unavailable".to_string());
+    }
+    super::runtime_observation_principal(auth)
+}
+
 impl ToolRuntime {
+    /// Resolve only the Operator storage namespace. The input principal
+    /// remains authoritative for Console visibility and Session context checks.
+    /// A managed OAuth token may be rotated or pruned; the exact Window audit
+    /// provides a bounded, server-authored user/client attribution fallback.
+    fn operator_principal_for_target(
+        &self,
+        window: &str,
+        activity_kind: &str,
+        activity_id: &str,
+        caller: Option<&AuthContext>,
+    ) -> Result<(String, String), String> {
+        let activity = (activity_kind.to_string(), activity_id.to_string());
+        if super::runtime_observation_principal(caller).ok().as_ref() == Some(&activity) {
+            return operator_principal_for_auth(caller);
+        }
+        if activity_kind == "oauth2" {
+            return self
+                .window_activity_db
+                .as_ref()
+                .and_then(|db| {
+                    db.oauth_window_operator_principal(window, activity_id)
+                        .ok()
+                        .flatten()
+                })
+                .ok_or_else(|| "OAuth Window recipient identity unavailable".to_string());
+        }
+        Ok(activity)
+    }
+
     #[cfg(test)]
     pub(crate) async fn post_window_operator_message(
         &self,
@@ -190,9 +239,20 @@ impl ToolRuntime {
         let Some(db) = self.communication_db.as_ref() else {
             return ToolResult::err("Window collaboration unavailable");
         };
+        let Ok((operator_kind, operator_principal)) = self.operator_principal_for_target(
+            target_window_key,
+            recipient_principal_kind,
+            recipient_principal_id,
+            auth,
+        ) else {
+            return invalid_window_context(
+                "operator_recipient_unavailable",
+                "Window recipient identity unavailable; wait for fresh Window activity",
+            );
+        };
         let input = webcodex_store::NewWindowOperatorMessage {
-            principal_kind: recipient_principal_kind.to_string(),
-            principal_id: recipient_principal_id.to_string(),
+            principal_kind: operator_kind,
+            principal_id: operator_principal,
             recipient_window_key: target_window_key.to_string(),
             context_session_id: context_session_id.map(str::to_string),
             context_project: canonical_context_project,
@@ -244,7 +304,7 @@ impl ToolRuntime {
         } else if let (Some(window), Some(db), Ok((kind, principal))) = (
             window,
             self.communication_db.as_ref(),
-            super::runtime_observation_principal(auth),
+            operator_principal_for_auth(auth),
         ) {
             let message_digest = format!("{:x}", Sha256::digest(reply.message.as_bytes()));
             let delivery_key = format!(
@@ -307,18 +367,31 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         limit: usize,
     ) -> serde_json::Value {
+        self.window_collaboration_page(window_key, auth, limit, None)
+    }
+
+    pub(crate) fn window_collaboration_page(
+        &self,
+        window_key: Option<&str>,
+        auth: Option<&AuthContext>,
+        limit: usize,
+        before: Option<&str>,
+    ) -> serde_json::Value {
         let unavailable = || json!({"available":false,"can_send":false,"messages":[]});
         if !auth.is_some_and(|a| a.has_scope(SCOPE_SESSION_COLLABORATE)) {
             return unavailable();
         }
-        let (Some(window), Ok((kind, principal))) =
-            (window_key, super::runtime_observation_principal(auth))
-        else {
+        let (Some(window), Ok(operator), Ok(peer)) = (
+            window_key,
+            operator_principal_for_auth(auth),
+            super::runtime_observation_principal(auth),
+        ) else {
             return unavailable();
         };
-        self.window_collaboration_for_principal(window, &kind, &principal, limit)
+        self.window_collaboration_page_for_scopes(window, &operator, &peer, limit, before)
     }
 
+    #[cfg(test)]
     pub(crate) fn window_collaboration_for_principal(
         &self,
         window: &str,
@@ -343,11 +416,34 @@ impl ToolRuntime {
         limit: usize,
         before: Option<&str>,
     ) -> serde_json::Value {
+        let Ok(operator) = self.operator_principal_for_target(window, kind, principal, None) else {
+            return json!({"available":false,"can_send":false,"messages":[],"error_kind":"operator_recipient_unavailable"});
+        };
+        let peer = (kind.to_string(), principal.to_string());
+        self.window_collaboration_page_for_scopes(window, &operator, &peer, limit, before)
+    }
+
+    fn window_collaboration_page_for_scopes(
+        &self,
+        window: &str,
+        operator: &(String, String),
+        peer: &(String, String),
+        limit: usize,
+        before: Option<&str>,
+    ) -> serde_json::Value {
         let unavailable = || json!({"available":false,"can_send":false,"messages":[]});
         let Some(db) = self.communication_db.as_ref() else {
             return unavailable();
         };
-        match db.window_collaboration_page(kind, principal, window, limit, before) {
+        match db.window_collaboration_page_scoped(
+            &operator.0,
+            &operator.1,
+            &peer.0,
+            &peer.1,
+            window,
+            limit,
+            before,
+        ) {
             Ok(Some((messages, truncated))) => {
                 let next_before = if truncated {
                     messages.first().map(|message| message.message_id.clone())
@@ -355,10 +451,12 @@ impl ToolRuntime {
                     None
                 };
                 // Opaque cache namespace only; a cursor/scope never grants authority.
-                let history_scope = format!(
-                    "{:x}",
-                    Sha256::digest(serde_json::to_vec(&(kind, principal, window)).unwrap())
-                );
+                let scope_fields = if operator == peer {
+                    serde_json::to_vec(&(&operator.0, &operator.1, window))
+                } else {
+                    serde_json::to_vec(&(operator, peer, window))
+                };
+                let history_scope = format!("{:x}", Sha256::digest(scope_fields.unwrap()));
                 json!({"available":true,"can_send":true,"returned":messages.len(),"messages":messages,
                     "truncated":truncated,"next_before":next_before,"history_scope":history_scope})
             }
@@ -393,10 +491,15 @@ impl ToolRuntime {
         ack_ids: &[String],
         deadline: std::time::Instant,
     ) {
+        // Stable OAuth Operator identity must not outlive the current caller's
+        // collaboration authority when a refreshed grant reduces its scopes.
+        if !auth.is_some_and(|auth| auth.has_scope(SCOPE_SESSION_COLLABORATE)) {
+            return;
+        }
         let (Some(window), Some(db), Ok((kind, principal))) = (
             window,
             self.communication_db.as_ref(),
-            super::runtime_observation_principal(auth),
+            operator_principal_for_auth(auth),
         ) else {
             return;
         };

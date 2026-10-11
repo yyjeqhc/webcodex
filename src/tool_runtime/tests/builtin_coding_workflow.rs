@@ -321,6 +321,57 @@ fn host_code_mode_strategy_is_bounded_guidance_only() {
 }
 
 #[test]
+fn host_code_mode_guidance_preserves_attention_when_compacting_model_output() {
+    use crate::tool_runtime::tool_inputs::CodingGuidanceProfile;
+    let host = builtin_coding_workflow_projection(CodingGuidanceProfile::HostCodeMode);
+    let direct = builtin_coding_workflow_projection(CodingGuidanceProfile::Direct);
+    validate_schema_instance_for_test(&host, &workflow_schema()).unwrap();
+
+    let strategy = strategy_text(&host);
+    for field in [
+        "session_attention",
+        "operator_messages",
+        "peer_messages",
+        "job_attention",
+    ] {
+        assert!(
+            strategy.contains(field),
+            "missing Host attention guidance for {field}"
+        );
+        assert!(
+            !strategy_text(&direct).contains(field),
+            "Host-only output instructions leaked into Direct: {field}"
+        );
+    }
+    for boundary in [
+        "nonempty",
+        "text(...)",
+        "never drop",
+        "emit compact evidence",
+        "model guidance only",
+    ] {
+        assert!(
+            strategy.contains(boundary),
+            "missing output boundary: {boundary}"
+        );
+    }
+
+    // A Host projection is not a Server receipt. The protocol and Direct
+    // workflow remain unchanged; only the Host tool strategy gains guidance.
+    let mut host_without_strategy = host;
+    let mut direct_without_strategy = direct;
+    host_without_strategy
+        .as_object_mut()
+        .unwrap()
+        .remove("tool_strategy");
+    direct_without_strategy
+        .as_object_mut()
+        .unwrap()
+        .remove("tool_strategy");
+    assert_eq!(host_without_strategy, direct_without_strategy);
+}
+
+#[test]
 fn host_code_mode_catalog_is_derived_from_tool_definition_hints_only() {
     use crate::tool_runtime::tool_definition::{
         model_visible_tool_definitions, ToolHostConcurrencyHint,

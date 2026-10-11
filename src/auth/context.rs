@@ -107,6 +107,20 @@ impl AuthContext {
         matches!(self.kind, AuthKind::OAuth2Token)
     }
 
+    /// Authenticated managed-user identity for Window Operator continuity only.
+    /// OAuth bridge/project-share subjects and incomplete identities stay apart.
+    pub(crate) fn managed_oauth_window_identity(&self) -> Option<(&str, &str)> {
+        if self.kind != AuthKind::OAuth2Token || self.token_kind.as_deref() != Some("oauth2") {
+            return None;
+        }
+        let user = self.user_id.as_deref().filter(|id| !id.trim().is_empty())?;
+        let client = self
+            .allowed_client_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())?;
+        Some((user, client))
+    }
+
     pub fn is_oauth_shared_key_subject(&self) -> bool {
         self.is_oauth_token() && self.token_kind.as_deref() == Some("oauth2_shared_key")
     }

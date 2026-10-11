@@ -117,6 +117,17 @@ fn observation_does_not_create_state_or_export_private_desktop_values() {
     assert_eq!(log.kind, PathKind::InMemory);
     assert!(log.directory_to_open.is_none());
     assert!(!fixture.data.join("logs").exists());
+    for id in ["desktop.lifecycle_current", "desktop.lifecycle_previous"] {
+        let entry = inventory
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .unwrap();
+        assert_eq!(entry.kind, PathKind::File);
+        assert_eq!(entry.status, PathStatus::Missing);
+        assert!(entry.directory_to_open.is_none());
+    }
+    assert!(!fixture.data.join(crate::lifecycle_log::DIRECTORY).exists());
 }
 
 #[test]

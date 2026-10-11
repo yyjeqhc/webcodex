@@ -276,6 +276,29 @@ fn collect_inventory(core: &InventoryContext<'_>, root: &Path, source: &str) -> 
         PathStatus::Present,
         SafetyCategory::Log,
     ));
+    for (id, file) in [
+        ("desktop.lifecycle_current", crate::lifecycle_log::CURRENT),
+        ("desktop.lifecycle_previous", crate::lifecycle_log::PREVIOUS),
+    ] {
+        let mut location = entry(
+            id,
+            "desktop",
+            "desktop_lifecycle_log",
+            "desktop_state",
+            &core
+                .data_dir
+                .join(crate::lifecycle_log::DIRECTORY)
+                .join(file),
+            PathKind::File,
+            SafetyCategory::Log,
+        );
+        location.log_source = Some(LogSource {
+            kind: LogSourceKind::LifecycleFile,
+            unit_name: None,
+            service_scope: None,
+        });
+        inventory.entries.push(location);
+    }
     inventory.entries.push(reference(
         "desktop.process_output",
         "desktop",
@@ -422,8 +445,8 @@ fn append_legacy_locations(inventory: &mut PathInventory, core: &InventoryContex
             SafetyCategory::Secret,
         ));
     }
-    // Legacy Desktop children retain output in memory. Do not manufacture
-    // persistent lifecycle logs for processes not managed as OS services.
+    // Legacy child stdout/stderr remain in memory; the separately listed
+    // Desktop lifecycle files contain only typed ownership/exit metadata.
 }
 
 #[cfg(test)]

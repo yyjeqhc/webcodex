@@ -1,6 +1,17 @@
 //! Caller-authorized Window queries shared by Console endpoints.
 use super::*;
 
+/// Compare the server-authored attribution already present in this observation.
+/// Live polling never locks the Store or infers identity from another request.
+fn same_managed_oauth_window_principal(
+    auth: &AuthContext,
+    identity: Option<&(String, String)>,
+) -> bool {
+    auth.managed_oauth_window_identity().is_some_and(|caller| {
+        identity.is_some_and(|(user, client)| caller == (user.as_str(), client.as_str()))
+    })
+}
+
 pub(super) fn window_principal_filter(
     auth: &AuthContext,
 ) -> Result<Option<(String, String)>, RuntimeConsoleError> {
@@ -76,7 +87,10 @@ pub(super) async fn console_window_event_visible_cached(
         return caller_principal.is_some_and(|(kind, id)| {
             event.principal_correlation_kind.as_deref() == Some(kind)
                 && event.principal_correlation_id.as_deref() == Some(id)
-        });
+        }) || same_managed_oauth_window_principal(
+            auth,
+            event.managed_oauth_identity.as_ref(),
+        );
     }
     window_event_visible_cached(runtime, auth, cache, event).await
 }
@@ -94,7 +108,8 @@ pub(super) async fn console_active_window_request_visible_cached(
             crate::tool_runtime::window_activity::active_window_request_matches_principal(
                 request, principal,
             )
-        }) {
+        }) && !same_managed_oauth_window_principal(auth, request.managed_oauth_identity.as_ref())
+        {
             return false;
         }
     }

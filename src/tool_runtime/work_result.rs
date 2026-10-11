@@ -219,13 +219,9 @@ impl ToolRuntime {
         {
             return ToolResult::err("invalid collaboration history page");
         }
-        let Ok((kind, principal)) = super::runtime_observation_principal(auth) else {
-            return ToolResult::err("collaboration principal unavailable");
-        };
-        let page = self.window_collaboration_page_for_principal(
-            window.key(),
-            &kind,
-            &principal,
+        let page = self.window_collaboration_page(
+            Some(window.key()),
+            auth,
             history.limit.unwrap_or(50),
             history.before_message_id.as_deref(),
         );

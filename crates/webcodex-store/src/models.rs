@@ -116,6 +116,9 @@ pub struct WindowWorkflowLinkRecord {
 /// Payload-safe durable Window activity row used by Runtime Console queries.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WindowActivityEventRecord {
+    /// Server-authored managed OAuth attribution, internal visibility only.
+    #[serde(skip)]
+    pub managed_oauth_identity: Option<(String, String)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_expectation_result: Option<String>,
     pub event_id: String,

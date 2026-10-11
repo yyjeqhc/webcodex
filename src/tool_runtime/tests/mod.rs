@@ -44,6 +44,7 @@ mod job_input;
 mod job_query;
 mod job_terminal_wait;
 mod jobs;
+mod kernel_pipeline;
 mod lsp;
 mod memory;
 mod metadata;

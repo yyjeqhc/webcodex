@@ -217,19 +217,34 @@ pub(crate) fn supports_control_sidecars(tool: &str) -> bool {
         )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ControlSidecarParseError {
+    NotAdmitted,
+    InvalidOperations,
+}
+
+impl ControlSidecarParseError {
+    // The adapter owns the field path; diagnostics must never include raw payloads.
+    pub(crate) fn description(self) -> &'static str {
+        match self {
+            Self::NotAdmitted => "is unavailable on this tool or adapter",
+            Self::InvalidOperations => "requires closed before/communication/after_success objects with bounded canonical operations",
+        }
+    }
+}
+
 pub(crate) fn parse_control_sidecars(
     value: Value,
-    _tool: &str,
     admitted: bool,
-) -> Result<Option<ControlSidecars>, &'static str> {
+) -> Result<Option<ControlSidecars>, ControlSidecarParseError> {
     if !admitted {
-        return Err("_control is unavailable on this tool or adapter");
+        return Err(ControlSidecarParseError::NotAdmitted);
     }
     // Do not interpolate serde errors: unknown fields/variants can contain
     // private continuation material supplied by a malformed caller.
-    serde_json::from_value(value).map(Some).map_err(|_| {
-        "_control requires closed before/communication/after_success objects with bounded canonical operations"
-    })
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(|_| ControlSidecarParseError::InvalidOperations)
 }
 
 #[cfg(test)]
@@ -237,9 +252,9 @@ pub(crate) fn strip_control_sidecars(
     arguments: &mut Value,
     tool: &str,
     admitted: bool,
-) -> Result<Option<ControlSidecars>, &'static str> {
+) -> Result<Option<ControlSidecars>, ControlSidecarParseError> {
     if !admitted || !supports_control_sidecars(tool) {
-        return Err("_control is unavailable on this tool or adapter");
+        return Err(ControlSidecarParseError::NotAdmitted);
     }
 
     let Some(value) = arguments
@@ -248,7 +263,7 @@ pub(crate) fn strip_control_sidecars(
     else {
         return Ok(None);
     };
-    parse_control_sidecars(value, tool, admitted)
+    parse_control_sidecars(value, admitted)
 }
 fn phase_schema(kinds: &[&str]) -> Value {
     let mut properties = serde_json::Map::new();

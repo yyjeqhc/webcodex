@@ -455,6 +455,14 @@ The removed ProjectConnector capability names (`task_start`, `files_read`, `edit
 
 ### Long work continues as Jobs
 
+Stateless MCP 2026 execution tools can opt in to `_wc.compact_execution=true`.
+This separates stable `output.execution` control facts from `output.details`
+(per item for `observe_jobs`) while retaining logs, recovery and collaboration
+obligations. Only `outcome=passed` proves successful execution; tool acceptance
+or a successful observation alone does not. It neither waits nor retries commands.
+See [Host execution control](experiments/host-execution-control.md) for supported
+tools, gateway placement, unknown outcomes and pending-chain design limits.
+
 `observe_jobs(summary_only=true)` is an opt-in presentation mode for proven successful
 structured validation Jobs. It removes routine passed-test and Cargo progress lines,
 while preserving test summaries, unknown text, warnings, validation evidence, lifecycle,
@@ -543,7 +551,7 @@ and execution keep the direct `load_skill` and `run_skill_resource` paths.
 The optional closeout helpers `check_workspace_hygiene` and `finish_coding_task`
 are model-visible gateway tools; review/coding catalogs still recommend them.
 
-Stateless MCP 2026 exposes common untrusted invocation metadata only through one optional closed `_wc` envelope. Depending on the tool, the envelope may admit `record`, `ack`, `ack_ref`, `resolve`, `reply`, `context`, and `control`. These are adapter metadata only: they never become canonical ToolCall business arguments or grant authority. Legacy flat root wrappers such as `recording_session_id`, `ack_session_message_ids`, `ack_ref`, `session_message_resolution`, `window_reply`, `context_request`, and `_control` are rejected on this Stateless 2026 surface; legacy/non-stateless transports keep their existing contracts. `call_runtime_tool` carries `_wc` only on the outer gateway call; the nested target `arguments` remain canonical business arguments and reject a second `_wc`.
+Stateless MCP 2026 exposes common untrusted invocation metadata only through one optional closed `_wc` envelope. Depending on the tool, the envelope may admit `record`, `ack`, `ack_ref`, `resolve`, `reply`, `context`, `control`, and `compact_execution`. These are adapter metadata only: they never become canonical ToolCall business arguments or grant authority. Legacy flat root wrappers such as `recording_session_id`, `ack_session_message_ids`, `ack_ref`, `session_message_resolution`, `window_reply`, `context_request`, and `_control` are rejected on this Stateless 2026 surface; legacy/non-stateless transports keep their existing contracts. `call_runtime_tool` carries `_wc` only on the outer gateway call; the nested target `arguments` remain canonical business arguments and reject a second `_wc`.
 
 `WEBCODEX_MCP_COMPACT_SCHEMAS` defaults to `true`. Compact `tools/list` omits
 `outputSchema` and projects shorter MCP-specific tool/input descriptions for

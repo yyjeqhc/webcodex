@@ -381,6 +381,13 @@ impl ModelErgonomicsCompletion {
         let success = structured_content.get("success")?.as_bool()?;
         let output = structured_content.get("output")?;
         let serialized_result_bytes = serialized_json_len(structured_content).ok()?;
+        // The opt-in Host view moves command diagnostics, not their meaning.
+        // Measure the actual returned envelope while classifying original faults.
+        let output = if output.get("execution").is_some() {
+            output.get("details").unwrap_or(output)
+        } else {
+            output
+        };
         Some(self.record_from_parts(success, output, Some(serialized_result_bytes)))
     }
 
@@ -735,6 +742,26 @@ mod tests {
         ModelErgonomicsTimer::start(tool_name)
             .expect("model-visible tool")
             .finish_after(Duration::from_millis(duration_ms))
+    }
+
+    #[test]
+    fn execution_control_telemetry_keeps_fault_classification_and_measures_actual_view() {
+        let completion = completion("run_process", 1);
+        let details = json!({"failure_kind":"command_exit_nonzero", "stdout_tail":"PRIVATE"});
+        let ordinary = json!({"success":false,"output":details,"error":"failed"});
+        let compact = json!({"success":false,"output":{
+            "execution":{"state":"completed","outcome":"failed","exit_code":1},
+            "details":details
+        },"error":"failed"});
+        let before = completion.record_for_structured_content(&ordinary).unwrap();
+        let after = completion.record_for_structured_content(&compact).unwrap();
+        assert_eq!(before.failure_kind, after.failure_kind);
+        assert_eq!(after.failure_kind.as_deref(), Some("command_exit_nonzero"));
+        assert_eq!(
+            after.serialized_result_bytes,
+            Some(serde_json::to_vec(&compact).unwrap().len() as u64)
+        );
+        assert!(!serde_json::to_string(&after).unwrap().contains("PRIVATE"));
     }
 
     #[test]

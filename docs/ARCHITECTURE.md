@@ -1,7 +1,8 @@
 # Architecture
 
-WebCodex is a self-hosted tool runtime that lets online AI clients operate
-private code through a Server and a local Runner, while the Server can also retain
+WebCodex is a self-hosted tool runtime that lets online AI clients work with
+registered directories, files, and code through a Server and a local Runner.
+The Server can also retain
 durable Agent/Conversation state independently of a browser window. This page is a
 conceptual overview; the [CLI](CLI.md), [Runner](RUNNER.md), [Deployment](DEPLOYMENT.md),
 and [Authentication](AUTH_MODEL.md) guides cover the operational details.
@@ -24,7 +25,9 @@ authenticates the caller, applies policy, and routes runtime tool calls to a
 connected Runner. The Runner owns the local project boundary and performs the
 file, Git, validation, shell, and Job work on the machine that has the code.
 
-The Server never scans your filesystem and never reads project files directly.
+The Server does not discover or read Runner project files through its own filesystem.
+It requests authorized operations from the Runner and returns their results to the
+client; requested file contents and command output can therefore reach the model.
 Projects are registered by Runners; the Server addresses them by runtime
 project id `agent:<client_id>:<project_id>`.
 
@@ -35,6 +38,7 @@ WebCodex exposes the same Server/Runner runtime through several user-facing adap
 - **MCP** — the recommended model-facing integration for ChatGPT, Claude, and other MCP clients.
 - **REST** — the Server HTTP runtime API.
 - **CLI** — operator/developer setup, lifecycle, and diagnostics.
+- **Desktop** — native setup and management UI over the same Environment and runtime; it is not a second execution backend.
 - **Console** — the Server-hosted operator browser surface.
 
 A regular Server + Runner and the local `webcodex share` / `webcodex run` lifecycle all expose the ordinary WebCodex runtime. `share` and `run` are deployment/auth/reachability conveniences around one locally registered Project; they do not define a second coding runtime or task model. Their project-scoped credentials restrict which Runner/Project is visible without changing ToolRuntime semantics.
@@ -96,8 +100,9 @@ These objects have different lifecycles and are never inferred from one another 
 
 The Runner is the trust boundary closest to the repository:
 
-- Projects execute only inside registered project roots and the configured
-  `allowed_roots` policy.
+- Project resolution and structured file operations enforce registered roots and
+  the configured `allowed_roots` policy. Process tools run with the Runner OS
+  account's permissions; project roots are not an operating-system sandbox.
 - Shell and Job tools are bounded execution primitives, not replacements for
   structured tools. Prefer structured read, edit, validation, and native argv
   operations when they fit; use `run_shell` for real shell semantics or short,
@@ -106,8 +111,10 @@ The Runner is the trust boundary closest to the repository:
   `~/.bashrc` / `~/.profile` are not sourced by default.
 - The Runner connects out to the Server over QUIC, WebSocket, or polling, and
   reconnects automatically. A disconnect is a liveness fact, not a lost-work
-  fact: active Jobs enter a bounded `recovering` state and are restored from
-  the Runner's inventory when the same instance reconnects.
+  fact. For a Runner advertising Job reconciliation, active Jobs enter bounded
+  `recovering` state and can reconcile from the same instance's inventory. Without
+  that capability, or when the recovery deadline expires or the instance is
+  replaced, ordinary Jobs become `lost`. Reconnection never authorizes replay.
 
 Runner Job wire lifecycle vocabulary is interpreted once by the canonical typed contract in `webcodex-core`; the Runner, Registry, Store, and Workflow Session then project that lifecycle into their own domain states. Server
 recovery remains an orthogonal Registry overlay, so `recovering` is an observed
@@ -119,7 +126,7 @@ recovery state rather than a Runner wire lifecycle value.
 flowchart TD
   M[Online model] -->|tool calls only| S[WebCodex Server]
   S -->|policy + auth + session ledger| R[Runner]
-  R -->|allowed project dirs only| P[Private repo]
+  R -->|project policy / OS account permissions| P[Registered directory]
   M -. no direct filesystem access .- P
 ```
 
@@ -129,8 +136,9 @@ The model sees tool results, not arbitrary local files. Access is bounded by:
 - scoped user tokens for the client surfaces,
 - Runner tokens bound to a `client_id` for transport,
 - `allowed_roots` and path policy on the Runner,
-- an authority mode that decides whether consequential tools auto-execute or
-  require human approval,
+- an authority mode that auto-authorizes consequential tools after hard safety
+  checks (`trusted_agent`) or denies them (`restricted`); restricted mode does
+  not create an approval queue,
 - bounded, redacted session evidence.
 
 See [SECURITY.md](../SECURITY.md) and [AUTH_MODEL.md](AUTH_MODEL.md).

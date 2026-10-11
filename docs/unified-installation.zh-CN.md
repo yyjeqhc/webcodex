@@ -2,7 +2,7 @@
 
 [English](unified-installation.md)
 
-本文描述本分支正在开发的统一安装流程，不代表已有新版本发布。Windows NSIS、macOS 安装包和 Debian 12 / Ubuntu 22.04+ `.deb` 计划在 x64 与 arm64 上统一包含 Desktop、CLI、Server 和 Runner。Linux 统一安装包会在原生架构的 Ubuntu 22.04 容器中构建和探测，将 GLIBC 符号版本限制在 2.35 以内，并检查运行时依赖。三种平台的真实机器安装、重启持久性、GUI 会话行为和升级尚未全部验收。具体检查项见[部署验收清单](unified-deployment-validation.md)。
+本文描述当前开发源码中的统一安装流程，不代表已有新版本发布。Windows NSIS、macOS 安装包和 Debian 12 / Ubuntu 22.04+ `.deb` 计划在 x64 与 arm64 上统一包含 Desktop、CLI、Server 和 Runner。Linux 统一安装包会在原生架构的 Ubuntu 22.04 容器中构建和探测，将 GLIBC 符号版本限制在 2.35 以内，并检查运行时依赖。三种平台的真实机器安装、重启持久性、GUI 会话行为和升级尚未全部验收。具体检查项见[部署验收清单](unified-deployment-validation.md)。
 
 已发布文件请从 [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases)获取。仓库 [`download/`](../download/README.md) 目录仅包含静态页面源文件；生成的 `manifest.json` 不提交到仓库。[下载页 workflow](https://github.com/yyjeqhc/webcodex/actions/workflows/download-page.yml) 会在 Release 发布后构建基于 manifest 的 GitHub Actions artifact，但不会托管或部署网页。安装包发布前如需预览特定源码修订，请看 [Linux 源码预览](DESKTOP_DEVELOPMENT.zh-CN.md#linux-源码预览与已有-server)。
 
@@ -18,7 +18,7 @@
 3. 在 Desktop 确认 Server、Runner 和项目状态。Desktop、CLI 与网页使用同一 Server 的授权视图。浏览器打开 `SERVER_URL/runtime`，使用现有用户凭据查看获授权的 Runner、项目和状态。
 4. 通过 Server 配置现有 ChatGPT MCP/Tunnel 连接。ChatGPT 始终连接中心 Server。远程项目路径属于 Runner 所在机器，不是 Server 机器上的本地路径。
 
-关闭 Desktop 不会停止持久服务。GUI helper 只会在同一用户已登录且未锁定的会话运行。Linux 不新增 GUI helper backend。
+关闭 Desktop 不会停止持久服务。注销或重启后的可用性取决于已保存的[服务作用域](#服务与凭据)。GUI helper 只会在同一用户已登录且未锁定的会话运行。Linux 不新增 GUI helper backend。
 
 ## 多台电脑
 
@@ -87,15 +87,22 @@ v0.5 将正式发布的 v0.4.6 Environment 版本作为最低直接升级来源�
 
 ## 服务与凭据
 
-计划使用的持久服务管理器分别是 Linux systemd、macOS LaunchDaemon 和 Windows Service Control Manager（SCM）。使用 `webcodex environment start server`、`webcodex environment stop runner` 或 `webcodex environment restart tunnel` 管理组件（按需替换操作和组件）。持久服务独立于 Desktop 窗口。
+新环境默认采用 **user** scope，已有环境保留原服务管理器与所有者。需要开机服务时，显式选择 `webcodex environment configure ... --scope system`。System 配置需要操作系统授权，失败时不会自动退回 user scope。
 
-如果 Windows Runner 服务丢失登录凭据，使用 `webcodex environment repair-credential runner`。它要求通过隐藏控制台输入真实 Windows 账户凭据；Windows Hello PIN 不是账户密码。服务以真实用户 SID 运行。服务登录密码仅由 SCM 保存；WebCodex 不会另存密码副本。
+| 作用域 | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| `user`（新环境默认） | systemd user manager；注销或重启后的可用性取决于 linger | 登录会话中的 LaunchAgent | 已登录用户的计划任务 |
+| `system`（显式选择） | 系统级 systemd 服务 | LaunchDaemon | Windows Service Control Manager（SCM） |
+
+使用 `webcodex environment start server`、`webcodex environment stop runner` 或 `webcodex environment restart tunnel --profile PROFILE` 管理组件（按需替换操作和组件）。Tunnel 服务控制适用于 standalone profile；embedded profile 随 Server 生命周期运行。持久服务独立于 Desktop 窗口，但 user scope 不保证登录前或注销后仍运行。
+
+如果 Windows **system scope** 的 Runner 服务丢失登录凭据，使用 `webcodex environment repair-credential runner`。它要求通过隐藏控制台输入真实 Windows 账户凭据；Windows Hello PIN 不是账户密码。服务以真实用户 SID 运行。服务登录密码仅由 SCM 保存；WebCodex 不会另存密码副本。User scope 的计划任务不使用这条 SCM 凭据修复路径。
 
 Desktop Diagnostics 只为已保存环境所拥有的本机组件提供独立 Start、Stop、Restart 控制。Server-only 环境只有 Server 控制；仅查看端没有本机服务控制。以查看端连接同一台机器的 Server，也不会接管由其他方式管理的服务。Windows 上还提供 Runner 服务原生凭据修复。Desktop 打开已有持久服务的环境时只读取状态并定期刷新，不会自动重启已停止的服务。若要恢复已保存的 Server 用户凭据，可在 Diagnostics 使用 **Restore Server user credential** 并通过受保护输入提供新凭据，或运行 `webcodex environment repair-user-credential [--token-file PATH]`。操作会核对已保存的 Server 和用户名，再原子写入新凭据；不会配对 Runner，也不会更改服务状态。
 
 ChatGPT 使用中心 Server 现有的 MCP/Tunnel 集成。其他机器上的 Runner 需要有一条自己可访问的 Server URL。OpenAI Tunnel 只承载 ChatGPT 到 MCP 的连接，不能作为 Runner 接入地址。配置不会自动开放防火墙端口或修改 Server 监听地址。Tailscale 可作为可选的私有网络连通方式，WebCodex 本身不依赖它。
 
-macOS 的开机恢复以系统和项目所在磁盘已解锁为前提。FileVault 的启动解锁由操作系统负责；WebCodex 不关闭加密或保存磁盘解锁密码。磁盘解锁后，后台项目任务不要求 Desktop 窗口保持打开；GUI 操作仍要求所属用户的活动、未锁定会话。参见 [Apple FileVault 说明](https://support.apple.com/guide/deployment/intro-to-filevault-dep82064ec40/web)。
+macOS 的 system scope 开机恢复以系统和项目所在磁盘已解锁为前提；user scope 的 LaunchAgent 还需要所有者的登录会话。FileVault 的启动解锁由操作系统负责；WebCodex 不关闭加密或保存磁盘解锁密码。后台项目任务不要求 Desktop 窗口保持打开；GUI 操作仍要求所属用户的活动、未锁定会话。参见 [Apple FileVault 说明](https://support.apple.com/guide/deployment/intro-to-filevault-dep82064ec40/web)。
 
 ## 升级
 
@@ -103,12 +110,12 @@ macOS 的开机恢复以系统和项目所在磁盘已解锁为前提。FileVaul
 
 Linux 和 macOS 的已有安装升级，要求原用户先针对候选包和自己的 EnvironmentStore 运行 Core `upgrade-prepare`。管理员用 `installer-authorize` 授权该 receipt；包钩子会将它与候选包及稳定 runtime 目录核对，不会打开 root 的默认 EnvironmentStore。包完成阶段由 root 下的已安装 CLI 通过窄范围 owner-context broker 运行 `installer-finish`。只有 Core 提交 owner 事务后才报告成功；失败时保留授权 receipt 供恢复。全新安装使用隔离的安装事务目录，不会启动服务。Windows 外层安装器以当前用户身份运行，在调用内层 Tauri 安装器前准备并验证该用户的 Store，完成后运行 `upgrade-finish`。
 
-Windows 会由绑定候选包 manifest 的新 CLI 单独判定安装类型和 Environment 所有权。官方 x64 v0.4.3 通过旧 build identity 及缺少 Environment 数据格式声明识别，不会向旧 CLI 发送 Environment 命令。完整但尚未配置 Environment 的新版安装也走独立的程序包事务。升级前须退出旧 Desktop 并停止其 Server/Runner；程序不可访问或正在运行、安装不完整、用户不匹配、存在无法对应 owner 的 Windows 服务时，会阻止替换。候选 CLI 保存私有备份并生成 `windows-package-prepared.json`，绑定原用户 SID、四个精确文件目标、事务及已发布 manifest。调用内层安装器前核对凭据和旧文件；完成阶段核对四个安装文件的 hash 和 build-info 启动结果；回滚恢复原来的四个程序。此流程不会创建 Environment、注册 Runner、修改 provider 配置或迁移 Server 数据。已有 Environment 保留已安装 CLI 和现有 owner 事务路径。
+Windows 会由绑定候选包 manifest 的新 CLI 将安装分为 `Fresh`、`Unconfigured` 或 `Environment`。完整但尚未配置的程序包必须声明受支持的 Environment 数据格式；包括官方 v0.4.3 在内的 pre-Environment 包会被拒绝，并提示先经 v0.4.6 升级。升级前须退出旧 Desktop 并停止其 Server/Runner；程序不可访问或正在运行、安装不完整、用户不匹配、存在无法对应 owner 的 Windows 服务时，会阻止替换。候选 CLI 保存私有备份并生成 `windows-package-prepared.json`，绑定原用户 SID、四个精确文件目标、事务及已发布 manifest。调用内层安装器前核对凭据和旧文件；完成阶段核对四个安装文件的 hash 和 build-info 启动结果；回滚恢复原来的四个程序。此流程不会创建 Environment、注册 Runner、修改 provider 配置或迁移 Server 数据。已有 Environment 保留已安装 CLI 和现有 owner 事务路径。
 
-如果程序回滚失败，请保留所选 Environment 目录内的 `windows-package-upgrade.json` 和 `upgrade-backups/`。停止相关程序后，使用已验证的新 CLI 执行 `environment package-upgrade-rollback --expected-runtime-dir <原安装目录>/webcodex-runtime --environment-dir <原Environment目录> --json`。不要删除恢复文件或修改事务目标。原生 Windows 测试包含兼容 v0.4.3 的 PE 夹具，其 Environment 命令返回 exit 2；真实官方安装器验收仍待执行。
+如果程序回滚失败，请保留所选 Environment 目录内的 `windows-package-upgrade.json` 和 `upgrade-backups/`。停止相关程序后，使用已验证的新 CLI 执行 `environment package-upgrade-rollback --expected-runtime-dir <原安装目录>/webcodex-runtime --environment-dir <原Environment目录> --json`。不要删除恢复文件或修改事务目标。此恢复命令只处理原来受支持的程序包事务，不会绕过 v0.4.6 升级桥。真实官方安装器验收仍待执行。
 
 重新安装完全相同且已验证的包会走只读、幂等验证路径，即使尚未配置 Environment 也一样。Unix 上没有 Environment 时，安装器仍会拒绝不同版本的包，需要由 owner 准备恢复记录；同包校验不能用作替换不同文件的许可。已有 Environment 的不同候选包仍需要 owner receipt 流程和已发布 source manifest 验证。
 
-回滚范围严格遵循包所拥有的文件。Linux 恢复受管 Desktop 可执行文件；macOS 恢复完整 `.app` bundle；Windows 只快照并恢复四个精确受管可执行文件：`WebCodex.exe` 和 `webcodex-runtime/` 下的 CLI、Server、Runner。系统菜单项、`.desktop` 文件和卸载元数据由包管理器负责，不属于应用回滚快照。Core 也会快照 runtime 可执行文件和 Environment 数据。已安装 CLI 损坏后的恢复和完整外层安装器回滚仍需原生验证。旧 CLI 服务迁移是上文单独说明的显式 Linux 流程，不会在安装时自动执行。以上升级和迁移流程尚未通过原生 Windows NSIS、macOS package 或 Debian package 验收。
+回滚范围严格遵循包所拥有的文件。Linux 恢复受管 Desktop 可执行文件；macOS 恢复完整 `.app` bundle；Windows 只快照并恢复四个精确受管可执行文件：`WebCodex.exe` 和 `webcodex-runtime/` 下的 CLI、Server、Runner。系统菜单项、`.desktop` 文件和卸载元数据由包管理器负责，不属于应用回滚快照。Core 也会快照 runtime 可执行文件和 Environment 数据。已安装 CLI 损坏后的恢复和完整外层安装器回滚仍需原生验证。pre-Environment Linux 服务迁移属于 v0.4.6 升级桥，不由 v0.5 安装器执行。以上升级流程尚未通过原生 Windows NSIS、macOS package 或 Debian package 验收。
 
 平台验收步骤和仍需真实机器验证的事项见[部署验收清单](unified-deployment-validation.md)。npm/runtime 压缩包和 Docker 高级说明保留在[部署指南](DEPLOYMENT.zh-CN.md)。

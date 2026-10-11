@@ -120,7 +120,10 @@ Authentication 回答“**调用方是谁**”；scope 回答“**该调用方�
 
 一个 token 拥有某个 scope，并不能绕过 project boundary 或 native safety check；反过来，知道 Project/Session/Job ID 也不会凭空获得缺失的 scope。
 
-`WEBCODEX_AUTHORITY_MODE` 同样与 authentication 分离。它决定有后果的操作在硬安全检查之后是自动执行还是走配置好的人工授权路径，但不会改变 credential identity 或 scope。Maintainer 级细节见 [Authority model](agent/permission-model.md)。
+`WEBCODEX_AUTHORITY_MODE` 同样与 authentication 分离。`trusted_agent` 在硬安全检查
+通过后自动授权有后果的操作；`restricted` 拒绝这些操作，不会创建审批队列。
+无效配置会拒绝执行。该模式不改变凭据身份或 scope，也不授权超出用户任务范围的发布
+或部署。Maintainer 级细节见 [Authority model](agent/permission-model.md)。
 
 ## Computer observation and control authorization
 

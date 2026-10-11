@@ -2,7 +2,10 @@
 
 [English](CODING_WORKFLOW.md) | [简体中文](CODING_WORKFLOW.zh-CN.md)
 
-This guide is for ordinary WebCodex coding/review work. It describes the model-facing workflow, not the internal continuity, audit, or transport protocols used to implement it.
+This guide is for coding/review through a connected WebCodex runtime. Its tool
+names and Workflow Sessions belong to that runtime. For local development of the
+WebCodex repository with another host's tools, follow [CONTRIBUTING.md](../CONTRIBUTING.md)
+and [AGENTS.md](../AGENTS.md). This guide does not require installing WebCodex to contribute.
 
 ## Normal loop
 
@@ -86,7 +89,7 @@ wins for guidance only. MCP omission uses the current request's
 See [request-local client policy](MCP.md#request-local-client-policy); HTTP headers
 select transport timing independently from this tool argument. Non-MCP/internal
 omission falls back to `direct`.
-Workflow contract v28 returns shared `guidance`, `model_protocol` and review `roles`,
+The current workflow contract returns shared `guidance`, `model_protocol` and review `roles`,
 plus only the selected `tool_strategy`, when explicitly requested through
 `context_request=["webcodex.workflow"]`. The selection is request-local: choose again
 on exact resume without changing Session identity or business state. It is never

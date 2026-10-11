@@ -2,7 +2,10 @@
 
 [English](CODING_WORKFLOW.md) | [简体中文](CODING_WORKFLOW.zh-CN.md)
 
-本文面向普通 WebCodex coding/review 工作，只说明模型真正需要遵循的流程，不展开内部 continuity、audit 或 transport 协议。
+本文面向通过已连接的 WebCodex runtime 完成的 coding/review 工作；文中的工具名称和
+Workflow Session 属于该 runtime。使用其他 Host 的工具在本地开发 WebCodex 仓库时，
+请遵循 [CONTRIBUTING.md](../CONTRIBUTING.zh-CN.md) 和 [AGENTS.md](../AGENTS.md)，
+无需为了贡献代码而先安装 WebCodex。
 
 ## 普通循环
 
@@ -46,7 +49,7 @@ Fresh work 仍须明确 `project` 或 `client_id + path`。`mode="worktree"` 始
 使用当次请求的 `X-WebCodex-MCP-Profile`，header 省略才使用部署默认
 `WEBCODEX_MCP_HOST_PROFILE`。HTTP header 独立决定返回/等待策略，见
 [MCP 客户端策略](MCP.zh-CN.md#同一-server-的客户端策略)。非 MCP/internal
-调用省略时仍回退到 `direct`。Workflow contract v28 保持共享的 `guidance`、
+调用省略时仍回退到 `direct`。当前 workflow contract 保持共享的 `guidance`、
 `model_protocol` 和 review `roles`，并在显式 `context_request=["webcodex.workflow"]`
 时通过 `tool_strategy` 返回本次请求选中的 effective 策略。
 

@@ -114,9 +114,17 @@ the native installer/DMG helpers where relevant.
    Documentation-only changes do not require a Cargo build.
 6. Review the final diff and worktree state before committing.
 
-For repository testing guidance, see [docs/TESTING.md](docs/TESTING.md). For the
-coding workflow and closeout conventions, see
-[docs/CODING_WORKFLOW.md](docs/CODING_WORKFLOW.md).
+For repository testing guidance, see [docs/TESTING.md](docs/TESTING.md). When using
+a connected WebCodex runtime to do the work, follow
+[docs/CODING_WORKFLOW.md](docs/CODING_WORKFLOW.md) for its tools and closeout.
+That runtime workflow does not require contributors using other hosts to create
+a WebCodex Workflow Session or call WebCodex tools.
+
+For documentation-only changes, run `python3 scripts/check_markdown_links.py`
+and `git diff --check`, then review changed commands, anchors, and claims against
+their sources. Update existing English/Chinese peers together; see
+[documentation maintenance](docs/MAINTENANCE.md).
+
 Desktop contributors should also use [docs/DESKTOP_DEVELOPMENT.md](docs/DESKTOP_DEVELOPMENT.md) for the source runtime, Tauri, native packaging, and installer/DMG smoke workflow.
 
 On developer machines, ordinary `dev` and `test` Cargo profiles intentionally omit

@@ -323,8 +323,68 @@ for (const [field, value] of Object.entries(conflicts)) {
   });
 }
 
+test("short presentation reference awaits the authorized exact result before binding", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  await view.initialize();
+  view.toolInput({ agent_continuation_ref: "~ac1" });
+  await flush();
+  assert.equal(view.calls("bind_agent_continuation").length, 0);
+  assert.equal(hostMessages(view).length, 0);
+  view.toolResult({ agent_continuation: projection });
+  await flush();
+  assert.equal(view.calls("bind_agent_continuation").length, 1);
+  assert.deepEqual(businessArgs(view.calls("bind_agent_continuation")[0]), {
+    ...input, binding_id: bindingId(view),
+  });
+});
+
+test("result-first short reference preserves the exact established identity", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  view.toolResult({ agent_continuation: projection });
+  await view.initialize();
+  view.toolInput({ agent_continuation_ref: "~ac1", agent_id: null, endpoint_id: null, expected_controller_generation: null });
+  view.toolInput({ agent_continuation_ref: "~ac1" });
+  await flush();
+  assert.equal(view.calls("bind_agent_continuation").length, 1);
+  await view.reply(view.calls("bind_agent_continuation")[0], toolResult({ agent_continuation: projection }));
+  assert.notEqual(view.nodes.binding.textContent, "Unavailable");
+  assert.equal(view.calls("get_agent_continuation_state").length, 1);
+});
+
+test("changed short reference is terminal before a late valid projection", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  await view.initialize();
+  view.toolInput({ agent_continuation_ref: "~ac1" });
+  view.toolInput({ agent_continuation_ref: "~ac2" });
+  view.toolResult({ agent_continuation: projection });
+  await flush();
+  assert.equal(view.calls("bind_agent_continuation").length, 0);
+  assert.equal(view.nodes.binding.textContent, "Unavailable");
+  assert.equal(hostMessages(view).length, 0);
+});
+
+test("short reference cannot retarget an established identity through a conflicting result", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  await view.initialize();
+  view.toolInput({ agent_continuation_ref: "~ac1" });
+  view.toolResult({ agent_continuation: projection });
+  await flush();
+  const pendingBind = view.calls("bind_agent_continuation")[0];
+  view.toolResult({ agent_continuation: { ...projection, endpoint_id: "wc_endpoint_AAAAAAAAAAAAAAAA" } });
+  await view.reply(pendingBind, toolResult({ agent_continuation: projection }));
+  await view.visibility(false);
+  assert.equal(view.calls("bind_agent_continuation").length, 1);
+  assert.equal(view.calls("get_agent_continuation_state").length, 0);
+  assert.equal(view.nodes.binding.textContent, "Unavailable");
+  assert.equal(hostMessages(view).length, 0);
+});
+
 for (const invalid of [
   null, [], {},
+  ...["~ac0", "~ac01", "~ac-1", "~ac1\n", "~ac1 ", "~ac" + "1".repeat(20), 1, ["~ac1"]]
+    .map(agent_continuation_ref => ({ agent_continuation_ref })),
+  { agent_continuation_ref: "~ac1", ...input },
+  { agent_continuation_ref: "~ac1", endpoint_id: input.endpoint_id },
   { ...input, agent_id: input.agent_id.replace("dagent", "agent") },
   { ...input, agent_id: `wc_dagent_${"A".repeat(32)}` },
   { ...input, agent_id: [input.agent_id] },

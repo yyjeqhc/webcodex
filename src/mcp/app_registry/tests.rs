@@ -10,7 +10,7 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
         "ui://webcodex/workbench/v3",
         "ui://webcodex/work-result/v31",
         "ui://webcodex/goal-plan/v7",
-        "ui://webcodex/agent-continuation/v18",
+        "ui://webcodex/agent-continuation/v19",
         "ui://webcodex/job-terminal-continuation/v2",
         "ui://webcodex/docx/v2",
     ];
@@ -62,6 +62,7 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
         "ui://webcodex/work-result/v21",
         "ui://webcodex/goal-plan/v6",
         "ui://webcodex/agent-continuation/v17",
+        "ui://webcodex/agent-continuation/v18",
         "ui://webcodex/job-terminal-continuation/v1",
     ] {
         assert!(
@@ -233,9 +234,27 @@ fn bundled_app_registry_composition_does_not_bypass_capability_or_model_visibili
             let payload =
                 super::super::tools::mcp_tools_list_payload_with_compact_and_app(compact, enabled);
             let tools = payload["tools"].as_array().unwrap();
-            assert!(!tools
-                .iter()
-                .any(|tool| tool["name"] == "present_agent_continuation"));
+            for presenter in [
+                "present_agent_continuation",
+                "present_job_terminal_continuation",
+            ] {
+                assert_eq!(
+                    tools
+                        .iter()
+                        .filter(|tool| tool["name"] == presenter)
+                        .count(),
+                    1,
+                    "dedicated presenter must remain directly visible: {presenter}"
+                );
+            }
+            for gateway_or_hidden in [
+                "wait_for_agent_events",
+                "wait_for_job_terminal",
+                "bind_agent_continuation",
+                "get_agent_continuation_state",
+            ] {
+                assert!(!tools.iter().any(|tool| tool["name"] == gateway_or_hidden));
+            }
             for descriptor in tools {
                 let name = descriptor["name"].as_str().unwrap();
                 let expected = enabled.then(|| for_tool(name)).flatten().map(|app| app.uri);

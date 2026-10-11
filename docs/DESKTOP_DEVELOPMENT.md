@@ -96,6 +96,22 @@ to ignore stdin EOF.
 Abrupt termination or power loss still requires uncertainty resolution; reboot
 alone is never permission to remove a fence or replay work.
 
+Desktop retains best-effort lifecycle metadata under its effective data root in
+`desktop-lifecycle-v1/current.jsonl` and `previous.jsonl` (256 KiB each). Settings'
+Configuration and data inventory lists both locations. Records contain a Desktop
+session UUID/PID, timestamp, typed exit/shutdown events, and canonical owned-process
+snapshots with generation, phase, PID and exit code. Activity messages, command
+lines, child stdout/stderr and credentials remain outside these files.
+
+A bounded background queue keeps disk I/O off the session-shutdown path. Each
+written record is synced; rotation retains only two files. Disk failures disable
+journaling without changing runtime ownership or recovery. Queue overflow is
+reported as `dropped_before` on the next accepted record. Recent events can be
+missing after abrupt termination, and an absent exit event does not prove a crash.
+A partial last line is preserved and separated from subsequent records. These
+files are diagnostic evidence only: they never authorize restart, remove tunnel
+fences, or replay work.
+
 The focused native regression sends session messages only to a disposable
 fixture window and checks four real child leases plus shared Server ordering:
 

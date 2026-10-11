@@ -712,7 +712,6 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     guard.parsed("ok");
     let server_trace_id = guard.correlation_trace_id();
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let live_principal = crate::tool_runtime::runtime_observation_principal(auth.as_ref()).ok();
     let window_registry = runtime.window_activity_registry();
     let window_activity_visible = !work_result_app_internal_tool(tool_name.as_deref());
     let mut live_window_request = if window_activity_visible
@@ -720,14 +719,12 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         && matches!(request.method.as_str(), "tools/call" | "tools/list")
     {
         window.identity.as_ref().map(|identity| {
-            window_registry.start_observed(
+            window_registry.start_authenticated(
                 identity,
                 &server_trace_id,
                 &request.method,
                 tool_name.as_deref(),
-                live_principal
-                    .as_ref()
-                    .map(|(kind, id)| (kind.as_str(), id.as_str())),
+                auth.as_ref(),
                 guard.request_observed_at_ms(),
             )
         })

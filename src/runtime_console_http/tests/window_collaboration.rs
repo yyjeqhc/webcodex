@@ -2,6 +2,257 @@ use super::*;
 use crate::runtime_console_http::window_collaboration;
 
 #[tokio::test]
+async fn operator_continuity_rotated_projectless_window_remains_discoverable() {
+    let (_tmp, db, runtime) = test_runtime_with_goal_db();
+    let mut old = scoped_oauth(&[SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE]);
+    old.api_key_id = Some("review-old-token".into());
+    let mut renewed = old.clone();
+    renewed.api_key_id = Some("review-renewed-token".into());
+    let target_window_key = "a".repeat(64);
+    record_window_event(&db, &old, &target_window_key, None, None, 5_000);
+    assert!(
+        window_collaboration::authorize(&runtime, &renewed, &target_window_key)
+            .await
+            .is_ok()
+    );
+    let inventory = windows_for_auth(&runtime, &renewed, Some(10), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        inventory.total, 1,
+        "an authorized renewed Window must remain discoverable"
+    );
+    let mut foreign = old.clone();
+    foreign.api_key_id = Some("foreign-token".into());
+    foreign.allowed_client_id = Some("foreign-client".into());
+    record_window_event(&db, &foreign, &"b".repeat(64), None, None, 6_000);
+    let mut foreign_user = old.clone();
+    foreign_user.api_key_id = Some("foreign-user-token".into());
+    foreign_user.user_id = Some("foreign-user".into());
+    record_window_event(&db, &foreign_user, &"c".repeat(64), None, None, 7_000);
+    record_window_event(
+        &db,
+        &old,
+        &"d".repeat(64),
+        Some("agent:hidden:project"),
+        None,
+        8_000,
+    );
+    let inventory = windows_for_auth(&runtime, &renewed, Some(10), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        inventory.total, 1,
+        "stable identity must not bypass user/client/Project visibility"
+    );
+    assert_eq!(inventory.windows[0].client_window_key, target_window_key);
+    for denied in [foreign, foreign_user] {
+        assert!(
+            window_collaboration::authorize(&runtime, &denied, &target_window_key)
+                .await
+                .is_err()
+        );
+    }
+    let detail = window_for_auth(
+        &runtime,
+        &renewed,
+        WindowInput {
+            client_window_key: target_window_key,
+            activity_limit: Some(20),
+            session_limit: Some(20),
+            detail_level: WindowDetailLevel::Full,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(detail.activity.len(), 1);
+    let serialized = serde_json::to_string(&detail).unwrap();
+    assert!(!serialized.contains(old.user_id.as_deref().unwrap()));
+    assert!(!serialized.contains(old.allowed_client_id.as_deref().unwrap()));
+}
+
+#[tokio::test]
+async fn operator_continuity_live_visibility_uses_admission_identity_without_sqlite() {
+    use rusqlite::hooks::{AuthContext as SqlAuthContext, Authorization};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_tmp, db, runtime) = test_runtime_with_goal_db();
+    let mut old = scoped_oauth(&[SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE]);
+    old.api_key_id = Some("live-old-token".into());
+    let mut renewed = old.clone();
+    renewed.api_key_id = Some("live-renewed-token".into());
+    let target = crate::client_window::ClientWindow::for_test("live-renewal");
+    let guard = runtime.window_activity.start_authenticated(
+        &target,
+        "live-renewal-trace",
+        "tools/list",
+        None,
+        Some(&old),
+        5_000,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    db.conn_for_tests()
+        .authorizer(Some(move |_: SqlAuthContext<'_>| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Authorization::Deny
+        }))
+        .unwrap();
+    for (auth, expected) in [
+        (renewed.clone(), 1),
+        (
+            {
+                let mut other = renewed.clone();
+                other.allowed_client_id = Some("different-client".into());
+                other
+            },
+            0,
+        ),
+        (
+            {
+                let mut other = renewed.clone();
+                other.user_id = Some("different-user".into());
+                other
+            },
+            0,
+        ),
+        (
+            {
+                let mut other = renewed.clone();
+                other.token_kind = Some("oauth2_shared_key".into());
+                other
+            },
+            0,
+        ),
+        (
+            {
+                let mut other = renewed.clone();
+                other.allowed_client_id = None;
+                other
+            },
+            0,
+        ),
+    ] {
+        let live = super::super::window_inventory::query_for_auth(
+            &runtime,
+            &auth,
+            WindowsInput {
+                projection: WindowInventoryProjection::Liveness,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(live.total, expected);
+    }
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "live visibility must not query the writer"
+    );
+    assert_eq!(
+        db.window_read_counts_for_test(),
+        (0, 0),
+        "live visibility must not query the history reader"
+    );
+    db.conn_for_tests()
+        .authorizer(None::<fn(SqlAuthContext<'_>) -> Authorization>)
+        .unwrap();
+    drop(guard);
+}
+
+#[tokio::test]
+async fn operator_continuity_missing_attribution_does_not_create_an_unreadable_mailbox() {
+    let (_tmp, db, runtime) = test_runtime_with_goal_db();
+    let mut recipient = scoped_oauth(&[SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE]);
+    recipient.api_key_id = Some("missing-attribution-token".into());
+    let mut historical = recipient.clone();
+    historical.user_id = None;
+    historical.allowed_client_id = None;
+    let key = "e".repeat(64);
+    record_window_event(&db, &historical, &key, None, None, 5_000);
+    let operator = test_bootstrap_auth();
+    let target = window_collaboration::authorize(&runtime, &operator, &key)
+        .await
+        .unwrap();
+    let result = runtime
+        .post_window_operator_message_with_options_for_principal(
+            &key,
+            None,
+            None,
+            "guidance",
+            "normal",
+            true,
+            "must not be orphaned".into(),
+            "missing-attribution".into(),
+            &target.0,
+            &target.1,
+            Some(&operator),
+        )
+        .await;
+    assert!(!result.success);
+    assert_eq!(
+        result.output["error_kind"],
+        "operator_recipient_unavailable"
+    );
+    assert_eq!(result.output["state_changed"], false);
+    assert!(db
+        .list_window_operator_messages(&target.0, &target.1, &key, 10)
+        .unwrap()
+        .is_empty());
+    let own = runtime
+        .post_window_operator_message(
+            &key,
+            None,
+            None,
+            "current identity is sufficient".into(),
+            "authenticated-send".into(),
+            Some(&recipient),
+        )
+        .await;
+    assert!(own.success);
+    let page = runtime.window_collaboration_page(Some(&key), Some(&recipient), 10, None);
+    assert_eq!(page["messages"][0]["message_id"], own.output["message_id"]);
+}
+
+#[tokio::test]
+async fn operator_continuity_ambiguous_operator_recipient_does_not_report_delivery() {
+    let (_tmp, db, runtime) = test_runtime_with_goal_db();
+    let mut recipient = scoped_oauth(&[SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE]);
+    recipient.api_key_id = Some("review-ambiguous-token".into());
+    let target_window_key = "b".repeat(64);
+    record_window_event(&db, &recipient, &target_window_key, None, None, 5_000);
+    let mut contradictory = recipient.clone();
+    contradictory.allowed_client_id = Some("review-different-client".into());
+    record_window_event(&db, &contradictory, &target_window_key, None, None, 6_000);
+    let operator = test_bootstrap_auth();
+    let target = window_collaboration::authorize(&runtime, &operator, &target_window_key)
+        .await
+        .unwrap();
+    assert!(db
+        .oauth_window_operator_principal(&target_window_key, &target.1)
+        .unwrap()
+        .is_none());
+    let result = runtime
+        .post_window_operator_message_with_options_for_principal(
+            &target_window_key,
+            None,
+            None,
+            "guidance",
+            "normal",
+            true,
+            "review fixture".into(),
+            "review-delivery".into(),
+            &target.0,
+            &target.1,
+            Some(&operator),
+        )
+        .await;
+    let view = runtime.window_collaboration(Some(&target_window_key), Some(&recipient), 10);
+    assert_eq!(view["messages"].as_array().unwrap().len(), 0);
+    assert!(!result.success, "ambiguous routing must fail closed instead of reporting delivery to an unreadable legacy mailbox");
+}
+
+#[tokio::test]
 async fn window_collaboration_app_pages_are_window_scoped_read_only_and_independent_of_session() {
     use crate::client_window::ClientWindow;
     use crate::tool_runtime::tool_call::WorkResultCollaborationRequest;

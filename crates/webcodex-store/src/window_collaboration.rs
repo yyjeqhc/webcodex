@@ -118,235 +118,82 @@ pub fn managed_oauth_operator_principal(
     ))
 }
 
-impl Database {
-    /// Move provably owned legacy OAuth Operator mailboxes to a stable
-    /// user+OAuth-client namespace, preserving message ids, projection/ACK
-    /// counters, replies, and replay keys. This runs before expired OAuth
-    /// token cleanup when the database is opened. Other credential kinds and
-    /// ambiguous/missing provenance stay untouched (fail closed).
-    ///
-    /// Bound the startup batch: any remainder is eligible on the next open.
-    /// Neither this migration nor a Window key grants model-access authority.
-    pub fn migrate_legacy_managed_oauth_operator_messages(&self) -> anyhow::Result<usize> {
-        let candidates: Vec<(String, String)> = {
-            let conn = self.lock_connection(StoreDomain::Communication);
-            let mut stmt = conn.prepare(
-                "SELECT DISTINCT principal_id, recipient_window_key
-                 FROM window_operator_messages WHERE principal_kind='oauth2'
-                 ORDER BY recipient_window_key, principal_id LIMIT 4096",
-            )?;
-            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-            rows.collect::<rusqlite::Result<_>>()?
-        };
-        let mut migrated = 0;
-        for (legacy_token_id, window) in candidates {
-            let Some((user, client)) =
-                self.oauth_managed_window_recipient(&window, &legacy_token_id)?
-            else {
-                continue;
-            };
-            let Some((stable_kind, stable_id)) = managed_oauth_operator_principal(&user, &client)
-            else {
-                continue;
-            };
-            let mut conn = self.lock_connection(StoreDomain::Communication);
-            let tx = conn.transaction()?;
-            let legacy_rows: Vec<(
-                String,
-                Option<String>,
-                Option<String>,
-                String,
-                String,
-                String,
-                String,
-                bool,
-                i64,
-                String,
-            )> = {
-                let mut stmt = tx.prepare(
-                    "SELECT message_id,context_session_id,context_project,kind,priority,
-                            message,tags_json,requires_ack,created_at_ms,delivery_key_hash
-                     FROM window_operator_messages
-                     WHERE principal_kind='oauth2' AND principal_id=?1
-                       AND recipient_window_key=?2",
-                )?;
-                let rows = stmt.query_map(params![legacy_token_id, window], |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                        row.get(7)?,
-                        row.get(8)?,
-                        row.get(9)?,
-                    ))
-                })?;
-                rows.collect::<rusqlite::Result<_>>()?
-            };
-            for (
-                message_id,
-                context_session_id,
-                context_project,
-                kind,
-                priority,
-                message,
-                tags_json,
-                requires_ack,
-                created_at_ms,
-                delivery_key_hash,
-            ) in legacy_rows
-            {
-                let Ok(tags) = serde_json::from_str::<Vec<String>>(&tags_json) else {
-                    continue;
-                };
-                let new_operator = NewWindowOperatorMessage {
-                    principal_kind: stable_kind.clone(),
-                    principal_id: stable_id.clone(),
-                    recipient_window_key: window.clone(),
-                    context_session_id,
-                    context_project,
-                    kind,
-                    priority,
-                    message,
-                    tags,
-                    requires_ack,
-                    created_at_ms,
-                };
-                let payload_hash =
-                    format!("{:x}", Sha256::digest(serde_json::to_vec(&new_operator)?));
-                let operator_collision: bool = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM window_operator_messages
-                     WHERE principal_kind=?1 AND principal_id=?2
-                       AND delivery_key_hash=?3 AND message_id<>?4)",
-                    params![stable_kind, stable_id, delivery_key_hash, message_id],
-                    |row| row.get(0),
-                )?;
-                if operator_collision {
-                    continue;
-                }
-                let reply_rows: Vec<(String, String, i64, String)> = {
-                    let mut stmt = tx.prepare(
-                        "SELECT message_id,message,created_at_ms,delivery_key_hash
-                         FROM window_model_replies WHERE principal_kind='oauth2'
-                           AND principal_id=?1 AND window_key=?2
-                           AND reply_to_message_id=?3",
-                    )?;
-                    let rows = stmt
-                        .query_map(params![legacy_token_id, window, message_id], |row| {
-                            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                        })?;
-                    rows.collect::<rusqlite::Result<_>>()?
-                };
-                let mut migrated_replies = Vec::with_capacity(reply_rows.len());
-                let mut conflict = false;
-                for (reply_id, reply_body, reply_created_at_ms, reply_key_hash) in reply_rows {
-                    let replay_collision: bool = tx.query_row(
-                        "SELECT EXISTS(SELECT 1 FROM window_model_replies
-                         WHERE principal_kind=?1 AND principal_id=?2
-                           AND delivery_key_hash=?3 AND message_id<>?4)",
-                        params![stable_kind, stable_id, reply_key_hash, reply_id],
-                        |row| row.get(0),
-                    )?;
-                    if replay_collision {
-                        conflict = true;
-                        break;
-                    }
-                    let stable_reply = NewWindowModelReply {
-                        principal_kind: stable_kind.clone(),
-                        principal_id: stable_id.clone(),
-                        window_key: window.clone(),
-                        reply_to_message_id: message_id.clone(),
-                        message: reply_body,
-                        created_at_ms: reply_created_at_ms,
-                    };
-                    let reply_payload_hash =
-                        format!("{:x}", Sha256::digest(serde_json::to_vec(&stable_reply)?));
-                    migrated_replies.push((reply_id, reply_payload_hash));
-                }
-                if conflict {
-                    continue;
-                }
-                tx.execute(
-                    "UPDATE window_operator_messages
-                     SET principal_kind=?1, principal_id=?2, delivery_payload_hash=?3
-                     WHERE message_id=?4 AND principal_kind='oauth2' AND principal_id=?5
-                       AND recipient_window_key=?6",
-                    params![
-                        stable_kind,
-                        stable_id,
-                        payload_hash,
-                        message_id,
-                        legacy_token_id,
-                        window
-                    ],
-                )?;
-                for (reply_id, reply_payload_hash) in migrated_replies {
-                    tx.execute(
-                        "UPDATE window_model_replies
-                         SET principal_kind=?1, principal_id=?2, delivery_payload_hash=?3
-                         WHERE message_id=?4 AND principal_kind='oauth2' AND principal_id=?5
-                           AND window_key=?6 AND reply_to_message_id=?7",
-                        params![
-                            stable_kind,
-                            stable_id,
-                            reply_payload_hash,
-                            reply_id,
-                            legacy_token_id,
-                            window,
-                            message_id
-                        ],
-                    )?;
-                }
-                migrated += 1;
-            }
-            tx.commit()?;
+/// The caller owns the read/transaction snapshot. No credential material leaves
+/// this lookup; only the storage namespace is returned.
+pub(super) fn oauth_window_operator_principal(
+    conn: &rusqlite::Connection,
+    window: &str,
+    access_token_id: &str,
+) -> anyhow::Result<Option<(String, String)>> {
+    let grant: Option<(String, String, Option<String>, String, Option<String>)> = conn
+        .query_row(
+            "SELECT subject_kind, subject_id, user_id, client_id, shared_key_hash
+             FROM oauth_access_tokens WHERE id=?1",
+            params![access_token_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((kind, subject, user, client, shared_key)) = grant {
+        if client.trim().is_empty()
+            || crate::oauth::validate_oauth_subject(
+                &kind,
+                &subject,
+                user.as_deref(),
+                shared_key.as_deref(),
+            )
+            .is_err()
+        {
+            return Ok(None);
         }
-        Ok(migrated)
+        return Ok(if kind == "managed_user" {
+            managed_oauth_operator_principal(user.as_deref().unwrap_or_default(), &client)
+        } else {
+            Some(("oauth2".into(), access_token_id.into()))
+        });
     }
+    // An expired grant may have been pruned. Only exact server-authored Window
+    // attribution can recover a managed identity; absence is not proof of a
+    // shared-key/project-share grant.
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT principal_user_id, oauth_client_id FROM action_events
+         WHERE client_window_key=?1 AND principal_correlation_kind='oauth2'
+         AND principal_correlation_id=?2 AND principal_kind='oauth2'
+         AND principal_user_id IS NOT NULL AND principal_user_id != ''
+         AND oauth_client_id IS NOT NULL AND oauth_client_id != ''
+         LIMIT 2",
+    )?;
+    let mut rows = stmt.query(params![window, access_token_id])?;
+    let Some(row) = rows.next()? else {
+        return Ok(None);
+    };
+    let (user, client): (String, String) = (row.get(0)?, row.get(1)?);
+    Ok(if rows.next()?.is_none() {
+        managed_oauth_operator_principal(&user, &client)
+    } else {
+        None
+    })
+}
 
-    /// Read-only, Window-fenced attribution of an OAuth access-token observation.
-    /// Console already authorizes the exact Window before using this lookup.
-    /// Historic tokens may have been pruned, so use only server-authored ActionAudit
-    /// user/client fields for an exact (Window, access-token id) fallback.
-    /// A missing or contradictory binding never grants a different principal.
-    pub fn oauth_managed_window_recipient(
+impl Database {
+    /// Resolve an exact OAuth observation to its Operator namespace. Missing or
+    /// ambiguous managed-user attribution is unavailable, never a token mailbox.
+    /// Non-managed credentials keep their original namespace only when the
+    /// retained grant proves their subject kind.
+    pub fn oauth_window_operator_principal(
         &self,
         window: &str,
         access_token_id: &str,
     ) -> anyhow::Result<Option<(String, String)>> {
         let conn = self.lock_connection(StoreDomain::WindowActivity);
-        let grant: Option<(String, Option<String>, String)> = conn
-            .query_row(
-                "SELECT subject_kind, user_id, client_id FROM oauth_access_tokens WHERE id=?1",
-                params![access_token_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .optional()?;
-        if let Some((kind, user, client)) = grant {
-            if kind != "managed_user" {
-                return Ok(None);
-            }
-            return Ok(user
-                .filter(|user| !user.trim().is_empty() && !client.trim().is_empty())
-                .map(|user| (user, client)));
-        }
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT principal_user_id, oauth_client_id FROM action_events
-             WHERE client_window_key=?1 AND principal_correlation_kind='oauth2'
-             AND principal_correlation_id=?2 AND principal_kind='oauth2'
-             AND principal_user_id IS NOT NULL AND principal_user_id != ''
-             AND oauth_client_id IS NOT NULL AND oauth_client_id != ''
-             LIMIT 2",
-        )?;
-        let mut rows = stmt.query(params![window, access_token_id])?;
-        let Some(row) = rows.next()? else {
-            return Ok(None);
-        };
-        let identity: (String, String) = (row.get(0)?, row.get(1)?);
-        Ok(rows.next()?.is_none().then_some(identity))
+        oauth_window_operator_principal(&conn, window, access_token_id)
     }
 
     pub fn window_has_session_context(

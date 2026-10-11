@@ -1,6 +1,9 @@
 use super::window_collaboration::*;
 use crate::{Database, NewPeerMessage};
 
+#[path = "window_collaboration_tests/migration.rs"]
+mod migration;
+
 fn input() -> NewWindowOperatorMessage {
     NewWindowOperatorMessage {
         principal_kind: "managed_user".into(),

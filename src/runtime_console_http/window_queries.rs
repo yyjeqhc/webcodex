@@ -1,35 +1,15 @@
 //! Caller-authorized Window queries shared by Console endpoints.
 use super::*;
 
-/// A changed managed OAuth access token does not change ownership of the
-/// same Window under the same user and OAuth client. This is evidence-based:
-/// only a server-authored token grant or exact Window ActionAudit attribution
-/// can establish the older principal's user/client pair.
+/// Compare the server-authored attribution already present in this observation.
+/// Live polling never locks the Store or infers identity from another request.
 fn same_managed_oauth_window_principal(
-    runtime: &ToolRuntime,
     auth: &AuthContext,
-    window_key: &str,
-    principal: Option<(&str, &str)>,
+    identity: Option<&(String, String)>,
 ) -> bool {
-    if !matches!(auth.kind, crate::auth::AuthKind::OAuth2Token)
-        || auth.token_kind.as_deref() != Some("oauth2")
-    {
-        return false;
-    }
-    let (Some(user), Some(client), Some(("oauth2", older_id)), Some(db)) = (
-        auth.user_id.as_deref(),
-        auth.allowed_client_id.as_deref(),
-        principal,
-        runtime.window_activity_db.as_ref(),
-    ) else {
-        return false;
-    };
-    db.oauth_managed_window_recipient(window_key, older_id)
-        .ok()
-        .flatten()
-        .is_some_and(|(original_user, original_client)| {
-            original_user == user && original_client == client
-        })
+    auth.managed_oauth_window_identity().is_some_and(|caller| {
+        identity.is_some_and(|(user, client)| caller == (user.as_str(), client.as_str()))
+    })
 }
 
 pub(super) fn window_principal_filter(
@@ -108,13 +88,8 @@ pub(super) async fn console_window_event_visible_cached(
             event.principal_correlation_kind.as_deref() == Some(kind)
                 && event.principal_correlation_id.as_deref() == Some(id)
         }) || same_managed_oauth_window_principal(
-            runtime,
             auth,
-            &event.client_window_key,
-            event
-                .principal_correlation_kind
-                .as_deref()
-                .zip(event.principal_correlation_id.as_deref()),
+            event.managed_oauth_identity.as_ref(),
         );
     }
     window_event_visible_cached(runtime, auth, cache, event).await
@@ -133,12 +108,8 @@ pub(super) async fn console_active_window_request_visible_cached(
             crate::tool_runtime::window_activity::active_window_request_matches_principal(
                 request, principal,
             )
-        }) && !same_managed_oauth_window_principal(
-            runtime,
-            auth,
-            &request.client_window_key,
-            request.principal_correlation(),
-        ) {
+        }) && !same_managed_oauth_window_principal(auth, request.managed_oauth_identity.as_ref())
+        {
             return false;
         }
     }

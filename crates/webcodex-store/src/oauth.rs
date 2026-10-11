@@ -37,7 +37,7 @@ fn validate_oauth_client_owner(record: &OAuthClientRecord) -> anyhow::Result<()>
     }
 }
 
-fn validate_oauth_subject(
+pub(super) fn validate_oauth_subject(
     subject_kind: &str,
     subject_id: &str,
     user_id: Option<&str>,

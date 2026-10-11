@@ -115,6 +115,10 @@ pub(crate) struct ActiveWindowRequest {
     principal_correlation_kind: Option<String>,
     #[serde(skip)]
     principal_correlation_id: Option<String>,
+    /// Captured from verified auth at admission, never looked up from history
+    /// during a live poll and never serialized to a caller.
+    #[serde(skip)]
+    pub(crate) managed_oauth_identity: Option<(String, String)>,
     #[serde(skip)]
     meaningful: bool,
     #[serde(skip)]
@@ -263,6 +267,30 @@ impl WindowActivityRegistry {
         )
     }
 
+    pub(crate) fn start_authenticated(
+        &self,
+        window: &ClientWindow,
+        server_trace_id: &str,
+        method: &str,
+        tool_name: Option<&str>,
+        auth: Option<&AuthContext>,
+        request_observed_at_ms: i64,
+    ) -> WindowActivityGuard {
+        let principal = super::runtime_observation_principal(auth).ok();
+        self.start_with_identity(
+            window,
+            server_trace_id,
+            method,
+            tool_name,
+            principal
+                .as_ref()
+                .map(|(kind, id)| (kind.as_str(), id.as_str())),
+            auth.and_then(AuthContext::managed_oauth_window_identity),
+            request_observed_at_ms,
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn start_observed(
         &self,
         window: &ClientWindow,
@@ -270,6 +298,27 @@ impl WindowActivityRegistry {
         method: &str,
         tool_name: Option<&str>,
         principal: Option<(&str, &str)>,
+        request_observed_at_ms: i64,
+    ) -> WindowActivityGuard {
+        self.start_with_identity(
+            window,
+            server_trace_id,
+            method,
+            tool_name,
+            principal,
+            None,
+            request_observed_at_ms,
+        )
+    }
+
+    fn start_with_identity(
+        &self,
+        window: &ClientWindow,
+        server_trace_id: &str,
+        method: &str,
+        tool_name: Option<&str>,
+        principal: Option<(&str, &str)>,
+        managed_oauth_identity: Option<(&str, &str)>,
         request_observed_at_ms: i64,
     ) -> WindowActivityGuard {
         let meaningful = method == "tools/call"
@@ -304,6 +353,8 @@ impl WindowActivityRegistry {
             project: None,
             principal_correlation_kind: principal.map(|(kind, _)| kind.to_string()),
             principal_correlation_id: principal.map(|(_, id)| id.to_string()),
+            managed_oauth_identity: managed_oauth_identity
+                .map(|(user, client)| (user.to_string(), client.to_string())),
             meaningful,
             overlapped,
             started_at_ms: request_observed_at_ms,

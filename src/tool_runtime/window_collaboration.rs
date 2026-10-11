@@ -48,13 +48,6 @@ fn valid_window_message_priority(value: &str) -> bool {
 /// Operator transcripts are Window-scoped and authorization-scoped, not
 /// access-token-scoped. Keep this identity separate from the legacy observation
 /// principal used by Goals, Peers, Sessions, and other durable resources.
-pub(crate) fn managed_oauth_operator_principal(
-    user_id: &str,
-    oauth_client_id: &str,
-) -> Option<(String, String)> {
-    webcodex_store::managed_oauth_operator_principal(user_id, oauth_client_id)
-}
-
 pub(crate) fn operator_principal_for_auth(
     auth: Option<&AuthContext>,
 ) -> Result<(String, String), String> {
@@ -62,11 +55,12 @@ pub(crate) fn operator_principal_for_auth(
         matches!(auth.kind, crate::auth::AuthKind::OAuth2Token)
             && auth.token_kind.as_deref() == Some("oauth2")
     }) {
-        return managed_oauth_operator_principal(
-            auth.user_id.as_deref().unwrap_or_default(),
-            auth.allowed_client_id.as_deref().unwrap_or_default(),
-        )
-        .ok_or_else(|| "managed OAuth operator identity unavailable".to_string());
+        return auth
+            .managed_oauth_window_identity()
+            .and_then(|(user, client)| {
+                webcodex_store::managed_oauth_operator_principal(user, client)
+            })
+            .ok_or_else(|| "managed OAuth operator identity unavailable".to_string());
     }
     super::runtime_observation_principal(auth)
 }
@@ -82,25 +76,23 @@ impl ToolRuntime {
         activity_kind: &str,
         activity_id: &str,
         caller: Option<&AuthContext>,
-    ) -> (String, String) {
+    ) -> Result<(String, String), String> {
         let activity = (activity_kind.to_string(), activity_id.to_string());
         if super::runtime_observation_principal(caller).ok().as_ref() == Some(&activity) {
-            if let Ok(stable) = operator_principal_for_auth(caller) {
-                return stable;
-            }
+            return operator_principal_for_auth(caller);
         }
         if activity_kind == "oauth2" {
-            if let Some((user_id, client_id)) = self.window_activity_db.as_ref().and_then(|db| {
-                db.oauth_managed_window_recipient(window, activity_id)
-                    .ok()
-                    .flatten()
-            }) {
-                if let Some(stable) = managed_oauth_operator_principal(&user_id, &client_id) {
-                    return stable;
-                }
-            }
+            return self
+                .window_activity_db
+                .as_ref()
+                .and_then(|db| {
+                    db.oauth_window_operator_principal(window, activity_id)
+                        .ok()
+                        .flatten()
+                })
+                .ok_or_else(|| "OAuth Window recipient identity unavailable".to_string());
         }
-        activity
+        Ok(activity)
     }
 
     #[cfg(test)]
@@ -247,12 +239,17 @@ impl ToolRuntime {
         let Some(db) = self.communication_db.as_ref() else {
             return ToolResult::err("Window collaboration unavailable");
         };
-        let (operator_kind, operator_principal) = self.operator_principal_for_target(
+        let Ok((operator_kind, operator_principal)) = self.operator_principal_for_target(
             target_window_key,
             recipient_principal_kind,
             recipient_principal_id,
             auth,
-        );
+        ) else {
+            return invalid_window_context(
+                "operator_recipient_unavailable",
+                "Window recipient identity unavailable; wait for fresh Window activity",
+            );
+        };
         let input = webcodex_store::NewWindowOperatorMessage {
             principal_kind: operator_kind,
             principal_id: operator_principal,
@@ -370,6 +367,16 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         limit: usize,
     ) -> serde_json::Value {
+        self.window_collaboration_page(window_key, auth, limit, None)
+    }
+
+    pub(crate) fn window_collaboration_page(
+        &self,
+        window_key: Option<&str>,
+        auth: Option<&AuthContext>,
+        limit: usize,
+        before: Option<&str>,
+    ) -> serde_json::Value {
         let unavailable = || json!({"available":false,"can_send":false,"messages":[]});
         if !auth.is_some_and(|a| a.has_scope(SCOPE_SESSION_COLLABORATE)) {
             return unavailable();
@@ -381,7 +388,7 @@ impl ToolRuntime {
         ) else {
             return unavailable();
         };
-        self.window_collaboration_page_for_scopes(window, &operator, &peer, limit, None)
+        self.window_collaboration_page_for_scopes(window, &operator, &peer, limit, before)
     }
 
     #[cfg(test)]
@@ -409,7 +416,9 @@ impl ToolRuntime {
         limit: usize,
         before: Option<&str>,
     ) -> serde_json::Value {
-        let operator = self.operator_principal_for_target(window, kind, principal, None);
+        let Ok(operator) = self.operator_principal_for_target(window, kind, principal, None) else {
+            return json!({"available":false,"can_send":false,"messages":[],"error_kind":"operator_recipient_unavailable"});
+        };
         let peer = (kind.to_string(), principal.to_string());
         self.window_collaboration_page_for_scopes(window, &operator, &peer, limit, before)
     }

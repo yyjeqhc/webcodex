@@ -187,7 +187,8 @@ The lanes above define test semantics; workflows decide when to run them.
   for baseline semantics.
 - v0.5 removes the Action adapter and its compatibility feature/lane. Canonical
   contract tests and HTTP negative tests verify that retired tool names and routes
-  remain unavailable; MCP and Runtime API authority/provenance tests stay active.- Linux Rust execution remains package-sharded: the server package `webcodex`, the
+  remain unavailable; MCP and Runtime API authority/provenance tests stay active.
+- Linux Rust execution remains package-sharded: the server package `webcodex`, the
   Runner/LSP packages, and the remaining workspace crates run in parallel. The
   Runner/LSP shard compiles with `--features runner-real-process-tests` to prevent
   bitrot while ordinary local runs skip compiling manual real-process test bodies;

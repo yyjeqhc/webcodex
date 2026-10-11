@@ -89,11 +89,9 @@ fn model_workflow_preferences_fit_the_unchanged_workflow_schema_and_keep_goal_ru
                     .as_str()
                     .unwrap();
                 assert!(continuation.contains("normal final assistant response"));
-                assert!(continuation.contains("let the current turn finalize promptly"));
-                assert!(
-                    continuation.contains("card/tool result alone does not end the assistant turn")
-                );
-                assert!(continuation.contains("Do not wait for wake readiness"));
+                assert!(continuation.contains("finalize promptly"));
+                assert!(continuation.contains("card/tool result is not final"));
+                assert!(continuation.contains("Do not wait for readiness/follow-up"));
                 assert!(projection["model_protocol"]["goal_checkpoint"]
                     .as_str()
                     .unwrap()

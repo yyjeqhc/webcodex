@@ -38,7 +38,7 @@ impl McpAppResumeMode {
             Self::UserConfirmed => "Host follow-up requires user confirmation. Do not promise unattended continuation or bypass confirmation. Message dispatch acceptance is not a fresh turn. Preserve the existing Job/Wake and its exact recovery path rather than re-dispatching work or repeatedly sending a follow-up.",
             Self::Unattended => "Unattended MCP App follow-up is operator-declared for this deployment, not dynamically proven or guaranteed. Automatic continuation still needs exact authorized controller/Endpoint binding and current readiness; dispatch acceptance is not a fresh turn. Never bypass Host confirmation or retry an uncertain prior effect.",
         };
-        format!("{interaction} After successfully presenting an Agent or Job continuation card, produce a normal final assistant response and let the current turn finalize promptly. The card/tool result alone does not end the assistant turn. Do not wait for wake readiness or a later follow-up in the presenting turn.")
+        format!("{interaction} After Agent/Job card success, produce a normal final assistant response to finalize promptly. A card/tool result is not final. Do not wait for readiness/follow-up in that turn.")
     }
 }
 

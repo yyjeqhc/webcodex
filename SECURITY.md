@@ -81,7 +81,7 @@ Use them only when:
 - The resulting output will not expose secrets.
 - A human can review the command, output summary, and workspace state.
 
-Prefer `read_files`, `search_project_text`, `edit_project_files`, `cargo_fmt`,
+Prefer `read_files`, `search_project_texts`, `edit_project_files`, `cargo_fmt`,
 `project_validate`, `read_workspace_changes`, and `check_workspace_hygiene` when
 they fit. Use `run_process` for literal argv and `run_shell` when shell syntax is
 needed. Use ecosystem validators such as `cargo_check`, `cargo_test`, or `go_test`

@@ -221,5 +221,6 @@ pub(crate) use surface::registered_tool_categories;
 mod tests;
 
 mod edit_outcome;
+pub(crate) mod execution_control;
 mod execution_outcome;
 mod external_observations;

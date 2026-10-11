@@ -1,5 +1,6 @@
 mod app_registry;
 mod discovery;
+mod execution_control;
 mod http_metadata;
 mod presentation;
 mod protocol;
@@ -419,9 +420,13 @@ fn mcp_tool_job_audit_correlation(
         let mut project_ambiguous = false;
         if let Some(items) = output.get("items").and_then(Value::as_array) {
             for item in items.iter().take(8) {
-                let item_output = item.get("output").filter(|value| value.is_object());
+                let original_item = item.get("details").unwrap_or(item);
+                let item_output = original_item
+                    .get("output")
+                    .filter(|value| value.is_object());
                 let job_id = safe_audit_job_id(
-                    item.get("job_id")
+                    item.pointer("/execution/job_id")
+                        .or_else(|| original_item.get("job_id"))
                         .or_else(|| item_output.and_then(|output| output.get("job_id"))),
                 );
                 if let Some(job_id) = job_id {
@@ -431,7 +436,7 @@ fn mcp_tool_job_audit_correlation(
                     let project = safe_audit_project(
                         item_output
                             .and_then(|output| output.get("project"))
-                            .or_else(|| item.get("project")),
+                            .or_else(|| original_item.get("project")),
                     );
                     match (resolved_project.as_deref(), project.as_deref()) {
                         (None, Some(project)) if !project_ambiguous => {
@@ -454,8 +459,20 @@ fn mcp_tool_job_audit_correlation(
         };
     }
 
+    // Reuse the canonical audit predicate, including uncertain promoted Jobs;
+    // presentation outcome alone must not drop the original receipt identity.
+    let execution_facts = output.get("execution").map(|execution| {
+        json!({
+            "job_id": execution.get("job_id"),
+            "execution_state": execution.get("state"),
+            "promoted_to_job": output.pointer("/details/promoted_to_job")
+        })
+    });
     McpToolJobAuditCorrelation {
-        async_job_id: crate::tool_runtime::job_audit::execution_job_id_for_audit(tool_name, output),
+        async_job_id: crate::tool_runtime::job_audit::execution_job_id_for_audit(
+            tool_name,
+            execution_facts.as_ref().unwrap_or(output),
+        ),
         observed_job_ids: Vec::new(),
         resolved_project: None,
     }

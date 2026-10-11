@@ -674,6 +674,12 @@ pub(super) const RECORDING_SESSION_SELECTOR_SCHEMA_PATTERN: &str =
 fn stateless_invocation_envelope_schema(tool_name: &str) -> Value {
     let allowed = mcp_invocation_envelope_supported_fields(tool_name);
     let mut properties = serde_json::Map::new();
+    if allowed.contains(&"compact_execution") {
+        properties.insert("compact_execution".to_string(), json!({
+            "type":"boolean", "default":false,
+            "description":"For run_process, run_script, run_shell, project_build, run_skill_resource and observe_jobs only. Opt in to output.execution (or items[].execution) control facts and separate details. Only outcome=passed proves execution success; outer success may mean acceptance. Retains logs and collaboration obligations. Does not wait, retry or authorize dependent work."
+        }));
+    }
     if allowed.contains(&"record") {
         properties.insert(
             "record".to_string(),
@@ -805,6 +811,7 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
         if stateless_window_reply_supported(tool_name) {
             add_stateless_window_reply_output_schema(tool);
         }
+        super::execution_control::add_output_schema(tool, name);
     }
 }
 fn tool_meta_object(value: &mut Value) -> Option<&mut serde_json::Map<String, Value>> {
@@ -2046,6 +2053,11 @@ fn mcp_invocation_envelope_supported_fields(tool: &str) -> Vec<&'static str> {
         return vec!["record", "ack", "ack_ref"];
     }
     let mut fields = vec!["record", "ack", "ack_ref", "resolve", "context"];
+    if tool == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+        || crate::tool_runtime::execution_control::supported(tool)
+    {
+        fields.push("compact_execution");
+    }
     if stateless_window_reply_supported(Some(tool)) {
         fields.push("reply");
     }
@@ -2064,6 +2076,7 @@ fn validate_mcp_invocation_envelope_for_target(
     let allowed = mcp_invocation_envelope_supported_fields(tool);
     let metadata = &envelope.metadata;
     for (field, present) in [
+        ("compact_execution", metadata.compact_execution),
         ("record", envelope.recording_session_selector.is_some()),
         ("ack", !metadata.ack_session_message_ids.is_empty()),
         ("ack_ref", metadata.ack_ref.is_some()),
@@ -2179,12 +2192,18 @@ pub(super) fn parse_mcp_invocation_envelope(
         .map_err(remap_mcp_invocation_envelope_error)?,
         None => None,
     };
+    let compact_execution = match envelope.remove("compact_execution") {
+        None => false,
+        Some(Value::Bool(value)) => value,
+        Some(_) => return Err("_wc.compact_execution must be a boolean".to_string()),
+    };
     debug_assert!(envelope.is_empty());
 
     Ok(McpInvocationEnvelope {
         recording_session_selector: strip_recording_session_id(&mut legacy)
             .map_err(remap_mcp_invocation_envelope_error)?,
         metadata: ToolInvocationMetadata {
+            compact_execution,
             control,
             ack_session_message_ids: strip_stateless_ack_session_message_ids(&mut legacy)
                 .map_err(remap_mcp_invocation_envelope_error)?,
@@ -2406,6 +2425,7 @@ pub(super) async fn handle_call(
         recording_session_selector,
         metadata:
             ToolInvocationMetadata {
+                compact_execution,
                 control,
                 ack_session_message_ids,
                 ack_ref,
@@ -3026,6 +3046,7 @@ pub(super) async fn handle_call(
                 host_file_import_trust,
             },
             ToolInvocationMetadata {
+                compact_execution,
                 control,
                 ack_session_message_ids,
                 ack_ref,
@@ -3103,6 +3124,14 @@ pub(super) async fn handle_call(
     project_tool_result_suggested_calls(&params.name, &mut result, &|target| {
         mcp_suggested_tool_call_route(target, stateless_2026)
     });
+    // App display consumes the existing observation shape before the Host view
+    // separates details. Keep only its bounded projection, not another log copy.
+    let compact_app_presentation = (compact_execution && app_enabled)
+        .then(|| presentation::result_app_presentation(&params.name, &result.output))
+        .flatten();
+    if compact_execution {
+        super::execution_control::project_result(&mut result);
+    }
     if let Some(lc) = lifecycle.as_deref() {
         // Protocol layer produced a JSON-RPC result (not -32xxx).
         // Canonical tool success is independent of the MCP presentation signal.
@@ -3206,7 +3235,13 @@ pub(super) async fn handle_call(
         );
     }
     if app_enabled {
-        presentation::attach_result_app_presentation(&params.name, &mut result);
+        if compact_execution {
+            if let Some(projection) = compact_app_presentation {
+                presentation::attach_presentation(&mut result, projection);
+            }
+        } else {
+            presentation::attach_result_app_presentation(&params.name, &mut result);
+        }
         if let (Some(expectation), Some(presentation)) = (
             outcome.correlation.failure_expectation_result.as_ref(),
             result

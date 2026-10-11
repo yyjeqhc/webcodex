@@ -47,13 +47,14 @@ use http_client::{RunnerHttpError, RunnerHttpErrorKind};
 use poll_dispatch::{handle_one_poll, PollingDispatchSupervisor, PollingRecoveryAction};
 #[cfg(test)]
 use project_inventory::{
-    handle_project_inventory_status, ProjectInventoryStatusAction,
-    POLLING_PROJECT_REFRESH_INTERVAL, PROJECT_INVENTORY_STAGING_RETRY_BACKOFF_STEPS,
+    handle_project_inventory_status, try_queue_project_inventory_page,
+    ProjectInventoryStatusAction, POLLING_PROJECT_REFRESH_INTERVAL,
+    PROJECT_INVENTORY_STAGING_RETRY_BACKOFF_STEPS,
 };
 use project_inventory::{
     log_project_inventory_degraded, paged_sync_after_registration, polling_projects_for_poll,
-    try_queue_project_inventory_page, InitialProjectInventory, PollingProjectRefresh,
-    ProjectInventorySync, ProjectScanReceiver, StreamingProjectInventoryCoordinator,
+    InitialProjectInventory, PollingProjectRefresh, ProjectInventorySync, ProjectScanReceiver,
+    StreamingProjectInventoryCoordinator,
 };
 use registration::{build_register_request_with_provider_status, register, RegisterRecoveryAction};
 use reqwest::blocking::Client;

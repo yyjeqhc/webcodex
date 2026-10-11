@@ -18,7 +18,7 @@ const script = new Script("(async () => {\n" + example[1] + "\n})()", {
 async function project(output, success = true, error = null) {
   const printed = [];
   const tools = {
-    mcp__webcodex__get_runtime_status: async () => ({
+    mcp__NewWebCodex__get_runtime_status: async () => ({
       structuredContent: { success, output, error },
     }),
   };

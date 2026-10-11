@@ -36,10 +36,12 @@ failures, uncertainty, permissions, or pending continuations.
 For a result that may contain Sidecars, keep the raw result inside the cell and
 print **nonempty attention before large business logs**. This example uses a
 normal `get_runtime_status` call only as a small reproducible carrier; use the
-same pattern for other ordinary model-visible tools.
+same pattern for other ordinary model-visible tools. The example uses the
+current `NewWebCodex` connector tool name; use your Host's exposed name if
+its installation differs.
 
 ```javascript
-const raw = await tools.mcp__webcodex__get_runtime_status({
+const raw = await tools.mcp__NewWebCodex__get_runtime_status({
   compact: true,
   _wc: {record: "<existing-authorized-session-id>"}
 });

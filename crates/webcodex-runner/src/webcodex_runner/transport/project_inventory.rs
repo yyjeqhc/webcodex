@@ -40,6 +40,25 @@ pub(super) enum InitialProjectInventory {
 pub(super) type ProjectScanReceiver =
     tokio::sync::watch::Receiver<Option<std::sync::Arc<Vec<RunnerProjectSummary>>>>;
 
+/// Shared across transport sessions so a mutation fences an in-flight scan even
+/// after its original stream disconnects.
+pub(super) struct InitialProjectScanState {
+    pub(super) receiver: Option<ProjectScanReceiver>,
+    pub(super) invalidated: bool,
+    pub(super) changed: tokio::sync::watch::Sender<()>,
+}
+
+impl Default for InitialProjectScanState {
+    fn default() -> Self {
+        let (changed, _) = tokio::sync::watch::channel(());
+        Self {
+            receiver: None,
+            invalidated: false,
+            changed,
+        }
+    }
+}
+
 impl From<Vec<RunnerProjectSummary>> for InitialProjectInventory {
     fn from(projects: Vec<RunnerProjectSummary>) -> Self {
         Self::Snapshot(projects)
@@ -405,6 +424,13 @@ impl StreamingProjectInventoryCoordinator {
             project_cache: RunnerProjectCache::default(),
             retry_backoff: RetryBackoff::new(&PROJECT_INVENTORY_STAGING_RETRY_BACKOFF_STEPS),
             retry_at: None,
+        }
+    }
+
+    pub(super) fn pending_scan() -> Self {
+        Self {
+            supported: true,
+            ..Self::new(None)
         }
     }
 

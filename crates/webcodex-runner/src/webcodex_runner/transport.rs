@@ -53,8 +53,8 @@ use project_inventory::{
 };
 use project_inventory::{
     log_project_inventory_degraded, paged_sync_after_registration, polling_projects_for_poll,
-    InitialProjectInventory, PollingProjectRefresh, ProjectInventorySync, ProjectScanReceiver,
-    StreamingProjectInventoryCoordinator,
+    InitialProjectInventory, InitialProjectScanState, PollingProjectRefresh, ProjectInventorySync,
+    ProjectScanReceiver, StreamingProjectInventoryCoordinator,
 };
 use registration::{build_register_request_with_provider_status, register, RegisterRecoveryAction};
 use reqwest::blocking::Client;
@@ -160,7 +160,7 @@ pub(crate) struct RunnerRuntimeState {
     coordinator: Arc<ShutdownCoordinator>,
     reload_threads: Arc<BackgroundThreads>,
     background_threads: Arc<BackgroundThreads>,
-    initial_project_scan: Arc<std::sync::Mutex<Option<ProjectScanReceiver>>>,
+    initial_project_scan: Arc<std::sync::Mutex<InitialProjectScanState>>,
     dispatches: ActivityTracker,
     #[cfg(windows)]
     exit_diagnostics: Option<Arc<RunnerExitDiagnostics>>,

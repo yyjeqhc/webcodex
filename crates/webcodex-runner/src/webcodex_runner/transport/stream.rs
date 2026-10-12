@@ -259,6 +259,9 @@ where
     let mut ping_interval = tokio::time::interval(transport.ping_interval());
     ping_interval.tick().await;
     let mut session_error = None;
+    // Subscribe before starting/reusing the scan so concurrent mutations cannot
+    // be lost between admitting a scanner and establishing this stream's watch.
+    let mut project_inventory_refresh_rx = runtime.project_inventory_changes();
     let (sync, mut initial_scan) = match initial_projects {
         InitialProjectInventory::Snapshot(projects) => {
             (Some(paged_sync_after_registration(projects)), None)
@@ -273,10 +276,12 @@ where
         #[cfg(test)]
         InitialProjectInventory::Disabled => (None, None),
     };
-    let mut project_inventory = StreamingProjectInventoryCoordinator::new(sync);
+    let mut project_inventory = if initial_scan.is_some() {
+        StreamingProjectInventoryCoordinator::pending_scan()
+    } else {
+        StreamingProjectInventoryCoordinator::new(sync)
+    };
     project_inventory.queue_pending(transport, &out_tx);
-    let (project_inventory_refresh_tx, mut project_inventory_refresh_rx) =
-        tokio::sync::mpsc::channel::<()>(1);
     let mut shutdown = Box::pin(shutdown);
     let mut shutdown_requested = false;
     let mut writer_observed = false;
@@ -297,6 +302,12 @@ where
                 let projects = receiver.borrow().clone().ok_or("project_inventory_scan_failed")?;
                 Ok::<_, &str>(projects)
             }, if initial_scan.is_some() => {
+                // A result and a mutation can become ready together. Keep the
+                // receiver pending until the known dirty notification replaces
+                // or refreshes it, rather than publishing the older catalog.
+                if project_inventory_refresh_rx.has_changed().unwrap_or(false) {
+                    continue;
+                }
                 initial_scan = None;
                 let projects = match projects {
                     Ok(projects) => projects,
@@ -311,18 +322,25 @@ where
             _ = tokio::time::sleep_until(project_inventory_retry_deadline), if project_inventory_retry_at.is_some() => {
                 project_inventory.retry_pending_now(transport, &out_tx);
             }
-            refresh = project_inventory_refresh_rx.recv() => {
-                if refresh.is_some() {
-                    // A fresh mutation snapshot supersedes the initial scan;
-                    // never publish its older result afterwards.
-                    initial_scan = None;
-                    project_inventory.refresh_from_current_projects(
-                        transport,
-                        cfg,
-                        runtime,
-                        &out_tx,
-                        "project_inventory_local_project_mutation",
-                    );
+            refresh = project_inventory_refresh_rx.changed() => {
+                if refresh.is_ok() {
+                    if initial_scan.is_some() {
+                        // Reuse the dirty worker, or replace an already completed
+                        // but unconsumed scan. Never run a second synchronous Git
+                        // scan on the stream thread while initial discovery waits.
+                        match runtime.initial_project_scan(cfg) {
+                            Ok(receiver) => initial_scan = Some(receiver),
+                            Err(error) => session_error = Some(error),
+                        }
+                    } else {
+                        project_inventory.refresh_from_current_projects(
+                            transport,
+                            cfg,
+                            runtime,
+                            &out_tx,
+                            "project_inventory_local_project_mutation",
+                        );
+                    }
                 }
             }
             _ = &mut shutdown => {
@@ -356,7 +374,6 @@ where
                             &sink,
                             &out_tx,
                             &mut project_inventory,
-                            &project_inventory_refresh_tx,
                             runtime,
                         ) {
                             session_error = Some(error);

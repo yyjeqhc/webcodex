@@ -39,7 +39,6 @@ pub(super) fn handle_stream_envelope(
     sink: &RunnerSink,
     out_tx: &tokio::sync::mpsc::Sender<RunnerEnvelope>,
     project_inventory: &mut StreamingProjectInventoryCoordinator,
-    project_inventory_refresh_tx: &tokio::sync::mpsc::Sender<()>,
     runtime: &RunnerRuntimeState,
 ) -> Option<String> {
     let envelope_kind = envelope.kind();
@@ -59,7 +58,12 @@ pub(super) fn handle_stream_envelope(
             let lsp = runtime.lsp.clone();
             let browser = runtime.browser.clone();
             let dispatch_guard = runtime.dispatches.enter();
-            let project_inventory_refresh_tx = project_inventory_refresh_tx.clone();
+            let runtime = runtime.clone();
+            let project_operation =
+                webcodex_core::runner_operation::RunnerProjectOperationKind::from_wire(
+                    &request.kind,
+                )
+                .is_some();
             tokio::task::spawn_blocking(move || {
                 let _dispatch_guard = dispatch_guard;
                 observe_runner_stream_request_dispatch_wait(transport, received_at.elapsed());
@@ -74,15 +78,14 @@ pub(super) fn handle_stream_envelope(
                     &browser,
                     request,
                 );
-                if dispatch_result
-                    .as_ref()
-                    .is_ok_and(|outcome| outcome.project_cache_invalidation_required)
-                {
-                    // Capacity one deliberately coalesces multiple project
-                    // mutations. A queued dirty signal already guarantees a
-                    // fresh full observation; never block request completion on
-                    // inventory synchronization.
-                    let _ = project_inventory_refresh_tx.try_send(());
+                let refresh_inventory = match dispatch_result {
+                    Ok(outcome) => outcome.project_cache_invalidation_required,
+                    // The mutation can finish even when its result cannot reach
+                    // the old stream. Only reobserve the catalog; never replay it.
+                    Err(_) => project_operation,
+                };
+                if refresh_inventory {
+                    runtime.invalidate_project_inventory();
                 }
             });
             None

@@ -36,7 +36,9 @@ impl RunnerRuntimeState {
             coordinator: Arc::new(ShutdownCoordinator::new(budget)),
             reload_threads: Arc::new(BackgroundThreads::default()),
             background_threads: Arc::new(BackgroundThreads::default()),
-            initial_project_scan: Arc::new(std::sync::Mutex::new(None)),
+            initial_project_scan: Arc::new(std::sync::Mutex::new(
+                InitialProjectScanState::default(),
+            )),
             dispatches: ActivityTracker::default(),
             #[cfg(windows)]
             exit_diagnostics: None,
@@ -93,6 +95,17 @@ impl RunnerRuntimeState {
         &self,
         cfg: &RunnerConfig,
     ) -> Result<ProjectScanReceiver, String> {
+        let runtime = self.clone();
+        let cfg = cfg.clone();
+        self.initial_project_scan_with(move || {
+            runtime.project_summaries(&mut RunnerProjectCache::default(), &cfg)
+        })
+    }
+
+    pub(super) fn initial_project_scan_with(
+        &self,
+        mut scan_projects: impl FnMut() -> Vec<RunnerProjectSummary> + Send + 'static,
+    ) -> Result<ProjectScanReceiver, String> {
         let mut scan = self
             .initial_project_scan
             .lock()
@@ -100,27 +113,63 @@ impl RunnerRuntimeState {
         if self.shutdown_requested() {
             return Err("project_inventory_scan_stopped".to_string());
         }
-        if let Some(receiver) = scan.as_ref() {
+        if let Some(receiver) = scan.receiver.as_ref() {
             if receiver.borrow().is_none() && receiver.has_changed().is_ok() {
                 return Ok(receiver.clone());
             }
         }
         self.background_threads.reap_finished();
+        scan.invalidated = false;
         let (sender, receiver) = tokio::sync::watch::channel(None);
         let runtime = self.clone();
-        let cfg = cfg.clone();
         let handle = std::thread::Builder::new()
             .name("runner-project-inventory".into())
-            .spawn(move || {
-                let projects = runtime.project_summaries(&mut RunnerProjectCache::default(), &cfg);
-                if !runtime.shutdown_requested() {
-                    let _ = sender.send(Some(Arc::new(projects)));
+            .spawn(move || loop {
+                if runtime.shutdown_requested() {
+                    break;
                 }
+                let projects = scan_projects();
+                let mut scan = runtime
+                    .initial_project_scan
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if runtime.shutdown_requested() {
+                    break;
+                }
+                if scan.invalidated {
+                    // Keep the one owned worker, but discard a catalog observed
+                    // before a Project mutation. Reconnects share this receiver.
+                    scan.invalidated = false;
+                    continue;
+                }
+                // Serialize publication with invalidation so an obsolete result
+                // cannot become the pending scan of a later connection.
+                let _ = sender.send(Some(Arc::new(projects)));
+                break;
             })
             .map_err(|_| "project_inventory_scan_start_failed".to_string())?;
         self.register_background_thread(handle);
-        *scan = Some(receiver.clone());
+        scan.receiver = Some(receiver.clone());
         Ok(receiver)
+    }
+
+    pub(super) fn project_inventory_changes(&self) -> tokio::sync::watch::Receiver<()> {
+        self.initial_project_scan
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .changed
+            .subscribe()
+    }
+
+    pub(super) fn invalidate_project_inventory(&self) {
+        let mut scan = self
+            .initial_project_scan
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        scan.invalidated = true;
+        // Runtime ownership preserves completion notifications from dispatches
+        // whose original stream has already disconnected. Watch coalesces bursts.
+        scan.changed.send_replace(());
     }
 
     pub(super) fn transport_runtime_shutdown_timeout(&self) -> Duration {

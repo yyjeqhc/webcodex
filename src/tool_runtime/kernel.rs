@@ -529,12 +529,13 @@ impl ToolRuntime {
             .await;
         let canonical_state_changed = result.output.get("state_changed").and_then(Value::as_bool);
         // Session/permission evidence is sealed above. The response stage owns
-        // canonical audit capture, one-shot model projection, and late sidecars.
+        // canonical audit capture, required receipts, and one-shot model projection.
         let postprocess::PostRecordResult {
             result,
             canonical_audit_output,
         } = postprocess::PostRecordResponse {
             compact_execution: invocation_metadata.compact_execution,
+            control: control.take(),
             tool_name: &request.tool_name,
             context,
             capabilities,

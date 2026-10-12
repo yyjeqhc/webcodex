@@ -1,4 +1,5 @@
 use super::*;
+use crate::tool_runtime::control_sidecar::{AfterSuccessControl, ControlSidecars};
 use crate::tool_runtime::kernel::{HostFileImportTrust, ToolTransport};
 use crate::tool_runtime::ToolCall;
 use serde_json::json;
@@ -77,6 +78,7 @@ async fn post_record_store_contention_omits_only_optional_sidecars_without_consu
         correlation: &correlation,
         business_session_id: None,
         window_reply: None,
+        control: None,
     }
     .finish(
         &runtime,
@@ -150,6 +152,7 @@ async fn post_record_captures_canonical_audit_and_telemetry_before_model_compact
             correlation: &correlation,
             business_session_id: None,
             window_reply: None,
+            control: None,
         }
         .finish(&runtime, process_result(), plan(), Some(&mut telemetry))
         .await;
@@ -202,6 +205,7 @@ async fn post_record_preserves_effect_uncertainty_and_retry_identity() {
             correlation: &correlation,
             business_session_id: None,
             window_reply: None,
+            control: None,
         }
         .finish(&runtime, result, plan(), None)
         .await;
@@ -250,6 +254,7 @@ async fn post_record_omits_redundant_or_over_budget_gap_without_changing_busines
                 correlation.recorder_gap_session_id.as_deref()
             },
             window_reply: None,
+            control: None,
         }
         .finish(
             &runtime,
@@ -263,6 +268,134 @@ async fn post_record_omits_redundant_or_over_budget_gap_without_changing_busines
         assert!(completed.result.success);
         assert_eq!(completed.result.output, json!({"payload":payload}));
         assert!(completed.canonical_audit_output.is_none());
+    }
+}
+
+#[tokio::test]
+async fn final_read_result_keeps_explicit_reply_receipt_inside_inspection_hard_cap() {
+    let runtime = ToolRuntime::new_for_tests();
+    let recorder = ToolCallRecorderMetadata::default();
+    let correlation = ToolCallCorrelation::default();
+    let hard_cap = webcodex_core::runtime_contract::MODEL_INSPECTION_MAX_RESULT_BYTES;
+    let project = "agent:runner:project";
+    let line_count = 2_000;
+    let text = vec!["x".repeat(32); line_count].join("\n");
+    let items = (0..8)
+        .map(|index| {
+            let path = format!("part-{index}.txt");
+            json!({
+                "index": index, "path": path, "success": true, "error": null,
+                "output": {
+                    "path": path, "text": text, "format": "plain",
+                    "sha256": "a".repeat(64), "read_revision": index + 1,
+                    "start_line": 1, "limit": line_count, "total_lines": line_count,
+                    "returned_lines": line_count, "end_line": line_count,
+                    "has_more": false, "next_start_line": null
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    let canonical = json!({
+        "project": project, "requested_count": 8, "returned_count": 8,
+        "succeeded_count": 8, "failed_count": 0, "items": items,
+        "output_truncated": false,
+        "session_attention": {"messages": [
+            {"message_id": "first", "message": "\\".repeat(1_536)},
+            {"message_id": "second", "message": "\"".repeat(1_536)}
+        ]}
+    });
+    let call = ToolCall::from_tool_name(
+        "read_files",
+        json!({
+            "project": project, "max_result_bytes": hard_cap,
+            "items": (0..8).map(|index| json!({
+                "path": format!("part-{index}.txt"), "limit": line_count
+            })).collect::<Vec<_>>()
+        }),
+    )
+    .unwrap();
+    let reply = ToolCallWindowReply {
+        reply_to_message_id: "unavailable-test-message".into(),
+        message: "fixture only; no communication store or authority".into(),
+    };
+    // Both messages obey the 3,072-byte attention body limit. Printable JSON
+    // escape characters expand to 6,144 bytes after serialization, so the
+    // canonical Session overlay can legitimately exhaust the envelope reserve.
+    for (with_reply, with_control) in [(false, false), (true, false), (false, true), (true, true)] {
+        let control = if with_control {
+            let mut control = ControlExecution::new(ControlSidecars {
+                before: None,
+                communication: None,
+                after_success: Some(AfterSuccessControl::SessionClose {
+                    session_id: "wc_sess_0000000000000000".into(),
+                }),
+            });
+            control.main_dispatched = true;
+            // An exact missing Session yields a real canonical error receipt.
+            // The fixture has no database or live communication target.
+            control
+                .after(
+                    &runtime,
+                    "read_files",
+                    &ToolResult::ok(canonical.clone()),
+                    context(ToolTransport::Mcp),
+                )
+                .await;
+            Some(control)
+        } else {
+            None
+        };
+        let completed = PostRecordResponse {
+            compact_execution: false,
+            tool_name: "read_files",
+            context: context(ToolTransport::Mcp),
+            capabilities: ToolProtocolCapabilities::default(),
+            recorder: &recorder,
+            correlation: &correlation,
+            business_session_id: None,
+            window_reply: with_reply.then_some(&reply),
+            control,
+        }
+        .finish(
+            &runtime,
+            ToolResult::ok(canonical.clone()),
+            ModelFacingProjectionPlan::capture(&call),
+            None,
+        )
+        .await;
+        assert!(completed.result.success);
+        if with_reply {
+            assert_eq!(
+                completed.result.output["window_reply"]["failure_kind"],
+                "insufficient_scope"
+            );
+            assert_eq!(
+                completed.result.output["window_reply"]["state_changed"],
+                false
+            );
+        }
+        if with_control {
+            assert_eq!(
+                completed.result.output["control"]["main"]["execution_state"],
+                "succeeded"
+            );
+            assert_eq!(
+                completed.result.output["control"]["after_success"]["kind"],
+                "session_close"
+            );
+            assert_eq!(
+                completed.result.output["control"]["after_success"]["success"],
+                false
+            );
+        }
+        let audit = completed.canonical_audit_output.unwrap();
+        assert!(audit.get("window_reply").is_none());
+        assert!(audit.get("control").is_none());
+        let bytes = serde_json::to_vec(&completed.result).unwrap().len();
+        assert!(
+            bytes <= hard_cap,
+            "final ToolResult with_reply={with_reply} with_control={with_control} is {bytes} bytes, hard cap is {hard_cap}"
+        );
     }
 }
 
@@ -282,6 +415,7 @@ async fn execution_control_is_captured_before_compaction_without_changing_audit(
             correlation: &correlation,
             business_session_id: None,
             window_reply: None,
+            control: None,
         }
         .finish(&runtime, process_result(), plan(), None)
         .await;

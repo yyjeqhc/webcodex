@@ -660,7 +660,12 @@ impl ControlExecution {
                 json!({"error_kind": kind}),
             ));
         }
-        let result = outcome.result.as_mut().unwrap();
+        self.decorate_result(outcome.result.as_mut().unwrap());
+    }
+
+    /// Attach the already-completed control receipt before model budgeting.
+    /// This only projects retained facts; it never executes a control phase.
+    pub(crate) fn decorate_result(self, result: &mut ToolResult) {
         let main = self
             .main
             .unwrap_or_else(|| main_projection(result, self.main_dispatched));

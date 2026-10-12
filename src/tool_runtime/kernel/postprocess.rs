@@ -5,6 +5,7 @@
 //! the request's projection plan once, then attach optional presentation sidecars.
 //! This module never dispatches/retries the original operation or selects a Session.
 use super::{ToolCallContext, ToolProtocolCapabilities};
+use crate::tool_runtime::control_sidecar::ControlExecution;
 use crate::tool_runtime::model_ergonomics_telemetry::ModelErgonomicsTimer;
 use crate::tool_runtime::result_projection::ModelFacingProjectionPlan;
 use crate::tool_runtime::sessions::ToolCallRecorderMetadata;
@@ -13,10 +14,11 @@ use crate::tool_runtime::window_collaboration::ToolCallWindowReply;
 use crate::tool_runtime::{ToolCallCorrelation, ToolResult, ToolRuntime};
 use serde_json::Value;
 
-/// Borrow only already-established request facts. No raw business arguments or
-/// permission evaluator are accepted; a Window/recorder cannot retarget a call.
+/// Carry only already-established request facts and completed control receipts.
+/// No permission evaluator is accepted; a Window/recorder cannot retarget a call.
 pub(super) struct PostRecordResponse<'a> {
     pub compact_execution: bool,
+    pub control: Option<ControlExecution>,
     pub tool_name: &'a str,
     pub context: ToolCallContext<'a>,
     pub capabilities: ToolProtocolCapabilities,
@@ -35,7 +37,7 @@ pub(super) struct PostRecordResult {
 
 impl PostRecordResponse<'_> {
     pub(super) async fn finish(
-        self,
+        mut self,
         runtime: &ToolRuntime,
         mut result: ToolResult,
         plan: ModelFacingProjectionPlan,
@@ -55,6 +57,29 @@ impl PostRecordResponse<'_> {
                 )
             })
             .flatten();
+        // Explicit side-effect receipts must survive truncation and be counted
+        // by the final read/search cap. Canonical evidence was captured above.
+        if let Some(control) = self.control.take() {
+            control.decorate_result(&mut result);
+        }
+        if crate::tool_runtime::tool_definition::is_model_visible_tool_name(self.tool_name) {
+            let reply_started = std::time::Instant::now();
+            runtime.add_window_model_reply_sidecar(
+                &mut result,
+                self.context.auth,
+                self.context.window,
+                self.window_reply,
+            );
+            crate::tool_request_trace::record_phase_latency(
+                "explicit_window_reply",
+                reply_started,
+                if self.window_reply.is_some() {
+                    "required"
+                } else {
+                    "not_requested"
+                },
+            );
+        }
         plan.project(&mut result);
         self.add_recorder_gap_hint(&mut result);
         if self.tool_name == "read_tool_manifest" {
@@ -98,22 +123,6 @@ impl PostRecordResponse<'_> {
         }
         let enrichment_deadline = crate::tool_runtime::optional_enrichment::deadline();
         if crate::tool_runtime::tool_definition::is_model_visible_tool_name(self.tool_name) {
-            let reply_started = std::time::Instant::now();
-            runtime.add_window_model_reply_sidecar(
-                &mut result,
-                self.context.auth,
-                self.context.window,
-                self.window_reply,
-            );
-            crate::tool_request_trace::record_phase_latency(
-                "explicit_window_reply",
-                reply_started,
-                if self.window_reply.is_some() {
-                    "required"
-                } else {
-                    "not_requested"
-                },
-            );
             let peer_project = self
                 .correlation
                 .resolved_project

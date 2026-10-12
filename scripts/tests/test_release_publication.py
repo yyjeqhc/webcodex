@@ -661,6 +661,57 @@ class DraftVerificationTests(unittest.TestCase):
                     )
 
 
+    def test_prerelease_draft_matches_release_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            meta = _write_bundle(root)
+            valid = publication.verify_bundle(root, collector.DEFAULT_REPO)
+            rc_version = "0.5.0-rc.1"
+            rc_summary = {**valid, "tag": f"v{rc_version}", "version": rc_version}
+            names = [
+                "SHA256SUMS",
+                *(item["filename"] for item in meta["artifacts"].values()),
+                *(item["filename"] for item in meta["desktop_artifacts"].values()),
+            ]
+            release = {
+                "id": 100,
+                "tag_name": f"v{rc_version}",
+                "draft": True,
+                "prerelease": True,
+                "html_url": f"https://github.com/{collector.DEFAULT_REPO}/releases/tag/v{rc_version}",
+                "assets": [
+                    {
+                        "name": name,
+                        "state": "uploaded",
+                        "size": (root / name).stat().st_size,
+                        "digest": "sha256:" + collector.sha256_file(root / name),
+                    }
+                    for name in names
+                ],
+            }
+            with mock.patch.object(publication, "verify_bundle", return_value=rc_summary), mock.patch.object(
+                publication.collector, "resolve_github_token", return_value="fake"
+            ), mock.patch.object(
+                publication.collector, "GitHubClient", return_value=mock.sentinel.github_client
+            ), mock.patch.object(
+                publication, "_find_authenticated_release_by_tag", return_value=release
+            ):
+                result = publication.verify_draft_assets(
+                    repo=collector.DEFAULT_REPO,
+                    bundle_dir=root,
+                    timeout=5,
+                )
+                self.assertEqual(result["tag"], f"v{rc_version}")
+                self.assertEqual(len(result["assets"]), len(names))
+                release["prerelease"] = False
+                with self.assertRaisesRegex(publication.PublicationError, "prerelease"):
+                    publication.verify_draft_assets(
+                        repo=collector.DEFAULT_REPO,
+                        bundle_dir=root,
+                        timeout=5,
+                    )
+
+
 class NpmPublicationContractTests(unittest.TestCase):
     def test_package_pins_public_npm_registry(self) -> None:
         package = json.loads(Path("npm/webcodex/package.json").read_text(encoding="utf-8"))

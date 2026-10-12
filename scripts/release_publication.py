@@ -1050,8 +1050,10 @@ def verify_draft_assets(*, repo: str, bundle_dir: Path, timeout: float, require_
     tag = str(summary["tag"])
     client = collector.GitHubClient(repo, collector.resolve_github_token(), timeout)
     release = _find_authenticated_release_by_tag(client, tag)
-    if release.get("tag_name") != tag or release.get("draft") is not True or release.get("prerelease") is not False:
-        raise PublicationError("GitHub Release must be the expected draft, non-prerelease release")
+    expected_prerelease = "-" in str(summary["version"]).split("+", 1)[0]
+    if (release.get("tag_name") != tag or release.get("draft") is not True
+            or release.get("prerelease") is not expected_prerelease):
+        raise PublicationError("GitHub Release must be the expected draft with matching prerelease status")
     release_id = release.get("id")
     release_url = release.get("html_url")
     if not isinstance(release_id, int) or release_id <= 0:

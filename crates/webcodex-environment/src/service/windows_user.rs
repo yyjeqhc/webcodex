@@ -46,7 +46,7 @@ pub(super) fn task_name(spec: &ServiceSpec, sid: &str) -> String {
     format!("WebCodex-user-{}-{}", &suffix[..16], spec.id)
 }
 
-fn decode_status(spec: &ServiceSpec, value: Value) -> Result<ServiceStatus, ServiceError> {
+fn decode_status(spec: &ServiceSpec, value: &Value) -> Result<ServiceStatus, ServiceError> {
     if value.get("error").is_some() {
         return Err(ServiceError::new(
             ServiceErrorCode::OutcomeUnknown,
@@ -90,8 +90,35 @@ fn decode_status(spec: &ServiceSpec, value: Value) -> Result<ServiceStatus, Serv
     })
 }
 
+/// A running task can be queued, and its engine PID need not be its action PID.
+/// Accept only the exact live action observation made by the native adapter.
+fn decode_running_pid(spec: &ServiceSpec, value: &Value) -> Result<Option<u32>, ServiceError> {
+    let status = decode_status(spec, value)?;
+    if status.ownership != Ownership::Owned || value["state"].as_u64() != Some(4) {
+        return Ok(None);
+    }
+    if value.get("process_id").is_none_or(Value::is_null) {
+        return Ok(None);
+    }
+    let pid = value["process_id"]
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+        .filter(|pid| *pid != 0);
+    let instance = value["instance_guid"]
+        .as_str()
+        .and_then(|id| uuid::Uuid::parse_str(id).ok())
+        .filter(|id| !id.is_nil());
+    match (pid, instance) {
+        (Some(pid), Some(_)) => Ok(Some(pid)),
+        _ => Err(ServiceError::new(
+            ServiceErrorCode::OwnershipUnknown,
+            "Task Scheduler did not confirm a live action process",
+        )),
+    }
+}
+
 #[cfg(windows)]
-fn call(spec: &ServiceSpec, operation: &str) -> Result<ServiceStatus, ServiceError> {
+fn call_value(spec: &ServiceSpec, operation: &str) -> Result<Value, ServiceError> {
     use crate::process::CommandOutputExt;
     use std::os::windows::process::CommandExt;
     scope::verify_current_user(spec)?;
@@ -149,7 +176,17 @@ fn call(spec: &ServiceSpec, operation: &str) -> Result<ServiceStatus, ServiceErr
             "Task Scheduler returned no valid bounded observation",
         )
     })?;
-    decode_status(spec, value)
+    Ok(value)
+}
+
+#[cfg(windows)]
+fn call(spec: &ServiceSpec, operation: &str) -> Result<ServiceStatus, ServiceError> {
+    decode_status(spec, &call_value(spec, operation)?)
+}
+
+#[cfg(windows)]
+pub(super) fn running_pid(spec: &ServiceSpec) -> Result<Option<u32>, ServiceError> {
+    decode_running_pid(spec, &call_value(spec, "running_pid")?)
 }
 
 #[cfg(windows)]
@@ -252,24 +289,90 @@ mod tests {
         assert!(!request.to_string().contains("--windows-service"));
     }
     #[test]
+    fn user_task_running_pid_requires_a_live_owned_action_observation() {
+        let spec = super::super::tests::sample_spec();
+        let current = json!({
+            "exists": true, "owned": true, "enabled": true, "state": 4,
+            "process_id": 4312,
+            "instance_guid": "{723A491B-825B-4C30-BB2B-F86AA98F94AA}"
+        });
+        assert_eq!(decode_running_pid(&spec, &current).unwrap(), Some(4312));
+        for state in [0, 1, 2, 3] {
+            let mut observation = current.clone();
+            observation["state"] = json!(state);
+            assert_eq!(decode_running_pid(&spec, &observation).unwrap(), None);
+        }
+        let mut foreign = current.clone();
+        foreign["owned"] = json!(false);
+        assert_eq!(decode_running_pid(&spec, &foreign).unwrap(), None);
+        let mut missing = current.clone();
+        missing.as_object_mut().unwrap().remove("process_id");
+        assert_eq!(decode_running_pid(&spec, &missing).unwrap(), None);
+        for pid in [
+            json!(0),
+            json!(-1),
+            json!(u64::from(u32::MAX) + 1),
+            json!("4312"),
+        ] {
+            let mut invalid = current.clone();
+            invalid["process_id"] = pid;
+            assert!(decode_running_pid(&spec, &invalid).is_err());
+        }
+        for instance in [
+            Value::Null,
+            json!("unknown"),
+            json!(uuid::Uuid::nil().to_string()),
+        ] {
+            let mut invalid = current.clone();
+            invalid["instance_guid"] = instance;
+            assert!(decode_running_pid(&spec, &invalid).is_err());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn user_task_action_pid_selection_rejects_ambiguous_or_replaced_processes() {
+        use crate::process::CommandOutputExt;
+        use std::os::windows::process::CommandExt;
+        let root = PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+        let result =
+            std::process::Command::new(root.join("System32/WindowsPowerShell/v1.0/powershell.exe"))
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    include_str!("windows_user_pid_tests.ps1"),
+                ])
+                .env("WEBCODEX_PARSE_SCRIPT", SCRIPT)
+                .creation_flags(0x08000000)
+                .bounded_output()
+                .unwrap();
+        assert!(
+            result.status.success(),
+            "mocked action PID selection failed"
+        );
+    }
+
+    #[test]
     fn user_task_does_not_turn_unobserved_state_into_stopped() {
         let spec = super::super::tests::sample_spec();
         let observed = decode_status(
             &spec,
-            json!({"exists":true,"owned":true,"enabled":true,"state":0}),
+            &json!({"exists":true,"owned":true,"enabled":true,"state":0}),
         )
         .unwrap();
         assert_eq!(observed.running, None);
         assert_eq!(
             decode_status(
                 &spec,
-                json!({"exists":true,"owned":false,"enabled":true,"state":4})
+                &json!({"exists":true,"owned":false,"enabled":true,"state":4})
             )
             .unwrap()
             .ownership,
             Ownership::Foreign
         );
-        assert!(decode_status(&spec, json!({})).is_err());
-        assert!(decode_status(&spec, json!({"error":"native_task_failed"})).is_err());
+        assert!(decode_status(&spec, &json!({})).is_err());
+        assert!(decode_status(&spec, &json!({"error":"native_task_failed"})).is_err());
     }
 }

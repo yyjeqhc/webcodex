@@ -299,11 +299,15 @@ impl ServiceManager {
         if status.ownership != Ownership::Owned || status.running != Some(true) {
             return Ok(None);
         }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(windows)]
+        if spec.scope == ServiceScope::User {
+            return windows_user::running_pid(spec);
+        }
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
         {
             platform::running_pid(spec)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         {
             Ok(None)
         }

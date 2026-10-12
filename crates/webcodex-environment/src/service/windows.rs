@@ -777,6 +777,28 @@ pub(super) fn inspect(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError>
     })
 }
 
+/// Resolve the process from the same SCM handle whose saved owner is checked.
+pub(super) fn running_pid(spec: &ServiceSpec) -> Result<Option<u32>, ServiceError> {
+    let scm = manager(SC_MANAGER_CONNECT)?;
+    let Some(handle) = open(&scm, spec, SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS)? else {
+        return Ok(None);
+    };
+    let before = query_status(&handle)?;
+    if before.dwCurrentState != SERVICE_RUNNING || before.dwProcessId == 0 {
+        return Ok(None);
+    }
+    let (binary, account, _) = query_config(&handle)?;
+    let description = query_description(&handle)?;
+    if !configuration_owned_by_spec(spec, &binary, &account, &description)? {
+        return Ok(None);
+    }
+    let after = query_status(&handle)?;
+    Ok(
+        (after.dwCurrentState == SERVICE_RUNNING && after.dwProcessId == before.dwProcessId)
+            .then_some(after.dwProcessId),
+    )
+}
+
 pub(super) fn preflight(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
     check_files(spec)?;
     if !spec.environment.is_empty() {

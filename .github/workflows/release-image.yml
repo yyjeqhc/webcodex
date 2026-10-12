@@ -26,6 +26,9 @@ env:
 
 jobs:
   resolve:
+    # Preview releases only distribute GitHub binaries; no automatic GHCR image.
+    # An operator can still explicitly dispatch this workflow from main.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:

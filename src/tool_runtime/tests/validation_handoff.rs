@@ -12,12 +12,11 @@ mod project_validation;
 use super::support::*;
 use crate::runner_http::{ShellJobStartMetadata, ShellJobVisibility};
 use crate::runner_protocol::{
-    RunnerCapabilities, RunnerJobUpdateRequest, RunnerResultPayload, RunnerResultRequest,
-    ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource,
-    ShellJobActivityState, ShellJobOpRequest, ShellJobValidationMetadata,
-    ShellJobValidationProgress, ShellJobValidationStep, JOB_INVENTORY_MAX_TERMINAL_JOBS,
-    VALIDATION_STEP_SPAWN_FAILED_CODE, VALIDATION_STEP_WAIT_FAILED_CODE,
-    VALIDATION_TOOL_UNAVAILABLE_CODE,
+    RunnerCapabilities, RunnerJobUpdateRequest, ShellCommandExecutionState, ShellJobActivity,
+    ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState, ShellJobOpRequest,
+    ShellJobValidationMetadata, ShellJobValidationProgress, ShellJobValidationStep,
+    JOB_INVENTORY_MAX_TERMINAL_JOBS, VALIDATION_STEP_SPAWN_FAILED_CODE,
+    VALIDATION_STEP_WAIT_FAILED_CODE, VALIDATION_TOOL_UNAVAILABLE_CODE,
 };
 use crate::tool_runtime::sessions::{SessionTransport, DEFAULT_MAX_EVENTS_PER_SESSION};
 use crate::tool_runtime::validation_events::validation_summary_for_session;
@@ -207,28 +206,18 @@ async fn complete_sync_shell_lifecycle(
     stderr: &str,
     error: Option<&str>,
 ) {
-    runtime
-        .runner_registry
-        .complete(RunnerResultPayload {
-            result: RunnerResultRequest {
-                client_id: client_id.to_string(),
-                runner_instance_id: "inst".to_string(),
-                request_id,
-                exit_code,
-                stdout: Some(stdout.to_string()),
-                stderr: Some(stderr.to_string()),
-                stdout_truncated: false,
-                stderr_truncated: false,
-                duration_ms: Some(5),
-                error: error.map(str::to_string),
-            },
-            command_execution_state: Some(execution_state),
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-        })
-        .await
-        .unwrap();
+    complete_patch_agent_execution(
+        runtime,
+        client_id,
+        request_id,
+        execution_state,
+        exit_code,
+        stdout,
+        stderr,
+        error,
+        5,
+    )
+    .await;
 }
 
 pub(super) fn cargo_test_update(

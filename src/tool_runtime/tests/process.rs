@@ -3,9 +3,8 @@
 use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{
-    RunnerCapabilities, RunnerJobUpdateRequest, RunnerPolicySummary, RunnerRegisterRequest,
-    RunnerResultPayload, RunnerResultRequest, ShellCommandExecutionState, ShellJobActivity,
-    ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
+    RunnerCapabilities, RunnerJobUpdateRequest, RunnerPolicySummary, ShellCommandExecutionState,
+    ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
 };
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;
@@ -132,33 +131,13 @@ async fn register_detached_process_job_agent_with_policy(
         detached_process_jobs: true,
         ..Default::default()
     };
-    runtime
-        .runner_registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(capabilities),
-            policy: Some(policy),
-        })
-        .await
-        .unwrap();
-    crate::test_support::apply_project_inventory_snapshot(
-        &runtime.runner_registry,
+    register_agent_with_projects_and_policy(
+        runtime,
         client_id,
-        "inst",
+        None,
+        capabilities,
         vec![registered_project("demo", &root.to_string_lossy())],
+        Some(policy),
     )
     .await;
     crate::tool_runtime::runner_project_runtime_id(client_id, "demo")
@@ -249,28 +228,10 @@ async fn complete_process_lifecycle(
     stderr: &str,
     error: Option<&str>,
 ) {
-    runtime
-        .runner_registry
-        .complete(RunnerResultPayload {
-            result: RunnerResultRequest {
-                client_id: client_id.to_string(),
-                runner_instance_id: "inst".to_string(),
-                request_id,
-                exit_code,
-                stdout: Some(stdout.to_string()),
-                stderr: Some(stderr.to_string()),
-                stdout_truncated: false,
-                stderr_truncated: false,
-                duration_ms: Some(7),
-                error: error.map(str::to_string),
-            },
-            command_execution_state: Some(state),
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-        })
-        .await
-        .unwrap();
+    complete_patch_agent_execution(
+        runtime, client_id, request_id, state, exit_code, stdout, stderr, error, 7,
+    )
+    .await;
 }
 
 async fn dispatch_process_until_request(

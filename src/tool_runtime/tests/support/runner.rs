@@ -4,8 +4,9 @@ use super::runtime::test_runtime;
 use crate::runner_http::RunnerRegistry;
 use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, RunnerPolicySummary, RunnerPollRequest,
-    RunnerProjectSummary, RunnerRegisterRequest, RunnerRequest, RunnerResultRequest,
-    ShellProfileSummaryEntry, EXTERNAL_SEARCH_REQUEST_PREFIX,
+    RunnerProjectSummary, RunnerRegisterRequest, RunnerRequest, RunnerResultPayload,
+    RunnerResultRequest, ShellCommandExecutionState, ShellProfileSummaryEntry,
+    EXTERNAL_SEARCH_REQUEST_PREFIX,
 };
 #[cfg(feature = "workspace-checkpoints")]
 use crate::tool_runtime::ToolResult;
@@ -1217,21 +1218,7 @@ pub(in crate::tool_runtime::tests) async fn probe_patch_agent_request(
     runtime: &ToolRuntime,
     client_id: &str,
 ) -> Option<RunnerRequest> {
-    for _ in 0..20 {
-        let req = runtime
-            .runner_registry
-            .poll(RunnerPollRequest {
-                client_id: client_id.to_string(),
-                runner_instance_id: "inst".to_string(),
-            })
-            .await
-            .unwrap();
-        if req.is_some() {
-            return req;
-        }
-        tokio::task::yield_now().await;
-    }
-    None
+    probe_agent_request_for_instance(runtime, client_id, "inst").await
 }
 
 /// Wait for a request that the test requires to be dispatched. Unlike
@@ -1338,6 +1325,43 @@ pub(in crate::tool_runtime::tests) async fn complete_patch_agent_request_for_ins
         .unwrap();
 }
 
+/// Complete one synchronous structured execution. Domain fixtures retain their
+/// explicit duration, exit state and diagnostics; no Job update is fabricated.
+pub(in crate::tool_runtime::tests) async fn complete_patch_agent_execution(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    request_id: String,
+    state: ShellCommandExecutionState,
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+    error: Option<&str>,
+    duration_ms: u64,
+) {
+    runtime
+        .runner_registry
+        .complete(RunnerResultPayload {
+            result: RunnerResultRequest {
+                client_id: client_id.to_string(),
+                runner_instance_id: "inst".to_string(),
+                request_id,
+                exit_code,
+                stdout: Some(stdout.to_string()),
+                stderr: Some(stderr.to_string()),
+                stdout_truncated: false,
+                stderr_truncated: false,
+                duration_ms: Some(duration_ms),
+                error: error.map(str::to_string),
+            },
+            command_execution_state: Some(state),
+            mcp_gateway: None,
+            plugin_gateway: None,
+            coding_agent: None,
+        })
+        .await
+        .unwrap();
+}
+
 pub(in crate::tool_runtime::tests) async fn complete_agent_ranged_file_read_request(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -1369,6 +1393,17 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_projects(
     caps: RunnerCapabilities,
     projects: Vec<RunnerProjectSummary>,
 ) {
+    register_agent_with_projects_and_policy(runtime, client_id, owner, caps, projects, None).await;
+}
+
+pub(in crate::tool_runtime::tests) async fn register_agent_with_projects_and_policy(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    owner: Option<&str>,
+    caps: RunnerCapabilities,
+    projects: Vec<RunnerProjectSummary>,
+    policy: Option<RunnerPolicySummary>,
+) {
     runtime
         .runner_registry
         .register(RunnerRegisterRequest {
@@ -1387,7 +1422,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_projects(
             hostname: None,
             host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(caps),
-            policy: None,
+            policy,
         })
         .await
         .unwrap();
@@ -1409,37 +1444,17 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_shell_profiles(
     policy: Option<RunnerPolicySummary>,
     projects: Vec<RunnerProjectSummary>,
 ) {
-    runtime
-        .runner_registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(RunnerCapabilities {
-                explicit_shell_selection: true,
-                bash_login_shell: true,
-                ..Default::default()
-            }),
-            policy,
-        })
-        .await
-        .unwrap();
-    crate::test_support::apply_project_inventory_snapshot(
-        &runtime.runner_registry,
+    register_agent_with_projects_and_policy(
+        runtime,
         client_id,
-        "inst",
+        None,
+        RunnerCapabilities {
+            explicit_shell_selection: true,
+            bash_login_shell: true,
+            ..Default::default()
+        },
         projects,
+        policy,
     )
     .await;
 }

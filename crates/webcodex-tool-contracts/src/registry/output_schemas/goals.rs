@@ -1,12 +1,5 @@
-use super::common::{schema_type, wrapped_output_schema};
+use super::common::{nullable_schema, schema_type, wrapped_output_schema};
 use serde_json::{json, Value};
-
-fn nullable_integer(description: &str) -> Value {
-    json!({
-        "anyOf": [{"type": "integer"}, {"type": "null"}],
-        "description": description
-    })
-}
 
 fn nullable_controller_agent_id(description: &str) -> Value {
     json!({
@@ -37,7 +30,7 @@ fn goal_summary_schema() -> Value {
             "revision": {"type": "integer", "minimum": 1, "description": "Monotonic authoritative Goal revision."},
             "created_at_unix_ms": schema_type("integer", "Goal creation time."),
             "updated_at_unix_ms": schema_type("integer", "Latest durable Goal mutation time."),
-            "terminal_at_unix_ms": nullable_integer("Terminal transition time, or null while active."),
+            "terminal_at_unix_ms": nullable_schema("integer", "Terminal transition time, or null while active."),
             "agent_task_count": {"type": "integer", "minimum": 0, "maximum": 64, "description": "Count of explicit AgentTask correlations; correlation grants no Task or execution authority."},
             "workflow_session_count": {"type": "integer", "minimum": 0, "maximum": 64, "description": "Count of explicit Workflow Session correlations; correlation grants no Session or Project authority."}
         },
@@ -86,7 +79,7 @@ fn mechanical_plan_schema() -> Value {
             "completion_conditions": {"type": "array", "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 512}, "description": "Fixed durable completion intent, not Server-evaluated predicates."},
             "steps": {"type": "array", "maxItems": 32, "items": goal_step_schema()},
             "progress_summary": progress_summary_schema(),
-            "checkpoint_at_unix_ms": nullable_integer("Last committed recovery checkpoint, or null before the first checkpoint.")
+            "checkpoint_at_unix_ms": nullable_schema("integer", "Last committed recovery checkpoint, or null before the first checkpoint.")
         },
         "required": ["completion_conditions", "steps", "progress_summary", "checkpoint_at_unix_ms"]
     })
@@ -128,9 +121,9 @@ fn goal_activity_schema() -> Value {
             "state": {"type": "string", "enum": ["active", "attention_needed", "unobserved", "not_applicable"], "description": "Derived soft liveness observation only; never authoritative Goal or Task state."},
             "idle_threshold_ms": {"type": "integer", "const": 300000, "description": "Internal five-minute soft-attention heuristic, not an execution timeout."},
             "observation_lease_ms": {"type": "integer", "const": 75000, "description": "Server-owned Goal Plan card observation lease. Successful App sync calls renew liveness evidence; browser timestamps are never accepted."},
-            "last_seen_at_ms": nullable_integer("Latest caller-visible WebCodex Window activity, including non-meaningful Host/App control traffic."),
-            "last_meaningful_activity_at_ms": nullable_integer("Latest caller-visible meaningful WebCodex business activity across correlated Windows."),
-            "quiet_for_ms": nullable_integer("Milliseconds since latest visible meaningful activity at projection time, or null when unobserved."),
+            "last_seen_at_ms": nullable_schema("integer", "Latest caller-visible WebCodex Window activity, including non-meaningful Host/App control traffic."),
+            "last_meaningful_activity_at_ms": nullable_schema("integer", "Latest caller-visible meaningful WebCodex business activity across correlated Windows."),
+            "quiet_for_ms": nullable_schema("integer", "Milliseconds since latest visible meaningful activity at projection time, or null when unobserved."),
             "linked_window_count": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 16}, {"type": "null"}], "description": "Bounded count of legally observable correlated Window candidates, or null when runtime observation is unavailable/not applicable."},
             "active_meaningful_request_count": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 64}, {"type": "null"}], "description": "Visible in-flight meaningful WebCodex requests across candidate Windows, or null when unavailable/not applicable."},
             "coverage_partial": {"type": "boolean", "description": "True when bounded scans or active-request retention may omit evidence. Partial coverage never produces attention_needed."}
@@ -155,16 +148,16 @@ fn goal_continuity_schema() -> Value {
             "wake_state": {"anyOf": [{"type": "string", "enum": ["pending", "claimed", "prepared", "delivered", "delivery_unknown", "consumed", "retired"]}, {"type": "null"}], "description": "Bounded durable lifecycle of the exact current Goal-stall Wake, or null when no current-epoch Wake is correlated."},
             "host_delivery": {"type": "string", "enum": ["not_started", "dispatching", "accepted", "unknown", "not_confirmed", "not_applicable"], "description": "Bounded Host-delivery observation for the current Goal-stall Wake, or for the retained most recent confirmed resume when no current-epoch Wake exists. accepted never means the fresh model turn ran; unknown remains uncertain."},
             "fresh_turn": {"type": "string", "enum": ["not_confirmed", "confirmed", "not_applicable"], "description": "Fresh-turn proof for the current Goal-stall Wake, or for the retained most recent confirmed resume when no current-epoch Wake exists. confirmed requires exact corresponding durable Wake consume."},
-            "attention_candidate_at_unix_ms": nullable_integer("Server-derived inactivity threshold instant for the current stall epoch, or for the most recent confirmed Goal-stall continuation after newer meaningful work begins; null when no bounded timeline exists."),
-            "attention_created_at_unix_ms": nullable_integer("Durable goal_workflow_stalled Attention creation time for the current stall epoch or most recent confirmed continuation timeline, or null before any commit."),
-            "wake_created_at_unix_ms": nullable_integer("Durable Goal-stall Wake creation time for the current stall epoch or most recent confirmed continuation timeline, or null before any commit."),
-            "host_dispatch_prepared_at_unix_ms": nullable_integer("Existing Wake Attempt preparation time, or null before the Host dispatch fence."),
-            "host_dispatch_accepted_at_unix_ms": nullable_integer("Host dispatch acceptance time, or null when not accepted. Acceptance never proves a fresh turn."),
-            "host_dispatch_unknown_at_unix_ms": nullable_integer("Conservative Host delivery-unknown time, or null when delivery is not uncertain."),
-            "wake_consumed_at_unix_ms": nullable_integer("Exact Goal-stall Wake consume time proving the current or most recent confirmed fresh turn, or null before any consume."),
-            "first_post_resume_meaningful_at_unix_ms": nullable_integer("First durable meaningful Window activity correlated to the exact resumed Workflow Session after Wake consume, or null."),
-            "last_post_resume_meaningful_at_unix_ms": nullable_integer("Latest durable meaningful Window activity correlated to the exact resumed Workflow Session after Wake consume, or null."),
-            "last_resume_at_unix_ms": nullable_integer("Most recent exact Goal-stall Wake consume time for bounded historical context, or null. Historical resume never determines the current continuity state.")
+            "attention_candidate_at_unix_ms": nullable_schema("integer", "Server-derived inactivity threshold instant for the current stall epoch, or for the most recent confirmed Goal-stall continuation after newer meaningful work begins; null when no bounded timeline exists."),
+            "attention_created_at_unix_ms": nullable_schema("integer", "Durable goal_workflow_stalled Attention creation time for the current stall epoch or most recent confirmed continuation timeline, or null before any commit."),
+            "wake_created_at_unix_ms": nullable_schema("integer", "Durable Goal-stall Wake creation time for the current stall epoch or most recent confirmed continuation timeline, or null before any commit."),
+            "host_dispatch_prepared_at_unix_ms": nullable_schema("integer", "Existing Wake Attempt preparation time, or null before the Host dispatch fence."),
+            "host_dispatch_accepted_at_unix_ms": nullable_schema("integer", "Host dispatch acceptance time, or null when not accepted. Acceptance never proves a fresh turn."),
+            "host_dispatch_unknown_at_unix_ms": nullable_schema("integer", "Conservative Host delivery-unknown time, or null when delivery is not uncertain."),
+            "wake_consumed_at_unix_ms": nullable_schema("integer", "Exact Goal-stall Wake consume time proving the current or most recent confirmed fresh turn, or null before any consume."),
+            "first_post_resume_meaningful_at_unix_ms": nullable_schema("integer", "First durable meaningful Window activity correlated to the exact resumed Workflow Session after Wake consume, or null."),
+            "last_post_resume_meaningful_at_unix_ms": nullable_schema("integer", "Latest durable meaningful Window activity correlated to the exact resumed Workflow Session after Wake consume, or null."),
+            "last_resume_at_unix_ms": nullable_schema("integer", "Most recent exact Goal-stall Wake consume time for bounded historical context, or null. Historical resume never determines the current continuity state.")
         },
         "required": [
             "available", "state", "production_auto_resume_available", "wake_state",
@@ -192,12 +185,12 @@ fn goal_plan_schema() -> Value {
             "current_step_id": {"anyOf": [{"type": "string", "pattern": "^[A-Za-z0-9_-]{1,32}$"}, {"type": "null"}]},
             "steps": {"type": "array", "maxItems": 32, "items": goal_step_schema()},
             "progress_summary": progress_summary_schema(),
-            "checkpoint_at_unix_ms": nullable_integer("Last committed Goal recovery checkpoint."),
+            "checkpoint_at_unix_ms": nullable_schema("integer", "Last committed Goal recovery checkpoint."),
             "controller_agent_id": nullable_controller_agent_id("Exact durable Goal attention-routing Agent, or null when workflow-stall continuation is unavailable. Endpoint/window bindings are never projected."),
             "lifecycle": lifecycle_schema(),
             "revision": {"type": "integer", "minimum": 1, "description": "Monotonic authoritative Goal revision."},
             "updated_at_unix_ms": schema_type("integer", "Latest authoritative Goal mutation time."),
-            "terminal_at_unix_ms": nullable_integer("Terminal transition time, or null while active."),
+            "terminal_at_unix_ms": nullable_schema("integer", "Terminal transition time, or null while active."),
             "agent_task_count": {"type": "integer", "minimum": 0, "maximum": 64, "description": "Count of explicit AgentTask correlations; no target-domain state or authority is projected."},
             "workflow_session_count": {"type": "integer", "minimum": 0, "maximum": 64, "description": "Count of explicit Workflow Session correlations; no Session ledger, Project state, or authority is projected."},
             "activity": goal_activity_schema(),
@@ -280,7 +273,7 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("offset", schema_type("integer", "Returned page offset.")),
             (
                 "next_offset",
-                nullable_integer("Next page offset when truncated."),
+                nullable_schema("integer", "Next page offset when truncated."),
             ),
             (
                 "truncated",

@@ -1,9 +1,5 @@
-use super::common::{schema_type, wrapped_output_schema};
+use super::common::{nullable_schema, schema_type, wrapped_output_schema};
 use serde_json::{json, Value};
-
-fn nullable_integer(description: &str) -> Value {
-    json!({"anyOf":[{"type":"integer"},{"type":"null"}],"description":description})
-}
 
 fn wait_source_schema() -> Value {
     json!({
@@ -44,9 +40,9 @@ fn wait_schema() -> Value {
             "revision":{"type":"integer","minimum":1},
             "created_at_unix_ms":schema_type("integer","Wait creation time."),
             "updated_at_unix_ms":schema_type("integer","Latest authoritative Wait mutation time."),
-            "triggered_at_unix_ms":nullable_integer("Time the selected ANY/ALL trigger condition became true, or null while waiting."),
-            "resumed_at_unix_ms":nullable_integer("Exact Wait-origin Wake consume time, or null before resumed."),
-            "cancelled_at_unix_ms":nullable_integer("Explicit pre-dispatch cancellation time, or null otherwise."),
+            "triggered_at_unix_ms":nullable_schema("integer", "Time the selected ANY/ALL trigger condition became true, or null while waiting."),
+            "resumed_at_unix_ms":nullable_schema("integer", "Exact Wait-origin Wake consume time, or null before resumed."),
+            "cancelled_at_unix_ms":nullable_schema("integer", "Explicit pre-dispatch cancellation time, or null otherwise."),
             "source_count":{"type":"integer","minimum":1,"maximum":8},
             "match_count":{"type":"integer","minimum":0,"maximum":8},
             "match_sequence":{"type":"integer","minimum":0,"maximum":8},

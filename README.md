@@ -165,6 +165,8 @@ WebCodex is developed in the open. If you want to support long-term maintenance,
 
 Thanks to the [LINUX DO](https://linux.do/) community for its welcoming space for technical discussion and support for open-source sharing.
 
+Thanks to [AtomGit](https://atomgit.com/) for hosting a mirror of WebCodex in China, making it easier for users in mainland China to access the project and find its releases.
+
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

@@ -161,6 +161,8 @@ WebCodex 以开放方式持续开发。如果你希望支持长期维护、测�
 
 感谢 [LINUX DO](https://linux.do/) 社区提供友好的技术交流与开源分享环境。
 
+感谢 [AtomGit](https://atomgit.com/) 在国内托管 WebCodex 镜像，方便中国大陆用户访问项目并获取发布版本。
+
 ## 许可证
 
 使用 Apache License 2.0，见 [LICENSE](LICENSE)。

@@ -1,5 +1,6 @@
 //! Shared test helpers for tool_runtime tests.
 
+pub(super) mod artifacts;
 mod assertions;
 mod auth;
 mod files;

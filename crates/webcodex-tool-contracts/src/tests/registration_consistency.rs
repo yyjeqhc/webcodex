@@ -45,6 +45,14 @@ fn canonical_registration_sets_are_exact_including_hidden_variants() {
         spec_names.is_disjoint(&hidden),
         "hidden variants became public"
     );
+    for definition in &definitions {
+        assert_eq!(
+            crate::is_model_hidden_tool_name(definition.name),
+            definition.visibility.is_model_hidden(),
+            "{} hidden-name helper drift",
+            definition.name
+        );
+    }
     for spec in &specs {
         assert_eq!(
             spec.input_schema, schemas[&spec.name],

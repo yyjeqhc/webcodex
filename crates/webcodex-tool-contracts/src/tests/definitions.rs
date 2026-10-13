@@ -25,14 +25,12 @@ fn tool_definition_source_has_no_module_wide_dead_code_allowance() {
 }
 
 #[test]
-fn tool_definitions_cover_known_names_and_public_specs() {
-    let definition_names = tool_definitions()
-        .map(|definition| definition.name)
-        .collect::<BTreeSet<_>>();
+fn tool_definition_helpers_preserve_order_lookup_and_hidden_partition() {
+    // Exact registration sets are owned by the exhaustive registration test;
+    // this test covers ordering and helper APIs rather than repeating set checks.
     let definition_order = tool_definitions()
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
-    let known_names = known_tool_names().collect::<BTreeSet<_>>();
     let hidden_names = model_hidden_tool_names().collect::<BTreeSet<_>>();
     let definition_hidden_names = tool_definitions()
         .filter(|definition| definition.visibility.is_model_hidden())
@@ -44,18 +42,10 @@ fn tool_definitions_cover_known_names_and_public_specs() {
             "{name} missing ToolDefinition lookup"
         );
     }
-    assert_eq!(definition_names, known_names);
     assert_eq!(definition_order, known_tool_names().collect::<Vec<_>>());
     assert_eq!(hidden_names, definition_hidden_names);
 
     let specs = registered_tool_specs();
-    let spec_names = specs
-        .iter()
-        .map(|spec| spec.name.as_str())
-        .collect::<BTreeSet<_>>();
-    let visible_definition_names = model_visible_tool_definitions()
-        .map(|definition| definition.name)
-        .collect::<BTreeSet<_>>();
     let spec_order = specs
         .iter()
         .map(|spec| spec.name.clone())
@@ -63,7 +53,6 @@ fn tool_definitions_cover_known_names_and_public_specs() {
     let visible_definition_order = model_visible_tool_definitions()
         .map(|definition| definition.name.to_string())
         .collect::<Vec<_>>();
-    assert_eq!(spec_names, visible_definition_names);
     assert_eq!(visible_definition_order, spec_order);
     assert_eq!(registered_tool_names(), visible_definition_order);
 }

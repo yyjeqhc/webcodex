@@ -28,6 +28,9 @@ use webcodex_process::ManagedChild;
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const MCP_GATEWAY_MAX_IGNORED_NOTIFICATIONS: usize = 32;
+// Limit bursts, not lifetime totals: an idle provider may ping indefinitely.
+const MCP_GATEWAY_UNSOLICITED_WINDOW: Duration = Duration::from_secs(5);
+const MCP_GATEWAY_MAX_PROVIDER_REQUEST_ID_BYTES: usize = 256;
 const PROVIDER_NEVER_STARTED: u8 = 0;
 const PROVIDER_HEALTHY: u8 = 1;
 const PROVIDER_CONNECTION_RETIRED: u8 = 2;
@@ -76,6 +79,7 @@ enum ReaderFault {
     Malformed,
     TooLarge,
     Io,
+    Stdin,
     NotificationFlood,
 }
 
@@ -956,6 +960,9 @@ impl ProviderConnection {
                 Ok(ReaderEvent::Message(Err(ReaderFault::Io))) => {
                     return Err(ProviderFailure::before_send("provider_stdout_failed"));
                 }
+                Ok(ReaderEvent::Message(Err(ReaderFault::Stdin))) => {
+                    return Err(ProviderFailure::before_send("provider_stdin_failed"));
+                }
             }
         }
 
@@ -1004,6 +1011,9 @@ impl ProviderConnection {
                 }
                 Ok(ReaderEvent::Message(Err(ReaderFault::Io))) => {
                     return Err(ProviderFailure::after_send("provider_stdout_failed"));
+                }
+                Ok(ReaderEvent::Message(Err(ReaderFault::Stdin))) => {
+                    return Err(ProviderFailure::after_send("provider_stdin_failed"));
                 }
                 Ok(ReaderEvent::Eof) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err(ProviderFailure::after_send("provider_eof"));
@@ -1078,27 +1088,50 @@ impl Drop for ProviderConnection {
     }
 }
 
+#[derive(Default)]
+struct UnsolicitedWindow {
+    start: Option<Instant>,
+    count: usize,
+}
+
+impl UnsolicitedWindow {
+    fn exceeded(&mut self, now: Instant) -> bool {
+        if self
+            .start
+            .is_none_or(|start| now.duration_since(start) >= MCP_GATEWAY_UNSOLICITED_WINDOW)
+        {
+            self.start = Some(now);
+            self.count = 0;
+        }
+        self.count += 1;
+        self.count > MCP_GATEWAY_MAX_IGNORED_NOTIFICATIONS
+    }
+
+    fn reset(&mut self) {
+        self.start = None;
+        self.count = 0;
+    }
+}
+
 fn provider_stdout_reader(
     stdout: std::process::ChildStdout,
     sender: mpsc::SyncSender<ReaderEvent>,
     stdin: Arc<Mutex<ChildStdin>>,
 ) {
     let mut reader = BufReader::new(stdout);
-    let mut unsolicited_messages = 0usize;
+    let mut unsolicited_window = UnsolicitedWindow::default();
     loop {
         let event = match read_bounded_line(&mut reader) {
             Ok(Some(line)) => match serde_json::from_slice::<Value>(&line) {
                 Ok(message) => {
                     if is_provider_notification(&message) {
-                        unsolicited_messages += 1;
-                        if unsolicited_messages > MCP_GATEWAY_MAX_IGNORED_NOTIFICATIONS {
+                        if unsolicited_window.exceeded(Instant::now()) {
                             ReaderEvent::Message(Err(ReaderFault::NotificationFlood))
                         } else {
                             continue;
                         }
                     } else if let Some(request_id) = provider_request_id(&message) {
-                        unsolicited_messages += 1;
-                        if unsolicited_messages > MCP_GATEWAY_MAX_IGNORED_NOTIFICATIONS {
+                        if unsolicited_window.exceeded(Instant::now()) {
                             return send_reader_fault(&sender, ReaderFault::NotificationFlood);
                         }
                         let reply = if message.get("method").and_then(Value::as_str) == Some("ping")
@@ -1109,21 +1142,21 @@ fn provider_stdout_reader(
                                 "error": {"code": -32601, "message": "Method not found"}})
                         };
                         let result = serde_json::to_vec(&reply)
-                            .map_err(|_| ReaderFault::Io)
+                            .map_err(|_| ReaderFault::Stdin)
                             .and_then(|mut data| {
                                 data.push(b'\n');
                                 stdin
                                     .lock()
-                                    .map_err(|_| ReaderFault::Io)?
+                                    .map_err(|_| ReaderFault::Stdin)?
                                     .write_all(&data)
-                                    .map_err(|_| ReaderFault::Io)
+                                    .map_err(|_| ReaderFault::Stdin)
                             });
                         match result {
                             Ok(()) => continue,
                             Err(fault) => ReaderEvent::Message(Err(fault)),
                         }
                     } else {
-                        unsolicited_messages = 0;
+                        unsolicited_window.reset();
                         ReaderEvent::Message(Ok(message))
                     }
                 }
@@ -1162,10 +1195,12 @@ fn provider_request_id(message: &Value) -> Option<Value> {
         return None;
     }
     let id = object.get("id")?;
-    if id.is_string() || id.is_i64() || id.is_u64() {
-        Some(id.clone())
-    } else {
-        None
+    match id {
+        Value::String(value) if value.len() <= MCP_GATEWAY_MAX_PROVIDER_REQUEST_ID_BYTES => {
+            Some(id.clone())
+        }
+        Value::Number(value) if value.is_i64() || value.is_u64() => Some(id.clone()),
+        _ => None,
     }
 }
 

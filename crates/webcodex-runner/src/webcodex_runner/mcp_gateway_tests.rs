@@ -1005,6 +1005,38 @@ fn provider_idle_ping_with_numeric_and_string_ids_is_answered() {
 }
 
 #[test]
+fn unsolicited_window_allows_long_lived_idle_ping_but_still_rejects_bursts() {
+    let mut window = UnsolicitedWindow::default();
+    let start = Instant::now();
+    // Low-frequency heartbeats must not accumulate toward a lifetime cap.
+    for step in 0..(MCP_GATEWAY_MAX_IGNORED_NOTIFICATIONS as u64 * 4) {
+        assert!(!window.exceeded(start + Duration::from_secs(step * 30)));
+    }
+    let burst = start + Duration::from_secs(5_000);
+    for _ in 0..MCP_GATEWAY_MAX_IGNORED_NOTIFICATIONS {
+        assert!(!window.exceeded(burst));
+    }
+    assert!(window.exceeded(burst));
+    window.reset();
+    assert!(!window.exceeded(burst));
+}
+
+#[test]
+fn provider_request_id_rejects_unbounded_or_non_integer_ids() {
+    assert_eq!(
+        provider_request_id(&json!({"jsonrpc":"2.0","method":"ping","id":"123"})),
+        Some(json!("123"))
+    );
+    for id in [
+        json!("x".repeat(MCP_GATEWAY_MAX_PROVIDER_REQUEST_ID_BYTES + 1)),
+        json!(1.5),
+        Value::Null,
+    ] {
+        assert!(provider_request_id(&json!({"jsonrpc":"2.0","method":"ping","id":id})).is_none());
+    }
+}
+
+#[test]
 fn provider_notification_flood_is_bounded_and_reconnects_on_next_request() {
     let fixture = Fixture::new("notification_flood", 2);
     let provider = fixture.provider();

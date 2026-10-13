@@ -330,6 +330,74 @@ async fn runtime_status_aggregate_matches_full_visible_job_projection_without_lo
 }
 
 #[tokio::test]
+async fn runtime_status_aggregate_preserves_recovery_overlay_and_capacity_distinctions() {
+    use crate::state::{JobRecoveryPhase, JobRecoveryReason, JobRecoveryState};
+
+    let (registry, id) = fixture().await;
+    for lifecycle in [
+        JobLifecycleState::Queued,
+        JobLifecycleState::RunnerQueued,
+        JobLifecycleState::StartedLegacy,
+        JobLifecycleState::Running,
+        JobLifecycleState::StopRequested,
+        JobLifecycleState::Completed,
+        JobLifecycleState::Failed,
+        JobLifecycleState::Stopped,
+        JobLifecycleState::Timeout,
+        JobLifecycleState::TimedOut,
+        JobLifecycleState::Lost,
+        JobLifecycleState::Cancelled,
+    ] {
+        for recovering in [false, true] {
+            for reason in [
+                None,
+                Some(JobRecoveryReason::RunnerInventoryMissing),
+                Some(JobRecoveryReason::RunnerInstanceReplaced),
+                Some(JobRecoveryReason::RunnerRecoveryDeadlineExceeded),
+                Some(JobRecoveryReason::RunnerTransportDisconnected),
+            ] {
+                {
+                    let mut inner = registry.inner.lock().await;
+                    let job = inner.jobs_by_id.get_mut(&id).unwrap();
+                    job.lifecycle = lifecycle;
+                    job.recovery = JobRecoveryState {
+                        phase: recovering.then_some(JobRecoveryPhase::Recovering),
+                        reason,
+                        recovering_since: recovering.then_some(crate::now_ts()),
+                        ..Default::default()
+                    };
+                }
+                // Keep the established public projection as an independent
+                // oracle, including terminal Jobs with stale recovery metadata.
+                let visible = registry.list_all_jobs_for_auth(None).await;
+                let actual = registry.runtime_job_aggregate_for_auth(None, None).await;
+                assert_eq!(
+                    actual,
+                    expected_runtime_job_aggregate(&visible),
+                    "{lifecycle:?} recovering={recovering} reason={reason:?}"
+                );
+                let capacity = registry.active_job_summary_by_runner_for_auth(None).await;
+                if lifecycle.is_active() {
+                    assert_eq!(capacity["oe"].active, 1);
+                    assert_eq!(
+                        capacity["oe"].running,
+                        usize::from(lifecycle.occupies_execution_slot())
+                    );
+                } else {
+                    assert!(capacity.is_empty());
+                }
+                if recovering && lifecycle.is_runner_active() {
+                    assert_eq!(actual.recovering_count, 1);
+                    assert_eq!(actual.running_count, 0);
+                    assert_eq!(actual.queued_count, 0);
+                    assert_eq!(actual.by_runner["oe"].running, 0);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
 #[ignore = "manual 1,500-job typed status aggregate versus full Job DTO cost comparison"]
 async fn runtime_status_aggregate_cost_comparison() {
     use std::time::Instant;

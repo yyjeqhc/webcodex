@@ -2240,38 +2240,33 @@ impl RunnerRegistry {
                 && shell_job_visible_to_auth(auth, &inner, job)
                 && client_id.is_none_or(|id| job.client_id == id)
         }) {
-            let status = job.public_status();
-            let lifecycle =
-                webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::from_wire(status);
-            let active = super::job_status::job_status_is_active(status);
-            let running =
-                matches!(
-                lifecycle,
-                Ok(webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::Running
-                    | webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::StartedLegacy)
-            );
-            let queued = matches!(
-                lifecycle,
-                Ok(
-                    webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::Queued
-                        | webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::RunnerQueued
-                )
-            );
-            let in_slot = lifecycle.is_ok_and(|state| state.occupies_execution_slot());
+            // Aggregate the Registry's typed facts, not a wire-status round trip.
+            // Recovery masks visible execution/queue counts here; the separate
+            // capacity aggregate deliberately retains underlying slot ownership.
+            let lifecycle = job.lifecycle;
+            let recovering = job.recovery_active();
+            let active = lifecycle.is_active();
+            let running = !recovering
+                && matches!(
+                    lifecycle,
+                    JobLifecycleState::Running | JobLifecycleState::StartedLegacy
+                );
+            let queued = !recovering
+                && matches!(
+                    lifecycle,
+                    JobLifecycleState::Queued | JobLifecycleState::RunnerQueued
+                );
+            let in_slot = !recovering && lifecycle.occupies_execution_slot();
             result.active_count += usize::from(active);
             result.running_count += usize::from(running);
             result.queued_count += usize::from(queued);
-            result.recovering_count += usize::from(status == "recovering");
+            result.recovering_count += usize::from(recovering);
             result.lost_after_reconcile_count += usize::from(
-                status == "lost"
-                    && matches!(
-                        job.recovery.public_reason(),
-                        Some(
-                            "runner_inventory_missing"
-                                | "runner_instance_replaced"
-                                | "runner_recovery_deadline_exceeded"
-                        )
-                    ),
+                lifecycle == JobLifecycleState::Lost
+                    && job
+                        .recovery
+                        .reason
+                        .is_some_and(JobRecoveryReason::implies_lost_after_reconcile),
             );
             if active || in_slot || queued {
                 let runner = result.by_runner.entry(job.client_id.clone()).or_default();

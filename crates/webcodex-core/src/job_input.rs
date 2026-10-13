@@ -51,7 +51,7 @@ pub fn validate_input(id: &str, data: &str, close: bool) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InputWriteState {
     Pending,

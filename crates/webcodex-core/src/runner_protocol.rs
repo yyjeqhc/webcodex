@@ -2354,7 +2354,7 @@ pub struct RunnerResultRequest {
 /// This is transport metadata, not a general execution framework: the Runner
 /// sets it from its actual process-spawn/collection path, while non-command
 /// request results omit it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShellCommandExecutionState {
     NotStarted,

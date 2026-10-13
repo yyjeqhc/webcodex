@@ -8,7 +8,9 @@ fn build_artifacts_schema() -> serde_json::Value {
     })
 }
 
+use crate::schema_generation::typed_host_schema;
 use serde_json::{json, Value};
+use webcodex_core::{job_input::InputWriteState, runner_protocol::ShellCommandExecutionState};
 
 use super::common::{
     array_schema, cargo_test_count_assertion_schema, job_activity_schema, nullable_schema,
@@ -344,7 +346,7 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
                     "job_status": {"type": "null"},
                     "continuation": {"enum": []},
                     "execution_state": {
-                        "enum": ["not_started", "outcome_unknown", "completed", "timed_out"]
+                        "enum": typed_host_schema::<ShellCommandExecutionState>()["enum"]
                     }
                 },
                 "required": ["job_id", "job_status"]
@@ -442,16 +444,9 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
 }
 
 fn job_command_execution_state_schema() -> Value {
-    json!({
-        "anyOf": [
-            {
-                "type": "string",
-                "enum": ["not_started", "outcome_unknown", "timed_out", "completed"]
-            },
-            {"type": "null"}
-        ],
-        "description": "Phase-A terminal lifecycle for a typed structured execution Job; null for active or legacy shell Jobs."
-    })
+    let mut schema = typed_host_schema::<Option<ShellCommandExecutionState>>();
+    schema["description"] = json!("Phase-A terminal lifecycle for a typed structured execution Job; null for active or legacy shell Jobs.");
+    schema
 }
 
 fn job_structured_execution_metadata_schema() -> Value {
@@ -1580,7 +1575,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "write_job_input" => Some(wrapped_output_schema(vec![
             ("job_id", schema_type("string", "The same existing interactive Job; no new execution.")),
             ("input_id", schema_type("string", "Exact retained input receipt identity.")),
-            ("state", json!({"type":"string","enum":["pending","written","closed","outcome_unknown"],"description":"Pipe write state, not the application's consumption or Job completion."})),
+            ("state", {
+                let mut schema = typed_host_schema::<InputWriteState>();
+                schema["description"] = json!("Pipe write state, not the application's consumption or Job completion.");
+                schema
+            }),
             ("bytes_written", schema_type("integer", "Bytes accepted by the OS pipe; not proof of consumption.")),
             ("stdin_closed", schema_type("boolean", "True only after the owned pipe handle has closed.")),
             ("execution_state", schema_type("string", "Input request result certainty, separate from Job lifecycle.")),

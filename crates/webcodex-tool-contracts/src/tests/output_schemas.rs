@@ -1,5 +1,104 @@
 use super::*;
 
+#[test]
+fn typed_job_activity_schema_preserves_closed_nullable_wire_shape() {
+    use webcodex_core::runner_protocol::ShellJobActivity;
+    let output = output_schema_for_tool("list_jobs");
+    let schema =
+        &output["properties"]["output"]["properties"]["jobs"]["items"]["properties"]["activity"];
+    let object = &schema["anyOf"][0];
+    assert_eq!(object["additionalProperties"], false);
+    assert_eq!(object["properties"].as_object().unwrap().len(), 3);
+    assert_eq!(object["required"].as_array().unwrap().len(), 3);
+    for (field, expected) in [
+        ("state", json!(["working", "waiting"])),
+        (
+            "phase",
+            json!([
+                "process_running",
+                "validation_format",
+                "validation_check",
+                "validation_test",
+                "cargo_waiting_for_build_lock",
+                "cargo_compiling",
+                "cargo_checking"
+            ]),
+        ),
+        (
+            "source",
+            json!(["runner_execution", "validation_plan", "cargo_output"]),
+        ),
+    ] {
+        assert_eq!(object["properties"][field]["enum"], expected, "{field}");
+    }
+    // Structural schema remains distinct from the runtime's canonical
+    // state/phase/source combination validator.
+    for state in ["working", "waiting"] {
+        for phase in [
+            "process_running",
+            "validation_format",
+            "validation_check",
+            "validation_test",
+            "cargo_waiting_for_build_lock",
+            "cargo_compiling",
+            "cargo_checking",
+        ] {
+            for source in ["runner_execution", "validation_plan", "cargo_output"] {
+                let value = json!({"state": state, "phase": phase, "source": source});
+                let typed: ShellJobActivity = serde_json::from_value(value.clone()).unwrap();
+                assert_eq!(serde_json::to_value(typed).unwrap(), value);
+                test_support::validate_schema_instance(&value, schema).unwrap();
+            }
+        }
+    }
+    test_support::validate_schema_instance(&Value::Null, schema).unwrap();
+    let valid = json!({"state":"working","phase":"process_running","source":"runner_execution"});
+    for field in ["state", "phase", "source"] {
+        let mut missing = valid.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(test_support::validate_schema_instance(&missing, schema).is_err());
+        let mut unknown = valid.clone();
+        unknown[field] = json!("unknown");
+        assert!(test_support::validate_schema_instance(&unknown, schema).is_err());
+    }
+    let mut extra = valid;
+    extra["private_runner_instance"] = json!("must-not-leak");
+    assert!(test_support::validate_schema_instance(&extra, schema).is_err());
+}
+
+#[test]
+fn typed_job_command_and_input_states_preserve_distinct_vocabularies() {
+    use webcodex_core::{job_input::InputWriteState, runner_protocol::ShellCommandExecutionState};
+    let jobs = output_schema_for_tool("list_jobs");
+    let command = &jobs["properties"]["output"]["properties"]["jobs"]["items"]["properties"]
+        ["command_execution_state"];
+    assert_eq!(
+        command["anyOf"][0]["enum"],
+        json!(["not_started", "outcome_unknown", "timed_out", "completed"])
+    );
+    for value in ["not_started", "outcome_unknown", "timed_out", "completed"] {
+        let typed: ShellCommandExecutionState = serde_json::from_value(json!(value)).unwrap();
+        test_support::validate_schema_instance(&serde_json::to_value(typed).unwrap(), command)
+            .unwrap();
+    }
+    test_support::validate_schema_instance(&Value::Null, command).unwrap();
+    assert!(test_support::validate_schema_instance(&json!("pending"), command).is_err());
+    let write = output_schema_for_tool("write_job_input");
+    let input = &write["properties"]["output"]["properties"]["state"];
+    assert_eq!(
+        input["enum"],
+        json!(["pending", "written", "closed", "outcome_unknown"])
+    );
+    for value in ["pending", "written", "closed", "outcome_unknown"] {
+        let typed: InputWriteState = serde_json::from_value(json!(value)).unwrap();
+        test_support::validate_schema_instance(&serde_json::to_value(typed).unwrap(), input)
+            .unwrap();
+    }
+    for invalid in [Value::Null, json!("completed"), json!("unknown"), json!(0)] {
+        assert!(test_support::validate_schema_instance(&invalid, input).is_err());
+    }
+}
+
 fn structured_execution_output(
     execution_source: &str,
     execution_state: &str,

@@ -819,14 +819,14 @@ impl ShellJobTestCountEvidence {
 /// Bounded Runner-owned observation of what an active Job is currently doing.
 /// Activity is advisory execution telemetry only: it never replaces canonical
 /// Job status, proves completion, or grants retry/continuation authority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShellJobActivityState {
     Working,
     Waiting,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShellJobActivityPhase {
     ProcessRunning,
@@ -838,7 +838,7 @@ pub enum ShellJobActivityPhase {
     CargoChecking,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShellJobActivitySource {
     RunnerExecution,
@@ -846,7 +846,7 @@ pub enum ShellJobActivitySource {
     CargoOutput,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ShellJobActivity {
     pub state: ShellJobActivityState,

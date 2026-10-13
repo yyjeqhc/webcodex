@@ -179,36 +179,10 @@ pub fn suggested_tool_call_schema_target(schema: &Value) -> Option<&str> {
     tool.get("const").and_then(Value::as_str)
 }
 pub fn job_activity_schema() -> Value {
-    json!({
-        "anyOf": [
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "state": {"type": "string", "enum": ["working", "waiting"]},
-                    "phase": {
-                        "type": "string",
-                        "enum": [
-                            "process_running",
-                            "validation_format",
-                            "validation_check",
-                            "validation_test",
-                            "cargo_waiting_for_build_lock",
-                            "cargo_compiling",
-                            "cargo_checking"
-                        ]
-                    },
-                    "source": {
-                        "type": "string",
-                        "enum": ["runner_execution", "validation_plan", "cargo_output"]
-                    }
-                },
-                "required": ["state", "phase", "source"]
-            },
-            {"type": "null"}
-        ],
-        "description": "Runner-owned bounded current activity for an active Job. Observation only: it never replaces canonical status, proves completion, or grants retry/continuation authority. null means unavailable, terminal, or temporarily untrusted during recovery."
-    })
+    let mut schema =
+        typed_host_schema::<Option<webcodex_core::runner_protocol::ShellJobActivity>>();
+    schema["description"] = json!("Runner-owned bounded current activity for an active Job. Observation only: it never replaces canonical status, proves completion, or grants retry/continuation authority. null means unavailable, terminal, or temporarily untrusted during recovery.");
+    schema
 }
 
 pub fn observe_job_continuation_schema() -> Value {

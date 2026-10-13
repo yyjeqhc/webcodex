@@ -734,6 +734,46 @@ fn job_terminal_continuation_output_schemas_are_sparse_and_private_app_payload_i
 }
 
 #[test]
+fn agent_task_coding_state_schemas_share_run_vocabulary_but_remain_nullable() {
+    let run = output_schema_for_tool("observe_coding_agent");
+    let run_fields = &run["properties"]["output"]["properties"];
+    for tool in [
+        "start_agent_task_coding_run",
+        "reconcile_agent_task_coding_run",
+    ] {
+        let schema = output_schema_for_tool(tool);
+        let fields = &schema["properties"]["output"]["properties"];
+        for (field, run_field) in [
+            ("run_state", "state"),
+            ("execution_state", "execution_state"),
+        ] {
+            let expected = json!({"anyOf": [run_fields[run_field], {"type": "null"}]});
+            assert_eq!(fields[field], expected, "{tool}.{field}");
+            crate::test_support::validate_schema_instance(&Value::Null, &fields[field]).unwrap();
+            for wire in run_fields[run_field]["enum"].as_array().unwrap() {
+                crate::test_support::validate_schema_instance(wire, &fields[field]).unwrap();
+            }
+            for invalid in [json!("unknown"), json!(0), json!({})] {
+                assert!(
+                    crate::test_support::validate_schema_instance(&invalid, &fields[field])
+                        .is_err(),
+                    "{tool}.{field} accepted {invalid}"
+                );
+            }
+        }
+        // Task binding has a non-null terminal object with nullable evidence;
+        // the direct CodingAgent API instead makes the whole object nullable.
+        let terminal = &fields["terminal"];
+        assert_eq!(terminal["type"], "object");
+        assert_eq!(terminal["additionalProperties"], false);
+        assert_eq!(
+            terminal["properties"]["completed_at"]["anyOf"],
+            json!([{"type": "integer"}, {"type": "null"}])
+        );
+    }
+}
+
+#[test]
 fn start_agent_task_attempt_schema_returns_ref_without_replacing_fence() {
     let schema = output_schema_for_tool("start_agent_task_attempt");
     let properties = schema["properties"]["output"]["properties"]

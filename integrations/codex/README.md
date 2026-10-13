@@ -62,10 +62,19 @@ For managed execution, the task-owned Runner pins ACP 2.1.1 and forces the
 model/effort through live ACP configuration admission. The harness preserves
 the exact Task/Attempt/Run, replays that same binding, restarts only its Server,
 and reconciles the original Run while its Runner stays alive. Read
-`run_state_before_disconnect` before describing the recovery: a startup-state
-restart or an already-terminal result does not prove recovery during a dispatched
-coding prompt. A transparent test-only relay records only adapter identity,
-effective model/effort and actual prompt-dispatch counts.
+`phase_before_disconnect`, `run_state_before_disconnect` and
+`execution_state_before_disconnect` before describing the recovery. Before
+restarting, the harness observes that same Run within the configured timeout,
+using its observation cursor, until canonical state proves `running` with
+execution `started`, or a terminal, uncertain or permission-waiting state is
+observed. Run state alone does not prove prompt dispatch. Missing identity/state,
+lost event history or an observation deadline fails the test before restart.
+An already-terminal result or pre-prompt failure can still exercise exact
+reconciliation, but cannot set `recovery.passed=true`; successful coding remains
+separate from recovery coverage. No replacement execution is launched to obtain
+a better test outcome. A transparent test-only relay records only adapter
+identity, effective model/effort and prompt-dispatch counts. A live pre-restart
+observation does not prove that the Run remained active throughout the outage.
 
 Inspect `report.json` by stage. Execution completion, the independent seven
 fixed tests, the additional tests and cleanup are separate results; also check
@@ -315,6 +324,18 @@ already travels inside `handoff_brief.task`; neither it nor acceptance creates
 a separate local task lifecycle or completion verdict.
 
 ## Verification boundary
+
+Run the harness's deterministic recovery tests without launching services or
+using a model account:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.tests.test_codex_bidirectional_acceptance -q
+```
+
+These tests cover waiting for canonical execution-start evidence, exact Run and
+TaskAttempt identities, pre-prompt failure and terminal/uncertain recovery,
+cursor use, history loss and bounded waits. They do not establish real-model
+execution, Server-restart acceptance or ChatGPT Host continuation.
 
 Python unit tests use synthetic Hook payloads and controlled senders, including
 uncertain delivery/retry, changed associations, private-file checks, redaction,

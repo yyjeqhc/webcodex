@@ -622,6 +622,57 @@ class BidirectionalSmoke(Smoke):
         return {"exit_code": result.returncode, "tests_run": int(match.group(1)),
                 "output_sha256": hashlib.sha256(result.stdout + result.stderr).hexdigest()}
 
+    def observe_before_restart(self, run_id: str) -> tuple[dict, list[str], Counter]:
+        """Wait for a dispatched live Run, or retain the narrower observed case."""
+        deadline = time.monotonic() + self.args.timeout
+        token = None
+        states, kinds = [], Counter()
+        while True:
+            require(time.monotonic() < deadline, "recovery_observation_deadline")
+            require(self.runner.poll() is None, "runner_exited_before_restart")
+            request = {"run_id": run_id, "wait_secs": 1}
+            if token:
+                request["after_observation_token"] = token
+            observation = self.tool("observe_coding_agent", request, self.operator)
+            require(observation.get("run_id") == run_id, "recovery_observed_wrong_run")
+            state, execution = observation.get("state"), observation.get("execution_state")
+            require(state in ("starting", "running", "waiting_permission", *TERMINAL)
+                    and execution in ("not_started", "started", "completed", "outcome_unknown"),
+                    "recovery_execution_state_missing")
+            require(observation.get("history_lost") is False, "managed_event_history_lost")
+            if not states or states[-1] != state:
+                states.append(state)
+            kinds.update(event["kind"] for event in observation.get("events", []))
+            self.report["managed"].update(states=states, event_kinds=dict(kinds), last_run_state=state)
+            self.report["recovery"].update(
+                run_state_before_disconnect=state, execution_state_before_disconnect=execution)
+            self.checkpoint("observing_before_server_restart")
+            require(time.monotonic() < deadline, "recovery_observation_deadline")
+            # Run state alone is insufficient: running may precede the durable
+            # prompt-write acknowledgement. The canonical execution state owns it.
+            if execution == "outcome_unknown":
+                phase = "outcome_unknown"
+            elif state in TERMINAL:
+                phase = "before_prompt" if execution == "not_started" else "terminal"
+            elif state == "running" and execution == "started":
+                phase = "in_flight"
+            elif state == "waiting_permission":
+                phase = "waiting_permission"
+            else:
+                token = observation.get("observation_token")
+                require(isinstance(token, str) and bool(token), "recovery_observation_token_missing")
+                continue
+            self.report["recovery"]["phase_before_disconnect"] = phase
+            if phase != "in_flight":
+                self.report["recovery"]["failure"] = "in_flight_restart_not_observed"
+            self.checkpoint("before_server_restart")
+            return observation, states, kinds
+
+    def require_original_binding(self, binding: dict) -> None:
+        require(all(binding.get(key) == self.report["managed"][key]
+                    for key in ("task_id", "attempt_id", "run_id")),
+                "recovery_changed_execution_identity")
+
     def managed(self) -> None:
         baseline = self.native_tests("test_clamp.py")
         require(baseline["exit_code"] != 0 and baseline["tests_run"] == 7, "baseline_should_fail")
@@ -669,16 +720,10 @@ class BidirectionalSmoke(Smoke):
         replay = self.tool("start_agent_task_coding_run", params, self.operator)
         require(replay.get("run_id") == run_id, "binding_replay_changed_run")
         self.report["recovery"]["exact_binding_replay_same_run"] = True
-        observation = self.tool("observe_coding_agent", {"run_id": run_id, "wait_secs": 1}, self.operator)
-        states = [observation["state"]]
-        self.report["managed"]["last_run_state"] = observation["state"]
+        observation, states, kinds = self.observe_before_restart(run_id)
         terminal = observation.get("terminal") or {}
         self.report["managed"]["last_terminal"] = {
             key: terminal[key] for key in ("stop_reason", "error_code") if key in terminal}
-        kinds = Counter(event["kind"] for event in observation.get("events", []))
-        self.report["managed"]["states"] = states
-        self.report["managed"]["event_kinds"] = dict(kinds)
-        self.checkpoint("before_server_restart")
         old_server, runner_pid = self.server.pid, self.runner.pid
         stop(self.server)
         require(self.runner.poll() is None and self.runner.pid == runner_pid,
@@ -697,7 +742,7 @@ class BidirectionalSmoke(Smoke):
         recovered = self.tool("reconcile_agent_task_coding_run", {
             "task_id": task["task_id"], "attempt_id": attempt_id,
         }, self.operator)
-        require(recovered.get("run_id") == run_id, "server_restart_changed_run")
+        self.require_original_binding(recovered)
         self.checkpoint("server_recovered_original_run")
         deadline = time.monotonic() + self.args.timeout + 30
         token = None  # A new Server process may reset public observation tokens.
@@ -706,6 +751,7 @@ class BidirectionalSmoke(Smoke):
             if token:
                 request["after_observation_token"] = token
             observation = self.tool("observe_coding_agent", request, self.operator)
+            require(observation.get("run_id") == run_id, "recovery_observed_wrong_run")
             token = observation.get("observation_token")
             if not states or states[-1] != observation["state"]:
                 states.append(observation["state"])
@@ -721,6 +767,7 @@ class BidirectionalSmoke(Smoke):
         reconciled = self.tool("reconcile_agent_task_coding_run", {
             "task_id": task["task_id"], "attempt_id": attempt_id,
         }, self.operator)
+        self.require_original_binding(reconciled)
         self.report["managed"]["terminal_binding"] = {
             k: reconciled[k] for k in BINDING_FIELDS if k in reconciled
         }
@@ -774,11 +821,13 @@ class BidirectionalSmoke(Smoke):
             "execution_completion": True, "business_acceptance": True,
         }
         self.report["recovery"] |= {
-            "passed": True, "same_task_attempt_run": True, "adapter_processes": len(processes),
+            "passed": self.report["recovery"]["phase_before_disconnect"] == "in_flight",
+            "same_task_attempt_run": True, "adapter_processes": len(processes),
             "actual_prompt_dispatches": len(prompts), "recovery_layer": "real-server-process-and-runner-acp",
             "lease_expiry_tested": False,
         }
-        self.checkpoint("managed_and_recovery_accepted")
+        self.checkpoint("managed_and_recovery_accepted" if self.report["recovery"]["passed"]
+                        else "managed_accepted_recovery_incomplete")
 
     def run(self) -> None:
         self.report["binaries"] = {name: {

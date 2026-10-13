@@ -32,8 +32,10 @@ no production `codex-acp` default. The provider child is always spawned after
 `env_clear()` and receives only configured mappings. Missing source variables
 fail before provider process start.
 
-P1 exposes exactly three model tools: `start_coding_agent`,
-`observe_coding_agent`, and `cancel_coding_agent`. They require the independent
+The P1 Run primitive exposes three model tools: `start_coding_agent`,
+`observe_coding_agent`, and `cancel_coding_agent`. The managed AgentTask entry
+below adds durable attempt ownership over this same primitive. These Run tools
+require the independent
 `coding_agent:run` OAuth scope. Direct shared-key, open-anonymous, project
 credentials, existing OAuth clients, `project:write`, `job:run`, and `mcp:local`
 do not imply it. The hosted shared-key OAuth bridge can add this scope only via
@@ -85,6 +87,54 @@ Codex authentication, explicit environment mappings, and a read-only prompt on
 the registered ACP worktree. The Run produced normalized agent/activity events
 and correlated `stopReason=end_turn`; no global package install or credential
 mutation was performed.
+
+## Managed AgentTask binding
+
+The current managed path layers durable TaskAttempt ownership over the same
+`CodingAgentRun`; it does not introduce another provider lifecycle. Use it when
+WebCodex assigns an explicit bounded task to a durable Agent. An external Codex
+that only consumes WebCodex MCP tools does not need an AgentTask, attempt, Goal,
+or Workflow Session; see [MCP access](../MCP.md).
+
+The Host retains the exact Task, Attempt and assignee identities from
+`create_agent_task` and `start_agent_task_attempt`. It then calls
+`start_agent_task_coding_run` with the exact registered Project, logical provider
+id and `attempt_ref` returned by that attempt claim. The reference is a compact
+selector for the existing claim, not independent authority. The explicit
+Task/Attempt/assignee/fence/controller-generation form is also admitted by the
+same contract. The task supplies the instruction; the Server derives the Run
+initiation key from the Attempt instead of accepting a second task instruction
+or a caller-created replacement key.
+
+Before any provider dispatch, the Server rechecks Project/provider authority and
+the current attempt claim, persists the unique Attempt-to-Run binding, and
+commits an `outcome_unknown` barrier. With a still-valid attempt claim, repeating
+the start call reconciles the original Run when its binding no longer permits
+dispatch. After lease expiry, use the explicit reconciliation entry below. The
+binding retains the provider instance and authority/intent
+fingerprints; a provider-instance change is not permission to retarget a Run
+whose execution may already have started.
+
+Observe execution with `observe_coding_agent(run_id)`. Recover task ownership
+with `reconcile_agent_task_coding_run(task_id, attempt_id)`, which reads the
+stored original Run and applies authoritative backend state to that same
+Attempt. Keep all three identities across a Host interruption or Server restart.
+A normal attempt-lease expiry does not make an active or uncertain external
+execution safe to replace. An external report, process log, native Job exit, or
+model assertion cannot supply this backend terminal authority.
+
+Run completion and task execution success are separate from business
+acceptance. The Host still inspects the actual diff and runs independent fixed
+acceptance tests. Workflow Session handoff is optional bounded context and
+evidence provenance; it neither owns this attempt nor supplies its fence.
+Conversation/Participant presence and typing, generic foreign-executor binding,
+and scheduling are separate contracts.
+
+The owning implementation is [the AgentTask runtime](../../src/tool_runtime/agent_task.rs)
+and [the AgentTask store](../../crates/webcodex-store/src/agent_task/operations.rs).
+The [runtime reconciliation test](../../src/tool_runtime/tests/agent_tasks.rs)
+covers a reopened database and fresh runtime with the original Run identity;
+that deterministic test is not real-model or real-Server-restart acceptance.
 
 ## 1. Product model
 
@@ -1077,7 +1127,8 @@ P0/P1 do not imply:
 - hot ACP provider reload/generic provider framework;
 - ACP v2 or experimental extensions;
 - scheduler, worker pool, automatic worker spawning, or orchestration;
-- integration with durable Agent/Conversation/Participant state, presence, or typing;
+- Conversation/Participant presence or typing integration; durable AgentTask
+  execution binding is implemented as described above;
 - durable Operation DAG;
 - unification of Workflow Session, Job, ACP Session, and CodingAgentRun;
 - a claim that Project cwd is a filesystem sandbox;

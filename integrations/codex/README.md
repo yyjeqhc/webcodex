@@ -8,6 +8,76 @@ consumer and optional automatic entry below can inspect that brief and the optio
 read-only Goal recovery context described below; export remains follow-up work. This
 does not establish real two-sided UI acceptance.
 
+## Choose the integration boundary
+
+An external Codex that only calls WebCodex tools needs the supported MCP endpoint,
+an authorized credential with the target tool's scopes, and the exact registered
+Project. It does not need the adapters in this directory, a Workflow Session,
+Goal, durable Agent, AgentTask, or `attempt_ref`. See [MCP access](../../docs/MCP.md)
+for transport, authentication and direct-tool discovery.
+
+The optional observation and handoff adapters below serve explicitly selected
+Workflow Sessions. Their reports remain external claims and their handoffs
+remain bounded saved context. For WebCodex-owned delegation, use the existing
+[managed AgentTask/CodingAgentRun path](../../docs/agent/acp-coding-agent-run.md#managed-agenttask-binding)
+and retain its exact Task, Attempt and Run identities. These three integration
+boundaries have different ownership and acceptance requirements.
+
+## Reproduce the bidirectional acceptance
+
+The opt-in [bidirectional harness](../../scripts/e2e_codex_bidirectional_ws.py)
+runs real Codex against task-owned loopback Server/Runner instances. It uses the
+existing Python clamp fixture and fixed tests from the Runner's
+`coding_agent/tests/dogfood.rs`. This is a POSIX manual test, not ordinary CI.
+See the [2026-10-13 acceptance checkpoint](../../docs/agent/codex-bidirectional-acceptance-2026-10-13.md)
+for exact tested versions, actual failures and the limits of the recorded evidence.
+
+Prepare explicit local dependencies and dogfood binaries:
+
+```sh
+cargo build --locked --profile dogfood -p webcodex --bin webcodex-server -p webcodex-runner --bin webcodex-runner
+npm install --prefix target/codex-bidirectional-deps --no-audit --no-fund --save-exact @agentclientprotocol/codex-acp@2.1.1
+python3 scripts/e2e_codex_bidirectional_ws.py \
+  --output-dir target/codex-bidirectional-run \
+  --bin-dir target/dogfood \
+  --adapter-script target/codex-bidirectional-deps/node_modules/@agentclientprotocol/codex-acp/dist/index.js \
+  --codex-path /absolute/path/to/codex
+```
+
+The output directory must not already exist. The harness uses the selected CLI's
+existing normal authentication and contacts the real model service; it fixes
+`gpt-5.6-luna` and `medium`. Successful `codex login status` only confirms local
+login state. An online authentication failure remains a failed test; use the
+CLI's supported login flow when the account requires reauthentication.
+
+For ordinary consumption, per-invocation configuration supplies the local MCP
+URL, a read-only PAT through an environment variable, and the direct profile
+header. No global Codex MCP configuration is installed. The client exposes only
+`read_files`; the PAT and registered Project enforce the server-side scope.
+Acceptance requires actual completed MCP tool receipts matching independently
+read fixture bytes, the model's separately checked answer, and no newly created
+Workflow Session, Goal, Agent or AgentTask.
+
+For managed execution, the task-owned Runner pins ACP 2.1.1 and forces the
+model/effort through live ACP configuration admission. The harness preserves
+the exact Task/Attempt/Run, replays that same binding, restarts only its Server,
+and reconciles the original Run while its Runner stays alive. Read
+`run_state_before_disconnect` before describing the recovery: a startup-state
+restart or an already-terminal result does not prove recovery during a dispatched
+coding prompt. A transparent test-only relay records only adapter identity,
+effective model/effort and actual prompt-dispatch counts.
+
+Inspect `report.json` by stage. Execution completion, the independent seven
+fixed tests, the additional tests and cleanup are separate results; also check
+`consumer_group_stopped`, `server_stopped`, `runner_stopped` and
+`execution_outcome`. Consumer transcript scratch is removed after bounded
+evidence extraction; diagnostic text is reduced to fixed categories. Private
+local service credentials and recovery configuration remain in `private/`
+with mode 0700/0600 and must not be copied into reports or repository history.
+The finally path stops only task-owned processes. Shared services and Codex
+configuration stay unchanged. Keep an incomplete execution's exact identities
+and observe/reconcile before starting any replacement.
+
 ## Server contract
 
 - `record_external_observation(project, session_id, adapter_id, event_id, observed_tool,

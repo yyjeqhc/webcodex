@@ -68,6 +68,76 @@ class SessionRecoveryTests(unittest.TestCase):
         self.assertEqual(value["status"], "read")
         self.assertEqual(value["handoff_brief"]["events"][-1]["event_id"], "event-two")
 
+    def read_server_handoff(self, **output):
+        # Exercise the real reader and cache together; only HTTP and discovery
+        # are fixtures. A mocked reader would miss dropped sibling projections.
+        brief = {**self.value["handoff_brief"],
+                 "session": {"session_id": self.binding["workflow_session_id"]},
+                 "deterministic": True, "llm_summary": False,
+                 "external_observations": {
+                     "provenance": "external_report", "coverage": {"complete": False}}}
+        body = {"success": True, "output": {**self.value, "handoff_brief": brief, **output}}
+        with patch("read_handoff.urllib.request.build_opener") as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.read.return_value = json.dumps(body).encode()
+            value = recovery.cached_recovery(
+                self.registry_path, recovery.load_registry(self.registry_path), self.payload,
+                recovery.read_handoff, self.caller,
+            )
+            self.assertEqual(opener.return_value.open.call_count, 1)
+            request = opener.return_value.open.call_args.args[0]
+            self.assertEqual(json.loads(request.data), {
+                "tool": "get_session_handoff_state",
+                "params": {"project": self.binding["project"], "session_id": "wc_sess_fixture"},
+            })
+            return value
+
+    def test_acceptance_changes_refresh_returning_conversation_without_brief_changes(self):
+        ready = {"state": "ready_for_review", "reason_codes": [], "evidence_refs": ["validation"]}
+        stale = {"state": "needs_evidence", "reason_codes": ["validation_stale"],
+                 "evidence_refs": ["validation"]}
+        first = self.read_server_handoff(acceptance=ready)
+        before_registry = self.registry_path.read_bytes()
+        self.assertEqual(self.read_server_handoff(acceptance=ready)["status"], "unchanged")
+        second = self.read_server_handoff(acceptance=stale)
+        self.assertEqual(second["status"], "read")
+        self.assertEqual(second["acceptance"], stale)
+        self.assertEqual(second["handoff_brief"], first["handoff_brief"])
+        self.assertEqual(second["snapshot_path"], first["snapshot_path"])
+        saved = json.loads(Path(second["snapshot_path"]).read_text())
+        self.assertEqual(saved["evidence"]["acceptance"], stale)
+        self.assertEqual(self.registry_path.read_bytes(), before_registry)
+        context = recovery.hook_output(second, self.payload["hook_event_name"])
+        self.assertIn("validation_stale", context["hookSpecificOutput"]["additionalContext"])
+        self.assertNotIn("Bearer fixture", json.dumps(context))
+
+        # A reason-only change must also refresh; matching state is insufficient.
+        changed = {**stale, "reason_codes": ["snapshot_changed"]}
+        self.assertEqual(self.read_server_handoff(acceptance=changed)["acceptance"], changed)
+        self.payload["session_id"] = "local-two"
+        self.assertEqual(self.read_server_handoff(acceptance=changed)["acceptance"], changed)
+        self.payload.update(session_id="local-one", hook_event_name="SessionStart")
+        self.assertEqual(self.read_server_handoff(acceptance=changed)["acceptance"], changed)
+
+    def test_invalid_acceptance_does_not_replace_last_valid_snapshot(self):
+        acceptance = {"state": "needs_evidence", "reason_codes": ["source_unproven"],
+                      "evidence_refs": ["validation"]}
+        first = self.read_server_handoff(acceptance=acceptance)
+        snapshot = Path(first["snapshot_path"])
+        before = snapshot.read_bytes()
+        with self.assertRaisesRegex(AdapterError, "^handoff_acceptance_invalid$"):
+            self.read_server_handoff(acceptance={**acceptance, "state": "succeeded"})
+        self.assertEqual(snapshot.read_bytes(), before)
+
+    def test_missing_acceptance_clears_previously_offered_readiness(self):
+        ready = {"state": "ready_for_review", "reason_codes": [], "evidence_refs": ["validation"]}
+        first = self.read_server_handoff(acceptance=ready)
+        second = self.read_server_handoff()
+        self.assertEqual(second["status"], "read")
+        self.assertNotIn("acceptance", second)
+        self.assertEqual(second["snapshot_path"], first["snapshot_path"])
+        self.assertNotIn("acceptance", json.loads(Path(second["snapshot_path"]).read_text())["evidence"])
+
 
     def test_goal_context_change_refreshes_automatic_recovery_snapshot(self):
         self.value["goal_context"] = {

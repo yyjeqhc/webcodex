@@ -12,6 +12,30 @@ import unicodedata
 from external_observation_hook import AdapterError, MAX_BYTES, NoRedirect, load_config, private_file
 
 
+def _validate_acceptance(value):
+    # Consumer of acceptance_evidence_schema in the canonical tool contracts.
+    # Validate the bounded wire shape; never derive readiness from local claims.
+    if (not isinstance(value, dict)
+            or set(value) != {"state", "reason_codes", "evidence_refs"}
+            or not isinstance(value.get("state"), str)
+            or value["state"] not in {"ready_for_review", "needs_evidence", "failed", "not_applicable"}):
+        raise AdapterError("handoff_acceptance_invalid")
+    for key, limit, allowed in (
+        ("reason_codes", 16, {
+            "workspace_unobserved", "review_missing", "validation_failed", "validation_stale",
+            "source_unproven", "validation_not_run", "validation_inconclusive", "validation_unknown",
+            "validation_evidence_incomplete", "zero_tests", "outputs_invalid", "outputs_historical",
+            "outputs_unverified", "history_partial", "snapshot_changed", "closeout_blocked",
+            "integrity_warning", "no_task_session",
+        }),
+        ("evidence_refs", 4, {"workspace", "validation", "review_evidence", "task_outputs"}),
+    ):
+        codes = value[key]
+        if (not isinstance(codes, list) or len(codes) > limit
+                or not all(isinstance(code, str) and code in allowed for code in codes)
+                or len(codes) != len(set(codes))):
+            raise AdapterError("handoff_acceptance_invalid")
+
 
 def _bounded_text(value, max_bytes, nullable=False):
     if value is None:
@@ -189,15 +213,19 @@ def read_handoff(config, timeout=6, current_dir=None):
     goal_context = output.get("goal_context")
     if goal_context is not None:
         _validate_goal_context(goal_context)
+    if "acceptance" in output:
+        _validate_acceptance(output["acceptance"])
     recovered = {
         "status": "read",
         "project": output["project"],
         "session_id": output["session_id"],
         "handoff_brief": brief,
-        "recovery_note": "Historical evidence only. Check current project rules, files, Git state and unresolved work before acting; never replay an unknown operation.",
+        "recovery_note": "Historical evidence only. Check current project rules, files, Git state and unresolved work before acting; never replay an unknown operation. Acceptance readiness is advisory; ready_for_review does not mean task completion.",
     }
     if goal_context is not None:
         recovered["goal_context"] = goal_context
+    if "acceptance" in output:
+        recovered["acceptance"] = output["acceptance"]
     return recovered
 
 

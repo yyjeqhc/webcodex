@@ -76,6 +76,62 @@ class ReadHandoffTests(unittest.TestCase):
         })
         self.assertEqual(request.get_header("Authorization"), "Bearer fixture")
         self.assertNotIn("Bearer fixture", json.dumps(result))
+        self.assertNotIn("acceptance", result)
+
+    def test_acceptance_is_preserved_without_reinterpreting_completion(self):
+        for acceptance in (
+            {"state": "ready_for_review", "reason_codes": [],
+             "evidence_refs": ["workspace", "validation", "review_evidence", "task_outputs"]},
+            {"state": "needs_evidence", "reason_codes": ["source_unproven", "outputs_historical"],
+             "evidence_refs": ["validation", "task_outputs"]},
+            {"state": "failed", "reason_codes": ["validation_failed", "closeout_blocked"],
+             "evidence_refs": ["validation"]},
+            {"state": "not_applicable", "reason_codes": ["no_task_session"], "evidence_refs": []},
+        ):
+            with self.subTest(state=acceptance["state"]):
+                self.body["output"]["acceptance"] = acceptance
+                result, call = self.read()
+                self.assertEqual(result["acceptance"], acceptance)
+                self.assertEqual(result["handoff_brief"], self.brief)
+                self.assertIn("advisory", result["recovery_note"])
+                self.assertEqual(json.loads(call.args[0].data)["tool"], "get_session_handoff_state")
+
+    def test_malformed_acceptance_is_rejected_without_exposing_payload(self):
+        valid = {"state": "needs_evidence", "reason_codes": ["source_unproven"],
+                 "evidence_refs": ["validation"]}
+        # Distinct admitted codes exercise the bound independently of deduplication.
+        reasons = ["workspace_unobserved", "review_missing", "validation_failed", "validation_stale",
+                   "source_unproven", "validation_not_run", "validation_inconclusive", "validation_unknown",
+                   "validation_evidence_incomplete", "zero_tests", "outputs_invalid", "outputs_historical",
+                   "outputs_unverified", "history_partial", "snapshot_changed", "closeout_blocked",
+                   "integrity_warning"]
+        self.body["output"]["acceptance"] = {**valid, "reason_codes": reasons[:16]}
+        result, _ = self.read()
+        self.assertEqual(result["acceptance"]["reason_codes"], reasons[:16])
+        cases = [
+            None, [], "ready_for_review", {},
+            {"state": "ready_for_review", "reason_codes": []},
+            {**valid, "state": "succeeded"},
+            {**valid, "state": []},
+            {**valid, "reason_codes": "source_unproven"},
+            {**valid, "reason_codes": [None]},
+            {**valid, "reason_codes": [{}]},
+            {**valid, "reason_codes": ["invented_reason"]},
+            {**valid, "reason_codes": reasons},
+            {**valid, "reason_codes": ["source_unproven"] * 17},
+            {**valid, "reason_codes": ["source_unproven", "source_unproven"]},
+            {**valid, "evidence_refs": None},
+            {**valid, "evidence_refs": [True]},
+            {**valid, "evidence_refs": ["external_report"]},
+            {**valid, "evidence_refs": ["validation"] * 5},
+            {**valid, "evidence_refs": ["validation", "validation"]},
+            {**valid, "raw_output": "private-fixture-value"},
+        ]
+        for index, acceptance in enumerate(cases):
+            with self.subTest(case=index):
+                self.body["output"]["acceptance"] = acceptance
+                with self.assertRaisesRegex(AdapterError, "^handoff_acceptance_invalid$"):
+                    self.read()
 
 
     def valid_goal_context(self):
@@ -200,6 +256,9 @@ class ReadHandoffTests(unittest.TestCase):
         self.body["output"].pop("goal_context", None)
 
     def test_wrong_project_or_session_or_nested_brief_is_rejected(self):
+        self.body["output"]["acceptance"] = {
+            "state": "ready_for_review", "reason_codes": [], "evidence_refs": ["validation"],
+        }
         for edit in (
             lambda: self.body["output"].update(project="agent:fixture:other"),
             lambda: self.body["output"].update(session_id="wc_sess_other"),

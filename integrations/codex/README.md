@@ -228,6 +228,15 @@ unknown operations before continuing. The command does not select a Session by
 directory or recency, bind the new local conversation, mark work complete, replay
 an operation, install a Hook, or write a handoff file.
 
+When the Server supplies `acceptance`, the reader validates and preserves that
+bounded sibling projection, including its state, reason codes and evidence
+references. It remains advisory: `ready_for_review` does not mean the task is
+complete, and retained validation or outputs do not prove current source
+freshness. Existing handoff actions remain the recovery guidance. A response
+without `acceptance` leaves it absent; the reader never infers readiness or
+retains an older verdict. Malformed acceptance fails the read without exposing
+the rejected payload or replacing the last valid private snapshot.
+
 When the exact Workflow Session already has one caller-owned active Goal linked by an
 explicit Workflow Session↔Goal correlation, the Server may also return sibling
 `goal_context`. This projection is separate from the 8 KiB `handoff_brief` and contains
@@ -297,6 +306,13 @@ Host or Agent consumed it. Offline and invalid responses remain failures and do
 not present cached evidence as current. Unknown outcomes and incomplete coverage
 are preserved. No observations, Goals, business operations or historical events
 are written or replayed by this entry.
+
+An acceptance-only change also refreshes the existing conversation's snapshot
+and Hook context, even when the handoff brief is unchanged. New conversations
+and `SessionStart` receive the current projection through the same read path.
+The [bounded task context](../../docs/implementation/task-context-recovery.md)
+already travels inside `handoff_brief.task`; neither it nor acceptance creates
+a separate local task lifecycle or completion verdict.
 
 ## Verification boundary
 

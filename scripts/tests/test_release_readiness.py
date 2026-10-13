@@ -351,6 +351,17 @@ class DispatchClassificationTests(unittest.TestCase):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_release_build_preflight_provisions_inventory_dependency(self) -> None:
+        workflow = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
+        preflight = workflow.split("  preflight:\n", 1)[1].split("\n  prepare:\n", 1)[0]
+        self.assertIn("if ! command -v rg >/dev/null 2>&1; then", preflight)
+        self.assertIn("sudo apt-get update", preflight)
+        self.assertIn("sudo apt-get install --no-install-recommends -y ripgrep", preflight)
+        self.assertLess(
+            preflight.index("sudo apt-get install --no-install-recommends -y ripgrep"),
+            preflight.index("bash scripts/release_check.sh --static-only"),
+        )
+
     def test_pre_tag_gate_combines_exact_source_ci_with_extended_native(self) -> None:
         workflow = Path(".github/workflows/release-readiness.yml").read_text(encoding="utf-8")
         extended = Path(".github/workflows/extended-native.yml").read_text(encoding="utf-8")

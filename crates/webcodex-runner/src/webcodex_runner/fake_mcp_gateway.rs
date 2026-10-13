@@ -87,6 +87,14 @@ fn main() -> io::Result<()> {
                 if scenario == "init_timeout" {
                     thread::sleep(Duration::from_secs(6));
                 }
+                if scenario == "init_ping" {
+                    send(&mut writer, r#"{"jsonrpc":"2.0","method":"ping","id":"init-ping"}"#)?;
+                    let mut reply = String::new();
+                    reader.read_line(&mut reply)?;
+                    append(marker, if reply.contains(r#""id":"init-ping""#) && reply.contains(r#""result":{}"#) {
+                        "init-ping-ok\n"
+                    } else { "init-ping-bad\n" })?;
+                }
                 let capabilities = if scenario == "init_missing_tools" {
                     r#"{}"#
                 } else {
@@ -181,6 +189,20 @@ fn main() -> io::Result<()> {
                         r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"echo","description":"{description}","inputSchema":{{"type":"object","properties":{{"value":{{"type":"{value_type}"}}}}}}}}]}}}}"#
                     ),
                 )?;
+                if scenario == "idle_ping" && lists == 1 {
+                    for (request, expected_id) in [
+                        (r#"{"jsonrpc":"2.0","id":14,"method":"ping"}"#, r#""id":14"#),
+                        (r#"{"jsonrpc":"2.0","id":"provider-14","method":"ping"}"#, r#""id":"provider-14""#),
+                        (r#"{"jsonrpc":"2.0","id":15,"method":"ping"}"#, r#""id":15"#),
+                    ] {
+                        send(&mut writer, request)?;
+                        let mut reply = String::new();
+                        reader.read_line(&mut reply)?;
+                        append(marker, if reply.contains(expected_id) && reply.contains(r#""result":{}"#) {
+                            "ping-ok\n"
+                        } else { "ping-bad\n" })?;
+                    }
+                }
                 if scenario == "exit_after_list" {
                     return Ok(());
                 }
@@ -235,10 +257,28 @@ fn main() -> io::Result<()> {
                             ),
                         )?;
                     }
-                    "callback" => send(
-                        &mut writer,
-                        r#"{"jsonrpc":"2.0","id":9000,"method":"sampling/createMessage","params":{}}"#,
-                    )?,
+                    "call_ping" => {
+                        send(&mut writer, r#"{"jsonrpc":"2.0","id":"during-call","method":"ping"}"#)?;
+                        let mut reply = String::new();
+                        reader.read_line(&mut reply)?;
+                        append(marker, if reply.contains(r#""id":"during-call""#) && reply.contains(r#""result":{}"#) {
+                            "call-ping-ok\n"
+                        } else { "call-ping-bad\n" })?;
+                        send(&mut writer, &format!(
+                            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"content":[{{"type":"text","text":"ping-during-call"}}],"isError":false}}}}"#
+                        ))?;
+                    }
+                    "callback" => {
+                        send(&mut writer, r#"{"jsonrpc":"2.0","id":9000,"method":"sampling/createMessage","params":{}}"#)?;
+                        let mut reply = String::new();
+                        reader.read_line(&mut reply)?;
+                        append(marker, if reply.contains(r#""code":-32601"#) && reply.contains(r#""id":9000"#) {
+                            "callback-rejected\n"
+                        } else { "callback-wrong\n" })?;
+                        send(&mut writer, &format!(
+                            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"content":[{{"type":"text","text":"callback-denied"}}],"isError":false}}}}"#
+                        ))?;
+                    },
                     "timeout" => {
                         thread::sleep(Duration::from_secs(6));
                     }

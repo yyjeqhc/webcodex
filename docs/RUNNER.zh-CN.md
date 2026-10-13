@@ -323,7 +323,9 @@ Runner 到 configured local provider 的内建 gateway 有意限制为 bounded s
 
 - provider-side tool 行为基于 MCP `2025-06-18`；
 - 支持 `tools/list` 与 `tools/call`；
-- 不支持 callback、list pagination 与端到端 progress forwarding；
+- Provider 主动发起的 ping（数字或字符串 ID）即使在空闲期间也会收到空 JSON-RPC result；Notification 不回复，并有洪泛限制；
+- 合法但未支持的 Provider callback 返回 JSON-RPC -32601，不授予 sampling、roots 或 elicitation 能力；畸形消息与未知响应 ID 仍属于致命协议错误；
+- 不支持 list pagination 以及端到端 progress/cancellation 转发；
 - tool result 支持 text 以及标准的有界 image content block，并保持 provider `content` 原始顺序；image `data` 必须是 standard Base64，MIME 仅支持 `image/png`、`image/jpeg`、`image/webp`，单个 result 内全部 image block 合计 decoded data 上限为 4 MiB；
 - 有界 `structuredContent` 与 image content 独立原样保留；
 - audio、resource、`resource_link` 以及未知 content block type 仍不支持。

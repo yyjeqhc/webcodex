@@ -3,6 +3,7 @@ use super::jobs::{
     notify_job_update, observe_job_terminal, parse_job_lifecycle, replace_log_from_snapshot,
     COMMAND_PREVIEW_MAX_CHARS,
 };
+use super::requests::retire_job_request_locked;
 use super::state::{
     JobLifecycleState, JobObservationState, JobRecoveryPhase, JobRecoveryReason, JobRecoveryState,
     RunnerRegistryInner, ShellJobLogState, ShellJobRecord, ShellJobVisibility,
@@ -688,12 +689,8 @@ fn remove_job_request_mapping(
     let Some(request_id) = request_id else {
         return;
     };
-    inner.pending_by_id.remove(request_id);
+    retire_job_request_locked(inner, client_id, request_id);
     inner.persistent_waiters.remove(request_id);
-    inner.request_to_job.remove(request_id);
-    if let Some(queue) = inner.queues_by_runner.get_mut(client_id) {
-        queue.retain(|queued| queued != request_id);
-    }
 }
 
 fn remove_job_control_requests(

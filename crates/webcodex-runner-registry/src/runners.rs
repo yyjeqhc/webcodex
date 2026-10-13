@@ -7,7 +7,7 @@ use super::reconciliation::{
     preflight_inventory_locked, reconcile_inventory_locked, terminate_instance_jobs_locked,
     validate_job_inventory_without_project_membership,
 };
-use super::requests::resolve_disconnected_sync_requests_locked;
+use super::requests::{resolve_disconnected_sync_requests_locked, retire_job_request_locked};
 use super::state::{
     JobLifecycleState, JobRecoveryReason, NotifierEntry, RunnerRecord, RunnerRegistryInner,
     RunnerSemanticView,
@@ -1141,11 +1141,7 @@ impl RunnerRegistry {
                 }
             }
             if let Some(request_id) = request_id {
-                inner.pending_by_id.remove(&request_id);
-                inner.request_to_job.remove(&request_id);
-                if let Some(queue) = inner.queues_by_runner.get_mut(client_id) {
-                    queue.retain(|id| id != &request_id);
-                }
+                retire_job_request_locked(&mut inner, client_id, &request_id);
             }
         }
         // Drop any additional job-backed control request (for example an
@@ -1160,11 +1156,7 @@ impl RunnerRegistry {
             .map(|(request_id, _)| request_id.clone())
             .collect::<Vec<_>>();
         for request_id in extra_job_requests {
-            inner.pending_by_id.remove(&request_id);
-            inner.request_to_job.remove(&request_id);
-            if let Some(queue) = inner.queues_by_runner.get_mut(client_id) {
-                queue.retain(|id| id != &request_id);
-            }
+            retire_job_request_locked(&mut inner, client_id, &request_id);
         }
         // Synchronous tool requests (run_shell/read_file/write/lsp/project ops)
         // carry a live oneshot waiter but no job_id, so the job loop above skips

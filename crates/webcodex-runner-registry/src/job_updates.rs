@@ -9,7 +9,7 @@ use super::jobs::{
 use super::reconciliation::validate_stream_snapshot;
 use super::requests::{
     capability_upgrade_error, enqueue_pending_request_locked, next_request_id,
-    notify_runner_locked, remove_pending_request_locked,
+    notify_runner_locked, retire_job_request_locked,
 };
 use super::state::{
     DetachedIdempotencyIntent, JobLifecycleState, JobObservationState, JobRecoveryPhase,
@@ -1989,8 +1989,7 @@ impl RunnerRegistry {
         }
         if job.lifecycle == JobLifecycleState::Queued {
             if let Some(request_id) = job.request_id.as_deref() {
-                remove_pending_request_locked(&mut inner, request_id);
-                inner.request_to_job.remove(request_id);
+                retire_job_request_locked(&mut inner, &job.client_id, request_id);
             }
             inner.jobs_by_id.remove(job_id);
             return Ok(true);
@@ -2050,11 +2049,7 @@ impl RunnerRegistry {
             return false;
         };
         if let Some(request_id) = job.request_id {
-            inner.request_to_job.remove(&request_id);
-            inner.pending_by_id.remove(&request_id);
-            if let Some(queue) = inner.queues_by_runner.get_mut(&job.client_id) {
-                queue.retain(|id| id != &request_id);
-            }
+            retire_job_request_locked(&mut inner, &job.client_id, &request_id);
         }
         true
     }
@@ -2108,11 +2103,7 @@ impl RunnerRegistry {
             .jobs_by_id
             .remove(job_id)
             .expect("projected hidden Job was checked under the registry lock");
-        inner.request_to_job.remove(&request_id);
-        inner.pending_by_id.remove(&request_id);
-        if let Some(queue) = inner.queues_by_runner.get_mut(&removed.client_id) {
-            queue.retain(|id| id != &request_id);
-        }
+        retire_job_request_locked(&mut inner, &removed.client_id, &request_id);
         true
     }
 
@@ -2983,8 +2974,7 @@ impl RunnerRegistry {
         match job.lifecycle {
             JobLifecycleState::Queued => {
                 if let Some(request_id) = &job.request_id {
-                    remove_pending_request_locked(&mut inner, request_id);
-                    inner.request_to_job.remove(request_id);
+                    retire_job_request_locked(&mut inner, &job.client_id, request_id);
                 }
                 let job = inner.jobs_by_id.get_mut(job_id).expect("job exists");
                 let terminal_now = now_ts();

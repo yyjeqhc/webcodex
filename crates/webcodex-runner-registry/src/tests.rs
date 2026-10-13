@@ -378,6 +378,8 @@ mod quic_queueing;
 mod raw_shell;
 #[path = "tests/registration_projection.rs"]
 mod registration_projection;
+#[path = "tests/request_cleanup.rs"]
+mod request_cleanup;
 #[path = "tests/run_enqueue.rs"]
 mod run_enqueue;
 #[path = "tests/runner_config.rs"]

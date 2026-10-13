@@ -52,6 +52,16 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+      # The static release gate runs test_inventory.sh self-tests, which require rg.
+      # Ubuntu runner images do not guarantee ripgrep; match ordinary CI setup.
+      - name: Ensure test inventory dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y ripgrep
+          fi
       - name: Fail fast on deterministic release contracts
         shell: bash
         env:

@@ -511,6 +511,15 @@ used by the regular Desktop Tunnel. That Tunnel derives the credential from the 
 The flag is ignored for non-loopback binds and all other credential classes; leave it
 unset on network-accessible Servers.
 
+Only this explicitly trusted loopback provenance may accept a resolved IPv4 address
+in the RFC 2544 benchmark / TUN fake-IP pool (`198.18.0.0/15`), and only when the
+HTTPS hostname matches the existing OpenAI attachment-host allowlist. All other
+private or sensitive destinations remain blocked; OAuth and remote trusted clients
+continue to require public DNS answers. Address pinning, TLS hostname verification,
+no-proxy/no-redirect download, file-size limits, and Project write permissions
+remain in force. This does not make fake IPs reachable without a correctly
+configured local TUN.
+
 List and revoke clients with `POST /api/oauth/clients/list` and
 `POST /api/oauth/clients/revoke`. OAuth uses the authorization-code flow;
 dynamic client registration, OIDC, and the device-code flow are not

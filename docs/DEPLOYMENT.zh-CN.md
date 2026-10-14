@@ -450,6 +450,12 @@ ChatGPT MCP host-file import 采用两级 trust。正常 active authenticated OA
 
 对于绑定到 loopback、并通过 OpenAI Secure Tunnel 访问的 operator-controlled Server，还有一个独立的 local-only 例外。设置 `WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true` 后，仅当请求由允许的本地 credential 认证时才信任 ChatGPT host-file rewrite：普通 user API token，或 Desktop regular Tunnel 使用的已配置 Server bootstrap credential。该 Tunnel 从本机 `WEBCODEX_TOKEN` 配置派生 credential 并私下完成注入；不要复制或暴露它。非 loopback bind 和其它 credential class 都会忽略该 flag；network-accessible Server 应保持未设置。
 
+仅上述明确受信任的 loopback 来源，在 HTTPS 主机名匹配现有 OpenAI 附件域名白名单时，
+才允许 DNS 解析结果落入 RFC 2544/TUN Fake-IP 网段 `198.18.0.0/15`。
+其它内网或敏感地址仍被拒绝；OAuth 及远程可信客户端仍要求 DNS 结果为公网地址。
+DNS 地址固定、TLS 主机名校验、禁止代理与重定向、文件大小限制及 Project 写入权限均保持不变。
+如果本机没有正确配置 TUN，该例外也不会让 Fake-IP 自动可达。
+
 用 `POST /api/oauth/clients/list` 与 `POST /api/oauth/clients/revoke` 列出与
 撤销 client。OAuth 使用 authorization-code 流程；动态 client 注册、OIDC 与
 device-code 流程未实现。宿主提供 `offline_access` 时保持勾选——它是协议级

@@ -1154,6 +1154,20 @@ mod tests {
         reset_import_test_dns_resolution_count();
     }
 
+    #[test]
+    fn rfc2544_exception_matches_exact_ipv4_benchmark_boundaries() {
+        for ip in ["198.18.0.0", "198.18.0.42", "198.19.255.255"] {
+            assert!(ipv4_is_rfc2544_benchmark(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in ["198.17.255.255", "198.20.0.0", "198.51.100.42"] {
+            assert!(!ipv4_is_rfc2544_benchmark(ip.parse().unwrap()), "{ip}");
+        }
+        // Mapped IPv6 does not qualify for the IPv4-only fake-IP exception.
+        assert!(!ip_is_rfc2544_benchmark(
+            "::ffff:198.18.0.42".parse().unwrap()
+        ));
+    }
+
     #[tokio::test]
     async fn loopback_trusted_mcp_policy_allows_rfc2544_only_for_openai_hosts() {
         let _lock = lock_import_test_network().await;
@@ -1178,6 +1192,31 @@ mod tests {
             )
             .await
             .expect_err("real private/sensitive addresses must still fail closed");
+            assert!(error.contains("non-public address"), "{error}");
+        }
+
+        // One forbidden address poisons the entire DNS answer set; no
+        // connection may fall back to the permitted fake IP in this case.
+        set_import_test_resolved_ips(Some(vec![fake_ip, "169.254.169.254".parse().unwrap()]));
+        let error = prepare_download_request(
+            "https://files.oaiusercontent.com/file",
+            ConversationImportDownloadPolicy::LoopbackTrustedMcpHostFile,
+        )
+        .await
+        .expect_err("mixed fake-IP and metadata-service DNS answers must fail closed");
+        assert!(error.contains("non-public address"), "{error}");
+
+        set_import_test_resolved_ips(Some(vec![fake_ip]));
+        for literal in [
+            "https://198.18.0.42/file",
+            "https://[::ffff:198.18.0.42]/file",
+        ] {
+            let error = prepare_download_request(
+                literal,
+                ConversationImportDownloadPolicy::LoopbackTrustedMcpHostFile,
+            )
+            .await
+            .expect_err("literal and mapped IPs must not impersonate an OpenAI hostname");
             assert!(error.contains("non-public address"), "{error}");
         }
 

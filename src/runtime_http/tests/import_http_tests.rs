@@ -14,8 +14,172 @@ use salvo::Service;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::instrument::WithSubscriber;
+
+fn capture_import_warnings() -> (
+    Arc<std::sync::Mutex<Vec<u8>>>,
+    impl tracing::Subscriber + Send + Sync,
+) {
+    #[derive(Clone)]
+    struct Capture(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = Capture(output.clone());
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter("webcodex::mcp=warn")
+        .with_ansi(false)
+        .without_time()
+        .with_writer(move || writer.clone())
+        .finish();
+    (output, subscriber)
+}
+
+#[tokio::test]
+async fn import_http_status_failure_logs_only_stage_status_and_safe_uuid() {
+    let _guard = lock_import_http_test().await;
+    let server = start_mock_http_server(vec![http_response(
+        "403 Forbidden",
+        &[("Content-Length", "20".to_string())],
+        b"private-body-secret!",
+    )])
+    .await;
+    let _download_base = ImportDownloadBaseUrlGuard::set(server.base_url.clone());
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, _registry) = super::register_import_agent_with_capabilities(
+        tmp.path(),
+        Some(crate::runner_protocol::RunnerCapabilities {
+            file_write: true,
+            ..Default::default()
+        }),
+    )
+    .await;
+    let config = super::test_config(Some("secret"));
+    let (_db_tmp, db) = super::test_db();
+    let service = Service::new(fixture::router(config, db, runtime));
+    let (output, subscriber) = capture_import_warnings();
+    let trace = "c77c5ec6-32e4-4a54-8590-4da44d35a8be";
+    let mut resp = crate::tool_request_trace::scope_active_trace(Some(trace.to_string()), async {
+        TestClient::post("http://localhost/test-host-file-import")
+            .bearer_auth("secret")
+            .json(&import_body(
+                "https://files.oaiusercontent.com/private-path-secret?sig=signed-query-secret",
+                "image/png",
+                "private-file-secret.png",
+            ))
+            .send(&service)
+            .await
+    })
+    .with_subscriber(subscriber)
+    .await;
+    let body: Value = resp.take_json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert_eq!(body["output"]["count"], 0);
+    assert_eq!(body["output"]["partial_success"], false);
+    assert!(!tmp
+        .path()
+        .join("docs/assets/private-file-secret.png")
+        .exists());
+    let log = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    let event = log
+        .lines()
+        .find(|line| line.contains("mcp_host_file_import_failed"))
+        .unwrap();
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.contains("mcp_host_file_import_failed"))
+            .count(),
+        1
+    );
+    for expected in [
+        "WARN",
+        "stage=\"download_request\"",
+        "failure_class=\"http_status\"",
+        "http_status=403",
+        trace,
+    ] {
+        assert!(event.contains(expected), "{event}");
+    }
+    for secret in [
+        "private-path-secret",
+        "signed-query-secret",
+        "private-file-secret",
+        "private-body-secret",
+        "https://",
+        "Authorization",
+        "Bearer",
+        "files.oaiusercontent.com",
+    ] {
+        assert!(!log.contains(secret), "{log}");
+    }
+}
 
 const IMPORT_TEST_AGENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[tokio::test]
+async fn import_http_truncated_body_logs_read_stage_and_aborts_without_success() {
+    let _guard = lock_import_http_test().await;
+    let server = start_mock_http_server(vec![http_response(
+        "200 OK",
+        &[("Content-Length", "100".to_string())],
+        b"short",
+    )])
+    .await;
+    let _download_base = ImportDownloadBaseUrlGuard::set(server.base_url.clone());
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = super::register_import_agent_with_capabilities(
+        tmp.path(),
+        Some(crate::runner_protocol::RunnerCapabilities {
+            file_write: true,
+            ..Default::default()
+        }),
+    )
+    .await;
+    let config = super::test_config(Some("secret"));
+    let (_db_tmp, db) = super::test_db();
+    let service = Service::new(fixture::router(config, db, runtime));
+    let agent = tokio::spawn(complete_import_artifact_uploads(registry, 1));
+    let (output, subscriber) = capture_import_warnings();
+    let mut resp = TestClient::post("http://localhost/test-host-file-import")
+        .bearer_auth("secret")
+        .json(&import_body(
+            "https://files.oaiusercontent.com/body-secret?sig=SECRET",
+            "image/png",
+            "private-body.png",
+        ))
+        .send(&service)
+        .with_subscriber(subscriber)
+        .await;
+    let outcomes = tokio::time::timeout(Duration::from_secs(5), agent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(outcomes[0].aborted);
+    assert!(!outcomes[0].finished);
+    let body: Value = resp.take_json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert_eq!(body["output"]["count"], 0);
+    assert!(!tmp.path().join("docs/assets/private-body.png").exists());
+    let log = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    assert!(log.contains("stage=\"download_body\""), "{log}");
+    assert!(log.contains("failure_class=\"failed\""), "{log}");
+    for excluded in [
+        "body-secret",
+        "SECRET",
+        "private-body.png",
+        "https://",
+        "docs/assets",
+    ] {
+        assert!(!log.contains(excluded), "{log}");
+    }
+}
 // The global import-network override is shared with MCP and DNS import fixtures.
 // Budget for queued full-suite contention while still failing a genuinely stuck wait.
 const IMPORT_TEST_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
@@ -876,6 +1040,16 @@ async fn import_http_batch_failure_reports_prior_success_and_preserves_unicode_n
     );
     assert_eq!(body["output"]["failed_item"]["index"], 1);
     assert_eq!(body["output"]["failed_item"]["source_name"], "source.docx");
+    use sha2::{Digest, Sha256};
+    let confirmed = &body["output"]["imported"][0];
+    assert_eq!(confirmed["bytes_written"], first_bytes.len());
+    assert_eq!(
+        confirmed["sha256"],
+        format!("{:x}", Sha256::digest(&first_bytes))
+    );
+    assert_eq!(body["output"]["succeeded"], body["output"]["imported"]);
+    assert_eq!(body["output"]["imported"].as_array().unwrap().len(), 1);
+    assert!(!tmp.path().join("docs/assets/wrong.bin").exists());
     assert!(body["output"]["failure_reason"]
         .as_str()
         .unwrap()
@@ -913,6 +1087,7 @@ async fn import_http_preserves_overwrite_false_protection() {
     let (_db_tmp, db) = super::test_db();
     let service = Service::new(fixture::router(config, db, runtime));
     let agent = tokio::spawn(complete_import_artifact_uploads(registry, 1));
+    let (output, subscriber) = capture_import_warnings();
     let mut resp = TestClient::post("http://localhost/test-host-file-import")
         .bearer_auth("secret")
         .json(&json!({
@@ -928,6 +1103,7 @@ async fn import_http_preserves_overwrite_false_protection() {
             }]
         }))
         .send(&service)
+        .with_subscriber(subscriber)
         .await;
     tokio::time::timeout(Duration::from_secs(5), agent)
         .await
@@ -943,6 +1119,18 @@ async fn import_http_preserves_overwrite_false_protection() {
         .unwrap()
         .contains("overwrite is false"));
     assert_eq!(std::fs::read(existing).unwrap(), b"original");
+    let log = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    assert!(log.contains("stage=\"upload_begin\""), "{log}");
+    assert!(log.contains("failure_class=\"failed\""), "{log}");
+    for excluded in [
+        "existing.png",
+        "replacement.png",
+        "docs/assets",
+        "original",
+        "overwrite is false",
+    ] {
+        assert!(!log.contains(excluded), "{log}");
+    }
 }
 
 #[tokio::test]

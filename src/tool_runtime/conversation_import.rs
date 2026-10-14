@@ -35,6 +35,86 @@ const IMPORT_DNS_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(5);
 const IMPORT_DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const IMPORT_DOWNLOAD_OVERALL_NETWORK_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
+#[derive(Clone, Copy)]
+enum ImportFailureStage {
+    Dns,
+    DownloadRequest,
+    DownloadBody,
+    UploadBegin,
+    UploadChunk,
+    UploadFinish,
+}
+
+impl ImportFailureStage {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Dns => "dns",
+            Self::DownloadRequest => "download_request",
+            Self::DownloadBody => "download_body",
+            Self::UploadBegin => "upload_begin",
+            Self::UploadChunk => "upload_chunk",
+            Self::UploadFinish => "upload_finish",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ImportFailureClass {
+    Timeout,
+    ConnectionFailed,
+    Failed,
+    HttpStatus,
+    SizeLimit,
+    ProtocolMismatch,
+}
+
+impl ImportFailureClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::ConnectionFailed => "connection_failed",
+            Self::Failed => "failed",
+            Self::HttpStatus => "http_status",
+            Self::SizeLimit => "size_limit",
+            Self::ProtocolMismatch => "protocol_mismatch",
+        }
+    }
+}
+
+fn diagnostic_trace_id() -> Option<String> {
+    crate::tool_request_trace::current_active_trace_id()
+        .and_then(|id| uuid::Uuid::parse_str(&id).ok())
+        .map(|id| id.hyphenated().to_string())
+}
+
+fn log_import_failure(
+    stage: ImportFailureStage,
+    failure: ImportFailureClass,
+    http_status: Option<u16>,
+) {
+    let server_trace_id = diagnostic_trace_id();
+    // Only fixed categories, a bounded status and a canonical UUID. Never pass
+    // error text, URLs, file names, paths, upload IDs or caller identities here.
+    tracing::warn!(
+        target: "webcodex::mcp",
+        stage = stage.as_str(),
+        failure_class = failure.as_str(),
+        http_status = http_status.filter(|status| (100..=599).contains(status)),
+        server_trace_id = server_trace_id.as_deref(),
+        "mcp_host_file_import_failed"
+    );
+}
+
+fn download_failure_class(error: &reqwest::Error) -> ImportFailureClass {
+    if error.is_timeout() {
+        ImportFailureClass::Timeout
+    } else if error.is_connect() {
+        ImportFailureClass::ConnectionFailed
+    } else {
+        ImportFailureClass::Failed
+    }
+}
+
 #[derive(Debug)]
 struct TrustedDownloadTarget {
     url: reqwest::Url,
@@ -244,6 +324,65 @@ fn ip_is_public(ip: IpAddr) -> bool {
     }
 }
 
+fn dns_diagnostic_host(host: &str) -> Option<&str> {
+    let host = host.strip_suffix('.').unwrap_or(host);
+    if host.is_empty() || host.len() > 253 {
+        return None;
+    }
+    host.split('.')
+        .all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+        .then_some(host)
+}
+
+fn dns_diagnostic_address_class(ip: IpAddr) -> &'static str {
+    if ip_is_public(ip) {
+        return "public";
+    }
+    if let IpAddr::V6(v6) = ip {
+        if let Some(v4) = ipv6_embedded_ipv4(v6) {
+            return dns_diagnostic_address_class(IpAddr::V4(v4));
+        }
+    }
+    match ip {
+        IpAddr::V4(v4) if v4.octets()[0] == 198 && matches!(v4.octets()[1], 18 | 19) => {
+            "benchmarking"
+        }
+        ip if ip.is_loopback() => "loopback",
+        IpAddr::V4(v4) if v4.is_link_local() => "link_local",
+        IpAddr::V6(v6) if v6.segments()[0] & 0xffc0 == 0xfe80 => "link_local",
+        _ => "non_public",
+    }
+}
+
+fn log_download_dns_rejection(host: Option<&str>, ips: &[IpAddr]) {
+    let Some(host) = host.and_then(dns_diagnostic_host) else {
+        return;
+    };
+    let address_classes: std::collections::BTreeSet<_> = ips
+        .iter()
+        .copied()
+        .map(dns_diagnostic_address_class)
+        .collect();
+    let server_trace_id = diagnostic_trace_id();
+    // Log no URL, path, query, raw address, file identity or caller identity.
+    // Domains are bounded DNS labels; classes and event name are constants.
+    tracing::warn!(
+        target: "webcodex::mcp",
+        download_host = host,
+        address_classes = ?address_classes,
+        server_trace_id = server_trace_id.as_deref(),
+        "mcp_host_file_download_dns_rejected"
+    );
+}
+
 #[cfg(test)]
 static IMPORT_TEST_NETWORK_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
     std::sync::OnceLock::new();
@@ -293,14 +432,27 @@ async fn resolve_download_domain(host: &str) -> Result<Vec<IpAddr>, String> {
             return Ok(ips);
         }
     }
-    let resolved = tokio::time::timeout(
-        IMPORT_DNS_RESOLUTION_TIMEOUT,
-        tokio::net::lookup_host((host, 443)),
-    )
+    bounded_download_dns_resolution(async {
+        tokio::net::lookup_host((host, 443))
+            .await
+            .map(|resolved| resolved.map(|addr| addr.ip()).collect())
+    })
     .await
-    .map_err(|_| "host-provided download URL DNS resolution timed out".to_string())?
-    .map_err(|_| "host-provided download URL DNS resolution failed".to_string())?;
-    Ok(resolved.map(|addr| addr.ip()).collect())
+}
+
+async fn bounded_download_dns_resolution(
+    lookup: impl std::future::Future<Output = std::io::Result<Vec<IpAddr>>>,
+) -> Result<Vec<IpAddr>, String> {
+    tokio::time::timeout(IMPORT_DNS_RESOLUTION_TIMEOUT, lookup)
+        .await
+        .map_err(|_| {
+            log_import_failure(ImportFailureStage::Dns, ImportFailureClass::Timeout, None);
+            "host-provided download URL DNS resolution timed out".to_string()
+        })?
+        .map_err(|_| {
+            log_import_failure(ImportFailureStage::Dns, ImportFailureClass::Failed, None);
+            "host-provided download URL DNS resolution failed".to_string()
+        })
 }
 
 async fn validate_trusted_mcp_download_url(
@@ -336,9 +488,11 @@ async fn validate_trusted_mcp_download_url(
         }
     };
     if ips.is_empty() {
+        log_download_dns_rejection(resolver_host.as_deref(), &ips);
         return Err("host-provided download URL resolved to no addresses".to_string());
     }
     if ips.iter().copied().any(|ip| !ip_is_public(ip)) {
+        log_download_dns_rejection(resolver_host.as_deref(), &ips);
         return Err("host-provided download URL resolves to a non-public address".to_string());
     }
     let mut pinned_addrs = Vec::with_capacity(ips.len());
@@ -480,6 +634,11 @@ impl ToolRuntime {
             )
             .await;
         if !result.success {
+            log_import_failure(
+                ImportFailureStage::UploadChunk,
+                ImportFailureClass::Failed,
+                None,
+            );
             if artifact_upload_failure_is_definite(&result, upload_id) {
                 self.abort_import_upload(
                     &input.project,
@@ -494,6 +653,11 @@ impl ToolRuntime {
             return Err(result);
         }
         if result.output.get("next_offset").and_then(Value::as_u64) != Some(next_offset as u64) {
+            log_import_failure(
+                ImportFailureStage::UploadChunk,
+                ImportFailureClass::ProtocolMismatch,
+                None,
+            );
             self.abort_import_upload(
                 &input.project,
                 path,
@@ -556,13 +720,23 @@ impl ToolRuntime {
         network_budget = network_budget.saturating_sub(send_started.elapsed());
         let mut response = match send_result {
             Ok(Ok(response)) => response,
-            Ok(Err(_)) | Err(_) => {
+            failure => {
+                let class = match failure {
+                    Ok(Err(error)) => download_failure_class(&error),
+                    _ => ImportFailureClass::Timeout,
+                };
+                log_import_failure(ImportFailureStage::DownloadRequest, class, None);
                 return Err(ToolResult::err(format!(
                     "failed to download '{source_name}'"
                 )));
             }
         };
         if !response.status().is_success() {
+            log_import_failure(
+                ImportFailureStage::DownloadRequest,
+                ImportFailureClass::HttpStatus,
+                Some(response.status().as_u16()),
+            );
             return Err(ToolResult::err(format!(
                 "download for '{source_name}' returned HTTP {}",
                 response.status()
@@ -570,6 +744,11 @@ impl ToolRuntime {
         }
         let expected_bytes = match response.content_length() {
             Some(len) if len > MAX_IMPORT_FILE_BYTES as u64 => {
+                log_import_failure(
+                    ImportFailureStage::DownloadBody,
+                    ImportFailureClass::SizeLimit,
+                    None,
+                );
                 return Err(ToolResult::err(format!(
                     "download for '{source_name}' exceeds {MAX_IMPORT_FILE_BYTES} bytes"
                 )));
@@ -593,6 +772,11 @@ impl ToolRuntime {
             )
             .await;
         if !begin.success {
+            log_import_failure(
+                ImportFailureStage::UploadBegin,
+                ImportFailureClass::Failed,
+                None,
+            );
             return Err(begin);
         }
         let Some(upload_id) = begin
@@ -601,6 +785,11 @@ impl ToolRuntime {
             .and_then(Value::as_str)
             .map(str::to_string)
         else {
+            log_import_failure(
+                ImportFailureStage::UploadBegin,
+                ImportFailureClass::ProtocolMismatch,
+                None,
+            );
             return Err(ToolResult::err(
                 "artifact upload begin returned no upload_id",
             ));
@@ -611,6 +800,11 @@ impl ToolRuntime {
         let mut pending = Vec::with_capacity(MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES);
         loop {
             if network_budget.is_zero() {
+                log_import_failure(
+                    ImportFailureStage::DownloadBody,
+                    ImportFailureClass::Timeout,
+                    None,
+                );
                 self.abort_import_upload(
                     &input.project,
                     &path,
@@ -634,7 +828,12 @@ impl ToolRuntime {
             let chunk = match read_result {
                 Ok(Ok(Some(chunk))) => chunk,
                 Ok(Ok(None)) => break,
-                Ok(Err(_)) | Err(_) => {
+                failure => {
+                    let class = match failure {
+                        Ok(Err(error)) => download_failure_class(&error),
+                        _ => ImportFailureClass::Timeout,
+                    };
+                    log_import_failure(ImportFailureStage::DownloadBody, class, None);
                     self.abort_import_upload(
                         &input.project,
                         &path,
@@ -650,6 +849,11 @@ impl ToolRuntime {
                 }
             };
             let Some(next_downloaded_bytes) = downloaded_bytes.checked_add(chunk.len()) else {
+                log_import_failure(
+                    ImportFailureStage::DownloadBody,
+                    ImportFailureClass::SizeLimit,
+                    None,
+                );
                 self.abort_import_upload(
                     &input.project,
                     &path,
@@ -664,6 +868,11 @@ impl ToolRuntime {
                 )));
             };
             if next_downloaded_bytes > MAX_IMPORT_FILE_BYTES {
+                log_import_failure(
+                    ImportFailureStage::DownloadBody,
+                    ImportFailureClass::SizeLimit,
+                    None,
+                );
                 self.abort_import_upload(
                     &input.project,
                     &path,
@@ -727,6 +936,11 @@ impl ToolRuntime {
             )
             .await;
         if !result.success {
+            log_import_failure(
+                ImportFailureStage::UploadFinish,
+                ImportFailureClass::Failed,
+                None,
+            );
             if artifact_upload_failure_is_definite(&result, &upload_id) {
                 self.abort_import_upload(
                     &input.project,
@@ -884,6 +1098,174 @@ impl ToolRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn diagnostic_trace_accepts_only_canonical_uuids() {
+        for unsafe_id in [
+            "SECRET",
+            "safe-request-correlation",
+            "https://example/path?token=SECRET",
+            "\nINJECT",
+        ] {
+            crate::tool_request_trace::scope_active_trace(Some(unsafe_id.to_string()), async {
+                assert!(diagnostic_trace_id().is_none());
+            })
+            .await;
+        }
+        crate::tool_request_trace::scope_active_trace(
+            Some("C77C5EC6-32E4-4A54-8590-4DA44D35A8BE".to_string()),
+            async {
+                assert_eq!(
+                    diagnostic_trace_id().as_deref(),
+                    Some("c77c5ec6-32e4-4a54-8590-4da44d35a8be")
+                );
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dns_failures_are_bounded_and_never_return_resolver_error_text() {
+        let start = tokio::time::Instant::now();
+        let timeout = bounded_download_dns_resolution(std::future::pending())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            tokio::time::Instant::now() - start,
+            IMPORT_DNS_RESOLUTION_TIMEOUT
+        );
+        assert_eq!(
+            timeout,
+            "host-provided download URL DNS resolution timed out"
+        );
+        let failed = bounded_download_dns_resolution(async {
+            Err(std::io::Error::other(
+                "https://private.example/path?sig=SECRET",
+            ))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(failed, "host-provided download URL DNS resolution failed");
+    }
+
+    #[tokio::test]
+    async fn dns_rejection_diagnostic_is_bounded_correlated_and_secret_free() {
+        #[derive(Clone)]
+        struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Capture {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let capture = Capture(Default::default());
+        let writer = capture.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter("warn")
+            .with_ansi(false)
+            .without_time()
+            .with_writer(move || writer.clone())
+            .finish();
+        let trace = "c77c5ec6-32e4-4a54-8590-4da44d35a8be";
+        crate::tool_request_trace::scope_active_trace(Some(trace.to_string()), async {
+            tracing::subscriber::with_default(subscriber, || {
+                log_download_dns_rejection(
+                    Some("files.oaiusercontent.com"),
+                    &[
+                        "198.18.5.253".parse().unwrap(),
+                        "198.19.0.1".parse().unwrap(),
+                        "8.8.8.8".parse().unwrap(),
+                        "127.0.0.1".parse().unwrap(),
+                        "169.254.1.1".parse().unwrap(),
+                    ],
+                );
+                for unsafe_host in [
+                    "evil.example\nINJECT",
+                    "evil.example?token=SECRET",
+                    "evil.example/SECRET",
+                    "user:SECRET@evil.example",
+                    "-bad.example",
+                ] {
+                    log_download_dns_rejection(
+                        Some(unsafe_host),
+                        &["198.18.5.253".parse().unwrap()],
+                    );
+                }
+                for stage in [
+                    ImportFailureStage::Dns,
+                    ImportFailureStage::DownloadRequest,
+                    ImportFailureStage::DownloadBody,
+                    ImportFailureStage::UploadBegin,
+                    ImportFailureStage::UploadChunk,
+                    ImportFailureStage::UploadFinish,
+                ] {
+                    log_import_failure(stage, ImportFailureClass::Failed, Some(999));
+                }
+            });
+        })
+        .await;
+        let output = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+        assert_eq!(output.lines().count(), 7, "{output}");
+        assert!(!output.contains("999"), "{output}");
+        for line in output.lines() {
+            assert!(line.contains(trace), "{line}");
+        }
+        for expected in [
+            "WARN",
+            "mcp_host_file_download_dns_rejected",
+            "files.oaiusercontent.com",
+            trace,
+            "benchmarking",
+            "public",
+            "loopback",
+            "link_local",
+        ] {
+            assert!(output.contains(expected), "{output}");
+        }
+        for excluded in [
+            "198.18.5.253",
+            "198.19.0.1",
+            "8.8.8.8",
+            "127.0.0.1",
+            "169.254.1.1",
+            "SECRET",
+            "INJECT",
+            "token=",
+            "evil.example",
+            "download_url",
+            "query",
+        ] {
+            assert!(!output.contains(excluded), "{output}");
+        }
+    }
+
+    #[test]
+    fn dns_diagnostic_domains_and_address_classes_preserve_rejection_boundaries() {
+        assert_eq!(
+            dns_diagnostic_host("xn--bcher-kva.example."),
+            Some("xn--bcher-kva.example")
+        );
+        assert!(dns_diagnostic_host(&format!("{}.example", "a".repeat(64))).is_none());
+        assert!(dns_diagnostic_host(&format!("{}.example", "a".repeat(254))).is_none());
+        for ip in [
+            "198.18.0.0",
+            "198.18.5.253",
+            "198.19.255.255",
+            "::ffff:198.18.5.253",
+        ] {
+            let ip = ip.parse().unwrap();
+            assert!(!ip_is_public(ip));
+            assert_eq!(dns_diagnostic_address_class(ip), "benchmarking");
+        }
+        for ip in ["10.0.0.1", "192.168.1.1", "::1", "fe80::1", "fc00::1"] {
+            let ip = ip.parse().unwrap();
+            assert!(!ip_is_public(ip));
+            assert_ne!(dns_diagnostic_address_class(ip), "public");
+        }
+    }
 
     #[test]
     fn import_limit_matches_canonical_streaming_artifact_limit() {
@@ -1102,6 +1484,8 @@ mod tests {
             vec!["169.254.1.1".parse().unwrap()],
             vec!["::1".parse().unwrap()],
             vec!["fe80::1".parse().unwrap()],
+            vec!["198.18.5.253".parse().unwrap()],
+            vec!["8.8.8.8".parse().unwrap(), "198.18.5.253".parse().unwrap()],
         ] {
             set_import_test_resolved_ips(Some(ips));
             reset_import_test_dns_resolution_count();
@@ -1115,6 +1499,14 @@ mod tests {
             );
             assert_eq!(import_test_dns_resolution_count(), 1);
         }
+        // A resolver-specific Fake-IP exception may restore real public answers;
+        // admission still uses the same all-public predicate and pinned addresses.
+        set_import_test_resolved_ips(Some(vec!["8.8.8.8".parse().unwrap()]));
+        let target = validate_trusted_mcp_download_url("https://download.example/file")
+            .await
+            .expect("public DNS answer may pass the unchanged SSRF policy");
+        assert_eq!(target.pinned_addrs, vec!["8.8.8.8:443".parse().unwrap()]);
+        assert_eq!(target.resolver_host.as_deref(), Some("download.example"));
         set_import_test_resolved_ips(None);
         reset_import_test_dns_resolution_count();
     }

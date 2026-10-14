@@ -1,6 +1,106 @@
 use super::*;
+use crate::mcp::tools::host_file_import_trust_for_call;
 
 const MCP_IMPORT_TRUSTED_REDIRECT: &str = "https://chatgpt.example/connector/oauth/webcodex-test";
+
+#[tokio::test]
+async fn mcp_file_import_denial_is_observable_with_warn_filter_without_identity_or_secrets() {
+    let _lock = lock_mcp_import_test().await;
+    #[derive(Clone)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let capture = Capture(Default::default());
+    let writer = capture.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter("warn")
+        .with_ansi(false)
+        .without_time()
+        .with_writer(move || writer.clone())
+        .finish();
+    let (_tmp, db) = test_db();
+    let mut config = (*test_config(Some("credential-secret-sentinel"))).clone();
+    config.oauth2.trust_loopback_api_token_mcp_file_import = false;
+    let auth = crate::auth::AuthContext {
+        username: Some("private-user-sentinel".to_string()),
+        user_id: Some("private-user-id-sentinel".to_string()),
+        api_key_id: Some("private-key-id-sentinel".to_string()),
+        token_kind: Some("user".to_string()),
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::ApiToken)
+    };
+    tracing::subscriber::with_default(subscriber, || {
+        assert_eq!(
+            host_file_import_trust_for_call(
+                Some("import_host_files"),
+                Some(&auth),
+                Some(&config),
+                Some(&db),
+                Some("c77c5ec6-32e4-4a54-8590-4da44d35a8be"),
+            ),
+            HostFileImportTrust::Untrusted,
+        );
+        // Enabling the existing explicit trust flag admits only the already
+        // supported local PAT case; its success must not become WARN noise.
+        config.oauth2.trust_loopback_api_token_mcp_file_import = true;
+        assert_eq!(
+            host_file_import_trust_for_call(
+                Some("import_host_files"),
+                Some(&auth),
+                Some(&config),
+                Some(&db),
+                Some("c77c5ec6-32e4-4a54-8590-4da44d35a8be"),
+            ),
+            HostFileImportTrust::TrustedMcpHostFile,
+        );
+        config.oauth2.trust_loopback_api_token_mcp_file_import = false;
+        for invalid_trace in [
+            "https://private.example/path?sig=trace-secret-sentinel",
+            "\ntrace-secret-sentinel",
+        ] {
+            assert_eq!(
+                host_file_import_trust_for_call(
+                    Some("import_host_files"),
+                    Some(&auth),
+                    Some(&config),
+                    Some(&db),
+                    Some(invalid_trace),
+                ),
+                HostFileImportTrust::Untrusted
+            );
+        }
+    });
+    let output = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    assert!(output.contains("WARN"), "{output}");
+    assert!(
+        output.contains("mcp_host_file_import_trust_decision"),
+        "{output}"
+    );
+    assert!(output.contains("reason=\"not_oauth_token\""), "{output}");
+    assert!(output.contains("auth_kind=\"api_token\""), "{output}");
+    assert!(
+        output.contains("server_trace_id=\"c77c5ec6-32e4-4a54-8590-4da44d35a8be\""),
+        "{output}"
+    );
+    assert!(output.contains("tool=\"import_host_files\""), "{output}");
+    assert!(!output.contains("trusted_loopback_api_token"), "{output}");
+    for private in [
+        "credential-secret-sentinel",
+        "trace-secret-sentinel",
+        "private.example",
+        "private-user-sentinel",
+        "private-user-id-sentinel",
+        "private-key-id-sentinel",
+    ] {
+        assert!(!output.contains(private), "{output}");
+    }
+}
 
 struct McpImportStartupEnvGuard {
     _env_lock: std::sync::MutexGuard<'static, ()>,

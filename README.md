@@ -157,9 +157,9 @@ coding agents may be used to help inspect, edit, and validate the repository.
 For what to include in a bug report, the self-service fix workflow, validation
 expectations, and pull request guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Support WebCodex
+## Support WebCodex ☕
 
-WebCodex is developed in the open. If you want to support long-term maintenance, testing, release infrastructure, or cross-platform work, see [Sponsorship and project support](docs/SPONSORSHIP.md). We prefer transparent project-level support and infrastructure partnerships that stay separate from normal product use.
+If WebCodex has been useful to you, consider [buying the maintainer a coffee](docs/SPONSORSHIP.md) via WeChat or Alipay. It's completely optional—stars, feedback, and contributions help too.
 
 ## Acknowledgements
 

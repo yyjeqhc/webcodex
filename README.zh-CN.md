@@ -155,7 +155,13 @@ Bug 报告需要提供哪些信息、自助修复流程、验证要求与 PR 说
 
 ## 支持 WebCodex ☕
 
-如果 WebCodex 对你有所帮助，欢迎[请维护者喝杯咖啡](docs/SPONSORSHIP.zh-CN.md)，支持后续开发和维护。可以使用微信或支付宝扫码，完全自愿；Star、反馈问题和贡献代码同样非常感谢。
+如果 WebCodex 对你有所帮助，欢迎自愿扫码请维护者喝杯咖啡；不赞助也完全不影响使用，Star、反馈问题和贡献代码同样很有帮助。[赞赏说明](docs/SPONSORSHIP.zh-CN.md)。
+
+| 微信赞赏 | 支付宝收款 |
+| :---: | :---: |
+| <a href="docs/assets/sponsor/vx.png"><img src="docs/assets/sponsor/vx.png" alt="微信赞赏二维码" width="260"></a> | <a href="docs/assets/sponsor/zfb.png"><img src="docs/assets/sponsor/zfb.png" alt="支付宝个人收款界面及二维码" width="320"></a> |
+
+点击图片可以打开或保存高清二维码，方便使用手机相册识别。付款前请在支付应用中核对收款人；这是向维护者个人的自愿赞赏，不由 GitHub 代收。
 
 ## 致谢
 

@@ -159,7 +159,13 @@ expectations, and pull request guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Support WebCodex ☕
 
-If WebCodex has been useful to you, consider [buying the maintainer a coffee](docs/SPONSORSHIP.md) via WeChat or Alipay. It's completely optional—stars, feedback, and contributions help too.
+If WebCodex has been useful to you, you can optionally buy the maintainer a coffee by scanning a QR code below. Stars, feedback, and contributions are equally appreciated. [Sponsorship details](docs/SPONSORSHIP.md).
+
+| WeChat appreciation | Alipay |
+| :---: | :---: |
+| <a href="docs/assets/sponsor/vx.png"><img src="docs/assets/sponsor/vx.png" alt="WeChat appreciation QR code" width="260"></a> | <a href="docs/assets/sponsor/zfb.png"><img src="docs/assets/sponsor/zfb.png" alt="Alipay personal payment card with QR code" width="320"></a> |
+
+Tap either image to open or save the full-resolution QR code. Please verify the recipient in your payment app before sending a tip; these are direct, voluntary contributions, not payments processed by GitHub.
 
 ## Acknowledgements
 

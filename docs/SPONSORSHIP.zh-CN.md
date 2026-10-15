@@ -12,7 +12,7 @@ WebCodex 是一个免费、开源的项目。如果它帮你节省了时间，�
 
 | 微信赞赏 | 支付宝 |
 | :---: | :---: |
-| <img src="assets/sponsor/vx.png" alt="微信赞赏二维码" width="240"> | <img src="assets/sponsor/zfb.png" alt="支付宝收款二维码" width="240"> |
+| <img src="assets/sponsor/vx.png" alt="微信赞赏二维码" width="260"> | <img src="assets/sponsor/zfb.png" alt="支付宝个人收款界面及二维码" width="320"> |
 
 使用同一部手机时，也可以打开并保存[微信二维码原图](assets/sponsor/vx.png)或[支付宝二维码原图](assets/sponsor/zfb.png)，再尝试通过支付应用的相册识别功能扫码。
 

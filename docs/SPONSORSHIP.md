@@ -12,7 +12,7 @@ If you want to support the maintainer personally, scan one of the QR codes with 
 
 | WeChat appreciation | Alipay |
 | :---: | :---: |
-| <img src="assets/sponsor/vx.png" alt="WeChat appreciation QR code" width="240"> | <img src="assets/sponsor/zfb.png" alt="Alipay payment QR code" width="240"> |
+| <img src="assets/sponsor/vx.png" alt="WeChat appreciation QR code" width="260"> | <img src="assets/sponsor/zfb.png" alt="Alipay personal payment card with QR code" width="320"> |
 
 On a phone, you can open the [WeChat QR image](assets/sponsor/vx.png) or [Alipay QR image](assets/sponsor/zfb.png), save it, and use your payment app's scan-from-gallery option if available.
 

@@ -56,7 +56,9 @@ header. No global Codex MCP configuration is installed. The client exposes only
 `read_files`; the PAT and registered Project enforce the server-side scope.
 Acceptance requires actual completed MCP tool receipts matching independently
 read fixture bytes, the model's separately checked answer, and no newly created
-Workflow Session, Goal, Agent or AgentTask.
+Workflow Session, Goal, Agent or AgentTask. The consumer's event history is also
+checked for started or failed non-read tool attempts: a later successful MCP
+read must not hide an earlier forbidden tool attempt.
 
 For managed execution, the task-owned Runner pins ACP 2.1.1 and forces the
 model/effort through live ACP configuration admission. The harness preserves

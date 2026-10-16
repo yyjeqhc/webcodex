@@ -7,10 +7,12 @@ real-model path passed. The first real run reached an online authentication
 failure. It preserved and reconciled the original managed execution through a
 task-owned Server restart, then stopped its test processes.
 
-The existing Goal remains active. The user removed the original six-hour
-budget; the remaining dependency is normal Codex reauthentication, not a time
-limit. No publication, merge, shared-service restart or authentication-file
-inspection was performed.
+At the time of this checkpoint, the existing Goal was still active and
+its original six-hour budget had been removed. The blocked real-model test
+needed normal Codex reauthentication, not a longer execution deadline. No
+publication, merge, shared-service restart or authentication-file inspection
+was performed during this recorded run. This is historical evidence, not a
+statement of current Goal liveness or current Codex login state.
 
 ## Source and runtime identities
 
@@ -214,5 +216,7 @@ and an explicitly configured model review, with credential/capability
 diagnostics. Saved decisions and progress do not imply restoration of hidden
 reasoning, unsaved full transcripts, or automatic account/model routing.
 
-These are scope conclusions, not external issue updates. This task has not
-published, merged or posted discussion.
+These are scope conclusions rather than acceptance of the original Issue
+#1076 end-to-end requirements. The recorded test did not publish, merge or
+post to external discussions; a subsequent PR may carry this historical
+checkpoint without turning any missing acceptance into a passing result.

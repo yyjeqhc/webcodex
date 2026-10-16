@@ -268,6 +268,31 @@ def stop_group(process: subprocess.Popen | None) -> bool:
     return False
 
 
+def require_consumer_read_only_activity(frames: list[dict]) -> None:
+    """Reject attempted non-read tools, including events without completion.
+
+    A later successful read cannot erase a previously started or failed shell,
+    web, file-change, or out-of-scope MCP operation from acceptance evidence.
+    The completed read's exact routing and receipt are checked separately.
+    """
+    for frame in frames:
+        event = frame.get("type")
+        if event not in ("item.started", "item.updated", "item.completed", "item.failed"):
+            continue
+        item = frame.get("item")
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        if kind in ("command_execution", "file_change", "web_search"):
+            raise AcceptanceFailure("consumer_used_unrequested_tools")
+        if kind == "mcp_tool_call":
+            if ((item.get("server") is not None and item["server"] != "bidirectional")
+                    or (item.get("tool") is not None and item["tool"] != "read_files")):
+                raise AcceptanceFailure("consumer_called_wrong_mcp_tool")
+            if event == "item.failed":
+                raise AcceptanceFailure("consumer_mcp_call_failed")
+
+
 def mcp_result(item: dict) -> dict:
     result = item.get("result")
     require(item.get("status") == "completed" and not item.get("error")
@@ -553,11 +578,9 @@ class BidirectionalSmoke(Smoke):
         self.report["consumer"]["exit_code"] = self.consumer_process.returncode
         require(self.consumer_process.returncode == 0, "consumer_process_failed")
         frames = bounded_jsonl(stdout)
+        require_consumer_read_only_activity(frames)
         completed = [frame["item"] for frame in frames
                      if frame.get("type") == "item.completed" and isinstance(frame.get("item"), dict)]
-        forbidden = [item.get("type") for item in completed
-                     if item.get("type") in ("command_execution", "file_change", "web_search")]
-        require(not forbidden, "consumer_used_unrequested_tools")
         calls = [item for item in completed if item.get("type") == "mcp_tool_call"]
         require(bool(calls), "consumer_did_not_call_mcp")
         observed = {}

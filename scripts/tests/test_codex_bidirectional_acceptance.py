@@ -219,5 +219,35 @@ class CodexRecoveryTests(unittest.TestCase):
                         self.smoke.require_original_binding({**self.binding, key: value})
 
 
+class ConsumerActivityGuardTests(unittest.TestCase):
+    def test_unrequested_activity_fails_even_if_it_never_completed(self):
+        for event, kind, fields in (
+            ("item.started", "command_execution", {}),
+            ("item.failed", "web_search", {}),
+            ("item.updated", "file_change", {}),
+            ("item.started", "mcp_tool_call", {"server": "other", "tool": "read_files"}),
+            ("item.failed", "mcp_tool_call", {"server": "bidirectional", "tool": "run_shell"}),
+        ):
+            with self.subTest(event=event, kind=kind, fields=fields):
+                frames = [{"type": event, "item": {"type": kind, **fields}},
+                          {"type": "item.completed", "item": {"type": "mcp_tool_call",
+                           "server": "bidirectional", "tool": "read_files", "status": "completed"}}]
+                with self.assertRaisesRegex(harness.AcceptanceFailure,
+                                            "consumer_used_unrequested_tools|consumer_called_wrong_mcp_tool"):
+                    harness.require_consumer_read_only_activity(frames)
+
+    def test_exact_read_call_is_allowed_across_item_lifecycle(self):
+        frames = [
+            {"type": "item.started", "item": {"type": "mcp_tool_call", "server": "bidirectional"}},
+            {"type": "item.updated", "item": {"type": "mcp_tool_call", "server": "bidirectional",
+                                                 "tool": "read_files"}},
+            {"type": "item.completed", "item": {"type": "mcp_tool_call", "server": "bidirectional",
+                                                   "tool": "read_files", "status": "completed"}},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "{}"}},
+        ]
+        harness.require_consumer_read_only_activity(frames)
+
+
+
 if __name__ == "__main__":
     unittest.main()

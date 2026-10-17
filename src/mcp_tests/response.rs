@@ -123,7 +123,7 @@ fn text_json_compat_mirrors_runtime_structured_content() {
 }
 
 #[test]
-fn mcp_execution_failure_logs_have_one_default_copy_and_preserve_recovery() {
+fn mcp_execution_failure_logs_follow_output_channel_and_preserve_recovery() {
     let stdout = "EXECUTION_STDOUT_SENTINEL\n".repeat(80);
     let stderr = "EXECUTION_STDERR_SENTINEL\n".repeat(80);
     for timed_out in [false, true] {
@@ -163,23 +163,28 @@ fn mcp_execution_failure_logs_have_one_default_copy_and_preserve_recovery() {
             assert!(compact_error.starts_with(prefix));
             assert!(compact_error.contains("Retry guidance:"));
             assert!(!compact_error.contains("SENTINEL"));
-            assert!(!rendered["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("SENTINEL"));
+            let standard = presentation == McpToolResultPresentation::Standard;
+            let text = rendered["content"][0]["text"].as_str().unwrap();
+            assert_eq!(text.contains("SENTINEL"), standard);
+            assert_eq!(text.contains("stdout_tail [truncated]"), standard);
+            assert!(text.starts_with(compact_error));
             assert_eq!(
                 rendered["isError"],
                 presentation == McpToolResultPresentation::Standard
             );
             let bytes = serde_json::to_vec(&rendered).unwrap();
-            // Even the full MCP envelope is smaller than the old structured result alone.
-            assert!(bytes.len() < serde_json::to_vec(&original).unwrap().len());
+            if !standard {
+                // OpenAI keeps one log copy: even its full envelope is smaller
+                // than the old structured result alone.
+                assert!(bytes.len() < serde_json::to_vec(&original).unwrap().len());
+                assert_eq!(text, compact_error);
+            }
             assert_eq!(
                 String::from_utf8(bytes)
                     .unwrap()
                     .matches("EXECUTION_STDOUT_SENTINEL")
                     .count(),
-                80
+                if standard { 160 } else { 80 }
             );
             if timed_out {
                 assert!(compact_error.contains("cannot prove its side effects ended"));

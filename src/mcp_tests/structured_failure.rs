@@ -5,6 +5,8 @@ use crate::runner_protocol::{
 use response::{mcp_runtime_tool_result_fallback, McpToolResultPresentation};
 #[path = "structured_failure/client_contract.rs"]
 mod client_contract;
+#[path = "structured_failure/diagnostics.rs"]
+mod diagnostics;
 use webcodex_core::mcp_gateway::{
     McpGatewayContent, McpGatewayProvider, McpGatewayRequest, McpGatewayResponse,
     McpGatewayResponsePayload, McpGatewayTool, McpGatewayToolResult,
@@ -322,6 +324,8 @@ async fn register_failure_runner_with_resource_links(
                     file_write: true,
                     shell: true,
                     structured_process_argv: true,
+                    structured_script_payload: true,
+                    structured_script_python: true,
                     apply_text_edit_local_guard_without_sha: true,
                     apply_text_edit_occurrence: true,
                     mcp_gateway_resource_links: allow_resource_links,
@@ -752,6 +756,12 @@ async fn http_edit_project_files_and_process_failures_preserve_canonical_output(
                 assert_eq!(output["stderr_tail"], "process diagnostics");
                 assert!(output.get("accepted_exit_codes").is_none());
                 assert!(output.get("result_expectation").is_none());
+                let text = body["result"]["content"][0]["text"].as_str().unwrap();
+                assert_eq!(text.contains("observed output"), client != "openai-mcp");
+                assert_eq!(text.contains("process diagnostics"), client != "openai-mcp");
+                // Only the text channel and isError differ between clients.
+                body["result"]["content"][0]["text"] =
+                    body["result"]["structuredContent"]["error"].clone();
             }
             body["result"]["isError"] = json!(true);
             if let Some(expected) = &baseline {
@@ -816,6 +826,11 @@ async fn http_mcp_execution_compaction_keeps_sparse_serialization() {
         assert_eq!(status, StatusCode::OK, "{body}");
         let result = &body["result"]["structuredContent"];
         assert_eq!(result["success"], true, "{body}");
+        assert_eq!(body["result"]["isError"], false);
+        assert_eq!(
+            body["result"]["content"][0]["text"],
+            "WebCodex tool completed successfully."
+        );
         assert!(result["output"].get("execution_state").is_none());
         assert!(result["output"].get("command_completed").is_none());
         assert_eq!(result["output"]["stdout_tail"], "output witness");

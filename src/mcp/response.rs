@@ -1,4 +1,4 @@
-use crate::tool_runtime::ToolResult;
+use crate::tool_runtime::{bounded_tail, ToolResult, COMMAND_STDIO_TAIL_CHARS};
 use serde_json::{json, Value};
 
 pub(super) const MCP_STATELESS_CACHE_TTL_MS: u64 = 0;
@@ -79,25 +79,29 @@ fn mcp_tool_text_content(structured: &Value, concise: String, text_json_compat: 
     }
 }
 
-/// Keep command logs in the canonical output only. Match the complete known
+fn execution_failure_output(success: bool, output: &Value) -> Option<&Value> {
+    let output = if output.get("execution").is_some() {
+        &output["details"]
+    } else {
+        output
+    };
+    (!success
+        && output["tool_failure"] == false
+        && matches!(
+            output["failure_kind"].as_str(),
+            Some("command_exit_nonzero" | "timeout")
+        ))
+    .then_some(output)
+}
+
+/// Keep command logs in the structured output only. Match the complete known
 /// tail block, not arbitrary error prose, so tool faults and recovery guidance
 /// retain their original meaning. HTTP/API and retained runtime results are untouched.
 fn project_execution_failure_logs(result: &mut ToolResult) {
     let compact = result.output.get("execution").is_some();
-    let output = if compact {
-        &result.output["details"]
-    } else {
-        &result.output
+    let Some(output) = execution_failure_output(result.success, &result.output) else {
+        return;
     };
-    if result.success || output["tool_failure"] != false {
-        return;
-    }
-    if !matches!(
-        output["failure_kind"].as_str(),
-        Some("command_exit_nonzero" | "timeout")
-    ) {
-        return;
-    }
     let (Some(stdout), Some(stderr), Some(error)) = (
         output["stdout_tail"].as_str(),
         output["stderr_tail"].as_str(),
@@ -120,6 +124,34 @@ fn project_execution_failure_logs(result: &mut ToolResult) {
     }
 }
 
+/// Some standard Hosts expose only content[0].text for isError results. Add
+/// bounded diagnostics there without changing structured facts or recovery prose.
+fn append_execution_failure_logs(text: &mut String, result: &ToolResult) {
+    let Some(output) = execution_failure_output(result.success, &result.output) else {
+        return;
+    };
+    for (name, truncated_name) in [
+        ("stdout_tail", "stdout_truncated"),
+        ("stderr_tail", "stderr_truncated"),
+    ] {
+        let Some(log) = output[name].as_str() else {
+            continue;
+        };
+        let (tail, truncated) = bounded_tail(log, COMMAND_STDIO_TAIL_CHARS);
+        let truncated = truncated || output[truncated_name] == true;
+        if tail.is_empty() && !truncated {
+            continue;
+        }
+        text.push_str("\n\n");
+        text.push_str(name);
+        if truncated {
+            text.push_str(" [truncated]");
+        }
+        text.push_str(":\n");
+        text.push_str(&tail);
+    }
+}
+
 pub(super) fn mcp_runtime_tool_result_fallback_with_compat(
     mut result: ToolResult,
     text_json_compat: bool,
@@ -129,7 +161,7 @@ pub(super) fn mcp_runtime_tool_result_fallback_with_compat(
     // `structuredContent` is the canonical machine-readable result. Repeating
     // that full JSON object in `content.text` doubles model context, so the
     // compatibility copy is explicit opt-in rather than the default.
-    let concise = if result.success {
+    let mut concise = if result.success {
         "WebCodex tool completed successfully.".to_string()
     } else {
         result
@@ -138,6 +170,12 @@ pub(super) fn mcp_runtime_tool_result_fallback_with_compat(
             .unwrap_or_else(|| "WebCodex tool failed.".to_string())
     };
     let success = result.success;
+    let is_error = presentation.is_error(success);
+    // JSON compatibility already carries the logs; the OpenAI presentation
+    // exposes structuredContent without raising a Host exception.
+    if is_error && !text_json_compat {
+        append_execution_failure_logs(&mut concise, &result);
+    }
     let structured = json!({
         "success": success,
         "output": result.output,
@@ -147,7 +185,7 @@ pub(super) fn mcp_runtime_tool_result_fallback_with_compat(
     json!({
         "content": [{ "type": "text", "text": text }],
         "structuredContent": structured,
-        "isError": presentation.is_error(success)
+        "isError": is_error
     })
 }
 

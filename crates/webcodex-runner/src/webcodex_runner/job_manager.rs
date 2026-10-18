@@ -352,10 +352,7 @@ pub(crate) use lifecycle::decode_failure_prestart_lifecycle;
 use shutdown::JobManagerOwnerLifetime;
 mod admission;
 #[cfg(test)]
-use delivery::{
-    job_update_from_delivery, queue_job_heartbeat_batch, spawn_job_heartbeat_worker_with_interval,
-    PendingJobUpdateDelivery,
-};
+use delivery::{job_update_from_delivery, queue_job_heartbeat_batch, PendingJobUpdateDelivery};
 mod delivery;
 mod detached;
 #[cfg(test)]

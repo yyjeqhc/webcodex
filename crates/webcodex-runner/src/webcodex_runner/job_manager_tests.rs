@@ -19,6 +19,8 @@ use std::sync::OnceLock;
 use tempfile::TempDir;
 use webcodex_core::runner_protocol::{RunnerEnvelope, VALIDATION_STEP_WAIT_FAILED_CODE};
 
+#[path = "job_manager_tests/heartbeat.rs"]
+mod heartbeat;
 #[path = "job_manager_tests/node_json.rs"]
 mod node_json;
 #[path = "job_manager_tests/project_build.rs"]
@@ -458,64 +460,6 @@ fn heartbeat_delivery_stays_behind_meaningful_updates_and_stops_at_terminal() {
             .map(|update| update.update_seq)
             .collect::<Vec<_>>(),
         vec![3, 5]
-    );
-}
-
-#[test]
-fn heartbeat_worker_keeps_fixed_cadence_across_signals_and_exits_on_shutdown() {
-    let jobs = Arc::new(Mutex::new(HashMap::new()));
-    let pending = Arc::new(Mutex::new(HashMap::new()));
-    let delivery_order = Arc::new(Mutex::new(()));
-    let shutting_down = Arc::new(AtomicBool::new(false));
-    let signal = Arc::new(JobUpdateDeliverySignal::default());
-    let job_id = "heartbeat-worker";
-    lock_unpoison(&jobs).insert(
-        job_id.to_string(),
-        RunningJob {
-            client_id: "test-agent".to_string(),
-            runner_instance_id: "test-instance".to_string(),
-            snapshot: test_job_snapshot(job_id),
-            input: None,
-            child: None,
-            stop_requested: Arc::new(AtomicBool::new(false)),
-            slot_reserved: true,
-        },
-    );
-
-    let interval = Duration::from_millis(300);
-    let worker = spawn_job_heartbeat_worker_with_interval(
-        Arc::downgrade(&jobs),
-        Arc::downgrade(&pending),
-        Arc::downgrade(&delivery_order),
-        Arc::downgrade(&shutting_down),
-        Arc::downgrade(&signal),
-        interval,
-    );
-
-    assert!(
-        wait_until(Duration::from_secs(1), || lock_unpoison(&jobs)[job_id]
-            .snapshot
-            .update_seq
-            >= 2),
-        "heartbeat worker must establish its first cadence before the signal check"
-    );
-    std::thread::sleep(Duration::from_millis(180));
-    signal.notify();
-    assert!(
-        wait_until(Duration::from_millis(220), || lock_unpoison(&jobs)[job_id]
-            .snapshot
-            .update_seq
-            >= 3),
-        "ordinary delivery signals must not postpone the fixed heartbeat cadence"
-    );
-
-    shutting_down.store(true, Ordering::SeqCst);
-    let shutdown_started = Instant::now();
-    signal.close();
-    worker.join().expect("heartbeat worker must exit cleanly");
-    assert!(
-        shutdown_started.elapsed() < Duration::from_secs(1),
-        "closed shutdown signal must wake the heartbeat worker promptly"
     );
 }
 

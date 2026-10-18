@@ -17,7 +17,8 @@ export function useRuntimeUpdates(ready: boolean) {
   const [actionError, setActionError] = useState(false);
   const alive = useRef(true); const busy = useRef(false); const acting = useRef(false);
   const latest = useRef(status); latest.current = status;
-  useEffect(() => { alive.current = true; return () => { alive.current = false; ++inspectionRequest.current; }; }, []);
+  const statusGeneration = useRef(0);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; ++inspectionRequest.current; ++statusGeneration.current; }; }, []);
 
   const acceptDownload = useCallback((download: UpdateDownloadStatus) => {
     if (!alive.current || !download) return;
@@ -57,10 +58,11 @@ export function useRuntimeUpdates(ready: boolean) {
   const check = useCallback(async (manual: boolean) => {
     if (busy.current || acting.current) return;
     busy.current = true; setChecking(true); if (manual) setManualError(false);
+    const generation = statusGeneration.current;
     try {
       const next = await desktopApi.checkForUpdates(manual);
-      if (alive.current) { setStatus(next); if (manual) setManualError(Boolean(next.manual_error)); }
-    } catch { if (alive.current && manual) setManualError(true); }
+      if (alive.current && generation === statusGeneration.current) { setStatus(next); if (manual) setManualError(Boolean(next.manual_error)); }
+    } catch { if (alive.current && generation === statusGeneration.current && manual) setManualError(true); }
     finally { busy.current = false; if (alive.current) setChecking(false); }
   }, []);
 
@@ -89,6 +91,8 @@ export function useRuntimeUpdates(ready: boolean) {
   const action = useCallback(async (execute: () => Promise<void>) => {
     if (acting.current) return;
     acting.current = true; setActionBusy(true); setActionError(false);
+    // A discovery begun before this action cannot restore older preferences or download state.
+    statusGeneration.current += 1;
     try { await execute(); }
     catch { if (alive.current) setActionError(true); }
     finally {

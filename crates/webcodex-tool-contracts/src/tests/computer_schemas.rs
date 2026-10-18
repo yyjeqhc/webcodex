@@ -211,19 +211,23 @@ fn computer_key_schema_discloses_closed_vocabulary_and_modifier_constraints() {
     let spec = spec_named(&specs, "control_computer");
     let key = action_properties(&spec.input_schema, "key");
     assert_eq!(key["key"]["enum"], json!(COMPUTER_KEY_INPUT_KEYS));
+    let modifiers = key["modifiers"]["anyOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|variant| variant["type"] == "array")
+        .unwrap();
     assert_eq!(
-        key["modifiers"]["items"]["enum"],
+        modifiers["items"]["enum"],
         json!(COMPUTER_KEY_INPUT_MODIFIERS)
     );
-    assert_eq!(
-        key["modifiers"]["maxItems"],
-        COMPUTER_KEY_INPUT_MODIFIERS.len()
-    );
-    assert_eq!(key["modifiers"]["uniqueItems"], true);
+    assert_eq!(modifiers["maxItems"], COMPUTER_KEY_INPUT_MODIFIERS.len());
+    assert_eq!(modifiers["uniqueItems"], true);
 
     for name in COMPUTER_KEY_INPUT_KEYS {
         for modifiers in [
             None,
+            Some(Value::Null),
             Some(json!([])),
             Some(json!(COMPUTER_KEY_INPUT_MODIFIERS)),
         ] {
@@ -240,6 +244,13 @@ fn computer_key_schema_discloses_closed_vocabulary_and_modifier_constraints() {
         ("Enter", json!([])),
         ("tab", json!(["ctrl"])),
         ("tab", json!(["alt"])),
+        ("tab", json!(["Shift"])),
+        ("tab", json!("shift")),
+        ("tab", json!(true)),
+        ("tab", json!(0)),
+        ("tab", json!({})),
+        ("tab", json!([null])),
+        ("tab", json!([1])),
         ("tab", json!(["shift", "shift"])),
         (
             "tab",
@@ -269,6 +280,7 @@ fn computer_key_schema_discloses_closed_vocabulary_and_modifier_constraints() {
 
 #[test]
 fn computer_key_wire_keeps_optional_modifiers_and_canonical_strings() {
+    let schema = crate::input_schema_for_tool("control_computer");
     for modifiers in [
         None,
         Some(Value::Null),
@@ -285,6 +297,7 @@ fn computer_key_wire_keeps_optional_modifiers_and_canonical_strings() {
             .filter(|value| !value.is_null())
             .cloned()
             .unwrap_or(json!([]));
+        test_support::validate_schema_instance(&input, &schema).unwrap();
         let call = ToolCall::from_tool_name("control_computer", input).unwrap();
         let ToolCall::ComputerControl(crate::tool_call::ComputerControlToolCall::Key {
             key,

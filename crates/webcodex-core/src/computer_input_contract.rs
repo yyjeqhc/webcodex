@@ -24,14 +24,20 @@ pub fn computer_key_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schem
     })
 }
 
+/// Preserve explicit null through the OpenAPI input-schema normalization path.
 pub fn computer_key_modifiers_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({
-        "type": "array",
-        "maxItems": COMPUTER_KEY_INPUT_MODIFIERS.len(),
-        "uniqueItems": true,
-        "items": {
-            "type": "string",
-            "enum": COMPUTER_KEY_INPUT_MODIFIERS,
-        },
+        "anyOf": [
+            {
+                "type": "array",
+                "maxItems": COMPUTER_KEY_INPUT_MODIFIERS.len(),
+                "uniqueItems": true,
+                "items": {
+                    "type": "string",
+                    "enum": COMPUTER_KEY_INPUT_MODIFIERS,
+                },
+            },
+            {"type": "null"}
+        ]
     })
 }

@@ -298,6 +298,8 @@ mod agent_continuation_app;
 mod artifact_export;
 #[path = "mcp_tests/computer_app.rs"]
 mod computer_app;
+#[path = "mcp_tests/computer_contracts.rs"]
+mod computer_contracts;
 #[path = "mcp_tests/conformance.rs"]
 mod conformance;
 #[path = "mcp_tests/execution_control.rs"]

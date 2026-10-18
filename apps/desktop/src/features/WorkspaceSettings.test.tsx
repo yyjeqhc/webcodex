@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { MantineProvider } from "@mantine/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,7 +31,13 @@ const onState = vi.fn();
 const wrap = (element: React.ReactNode) => <MantineProvider><LocaleProvider><WorkspaceProvider state={state}>{element}</WorkspaceProvider></LocaleProvider></MantineProvider>;
 function FileAccessHarness() {
   const [current, setCurrent] = useState(settings);
-  return <RunnerFileAccess settings={current} disabled={false} onState={onState} onSettings={next => { settings = next; setCurrent(next); }} />;
+  return <RunnerFileAccess state={state} settings={current} disabled={false} onState={onState} onSettings={next => { settings = next; setCurrent(next); }} />;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(yes => { resolve = yes; });
+  return { promise, resolve };
 }
 
 beforeEach(() => {
@@ -48,7 +54,7 @@ beforeEach(() => {
   api.authorizeRunnerCapabilities.mockResolvedValue({ target, can_authorize: true, coding_agents: true, ssh_resources: true });
   api.sshResources.mockResolvedValue({ runner: target.client_id, available: true, observation_id: "observed", resources: [], error_kind: null });
   api.updateRunnerSettings.mockImplementation(async (_target, _expected, paths) => { settings.paths = paths; return state; });
-  api.updateRunnerAllowedRoots.mockImplementation(async (_target, expected, roots) => { expect(expected).toEqual(settings.file_access.configured_roots); settings.file_access = { configured_roots: roots, default_roots: ["/Users/fixture"], effective_roots: roots.length ? roots : ["/Users/fixture"], using_default_roots: roots.length === 0, allow_cwd_anywhere: false }; return state; });
+  api.updateRunnerAllowedRoots.mockImplementation(async (_target, expected, roots) => { expect(expected).toEqual(settings.file_access.configured_roots); settings = { ...settings, file_access: { configured_roots: roots, default_roots: ["/Users/fixture"], effective_roots: roots.length ? roots : ["/Users/fixture"], using_default_roots: roots.length === 0, allow_cwd_anywhere: false } }; return state; });
   api.addRunnerPlugin.mockImplementation(async (_target, provider) => { settings.plugin_ids.push(provider.id); return state; });
   api.restartOwnedRunner.mockResolvedValue(state); api.getState.mockResolvedValue(state); api.updateTunnelConfig.mockResolvedValue(state);
   api.computerPermissions.mockResolvedValue({ supported: true, foreground: false, execution_process: "WebCodex Runner", execution_path: "/Applications/WebCodex.app/Contents/Resources/webcodex-runner", runner_accessibility: "unknown", runner_screen_recording: "unknown", desktop_accessibility: false, desktop_screen_recording: false });
@@ -118,6 +124,96 @@ describe("workspace configuration boundaries", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Runner rejected the file access reload");
     expect(screen.getByRole("alert")).toHaveTextContent("previous on-disk file access configuration was restored");
     await waitFor(() => expect(api.runnerSettings).toHaveBeenCalled());
+  });
+
+
+  it("cancels a folder choice when file-access settings unmount", async () => {
+    const pick = deferred<string | null>();
+    dialog.open.mockReturnValueOnce(pick.promise);
+    const onSettings = vi.fn();
+    const view = render(wrap(<RunnerFileAccess state={state} settings={settings} disabled={false} onState={onState} onSettings={onSettings} />));
+    fireEvent.click(screen.getByRole("button", { name: "Authorize folder" }));
+    view.unmount();
+    await act(async () => { pick.resolve("/Volumes/Late"); });
+    expect(api.updateRunnerAllowedRoots).not.toHaveBeenCalled();
+    expect(api.runnerSettings).not.toHaveBeenCalled();
+    expect(onState).not.toHaveBeenCalled();
+    expect(onSettings).not.toHaveBeenCalled();
+  });
+
+  it("owns one folder picker until its choice completes", async () => {
+    const pick = deferred<string | null>();
+    dialog.open.mockReturnValueOnce(pick.promise);
+    render(wrap(<FileAccessHarness />));
+    const add = screen.getByRole("button", { name: "Authorize folder" });
+    fireEvent.click(add); fireEvent.click(add);
+    expect(dialog.open).toHaveBeenCalledTimes(1);
+    expect(add).toBeDisabled();
+    await act(async () => { pick.resolve(null); });
+    expect(add).toBeEnabled();
+    expect(api.updateRunnerAllowedRoots).not.toHaveBeenCalled();
+  });
+
+  it.each(["target", "roots", "operation"] as const)("discards a folder choice after an intervening %s change, even when it changes back", async kind => {
+    const pick = deferred<string | null>();
+    dialog.open.mockReturnValueOnce(pick.promise);
+    const original = structuredClone(settings);
+    const onSettings = vi.fn();
+    const panel = (snapshot: RunnerSettings, disabled = false) => wrap(<RunnerFileAccess state={state} settings={snapshot} disabled={disabled} onState={onState} onSettings={onSettings} />);
+    const view = render(panel(original));
+    fireEvent.click(screen.getByRole("button", { name: "Authorize folder" }));
+    const changed = structuredClone(original);
+    if (kind === "target") changed.target.client_id = "another-runner";
+    if (kind === "roots") changed.file_access.configured_roots = ["/Volumes/Elsewhere"];
+    view.rerender(panel(changed, kind === "operation"));
+    view.rerender(panel(original));
+    await act(async () => { pick.resolve("/Volumes/Late"); });
+    expect(api.updateRunnerAllowedRoots).not.toHaveBeenCalled();
+    expect(onSettings).not.toHaveBeenCalled();
+  });
+
+  it("ignores a file-access mutation that completes after leaving the settings page", async () => {
+    const save = deferred<DesktopState>();
+    api.updateRunnerAllowedRoots.mockReturnValueOnce(save.promise);
+    settings.file_access = { ...settings.file_access, configured_roots: ["/fixture/work"], effective_roots: ["/fixture/work"], using_default_roots: false };
+    const onSettings = vi.fn();
+    const view = render(wrap(<RunnerFileAccess state={state} settings={settings} disabled={false} onState={onState} onSettings={onSettings} />));
+    fireEvent.click(screen.getByRole("button", { name: "Restore default access" }));
+    expect(api.updateRunnerAllowedRoots).toHaveBeenCalledTimes(1);
+    view.unmount();
+    await act(async () => { save.resolve(state); });
+    expect(onState).not.toHaveBeenCalled();
+    expect(api.runnerSettings).not.toHaveBeenCalled();
+    expect(onSettings).not.toHaveBeenCalled();
+  });
+
+  it("does not replace new roots with a late canonical readback", async () => {
+    const readback = deferred<RunnerSettings>();
+    api.runnerSettings.mockReturnValueOnce(readback.promise);
+    api.updateRunnerAllowedRoots.mockResolvedValueOnce(state);
+    settings.file_access = { ...settings.file_access, configured_roots: ["/fixture/work"], effective_roots: ["/fixture/work"], using_default_roots: false };
+    const original = structuredClone(settings), onSettings = vi.fn();
+    const panel = (snapshot: RunnerSettings) => wrap(<RunnerFileAccess state={state} settings={snapshot} disabled={false} onState={onState} onSettings={onSettings} />);
+    const view = render(panel(original));
+    fireEvent.click(screen.getByRole("button", { name: "Restore default access" }));
+    await waitFor(() => expect(api.runnerSettings).toHaveBeenCalledTimes(1));
+    const newer = { ...original, file_access: { ...original.file_access, configured_roots: ["/Volumes/Newer"], effective_roots: ["/Volumes/Newer"] } };
+    view.rerender(panel(newer));
+    await act(async () => { readback.resolve(original); });
+    expect(onState).toHaveBeenCalledTimes(1);
+    expect(onSettings).not.toHaveBeenCalled();
+    expect(screen.getAllByText("/Volumes/Newer").length).toBeGreaterThan(0);
+  });
+
+  it("retries only the file-access readback when a background refresh temporarily owns the core", async () => {
+    settings.file_access = { ...settings.file_access, configured_roots: ["/fixture/work"], effective_roots: ["/fixture/work"], using_default_roots: false };
+    api.runnerSettings.mockRejectedValueOnce({ code: "desktop_state_unavailable", message: "Refreshing", next_action: "Refresh" });
+    render(wrap(<FileAccessHarness />));
+    fireEvent.click(screen.getByRole("button", { name: "Restore default access" }));
+    await screen.findByText("No custom folders configured.");
+    expect(api.updateRunnerAllowedRoots).toHaveBeenCalledTimes(1);
+    expect(api.runnerSettings).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("applies exact-target instruction and Skill paths without Runner restart", async () => {

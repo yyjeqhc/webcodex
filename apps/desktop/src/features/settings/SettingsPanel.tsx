@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CircleHelp, Database, FolderLock, Info, Monitor, Network, Settings2 } from "lucide-react";
 import { desktopApi } from "../../lib/desktop-api";
+import { desktopIdentity, readDesktopObservation } from "../../lib/desktop-observation";
 import type { DesktopError, DesktopState, TunnelProxyMode } from "../../models/topology";
 import { LANGUAGES, useLocale } from "../../i18n/locale";
 import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
@@ -25,16 +26,7 @@ const SECTIONS = ["general", "access", "network", "runtime", "configuration", "d
 type SettingsSection = typeof SECTIONS[number];
 const SECTION_ICONS = { general: Settings2, access: FolderLock, network: Network, runtime: Monitor, configuration: Database, diagnostics: CircleHelp, about: Info };
 
-export function SettingsPanel({
-  state,
-  onState,
-  onChangeSetup,
-  onStopRuntime,
-  onActivity,
-  onConnection,
-  initialSection,
-  updates,
-}: {
+type SettingsPanelProps = {
   state: DesktopState;
   onState: (state: DesktopState) => void;
   onChangeSetup?: () => void;
@@ -43,8 +35,10 @@ export function SettingsPanel({
   onConnection?: () => void;
   initialSection?: "diagnostics" | "runtime" | "network" | "access";
   updates?: RuntimeUpdates;
-}) {
-  const { locale, setLocale, t } = useLocale();
+};
+
+export function SettingsPanel(props: SettingsPanelProps) {
+  const { initialSection } = props;
   const [section, setSection] = useState<SettingsSection>(initialSection ?? "general");
   const [visited, setVisited] = useState<SettingsSection[]>([initialSection ?? "general"]);
   const selectSection = (next: SettingsSection) => {
@@ -52,10 +46,26 @@ export function SettingsPanel({
     setVisited(current => current.includes(next) ? current : [...current, next]);
   };
   useEffect(() => { if (initialSection) selectSection(initialSection); }, [initialSection]);
+  // Category navigation survives retargeting; the target's drafts and pending
+  // work do not. Same-target category changes keep their editors mounted.
+  return <SettingsView key={desktopIdentity(props.state)} {...props} section={section} visited={visited} selectSection={selectSection} />;
+}
+
+function SettingsView({
+  state, onState, onChangeSetup, onStopRuntime, onActivity, onConnection, updates,
+  section, visited, selectSection,
+}: SettingsPanelProps & {
+  section: SettingsSection;
+  visited: SettingsSection[];
+  selectSection: (section: SettingsSection) => void;
+}) {
+  const { locale, setLocale, t } = useLocale();
   const { appearance, setAppearance, accent, setAccent } = useAppearance();
   const p = useProduct();
   const c = useConfigurationData();
   const [runnerSettings, setRunnerSettings] = useState<RunnerSettings | null>(null);
+  const [loadingRunnerSettings, setLoadingRunnerSettings] = useState(true);
+  const [runnerSettingsError, setRunnerSettingsError] = useState<DesktopError | null>(null);
   const [restartingRunner, setRestartingRunner] = useState(false);
   const [runnerError, setRunnerError] = useState<DesktopError | null>(null);
   const [proxyMode, setProxyMode] = useState<TunnelProxyMode>(state.tunnel_proxy.mode);
@@ -72,42 +82,100 @@ export function SettingsPanel({
   const labels: Record<SettingsSection, string> = { general: p("general"), access: p("accessAndPermissions"), network: p("network"), runtime: p("runtimeAndServices"), configuration: c("title"), diagnostics: p("troubleshooting"), about: p("aboutAndUpdates") };
   const descriptions: Record<SettingsSection, string> = { general: p("generalSummary"), access: p("accessSummary"), network: p("networkSummary"), runtime: p("runtimeSummary"), configuration: c("summary"), diagnostics: p("diagnosticsSummary"), about: p("aboutSummary") };
 
+  const identity = desktopIdentity(state);
+  const expectedTarget = useRef(state.workspace_runner).current;
+  const alive = useRef(true);
+  const reading = useRef<AbortController | null>(null);
+  const generation = useRef(0);
+  const action = useRef<"proxy" | "restart" | null>(null);
+  const launchAction = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; reading.current?.abort(); generation.current++; };
+  }, []);
+  const refreshRunnerSettings = useCallback(async () => {
+    reading.current?.abort();
+    const controller = new AbortController();
+    reading.current = controller;
+    const request = ++generation.current;
+    const current = () => alive.current && !controller.signal.aborted && request === generation.current;
+    setLoadingRunnerSettings(true); setRunnerSettingsError(null);
+    try {
+      const next = await readDesktopObservation(identity, controller.signal, desktopApi.runnerSettings);
+      if (!current()) return;
+      if (expectedTarget && (next.target.client_id !== expectedTarget.client_id
+        || next.target.server_url !== expectedTarget.server_url || next.target.config_path !== expectedTarget.config_path)) {
+        throw { code: "runner_settings_changed", message: "Runner settings no longer match the selected Runner.", next_action: "Refresh the current Runtime." };
+      }
+      setRunnerSettings(next);
+    } catch (value) {
+      if (current()) setRunnerSettingsError(normalizeDesktopError(value));
+    } finally {
+      if (current()) setLoadingRunnerSettings(false);
+    }
+  }, [identity, expectedTarget]);
+  useEffect(() => { void refreshRunnerSettings(); }, [refreshRunnerSettings]);
+  const previousOperation = useRef(state.current_operation?.kind);
+  useEffect(() => {
+    const wasRefresh = previousOperation.current === "runtime_refresh";
+    previousOperation.current = state.current_operation?.kind;
+    if (wasRefresh && !operationBusy && runnerSettingsError
+      && ["desktop_operation_busy", "desktop_state_unavailable"].includes(runnerSettingsError.code)) {
+      void refreshRunnerSettings();
+    }
+  }, [state.current_operation?.kind, operationBusy, runnerSettingsError, refreshRunnerSettings]);
   useEffect(() => {
     let cancelled = false;
-    void desktopApi.runnerSettings().then(next => { if (!cancelled) setRunnerSettings(next); }).catch(() => undefined);
-    void desktopApi.getLaunchAtLogin().then((enabled) => {
+    void desktopApi.getLaunchAtLogin().then(enabled => {
       if (!cancelled) setLaunchAtLogin(enabled);
-    }).catch((value) => {
+    }).catch(value => {
       if (!cancelled) setLaunchAtLoginError(normalizeDesktopError(value));
     });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
-
+  const acceptRunnerSettings = (next: RunnerSettings) => {
+    if (!alive.current) return;
+    // An action's canonical readback supersedes an older mount/manual read.
+    reading.current?.abort(); generation.current++;
+    setRunnerSettings(next); setRunnerSettingsError(null); setLoadingRunnerSettings(false);
+  };
   const saveProxy = async () => {
-    if (operationBusy) return;
-    setSavingProxy(true);
-    setProxyError(null);
+    if (operationBusy || action.current || !alive.current) return;
+    action.current = "proxy"; setSavingProxy(true); setProxyError(null);
     try {
-      onState(await desktopApi.updateTunnelProxy(proxyMode, customProxy));
+      const next = await desktopApi.updateTunnelProxy(proxyMode, customProxy);
+      if (alive.current) onState(next);
     } catch (value) {
-      setProxyError(normalizeDesktopError(value));
+      if (alive.current) setProxyError(normalizeDesktopError(value));
     } finally {
-      setSavingProxy(false);
+      action.current = null;
+      if (alive.current) setSavingProxy(false);
     }
   };
-
-  const updateLaunchAtLogin = async (enabled: boolean) => {
-    if (savingLaunchAtLogin) return;
-    setSavingLaunchAtLogin(true);
-    setLaunchAtLoginError(null);
+  const restartRunner = async () => {
+    if (!runnerSettings?.can_restart || operationBusy || loadingRunnerSettings || runnerSettingsError || action.current || !alive.current) return;
+    action.current = "restart"; setRestartingRunner(true); setRunnerError(null);
     try {
-      setLaunchAtLogin(await desktopApi.setLaunchAtLogin(enabled));
+      const next = await desktopApi.restartOwnedRunner(runnerSettings.target);
+      if (alive.current) onState(next);
     } catch (value) {
-      setLaunchAtLoginError(normalizeDesktopError(value));
+      if (alive.current) setRunnerError(normalizeDesktopError(value));
     } finally {
-      setSavingLaunchAtLogin(false);
+      action.current = null;
+      if (alive.current) setRestartingRunner(false);
+    }
+  };
+  const updateLaunchAtLogin = async (enabled: boolean) => {
+    if (launchAction.current || !alive.current) return;
+    launchAction.current = true; setSavingLaunchAtLogin(true); setLaunchAtLoginError(null);
+    try {
+      const next = await desktopApi.setLaunchAtLogin(enabled);
+      if (alive.current) setLaunchAtLogin(next);
+    } catch (value) {
+      if (alive.current) setLaunchAtLoginError(normalizeDesktopError(value));
+    } finally {
+      launchAction.current = false;
+      if (alive.current) setSavingLaunchAtLogin(false);
     }
   };
   return (
@@ -141,7 +209,8 @@ export function SettingsPanel({
       </section>
       </div>
       <div id="desktop-settings-access" hidden={section !== "access"}>
-      <RunnerFileAccess settings={runnerSettings} disabled={operationBusy} onState={onState} onSettings={setRunnerSettings} />
+      <RunnerFileAccess state={state} settings={runnerSettings} loading={loadingRunnerSettings} disabled={operationBusy || loadingRunnerSettings || Boolean(runnerSettingsError)} onState={onState} onSettings={acceptRunnerSettings} />
+      {runnerSettingsError && <SettingsError error={runnerSettingsError} onRetry={() => void refreshRunnerSettings()} />}
       {visited.includes("access") && <ComputerPermissions />}
       </div>
       <div id="desktop-settings-diagnostics" hidden={section !== "diagnostics"}>
@@ -170,14 +239,9 @@ export function SettingsPanel({
           {onChangeSetup && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onChangeSetup}>{p("changeServer")}</button>}
           {!state.persistent_environment && onStopRuntime && state.topology?.server.kind === "local" && state.readiness.runtime_ready && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onStopRuntime}>{p("stop")} WebCodex</button>}
         </div>
-        {!state.persistent_environment && runnerSettings && <><p className="field-help">{p("restartRunnerHelp")}</p><button type="button" className="secondary-button" disabled={operationBusy || restartingRunner || !runnerSettings.can_restart} data-webcodex-action="restart-owned-runner" onClick={async () => {
-          if (operationBusy || restartingRunner) return;
-          setRestartingRunner(true); setRunnerError(null);
-          try { onState(await desktopApi.restartOwnedRunner(runnerSettings.target)); }
-          catch (value) { setRunnerError(normalizeDesktopError(value)); }
-          finally { setRestartingRunner(false); }
-        }}>{p("restartRunner")}</button></>}
+        {!state.persistent_environment && runnerSettings && <><p className="field-help">{p("restartRunnerHelp")}</p><button type="button" className="secondary-button" disabled={operationBusy || restartingRunner || loadingRunnerSettings || Boolean(runnerSettingsError) || !runnerSettings.can_restart} data-webcodex-action="restart-owned-runner" onClick={() => void restartRunner()}>{p("restartRunner")}</button></>}
         {runnerError && <SettingsError error={runnerError} />}
+        {runnerSettingsError && <SettingsError error={runnerSettingsError} onRetry={() => void refreshRunnerSettings()} />}
         {runnerSettings && <details className="workspace-technical"><summary>{p("details")}</summary><dl className="detail-list"><div><dt>Runner</dt><dd>{runnerSettings.target.config_path}</dd></div></dl></details>}
         </details>
         <PowerShellInstallGuidance state={state} onState={onState} />
@@ -196,8 +260,9 @@ export function SettingsPanel({
   );
 }
 
-function SettingsError({ error }: { error: DesktopError }) {
+function SettingsError({ error, onRetry }: { error: DesktopError; onRetry?: () => void }) {
   const { t } = useLocale();
+  const p = useProduct();
   const presentation = desktopErrorPresentation(error, t);
   return (
     <div className="error-card" role="alert">
@@ -208,6 +273,7 @@ function SettingsError({ error }: { error: DesktopError }) {
         <code>{error.code}</code>
         <p>{error.message}</p>
       </details>
+      {onRetry && <button type="button" className="secondary-button" onClick={onRetry}>{p("refresh")}</button>}
     </div>
   );
 }

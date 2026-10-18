@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode, useState } from "react";
 import { MantineProvider } from "@mantine/core";
 import { describe, expect, it, vi } from "vitest";
 import { LocaleProvider } from "../../i18n/locale";
@@ -31,4 +32,31 @@ describe("Mantine modal accessibility boundary", () => {
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button"));
     expect(close).toHaveBeenCalledTimes(1);
   });
+});
+
+function DialogReplacement() {
+  const [view, setView] = useState<"window" | "session" | null>(null);
+  return <><button onClick={() => setView("window")}>Open work details</button>
+    {view === "window" && <WorkspaceDialog key="window" title="Window" onClose={() => setView(null)}>
+      <button onClick={() => setView("session")}>Open associated session</button>
+    </WorkspaceDialog>}
+    {view === "session" && <WorkspaceDialog key="session" title="Session" onClose={() => setView(null)}>
+      <button onClick={() => setView(null)}>Close session</button>
+    </WorkspaceDialog>}
+  </>;
+}
+
+it.each([false, true])("restores the original work opener after Window → Session replacement (StrictMode=%s)", async strict => {
+  const app = <MantineProvider env="test"><LocaleProvider><DialogReplacement /></LocaleProvider></MantineProvider>;
+  render(strict ? <StrictMode>{app}</StrictMode> : app);
+  const opener = screen.getByRole("button", { name: "Open work details" });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    opener.focus(); fireEvent.click(opener);
+    const associated = await screen.findByRole("button", { name: "Open associated session" });
+    associated.focus(); fireEvent.click(associated);
+    expect(await screen.findByRole("dialog", { name: "Session" })).toBeInTheDocument();
+    expect(associated.isConnected).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Close session" }));
+    await waitFor(() => expect(opener).toHaveFocus());
+  }
 });

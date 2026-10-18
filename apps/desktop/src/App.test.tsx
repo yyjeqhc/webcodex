@@ -379,15 +379,17 @@ beforeEach(() => {
   it("groups navigation while preserving shortcut order and persists the selected appearance", async () => {
     api.getState.mockResolvedValue(readyState);
     renderApp();
-    await screen.findByLabelText("外观 · 跟随系统");
+    const appearance = await screen.findByRole("button", { name: "外观" });
+    expect(appearance).toHaveAttribute("aria-description", "外观 · 跟随系统");
 
     expect(screen.getByText("工作")).toBeInTheDocument();
     expect(screen.getByText("配置")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "首页" })).toHaveAttribute("aria-keyshortcuts", "Control+1 Meta+1");
     expect(screen.getByRole("button", { name: "设置" })).toHaveAttribute("aria-keyshortcuts", "Control+6 Meta+6");
 
-    fireEvent.click(screen.getByLabelText("外观 · 跟随系统"));
-    fireEvent.click(screen.getByLabelText("外观 · 浅色"));
+    fireEvent.click(appearance);
+    expect(appearance).toHaveAttribute("aria-description", "外观 · 浅色");
+    fireEvent.click(appearance);
     await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", "dark"));
     expect(document.documentElement).toHaveAttribute("data-appearance", "dark");
     expect(window.localStorage.getItem("webcodex.desktop.appearance.v1")).toBe("dark");

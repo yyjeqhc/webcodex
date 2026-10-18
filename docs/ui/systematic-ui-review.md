@@ -168,3 +168,31 @@ screens, with each label above its complete value/copy action. Project address
 is accurately labeled Project ID, Window/Runner labels explicitly name IDs, and
 First observed describes the first-seen timestamp. No API/read/permission or
 credential boundary changes accompany these presentation corrections.
+
+## Desktop solid-surface extension
+
+Desktop now opts into its own renderer-scoped neutral theme, extending the
+approved Web design to the shared Windows/Linux/macOS UI. The seven native
+destinations retain their lifecycle, connection, permission and configuration
+responsibilities. A rounded sidebar, monochrome navigation/category tabs, stable
+reading measure, opaque content regions and full-outline entity selections
+replace the former glass chrome and accent rails.
+
+Sidebar preferences use the same source-owned Mantine accent/appearance controls
+as the Web implementation, plus a language radio menu. The compact rail
+retains all three targets. Existing locale/theme storage and native effects are
+unchanged. The Desktop bundler resolves shared Mantine/Lucide code through the
+Desktop dependency instances, preserving provider and React identity. Native
+input CSS excludes Mantine composite inputs. Public fixtures, the layout contract
+and explicit native-validation boundaries live in the
+[Desktop gallery](desktop-soft-surfaces/README.md).
+
+A follow-up mounted-flow audit covers every main destination, Settings/Extensions
+category and reachable app-owned dialog variant in English and Chinese. Live
+resize reaches the native 780×580 minimum, flips light/dark without remounting,
+and checks stable layout, draft/selection retention, scrolling and focus. It
+found a Window→Session replacement losing its original opener; dialog ownership
+now transfers that return target through the replacement. The
+[Desktop audit inventory](desktop-soft-surfaces/README.md#mounted-resize-and-theme-audit)
+distinguishes these fixture checks from native Linux smoke and untested OS/error
+permutations.

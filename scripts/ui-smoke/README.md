@@ -138,3 +138,50 @@ Escape/focus restoration, outside dismissal, popup bounds, and horizontal overfl
 Screenshots and the report go to ignored
 `artifacts/web-soft-surfaces/admin-preferences/`. These are isolated Chromium
 fixtures, not live backend or native WebView evidence.
+
+## Desktop solid-surface checks
+
+For Desktop neutral surfaces and preference controls, build `apps/desktop` and run
+`node scripts/ui-smoke/desktop-soft-surfaces.mjs`. It covers all seven destinations,
+all seven Settings and six Extensions categories, Activity tabs and details, Connection
+and native Plugin dialogs, selected project rows, and long bilingual metadata at
+1440/1280/1024/780/768/390 pixels, in both themes and English/Chinese. The 780-pixel
+case represents the native minimum width; narrower cases are supplementary renderer
+checks. Assertions cover shared content origin and bounded reading measure, overflow,
+large blur removal, rounded monochrome navigation without rails, selected entity label contrast of at least 4.5:1, stable category
+geometry and equal tab treatment, and compact preferences in expanded/compact
+navigation. Real control interactions cover accent presets/custom input, invalid
+input, appearance cycling, language, focus return, reload persistence, and absence
+of configuration/service effects while browsing. Screenshots and detailed geometry,
+check, error, and failure evidence go to ignored `artifacts/desktop-soft-surfaces/`.
+These isolated Chromium fixtures do not establish native WebView or real-model
+acceptance. Set `WEBCODEX_SMOKE_BROWSER` for an installed Chromium executable.
+
+For the Desktop dialog inventory, run `node scripts/ui-smoke/desktop-dialogs.mjs`
+after building Desktop. The browser fixture opens each app-owned WorkspaceDialog
+variant and the native HTML permission welcome dialog through its real UI trigger,
+then resizes the same mounted dialog through 1440×960, 1024×760, 780×580, and
+1440×960 again. English and Chinese cases flip light/dark through the production
+appearance event while open, check containment, stable bounds, focus, ordinary
+wheel access to final controls, Escape dismissal, and focus restoration. A strict
+invoke allowlist records all calls and rejects configuration, service, permission,
+authorization, credential and clipboard final effects. OS file selection is a
+browser fixture; no native picker or backend is contacted. Outputs and the exact
+surface/check/command inventory are saved under ignored
+`artifacts/desktop-soft-surfaces/dialogs/`. Use `DIALOG_LOCALES=en-US` and
+`DIALOG_FILTER=substring` for focused reproductions. Failed triggers remain failures
+in the report; loading/busy/error states and native WebView behavior are separate
+acceptance work. Inline update confirmation belongs to the page-flow harness.
+
+For Desktop pages under live window-size and theme changes, run
+`node scripts/ui-smoke/desktop-resize-theme.mjs` after the Desktop production
+build. The same mounted English/Chinese views traverse 1440×960, 1280×760,
+1024×580, 780×580, 1180×760 and back to 1440×960. All main destinations,
+Settings/Extensions categories, onboarding choices, synthetic setup completion,
+operation banner and inline update confirmation are included. Geometry,
+monochrome selection, tab state, drafts, light/dark overflow, preference access,
+OS-theme following and absence of unplanned fixture effects are asserted.
+Update-confirmation geometry, action reachability and cancellation focus are
+checked separately from the underlying page. Results are saved under ignored
+`artifacts/desktop-soft-surfaces/resize-theme/`. Native Windows/macOS, OS dialogs,
+and asynchronous error/busy permutations require separate acceptance.

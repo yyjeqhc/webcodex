@@ -68,3 +68,7 @@ __pycache__/
 /artifacts/mcp-workspaces/
 /artifacts/runtime-call-stream/
 /scripts/ui-smoke/node_modules/
+
+# Desktop solid-surface verification and root Vite temporary modules.
+/artifacts/desktop-soft-surfaces/
+/node_modules/

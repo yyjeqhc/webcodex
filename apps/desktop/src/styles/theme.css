@@ -1,0 +1,72 @@
+/* Desktop opts into the same solid surfaces as the approved Web design.
+   Native platform behavior and other renderer tokens keep their own owners. */
+:root[data-ui-renderer="desktop"] {
+  --ui-background: #f3f3f3;
+  --ui-content: #fff;
+  --ui-surface: #fff;
+  --ui-surface-secondary: #f6f6f6;
+  --ui-surface-elevated: #fff;
+  --ui-text-primary: #191919;
+  --ui-text-secondary: #5c5c5c;
+  --ui-text-tertiary: #757575;
+  --ui-border: #e5e5e5;
+  --ui-border-subtle: #ededed;
+  --ui-border-strong: #a3a3a3;
+  --desktop-selection: #191919;
+  --desktop-on-selection: #fff;
+  --desktop-content-max: 1440px;
+  --desktop-shell-gap: 16px;
+  --desktop-page-inset: 24px;
+  --desktop-panel-inset: 24px;
+  --desktop-section-gap: 24px;
+  --ui-glass: var(--ui-content);
+  --ui-glass-hover: var(--ui-surface-secondary);
+  --ui-glass-active: var(--ui-surface-secondary);
+  --ui-glass-popover: var(--ui-surface-elevated);
+  --ui-glass-border: var(--ui-border);
+  --ui-glass-edge: var(--ui-border-subtle);
+  --ui-glass-filter: none;
+  --ui-glass-highlight: 0 0 0 transparent;
+  --ui-shadow-surface: 0 2px 8px rgb(0 0 0 / 2%);
+  --ui-shadow-raised: 0 4px 20px rgb(0 0 0 / 4%);
+  --ui-shadow-floating: 0 16px 48px rgb(0 0 0 / 12%);
+}
+:root[data-ui-renderer="desktop"][data-theme="dark"] {
+  --ui-background: #141414;
+  --ui-content: #202020;
+  --ui-surface: #202020;
+  --ui-surface-secondary: #292929;
+  --ui-surface-elevated: #303030;
+  --ui-text-primary: #f5f5f5;
+  --ui-text-secondary: #c2c2c2;
+  --ui-text-tertiary: #a3a3a3;
+  --ui-border: #383838;
+  --ui-border-subtle: #303030;
+  --ui-border-strong: #737373;
+  --desktop-selection: #f5f5f5;
+  --desktop-on-selection: #191919;
+  --ui-shadow-surface: 0 2px 8px rgb(0 0 0 / 8%);
+  --ui-shadow-raised: 0 4px 20px rgb(0 0 0 / 12%);
+  --ui-shadow-floating: 0 16px 48px rgb(0 0 0 / 32%);
+}
+:root[data-ui-renderer="desktop"] .appearance-preference-popover {
+  border-color: var(--ui-border);
+  background: var(--ui-surface-elevated);
+  color: var(--ui-text-primary);
+  box-shadow: var(--ui-shadow-floating);
+}
+:root[data-ui-renderer="desktop"] .appearance-preference-popover .mantine-ColorSwatch-root { cursor: pointer; }
+@media (max-width: 768px) {
+  :root[data-ui-renderer="desktop"] {
+    --desktop-shell-gap: 12px;
+    --desktop-page-inset: 16px;
+    --desktop-panel-inset: 16px;
+    --desktop-section-gap: 20px;
+  }
+}
+/* Keep the entity accent in the surface/outline, with readable label contrast. */
+:root[data-ui-renderer="desktop"] .project-picker-option[aria-pressed="true"] {
+  color: var(--ui-text-primary);
+  outline: 1px solid color-mix(in srgb, var(--ui-accent) 28%, var(--ui-border));
+  outline-offset: -1px;
+}

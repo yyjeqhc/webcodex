@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const css = readFileSync(new URL("../src/styles/app.css", import.meta.url), "utf8");
-const fullWidthSelector = 'input:not([type="radio"]):not([type="checkbox"]), select';
+const fullWidthSelector = 'input:not([type="radio"]):not([type="checkbox"]):not(.mantine-Input-input), select:not(.mantine-Input-input)';
 const legacySelector = 'input:not([type="radio"]), select';
 
 assert.match(
@@ -16,7 +16,7 @@ assert.ok(
 );
 assert.match(
   css,
-  /input\[type="checkbox"\]\s*\{[^}]*width:\s*18px;[^}]*height:\s*18px;/,
+  /input\[type="checkbox"\]:not\(\.mantine-Checkbox-input\)\s*\{[^}]*width:\s*18px;[^}]*height:\s*18px;/,
   "checkboxes must keep an explicit compact sizing contract",
 );
 assert.match(

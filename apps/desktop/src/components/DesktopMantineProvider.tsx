@@ -29,7 +29,7 @@ export function DesktopMantineProvider({ children }: { children: ReactNode }) {
       PasswordInput: PasswordInput.extend({ defaultProps: { size: "md" }, classNames: { input: "ui-mantine-input", label: "ui-mantine-label" } }),
       Select: Select.extend({ defaultProps: { size: "md" }, classNames: { input: "ui-mantine-input", label: "ui-mantine-label" } }),
       Textarea: Textarea.extend({ defaultProps: { size: "md" }, classNames: { input: "ui-mantine-input", label: "ui-mantine-label" } }),
-      Modal: Modal.extend({ defaultProps: { centered: true, overlayProps: { backgroundOpacity: 0.35, blur: 5 } }, classNames: { content: "ui-mantine-modal-content", header: "ui-mantine-modal-header", title: "ui-mantine-modal-title" } }),
+      Modal: Modal.extend({ defaultProps: { centered: true, overlayProps: { backgroundOpacity: 0.35, blur: 0 } }, classNames: { content: "ui-mantine-modal-content", header: "ui-mantine-modal-header", title: "ui-mantine-modal-title" } }),
       Alert: Alert.extend({ classNames: { root: "ui-mantine-alert" } }),
     },
   });

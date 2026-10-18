@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigurationDataPanel } from "./ConfigurationDataPanel";
 import { LocaleProvider, LANGUAGES } from "../../i18n/locale";
 import { CONFIGURATION_DATA_MESSAGES, configurationDataText } from "../../i18n/configuration-data";
@@ -9,7 +9,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { DesktopState } from "../../models/topology";
 import type { PathEntry, PathInventory } from "../../models/path-inventory";
 
-vi.mock("../../lib/desktop-api", () => ({ desktopApi: { pathInventory: vi.fn(), openInventoryLocation: vi.fn(), exportInventoryDocument: vi.fn() } }));
+vi.mock("../../lib/desktop-api", () => ({ desktopApi: { pathInventory: vi.fn(), getState: vi.fn(), openInventoryLocation: vi.fn(), exportInventoryDocument: vi.fn() } }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn() }));
 const state = { persistent_environment: "alpha", topology: { server: { kind: "local" }, runner: { kind: "local" } }, binaries: { directory: "/runtime" } } as DesktopState;
@@ -17,9 +17,88 @@ const entry = (id: string, overrides: Partial<PathEntry> = {}): PathEntry => ({ 
 const inventory = (overrides: Partial<PathInventory> = {}): PathInventory => ({ schema_version: 1, observed_at_ms: 1, environment_id: "alpha", local_server: true, local_runner: true, service_scope: "user", revision: "revision-1", roots: [entry("environment.root", { kind: "directory" }), entry("desktop.root", { kind: "directory" })], entries: [entry("server.configuration")], issues: [], builds: [], identities: [], ...overrides });
 function view(value = state) { return <LocaleProvider><ConfigurationDataPanel state={value} /></LocaleProvider>; }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
-beforeEach(() => { vi.resetAllMocks(); localStorage.setItem("webcodex.desktop.locale", "en-US"); vi.mocked(desktopApi.pathInventory).mockResolvedValue(inventory()); vi.mocked(save).mockResolvedValue(null); });
+beforeEach(() => { vi.resetAllMocks(); localStorage.setItem("webcodex.desktop.locale", "en-US"); vi.mocked(desktopApi.pathInventory).mockResolvedValue(inventory()); vi.mocked(desktopApi.getState).mockResolvedValue(state); vi.mocked(save).mockResolvedValue(null); });
+
+afterEach(() => { vi.useRealTimers(); });
 
 describe("configuration location observations", () => {
+
+  it.each(["desktop_operation_busy", "desktop_state_unavailable"])("recovers a passive refresh collision reported as %s", async code => {
+    vi.useFakeTimers();
+    vi.mocked(desktopApi.getState).mockResolvedValue({ ...state, current_operation: { id: "refresh", kind: "runtime_refresh", phase: "running", started_at_ms: 1, cancellable: false } });
+    vi.mocked(desktopApi.pathInventory).mockRejectedValueOnce({ code, message: "private refresh detail", next_action: "Wait" }).mockResolvedValueOnce(inventory());
+    render(view()); await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+    expect(screen.getByText("/private/desktop.root")).toBeVisible();
+    expect(desktopApi.pathInventory).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+
+  it.each(["before retry", "after delay"])("reports an identity change discovered %s without reading the new target", async phase => {
+    vi.useFakeTimers();
+    const changed = { ...state, persistent_environment: "beta" };
+    vi.mocked(desktopApi.getState).mockResolvedValue(changed);
+    if (phase === "after delay") vi.mocked(desktopApi.getState).mockResolvedValueOnce(state);
+    vi.mocked(desktopApi.pathInventory).mockRejectedValue({ code: "desktop_operation_busy", message: "private location body", next_action: "Wait" });
+    render(view()); await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+    expect(screen.getByRole("alert")).toHaveTextContent("inventory_changed");
+    expect(screen.queryByText("inventory_unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("private location body")).not.toBeInTheDocument();
+    expect(desktopApi.pathInventory).toHaveBeenCalledOnce();
+  });
+
+  it("preserves an exhausted busy code without revealing native details", async () => {
+    vi.useFakeTimers();
+    vi.mocked(desktopApi.getState).mockResolvedValue(state);
+    vi.mocked(desktopApi.pathInventory).mockRejectedValue({ code: "desktop_operation_busy", message: "private location body", next_action: "private next action" });
+    render(view()); await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+    expect(screen.getByRole("alert")).toHaveTextContent("desktop_operation_busy");
+    expect(screen.queryByText("inventory_unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText(/private location body|private next action/)).not.toBeInTheDocument();
+    expect(desktopApi.pathInventory).toHaveBeenCalledTimes(6);
+    expect(screen.getByRole("button", { name: "Refresh locations" })).toBeEnabled();
+  });
+
+  it("does not retry inventory reads during a foreground operation", async () => {
+    vi.useFakeTimers();
+    vi.mocked(desktopApi.getState).mockResolvedValue({ ...state, current_operation: { id: "switch", kind: "runtime_switch", phase: "running", started_at_ms: 1, cancellable: false } });
+    vi.mocked(desktopApi.pathInventory).mockRejectedValue({ code: "desktop_operation_busy", message: "Busy", next_action: "Wait" });
+    render(view()); await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+    expect(desktopApi.pathInventory).toHaveBeenCalledOnce();
+    expect(screen.getByRole("alert")).toHaveTextContent("desktop_operation_busy");
+  });
+
+  it.each(["unmount", "identity"])("cancels an inventory retry on %s", async change => {
+    vi.useFakeTimers();
+    vi.mocked(desktopApi.getState).mockResolvedValue(state);
+    vi.mocked(desktopApi.pathInventory).mockRejectedValueOnce({ code: "desktop_operation_busy", message: "Busy", next_action: "Wait" }).mockResolvedValue(inventory());
+    const rendered = render(view()); await act(async () => {});
+    expect(desktopApi.getState).toHaveBeenCalledOnce();
+    if (change === "unmount") rendered.unmount();
+    else rendered.rerender(view({ ...state, persistent_environment: "beta" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+    expect(desktopApi.pathInventory).toHaveBeenCalledTimes(change === "unmount" ? 1 : 2);
+  });
+
+  it("abandons a save picker after unmount", async () => {
+    const picker = deferred<string | null>(); vi.mocked(save).mockReturnValueOnce(picker.promise);
+    const rendered = render(view());
+    fireEvent.click(await screen.findByRole("button", { name: "Export path inventory" }));
+    rendered.unmount();
+    await act(async () => picker.resolve("/stale-export.json"));
+    expect(desktopApi.exportInventoryDocument).not.toHaveBeenCalled();
+  });
+
+  it("preserves a native action's busy error without replaying the action", async () => {
+    vi.mocked(desktopApi.openInventoryLocation).mockRejectedValue({ code: "desktop_operation_busy", message: "private body", next_action: "Wait" });
+    render(view());
+    const panel = (await screen.findByRole("heading", { name: "Server · Configuration" })).closest("article")!;
+    fireEvent.click(within(panel).getByRole("button", { name: "Open location" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("desktop_operation_busy");
+    expect(desktopApi.openInventoryLocation).toHaveBeenCalledOnce(); expect(desktopApi.pathInventory).toHaveBeenCalledOnce();
+    expect(desktopApi.getState).not.toHaveBeenCalled(); expect(screen.queryByText("private body")).not.toBeInTheDocument();
+  });
   it("keeps environment and actual Desktop data roots separate and copies only the explicit canonical path", async () => {
     render(view());
     const root = (await screen.findByRole("heading", { name: "Environment · Environment root" })).closest("article")!;

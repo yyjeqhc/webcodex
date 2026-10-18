@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LocaleProvider } from "../../i18n/locale";
 import { DesktopMantineProvider } from "../../components/DesktopMantineProvider";
@@ -46,6 +46,66 @@ describe("persistent local services", () => {
     fireEvent.click(within(section).getByRole("button", { name: "Restart Local Server" }));
     await waitFor(() => expect(api.environmentServiceAction).toHaveBeenCalledExactlyOnceWith({ environmentId: "environment-1", component: "server", action: "restart" }));
     await waitFor(() => expect(onState).toHaveBeenCalledWith(baseState));
+  });
+
+  it("does not publish a late service result after unmount", async () => {
+    let finish!: (value: DesktopState) => void;
+    api.environmentServiceAction.mockReturnValue(new Promise<DesktopState>(resolve => { finish = resolve; }));
+    const onState = vi.fn();
+    const mounted = render(wrap(<LocalServicesPanel state={baseState} onState={onState} />));
+    fireEvent.click(screen.getByRole("button", { name: "Restart Local Server" }));
+    mounted.unmount();
+    await act(async () => finish(baseState));
+    expect(api.environmentServiceAction).toHaveBeenCalledOnce();
+    expect(onState).not.toHaveBeenCalled();
+  });
+
+  it("keeps a new target's action independent of a late prior service result", async () => {
+    let finishOld!: (value: DesktopState) => void, finishNew!: (value: DesktopState) => void;
+    api.environmentServiceAction
+      .mockReturnValueOnce(new Promise<DesktopState>(resolve => { finishOld = resolve; }))
+      .mockReturnValueOnce(new Promise<DesktopState>(resolve => { finishNew = resolve; }));
+    const onState = vi.fn();
+    const mounted = render(wrap(<LocalServicesPanel state={baseState} onState={onState} />));
+    fireEvent.click(screen.getByRole("button", { name: "Restart Local Server" }));
+    const nextState = { ...baseState, persistent_environment: "environment-2" };
+    mounted.rerender(wrap(<LocalServicesPanel state={nextState} onState={onState} />));
+    const restart = screen.getByRole("button", { name: "Restart Local Server" });
+    expect(restart).toBeEnabled();
+    fireEvent.click(restart); fireEvent.click(restart);
+    expect(api.environmentServiceAction).toHaveBeenCalledTimes(2);
+    expect(api.environmentServiceAction).toHaveBeenLastCalledWith({ environmentId: "environment-2", component: "server", action: "restart" });
+    await act(async () => finishOld(baseState));
+    expect(onState).not.toHaveBeenCalled();
+    expect(restart).toBeDisabled();
+    await act(async () => finishNew(nextState));
+    expect(onState).toHaveBeenCalledExactlyOnceWith(nextState);
+    expect(restart).toBeEnabled();
+  });
+
+  it("discards a prior target's late service error", async () => {
+    let fail!: (reason: unknown) => void;
+    api.environmentServiceAction.mockReturnValue(new Promise<DesktopState>((_resolve, reject) => { fail = reject; }));
+    const onState = vi.fn();
+    const mounted = render(wrap(<LocalServicesPanel state={baseState} onState={onState} />));
+    fireEvent.click(screen.getByRole("button", { name: "Restart Local Server" }));
+    mounted.rerender(wrap(<LocalServicesPanel state={{ ...baseState, persistent_environment: "environment-2" }} onState={onState} />));
+    await act(async () => fail({ code: "service_start_failed", message: "Old target failed", next_action: "Retry" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restart Local Server" })).toBeEnabled();
+    expect(onState).not.toHaveBeenCalled();
+  });
+
+  it("retains an admitted action across observation-only state changes", async () => {
+    let finish!: (value: DesktopState) => void;
+    api.environmentServiceAction.mockReturnValue(new Promise<DesktopState>(resolve => { finish = resolve; }));
+    const onState = vi.fn();
+    const mounted = render(wrap(<LocalServicesPanel state={baseState} onState={onState} />));
+    fireEvent.click(screen.getByRole("button", { name: "Restart Local Server" }));
+    mounted.rerender(wrap(<LocalServicesPanel state={{ ...baseState, readiness: { ...baseState.readiness, runner: "connecting" } }} onState={onState} />));
+    expect(screen.getByRole("button", { name: "Restart Local Server" })).toBeDisabled();
+    await act(async () => finish(baseState));
+    expect(onState).toHaveBeenCalledExactlyOnceWith(baseState);
   });
 
   it("hides controls for absent or remote persistent components", async () => {

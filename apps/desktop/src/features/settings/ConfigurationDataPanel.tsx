@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { save } from "@tauri-apps/plugin-dialog";
 import { desktopApi } from "../../lib/desktop-api";
+import { desktopIdentity, readDesktopObservation } from "../../lib/desktop-observation";
 import type { DesktopError, DesktopState } from "../../models/topology";
 import type { InventoryDocumentKind, PathEntry, PathInventory } from "../../models/path-inventory";
 import { useConfigurationData, type ConfigurationDataKey } from "../../i18n/configuration-data";
@@ -24,10 +25,11 @@ function purposeKey(entry: PathEntry): ConfigurationDataKey {
 }
 const sourceKeys: Record<string, ConfigurationDataKey> = { selected: "selected", saved_record: "saved_record", saved_journal: "saved_journal", configured: "configured", derived: "derived", platform: "platform", tauri: "platform", environment: "environment", desktop_state: "desktop_state", desktop_preferences: "desktop_preferences", in_memory: "in_memory" };
 const issueKeys: Record<string, ConfigurationDataKey> = { environment_changed: "changed", inventory_truncated: "limited", tunnel_profiles_truncated: "limited", project_references_truncated: "limited", runner_binding_unconfirmed: "runner_binding", environment_record_invalid: "record_unavailable", environment_record_unavailable: "record_unavailable" };
-const inventoryErrorCodes = new Set(["inventory_incomplete", "inventory_changed", "inventory_location_unavailable", "inventory_export_file_exists_or_unavailable", "inventory_export_managed_path", "inventory_export_path_invalid", "inventory_export_path_unconfirmed", "inventory_serialization_failed", "inventory_too_large", "inventory_write_unconfirmed"]);
+const inventoryErrorCodes = new Set(["desktop_operation_busy", "desktop_state_unavailable", "inventory_incomplete", "inventory_changed", "inventory_location_unavailable", "inventory_export_file_exists_or_unavailable", "inventory_export_managed_path", "inventory_export_path_invalid", "inventory_export_path_unconfirmed", "inventory_serialization_failed", "inventory_too_large", "inventory_write_unconfirmed"]);
 function inventoryError(value: unknown): DesktopError {
   const error = normalizeDesktopError(value);
-  return { code: inventoryErrorCodes.has(error.code) ? error.code : "inventory_unavailable", message: "", next_action: "refresh" };
+  const code = error.code === "diagnostic_identity_changed" ? "inventory_changed" : error.code;
+  return { code: inventoryErrorCodes.has(code) ? code : "inventory_unavailable", message: "", next_action: "refresh" };
 }
 const componentNames: Record<string, string> = { desktop: "Desktop", environment: "Environment", server: "Server", runner: "Runner", tunnel: "Tunnel", runtime: "Runtime" };
 
@@ -37,6 +39,7 @@ export function ConfigurationDataPanel({ state }: { state: DesktopState }) {
   const context = JSON.stringify([state.persistent_environment ?? null, state.topology ?? null, state.binaries ?? null, state.workspace_runner ?? null]);
   const currentContext = useRef(context); currentContext.current = context;
   const generation = useRef(0);
+  const observation = useRef<AbortController | null>(null);
   const inFlight = useRef<number | null>(null);
   const [snapshot, setSnapshot] = useState<{ context: string; inventory: PathInventory } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -45,10 +48,12 @@ export function ConfigurationDataPanel({ state }: { state: DesktopState }) {
   const data = snapshot?.context === context ? snapshot.inventory : null;
   const refresh = async () => {
     const request = ++generation.current; const identity = context;
+    observation.current?.abort();
+    const controller = new AbortController(); observation.current = controller;
     inFlight.current = null;
     setSnapshot(null); setBusy(true); setError(null); setNotice(null);
     try {
-      const inventory = await desktopApi.pathInventory();
+      const inventory = await readDesktopObservation(desktopIdentity(state), controller.signal, () => desktopApi.pathInventory());
       if (generation.current === request && currentContext.current === identity) setSnapshot({ context: identity, inventory });
     } catch (value) {
       if (generation.current === request && currentContext.current === identity) setError(inventoryError(value));
@@ -58,7 +63,7 @@ export function ConfigurationDataPanel({ state }: { state: DesktopState }) {
   };
   useEffect(() => {
     void refresh();
-    return () => { generation.current++; };
+    return () => { generation.current++; observation.current?.abort(); };
   }, [context]); // State changes invalidate observations before the next request.
   const disabled = busy || Boolean(state.current_operation);
   const exportDisabled = disabled || Boolean(data?.issues.some(issue => issue.code.endsWith("_truncated")));

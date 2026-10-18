@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { desktopApi } from "../../lib/desktop-api";
+import { desktopIdentity } from "../../lib/desktop-observation";
 import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
 import { useShellText } from "../../i18n/runtime-shell";
@@ -7,18 +8,28 @@ import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/pres
 import type { DesktopError, DesktopState } from "../../models/topology";
 import { statusKey } from "../workspace/WorkspaceStatus";
 
-export function LocalServicesPanel({ state, onState }: { state: DesktopState; onState: (state: DesktopState) => void }) {
+type Props = { state: DesktopState; onState: (state: DesktopState) => void };
+
+export function LocalServicesPanel(props: Props) {
+  return <LocalServiceControls key={desktopIdentity(props.state)} {...props} />;
+}
+
+function LocalServiceControls({ state, onState }: Props) {
   const p = useProduct(); const s = useShellText(); const { t } = useLocale();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
+  const alive = useRef(true), actionInFlight = useRef(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const environmentId = state.persistent_environment?.trim();
   const disabled = busy || Boolean(state.current_operation);
   const act = async (component: "server" | "runner", action: "start" | "stop" | "restart" | "repair_credential") => {
-    if (!environmentId || disabled) return;
-    setBusy(true); setError(null);
-    try { onState(await desktopApi.environmentServiceAction({ environmentId, component, action })); }
-    catch (value) { setError(normalizeDesktopError(value)); }
-    finally { setBusy(false); }
+    if (!environmentId || disabled || actionInFlight.current) return;
+    actionInFlight.current = true; setBusy(true); setError(null);
+    try {
+      const next = await desktopApi.environmentServiceAction({ environmentId, component, action });
+      if (alive.current) onState(next);
+    } catch (value) { if (alive.current) setError(normalizeDesktopError(value)); }
+    finally { actionInFlight.current = false; if (alive.current) setBusy(false); }
   };
   const presentation = error && desktopErrorPresentation(error, t);
   return <div className="service-status-list" data-testid={environmentId ? "persistent-services" : undefined}>

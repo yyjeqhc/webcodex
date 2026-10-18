@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { desktopApi } from "../../lib/desktop-api";
+import { desktopIdentity, readDesktopObservation } from "../../lib/desktop-observation";
 import type { DesktopError, DesktopState } from "../../models/topology";
 import type { BinaryProbe, RuntimeCandidate, RuntimeSettings, RuntimeSource, RuntimeSwitchResult } from "../../models/runtime-shell";
 import { useShellText } from "../../i18n/runtime-shell";
@@ -9,36 +10,53 @@ import { useLocale } from "../../i18n/locale";
 import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 
-export function RuntimePanel({ state, onState, onActivity, onUpdates }: { state: DesktopState; onState: (state: DesktopState) => void; onActivity?: () => void; onUpdates?: () => void }) {
+type RuntimePanelProps = { state: DesktopState; onState: (state: DesktopState) => void; onActivity?: () => void; onUpdates?: () => void };
+export function RuntimePanel(props: RuntimePanelProps) {
+  return <RuntimePanelContent key={desktopIdentity(props.state)} {...props} />;
+}
+
+function RuntimePanelContent({ state, onState, onActivity, onUpdates }: RuntimePanelProps) {
   const s = useShellText(); const p = useProduct(); const { t } = useLocale();
+  const identity = desktopIdentity(state);
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
   const [confirm, setConfirm] = useState<RuntimeCandidate | null>(null);
   const [result, setResult] = useState<RuntimeSwitchResult | null>(null);
-  const alive = useRef(true);
+  const generation = useRef(0);
+  const observation = useRef<AbortController | null>(null);
   const runningAction = useRef(false);
   useEffect(() => {
-    alive.current = true;
-    void Promise.resolve().then(() => desktopApi.runtimeSettings()).then(value => { if (alive.current) { setSettings(value); setResult(value.last_switch); } })
-      .catch(value => { if (alive.current) setError(normalizeDesktopError(value)); });
-    return () => { alive.current = false; };
-  }, []);
+    const request = ++generation.current;
+    const controller = new AbortController(); observation.current = controller;
+    void readDesktopObservation(identity, controller.signal, () => desktopApi.runtimeSettings()).then(value => {
+      if (request === generation.current && !controller.signal.aborted) { setSettings(value); setResult(value.last_switch); }
+    }).catch(value => {
+      if (request === generation.current && !controller.signal.aborted) setError(normalizeDesktopError(value));
+    });
+    return () => { ++generation.current; observation.current?.abort(); controller.abort(); };
+  }, [identity]);
   const disabled = busy || Boolean(state.current_operation);
-  const run = async (action: () => Promise<void>) => {
-    if (disabled || runningAction.current) return;
+  const run = async (action: (valid: () => boolean, signal: AbortSignal) => Promise<void>) => {
+    if (disabled || runningAction.current || observation.current?.signal.aborted) return;
     runningAction.current = true;
+    // A user action supersedes a slow initial observation, including its retries.
+    const request = ++generation.current;
+    observation.current?.abort();
+    const controller = new AbortController(); observation.current = controller;
+    const valid = () => request === generation.current && !controller.signal.aborted;
     setBusy(true); setError(null);
-    try { await action(); } catch (value) { if (alive.current) setError(normalizeDesktopError(value)); }
-    finally { runningAction.current = false; if (alive.current) setBusy(false); }
+    try { await action(valid, controller.signal); } catch (value) { if (valid()) setError(normalizeDesktopError(value)); }
+    finally { if (valid()) { runningAction.current = false; setBusy(false); } }
   };
-  const apply = async (candidate: RuntimeCandidate, confirmInterrupt: boolean) => {
+  const apply = async (candidate: RuntimeCandidate, confirmInterrupt: boolean, valid: () => boolean, signal: AbortSignal) => {
+    if (!valid()) return;
     let next: RuntimeSwitchResult;
     try {
       next = await desktopApi.switchRuntime({ candidate_id: candidate.candidate_id, expected_selection_revision: candidate.selection_revision, confirm_interrupt: confirmInterrupt });
     } catch (value) {
       const failure = normalizeDesktopError(value);
-      if (!confirmInterrupt && failure.code === "runtime_switch_jobs_confirmation_required" && alive.current) {
+      if (!confirmInterrupt && failure.code === "runtime_switch_jobs_confirmation_required" && valid()) {
         // The native preflight found work after our earlier observation. It has
         // not stopped anything. Ask once; never automatically retry with consent.
         setSettings(current => current && ({ ...current, active_jobs: null }));
@@ -47,15 +65,20 @@ export function RuntimePanel({ state, onState, onActivity, onUpdates }: { state:
       }
       throw value;
     }
-    if (!alive.current) return;
+    if (!valid()) return;
     setResult(next); setConfirm(null);
-    onState(await desktopApi.getState());
-    const current = await desktopApi.runtimeSettings();
-    if (alive.current) setSettings(current);
+    const nextState = await desktopApi.getState();
+    if (!valid()) return;
+    onState(nextState);
+    // A changed Runtime identity mounts a new observer through the parent.
+    if (desktopIdentity(nextState) !== identity) return;
+    const current = await readDesktopObservation(identity, signal, () => desktopApi.runtimeSettings());
+    if (valid()) setSettings(current);
   };
-  const select = async (source: RuntimeSource) => {
+  const select = async (source: RuntimeSource, valid: () => boolean, signal: AbortSignal) => {
+    if (!valid()) return;
     const next = await desktopApi.probeRuntime(source);
-    if (!alive.current) return;
+    if (!valid()) return;
     setSettings(next); setResult(null);
     const candidate = next.candidate;
     if (!candidate || candidate.error_code || candidate.compatibility !== "compatible" || !next.can_switch) return;
@@ -63,13 +86,13 @@ export function RuntimePanel({ state, onState, onActivity, onUpdates }: { state:
     // preview approval; confirm only when this may interrupt work. The native
     // transaction still rechecks the exact candidate, owner and live Job count.
     if (next.active_jobs !== 0) setConfirm(candidate);
-    else await apply(candidate, false);
+    else await apply(candidate, false, valid, signal);
   };
-  const choose = () => run(async () => {
+  const choose = () => run(async (valid, signal) => {
     const directory = await open({ title: s("Select Runtime folder…"), directory: true, multiple: false });
-    if (typeof directory === "string" && alive.current) await select({ kind: "custom", directory });
+    if (typeof directory === "string" && valid()) await select({ kind: "custom", directory }, valid, signal);
   });
-  const activate = (candidate: RuntimeCandidate, confirmInterrupt: boolean) => run(() => apply(candidate, confirmInterrupt));
+  const activate = (candidate: RuntimeCandidate, confirmInterrupt: boolean) => run((valid, signal) => apply(candidate, confirmInterrupt, valid, signal));
   const stageSwitch = () => {
     const candidate = settings?.candidate;
     if (!candidate || candidate.error_code || candidate.compatibility !== "compatible" || !settings.can_switch || disabled) return;
@@ -91,11 +114,11 @@ export function RuntimePanel({ state, onState, onActivity, onUpdates }: { state:
       {!settings.can_switch && <div className="shell-notice"><p>{p(switchHelp)}</p>{switchHelp === "runtimeManagedHelp" && onUpdates && <button type="button" className="secondary-button" onClick={onUpdates}>{p("aboutAndUpdates")}</button>}<details><summary>{p("details")}</summary><code>{settings.switch_unavailable_reason}</code></details></div>}
     </> : !error && <p role="status">{s("Loading…")}</p>}
     <div className="shell-actions">
-      {settings?.source.kind === "custom" && settings.can_switch && <button type="button" className="primary-button" disabled={disabled} onClick={() => void run(() => select(settings.source))}>{p("reloadRuntimeFolder")}</button>}
-      {settings?.can_switch && <><button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(() => select({ kind: "bundled" }))}>{s("Use bundled Runtime")}</button>
+      {settings?.source.kind === "custom" && settings.can_switch && <button type="button" className="primary-button" disabled={disabled} onClick={() => void run((valid, signal) => select(settings.source, valid, signal))}>{p("reloadRuntimeFolder")}</button>}
+      {settings?.can_switch && <><button type="button" className="secondary-button" disabled={disabled} onClick={() => void run((valid, signal) => select({ kind: "bundled" }, valid, signal))}>{s("Use bundled Runtime")}</button>
       <button type="button" className="secondary-button" disabled={disabled} onClick={() => void choose()}>{s("Select Runtime folder…")}</button></>}
     </div>
-    <details className="workspace-technical"><summary>{p("runtimeInspection")}</summary><button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(async () => { const next = await desktopApi.recheckRuntime(); if (alive.current) setSettings(next); })}>{s("Recheck Runtime")}</button></details>
+    <details className="workspace-technical"><summary>{p("runtimeInspection")}</summary><button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(async valid => { const next = await desktopApi.recheckRuntime(); if (valid()) setSettings(next); })}>{s("Recheck Runtime")}</button></details>
     {settings?.candidate && <div className="runtime-candidate" data-webcodex-panel="runtime-candidate">
       <h3>{s("Candidate Runtime")}</h3><p className="field-help">{p("runtimeCandidateHelp")}</p>
       {settings.candidate.directory && <code className="runtime-directory">{settings.candidate.directory}</code>}

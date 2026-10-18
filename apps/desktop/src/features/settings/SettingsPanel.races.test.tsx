@@ -13,7 +13,6 @@ const api = vi.hoisted(() => ({
 vi.mock("../../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("./ComputerPermissions", () => ({ ComputerPermissions: () => null }));
-vi.mock("./PowerShellInstallGuidance", () => ({ PowerShellInstallGuidance: () => null }));
 vi.mock("./RunnerCapacityPanel", () => ({ RunnerCapacityPanel: () => null }));
 vi.mock("./RuntimePanel", () => ({ RuntimePanel: () => null }));
 vi.mock("./DiagnosticsPanel", () => ({ DiagnosticsPanel: () => null }));
@@ -63,6 +62,19 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("Settings observation and action ownership", () => {
+  it.each(["unmount", "retarget"])("does not restore an old Desktop state from PowerShell guidance after %s", async boundary => {
+    state = { ...state, powershell_runtime: { pwsh_available: false, windows_powershell_available: true } };
+    const pending = deferred<DesktopState>(), onState = vi.fn(), original = state;
+    api.getState.mockReturnValueOnce(pending.promise);
+    const view = render(wrap(<SettingsPanel state={state} onState={onState} initialSection="runtime" />));
+    fireEvent.click(screen.getByRole("button", { name: "Recheck" }));
+    expect(api.getState).toHaveBeenCalledTimes(1);
+    if (boundary === "unmount") view.unmount();
+    else { retarget(); view.rerender(wrap(<SettingsPanel state={state} onState={onState} initialSection="runtime" />)); }
+    await act(async () => { pending.resolve(original); });
+    expect(onState).not.toHaveBeenCalled();
+  });
+
   it("recovers file access when a first settings read races with runtime refresh", async () => {
     vi.useFakeTimers();
     state = { ...state, current_operation: refreshOperation };

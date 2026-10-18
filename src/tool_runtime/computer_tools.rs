@@ -21,6 +21,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
+use webcodex_core::computer_input_contract::{
+    COMPUTER_KEY_INPUT_KEYS, COMPUTER_KEY_INPUT_MODIFIERS,
+};
 
 const MAX_WINDOWS: usize = 64;
 const MAX_APPLICATIONS: usize = 64;
@@ -43,20 +46,6 @@ const COMPUTER_WAIT_SECS: u64 = 30;
 const MAX_COMPUTER_TARGETS: usize = 64;
 const DEFAULT_FIND_ELEMENTS_LIMIT: usize = 8;
 const MAX_FIND_ELEMENTS_LIMIT: usize = 32;
-const COMPUTER_KEY_INPUT_KEYS: &[&str] = &[
-    "enter",
-    "escape",
-    "tab",
-    "arrow_up",
-    "arrow_down",
-    "arrow_left",
-    "arrow_right",
-    "page_up",
-    "page_down",
-    "home",
-    "end",
-];
-const COMPUTER_KEY_INPUT_MODIFIERS: &[&str] = &["shift", "control", "option", "command"];
 mod accessibility;
 mod control;
 mod effects;

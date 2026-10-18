@@ -7,6 +7,9 @@ use std::sync::{Mutex, MutexGuard};
 #[cfg(any(test, target_os = "macos"))]
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
+use webcodex_core::computer_input_contract::{
+    COMPUTER_KEY_INPUT_KEYS, COMPUTER_KEY_INPUT_MODIFIERS,
+};
 
 pub const MAX_WINDOWS: usize = 64;
 pub const MAX_APPLICATIONS: usize = 64;
@@ -24,20 +27,6 @@ const MAX_INPUT_TEXT_BYTES: usize = 2048;
 const MAX_CLIPBOARD_TEXT_BYTES: usize = 16 * 1024;
 #[cfg(any(test, target_os = "macos", windows))]
 const MAX_CLIPBOARD_NATIVE_STORAGE_BYTES: usize = 64 * 1024;
-const COMPUTER_KEY_INPUT_KEYS: &[&str] = &[
-    "enter",
-    "escape",
-    "tab",
-    "arrow_up",
-    "arrow_down",
-    "arrow_left",
-    "arrow_right",
-    "page_up",
-    "page_down",
-    "home",
-    "end",
-];
-const COMPUTER_KEY_INPUT_MODIFIERS: &[&str] = &["shift", "control", "option", "command"];
 
 // Snapshot selectors are non-secret identities. Their owning collection decides
 // occupancy; no process-wide identity registry or authority is introduced.
@@ -2844,6 +2833,14 @@ mod key_input_runtime_tests {
 
     #[test]
     fn key_input_vocabulary_and_modifiers_are_closed() {
+        let modifiers = COMPUTER_KEY_INPUT_MODIFIERS
+            .iter()
+            .map(|modifier| modifier.to_string())
+            .collect::<Vec<_>>();
+        for key in COMPUTER_KEY_INPUT_KEYS {
+            assert!(validate_key_input(key, &[]).is_ok());
+            assert!(validate_key_input(key, &modifiers).is_ok());
+        }
         assert!(validate_key_input("tab", &["shift".to_string()]).is_ok());
         assert!(validate_key_input("a", &[]).is_err());
         assert!(validate_key_input("enter", &["shift".to_string(), "shift".to_string()]).is_err());

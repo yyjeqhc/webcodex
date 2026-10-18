@@ -202,6 +202,104 @@ fn computer_control_schema_is_closed_action_union() {
 }
 
 #[test]
+fn computer_key_schema_discloses_closed_vocabulary_and_modifier_constraints() {
+    use webcodex_core::computer_input_contract::{
+        COMPUTER_KEY_INPUT_KEYS, COMPUTER_KEY_INPUT_MODIFIERS,
+    };
+
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "control_computer");
+    let key = action_properties(&spec.input_schema, "key");
+    assert_eq!(key["key"]["enum"], json!(COMPUTER_KEY_INPUT_KEYS));
+    assert_eq!(
+        key["modifiers"]["items"]["enum"],
+        json!(COMPUTER_KEY_INPUT_MODIFIERS)
+    );
+    assert_eq!(
+        key["modifiers"]["maxItems"],
+        COMPUTER_KEY_INPUT_MODIFIERS.len()
+    );
+    assert_eq!(key["modifiers"]["uniqueItems"], true);
+
+    for name in COMPUTER_KEY_INPUT_KEYS {
+        for modifiers in [
+            None,
+            Some(json!([])),
+            Some(json!(COMPUTER_KEY_INPUT_MODIFIERS)),
+        ] {
+            let mut input = json!({"action":"key","client_id":"special","surface_id":"surface_test","key":name});
+            if let Some(modifiers) = modifiers {
+                input["modifiers"] = modifiers;
+            }
+            test_support::validate_schema_instance(&input, &spec.input_schema).unwrap();
+        }
+    }
+    for (name, modifiers) in [
+        ("p", json!([])),
+        ("Ctrl+P", json!([])),
+        ("Enter", json!([])),
+        ("tab", json!(["ctrl"])),
+        ("tab", json!(["alt"])),
+        ("tab", json!(["shift", "shift"])),
+        (
+            "tab",
+            json!(["shift", "control", "option", "command", "shift"]),
+        ),
+    ] {
+        let input = json!({"action":"key","client_id":"special","surface_id":"surface_test","key":name,"modifiers":modifiers});
+        assert!(
+            test_support::validate_schema_instance(&input, &spec.input_schema).is_err(),
+            "{input}"
+        );
+    }
+    for text in [
+        "Ctrl+P",
+        "Shift+Tab",
+        "Windows",
+        "macOS",
+        "option+Tab",
+        "control+Escape",
+    ] {
+        assert!(
+            spec.description.contains(text),
+            "missing model guidance: {text}"
+        );
+    }
+}
+
+#[test]
+fn computer_key_wire_keeps_optional_modifiers_and_canonical_strings() {
+    for modifiers in [
+        None,
+        Some(Value::Null),
+        Some(json!([])),
+        Some(json!(["shift"])),
+    ] {
+        let mut input =
+            json!({"action":"key","client_id":"special","surface_id":"surface_test","key":"tab"});
+        if let Some(modifiers) = modifiers {
+            input["modifiers"] = modifiers;
+        }
+        let expected_modifiers = input
+            .get("modifiers")
+            .filter(|value| !value.is_null())
+            .cloned()
+            .unwrap_or(json!([]));
+        let call = ToolCall::from_tool_name("control_computer", input).unwrap();
+        let ToolCall::ComputerControl(crate::tool_call::ComputerControlToolCall::Key {
+            key,
+            modifiers,
+            ..
+        }) = call
+        else {
+            panic!("expected canonical Computer key input");
+        };
+        assert_eq!(key, "tab");
+        assert_eq!(json!(modifiers.unwrap_or_default()), expected_modifiers);
+    }
+}
+
+#[test]
 fn computer_gateway_outputs_cover_preserved_observation_and_control_shapes() {
     let specs = registered_tool_specs();
     let observe = spec_named(&specs, "observe_computer");

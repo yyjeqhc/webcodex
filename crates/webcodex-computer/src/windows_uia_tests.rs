@@ -502,6 +502,12 @@ fn computer_windows_scroll_attempt_failure_is_unknown() {
 
 #[test]
 fn computer_windows_key_input_native_plan_is_closed_and_releases_modifiers_in_reverse() {
+    for key in COMPUTER_KEY_INPUT_KEYS {
+        assert!(
+            platform::test_windows_key_input_plan(key, &[]).is_ok(),
+            "{key}"
+        );
+    }
     for (key, expected_vk) in [
         ("enter", 13u16),
         ("escape", 27),

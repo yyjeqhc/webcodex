@@ -1389,8 +1389,14 @@ pub enum ComputerControlToolCall {
         client_id: String,
         #[schemars(length(min = 1, max = 128))]
         surface_id: String,
+        /// Exact lowercase navigation key from the closed vocabulary; letters and shortcut strings
+        /// such as Ctrl+P are unsupported. The exact surface must already be foreground/focused.
+        #[schemars(schema_with = "webcodex_core::computer_input_contract::computer_key_schema")]
         key: String,
-        #[schemars(length(max = 4))]
+        /// Unique canonical modifiers; omission means none. Windows maps option to Alt, rejects
+        /// command, option+Tab, option+Escape, and any control+Escape chord. macOS uses the named
+        /// Shift/Control/Option/Command flags. Held/interfering keys can fail native preflight.
+        #[schemars(schema_with = "webcodex_core::computer_input_contract::computer_key_modifiers_schema")]
         #[serde(default)]
         modifiers: Option<Vec<String>>,
     },

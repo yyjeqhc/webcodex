@@ -1271,6 +1271,15 @@ mod key_input_native_contract_tests {
 
     #[test]
     fn closed_key_codes_and_modifier_flags_are_stable() {
+        for key in crate::COMPUTER_KEY_INPUT_KEYS {
+            assert!(key_code(key).is_ok(), "{key}");
+        }
+        for modifier in crate::COMPUTER_KEY_INPUT_MODIFIERS {
+            assert!(
+                key_modifier_flags(&[modifier.to_string()]).is_ok(),
+                "{modifier}"
+            );
+        }
         for (key, expected) in [
             ("enter", 0x24),
             ("tab", 0x30),

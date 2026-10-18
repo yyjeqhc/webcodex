@@ -1340,6 +1340,26 @@ fn computer_scroll_validator_is_exact_and_post_dispatch_mismatch_is_unknown() {
 
 #[test]
 fn computer_key_input_normalizes_closed_vocabulary_and_modifiers() {
+    let modifiers = COMPUTER_KEY_INPUT_MODIFIERS
+        .iter()
+        .map(|modifier| modifier.to_string())
+        .collect::<Vec<_>>();
+    for key in COMPUTER_KEY_INPUT_KEYS {
+        assert_eq!(
+            normalize_computer_key_input(key, None).unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            normalize_computer_key_input(key, Some(vec![])).unwrap(),
+            Vec::<String>::new()
+        );
+        let mut reversed = modifiers.clone();
+        reversed.reverse();
+        assert_eq!(
+            normalize_computer_key_input(key, Some(reversed)).unwrap(),
+            modifiers
+        );
+    }
     assert_eq!(
         normalize_computer_key_input(
             "tab",
@@ -1355,6 +1375,7 @@ fn computer_key_input_normalizes_closed_vocabulary_and_modifiers() {
     )
     .is_err());
     assert!(normalize_computer_key_input("enter", Some(vec!["caps_lock".to_string()]),).is_err());
+    assert!(normalize_computer_key_input("tab", Some(vec!["shift".to_string(); 5])).is_err());
 }
 
 #[test]

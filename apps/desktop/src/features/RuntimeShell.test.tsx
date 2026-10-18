@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocaleProvider } from "../i18n/locale";
@@ -680,4 +680,157 @@ it("does not treat an incoming request gap as proof of a later meaningful call",
   expect(value?.next_meaningful_call).toBe("not_observed");
   expect(value?.previous_response_gap_ms).toBe(5000);
   expect(value?.next_call_gap_ms).toBeNull();
+});
+
+function settingsDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (value: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+describe("Diagnostics observation and action races", () => {
+  const first = { ...state, persistent_environment: "fixture-A" };
+  const second = { ...state, persistent_environment: "fixture-B" };
+  const busy = { code: "desktop_operation_busy", message: "Busy", next_action: "Wait" };
+
+  it("recovers a busy initial read after background refresh without flashing an error", async () => {
+    vi.useFakeTimers();
+    try {
+      api.getState.mockResolvedValue({ ...first, current_operation: { id: "refresh", kind: "runtime_refresh", phase: "running", started_at_ms: 1, cancellable: true } });
+      api.diagnostics.mockRejectedValueOnce(busy);
+      const view = render(wrap(<DiagnosticsPanel state={first} onState={vi.fn()} />));
+      await act(async () => { await vi.advanceTimersByTimeAsync(199); });
+      expect(api.diagnostics).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      api.getState.mockResolvedValue(first);
+      view.rerender(wrap(<DiagnosticsPanel state={first} onState={vi.fn()} />));
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(api.diagnostics).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("combobox", { name: "Tool Request Tracing" })).toBeEnabled();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      view.unmount();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each(["success", "failure"])("ignores an older initial read's late %s after manual refresh and a draft edit", async result => {
+    const initial = settingsDeferred<DiagnosticSnapshot>();
+    api.diagnostics.mockReturnValueOnce(initial.promise);
+    render(wrap(<DiagnosticsPanel state={first} onState={vi.fn()} />));
+    api.diagnostics.mockResolvedValue({ ...diagnostic, trace: { ...diagnostic.trace, configured_mode: "full", revision: "new-revision" } });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Tool Request Tracing" })).toHaveValue("full"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Tool Request Tracing" }), { target: { value: "metadata" } });
+    await act(async () => { if (result === "success") initial.resolve(diagnostic); else initial.reject(busy); });
+    expect(screen.getByRole("combobox", { name: "Tool Request Tracing" })).toHaveValue("metadata");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.setToolRequestTracing).toHaveBeenCalledWith(expect.objectContaining({ mode: "metadata", expected_revision: "new-revision" })));
+  });
+
+  it("preserves an edited mode when a current manual observation completes", async () => {
+    render(wrap(<DiagnosticsPanel state={first} onState={vi.fn()} />));
+    fireEvent.change(await screen.findByRole("combobox", { name: "Tool Request Tracing" }), { target: { value: "metadata" } });
+    api.diagnostics.mockResolvedValue({ ...diagnostic, trace: { ...diagnostic.trace, configured_mode: "full", revision: "updated" } });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
+    expect(screen.getByRole("combobox", { name: "Tool Request Tracing" })).toHaveValue("metadata");
+    expect(within(screen.getByText("Saved recording setting").parentElement!).getByText("Full inputs & results")).toBeVisible();
+  });
+
+  it.each([
+    ["environment", second],
+    ["Server address", { ...first, topology: { ...first.topology!, server: { kind: "remote" as const, url: "https://replacement.invalid" } } }],
+    ["Runner configuration", { ...first, workspace_runner: { client_id: "other", config_path: "/fixture/other.toml", server_url: "https://replacement.invalid" } } as DesktopState],
+  ])("clears credential input before a changed %s can receive it", async (_, replacement) => {
+    const view = render(wrap(<DiagnosticsPanel state={first} onState={vi.fn()} />));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore Server user credential" }));
+    fireEvent.change(screen.getByLabelText("Existing Server user API token"), { target: { value: "fixture-placeholder-not-a-credential" } });
+    view.rerender(wrap(<DiagnosticsPanel state={replacement} onState={vi.fn()} />));
+    expect(screen.queryByLabelText("Existing Server user API token")).not.toBeInTheDocument();
+    expect(api.repairEnvironmentUserCredential).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Restore Server user credential" }));
+    expect(screen.getByLabelText("Existing Server user API token")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Save credential" })).toBeDisabled();
+  });
+
+  it("discards a trace confirmation and old edit authority when the environment changes", async () => {
+    const view = render(wrap(<DiagnosticsPanel state={first} onState={vi.fn()} />));
+    fireEvent.change(await screen.findByRole("combobox", { name: "Tool Request Tracing" }), { target: { value: "full" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByRole("dialog");
+    const pending = settingsDeferred<DiagnosticSnapshot>();
+    api.diagnostics.mockReturnValueOnce(pending.promise);
+    view.rerender(wrap(<DiagnosticsPanel state={second} onState={vi.fn()} />));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Tool Request Tracing" })).not.toBeInTheDocument();
+    await act(async () => pending.resolve({ ...diagnostic, trace: { ...diagnostic.trace, can_edit: false, can_restart: false } }));
+    expect(screen.getByRole("combobox", { name: "Tool Request Tracing" })).toBeDisabled();
+    expect(api.setToolRequestTracing).not.toHaveBeenCalled();
+  });
+
+  it.each(["success", "failure"])("ignores a credential repair's late %s after target replacement", async result => {
+    const pending = settingsDeferred<DesktopState>();
+    const onState = vi.fn();
+    api.repairEnvironmentUserCredential.mockReturnValueOnce(pending.promise);
+    const view = render(wrap(<DiagnosticsPanel state={first} onState={onState} />));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore Server user credential" }));
+    fireEvent.change(screen.getByLabelText("Existing Server user API token"), { target: { value: "fixture-placeholder-not-a-credential" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save credential" }));
+    expect(api.repairEnvironmentUserCredential).toHaveBeenCalledExactlyOnceWith({ environmentId: "fixture-A", userToken: "fixture-placeholder-not-a-credential" });
+    view.rerender(wrap(<DiagnosticsPanel state={second} onState={onState} />));
+    await screen.findByRole("button", { name: "Restore Server user credential" });
+    await act(async () => { if (result === "success") pending.resolve(first); else pending.reject(busy); });
+    expect(onState).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore Server user credential" })).toBeEnabled();
+  });
+
+  it("does not recreate a trace confirmation after its environment was replaced", async () => {
+    const pending = settingsDeferred<RuntimeSettings>();
+    api.runtimeSettings.mockReturnValueOnce(pending.promise);
+    const view = render(wrap(<DiagnosticsPanel state={first} onState={vi.fn()} />));
+    fireEvent.change(await screen.findByRole("combobox", { name: "Tool Request Tracing" }), { target: { value: "metadata" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save & Restart Server" }));
+    expect(api.runtimeSettings).toHaveBeenCalledTimes(1);
+    view.rerender(wrap(<DiagnosticsPanel state={second} onState={vi.fn()} />));
+    await act(async () => pending.resolve({ ...settings, active_jobs: 3 }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.setToolRequestTracing).not.toHaveBeenCalled();
+  });
+
+  it.each(["unmount", "replace"])("does not export to a late save-dialog result after %s", async event => {
+    const pending = settingsDeferred<string>();
+    dialog.save.mockReturnValueOnce(pending.promise);
+    const view = render(wrap(<DiagnosticsPanel state={first} onState={vi.fn()} />));
+    fireEvent.click(await screen.findByRole("button", { name: "Export Support Bundle" }));
+    expect(dialog.save).toHaveBeenCalledTimes(1);
+    if (event === "unmount") view.unmount();
+    else view.rerender(wrap(<DiagnosticsPanel state={second} onState={vi.fn()} />));
+    await act(async () => pending.resolve("/fixture/support.zip"));
+    expect(api.exportSupportBundle).not.toHaveBeenCalled();
+  });
+
+  it("never retries a busy credential mutation", async () => {
+    api.repairEnvironmentUserCredential.mockRejectedValue(busy);
+    render(wrap(<DiagnosticsPanel state={first} onState={vi.fn()} />));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore Server user credential" }));
+    fireEvent.change(screen.getByLabelText("Existing Server user API token"), { target: { value: "fixture-placeholder-not-a-credential" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save credential" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(busy.code);
+    expect(api.repairEnvironmentUserCredential).toHaveBeenCalledTimes(1);
+    expect(api.getState).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Existing Server user API token")).toHaveValue("");
+  });
+
+  it("ignores the first StrictMode effect's late result", async () => {
+    const initial = settingsDeferred<DiagnosticSnapshot>();
+    api.diagnostics.mockReturnValueOnce(initial.promise);
+    api.diagnostics.mockResolvedValue({ ...diagnostic, trace: { ...diagnostic.trace, configured_mode: "full" } });
+    render(<StrictMode>{wrap(<DiagnosticsPanel state={first} onState={vi.fn()} />)}</StrictMode>);
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Tool Request Tracing" })).toHaveValue("full"));
+    await act(async () => initial.resolve(diagnostic));
+    expect(screen.getByRole("combobox", { name: "Tool Request Tracing" })).toHaveValue("full");
+  });
 });

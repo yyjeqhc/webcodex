@@ -8,7 +8,7 @@ import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/pres
 import type { DesktopError, DesktopState } from "../../models/topology";
 import type { DiagnosticSnapshot } from "../../models/runtime-shell";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
-import { consoleIdentity, readConsoleDiagnostics } from "./read-console-diagnostics";
+import { desktopIdentity, readDesktopObservation } from "../../lib/desktop-observation";
 
 export function RuntimeConsolePanel({ state, onSettings }: { state: DesktopState; onSettings: () => void }) {
   const p = useProduct(); const s = useShellText(); const { t } = useLocale();
@@ -20,13 +20,13 @@ export function RuntimeConsolePanel({ state, onSettings }: { state: DesktopState
   const [revision, setRevision] = useState(0);
   const alive = useRef(true);
   const observation = useRef(0);
-  const identity = consoleIdentity(state);
+  const identity = desktopIdentity(state);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     const request = new AbortController();
     observation.current += 1;
     setData(null); setError(null); setConfirmation(false); setCopied(false);
-    void readConsoleDiagnostics(identity, request.signal).then(next => { if (!request.signal.aborted) setData(next); })
+    void readDesktopObservation(identity, request.signal, desktopApi.diagnostics).then(next => { if (!request.signal.aborted) setData(next); })
       .catch(value => { if (!request.signal.aborted) setError(normalizeDesktopError(value)); });
     return () => { request.abort(); };
   }, [revision, identity, state.readiness.server]);

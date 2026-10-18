@@ -1,10 +1,10 @@
-import { normalizeDesktopError } from "../../i18n/presentation";
-import { desktopApi } from "../../lib/desktop-api";
-import type { DesktopError, DesktopState } from "../../models/topology";
+import { normalizeDesktopError } from "../i18n/presentation";
+import { desktopApi } from "./desktop-api";
+import type { DesktopError, DesktopState } from "../models/topology";
 
-// Invalidate UI observations when the published target changes. The native
-// diagnostics identity checks and credential-copy fence remain authoritative.
-export function consoleIdentity(state: DesktopState): string {
+// Invalidate observations and drafts when their published target changes.
+// Native target/revision checks remain authoritative for every mutation.
+export function desktopIdentity(state: DesktopState): string {
   return JSON.stringify([
     state.persistent_environment, state.environment_setup?.environment_id,
     state.workspace_runner?.server_url, state.workspace_runner?.client_id,
@@ -32,25 +32,28 @@ function retryDelay(signal: AbortSignal): Promise<void> {
   });
 }
 
-// Only this read is retryable. Never wrap clipboard, browser-open, or other
-// actions: a busy effect must retain its original explicit recovery semantics.
-export async function readConsoleDiagnostics(identity: string, signal: AbortSignal) {
+// Only idempotent observations belong here. Never pass a mutation, clipboard,
+// browser-open, probe, restart, or export action: those keep explicit recovery.
+export async function readDesktopObservation<T>(
+  identity: string,
+  signal: AbortSignal,
+  read: () => Promise<T>,
+): Promise<T> {
   const deadline = performance.now() + 2_000;
   const checkRetry = async (busy: DesktopError) => {
     signal.throwIfAborted();
-    // getState reads the published snapshot without borrowing DesktopCore.
+    // The published snapshot is readable while DesktopCore is borrowed.
     const state = await desktopApi.getState().catch(() => null);
     signal.throwIfAborted();
     if (!state) throw busy;
-    if (consoleIdentity(state) !== identity) {
+    if (desktopIdentity(state) !== identity) {
       throw {
         code: "diagnostic_identity_changed",
-        message: "The Runtime configuration changed while reading diagnostics.",
-        next_action: "Refresh diagnostics for the current Runtime.",
+        message: "The Runtime configuration changed while reading its settings.",
+        next_action: "Refresh the current Runtime.",
       } satisfies DesktopError;
     }
-    // No current operation means the busy operation has already finished.
-    // Any still-active operation other than observation must fail closed.
+    // Idle also covers a refresh that ended before this observation.
     if ((state.current_operation && state.current_operation.kind !== "runtime_refresh")
       || performance.now() >= deadline) throw busy;
   };
@@ -58,18 +61,19 @@ export async function readConsoleDiagnostics(identity: string, signal: AbortSign
   for (let retries = 0; ; retries += 1) {
     signal.throwIfAborted();
     try {
-      const snapshot = await desktopApi.diagnostics();
+      const snapshot = await read();
       signal.throwIfAborted();
       return snapshot;
     } catch (value) {
       signal.throwIfAborted();
       const error = normalizeDesktopError(value);
-      if (error.code !== "desktop_operation_busy" || retries >= 5
-        || performance.now() >= deadline) throw value;
+      // runnerSettings currently uses desktop_state_unavailable while its core
+      // is borrowed. Real failures retain their original error after this bound.
+      if ((error.code !== "desktop_operation_busy" && error.code !== "desktop_state_unavailable")
+        || retries >= 5 || performance.now() >= deadline) throw value;
       await checkRetry(error);
       await retryDelay(signal);
-      // A different operation or identity may have appeared during the delay,
-      // before the workspace observer has delivered new component props.
+      // Recheck immediately before another read, including stale-props cases.
       await checkRetry(error);
     }
   }

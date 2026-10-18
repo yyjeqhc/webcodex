@@ -71,7 +71,9 @@ fn parse_startup_timings(value: &Value) -> Option<ConnectionStartupTimings> {
         value.get("poll_attempts").and_then(Value::as_u64),
         value.get("poll_request_ms").and_then(Value::as_u64),
     ) {
-        (Some(attempts), Some(request_ms)) if (1..=128).contains(&attempts) && request_ms <= poll => {
+        (Some(attempts), Some(request_ms))
+            if (1..=128).contains(&attempts) && request_ms <= poll =>
+        {
             (Some(attempts), Some(request_ms))
         }
         (None, None) => (None, None),

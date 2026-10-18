@@ -703,11 +703,7 @@ pub async fn export_support_bundle(
     let report = state.diagnostics().await?.report;
     let configuration = state.diagnostic_configuration(&locale).await?;
     tokio::task::spawn_blocking(move || {
-        crate::diagnostics::export_support(
-            std::path::Path::new(&path),
-            &report,
-            &configuration,
-        )
+        crate::diagnostics::export_support(std::path::Path::new(&path), &report, &configuration)
     })
     .await
     .map_err(|_| crate::diagnostics::diagnostic_error("support_bundle_write_unconfirmed"))?

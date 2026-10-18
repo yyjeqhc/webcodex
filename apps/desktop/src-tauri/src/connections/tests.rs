@@ -45,11 +45,23 @@ fn root() -> PathBuf {
 fn startup_timings_are_bounded_and_cannot_change_readiness() {
     assert_eq!(
         parse_startup_timings(&json!({"cli_total":6100,"initial_poll":5100})),
-        Some(ConnectionStartupTimings { cli_total: 6100, initial_poll: 5100, poll_attempts: None, poll_request_ms: None })
+        Some(ConnectionStartupTimings {
+            cli_total: 6100,
+            initial_poll: 5100,
+            poll_attempts: None,
+            poll_request_ms: None
+        })
     );
     assert_eq!(
-        parse_startup_timings(&json!({"cli_total":6100,"initial_poll":5100,"poll_attempts":1,"poll_request_ms":5000})),
-        Some(ConnectionStartupTimings { cli_total: 6100, initial_poll: 5100, poll_attempts: Some(1), poll_request_ms: Some(5000) })
+        parse_startup_timings(
+            &json!({"cli_total":6100,"initial_poll":5100,"poll_attempts":1,"poll_request_ms":5000})
+        ),
+        Some(ConnectionStartupTimings {
+            cli_total: 6100,
+            initial_poll: 5100,
+            poll_attempts: Some(1),
+            poll_request_ms: Some(5000)
+        })
     );
     for invalid in [
         json!({"cli_total":10,"initial_poll":11}),

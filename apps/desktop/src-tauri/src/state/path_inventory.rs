@@ -7,8 +7,8 @@ use webcodex_environment::inventory::{
     append_runner_configuration_paths, append_server_configuration_paths, build_backup_manifest,
     build_diagnostic_configuration, empty_environment_inventory, inspect_environment_paths,
     local_path_entry, recompute_revision, safe_build, BuildObservation, BuildSource,
-    DesktopPreferences, DiagnosticConfiguration, InventoryIssue, LogSource, LogSourceKind,
-    PathEntry, PathInventory, PathKind, PathStatus, SafetyCategory, Setting, DiagnosticLanguage,
+    DesktopPreferences, DiagnosticConfiguration, DiagnosticLanguage, InventoryIssue, LogSource,
+    LogSourceKind, PathEntry, PathInventory, PathKind, PathStatus, SafetyCategory, Setting,
 };
 
 mod export;

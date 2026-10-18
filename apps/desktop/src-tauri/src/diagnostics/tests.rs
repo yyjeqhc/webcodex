@@ -11,8 +11,7 @@ fn env_fixture(text: &str) -> PathBuf {
     file
 }
 
-fn diagnostic_configuration_fixture(
-) -> webcodex_environment::inventory::DiagnosticConfiguration {
+fn diagnostic_configuration_fixture() -> webcodex_environment::inventory::DiagnosticConfiguration {
     serde_json::from_value(json!({
         "schema_version": 1,
         "kind": "diagnostic_configuration",

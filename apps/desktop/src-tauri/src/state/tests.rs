@@ -675,6 +675,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn diagnostics_contention_keeps_the_competing_operation_observable() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(
+            data_dir.path().to_path_buf(),
+            data_dir.path().join("test-resources"),
+        )
+        .unwrap();
+        for kind in [
+            DesktopOperationKind::RuntimeRefresh,
+            DesktopOperationKind::RuntimeSwitch,
+        ] {
+            // Hold the real operation's core slot across the diagnostic read.
+            // This fixes the interleaving without timers, services, or threads.
+            let (operation, cancellation, core, baseline) =
+                state.begin_operation(kind, false).await.unwrap();
+            assert_eq!(
+                state.diagnostics().await.err().unwrap().code,
+                "desktop_operation_busy"
+            );
+            let observed = state.get_state();
+            let competing = observed.current_operation.as_ref().unwrap();
+            assert_eq!(competing.id, operation.id);
+            assert_eq!(competing.kind, kind);
+
+            state
+                .finish_operation(operation, cancellation, core, baseline, Ok(observed))
+                .await
+                .unwrap();
+            assert!(state.get_state().current_operation.is_none());
+            assert!(state.diagnostics().await.is_ok());
+        }
+    }
+
+    #[tokio::test]
     async fn control_plane_stays_observable_and_cancel_is_exact_while_mutation_is_stuck() {
         let data_dir = std::env::temp_dir().join(format!(
             "webcodex-desktop-control-plane-{}-{}",

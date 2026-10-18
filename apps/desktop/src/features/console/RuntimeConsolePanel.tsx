@@ -8,6 +8,7 @@ import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/pres
 import type { DesktopError, DesktopState } from "../../models/topology";
 import type { DiagnosticSnapshot } from "../../models/runtime-shell";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
+import { consoleIdentity, readConsoleDiagnostics } from "./read-console-diagnostics";
 
 export function RuntimeConsolePanel({ state, onSettings }: { state: DesktopState; onSettings: () => void }) {
   const p = useProduct(); const s = useShellText(); const { t } = useLocale();
@@ -19,15 +20,16 @@ export function RuntimeConsolePanel({ state, onSettings }: { state: DesktopState
   const [revision, setRevision] = useState(0);
   const alive = useRef(true);
   const observation = useRef(0);
+  const identity = consoleIdentity(state);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    let cancelled = false;
+    const request = new AbortController();
     observation.current += 1;
     setData(null); setError(null); setConfirmation(false); setCopied(false);
-    void desktopApi.diagnostics().then(next => { if (!cancelled) setData(next); })
-      .catch(value => { if (!cancelled) setError(normalizeDesktopError(value)); });
-    return () => { cancelled = true; };
-  }, [revision, state.workspace_runner?.server_url, state.persistent_environment, state.topology?.server.kind, state.topology?.server.kind === "remote" ? state.topology.server.url : null, state.readiness.server]);
+    void readConsoleDiagnostics(identity, request.signal).then(next => { if (!request.signal.aborted) setData(next); })
+      .catch(value => { if (!request.signal.aborted) setError(normalizeDesktopError(value)); });
+    return () => { request.abort(); };
+  }, [revision, identity, state.readiness.server]);
   const disabled = busy || Boolean(state.current_operation);
   const available = Boolean(data?.resources.includes("runtime_console"));
   const canCopy = available && Boolean(data?.can_copy_console_credential && data.credential_copy_fence);

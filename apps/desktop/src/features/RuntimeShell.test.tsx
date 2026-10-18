@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocaleProvider } from "../i18n/locale";
 import { DesktopMantineProvider } from "../components/DesktopMantineProvider";
 import { RuntimeConsolePanel } from "./console/RuntimeConsolePanel";
@@ -14,7 +14,7 @@ import { continuationFromWindow } from "./activity/window-evidence";
 import { AccentPicker } from "../components/AccentPicker";
 import { useRuntimeUpdates } from "../hooks/useRuntimeUpdates";
 import { AboutPanel, UpdateBanner } from "./settings/AboutPanel";
-import type { DesktopState } from "../models/topology";
+import type { DesktopOperationKind, DesktopState } from "../models/topology";
 import type { DiagnosticSnapshot, RuntimeSettings, RuntimeCandidate } from "../models/runtime-shell";
 import type { WindowDetail } from "../models/workspace";
 
@@ -172,6 +172,197 @@ it("links users from About to issues, source builds, and contribution guidance",
     fireEvent.click(screen.getByRole("button", { name: label }));
     await waitFor(() => expect(api.openDiagnosticResource).toHaveBeenCalledWith(resource));
   }
+});
+
+describe("Runtime Console diagnostic contention", () => {
+  const busy = { code: "desktop_operation_busy", message: "Busy", next_action: "Wait" };
+  const consoleState: DesktopState = {
+    ...state, persistent_environment: "env-fixture",
+    workspace_runner: { server_url: "http://127.0.0.1:1", client_id: "runner", config_path: "/fixture/runner.toml" },
+  };
+  const operating = (kind: DesktopOperationKind): DesktopState => ({
+    ...consoleState,
+    current_operation: { id: "operation", kind, phase: "running", started_at_ms: 1, cancellable: false },
+  });
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  }
+  const renderConsole = () => render(wrap(<RuntimeConsolePanel state={consoleState} onSettings={vi.fn()} />));
+  const advance = async (ms = 0) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
+  beforeEach(() => {
+    vi.useFakeTimers();
+    api.getState.mockResolvedValue(operating("runtime_refresh"));
+  });
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
+
+  it.each(["runtime_refresh", null] as const)("recovers from a controlled busy read when the refresh is %s without an error flash", async operation => {
+    const pending = deferred<DiagnosticSnapshot>();
+    api.diagnostics.mockReturnValueOnce(pending.promise);
+    renderConsole();
+    // The read overlaps a background refresh; it may finish before getState.
+    api.getState.mockResolvedValue(operation ? operating(operation) : consoleState);
+    await act(async () => { pending.reject(busy); });
+    expect(api.diagnostics).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeVisible();
+    await advance(199);
+    expect(api.diagnostics).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await advance(1);
+    expect(api.diagnostics).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Open in browser" })).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await advance(10_000);
+    expect(api.diagnostics).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["runtime_switch", "configuration_restore", "local_setup", "runner_restart"] as const)("does not retry contention with %s", async kind => {
+    api.diagnostics.mockRejectedValue(busy);
+    api.getState.mockResolvedValue(operating(kind));
+    renderConsole();
+    await advance(10_000);
+    expect(screen.getByRole("alert")).toHaveTextContent(busy.code);
+    expect(api.diagnostics).toHaveBeenCalledTimes(1);
+    expect(api.getState).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops when another operation begins during the retry delay", async () => {
+    api.diagnostics.mockRejectedValueOnce(busy);
+    renderConsole();
+    await advance();
+    api.getState.mockResolvedValue(operating("runtime_switch"));
+    await advance(200);
+    expect(api.diagnostics).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alert")).toHaveTextContent(busy.code);
+  });
+
+  it("exhausts five retries and leaves a stable busy error without polling", async () => {
+    api.diagnostics.mockRejectedValue(busy);
+    const view = renderConsole();
+    await advance(999);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await advance(1);
+    expect(api.diagnostics).toHaveBeenCalledTimes(6);
+    expect(screen.getByRole("alert")).toHaveTextContent(busy.code);
+    view.rerender(wrap(<RuntimeConsolePanel state={{ ...consoleState, activity_sequence: 99 }} onSettings={vi.fn()} />));
+    await advance(10_000);
+    expect(api.diagnostics).toHaveBeenCalledTimes(6);
+    expect(api.getState).toHaveBeenCalledTimes(10);
+    expect(screen.getByRole("alert")).toHaveTextContent(busy.code);
+  });
+
+  it("does not start another diagnostic read after a slow state read exceeds the deadline", async () => {
+    const pending = deferred<DesktopState>();
+    api.diagnostics.mockRejectedValueOnce(busy);
+    api.getState.mockReturnValueOnce(pending.promise);
+    renderConsole();
+    await advance(2_000);
+    await act(async () => { pending.resolve(consoleState); });
+    await advance(10_000);
+    expect(api.diagnostics).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alert")).toHaveTextContent(busy.code);
+  });
+
+  it.each(["diagnostic_identity_changed", "runtime_identity_unavailable"])("preserves a real %s diagnostic failure", async code => {
+    api.diagnostics.mockRejectedValue({ ...busy, code });
+    renderConsole();
+    await advance(10_000);
+    expect(screen.getByRole("alert")).toHaveTextContent(code);
+    expect(api.diagnostics).toHaveBeenCalledTimes(1);
+    expect(api.getState).not.toHaveBeenCalled();
+  });
+
+  it("keeps the original busy error when the competing operation cannot be observed", async () => {
+    api.diagnostics.mockRejectedValueOnce(busy);
+    api.getState.mockRejectedValue(new Error("State unavailable"));
+    renderConsole();
+    await advance(10_000);
+    expect(screen.getByRole("alert")).toHaveTextContent(busy.code);
+    expect(api.diagnostics).toHaveBeenCalledTimes(1);
+  });
+
+  const changedIdentities: [string, DesktopState][] = [
+    ["environment", { ...consoleState, persistent_environment: "replacement" }],
+    ["Runner", { ...consoleState, workspace_runner: { ...consoleState.workspace_runner!, client_id: "replacement" } }],
+    ["configuration", { ...consoleState, workspace_runner: { ...consoleState.workspace_runner!, config_path: "/fixture/replacement.toml" } }],
+    ["Server", { ...consoleState, workspace_runner: { ...consoleState.workspace_runner!, server_url: "http://127.0.0.1:2" } }],
+    ["Runtime", { ...consoleState, binaries: { ...consoleState.binaries!, directory: "/fixture/replacement" } }],
+  ];
+  it.each(changedIdentities)("rejects a changed %s identity before retrying even with stale props", async (_, changed) => {
+    api.diagnostics.mockRejectedValueOnce(busy);
+    renderConsole();
+    await advance();
+    api.getState.mockResolvedValue(changed);
+    await advance(10_000);
+    expect(api.diagnostics).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("diagnostic_identity_changed");
+    expect(screen.queryByRole("button", { name: "Copy Runtime Console credential" })).not.toBeInTheDocument();
+  });
+
+  it("cancels a scheduled retry when configuration props change at the same Server URL", async () => {
+    api.diagnostics.mockRejectedValueOnce(busy);
+    const view = renderConsole();
+    await advance();
+    api.diagnostics.mockResolvedValue({ ...diagnostic, resources: [], can_copy_console_credential: false, credential_copy_fence: null });
+    view.rerender(wrap(<RuntimeConsolePanel state={changedIdentities[2][1]} onSettings={vi.fn()} />));
+    await advance(10_000);
+    expect(api.diagnostics).toHaveBeenCalledTimes(2);
+    expect(api.getState).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Open in browser" })).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each(["success", "busy"])("ignores a superseded request's late %s result", async result => {
+    const pending = deferred<DiagnosticSnapshot>();
+    api.diagnostics.mockReturnValueOnce(pending.promise);
+    renderConsole();
+    api.diagnostics.mockResolvedValue({ ...diagnostic, resources: [], can_copy_console_credential: false, credential_copy_fence: null });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await advance();
+    await act(async () => { if (result === "success") pending.resolve(diagnostic); else pending.reject(busy); });
+    await advance(10_000);
+    expect(api.diagnostics).toHaveBeenCalledTimes(2);
+    expect(api.getState).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Open in browser" })).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each(["diagnostics", "state", "delay"])("cancels on unmount while waiting for %s", async stage => {
+    const diagnosticRead = deferred<DiagnosticSnapshot>();
+    const stateRead = deferred<DesktopState>();
+    api.diagnostics.mockReturnValueOnce(diagnosticRead.promise);
+    if (stage === "state") api.getState.mockReturnValueOnce(stateRead.promise);
+    const view = renderConsole();
+    if (stage !== "diagnostics") await act(async () => { diagnosticRead.reject(busy); });
+    const stateReads = api.getState.mock.calls.length;
+    view.unmount();
+    if (stage === "diagnostics") await act(async () => { diagnosticRead.reject(busy); });
+    if (stage === "state") await act(async () => { stateRead.resolve(consoleState); });
+    await advance(10_000);
+    expect(api.diagnostics).toHaveBeenCalledTimes(1);
+    expect(api.getState).toHaveBeenCalledTimes(stateReads);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("never retries a busy credential copy or browser launch", async () => {
+    api.copyRuntimeConsoleCredential.mockRejectedValue(busy);
+    api.openDiagnosticResource.mockRejectedValue(busy);
+    renderConsole();
+    await advance();
+    fireEvent.click(screen.getByRole("button", { name: "Open in browser" }));
+    await advance(10_000);
+    expect(api.openDiagnosticResource).toHaveBeenCalledExactlyOnceWith("runtime_console");
+    fireEvent.click(screen.getByRole("button", { name: "Copy Runtime Console credential" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy sensitive credential" }));
+    await advance(10_000);
+    expect(api.copyRuntimeConsoleCredential).toHaveBeenCalledExactlyOnceWith("identity-fence");
+    expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent(busy.code);
+    expect(api.diagnostics).toHaveBeenCalledTimes(1);
+    expect(api.getState).not.toHaveBeenCalled();
+  });
 });
 
 describe("Diagnostics are explicit and secret-free", () => {

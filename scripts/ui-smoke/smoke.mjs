@@ -370,7 +370,7 @@ try {
     assert.equal(await page.locator('.goal-plan-stepper .mantine-Stepper-step').count(), 3, `Runtime ${width}: Goal plan must use three Mantine steps`);
     assert.equal(await page.locator('.goal-plan-stepper .mantine-Stepper-step[data-progress]').count(), 1, `Runtime ${width}: current Goal step must be distinct`);
     report.checks.push(`Runtime ${width} segmented work switch and progress`);
-    await activeRail('.app-nav .nav-button.active .ui-selection-rail', `Runtime ${width}`);
+    await activeRail('.app-nav .nav-button.active[aria-current="page"]', `Runtime ${width}`);
     if (width === 1440) {
       const picker = page.locator('.nav-utilities .accent-picker');
       await accentChoice(picker, 'Runtime 1440', 'Indigo', true);
@@ -645,7 +645,7 @@ try {
     await noOverflow('Runtime compact sidebar 924');
     await screenshot('runtime-compact-sidebar-dark-924');
     await page.locator('.app-nav .nav-button[title="Projects"]').click();
-    await activeRail('.app-nav .nav-button.active .ui-selection-rail', 'Runtime compact Projects');
+    await activeRail('.app-nav .nav-button.active[aria-current="page"]', 'Runtime compact Projects');
     await page.locator('.app-nav .nav-button[title="Work"]').click();
     report.checks.push('Runtime compact sidebar icon, brand, preferences, and navigation at 924 px');
     await context.close();
@@ -659,7 +659,8 @@ try {
     await page.locator('#overview-section .overview-item').first().waitFor();
     assert.equal(await page.locator('#projects-section .admin-data-table').count(), 1);
     report.checks.push(`Admin ${width} component project table`);
-    await activeRail('.section-nav a[aria-current] .admin-nav-rail', `Admin ${width}`);
+    assert.equal(await page.locator('.section-nav a[aria-current]').count(), 1, 'Admin has exactly one current navigation destination');
+    report.checks.push(`Admin ${width} current navigation destination`);
     const sectionEdges = await page.locator('#overview-section, #devices-section, #projects-section').evaluateAll(elements => elements.map(element => {
       const rect = element.getBoundingClientRect(); return [rect.left, rect.right];
     }));

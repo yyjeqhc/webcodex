@@ -1,6 +1,5 @@
 import { ActionIcon, TextInput } from "@mantine/core";
 import { ArrowUpRight, Search } from "lucide-react";
-import { motion } from "motion/react";
 import { useMemo, useState } from "react";
 import { relativeTime } from "../model/format.js";
 import type { WorkBucket, WorkItem } from "../model/work.js";
@@ -103,11 +102,11 @@ export function WorkList({
                 <button
                   className={"work-row" + (selectedKey === item.key ? " selected" : "")}
                   type="button"
+                  aria-pressed={selectedKey === item.key}
                   onClick={() => onSelect(item)}
                   data-testid={"work-row-" + item.sessionId}
                   key={item.key}
                 >
-                  {selectedKey === item.key && <motion.span className="ui-selection-rail" layoutId="runtime-session-rail" aria-hidden="true" />}
                   <span className={"work-state-dot " + item.bucket} />
                   <span className="work-row-body">
                     <strong>{item.title}</strong>

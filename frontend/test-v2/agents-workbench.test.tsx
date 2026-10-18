@@ -435,3 +435,47 @@ it("continues renewing the current Endpoint after a successful heartbeat", async
     vi.useRealTimers();
   }
 });
+
+it("distinguishes initial Agent loading, failure, empty success and stale retained data", async () => {
+  let finish!: (value: unknown) => void;
+  let mode: "pending" | "error" | "empty" | "ready" = "pending";
+  const client = { post: vi.fn(async (path: string) => {
+    if (path === "communication/agents") {
+      if (mode === "pending") return new Promise(resolve => { finish = resolve; });
+      if (mode === "error") return { ok: false, status: 503 };
+      return ok({ agents: mode === "empty" ? [] : agents });
+    }
+    if (path === "communication/conversations") return ok({ conversations: [] });
+    return ok({});
+  }) } as unknown as RuntimeV2Client;
+  const unauthorized = vi.fn();
+  const { result } = renderHook(() => useAgentWorkspace(client, true, unauthorized));
+  expect(result.current.availability).toBe("loading");
+  await act(async () => finish({ ok: false, status: 503 }));
+  await waitFor(() => expect(result.current.availability).toBe("error"));
+  expect(result.current.status).not.toContain("previous data retained");
+  mode = "empty";
+  act(() => result.current.refresh());
+  await waitFor(() => expect(result.current.availability).toBe("available"));
+  expect(result.current.agents).toEqual([]);
+  mode = "ready";
+  act(() => result.current.refresh());
+  await waitFor(() => expect(result.current.agents).toHaveLength(1));
+  mode = "error";
+  act(() => result.current.refresh());
+  await waitFor(() => expect(result.current.availability).toBe("stale"));
+  expect(result.current.agents[0].display_name).toBe("Reviewer");
+});
+
+it("does not prompt Agent creation while the first inventory read is pending or failed", async () => {
+  let finish!: (value: unknown) => void;
+  const client = { post: vi.fn(async (path: string) => path === "communication/agents"
+    ? new Promise(resolve => { finish = resolve; }) : ok({ conversations: [] })) } as unknown as RuntimeV2Client;
+  render(<UiProvider><AgentsPanel client={client} language="en" onUnauthorized={vi.fn()} /></UiProvider>);
+  expect(screen.getAllByText("Loading Agents…").length).toBeGreaterThan(0);
+  expect(screen.queryByText("No durable Agents are visible.")).toBeNull();
+  expect(screen.queryByText("Select or create an Agent to get started.")).toBeNull();
+  await act(async () => finish({ ok: false, status: 503 }));
+  expect((await screen.findAllByText("Agents could not be loaded. Refresh to retry.")).length).toBeGreaterThan(0);
+  expect(screen.queryByText("No durable Agents are visible.")).toBeNull();
+});

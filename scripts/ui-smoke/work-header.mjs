@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { startFixtureServer } from './server.mjs';
 
 // Production assets with isolated read-only fixtures; no live Runtime access.
-const output = new URL('../../artifacts/work-header/', import.meta.url);
+const output = new URL('../../artifacts/web-page-consistency/header/', import.meta.url);
 fs.mkdirSync(output, { recursive: true });
 const fixture = await startFixtureServer();
 const browser = await chromium.launch({ headless: true });
@@ -22,9 +22,10 @@ try {
       }, theme);
       await page.goto(fixture.url + '/runtime/');
       const header = page.locator('.window-work-header');
+      await header.locator('.window-header-details > summary').click();
       await header.getByRole('button', { name: 'Copy Directory', exact: true }).waitFor();
       await page.screenshot({ path: new URL(`work-${width}-${theme}.png`, output).pathname, fullPage: true });
-      for (const label of ['Window', 'Machine', 'Directory', 'Project address']) {
+      for (const label of ['Window ID', 'Runner ID', 'Directory', 'Project ID']) {
         const button = header.getByRole('button', { name: 'Copy ' + label, exact: true });
         const value = await button.locator('..').locator('code').textContent();
         await button.click();

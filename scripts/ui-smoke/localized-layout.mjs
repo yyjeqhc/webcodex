@@ -45,10 +45,12 @@ try {
     await page.locator('#window-collaboration-tab').click();
     for (const language of languages) {
       // The same preference control is used by desktop and mobile settings.
-      if (!await page.locator('.runtime-language-control select:visible').count()) {
+      if (!await page.locator('.runtime-preference-buttons:visible').count()) {
         await page.getByRole('button', { name: /Preferences|偏好|Préférences|Einstellungen|設定|환경 설정/ }).click();
       }
-      await page.locator('.runtime-language-control select:visible').selectOption(language);
+      await page.locator('.runtime-preference-buttons:visible > button').nth(2).click();
+      const labels = { en: 'English', 'zh-CN': '简体中文', 'zh-TW': '繁體中文', 'ja-JP': '日本語', 'ko-KR': '한국어', 'de-DE': 'Deutsch', 'fr-FR': 'Français' };
+      await page.getByRole('menuitemradio', { name: labels[language], exact: true }).click();
       if (await page.locator('#mobile-preferences').isVisible()) await page.locator('[aria-controls="mobile-preferences"]').click();
       await page.locator('.window-collaboration-message').first().waitFor();
       const metrics = await page.evaluate(() => {

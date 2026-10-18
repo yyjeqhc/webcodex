@@ -6,7 +6,7 @@
   line-height: 1.5;
 }
 .runtime-page .page-heading-context { max-width: 60ch; color: var(--muted); font-size: var(--runtime-body-size); }
-.runtime-page .runtime-sync-status { margin: 12px auto 24px; max-width: 1680px; font-size: var(--runtime-caption-size); }
+.runtime-page .runtime-sync-status { margin: 12px auto 24px; max-width:var(--web-content-max); font-size: var(--runtime-caption-size); }
 .runtime-page .runtime-tabs button,
 .runtime-page .text-button { font-size: 14px; }
 .runtime-page .quiet-pill { display: inline-flex; }
@@ -18,7 +18,7 @@
 .runtime-page .runtime-diagnostics > p { color: var(--muted); font-size: var(--runtime-body-size); }
 .runtime-page .runtime-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .runtime-page .runtime-metrics > div { align-content: start; gap: 10px; padding: 20px; min-width: 0; }
-.runtime-page .runtime-metrics > div:first-child { padding-left: 0; }
+.runtime-page .runtime-metrics > div:first-child { padding-left: 20px; }
 .runtime-page .runtime-metrics span { font-size: var(--runtime-body-size); }
 .runtime-page .runtime-metrics strong { font-size: 34px; line-height: 1.15; }
 .runtime-page .runtime-metrics small,
@@ -35,7 +35,7 @@
 .runtime-server-version { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; color: var(--muted); }
 .runtime-server-version code { color: var(--text); overflow-wrap: anywhere; }
 .runtime-config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
-.runtime-config-group { min-width: 0; border: 1px solid var(--line); border-radius: 14px; padding: 20px; background: var(--surface); }
+.runtime-config-group { min-width: 0; border: 0; border-radius: var(--ui-radius-md); padding: var(--web-panel-inset); background: var(--surface-soft); }
 .runtime-config-group h3 { margin: 0; font-size: 17px; font-weight: 600; }
 .runtime-config-group > p { margin: 6px 0 20px; color: var(--muted); font-size: var(--runtime-caption-size); }
 .runtime-config-group dl { margin: 0; }
@@ -47,14 +47,14 @@
 .runtime-page .runtime-row-build { white-space: normal; overflow-wrap: anywhere; }
 @media (max-width: 1100px) {
   .runtime-page .runtime-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .runtime-page .runtime-metrics > div:nth-child(odd) { padding-left: 0; border-left: 0; }
-  .runtime-page .runtime-metrics > div:nth-child(n + 3) { border-top: 1px solid var(--line); }
+  .runtime-page .runtime-metrics > div:nth-child(odd) { padding-left: 20px; }
   .runtime-page .runtime-row { grid-template-areas: "icon primary compat" "icon jobs jobs"; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; }
   .runtime-config-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 600px) {
+  .runtime-page .runtime-metrics { gap: 10px; }
   .runtime-page .runtime-metrics > div { padding: 16px 12px; }
-  .runtime-page .runtime-metrics > div:nth-child(even) { border-left: 1px solid var(--line); }
+  .runtime-page .runtime-metrics > div:nth-child(odd) { padding-left: 12px; }
   .runtime-page .runtime-metrics strong { font-size: 30px; }
   .runtime-page .runtime-row { grid-template-areas: "icon primary" "icon compat" "icon jobs"; grid-template-columns: 24px minmax(0, 1fr); }
   .runtime-page .runtime-row-compat { justify-self: start; }

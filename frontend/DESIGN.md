@@ -2,7 +2,9 @@
 
 ## Visual language across renderers
 
-Runtime WebUI, Desktop and Admin share a restrained glass visual language while keeping their independent bundles. Semantic canvas, solid surface, glass, text, border, status, radius and shadow values have light and dark variants. System appearance is the default; the chosen appearance is stored only as a non-secret local preference. Main reading surfaces, logs, tables and form fields remain opaque. Blur is limited to navigation, composer chrome and dialogs, with opaque fallbacks for unsupported or reduced-transparency environments. Reduced motion and visible keyboard focus apply in all three renderers.
+Runtime WebUI, Desktop and Admin share semantic foundation tokens and Mantine controls, while retaining independent bundles. Runtime and Admin explicitly opt into the solid Web material through a `data-ui-renderer` root attribute and `ui/web.css`. Desktop retains the existing glass foundation unchanged. Web content uses a neutral gray canvas, opaque white or dark gray regions, 12–20px radii, subtle separators and restrained shadows. Primary navigation uses a black selection with white text, inverted in dark mode. Blue remains the default accent; existing custom colors and appearance preferences remain supported.
+
+Accent color is reserved for primary actions, focus, progress and limited selection emphasis. Normal operational status labels are neutral; warning/error and meaningful success evidence retain semantic color plus text or icons. Session identity labels use the selected accent rather than a competing categorical rainbow. Web navigation, mobile controls, popovers and dialogs are opaque with no backdrop blur. Reduced motion, forced colors, keyboard focus and modal focus restoration remain supported.
 
 Runtime keeps Work, Projects and Runtime as its primary destinations. Desktop groups its six existing destinations as Work and Configure without changing their IDs or shortcuts. Admin provides section navigation for Overview, Devices / Agents, Projects and Diagnostics; its wide data tables scroll inside labelled regions on narrow screens. Visual changes do not alter backend authority, credential handling or mutation behavior.
 
@@ -112,3 +114,51 @@ Runtime displays the existing allowlisted effective configuration projection
 (authentication switches, MCP host wait budgets in seconds, request tracing), with
 readable labels and canonical parameter names. It never reads raw environment
 variables or displays credentials; the existing runtime-read boundary applies.
+
+## Web layout and selection contract
+
+Runtime and Admin opt into `ui/web.css` with a renderer attribute. Their shared
+content measure is 1440px; the shell uses a 226px navigation rail and 16px gaps.
+Page insets are 24px and panel insets 20px, both 16px on mobile. Independent regions
+use 24px gaps (20px on mobile); controls use a 40px minimum where space permits.
+Dense table cells, transcript rows and technical evidence retain compact spacing.
+
+Primary navigation and selected tab buttons use monochrome inverse ink. Selected
+Window, Session, Goal, Agent, Conversation, Project and workspace rows use the same
+subtle full outline and low-intensity accent surface. Selection does not insert a
+layout element or an inset stripe. Semantic status and focus colors retain their
+meaning independently of selection. Nested native form styling targets direct
+native controls, leaving Mantine composite input internals to Mantine.
+
+Web dialogs scroll within the viewport, including short mobile screens. Admin's
+selected anchor follows document scrolling. Initial inventory loading, initial
+failure, successful empty data and stale retained Agent data are distinct UI
+states; the underlying request and mutation controllers retain their authority.
+See the [Web gallery](../docs/ui/soft-surfaces/README.md) for the page inventory,
+reproducible browser checks and evidence boundaries.
+
+
+Runtime preferences use three compact Mantine icon controls: an accent Popover
+with existing presets/custom hex input, an appearance cycle, and a language radio
+Menu. The expanded rail arranges them horizontally; the 70px rail stacks the same
+three targets. The access gate and mobile settings reuse these controls. Lock is
+separate from preferences in the Runtime footer. Mantine owns popover/menu focus,
+Escape and keyboard navigation; existing preference/credential owners retain
+persistence and lock behavior. Admin reuses the same accent and appearance controls
+through `ui/AppearanceControls.tsx`: two 36px icons in a row, stacked on the
+compact rail. Its existing English-only console does not gain a language setting.
+Both Web renderers share the palette surface, presets and custom input, while
+Desktop retains its own controls.
+
+Runtime reserves its page scrollbar gutter so switching between the long Overview
+and short, denied or available Agent content does not recenter the heading and
+tab strip. Runtime Overview/Agents and Window/Collaboration each use two equal
+120px tracks, shrinking together when constrained, independent of the selected
+label or activity count. Expanding Window details can move the tabs vertically;
+switching their content preserves the expanded header geometry.
+
+Window details use a semantic definition list with labels above their values:
+Window ID, Runner ID, Directory and Project ID. Full values wrap within each
+field, with an exact-value copy action. First observed reflects the Window's
+first-seen timestamp. Desktop/embedded styles and backend authority remain
+independent of these Web presentation rules.

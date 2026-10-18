@@ -1,5 +1,6 @@
 import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { SessionCollaboration } from "../src/runtime-v2/components/SessionCollaboration.js";
 import { SessionComposer } from "../src/runtime-v2/components/SessionComposer.js";
 import { SessionInspector } from "../src/runtime-v2/components/SessionInspector.js";
 import { workItemFromRecent } from "../src/runtime-v2/model/work.js";
@@ -201,4 +202,15 @@ describe("Session inspector tabs", () => {
     fireEvent.click(context);
     expect(context.getAttribute("aria-selected")).toBe("true");
   });
+});
+
+
+it.each(["error", "stale"] as const)("explains Session message %s and retries through the existing refresh", (messagesAvailability) => {
+  const session = workspace({ messagesAvailability });
+  render(<SessionCollaboration location={location} session={session} language="en" />);
+  expect(screen.getByRole("status").textContent).toContain(messagesAvailability === "stale"
+    ? "Message refresh failed; previous messages retained." : "Session messages could not be loaded.");
+  expect(screen.queryByText("No retained Session messages.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(session.refresh).toHaveBeenCalledTimes(1);
 });

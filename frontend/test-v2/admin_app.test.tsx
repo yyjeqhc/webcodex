@@ -125,3 +125,44 @@ test("Admin can authorize a fresh mutation after an in-flight mutation loses aut
   await waitFor(() => expect(mutations).toBe(2));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
+
+test("Admin keeps normal, warning, and error statuses distinct with visible status text", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+    ...dashboardFixture,
+    devices: [
+      { client_id: "runner-online", status: "online" },
+      { client_id: "runner-pending", status: "pending" },
+      { client_id: "runner-offline", status: "offline" },
+    ],
+  })));
+
+  render(<UiProvider><AdminApp /></UiProvider>);
+  fireEvent.change(screen.getByLabelText("Admin token"), { target: { value: "fixture-secret" } });
+  fireEvent.click(screen.getByRole("button", { name: "Unlock console" }));
+  const runners = await screen.findByRole("region", { name: "Connected Runners table. Scroll horizontally to view all fields." });
+  expect(within(runners).getByText("online").closest(".admin-status-badge")?.getAttribute("data-tone")).toBe("good");
+  expect(within(runners).getByText("pending").closest(".admin-status-badge")?.getAttribute("data-tone")).toBe("warning");
+  expect(within(runners).getByText("offline").closest(".admin-status-badge")?.getAttribute("data-tone")).toBe("error");
+});
+
+test("Admin unlock shows pending state and first-request failure without a false empty dashboard", async () => {
+  let finish!: (response: Response) => void;
+  const fetchMock = vi.fn(() => new Promise<Response>(resolve => { finish = resolve; }));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<UiProvider><AdminApp /></UiProvider>);
+  const token = screen.getByLabelText("Admin token") as HTMLInputElement;
+  const unlock = screen.getByRole("button", { name: "Unlock console" }) as HTMLButtonElement;
+  fireEvent.change(token, { target: { value: "fixture-secret" } });
+  fireEvent.click(unlock);
+  expect(unlock.disabled).toBe(true);
+  expect(token.disabled).toBe(true);
+  expect(unlock.getAttribute("aria-busy")).toBe("true");
+  fireEvent.submit(unlock.closest("form")!);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  finish(new Response("{}", { status: 503 }));
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  expect(screen.getByRole("alert").textContent).toContain("Dashboard refresh failed");
+  expect(screen.queryByRole("heading", { name: "Operations" })).toBeNull();
+  await waitFor(() => expect(unlock.disabled).toBe(false));
+  expect(token.value).toBe("");
+});

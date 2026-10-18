@@ -28,9 +28,12 @@ import {
   type InboxDelivery,
 } from "../model/agents.js";
 
+import type { Availability } from "../model/types.js";
+
 type PendingKey = { fingerprint: string; key: string } | null;
 
 export type AgentWorkspaceState = {
+  availability: Availability;
   readAvailable: boolean | null;
   manageAvailable: boolean | null;
   agents: DurableAgent[];
@@ -62,6 +65,7 @@ export function useAgentWorkspace(
   enabled: boolean,
   onUnauthorized: () => void,
 ): AgentWorkspaceState {
+  const [availability, setAvailability] = useState<Availability>("idle");
   const [readAvailable, setReadAvailable] = useState<boolean | null>(null);
   const [manageAvailable, setManageAvailable] = useState<boolean | null>(null);
   const [agents, setAgents] = useState<DurableAgent[]>([]);
@@ -115,6 +119,7 @@ export function useAgentWorkspace(
     request.current?.abort();
     request.current = controller;
     let disposed = false;
+    setAvailability((value) => value === "available" || value === "stale" ? value : "loading");
 
     void Promise.all([
       fetchAgents(client, controller.signal),
@@ -127,6 +132,7 @@ export function useAgentWorkspace(
       }
       if (agentResponse?.status === 403 || conversationResponse?.status === 403) {
         setReadAvailable(false);
+        setAvailability("denied");
         setAgents([]);
         setConversations([]);
         setConversationDetail(null);
@@ -134,10 +140,11 @@ export function useAgentWorkspace(
         return;
       }
       if (!agentResponse?.ok || !agentResponse.data || !conversationResponse?.ok || !conversationResponse.data) {
-        setStatus("Durable communication refresh failed; previous data retained.");
+        setAvailability((value) => value === "available" || value === "stale" ? "stale" : "error");
         return;
       }
       setReadAvailable(true);
+      setAvailability("available");
       const nextAgents = Array.isArray(agentResponse.data.agents) ? agentResponse.data.agents : [];
       const nextConversations = Array.isArray(conversationResponse.data.conversations)
         ? conversationResponse.data.conversations
@@ -665,6 +672,7 @@ export function useAgentWorkspace(
   }, [client, endpoint, onUnauthorized, refresh, selectedAgentId]);
 
   return {
+    availability,
     readAvailable,
     manageAvailable,
     agents,

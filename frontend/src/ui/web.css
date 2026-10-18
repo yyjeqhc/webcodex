@@ -1,0 +1,95 @@
+/* Web renderers opt in explicitly. Desktop keeps the foundation unchanged. */
+:root:is([data-ui-renderer="runtime"], [data-ui-renderer="admin"]) {
+  --ui-background: #f2f2f2;
+  --ui-content: #ffffff;
+  --ui-surface: #ffffff;
+  --ui-surface-secondary: #f7f7f7;
+  --ui-surface-elevated: #ffffff;
+  --ui-text-primary: #191919;
+  --ui-text-secondary: #595959;
+  --ui-text-tertiary: #707070;
+  --ui-border: #e5e5e5;
+  --ui-border-subtle: #eeeeee;
+  --ui-border-strong: #a3a3a3;
+  --web-row-selected: color-mix(in srgb, var(--ui-accent) 5%, var(--ui-content));
+  --web-row-border: color-mix(in srgb, var(--ui-accent) 24%, var(--ui-border));
+  --web-selection: #191919;
+  --web-on-selection: #ffffff;
+  --ui-glass: var(--ui-surface);
+  --ui-glass-hover: var(--ui-surface-secondary);
+  --ui-glass-popover: var(--ui-surface-elevated);
+  --ui-glass-active: var(--ui-surface-secondary);
+  --ui-glass-border: var(--ui-border-subtle);
+  --ui-glass-edge: var(--ui-border);
+  --ui-glass-highlight: 0 0 transparent;
+  --ui-glass-filter: none;
+  --ui-shadow-surface: 0 2px 8px rgb(0 0 0 / 2%);
+  --ui-shadow-raised: 0 4px 20px rgb(0 0 0 / 4%);
+  --ui-shadow-floating: 0 16px 48px rgb(0 0 0 / 12%);
+  --ui-font-page: 30px;
+  --web-content-max: 1440px;
+  --web-shell-gap: 16px;
+  --web-page-inset: 24px;
+  --web-panel-inset: 20px;
+  --web-section-gap: 24px;
+  --web-control-height: 40px;
+  --web-sidebar-width: 226px;
+}
+:root:is([data-ui-renderer="runtime"], [data-ui-renderer="admin"])[data-resolved-theme="dark"] {
+  --ui-background: #141414;
+  --ui-content: #202020;
+  --ui-surface: #202020;
+  --ui-surface-secondary: #292929;
+  --ui-surface-elevated: #303030;
+  --ui-text-primary: #f5f5f5;
+  --ui-text-secondary: #c2c2c2;
+  --ui-text-tertiary: #a3a3a3;
+  --ui-border: #383838;
+  --ui-border-subtle: #303030;
+  --ui-border-strong: #737373;
+  --web-selection: #f5f5f5;
+  --web-on-selection: #191919;
+  --ui-shadow-surface: 0 2px 8px rgb(0 0 0 / 8%);
+  --ui-shadow-raised: 0 4px 20px rgb(0 0 0 / 12%);
+  --ui-shadow-floating: 0 16px 48px rgb(0 0 0 / 32%);
+}
+
+/* Shared modal geometry includes portal content in either Web renderer. */
+:root:is([data-ui-renderer="runtime"], [data-ui-renderer="admin"]) .mantine-Modal-content {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+:root:is([data-ui-renderer="runtime"], [data-ui-renderer="admin"]) .mantine-Modal-header {
+  min-height: 64px;
+  padding-inline: var(--web-panel-inset);
+}
+:root:is([data-ui-renderer="runtime"], [data-ui-renderer="admin"]) .mantine-Modal-body {
+  padding: var(--web-panel-inset);
+}
+@media (max-width: 700px) {
+  :root:is([data-ui-renderer="runtime"], [data-ui-renderer="admin"]) {
+    --web-page-inset: 16px;
+    --web-panel-inset: 16px;
+    --web-section-gap: 20px;
+  }
+}
+
+:root:is([data-ui-renderer="runtime"], [data-ui-renderer="admin"]) .appearance-preference-popover {
+  border-color: var(--ui-border);
+  background: var(--ui-surface-elevated);
+  color: var(--ui-text-primary);
+  box-shadow: var(--ui-shadow-floating);
+}
+:root:is([data-ui-renderer="runtime"], [data-ui-renderer="admin"]) .appearance-preference-popover .mantine-ColorSwatch-root {
+  cursor: pointer;
+}
+
+:root:is([data-ui-renderer="runtime"], [data-ui-renderer="admin"]) .appearance-preference-button.mantine-ActionIcon-root {
+  flex: 0 0 36px;
+  color: var(--ui-text-secondary);
+}
+:root:is([data-ui-renderer="runtime"], [data-ui-renderer="admin"]) .appearance-preference-button.mantine-ActionIcon-root:hover {
+  background: var(--ui-surface-secondary);
+  color: var(--ui-text-primary);
+}

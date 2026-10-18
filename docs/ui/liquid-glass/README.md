@@ -1,5 +1,7 @@
 # WebCodex UI review
 
+This is the historical glass revision. See the [current solid Web revision](../soft-surfaces/README.md) for Runtime/Admin screenshots and the current focused checks.
+
 These screenshots show the macOS workbench revision using isolated browser fixtures, not a live Server or native Desktop backend. Run `npm --prefix scripts/ui-smoke test` to regenerate the full set at 1440, 1280, 1024, 768, and 390 px in light and dark themes, plus targeted 1900 and 2560 px captures, under `artifacts/liquid-glass-ui/`. The captured page baselines use the default blue accent; separate picker captures exercise user colors. The smoke also checks aligned rows and section edges, long paths, horizontal overflow, keyboard focus, navigation, dialogs, large surfaces against the active light or dark theme, compact desktop preferences, and reduced-transparency and reduced-motion fallbacks. See [the audit and design rules](../systematic-ui-review.md) for the rationale.
 
 ## Runtime WebUI

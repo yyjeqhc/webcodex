@@ -1,6 +1,6 @@
 # WebCodex interface system
 
-The Runtime WebUI, Desktop, and Admin Console are separate builds of the same product. Their data and operation contracts remain independent, while their visual language comes from `frontend/src/ui/foundation.css`.
+The Runtime WebUI, Desktop, and Admin Console are separate builds of the same product. Their data and operation contracts remain independent, while their semantic visual foundation comes from `frontend/src/ui/foundation.css`. Runtime and Admin now opt into the solid Web material in `frontend/src/ui/web.css`; Desktop retains its existing material. The historical audits below describe earlier revisions.
 
 ## Audit (22 September 2026)
 
@@ -90,3 +90,81 @@ CSS in these areas now supplies layout constraints and shared tokens; the compon
 The light-theme Session screenshot exposed a fixed near-black `.active-command` card inside otherwise light operational content. A computed-style sweep of the fixture's Runtime Goals, Session, Projects, Runtime Overview, Window Activity, Agents, and Admin overview found this as the only large dark content surface in light mode. Its border, icon, title, status, and footer were fixed to dark-theme colors too. The execution summary now uses semantic surface, border, text, and accent tokens in both themes; the timeline heading and run-status divider use the same contract. Desktop's regular content surfaces were already token-based, while its two native dialog backdrops now resolve from a light/dark token.
 
 The browser smoke checks large surfaces in representative Runtime, Desktop, and Admin views against the active theme, plus the execution summary at the reported 1900px compact-sidebar width. Small brand marks, status icons, and genuinely modal dimming remain distinct from content surfaces.
+
+## Solid Web surface revision
+
+The supplied dashboard images informed this Web-only pass: neutral canvas, opaque rounded regions, clear whitespace and one restrained accent. Runtime and Admin retain their left navigation and existing information architecture. Navigation selection is black/white, inverted in dark mode; blue stays the default and custom accents still apply to actions, focus and progress. Routine status labels are quiet, while exceptional states and meaningful success evidence keep their semantic text/icons and color. No decorative charts, copied artwork or fabricated metrics were added.
+
+Runtime separates its work list, execution pane and context through solid regions. Project details sit on one reading surface; Runtime summaries and fleet/configuration regions use whitespace and consistent geometry. Admin uses separate metric regions, rounded scrollable tables and opaque dialogs. Legacy light-only Runtime colors were replaced at their source, and obsolete dark overrides removed. The former glass layout file is now `styles-workbench.css`, rather than an additional layer of visual patches.
+
+Web tokens are gated by an explicit renderer attribute and imported only by Web entrypoints, including portal surfaces. Desktop and MCP embedded renderers are unchanged. See the [solid Web gallery and validation boundary](soft-surfaces/README.md) for fixture screenshots and reproducible checks. The older [glass gallery](liquid-glass/README.md) remains historical comparison evidence.
+
+## Sidebar alignment and selection correction
+
+The next review used actual Chinese-language screenshots: the language control occupied a separate full-width row while three utility icons used a second row; an old animation rail appeared as a white stripe on black navigation; Window selection retained a curved blue inset edge and four competing metadata lines. These were presentational defects in the first solid-Web revision.
+
+[Linear's current refresh](https://linear.app/now/behind-the-latest-design-refresh) emphasizes reducing the visual weight of navigation, consistent control placement and fewer decorative separators. [Carbon's shell guidance](https://www.carbondesignsystem.com/building-blocks/core/components/ui-shell-left-panel/guidelines) keeps product navigation distinct from system actions, while [Geist's menu guidance](https://vercel.com/geist/menu) groups actions with consistent leading/trailing affordances and keyboard access. Applying those principles here is a design interpretation: utility controls now share one icon/text grid with navigation, expanded rows have visible labels, and compact rails keep the same centered icon axis. No external artwork or component source was copied.
+
+Runtime navigation and Goal selection no longer mount decorative rails. Window, Goal and Project selections use a complete subtle outline with a low-intensity accent surface. Window rows show the workspace title, current activity and one short Runner/Window context line. Complete paths and canonical identities remain in the selected Window details and their copy actions; removing redundant row text does not hide the authoritative detail. The Chinese accent label is translated. The [geometry regression](../../scripts/ui-smoke/sidebar-geometry.mjs) covers English/Chinese, both themes, five viewport widths, explicit collapse, mobile preferences, icon/label alignment, readable selection and keyboard reachability. Public comparison screenshots are in the [Web gallery](soft-surfaces/README.md).
+
+## Full Web consistency pass
+
+A source and isolated-browser audit of every reachable Web composition extended
+the sidebar correction into nested surfaces. Agent and Conversation selection,
+Session tabs, inspector tabs, composer modes and Session/Window filters now use
+the same selection vocabulary. The Session record's remaining motion rail also
+occupied a grid cell and displaced its timestamp; removing it restores the
+trailing time column. Page headings, filters and primary regions share a 1440px
+content measure rather than competing 1180/1480/1680px limits. Panel insets and
+section gaps now consume Web layout tokens, including compact Admin navigation.
+
+The audit reproduced a clipped Admin form footer on 390×600 screens, an invisible
+initial Admin load error and false-empty Agent loading/failure messages. Dialog
+content now scrolls normally; unlock has a visible pending state and failure
+message; Agent inventory distinguishes loading/error/empty/stale. Admin anchor
+selection follows scrolling, empty diagnostics have a readable explanation, and
+Goal detail / Session message failures explain their state. Request cancellation,
+authentication, polling, draft storage and confirmation controllers are preserved.
+
+The full-page harness covers six widths and both themes, while a complementary
+nested-detail harness covers Session workflow/collaboration, inspector keyboard
+tabs, Session Window chooser, trace search and retained payload display. The
+[gallery inventory](soft-surfaces/README.md) distinguishes these fixture checks
+from private live-read smoke and explicitly unverified environments.
+
+
+## Compact Runtime preferences
+
+The next user revision replaces permanently labeled preference rows with three
+small controls, reducing the sidebar footer to one row. Runtime now uses Mantine
+[ActionIcon](https://mantine.dev/core/action-icon/),
+[Popover](https://mantine.dev/core/popover/) and
+[Menu](https://mantine.dev/core/menu/) components, including a library radio group
+for language selection. The accent card retains the existing five presets and
+custom color input; appearance still cycles through System/Light/Dark. The same
+controls serve mobile settings and the access gate. Lock remains separately
+available in the Runtime footer and mobile settings. Preference storage is unchanged.
+
+Admin subsequently adopts the same source-owned accent and appearance controls
+from `AppearanceControls.tsx`, replacing its labeled appearance row and native
+color disclosure. Its two 36px targets align horizontally on expanded/mobile
+navigation and vertically on compact rails. The shared Mantine palette has the
+same opaque surface and preset/custom interactions in both Web renderers. Admin
+remains English-only; Desktop retains its existing controls.
+
+## Stable view switches and Window identity
+
+The next screenshots exposed a measurable layout shift. With a real 17px classic
+scrollbar, the long Runtime Overview centered its heading 8.5px to the left of the
+short/denied Agent view. The source used automatic overflow without a reserved
+gutter; both view switches also sized buttons from their unequal labels/counts.
+Runtime now reserves the page gutter and the two targeted switches use equal
+stable tracks. Their heading and switch coordinates are checked across repeated
+Overview/denied/available Agent transitions and Window/Collaboration changes.
+
+Window identity fields previously squeezed icon, label and a long code into one
+row. They now use a two-column semantic definition list, stacking on narrow
+screens, with each label above its complete value/copy action. Project address
+is accurately labeled Project ID, Window/Runner labels explicitly name IDs, and
+First observed describes the first-seen timestamp. No API/read/permission or
+credential boundary changes accompany these presentation corrections.

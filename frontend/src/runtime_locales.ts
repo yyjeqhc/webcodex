@@ -12,6 +12,10 @@ export type RuntimeLanguage = typeof RUNTIME_LANGUAGES[number]["value"];
 const TRANSLATED_LANGUAGES = ["zh-TW", "ja-JP", "ko-KR", "de-DE", "fr-FR"] as const;
 type Translations = readonly [string, string, string, string, string];
 export const WORK_TEXT: Record<string, Translations> = {
+  "First observed": ["首次記錄", "初回観測", "최초 관측", "Erstmals beobachtet", "Première observation"],
+  "Window ID": ["視窗 ID", "ウィンドウ ID", "창 ID", "Fenster-ID", "ID de fenêtre"],
+  "Runner ID": ["執行端 ID", "Runner ID", "Runner ID", "Runner-ID", "ID du Runner"],
+  "Project ID": ["專案 ID", "プロジェクト ID", "프로젝트 ID", "Projekt-ID", "ID du projet"],
   "Activity": ["活動", "アクティビティ", "활동", "Aktivität", "Activité"],
   "Copy": ["複製", "コピー", "복사", "Kopieren", "Copier"],
   "Copied": ["已複製", "コピーしました", "복사됨", "Kopiert", "Copié"],

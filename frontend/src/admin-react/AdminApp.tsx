@@ -1,12 +1,11 @@
 import { displayProjectPath, projectPresentationName } from "../ui/projectPresentation.js";
 import { Alert, Badge, Button, Checkbox, Menu, Modal, PasswordInput, Switch, Table, TextInput } from "@mantine/core";
-import { Activity, AlertTriangle, Ellipsis, Folder, LayoutDashboard, LockKeyhole, MoonStar, Plus, RefreshCw, Sun, Users } from "lucide-react";
-import { motion, useReducedMotion } from "motion/react";
+import { Activity, AlertTriangle, Ellipsis, Folder, LayoutDashboard, LockKeyhole, Plus, RefreshCw, Users } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AdminHttpError, AdminRefreshController } from "../admin_controller.js";
 import { AdminMutationController, AdminMutationError, type MutationKind, type MutationErrorCode } from "../admin_mutation_controller.js";
 import { AdminMutationDialogCoordinator } from "../admin_mutation_view.js";
-import { AccentPicker } from "../runtime-v2/components/ui/AccentPicker.js";
+import { AppearanceControls } from "../ui/AppearanceControls.js";
 import { ACCENT_CHANGE_EVENT, ACCENT_STORAGE_KEY, applyAccentPreference, loadAccentPreference, normalizeAccent, persistAccentPreference } from "../ui/accent.js";
 import { BrandMark } from "../ui/BrandMark.js";
 import { capabilityLabels, display, emptyDashboard, mergeDashboard, record, semanticStatus, type DashboardSection, type DashboardView, type JsonRecord } from "./model.js";
@@ -77,8 +76,8 @@ async function requestMutation(kind: MutationKind, token: string, body: Record<s
 
 function Status({ value }: { value: unknown }) {
   const tone = semanticStatus(value);
-  return <Badge className="admin-status-badge" size="sm" radius="xl" variant="light"
-    color={tone === "good" ? "green" : tone === "warning" ? "yellow" : tone === "error" ? "red" : "blue"}>{display(value)}</Badge>;
+  return <Badge className="admin-status-badge" size="sm" radius="xl" variant="light" data-tone={tone}
+    color={tone === "warning" ? "yellow" : tone === "error" ? "red" : "gray"}>{display(value)}</Badge>;
 }
 
 function Section({ id, eyebrow, title, error, actions, children }: {
@@ -124,11 +123,13 @@ function ProjectActionMenu({ project, onAction }: {
 }
 
 export function AdminApp() {
-  const reduceMotion = useReducedMotion();
   const [appearance, setAppearance] = useState<Appearance>(savedAppearance);
   const [accent, setAccent] = useState(loadAccentPreference);
   const [tokenInput, setTokenInput] = useState("");
   const [authenticated, setAuthenticated] = useState(false);
+  const [unlockPending, setUnlockPending] = useState(false);
+  const unlockAttempt = useRef(0);
+  const unlocking = useRef(false);
   const [gateError, setGateError] = useState("");
   const [dashboard, setDashboard] = useState<DashboardView>(emptyDashboard);
   const [status, setStatus] = useState("Locked");
@@ -147,6 +148,9 @@ export function AdminApp() {
 
   const closeDialog = () => { dialogOpen.current = false; setDialog(null); };
   const lock = (message = "Locked.") => {
+    unlockAttempt.current += 1;
+    unlocking.current = false;
+    setUnlockPending(false);
     flowRef.current?.closeForSessionEnd();
     mutationRef.current?.lock();
     refreshRef.current?.lock(message);
@@ -244,15 +248,50 @@ export function AdminApp() {
     }
   }, [dashboard.projects, dialog, dialogError]);
 
+  useEffect(() => {
+    if (!authenticated) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const ids = ["overview-section", "devices-section", "projects-section", "diagnostics-section"];
+      const sections = ids.map((id) => document.getElementById(id)).filter((element): element is HTMLElement => !!element);
+      const toolbar = document.querySelector(".workspace-toolbar")?.getBoundingClientRect();
+      const boundary = Math.max(110, (toolbar?.bottom || 0) + 24);
+      const atBottom = window.scrollY > 0 && window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+      const current = atBottom ? sections.at(-1) : sections.filter((section) => section.getBoundingClientRect().top <= boundary).at(-1) || sections[0];
+      if (current) setActiveSection(current.id);
+    };
+    const schedule = () => { if (!frame) frame = window.requestAnimationFrame(update); };
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    return () => {
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      window.cancelAnimationFrame(frame);
+    };
+  }, [authenticated]);
+
   const unlock = async (event: FormEvent) => {
     event.preventDefault();
+    if (unlocking.current) return;
     const token = tokenInput.trim();
     setTokenInput("");
     if (!token) return;
+    const attempt = ++unlockAttempt.current;
+    unlocking.current = true;
+    setUnlockPending(true);
+    setGateError("");
     flowRef.current!.closeForSessionEnd();
     mutationRef.current!.beginSession(token);
-    await refreshRef.current!.beginSession(token);
-    if (auto) refreshRef.current!.startAutoRefresh(REFRESH_MS);
+    try {
+      await refreshRef.current!.beginSession(token);
+      if (attempt === unlockAttempt.current && auto) refreshRef.current!.startAutoRefresh(REFRESH_MS);
+    } finally {
+      if (attempt === unlockAttempt.current) {
+        unlocking.current = false;
+        setUnlockPending(false);
+      }
+    }
   };
   const changeAuto = (checked: boolean) => {
     setAuto(checked);
@@ -315,20 +354,18 @@ export function AdminApp() {
   ] as const;
 
   return <div className="admin-shell ui-canvas">
-    <aside className="admin-rail ui-glass" aria-label="WebCodex Admin navigation">
+    <aside className="admin-rail ui-surface" aria-label="WebCodex Admin navigation">
       <div className="product-identity"><BrandMark /><div><strong>WebCodex</strong><span>Admin console</span></div></div>
       <nav className="section-nav" aria-label="Dashboard sections">
         {navigation.map(([id, label, Icon]) => <a key={id} href={`#${id}`} aria-current={activeSection === id ? "location" : undefined}
           aria-label={label} title={label} onClick={() => setActiveSection(id)}>
-          {activeSection === id && <motion.span className="admin-nav-rail" layoutId="admin-nav-rail" initial={false}
-            transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 38 }} aria-hidden="true" />}
           <Icon size={18} aria-hidden="true" /><span>{label}</span></a>)}
       </nav>
       <div className="rail-footer">
         <p className="rail-status"><span aria-hidden="true" /> Control plane</p>
-        <Button variant="subtle" color="gray" onClick={cycleAppearance} title={`Appearance: ${appearance}`} aria-label={`Appearance: ${appearance}`} className="appearance-button"
-          leftSection={appearance === "dark" ? <MoonStar size={16} /> : <Sun size={16} />}>Appearance · {appearance}</Button>
-        <AccentPicker color={accent} onChange={changeAccent} language="en" />
+        <div className="admin-preference-buttons" role="group" aria-label="Preferences">
+          <AppearanceControls accent={accent} appearance={appearance} onAccentChange={changeAccent} onAppearanceCycle={cycleAppearance} />
+        </div>
       </div>
     </aside>
     <main className="admin-workspace">
@@ -337,13 +374,13 @@ export function AdminApp() {
         <span className="eyebrow">Secure control plane</span><h1 id="gate-title">Administrator access</h1>
         <p>Use a bootstrap token or admin-scoped PAT. The token stays only in this page’s memory.</p>
         <form onSubmit={(event) => void unlock(event)} autoComplete="off" className="gate-form">
-          <PasswordInput label="Admin token" aria-label="Admin token" autoComplete="off" value={tokenInput} onChange={(event) => setTokenInput(event.currentTarget.value)} placeholder="Enter admin token" />
-          <Button type="submit" className="admin-primary">Unlock console</Button>
+          <PasswordInput label="Admin token" aria-label="Admin token" autoComplete="off" value={tokenInput} disabled={unlockPending} onChange={(event) => setTokenInput(event.currentTarget.value)} placeholder="Enter admin token" />
+          <Button type="submit" className="admin-primary" loading={unlockPending} aria-busy={unlockPending}>Unlock console</Button>
         </form>
-        {gateError && <Alert color="red" role="alert" mt="md">{gateError}</Alert>}
+        {(gateError || error) && <Alert color="red" role="alert" mt="md">{gateError || error}</Alert>}
       </section> : <>
-        <header className="workspace-toolbar ui-glass"><div className="page-context"><span className="eyebrow">Control plane</span><h1>Operations</h1></div>
-          <div className="toolbar-actions"><Badge color="green" variant="light" className="status" role="status">{status}</Badge>
+        <header className="workspace-toolbar ui-surface"><div className="page-context"><span className="eyebrow">Control plane</span><h1>Operations</h1></div>
+          <div className="toolbar-actions"><Badge color="gray" variant="light" className="status" role="status">{status}</Badge>
             <Switch label="Live" checked={auto} onChange={(event) => changeAuto(event.currentTarget.checked)} size="sm" />
             <Button variant="default" leftSection={<RefreshCw size={15} />} onClick={() => void refreshRef.current!.refresh()}>Refresh</Button>
             <Button variant="subtle" color="gray" onClick={() => lock()}>Lock</Button></div>
@@ -372,6 +409,7 @@ export function AdminApp() {
         <div className="details-grid">
           <Section id="diagnostics-section" eyebrow="System evidence" title="Diagnostics">
             <dl>{Object.entries(dashboard.diagnostics).map(([key, value]) => <div key={key}><dt>{key.replace(/_/g, " ")}</dt><dd>{display(value)}</dd></div>)}</dl>
+            {!Object.keys(dashboard.diagnostics).length && <div className="empty-state">No diagnostics available.</div>}
           </Section>
           <Section id="activity-section" eyebrow="Recent events" title="Recent activity" error={sectionError("activity")}>
             {dashboard.activity.length ? <ol className="activity-list">{dashboard.activity.map((entry, index) => <li key={index}>

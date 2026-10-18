@@ -105,7 +105,7 @@ export function RuntimeView({
         {overviewAvailability === "stale" && <span role="status">{t("Refresh failed · showing previous data")}</span>}
       </div>
 
-      <div className="runtime-tabs" role="tablist">
+      <div className="runtime-tabs runtime-view-tabs equal-view-tabs" role="tablist" aria-label={t("Runtime")}>
         <button className={mode === "overview" ? "active" : ""} role="tab" aria-selected={mode === "overview"} onClick={() => setMode("overview")}>
           <Server size={15} /> {t("Overview")}
         </button>

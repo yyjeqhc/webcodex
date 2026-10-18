@@ -62,6 +62,8 @@ __pycache__/
 /artifacts/desktop-runtime-simple/
 /artifacts/desktop-clarity/
 /artifacts/projects-runtime/
+/artifacts/web-soft-surfaces/
+/artifacts/web-page-consistency/
 /artifacts/pdf-reader/
 /artifacts/mcp-workspaces/
 /artifacts/runtime-call-stream/

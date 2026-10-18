@@ -1,13 +1,13 @@
-.trace-search { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12px; min-width: 0; }
+.trace-search { padding: 16px var(--web-panel-inset); border-bottom: 1px solid var(--line); font-size: 12px; min-width: 0; }
 .trace-search > summary, .trace-event > summary { cursor: pointer; overflow-wrap: anywhere; }
 .trace-search form { display: grid; gap: 8px; margin-block: 12px; }
 .trace-search label { display: grid; gap: 4px; color: var(--muted); }
-.trace-search input:not([type="checkbox"]) { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
+.trace-search input:not([type="checkbox"]) { width: 100%; min-width: 0; min-height: var(--web-control-height); padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--ui-radius-sm); background: var(--surface); color: var(--text); }
 .trace-search .trace-passive { display: flex; align-items: center; }
 .trace-search-call { display: grid; gap: 5px; padding: 10px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
 .trace-search-call time, .trace-search-call small { color: var(--muted); }
 .trace-call-details { margin-top: 6px; min-width: 0; }
 .trace-call-details section { padding: 8px 0; min-width: 0; }
-.trace-event { margin-top: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); }
+.trace-event { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--ui-radius-sm); background: var(--surface-soft); }
 .trace-event pre { max-width: 100%; max-height: 32rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.5; }
 .trace-call-details button, .trace-search button { white-space: normal; text-align: start; }

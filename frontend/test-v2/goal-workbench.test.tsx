@@ -143,3 +143,14 @@ describe("Goal Workbench", () => {
   });
 
 });
+
+it.each([403, 503])("explains unavailable Goal details instead of asking for selection (status %s)", async (status) => {
+  const backing = client();
+  const failing = { post: (path: string, ...args: unknown[]) => path === "goal"
+    ? Promise.resolve({ ok: false, status }) : (backing.post as (...args: unknown[]) => unknown)(path, ...args) } as RuntimeV2Client;
+  render(<UiProvider><GoalWorkbench client={failing} language="en" projects={[]} surface="goals"
+    onSurfaceChange={vi.fn()} onOpenSession={vi.fn()} onOpenAgent={vi.fn()} onOpenWindow={vi.fn()} onUnauthorized={vi.fn()} /></UiProvider>);
+  const message = status === 403 ? "Goal details are not available with this access key." : "Goal details could not be loaded.";
+  expect(await screen.findByRole("heading", { name: message })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Select a Goal" })).toBeNull();
+});

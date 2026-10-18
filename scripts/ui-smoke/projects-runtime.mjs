@@ -52,6 +52,7 @@ try {
         const details = await page.locator('.project-family-details').boundingBox();
         assert(details.x >= list.x + list.width, 'Details must sit beside the project list');
       } else {
+        await page.waitForFunction(() => document.activeElement?.classList.contains('project-family-details'));
         assert.equal(await page.evaluate(() => document.activeElement?.className), 'project-family-details');
       }
       await page.screenshot({ path: new URL(`projects-${width}-${theme}.png`, output).pathname, fullPage: true });

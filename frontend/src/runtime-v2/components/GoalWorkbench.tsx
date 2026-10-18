@@ -17,7 +17,6 @@ import {
   Users,
 } from "lucide-react";
 import { Progress, SegmentedControl, Stepper, TextInput } from "@mantine/core";
-import { motion } from "motion/react";
 import { useMemo, useState } from "react";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
@@ -135,10 +134,10 @@ export function GoalWorkbench({
       type="button"
       className={"goal-list-row " + (state.selectedGoalId === goal.goal_id ? "selected" : "")}
       data-testid={"goal-row-" + goal.goal_id}
+      aria-current={state.selectedGoalId === goal.goal_id ? "true" : undefined}
       onClick={() => state.selectGoal(goal.goal_id)}
       key={goal.goal_id}
     >
-      {state.selectedGoalId === goal.goal_id && <motion.span className="ui-selection-rail" layoutId="runtime-goal-rail" aria-hidden="true" />}
       <span className={"goal-list-icon " + lifecycleClass(goal.lifecycle)}><Flag size={14} /></span>
       <span className="goal-list-copy">
         <strong>{goal.title}</strong>
@@ -176,6 +175,7 @@ export function GoalWorkbench({
           {!!active.length && <section className="work-group"><div className="work-group-heading"><span>{t("Active Goals")}</span><small>{active.length}</small></div><div className="work-group-list">{active.map(renderGoalRow)}</div></section>}
           {!!history.length && <section className="work-group"><div className="work-group-heading"><span>{t("Goal history")}</span><small>{history.length}</small></div><div className="work-group-list">{history.map(renderGoalRow)}</div></section>}
           {state.availability === "loading" && <div className="empty-inline">{t("Loading Goals…")}</div>}
+          {(state.availability === "error" || state.availability === "stale") && <div className="inventory-note" role="status">{t(state.availability === "stale" ? "Goal refresh failed; previous data retained." : "Goals could not be loaded. Refresh to retry.")}</div>}
           {state.availability === "denied" && <div className="empty-inline">{t("Goals require communication and Project read access.")}</div>}
           {state.availability === "available" && !filtered.length && <div className="empty-panel"><Flag size={18} /><strong>{t("No matching Goals")}</strong></div>}
         </div>
@@ -194,7 +194,8 @@ export function GoalWorkbench({
         ) : (
           <div className="empty-work">
             <Flag size={23} />
-            <h2>{state.detailAvailability === "loading" ? t("Loading Goal…") : t("Select a Goal")}</h2>
+            <h2>{t(state.detailAvailability === "loading" ? "Loading Goal…" : state.detailAvailability === "denied" ? "Goal details are not available with this access key." : state.detailAvailability === "error" ? "Goal details could not be loaded." : "Select a Goal")}</h2>
+            {state.detailAvailability === "error" && <button type="button" className="text-button" onClick={state.refresh}>{t("Refresh")}</button>}
           </div>
         )}
       </main>

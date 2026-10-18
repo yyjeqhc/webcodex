@@ -88,7 +88,13 @@ export function SessionCollaboration({ location, session, language }: {
         {session.messagesAvailability === "denied" && (
           <p className="muted-copy">{t("Session messages are not available with this access key.")}</p>
         )}
-        {session.messages?.messages.length === 0 && (
+        {(session.messagesAvailability === "error" || session.messagesAvailability === "stale") && (
+          <div className="inventory-note" role="status">
+            {t(session.messagesAvailability === "stale" ? "Message refresh failed; previous messages retained." : "Session messages could not be loaded.")}
+            {" "}<button type="button" className="text-button" onClick={session.refresh}>{t("Refresh")}</button>
+          </div>
+        )}
+        {session.messagesAvailability === "available" && session.messages?.messages.length === 0 && (
           <p className="muted-copy">{t("No retained Session messages.")}</p>
         )}
       </div>

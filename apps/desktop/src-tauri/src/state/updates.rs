@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod tests;
 mod view;
 use super::*;
 use crate::runtime_selection;
@@ -52,17 +54,90 @@ impl AppState {
         status
     }
 
-    async fn request_automatic_download(&self, cache: &UpdateCache) {
-        if let Ok((kind, _context)) = self.update_installation_context().await {
-            let target = updates::detected_installer_target();
+    async fn request_update_download_with(
+        &self,
+        manual_version: Option<&str>,
+        submit: impl FnOnce(&UpdateCache, bool, InstallationKind),
+    ) -> DesktopResult<UpdateCache> {
+        let (revision, binaries, source, environment_id) = {
+            let slot = self.core.lock().await;
+            let core = slot
+                .as_ref()
+                .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?;
+            (
+                core.config.runtime_selection_revision,
+                core.adapter.binaries().ok().cloned(),
+                core.config.runtime_binary_source.clone(),
+                core.config.persistent_environment.clone(),
+            )
+        };
+        // Installation classification may probe the host package manager.
+        // Keep those filesystem/process operations outside the core lock.
+        let (kind, _context) = updates::assess_installation(
+            crate::commands::get_desktop_build_info(),
+            binaries.clone(),
+            source.clone(),
+            environment_id.clone(),
+        );
+        let slot = self.core.lock().await;
+        let core = slot
+            .as_ref()
+            .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?;
+        let binaries_unchanged = match (binaries.as_ref(), core.adapter.binaries().ok()) {
+            (None, None) => true,
+            (Some(before), Some(current)) => {
+                before.directory == current.directory
+                    && before.webcodex == current.webcodex
+                    && before.server == current.server
+                    && before.runner == current.runner
+                    && before.source == current.source
+                    && before.builds == current.builds
+                    && before.fingerprint == current.fingerprint
+            }
+            _ => false,
+        };
+        if !binaries_unchanged
+            || core.config.runtime_selection_revision != revision
+            || core.config.runtime_binary_source != source
+            || core.config.persistent_environment != environment_id
+        {
+            return Err(runtime_selection::error("runtime_selection_changed"));
+        }
+        let cache = &core.config.update_cache;
+        if let Some(version) = manual_version {
+            if cache
+                .latest
+                .as_ref()
+                .filter(|release| updates::valid_notice(release) && release.version == version)
+                .is_none()
+            {
+                return Err(action_error());
+            }
+        }
+        // Read current preferences and admit the request under the same lock
+        // used to persist a disable and cancel its preceding download. The
+        // synchronous submit only schedules work; no network is awaited here.
+        // With automatic=false the manager still reconciles pending installs
+        // and verifies existing cache files, but cannot download an installer.
+        submit(cache, manual_version.is_some(), kind);
+        Ok(cache.clone())
+    }
+
+    async fn request_update_download(
+        &self,
+        manual_version: Option<&str>,
+    ) -> DesktopResult<UpdateCache> {
+        let target = updates::detected_installer_target();
+        self.request_update_download_with(manual_version, |cache, manual, kind| {
             self.updates.request(
                 cache.latest.clone(),
                 cache.automatic_download,
-                false,
+                manual,
                 kind,
                 target,
             );
-        }
+        })
+        .await
     }
 
     pub async fn check_for_updates(&self, manual: bool) -> DesktopResult<UpdateStatus> {
@@ -77,7 +152,7 @@ impl AppState {
                 .clone()
         };
         if !cache.should_check(now, manual) {
-            self.request_automatic_download(&cache).await;
+            let cache = self.request_update_download(None).await.unwrap_or(cache);
             return Ok(self.update_status(&cache, now, true, None));
         }
         // No network under the Runtime core lock. Download retry cadence is
@@ -125,7 +200,7 @@ impl AppState {
         }
         let cache = core.config.update_cache.clone();
         drop(slot);
-        self.request_automatic_download(&cache).await;
+        let cache = self.request_update_download(None).await.unwrap_or(cache);
         Ok(self.update_status(&cache, now, false, error))
     }
 
@@ -134,31 +209,7 @@ impl AppState {
     }
 
     pub async fn download_update(&self, version: &str) -> DesktopResult<UpdateStatus> {
-        let cache = {
-            let slot = self.core.lock().await;
-            slot.as_ref()
-                .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?
-                .config
-                .update_cache
-                .clone()
-        };
-        if cache
-            .latest
-            .as_ref()
-            .filter(|release| updates::valid_notice(release) && release.version == version)
-            .is_none()
-        {
-            return Err(action_error());
-        }
-        let (kind, _context) = self.update_installation_context().await?;
-        let target = updates::detected_installer_target();
-        self.updates.request(
-            cache.latest.clone(),
-            cache.automatic_download,
-            true,
-            kind,
-            target,
-        );
+        let cache = self.request_update_download(Some(version)).await?;
         tokio::task::yield_now().await;
         Ok(self.update_status(&cache, runtime_selection::now_ms(), true, None))
     }
@@ -186,12 +237,17 @@ impl AppState {
             return Err(error);
         }
         let cache = core.config.update_cache.clone();
-        drop(slot);
-        if enabled {
-            self.request_automatic_download(&cache).await;
-        } else {
+        if !enabled {
+            // Do not let a later enable/manual request replace the cancellation
+            // signal before this completed preference change cancels old work.
             self.updates.cancel_download(false);
         }
+        drop(slot);
+        let cache = if enabled {
+            self.request_update_download(None).await.unwrap_or(cache)
+        } else {
+            cache
+        };
         Ok(self.update_status(&cache, runtime_selection::now_ms(), true, None))
     }
 

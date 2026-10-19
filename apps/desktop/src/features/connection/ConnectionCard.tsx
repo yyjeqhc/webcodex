@@ -122,7 +122,7 @@ export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEd
       {canStop && <button type="button" className="secondary-button" disabled={busy} aria-label={`${p("stop")} ${profile.name}`} onClick={() => onAction("stop")}>{p("stop")}</button>}
       <button type="button" className="text-button" disabled={busy} aria-label={`${c("delete")} ${profile.name}`} onClick={onDelete}>{c("delete")}</button>
     </div>
-    <details className="connection-details"><summary>{p("details")}</summary>
+    <details className="connection-details"><summary aria-label={`${p("details")} ${profile.name}`}>{p("details")}</summary>
       {profile.credential_present && <p>{c("credentials")}</p>}
       <dl className="connection-meta-grid">
         {detailRows.map(({ label, value, path }) =>

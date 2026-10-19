@@ -29,9 +29,9 @@ export function RunnerDevices({ onComputerSettings, selectedDevice, onSelectDevi
       return <li className="runner-device" key={runner.client_id} data-runner-id={runner.client_id}>
         <div className="runner-device-heading"><Monitor size={20} aria-hidden="true" /><h3>{local ? p("thisComputer") : p("otherDevice")}</h3><span className={`workspace-badge${runner.connected && !stale ? " working" : ""}`}>{p(stale ? "deviceNeedsRefresh" : runner.connected ? "runnerConnected" : "runnerDisconnected")}</span></div>
         {!local && <p className="runner-device-identifier">{p("deviceIdentifier")} · <code>{runner.client_id}</code></p>}
+        <RunnerCapacitySummary capacity={runnerCapacity(runner, stale || workspace.busy || capacityExpired)} />
         <details className="runner-device-details"><summary>{p(desktopLabel)}</summary>
           <p className="runner-device-help">{p(help)}</p>
-          <RunnerCapacitySummary capacity={runnerCapacity(runner, stale || workspace.busy || capacityExpired)} />
           {local && <p>{p("deviceIdentifier")} · <code>{runner.client_id}</code></p>}
           <p className="runner-device-help">{p("runnerRole")}</p>
         </details>

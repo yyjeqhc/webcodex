@@ -567,6 +567,7 @@ beforeEach(() => {
     renderApp(); fireEvent.click(await screen.findByRole("button", { name: "连接" }));
     expect(screen.queryByRole("button", { name: "启动 ChatGPT" })).not.toBeInTheDocument();
     const profile = within(screen.getByRole("article", { name: "ChatGPT" }));
+    expect(profile.getByText("详情", { selector: "summary" })).toHaveAttribute("aria-label", "详情 ChatGPT");
     expect(profile.getByText("tunnel_control_plane")).not.toBeVisible();
     fireEvent.click(profile.getByText("详情", { selector: "summary" }));
     expect(profile.getByText("tunnel_control_plane")).toBeVisible();

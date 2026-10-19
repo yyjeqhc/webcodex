@@ -121,6 +121,15 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         AuthMiddleware,
     ),
     route(
+        RuntimeConsoleBrowserStatus,
+        Post,
+        "/api/runtime-console/browser-status",
+        Require(webcodex_core::authority::SCOPE_BROWSER_READ),
+        RuntimeConsole,
+        Other,
+        AuthMiddleware,
+    ),
+    route(
         RuntimeConsoleWindows,
         Post,
         "/api/runtime-console/windows",

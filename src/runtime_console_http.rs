@@ -8,6 +8,7 @@ use crate::auth::{
     AuthContext, SCOPE_COMMUNICATION_MANAGE, SCOPE_COMMUNICATION_READ, SCOPE_PROJECT_READ,
     SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE,
 };
+use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::sessions::{
     aggregate_console_list, is_valid_session_id, SessionMessageKind, SessionMessagePriority,
     WorkflowSessionConsoleAggregate, WorkflowSessionConsoleAttentionOverview,
@@ -26,6 +27,7 @@ use serde_json::Value;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
+use webcodex_tool_contracts::tool_call::BrowserObserveToolCall;
 
 mod communication;
 mod goals;
@@ -86,6 +88,9 @@ pub(crate) fn routes() -> Router {
     Router::new()
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleOverview)).post(overview))
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleRunner)).post(runner))
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleBrowserStatus)).post(browser_status),
+        )
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleWindows)).post(windows))
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleWindow)).post(window))
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleTrace)).post(trace::read))
@@ -253,6 +258,41 @@ struct RunnerInput {
     client_id: String,
     #[serde(default)]
     project_limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrowserStatusInput {
+    client_id: String,
+}
+
+// No Browser IDs, pages, profiles or endpoint URLs are returned to Desktop.
+fn browser_status_count(output: &Value) -> Option<usize> {
+    let browsers = output.get("browsers")?.as_array()?;
+    let count = usize::try_from(output.get("count")?.as_u64()?).ok()?;
+    (count == browsers.len() && count <= 4).then_some(count)
+}
+
+#[cfg(test)]
+#[test]
+fn desktop_browser_count_rejects_truncated_or_inconsistent_runner_output() {
+    assert_eq!(
+        browser_status_count(&serde_json::json!({"count":0,"browsers":[]})),
+        Some(0)
+    );
+    assert_eq!(
+        browser_status_count(&serde_json::json!({"count":2,"browsers":[{},{}]})),
+        Some(2)
+    );
+    assert_eq!(
+        browser_status_count(&serde_json::json!({"count":2,"browsers":[{}]})),
+        None
+    );
+    assert_eq!(
+        browser_status_count(&serde_json::json!({"count":5,"browsers":[{},{},{},{},{}]})),
+        None
+    );
+    assert_eq!(browser_status_count(&serde_json::json!({"count":0})), None);
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2362,6 +2402,58 @@ async fn runner(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     match runner_for_auth(&runtime, &auth, &input.client_id, input.project_limit).await {
         Ok(output) => res.render(Json(output)),
         Err(error) => render_error(res, error),
+    }
+}
+
+#[handler]
+async fn browser_status(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, auth) = match prepared(req, depot).await {
+        Ok(value) => value,
+        Err(error) => return render_error(res, error),
+    };
+    let input = match req.parse_json::<BrowserStatusInput>().await {
+        Ok(value) => value,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    if input.client_id.is_empty()
+        || input.client_id.len() > 128
+        || input.client_id.chars().any(char::is_control)
+    {
+        return render_error(res, RuntimeConsoleError::Invalid);
+    }
+    // Enforce the canonical BrowserObserve scope, capability, Runner visibility,
+    // permission and dispatch path. This console route only projects the count.
+    match runtime
+        .invoke_browser_observe_gateway(
+            BrowserObserveToolCall::Browsers {
+                client_id: input.client_id.clone(),
+            },
+            None,
+            Some(&auth),
+            SessionTransport::Api,
+        )
+        .await
+    {
+        Ok(result) if result.success => match browser_status_count(&result.output) {
+            Some(count) => res.render(Json(serde_json::json!({
+                "client_id": input.client_id,
+                "state": "fresh",
+                "count": count,
+            }))),
+            None => render_error(res, RuntimeConsoleError::Internal),
+        },
+        Ok(_) => res.render(Json(serde_json::json!({
+            "client_id": input.client_id,
+            "state": "unavailable",
+            "count": null,
+        }))),
+        Err(_) => render_error(
+            res,
+            RuntimeConsoleError::Request {
+                status: 403,
+                message: "Browser observation not authorized",
+            },
+        ),
     }
 }
 

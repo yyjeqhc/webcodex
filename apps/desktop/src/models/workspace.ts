@@ -70,7 +70,7 @@ export interface ExtensionsSnapshot {
   plugins: { available: boolean; catalog?: { plugins: PluginSummary[]; truncated?: boolean } };
 }
 export type WorkspaceRequest =
-  | { kind: "overview" | "projects" | "runner_details" | "windows" }
+  | { kind: "overview" | "projects" | "runner_details" | "browser_status" | "windows" }
   | { kind: "sessions" | "extensions" | "project_git"; project: string }
   | { kind: "session"; project: string; session_id: string }
   | { kind: "window"; client_window_key: string }

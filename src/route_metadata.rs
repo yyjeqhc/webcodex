@@ -87,6 +87,7 @@ pub(crate) enum RouteId {
     McpPost,
     RuntimeConsoleOverview,
     RuntimeConsoleRunner,
+    RuntimeConsoleBrowserStatus,
     RuntimeConsoleWindows,
     RuntimeConsoleWindow,
     RuntimeConsoleTrace,

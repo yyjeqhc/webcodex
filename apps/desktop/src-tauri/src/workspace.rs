@@ -16,6 +16,7 @@ pub enum WorkspaceRequest {
     Overview {},
     Projects {},
     RunnerDetails {},
+    BrowserStatus {},
     Windows {},
     Sessions {
         project: String,
@@ -97,6 +98,9 @@ fn request_body(
         WorkspaceRequest::Projects {} => ("projects", json!({"limit": 200})),
         WorkspaceRequest::RunnerDetails {} if runner.is_some() => {
             ("runner", json!({"client_id": runner, "project_limit": 200}))
+        }
+        WorkspaceRequest::BrowserStatus {} if runner.is_some() => {
+            ("browser-status", json!({"client_id": runner}))
         }
         WorkspaceRequest::Windows {} => ("windows", json!({"limit": 64})),
         WorkspaceRequest::Sessions { project } if valid(&project) => (

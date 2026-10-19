@@ -6,6 +6,7 @@ import { useConnectionsTools } from "../../i18n/connections-tools";
 import { useLocale } from "../../i18n/locale";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import { WorkspaceStatus, ChatgptObservation } from "../workspace/WorkspaceStatus";
+import { BrowserRuntimeStatus } from "./BrowserRuntimeStatus";
 
 interface DashboardProps {
   state: DesktopState; refreshing: boolean; onRefresh: () => Promise<void>;
@@ -25,6 +26,7 @@ export function Dashboard(props: DashboardProps) {
       <Button className="secondary-button" variant="default" disabled={busy || props.refreshing} onClick={() => void props.onRefresh()}>{p("refresh")}</Button>
     </header>
     <WorkspaceStatus state={state} />
+    <BrowserRuntimeStatus state={state} />
     {!state.readiness.runtime_ready && <div className="workspace-quick-actions"><Button className="secondary-button" variant="default" onClick={state.readiness.next_action_kind === "restart_quick_share" ? props.onChangeSetup : props.onResumeRuntime} disabled={busy}>{state.readiness.next_action_kind === "restart_quick_share" ? p("restart") + " Quick Share" : p("start") + " WebCodex"}</Button></div>}
     <div className="dashboard-handoff">
       <MessageSquare size={24} aria-hidden="true" />

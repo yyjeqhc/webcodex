@@ -24,7 +24,10 @@ export function replaceSelectionRegion(html, content, begin, end) {
 async function main() {
   const args = process.argv.slice(2);
   if (args.some(arg => arg !== "--check")) throw new Error("Only --check is supported");
-  const path = resolve(root, "../src/mcp_workbench_app.html");
+  const apps = [
+    { name: "workbench", brand: "WORKBENCH" },
+    { name: "work_result", brand: "WORK RESULT", skin: "src/mcp-apps/work-result/work-result.css" },
+  ];
   const results = await Promise.all([
     build({ absWorkingDir: root, entryPoints: ["src/ui/selectionMotion.ts"], bundle: true,
       platform: "browser", format: "iife", globalName: "WebCodexSelectionMotion", target: "es2022",
@@ -35,17 +38,22 @@ async function main() {
   if (results.some(result => Object.keys(result.metafile.inputs).some(path => path.split(/[\\/]/).includes("node_modules")))) {
     throw new Error("Selection motion bundle must contain only first-party modules");
   }
-  const html = normalizeLineEndings(readFileSync(path, "utf8"));
+
   const script = results[0].outputFiles[0].text.replace(/<\/script/gi, "<\\/script");
   const css = results[1].outputFiles[0].text.replace(/<\/style/gi, "<\\/style");
   const brand = normalizeLineEndings(readFileSync(resolve(root, "src/ui/brand-mark.svg"), "utf8"));
-  const output = replaceSelectionRegion(replaceSelectionRegion(replaceSelectionRegion(html, script, JS_BEGIN, JS_END), css, CSS_BEGIN, CSS_END), brand, "<!-- BEGIN WORKBENCH BRAND -->", "<!-- END WORKBENCH BRAND -->");
-  if (args.includes("--check")) {
-    if (output !== html) throw new Error("Selection motion bundle out of date; run node frontend/scripts/build-selection-motion.mjs");
-    console.log("Selection motion bundle checked");
-  } else {
-    writeFileSync(path, output);
-    console.log("Selection motion bundle generated");
+  for (const app of apps) {
+    const path = resolve(root, `../src/mcp_${app.name}_app.html`);
+    const html = normalizeLineEndings(readFileSync(path, "utf8"));
+    const appCss = app.skin ? css + "\n" + normalizeLineEndings(readFileSync(resolve(root, app.skin), "utf8")) : css;
+    const output = replaceSelectionRegion(replaceSelectionRegion(replaceSelectionRegion(html, script, JS_BEGIN, JS_END), appCss, CSS_BEGIN, CSS_END), brand, `<!-- BEGIN ${app.brand} BRAND -->`, `<!-- END ${app.brand} BRAND -->`);
+    if (args.includes("--check")) {
+      if (output !== html) throw new Error(`${app.name} selection motion bundle out of date; run node frontend/scripts/build-selection-motion.mjs`);
+      console.log(`${app.name} selection motion bundle checked`);
+    } else {
+      writeFileSync(path, output);
+      console.log(`${app.name} selection motion bundle generated`);
+    }
   }
 }
 

@@ -8,6 +8,8 @@ interface BrowserStatus {
   client_id: string;
   state: "fresh" | "partial" | "unavailable";
   count: number | null;
+  owned_count?: number;
+  attached_count?: number;
 }
 
 interface ObservedBrowserStatus {
@@ -33,6 +35,9 @@ export function BrowserRuntimeStatus({ state }: { state: DesktopState }) {
       .then(value => {
         if (!cancelled) setObservation({ revision, status: value?.client_id === clientId && value.state === "fresh"
           && Number.isInteger(value.count) && value.count! >= 0 && value.count! <= 4
+          && Number.isInteger(value.owned_count) && value.owned_count! >= 0
+          && Number.isInteger(value.attached_count) && value.attached_count! >= 0
+          && value.owned_count! + value.attached_count! === value.count
           ? value : { client_id: clientId, state: "unavailable", count: null } });
       })
       .catch(() => {
@@ -54,7 +59,10 @@ export function BrowserRuntimeStatus({ state }: { state: DesktopState }) {
       <p role="status">
         {!ready ? p("browserRuntimeStopped")
           : loading ? p("browserRuntimeChecking")
-          : available ? p("browserRuntimeActive").replace("{count}", String(observed.count))
+          : available ? <>
+              {p("browserRuntimeActive").replace("{count}", String(observed.count))}
+              {" · "}{p("browserRuntimeOwnership").replace("{owned}", String(observed.owned_count)).replace("{attached}", String(observed.attached_count))}
+            </>
           : p("browserRuntimeUnknown")}
       </p>
     </div>

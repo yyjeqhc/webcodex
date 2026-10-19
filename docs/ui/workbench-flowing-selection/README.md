@@ -34,8 +34,9 @@ Runtime tabs, inspector, message kinds and activity-order controls use the same
 controller. Work level navigation stays mounted above the changing workbench so
 its plate can continue between Goals and Activity. Workbench project tabs inline
 the same first-party controller and CSS; no external script or dependency is
-loaded. Primary sidebars, entity pickers, ordinary buttons and the separate Work
-Result App retain their own behavior.
+loaded. Primary sidebars, entity pickers and ordinary buttons retain their own behavior.
+The separate [Work Result App](../work-result/README.md) now reuses the same
+controller, neutral surfaces and first-party brand.
 
 Rapid changes retarget from the visible plate rectangle. Initial placement,
 responsive reflow, font/language changes and theme changes snap to valid geometry.
@@ -92,7 +93,7 @@ snapshot failures, denied reads and explicit reference tray behavior.
 These are fixture/browser checks, not native Desktop or real ChatGPT/Codex Host
 acceptance. They use no live backend, credentials, model, services or persistent
 Tunnel. Windows/macOS WebViews and actual Host rollout remain unverified.
-Workbench uses `ui://webcodex/workbench/v6`; deployment and a Host resource refresh
+Workbench uses `ui://webcodex/workbench/v7`; deployment and a Host resource refresh
 are separate operations and are not performed by this change.
 
 ## Local validation result

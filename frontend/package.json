@@ -11,7 +11,7 @@
     "test:admin": "node --test test/build.test.mjs test/app-regions.test.mjs test/selection-motion-build.test.mjs test/work-result-sections.test.mjs test/work-result-read-cache.test.mjs test/work-result-pdf.test.mjs test/pdf-document-reader.test.mjs test/pdf-document-host.test.mjs test/pdf-continuous-preview.test.mjs test/pdf-bundle.test.mjs test/spreadsheet.test.mjs test/spreadsheet-host.test.mjs test/spreadsheet-build.test.mjs && npm run test:docx",
     "test:runtime": "vitest run --config vitest.config.ts",
     "test": "npm run test:admin && npm run test:runtime",
-    "build:work-result": "node scripts/build-work-result-markdown.mjs && node scripts/build-work-result-sections.mjs && node scripts/build-work-result-pdf.mjs && node scripts/build-pdf-document.mjs",
+    "build:work-result": "node scripts/build-selection-motion.mjs && node scripts/build-work-result-markdown.mjs && node scripts/build-work-result-sections.mjs && node scripts/build-work-result-pdf.mjs && node scripts/build-pdf-document.mjs",
     "build:spreadsheet": "node scripts/build-spreadsheet.mjs",
     "test:spreadsheet": "node --test test/spreadsheet.test.mjs test/spreadsheet-host.test.mjs test/spreadsheet-build.test.mjs",
     "build:docx": "node scripts/build-docx.mjs",

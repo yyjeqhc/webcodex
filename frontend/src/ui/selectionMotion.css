@@ -21,6 +21,9 @@
   border: 0;
   pointer-events: none !important;
   user-select: none;
+  /* WAAPI owns these layers. Ancestor/Host CSS must not add a second motion. */
+  transition: none !important;
+  animation: none !important;
 }
 [data-selection-motion] [data-selection-motion-plate] {
   z-index: 0;

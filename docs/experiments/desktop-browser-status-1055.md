@@ -30,3 +30,32 @@ Status: **read-only first stage implemented**. The Desktop dashboard shows a bou
 ## Authority boundary
 
 The read-only adapter is now established: Tauri `WorkspaceRequest::BrowserStatus` posts to the authenticated Server endpoint, which invokes the canonical `BrowserObserve` gateway and returns only the count. It does **not** grant a `BrowserControl` capability or establish Browser ownership for closing. Any future Close all action requires separate design, explicit consent and the focused tests above; a direct Tauri-to-Runner kill command remains out of scope.
+
+## 2026-10-19 — owned versus external status follow-up
+
+The original read-only status panel is now merged upstream via PR #1179. A separate
+read-only follow-up records ownership *counts* per exact selected Runner before
+considering any Close all implementation:
+
+- The canonical `BrowserObserve` gateway still supplies the underlying bounded
+  Runner inventory; the authenticated console returns only total, owned and
+  externally-attached **counts**, no Browser IDs, profile names, page data or
+  endpoints. Ephemeral and managed persistent ownership are classified as
+  WebCodex-owned; attached_external is separate.
+- Unknown, missing, inconsistent or truncated ownership data is rejected
+  instead of marked fresh or interpreted as zero. Counts must sum to the
+  already-validated total, which stays bounded by the existing four-Browser
+  admission limit. Desktop also rejects mismatched selected Runner IDs.
+- This change is **observation only**, not a snapshot or fence for later
+  destructive actions. Even an accurately observed owned count cannot
+  authorize Close all: the set of Browser identities may change before
+  confirmation and requires a fresh server-owned selection and BrowserControl
+  authorization for each exact target.
+- No action routes, close buttons, background polling, browser runtime changes
+  or production settings are introduced. Existing external attached Browser
+  shutdown/detach semantics must never be conflated with owned-process kill.
+
+A future Close all needs separate design/review and tests for explicit
+confirmation, user cancellation, Runner changes, missing control permission,
+identity fencing across races, attached_external exclusion, partial/unknown
+outcomes and no blind retry. It must not be inferred from the count response.

@@ -160,6 +160,36 @@ describe("flowing selection motion", () => {
     expect(animate).toHaveBeenCalledTimes(2);
   });
 
+  it("animates a keyboard tab selection while its roving tabindex moves", async () => {
+    const { items, animate } = fixture();
+    await act(async () => {
+      items[0].setAttribute("aria-selected", "false");
+      items[0].setAttribute("tabindex", "-1");
+      items[1].setAttribute("aria-selected", "true");
+      items[1].setAttribute("tabindex", "0");
+      items[1].focus();
+    });
+    expect(document.activeElement).toBe(items[1]);
+    expect(animate).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps inline Host height changes from cancelling motion, but snaps a reflow", async () => {
+    const { select, boxes, animate, cancel } = fixture();
+    select(1);
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      await new Promise(requestAnimationFrame);
+    });
+    expect(cancel).not.toHaveBeenCalled();
+    boxes[1].width = 95;
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      await new Promise(requestAnimationFrame);
+    });
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(animate).toHaveBeenCalledTimes(2);
+  });
+
   it("supports label selectors without duplicating radio controls", () => {
     const { group, controller } = fixture();
     controller.destroy();

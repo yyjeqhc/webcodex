@@ -89,8 +89,9 @@ export function createSelectionMotion(group: HTMLElement, options: SelectionMoti
         && record.attributeName !== "data-selection-motion-selected";
     });
     if (!relevant.length) return;
+    // Roving tabindex follows selection without changing label geometry.
     const selectionOnly = relevant.every(record => record.type === "attributes"
-      && ["aria-selected", "aria-pressed", "class", "data-active", "checked", "name", "value"].includes(record.attributeName ?? ""));
+      && ["aria-selected", "aria-pressed", "tabindex", "class", "data-active", "checked", "name", "value"].includes(record.attributeName ?? ""));
     update({ animate: selectionOnly });
   });
   const observe = () => observer.observe(group, { subtree: true, childList: true, characterData: true, attributes: true });
@@ -219,11 +220,18 @@ export function createSelectionMotion(group: HTMLElement, options: SelectionMoti
     });
   }
 
+  function viewportResize() {
+    // Inline Hosts resize iframe height when a panel opens. Preserve motion if
+    // the selected control has not reflowed; real responsive changes still snap.
+    const selected = items.find(item => item.matches(selectedSelector));
+    if (!selected || !target || !sameBox(localBox(selected), target)) scheduleSnap();
+  }
+
   theme.observe(doc.documentElement, { attributes: true, attributeFilter: ["class", "style", "lang", "data-mantine-color-scheme", "data-theme", "data-resolved-theme", "data-display-mode"] });
   if (doc.body !== group) theme.observe(doc.body, { attributes: true, attributeFilter: ["class", "style", "lang", "data-theme"] });
   reduced?.addEventListener("change", scheduleSnap);
   forced?.addEventListener("change", scheduleSnap);
-  view.addEventListener("resize", scheduleSnap);
+  view.addEventListener("resize", viewportResize);
   doc.fonts?.addEventListener("loadingdone", scheduleSnap);
   update({ animate: false });
   return {
@@ -238,7 +246,7 @@ export function createSelectionMotion(group: HTMLElement, options: SelectionMoti
       view.cancelAnimationFrame(pendingFrame);
       reduced?.removeEventListener("change", scheduleSnap);
       forced?.removeEventListener("change", scheduleSnap);
-      view.removeEventListener("resize", scheduleSnap);
+      view.removeEventListener("resize", viewportResize);
       doc.fonts?.removeEventListener("loadingdone", scheduleSnap);
       for (const item of items) {
         item.removeAttribute("data-selection-motion-item");

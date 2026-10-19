@@ -267,32 +267,63 @@ struct BrowserStatusInput {
 }
 
 // No Browser IDs, pages, profiles or endpoint URLs are returned to Desktop.
-fn browser_status_count(output: &Value) -> Option<usize> {
+// Ownership is read-only diagnostic context, not authority for Browser closure.
+fn browser_status_counts(output: &Value) -> Option<(usize, usize, usize)> {
     let browsers = output.get("browsers")?.as_array()?;
     let count = usize::try_from(output.get("count")?.as_u64()?).ok()?;
-    (count == browsers.len() && count <= 4).then_some(count)
+    if count != browsers.len() || count > 4 {
+        return None;
+    }
+    let mut owned = 0usize;
+    let mut attached = 0usize;
+    for browser in browsers {
+        match browser.get("ownership")?.as_str()? {
+            "owned_ephemeral" | "owned_managed_persistent" => owned += 1,
+            "attached_external" => attached += 1,
+            _ => return None,
+        }
+    }
+    Some((count, owned, attached))
 }
 
 #[cfg(test)]
 #[test]
 fn desktop_browser_count_rejects_truncated_or_inconsistent_runner_output() {
     assert_eq!(
-        browser_status_count(&serde_json::json!({"count":0,"browsers":[]})),
-        Some(0)
+        browser_status_counts(&serde_json::json!({"count":0,"browsers":[]})),
+        Some((0, 0, 0))
     );
     assert_eq!(
-        browser_status_count(&serde_json::json!({"count":2,"browsers":[{},{}]})),
-        Some(2)
+        browser_status_counts(
+            &serde_json::json!({"count":2,"browsers":[{"ownership":"owned_ephemeral"},{"ownership":"attached_external"}]})
+        ),
+        Some((2, 1, 1))
     );
     assert_eq!(
-        browser_status_count(&serde_json::json!({"count":2,"browsers":[{}]})),
+        browser_status_counts(
+            &serde_json::json!({"count":2,"browsers":[{"ownership":"owned_managed_persistent"}]})
+        ),
         None
     );
     assert_eq!(
-        browser_status_count(&serde_json::json!({"count":5,"browsers":[{},{},{},{},{}]})),
+        browser_status_counts(&serde_json::json!({"count":5,"browsers":[{},{},{},{},{}]})),
         None
     );
-    assert_eq!(browser_status_count(&serde_json::json!({"count":0})), None);
+    assert_eq!(browser_status_counts(&serde_json::json!({"count":0})), None);
+    assert_eq!(
+        browser_status_counts(&serde_json::json!({"count":1,"browsers":[{}]})),
+        None
+    );
+    assert_eq!(
+        browser_status_counts(&serde_json::json!({"count":1,"browsers":[{"ownership":"unknown"}]})),
+        None
+    );
+    assert_eq!(
+        browser_status_counts(
+            &serde_json::json!({"count":2,"browsers":[{"ownership":"owned_managed_persistent"},{"ownership":"owned_ephemeral"}]})
+        ),
+        Some((2, 2, 0))
+    );
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2434,11 +2465,13 @@ async fn browser_status(req: &mut Request, depot: &mut Depot, res: &mut Response
         )
         .await
     {
-        Ok(result) if result.success => match browser_status_count(&result.output) {
-            Some(count) => res.render(Json(serde_json::json!({
+        Ok(result) if result.success => match browser_status_counts(&result.output) {
+            Some((count, owned_count, attached_count)) => res.render(Json(serde_json::json!({
                 "client_id": input.client_id,
                 "state": "fresh",
                 "count": count,
+                "owned_count": owned_count,
+                "attached_count": attached_count,
             }))),
             None => render_error(res, RuntimeConsoleError::Internal),
         },

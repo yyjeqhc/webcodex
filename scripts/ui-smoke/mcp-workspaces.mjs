@@ -20,15 +20,17 @@ const browser = await chromium.launch({ headless: true,
   ...(process.env.WEBCODEX_SMOKE_BROWSER ? { executablePath: process.env.WEBCODEX_SMOKE_BROWSER } : {}) });
 const report = { fixture: true, nativeHost: false, browser: browser.version(), cases: [] };
 
-async function mount(kind, width, mode = 'fullscreen', empty = false, record = false) {
+async function mount(kind, width, mode = 'fullscreen', empty = false, record = false, reducedMotion = kind === 'workbench' ? 'no-preference' : 'reduce', thread = false) {
+  const state = structuredClone(baseState);
+  if (thread) Object.assign(state.workspace.files[0], { path: 'README.md', content: '@@ -1 +1 @@\n-old\n+new\n', content_kind: 'diff', content_truncated: false });
   const html = await readFile(new URL(`../../src/mcp_${kind}_app.html`, import.meta.url), 'utf8');
   // Deliberately disagree with the Host theme, so system preference cannot hide a bug.
-  const page = await browser.newPage({ viewport: { width, height: 720 }, colorScheme: 'light', reducedMotion: kind === 'workbench' ? 'no-preference' : 'reduce', recordVideo: record ? {dir:output.pathname,size:{width:1440,height:720}} : undefined });
+  const page = await browser.newPage({ viewport: { width, height: 720 }, colorScheme: 'light', reducedMotion, recordVideo: record ? {dir:output.pathname,size:{width:1440,height:720}} : undefined });
   page.setDefaultTimeout(5000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
-  await page.evaluate(({ html, state, kind, mode, empty, workbenchState, goalDetail }) => {
+  await page.evaluate(({ html, state, kind, mode, empty, workbenchState, goalDetail, thread }) => {
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
     window.fixture = { sizes: [], calls: [], contextUpdates: [], errors: [], closed: false };
@@ -57,6 +59,7 @@ async function mount(kind, width, mode = 'fullscreen', empty = false, record = f
     fixture.completedTodo = false;
     fixture.workSubmitAttempts = 0;
     window.changeContext = context => notify('ui/notifications/host-context-changed', context);
+    window.changeWorkInput = arguments_ => notify('ui/notifications/tool-input', { arguments: arguments_ });
     window.closeApp = () => frame.contentWindow.postMessage({ jsonrpc: '2.0', id: 9000, method: 'ui/resource-teardown', params: {} }, '*');
     addEventListener('message', event => {
       if (event.source !== frame.contentWindow || event.data?.jsonrpc !== '2.0') return;
@@ -66,8 +69,9 @@ async function mount(kind, width, mode = 'fullscreen', empty = false, record = f
         protocolVersion: '2026-01-26', hostCapabilities: kind === 'workbench' ? {updateModelContext:{resourceLink:{}}} : {}, hostContext: { theme: 'dark', displayMode: mode },
       });
       else if (message.method === 'ui/notifications/initialized') {
-        notify('ui/notifications/tool-input', { arguments: kind === 'workbench' || empty ? {} : { project: state.project } });
+        notify('ui/notifications/tool-input', { arguments: kind === 'workbench' || empty || thread ? {} : { project: state.project } });
         const value = result(kind === 'workbench' ? { runners: runner, projects } : { work_result: empty ? null : state });
+        if (thread) value._meta = { 'webcodex/workResultThread': { session_id: state.session_id } };
         if (empty) value._meta = { 'webcodex/workResultThread': { empty: true, session_id: null } };
         notify('ui/notifications/tool-result', value);
       } else if (message.method === 'ui/notifications/size-changed') {
@@ -103,12 +107,23 @@ async function mount(kind, width, mode = 'fullscreen', empty = false, record = f
         else if (name === 'read_webcodex_resource') reply(message.id, result({uri:message.params.arguments.uri,kind:message.params.arguments.uri.includes('/goal/')?'goal':'file',data:message.params.arguments.uri.includes('/goal/')?{goal:{summary:fixtureGoal.summary,objective:fixtureGoal.objective},summary_only:true}:{text:'# Workspace notes\n<script>fixtureMarkup()</script>\nSafe text preview.'}}));
         else if (name === 'get_goal') reply(message.id, result({ goal: fixtureGoal }));
         else if (name === 'list_project_files') reply(message.id, result({project:state.project,path:message.params.arguments.path||'',entries:[{path:'src',kind:'dir'},{path:'README.md',kind:'file'}],next_offset:null}));
-        else if (name === 'get_work_result_state') reply(message.id, result({ work_result: state }));
+        else if (name === 'get_work_result_state') {
+          const files = message.params.arguments.files;
+          if (!thread || !files) reply(message.id, result({ work_result: state }));
+          else {
+            const snapshot_id = 'wc_changes_snapshot_' + 'b'.repeat(32);
+            const identity = { project: state.project, session_id: null, snapshot_id };
+            const content = '# Workspace result\n\nReviewed **locally**.\n';
+            reply(message.id, result({ work_result_files: files.view === 'content'
+              ? { ...identity, path: 'README.md', view: 'content', content, byte_offset: 0, bytes_total: new TextEncoder().encode(content).length, next_byte_offset: null, complete: true, limited: false }
+              : { ...identity, offset: 0, next_offset: null, files_total: 1, source_truncated: false, files: [{ path: 'README.md', kind: 'modified', additions: 1, deletions: 1 }] } }));
+          }
+        }
         else { fixture.errors.push(name); reply(message.id, { structuredContent: { success: false, error: 'Unexpected fixture call' } }); }
       }
     });
     frame.srcdoc = html; document.body.append(frame);
-  }, { html, state: baseState, kind, mode, empty, workbenchState, goalDetail });
+  }, { html, state, kind, mode, empty, workbenchState, goalDetail, thread });
   const frame = page.frames().find(frame => frame.parentFrame());
   await frame.locator('#status').filter({ hasNotText: /Connecting/ }).waitFor();
   if (!empty) await frame.locator('#refresh:not(:disabled)').waitFor();
@@ -230,6 +245,7 @@ try {
         await page.evaluate(() => changeContext({ theme: 'light', displayMode: 'inline' }));
         await frame.waitForFunction(() => getComputedStyle(document.documentElement).colorScheme === 'light');
         await readableControls(frame);
+        await page.screenshot({ path: new URL(`${kind}-light-${width}.png`, output).pathname });
         await page.evaluate(() => changeContext({ theme: 'invalid', displayMode: 'invalid' }));
         assert.equal(await frame.evaluate(() => getComputedStyle(document.documentElement).colorScheme), 'light');
         assert.ok(await frame.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
@@ -368,6 +384,163 @@ try {
       assert.equal(await frame.locator('#workInstruction').inputValue(), '');
       assert.deepEqual(await page.evaluate(() => fixture.errors), []);
       assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+  });
+  for (const reducedMotion of ['no-preference', 'reduce']) for (const width of [320, 390, 800, 1440]) for (const mode of ['inline', 'fullscreen']) {
+    await run(`work_result: selection motion and rapid switching (${reducedMotion}/${mode}/${width})`, async () => {
+      const record = reducedMotion === 'no-preference' && mode === 'fullscreen' && width === 1440;
+      const { page, frame, errors } = await mount('work_result', width, mode, false, record, reducedMotion);
+      try {
+        const plate = frame.locator('#viewTabs [data-selection-motion-plate]');
+        await plate.waitFor();
+        await frame.evaluate(() => { window.motionFixturePlate = document.querySelector('#viewTabs [data-selection-motion-plate]'); });
+        for (const theme of ['dark', 'light']) {
+          await page.evaluate(theme => changeContext({ theme }), theme);
+          await frame.waitForFunction(theme => getComputedStyle(document.documentElement).colorScheme === theme, theme);
+          await frame.locator('#tabActivity').click();
+          await frame.waitForFunction(() => document.querySelector('#viewTabs').getAnimations({ subtree: true }).length === 0);
+          const start = await plate.boundingBox();
+          // Dispatch synchronously to inspect the animation before Playwright's
+          // actionability wait can let a short transition finish.
+          const moving = await frame.evaluate(async () => {
+            document.querySelector('#tabResults').click();
+            await new Promise(requestAnimationFrame);
+            const plate = document.querySelector('#viewTabs [data-selection-motion-plate]');
+            const animations = document.querySelector('#viewTabs').getAnimations({ subtree: true });
+            for (const animation of animations) { animation.pause(); animation.currentTime = 85; }
+            // Read the sought frame atomically: inline Hosts may resize the
+            // iframe next, which correctly snaps the presentation to new bounds.
+            return { count: animations.length, duration: plate.getAnimations()[0]?.effect.getTiming().duration, middle: plate.getBoundingClientRect().x, destination: document.querySelector('#tabResults').getBoundingClientRect().x };
+          });
+          if (reducedMotion === 'no-preference') {
+            assert.equal(moving.count, 2, 'One plate and one clipped label animation');
+            assert.equal(moving.duration, 260);
+            assert.ok(Math.abs(moving.middle - start.x) > 1 && Math.abs(moving.middle - moving.destination) > .2, 'Plate passes through an intermediate position');
+          } else assert.equal(moving.count, 0, 'Reduced motion snaps without animations');
+          // Interrupt the paused transition repeatedly, allowing mutation
+          // observers to see each new selection without waiting for settlement.
+          await frame.evaluate(async () => {
+            for (const id of ['tabCollaboration', 'tabActivity', 'tabResults', 'tabCollaboration']) {
+              document.getElementById(id).click();
+              await new Promise(requestAnimationFrame);
+            }
+          });
+          await frame.waitForFunction(() => document.querySelector('#viewTabs').getAnimations({ subtree: true }).length === 0);
+          assert.equal(await plate.evaluate(node => node === window.motionFixturePlate), true, 'Selection plate remains persistent');
+          const selected = frame.locator('#viewTabs [role=tab][aria-selected=true]');
+          assert.equal(await selected.getAttribute('id'), 'tabCollaboration');
+          const actual = await plate.boundingBox(), expected = await selected.boundingBox();
+          for (const key of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(actual[key] - expected[key]) < 1, `Final plate ${key} aligns after rapid switching`);
+          assert.equal(await frame.locator('#viewTabs [role=tab][tabindex="0"]').count(), 1);
+          assert.ok(await frame.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Motion layout overflows');
+          await frame.locator('#tabActivity').click();
+          await frame.waitForFunction(() => document.querySelector('#viewTabs').getAnimations({ subtree: true }).length === 0);
+          await page.screenshot({ path: new URL(`work-result-${theme}-${reducedMotion}-${mode}-${width}.png`, output).pathname });
+        }
+        await page.evaluate(() => closeApp());
+        await page.waitForFunction(() => fixture.closed);
+        assert.equal(await frame.locator('#viewTabs [data-selection-motion-overlay]').count(), 0, 'Teardown removes motion overlays');
+        assert.deepEqual(await page.evaluate(() => fixture.errors), []);
+        assert.deepEqual(errors, []);
+      } finally {
+        const video = page.video(); await page.close();
+        if (video) await video.saveAs(new URL('work-result-motion.webm', output).pathname);
+      }
+    });
+  }
+  await run('work_result: native message picker keyboard interaction (390)', async () => {
+    const { page, frame, errors } = await mount('work_result', 390, 'fullscreen', false, true);
+    try {
+      await frame.locator('#tabCollaboration').click();
+      const picker = frame.getByRole('combobox', { name: 'Message type' });
+      assert.equal(await picker.inputValue(), 'guidance');
+      await picker.focus();
+      await page.keyboard.press('Space');
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Enter');
+      assert.equal(await picker.inputValue(), 'question');
+      assert.equal(await picker.evaluate(node => document.activeElement === node), true, 'Closing the native picker returns focus');
+      await page.keyboard.press('Space');
+      await page.keyboard.press('Escape');
+      assert.equal(await picker.inputValue(), 'question', 'Cancel preserves the selected type');
+      assert.equal(await picker.evaluate(node => document.activeElement === node), true);
+      assert.ok(await frame.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Native picker layout overflows');
+      assert.deepEqual(await page.evaluate(() => fixture.errors), []);
+      assert.deepEqual(errors, []);
+      await page.screenshot({ path: new URL('work-result-message-picker-390.png', output).pathname });
+    } finally {
+      const video = page.video(); await page.close();
+      if (video) await video.saveAs(new URL('work-result-message-picker.webm', output).pathname);
+    }
+  });
+  for (const width of [320, 1440]) await run(`work_result: file view selection and forced colors (${width})`, async () => {
+    const { page, frame, errors } = await mount('work_result', width, 'fullscreen', false, width === 1440, 'no-preference', true);
+    try {
+      assert.equal(await frame.locator('#tabResults').textContent(), 'Review');
+      await frame.locator('#workspaceFiles .file-toggle').first().click();
+      const group = frame.locator('#workspaceFiles .file-views').first();
+      const plate = group.locator('[data-selection-motion-plate]');
+      await plate.waitFor();
+      await plate.evaluate(node => { window.fileMotionFixturePlate = node; });
+      await group.getByRole('button', { name: 'Full text', exact: true }).click();
+      await group.getByRole('button', { name: 'Markdown', exact: true }).waitFor({ state: 'visible' });
+      await frame.waitForFunction(() => !document.querySelector('#workspaceFiles button[data-view=markdown]').disabled);
+      await group.getByRole('button', { name: 'Markdown', exact: true }).click();
+      await frame.waitForFunction(() => document.querySelector('#workspaceFiles .file-views').getAnimations({ subtree: true }).length === 0);
+      assert.equal(await plate.evaluate(node => node === window.fileMotionFixturePlate), true);
+      const selected = group.locator('button[data-view][aria-pressed=true]');
+      assert.equal(await selected.getAttribute('data-view'), 'markdown');
+      const actual = await plate.boundingBox(), expected = await selected.boundingBox();
+      for (const key of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(actual[key] - expected[key]) < 1, `File-view plate ${key} aligns`);
+      // Wrap lines applies to text/changes; Markdown deliberately hides it.
+      await group.getByRole('button', { name: 'Full text', exact: true }).click();
+      await frame.waitForFunction(() => document.querySelector('#workspaceFiles .file-views').getAnimations({ subtree: true }).length === 0);
+      for (const name of ['Wrap lines', 'Quote selection']) {
+        const action = group.getByRole('button', { name, exact: true });
+        assert.equal(await action.getAttribute('data-selection-motion-item'), null, `${name} is an action, not navigation`);
+        await action.click();
+      }
+      assert.equal(await selected.getAttribute('data-view'), 'text', 'Other actions never retarget the plate');
+      assert.equal(await group.locator('[data-selection-motion-selected]').count(), 1);
+      await page.screenshot({ path: new URL(`work-result-file-views-${width}.png`, output).pathname });
+      await page.emulateMedia({ forcedColors: 'active' });
+      await group.getByRole('button', { name: 'Changes', exact: true }).click();
+      await frame.waitForFunction(() => document.querySelector('#workspaceFiles .file-views').getAnimations({ subtree: true }).length === 0);
+      assert.equal(await plate.evaluate(node => getComputedStyle(node).display), 'none', 'Forced colors uses native selected controls');
+      assert.equal(await group.locator('button[data-view=diff]').getAttribute('data-selection-motion-selected'), '');
+      assert.equal(await group.locator('button[data-view=diff]').evaluate(node => getComputedStyle(node).forcedColorAdjust), 'none');
+      assert.ok(await frame.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await page.screenshot({ path: new URL(`work-result-file-views-forced-colors-${width}.png`, output).pathname });
+      await page.emulateMedia({ forcedColors: 'none' });
+      await page.evaluate(() => closeApp());
+      await page.waitForFunction(() => fixture.closed);
+      assert.equal(await frame.locator('[data-selection-motion-overlay]').count(), 0);
+      assert.deepEqual(await page.evaluate(() => fixture.errors), []);
+      assert.deepEqual(errors, []);
+    } finally {
+      const video = page.video(); await page.close();
+      if (video) await video.saveAs(new URL('work-result-file-views.webm', output).pathname);
+    }
+  });
+  for (const width of [320, 390, 800, 1440]) await run(`work_result: invalid identity fails closed (${width})`, async () => {
+    const { page, frame, errors } = await mount('work_result', width);
+    try {
+      const callsBefore = await page.evaluate(() => fixture.calls.length);
+      await page.evaluate(() => changeWorkInput({ project: 'agent:fixture:private-project\nprivate-token' }));
+      await frame.locator('#status').filter({ hasText: 'WR-IDENTITY-INVALID' }).waitFor();
+      assert.equal(await frame.locator('#status').textContent(), 'This Work Result card is unavailable · WR-IDENTITY-INVALID');
+      assert.equal(await frame.locator('#badge').textContent(), 'Unavailable');
+      assert.equal(await frame.locator('#refresh').isDisabled(), true);
+      assert.equal(await frame.locator('#viewTabs [data-selection-motion-overlay]').count(), 0);
+      await page.evaluate(() => changeWorkInput({ project: 'agent:fixture:another-project' }));
+      await page.evaluate(() => changeContext({ theme: 'light', displayMode: 'inline' }));
+      await page.waitForTimeout(300);
+      assert.equal(await page.evaluate(() => fixture.calls.length), callsBefore, 'Fail-closed card never retargets or resumes reads');
+      assert.equal(await frame.locator('#refresh').isDisabled(), true);
+      assert.ok(await frame.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      assert.deepEqual(await page.evaluate(() => fixture.errors), []);
+      assert.deepEqual(errors, []);
+      await page.screenshot({ path: new URL(`work-result-invalid-identity-${width}.png`, output).pathname });
     } finally { await page.close(); }
   });
   await run('work_result: first-open empty state has no target or runtime reads', async () => {

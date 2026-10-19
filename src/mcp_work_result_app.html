@@ -332,13 +332,125 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   :root[data-display-mode="fullscreen"] .card-tabs button { flex: 1; padding: 10px 4px; }
 }
 @media (pointer: coarse) { .refresh, .file-toggle { min-height: 44px; } }
+/* BEGIN GENERATED SELECTION MOTION CSS */
+[data-selection-motion]{isolation:isolate}[data-selection-motion] [data-selection-motion-item]{position:relative;z-index:1;background:transparent!important;color:var(--selection-motion-base-ink, var(--ui-text-primary))!important}[data-selection-motion] [data-selection-motion-item]:not(:focus-visible){box-shadow:none!important}[data-selection-motion] [data-selection-motion-overlay]{position:absolute;left:0;top:0;display:block;box-sizing:border-box;margin:0;padding:0;border:0;pointer-events:none!important;user-select:none;transition:none!important;animation:none!important}[data-selection-motion] [data-selection-motion-plate]{z-index:0;background:var(--selection-motion-fill, var(--ui-text-primary));transform-origin:center}[data-selection-motion] [data-selection-motion-foreground]{z-index:2;width:100%;height:100%;overflow:visible;background:transparent}[data-selection-motion] [data-selection-motion-label]{position:absolute;box-sizing:border-box;display:flex;margin:0;overflow:hidden;background:transparent}[data-selection-motion-foreground],[data-selection-motion-foreground] *{color:var(--selection-motion-ink, var(--ui-content))!important}[data-selection-motion] [data-selection-motion-overlay][hidden]{display:none}@media(forced-colors:active){[data-selection-motion] [data-selection-motion-overlay]{display:none}[data-selection-motion] [data-selection-motion-item]{color:ButtonText!important}[data-selection-motion] [data-selection-motion-selected]{background:Highlight!important;color:HighlightText!important;forced-color-adjust:none}[data-selection-motion] [data-selection-motion-selected] *{color:HighlightText!important}}[data-selection-motion] [data-selection-motion-origin]{width:0;height:0;overflow:hidden}
+
+/* Work Result uses the Workbench's opaque, neutral surfaces. Host color-scheme
+   and font variables remain authoritative; status colors keep their meaning. */
+:root {
+  --accent: CanvasText;
+  --accent-soft: color-mix(in srgb, CanvasText 7%, Canvas);
+  --card-header: Canvas;
+  --card-body: Canvas;
+  --surface: color-mix(in srgb, CanvasText 4%, Canvas);
+  --surface-hover: color-mix(in srgb, CanvasText 8%, Canvas);
+  --selection-motion-fill: CanvasText;
+  --selection-motion-ink: Canvas;
+  --selection-motion-base-ink: CanvasText;
+}
+.card { border-radius: 12px; box-shadow: none; }
+.app-header { min-height: 58px; padding: 10px 14px; gap: 8px 12px; }
+.brand { gap: 9px; }
+.brand-icon {
+  width: 30px; height: 30px; border: 0; border-radius: 7px;
+  background: CanvasText; color: Canvas;
+}
+.brand-icon svg { width: 20px; height: 20px; }
+h1 { font-size: 13px; font-weight: 650; }
+.brand-subtitle { font-family: inherit; }
+.badge, .status-value { border-radius: 6px; font-weight: 550; }
+.refresh, .file-views button, .workflow-stages button {
+  min-height: 32px; padding: 6px 10px; border: 1px solid var(--card-border);
+  border-radius: 7px; background: var(--card-body); color: CanvasText;
+  font: inherit; font-size: 12px; font-weight: 500;
+  transition: background-color 120ms, border-color 120ms;
+}
+.refresh:active:not(:disabled) { transform: none; }
+.refresh:hover:not(:disabled), .file-views button:hover:not(:disabled) { background: var(--surface-hover); }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible {
+  outline: 2px solid CanvasText; outline-offset: 2px;
+}
+.content { padding: 12px; gap: 12px; }
+.section { padding: 12px; border-radius: 8px; background: Canvas; gap: 8px; }
+.progress-section { background: var(--surface); }
+h2 { font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.primary { font-size: 14px; font-weight: 600; line-height: 1.5; }
+.card-tabs {
+  margin: 0 12px; padding: 4px; gap: 4px; border: 1px solid var(--divider);
+  border-radius: 9px; background: var(--surface);
+}
+.card-tabs button {
+  min-height: 34px; padding: 7px 10px; border: 0; border-radius: 6px;
+  font: inherit; font-size: 12px; font-weight: 550; color: CanvasText;
+}
+.card-tabs button[aria-selected="true"] { color: Canvas; background: CanvasText; font-weight: 550; }
+.card-tabs button:hover { background: var(--surface-hover); }
+.card-tabs button:focus-visible { outline-offset: -2px; }
+.file-views[data-work-result-selection] { position: relative; align-items: center; }
+.file-views button[data-view] { border-color: transparent; }
+.file-views button[data-view][aria-pressed="true"] { color: Canvas; background: CanvasText; }
+.thread-review .file-views .refresh[aria-pressed="true"]:not([data-view]) {
+  background: var(--surface-hover); border-color: var(--card-border); color: CanvasText;
+}
+.details { border-radius: 8px; }
+.details > summary { min-height: 36px; display: list-item; align-content: center; }
+.app-footer { gap: 8px; background: var(--surface); }
+.live-dot { background: var(--faint); box-shadow: none; }
+[data-unavailable] .live-dot { background: var(--danger); }
+[data-unavailable] #badge { color: var(--danger); background: var(--danger-soft); border-color: var(--divider); }
+select, .conversation-intent select, .file-navigator select, input, textarea {
+  min-height: 34px; max-width: 100%; border: 1px solid var(--card-border);
+  border-radius: 7px; background: var(--card-body); color: CanvasText; font: inherit;
+}
+select, .conversation-intent select, .file-navigator select { padding: 6px 28px 6px 9px; cursor: pointer; }
+select:hover:not(:disabled), input:hover:not(:disabled), textarea:hover:not(:disabled) { border-color: var(--muted); }
+select:disabled { opacity: .48; cursor: default; }
+/* New browsers style the native picker without replacing its value, form,
+   focus or keyboard behavior. Other Hosts retain their platform picker. */
+@supports (appearance: base-select) {
+  select, ::picker(select) { appearance: base-select; }
+  select::picker-icon { color: var(--muted); }
+  ::picker(select) {
+    background: Canvas; color: CanvasText; border: 1px solid var(--card-border);
+    border-radius: 8px; padding: 4px; max-height: min(320px, 60dvh); overflow: auto;
+    box-shadow: 0 8px 24px color-mix(in srgb, CanvasText 12%, transparent);
+  }
+  select option { padding: 7px 9px; border-radius: 5px; overflow-wrap: anywhere; }
+  select option:hover, select option:checked { background: var(--surface-hover); }
+}
+:root[data-display-mode="fullscreen"] .app-header { padding: 12px 20px; }
+:root[data-display-mode="fullscreen"] h1 { font-size: 14px; }
+:root[data-display-mode="fullscreen"] .card-tabs { padding: 4px; margin: 0 20px; }
+:root[data-display-mode="fullscreen"] .card-tabs button { padding: 7px 16px; }
+@media (max-width: 620px) {
+  .app-header { align-items: center; }
+  .brand-icon { width: 30px; height: 30px; }
+  .card-tabs button { padding: 7px 4px; }
+  :root[data-display-mode="fullscreen"] .app-header { padding: 12px; }
+  :root[data-display-mode="fullscreen"] .card-tabs { margin: 0 12px; }
+  :root[data-display-mode="fullscreen"] .card-tabs button { flex: 1; padding: 7px 4px; }
+}
+@media (pointer: coarse) {
+  .refresh, .card-tabs button, .file-views button, select, .conversation-intent select, .file-navigator select { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+/* END GENERATED SELECTION MOTION CSS */
 </style>
 </head>
 <body>
 <main id="workResultCard" class="card" aria-live="polite">
   <header class="app-header">
     <div class="brand">
-      <span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="18" r="3"></circle><path d="M8.6 7.5 15.4 16.5M15.4 7.5 8.6 16.5"></path></svg></span>
+      <span class="brand-icon" aria-hidden="true"><!-- BEGIN WORK RESULT BRAND -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <rect x="2" y="2" width="60" height="60" rx="17" fill="#202329"/>
+  <rect x="2.75" y="2.75" width="58.5" height="58.5" rx="16.25" stroke="#FFFFFF" stroke-opacity=".18" stroke-width="1.5"/>
+  <path d="M18 16.5h27.5a5 5 0 0 1 5 5V38" stroke="#FFFFFF" stroke-opacity=".42" stroke-width="2.5" stroke-linecap="round"/>
+  <rect x="12.5" y="22.5" width="38" height="29" rx="7" fill="#F7F8FA"/>
+  <path d="m22.5 32 6.5 5.5-6.5 5.5" stroke="#202329" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M34 43h8.5" stroke="#202329" stroke-width="3.5" stroke-linecap="round"/>
+</svg>
+<!-- END WORK RESULT BRAND --></span>
       <div class="brand-copy"><h1 id="taskTitle">WebCodex</h1><span id="branch" class="brand-subtitle">Window activity</span></div>
     </div>
     <div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div>
@@ -465,6 +577,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   <footer class="app-footer"><span class="live-dot" aria-hidden="true"></span><div id="status" class="status">Connecting…</div></footer>
 </main>
 <script>
+/* BEGIN GENERATED SELECTION MOTION */
+"use strict";var WebCodexSelectionMotion=(()=>{var j=Object.defineProperty;var J=Object.getOwnPropertyDescriptor;var Q=Object.getOwnPropertyNames;var Z=Object.prototype.hasOwnProperty;var _=(t,a)=>{for(var s in a)j(t,s,{get:a[s],enumerable:!0})},ee=(t,a,s,o)=>{if(a&&typeof a=="object"||typeof a=="function")for(let c of Q(a))!Z.call(t,c)&&c!==s&&j(t,c,{get:()=>a[c],enumerable:!(o=J(a,c))||o.enumerable});return t};var te=t=>ee(j({},"__esModule",{value:!0}),t);var ie={};_(ie,{createSelectionMotion:()=>ne});var X="http://www.w3.org/2000/svg";function Y(t,a){if(t.nodeType===3)return a.createTextNode(t.textContent??"");if(t.nodeType!==1)return null;let s=t;if(/^(input|select|textarea|script|style|iframe|object)$/i.test(s.localName))return null;let o=s.namespaceURI===X,c=o?a.createElementNS(X,s.localName):a.createElement("span");for(let{name:d,value:f}of Array.from(s.attributes))(d==="class"||d==="style"||o&&!/^(id|tabindex|role|aria-.+|on.+|href|xlink:href)$/i.test(d))&&c.setAttribute(d,f);if((!o||s.localName==="svg")&&a.defaultView){let d=a.defaultView.getComputedStyle(s),f=c.style;for(let y of["display","box-sizing","font","line-height","letter-spacing","text-transform","text-align","white-space","vertical-align","width","height","min-width","max-width","min-height","max-height","padding","margin","border-width","border-style","border-radius","align-items","align-self","justify-content","flex-direction","flex-wrap","flex-grow","flex-shrink","flex-basis","gap","order","overflow","overflow-wrap","word-break"])f.setProperty(y,d.getPropertyValue(y));f.borderColor="transparent"}for(let d of Array.from(s.childNodes)){let f=Y(d,a);f&&c.appendChild(f)}return c}function B(t,a){return Math.abs(t.x-a.x)<.25&&Math.abs(t.y-a.y)<.25&&Math.abs(t.width-a.width)<.25&&Math.abs(t.height-a.height)<.25}function ne(t,a={}){let s=t?.ownerDocument,o=s?.defaultView;if(!o||!t.querySelectorAll||!t.matches||!o.getComputedStyle)return{update(){},destroy(){}};let c=a.itemSelector??'[role="tab"], button',d=a.selectedSelector??'[aria-selected="true"], [aria-pressed="true"], .active',f=t.style.position,y=o.getComputedStyle(t).position==="static";y&&(t.style.position="relative");let m=s.createElement("span"),h=s.createElement("span"),v=s.createElement("span");v.dataset.selectionMotionOrigin="",m.dataset.selectionMotionPlate="",h.dataset.selectionMotionForeground="";for(let n of[m,h,v])n.dataset.selectionMotionOverlay="",n.setAttribute("aria-hidden","true"),n.setAttribute("inert","");t.dataset.selectionMotion="",t.append(m,h,v);let b=[],x=null,g="0px",O=[],M=!1,A=!1,E=0,z=o.matchMedia?.("(prefers-reduced-motion: reduce)"),H=o.matchMedia?.("(forced-colors: active)"),P=new o.MutationObserver(n=>{let i=n.filter(e=>{let r=e.target.nodeType===1?e.target:e.target.parentElement;return r?.localName==="input"&&["name","type","value"].includes(e.attributeName??"")||r!==t&&!r?.closest(c)?!1:!r?.closest("[data-selection-motion-overlay]")&&!(r===t&&e.attributeName==="data-selection-motion")&&e.attributeName!=="data-selection-motion-item"&&e.attributeName!=="data-selection-motion-selected"});if(!i.length)return;let l=i.every(e=>e.type==="attributes"&&["aria-selected","aria-pressed","tabindex","class","data-active","checked","name","value"].includes(e.attributeName??""));N({animate:l})}),F=()=>P.observe(t,{subtree:!0,childList:!0,characterData:!0,attributes:!0}),S=typeof o.ResizeObserver=="function"?new o.ResizeObserver(()=>p()):null;S?.observe(t);let R=new o.MutationObserver(()=>p());function w(n){let i=n.getBoundingClientRect(),l=v.getBoundingClientRect();return{x:i.left-l.left,y:i.top-l.top,width:i.width,height:i.height}}function C(n){return{transform:`translate(${n.x}px, ${n.y}px)`,width:`${n.width}px`,height:`${n.height}px`}}function L(n){return`inset(${n.y}px calc(100% - ${n.x+n.width}px) calc(100% - ${n.y+n.height}px) ${n.x}px round ${g})`}function V(){for(let n of O)n.cancel();O=[]}function G(n){for(let i of b)n.includes(i)||(i.removeAttribute("data-selection-motion-item"),i.removeAttribute("data-selection-motion-selected"),S?.unobserve(i));for(let i of n)b.includes(i)||S?.observe(i);b=n,h.replaceChildren();for(let i of b){i.dataset.selectionMotionItem="",i.toggleAttribute("data-selection-motion-selected",i.matches(d));let l=w(i),e=o.getComputedStyle(i),r=s.createElement("span");r.dataset.selectionMotionLabel="",Object.assign(r.style,{left:`${l.x}px`,top:`${l.y}px`,width:`${l.width}px`,height:`${l.height}px`,font:e.font,letterSpacing:e.letterSpacing,textTransform:e.textTransform,lineHeight:e.lineHeight,textAlign:e.textAlign,whiteSpace:e.whiteSpace,justifyContent:/flex|grid/.test(e.display)?e.justifyContent:/left|start/.test(e.textAlign)?"flex-start":/right|end/.test(e.textAlign)?"flex-end":"center",alignItems:/flex|grid/.test(e.display)?e.alignItems:"center",flexDirection:e.flexDirection,gap:e.gap,padding:e.padding,borderWidth:e.borderWidth,borderStyle:"solid",borderColor:"transparent"});for(let k of Array.from(i.childNodes)){let u=Y(k,s);u&&r.appendChild(u)}h.appendChild(r)}}function N({animate:n=!0}={}){if(M||A)return;A=!0,P.disconnect(),y&&(t.style.position=f,y=!1),o.getComputedStyle(t).position==="static"&&(t.style.position="relative",y=!0);let i=Array.from(t.querySelectorAll(c)).filter(u=>!u.closest("[data-selection-motion-overlay]")),l=i.find(u=>u.matches(d)),e=l?w(l):null,r=x&&!m.hidden?w(m):null;if(!!e&&!!x&&B(e,x)&&n){A=!1,F();return}if(V(),G(i),x=e,m.hidden=h.hidden=!e||e.width<=0||e.height<=0,e&&l){Object.assign(m.style,C(e)),g=o.getComputedStyle(l).borderRadius||"0px";let u=l.lastElementChild;if(u instanceof o.HTMLElement&&(!g||/^0(?:px)?$/.test(g))){let $=w(u);B($,e)&&(g=o.getComputedStyle(u).borderRadius||g)}if(m.style.borderRadius=g,h.style.clipPath=L(e),n&&r&&!B(r,e)&&!z?.matches&&!H?.matches&&typeof m.animate=="function"&&r){let $=e.x-r.x,q=e.y-r.y,T=Math.hypot($,q),I=T?.03*Math.abs($)/T:0,K=T?.03*Math.abs(q)/T:0,W={x:e.x-e.width*I/2,y:e.y-e.height*K/2,width:e.width*(1+I),height:e.height*(1+K)},U={duration:260,easing:"cubic-bezier(.2,.75,.25,1)",fill:"none"};O=[m.animate([C(r),{...C(W),offset:.72},C(e)],U),h.animate([{clipPath:L(r)},{clipPath:L(W),offset:.72},{clipPath:L(e)}],U)]}}A=!1,F()}function p(){M||E||(E=o.requestAnimationFrame(()=>{E=0,N({animate:!1})}))}function D(){let n=b.find(i=>i.matches(d));(!n||!x||!B(w(n),x))&&p()}return R.observe(s.documentElement,{attributes:!0,attributeFilter:["class","style","lang","data-mantine-color-scheme","data-theme","data-resolved-theme","data-display-mode"]}),s.body!==t&&R.observe(s.body,{attributes:!0,attributeFilter:["class","style","lang","data-theme"]}),z?.addEventListener("change",p),H?.addEventListener("change",p),o.addEventListener("resize",D),s.fonts?.addEventListener("loadingdone",p),N({animate:!1}),{update:N,destroy(){if(!M){M=!0,P.disconnect(),S?.disconnect(),R.disconnect(),V(),o.cancelAnimationFrame(E),z?.removeEventListener("change",p),H?.removeEventListener("change",p),o.removeEventListener("resize",D),s.fonts?.removeEventListener("loadingdone",p);for(let n of b)n.removeAttribute("data-selection-motion-item"),n.removeAttribute("data-selection-motion-selected");m.remove(),h.remove(),v.remove(),t.removeAttribute("data-selection-motion"),y&&(t.style.position=f)}}}}return te(ie);})();
+/* END GENERATED SELECTION MOTION */
 /* BEGIN GENERATED WORK RESULT MARKDOWN */
 /* Third-party licenses
 entities 8.1.0
@@ -1369,6 +1484,26 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   let selectedPane = "Activity";
   const pending = new Map();
   const el = id => document.getElementById(id);
+  // Observe presentation groups only. Detached file views release their own
+  // observers; neither selection nor this lifecycle starts a Host/tool request.
+  const selectionMotions = new Map();
+  const selectionRoot = el("workResultCard");
+  const syncSelections = () => {
+    if (tornDown || !selectionRoot.querySelectorAll) return;
+    for (const [group, motion] of selectionMotions) {
+      if (!selectionRoot.contains(group)) { motion.destroy(); selectionMotions.delete(group); }
+    }
+    for (const group of selectionRoot.querySelectorAll("#viewTabs, .file-views[data-work-result-selection]")) {
+      if (!selectionMotions.has(group)) selectionMotions.set(group,
+        WebCodexSelectionMotion.createSelectionMotion(group, group.id === "viewTabs"
+          ? {} : { itemSelector: "button[data-view]" }));
+    }
+  };
+  // Protocol-only fixtures have no rendered document/defaultView.
+  const selectionObserver = document.defaultView?.MutationObserver
+    ? new document.defaultView.MutationObserver(syncSelections) : null;
+  selectionObserver?.observe(selectionRoot, { childList: true, subtree: true });
+  syncSelections();
   let lastHeight = 0;
   function reportSize() {
     if (!hostInitialized || tornDown || document.documentElement.getAttribute("data-display-mode") === "fullscreen") return;
@@ -1453,6 +1588,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
       ? FAIL_CLOSED_CODES[reason] : "WR-UNKNOWN";
     teardown();
     el("badge").textContent = "Unavailable";
+    el("workResultCard").setAttribute("data-unavailable", "");
     el("status").textContent = "This Work Result card is unavailable · " + code;
     conversationPage = null; readingHistory = false; historyGeneration++;
     el("messages").replaceChildren();
@@ -2382,10 +2518,12 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     };
     const makeControls = () => {
       controls = document.createElement("div"); controls.className = "file-views";
+      controls.setAttribute("data-work-result-selection", "");
+      controls.setAttribute("role", "group"); controls.setAttribute("aria-label", "File view");
       const make = (label, value) => {
         const node = document.createElement("button"); node.type = "button"; node.textContent = label;
         if (threadSession !== undefined) node.className = "refresh";
-        node.datasetView = value; node.setAttribute("aria-pressed", String(value === "diff")); node.onclick = () => select(value); controls.append(node); return node;
+        node.datasetView = value; node.setAttribute("data-view", value); node.setAttribute("aria-pressed", String(value === "diff")); node.onclick = () => select(value); controls.append(node); return node;
       };
       make("Changes", "diff"); make("Full text", "text").hidden = pdfFile;
       mdButton = make("Markdown", "markdown"); mdButton.disabled = true; mdButton.hidden = !/\.(md|markdown)$/i.test(file.path);
@@ -3249,6 +3387,9 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     if (tornDown) return;
     tornDown = true;
     sizeObserver.disconnect();
+    selectionObserver?.disconnect();
+    for (const motion of selectionMotions.values()) motion.destroy();
+    selectionMotions.clear();
     if (activeContentPreview) { activeContentPreview(); activeContentPreview = null; }
     finalDiffReads.dispose(); workspaceDiffReads.dispose(); activityDetails.dispose();
     contentCache.clear(); contentPending.clear();

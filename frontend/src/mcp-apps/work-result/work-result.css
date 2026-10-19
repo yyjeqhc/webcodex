@@ -1,0 +1,99 @@
+/* Work Result uses the Workbench's opaque, neutral surfaces. Host color-scheme
+   and font variables remain authoritative; status colors keep their meaning. */
+:root {
+  --accent: CanvasText;
+  --accent-soft: color-mix(in srgb, CanvasText 7%, Canvas);
+  --card-header: Canvas;
+  --card-body: Canvas;
+  --surface: color-mix(in srgb, CanvasText 4%, Canvas);
+  --surface-hover: color-mix(in srgb, CanvasText 8%, Canvas);
+  --selection-motion-fill: CanvasText;
+  --selection-motion-ink: Canvas;
+  --selection-motion-base-ink: CanvasText;
+}
+.card { border-radius: 12px; box-shadow: none; }
+.app-header { min-height: 58px; padding: 10px 14px; gap: 8px 12px; }
+.brand { gap: 9px; }
+.brand-icon {
+  width: 30px; height: 30px; border: 0; border-radius: 7px;
+  background: CanvasText; color: Canvas;
+}
+.brand-icon svg { width: 20px; height: 20px; }
+h1 { font-size: 13px; font-weight: 650; }
+.brand-subtitle { font-family: inherit; }
+.badge, .status-value { border-radius: 6px; font-weight: 550; }
+.refresh, .file-views button, .workflow-stages button {
+  min-height: 32px; padding: 6px 10px; border: 1px solid var(--card-border);
+  border-radius: 7px; background: var(--card-body); color: CanvasText;
+  font: inherit; font-size: 12px; font-weight: 500;
+  transition: background-color 120ms, border-color 120ms;
+}
+.refresh:active:not(:disabled) { transform: none; }
+.refresh:hover:not(:disabled), .file-views button:hover:not(:disabled) { background: var(--surface-hover); }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible {
+  outline: 2px solid CanvasText; outline-offset: 2px;
+}
+.content { padding: 12px; gap: 12px; }
+.section { padding: 12px; border-radius: 8px; background: Canvas; gap: 8px; }
+.progress-section { background: var(--surface); }
+h2 { font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.primary { font-size: 14px; font-weight: 600; line-height: 1.5; }
+.card-tabs {
+  margin: 0 12px; padding: 4px; gap: 4px; border: 1px solid var(--divider);
+  border-radius: 9px; background: var(--surface);
+}
+.card-tabs button {
+  min-height: 34px; padding: 7px 10px; border: 0; border-radius: 6px;
+  font: inherit; font-size: 12px; font-weight: 550; color: CanvasText;
+}
+.card-tabs button[aria-selected="true"] { color: Canvas; background: CanvasText; font-weight: 550; }
+.card-tabs button:hover { background: var(--surface-hover); }
+.card-tabs button:focus-visible { outline-offset: -2px; }
+.file-views[data-work-result-selection] { position: relative; align-items: center; }
+.file-views button[data-view] { border-color: transparent; }
+.file-views button[data-view][aria-pressed="true"] { color: Canvas; background: CanvasText; }
+.thread-review .file-views .refresh[aria-pressed="true"]:not([data-view]) {
+  background: var(--surface-hover); border-color: var(--card-border); color: CanvasText;
+}
+.details { border-radius: 8px; }
+.details > summary { min-height: 36px; display: list-item; align-content: center; }
+.app-footer { gap: 8px; background: var(--surface); }
+.live-dot { background: var(--faint); box-shadow: none; }
+[data-unavailable] .live-dot { background: var(--danger); }
+[data-unavailable] #badge { color: var(--danger); background: var(--danger-soft); border-color: var(--divider); }
+select, .conversation-intent select, .file-navigator select, input, textarea {
+  min-height: 34px; max-width: 100%; border: 1px solid var(--card-border);
+  border-radius: 7px; background: var(--card-body); color: CanvasText; font: inherit;
+}
+select, .conversation-intent select, .file-navigator select { padding: 6px 28px 6px 9px; cursor: pointer; }
+select:hover:not(:disabled), input:hover:not(:disabled), textarea:hover:not(:disabled) { border-color: var(--muted); }
+select:disabled { opacity: .48; cursor: default; }
+/* New browsers style the native picker without replacing its value, form,
+   focus or keyboard behavior. Other Hosts retain their platform picker. */
+@supports (appearance: base-select) {
+  select, ::picker(select) { appearance: base-select; }
+  select::picker-icon { color: var(--muted); }
+  ::picker(select) {
+    background: Canvas; color: CanvasText; border: 1px solid var(--card-border);
+    border-radius: 8px; padding: 4px; max-height: min(320px, 60dvh); overflow: auto;
+    box-shadow: 0 8px 24px color-mix(in srgb, CanvasText 12%, transparent);
+  }
+  select option { padding: 7px 9px; border-radius: 5px; overflow-wrap: anywhere; }
+  select option:hover, select option:checked { background: var(--surface-hover); }
+}
+:root[data-display-mode="fullscreen"] .app-header { padding: 12px 20px; }
+:root[data-display-mode="fullscreen"] h1 { font-size: 14px; }
+:root[data-display-mode="fullscreen"] .card-tabs { padding: 4px; margin: 0 20px; }
+:root[data-display-mode="fullscreen"] .card-tabs button { padding: 7px 16px; }
+@media (max-width: 620px) {
+  .app-header { align-items: center; }
+  .brand-icon { width: 30px; height: 30px; }
+  .card-tabs button { padding: 7px 4px; }
+  :root[data-display-mode="fullscreen"] .app-header { padding: 12px; }
+  :root[data-display-mode="fullscreen"] .card-tabs { margin: 0 12px; }
+  :root[data-display-mode="fullscreen"] .card-tabs button { flex: 1; padding: 7px 4px; }
+}
+@media (pointer: coarse) {
+  .refresh, .card-tabs button, .file-views button, select, .conversation-intent select, .file-navigator select { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }

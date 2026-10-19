@@ -65,7 +65,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolHostOrchestrationHint::sequential()
                         .with_native_batch_field("changes"),
                 ),
-                "Project editor: read_files → edit_project_files → review_changes when Git review is useful → task-appropriate validation. One change per file. For existing-file edits/deletes/renames, set expected_read_revision from read_files.read_revision; create requires content. Exact edits fail closed on ambiguity; replace_range edits 1-based inclusive lines from that snapshot. Batches preflight transactionally; Runner rechecks source before mutation. dry_run plans only. Stale state returns read_files recovery; outcome_unknown requires workspace observation before another write.",
+                "Project editor: read_files → edit_project_files. Use review_changes when Git review is useful, then task-appropriate validation. One change per file. For existing-file edits/deletes/renames, set expected_read_revision from read_files.read_revision; create requires content. Exact edits fail closed on ambiguity; replace_range edits 1-based inclusive lines from that snapshot. Batches preflight transactionally; Runner rechecks source before mutation. dry_run plans only. Stale state returns read_files recovery; outcome_unknown requires workspace observation before writing.",
             ).with_discovery_keywords(&["replace", "exact", "snippets", "edit", "existing", "files", "text", "insert", "delete", "rename", "move", "替换", "编辑", "修改", "文字", "文本", "插入", "删除", "重命名", "移动", "文件"]),
             PERMISSION_RISK_WRITE,
         ),

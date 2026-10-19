@@ -1,3 +1,4 @@
+use super::dispatch_fence::PendingDispatchFence;
 use super::{RunnerFeature, RunnerFeatureSet, RunnerTransport};
 use crate::protocol::AcceptedRunnerProtocol;
 use crate::RunnerAccessGroup;
@@ -224,12 +225,6 @@ impl RunnerRecord {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct SkillDispatchFence {
-    pub(super) runner_instance_id: String,
-    pub(super) management: bool,
-}
-
 #[derive(Debug)]
 pub(super) struct PendingShellRequest {
     pub(super) request: RunnerRequest,
@@ -239,40 +234,7 @@ pub(super) struct PendingShellRequest {
     pub(super) operation: RunnerOperation,
     pub(super) waiter: Option<oneshot::Sender<ShellRunResponse>>,
     pub(super) job_id: Option<String>,
-    /// Optional Control-side project-placement fence for synchronous requests
-    /// whose filesystem authority must still match the active registration at
-    /// the instant the request is handed to the Runner.
-    pub(super) expected_runner_owner: Option<String>,
-    pub(super) expected_project_id: Option<String>,
-    pub(super) expected_project_cwd: Option<String>,
-    /// Exact Runner process lease for a project-placement-fenced file access.
-    /// Revalidated immediately before dequeue so a replacement process using
-    /// the same client_id/project path cannot inherit stale project work.
-    pub(super) expected_project_runner_instance_id: Option<String>,
-    /// Exact Runner process lease captured for an MCP gateway request. This is
-    /// revalidated under the registry lock immediately before dequeue so a
-    /// replacement Runner cannot consume stale bridge work.
-    pub(super) expected_mcp_gateway_runner_instance_id: Option<String>,
-    /// Exact provider lease captured with the Runner lease. Both logical id
-    /// and opaque provider instance must still match registration immediately
-    /// before dequeue.
-    pub(super) expected_mcp_gateway_provider_id: Option<String>,
-    pub(super) expected_mcp_gateway_provider_instance_id: Option<String>,
-    /// Exact Runner process lease captured for Runner-local managed SSH resource
-    /// management. Revalidated at dequeue so a replacement Runner can never
-    /// inherit a host-configuration mutation.
-    pub(super) expected_ssh_resource_runner_instance_id: Option<String>,
-    /// Exact Runner process lease captured for first-class config check/reload.
-    /// Revalidated at dequeue so neither check nor reload can silently retarget
-    /// a replacement process using the same client_id.
-    pub(super) expected_runner_config_runner_instance_id: Option<String>,
-    /// Exact Runner process lease captured for configured-instruction observation.
-    /// Revalidated at dequeue so a replacement process cannot inherit the request.
-    pub(super) expected_instruction_runner_instance_id: Option<String>,
-    /// Exact Runner process lease plus source/read/manage mode captured for a
-    /// Runner-global Skill request. Revalidated at dequeue so a replacement
-    /// process using the same client_id cannot inherit authority.
-    pub(super) skill_fence: Option<SkillDispatchFence>,
+    pub(super) dispatch_fence: PendingDispatchFence,
     /// Server-process monotonic enqueue instant for queue-wait and request
     /// round-trip observability. It is never serialized or exposed on the wire.
     pub(super) enqueued_at: Instant,

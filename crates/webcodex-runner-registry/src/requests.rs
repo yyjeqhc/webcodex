@@ -1,4 +1,5 @@
 use super::access_control::assert_runner_access;
+use super::dispatch_fence::{McpGatewayDispatchFence, PendingDispatchFence, ProjectDispatchFence};
 use super::execution_admission::ExecutionAdmissionError;
 use super::jobs::{
     command_preview, ensure_dispatch_supported_locked, ensure_queue_capacity_locked,
@@ -8,7 +9,6 @@ use super::jobs::{
 use super::projects::RunnerLookupError;
 use super::state::{
     CodingAgentDispatchFence, PendingShellRequest, PluginGatewayDispatchFence, RunnerRegistryInner,
-    SkillDispatchFence,
 };
 use super::validation::{
     validate_file_request, validate_id, validate_process_request, validate_run_request,
@@ -220,9 +220,36 @@ pub(super) fn enqueue_pending_request_locked(
     waiter: Option<oneshot::Sender<ShellRunResponse>>,
     job_id: Option<String>,
 ) -> Result<(), PendingRequestEnqueueError> {
+    enqueue_pending_request_with_fence_locked(
+        telemetry,
+        inner,
+        client_id,
+        request_id,
+        request,
+        waiter,
+        job_id,
+        PendingDispatchFence::Unfenced,
+    )
+}
+
+pub(super) fn enqueue_pending_request_with_fence_locked(
+    telemetry: &dyn crate::RunnerRegistryTelemetry,
+    inner: &mut RunnerRegistryInner,
+    client_id: &str,
+    request_id: String,
+    request: RunnerRequest,
+    waiter: Option<oneshot::Sender<ShellRunResponse>>,
+    job_id: Option<String>,
+    dispatch_fence: PendingDispatchFence,
+) -> Result<(), PendingRequestEnqueueError> {
     let operation = request
         .decode_operation()
         .map_err(|message| PendingRequestEnqueueError::InvalidOperation { message })?;
+    dispatch_fence
+        .validate_operation(&operation)
+        .map_err(|message| PendingRequestEnqueueError::InvalidOperation {
+            message: message.to_string(),
+        })?;
     ensure_dispatch_supported_locked(inner, client_id)?;
     ensure_queue_capacity_locked(inner, client_id)?;
     let runner = inner.runners.get(client_id);
@@ -254,17 +281,7 @@ pub(super) fn enqueue_pending_request_locked(
             operation,
             waiter,
             job_id,
-            expected_runner_owner: None,
-            expected_project_id: None,
-            expected_project_cwd: None,
-            expected_project_runner_instance_id: None,
-            expected_mcp_gateway_runner_instance_id: None,
-            expected_mcp_gateway_provider_id: None,
-            expected_mcp_gateway_provider_instance_id: None,
-            expected_ssh_resource_runner_instance_id: None,
-            expected_runner_config_runner_instance_id: None,
-            expected_instruction_runner_instance_id: None,
-            skill_fence: None,
+            dispatch_fence,
             enqueued_at,
             dispatched_transport: None,
             dispatched: false,
@@ -861,8 +878,13 @@ impl RunnerRegistry {
                 "stale_project: target project {expected_project_id} is no longer registered at the resolved path"
             ));
         }
-        let expected_runner_owner = current.owner.clone();
-        enqueue_pending_request_locked(
+        let fence = PendingDispatchFence::Project(ProjectDispatchFence {
+            owner: current.owner.clone(),
+            project_id: expected_project_id.to_string(),
+            cwd: expected_project_cwd.to_string(),
+            runner_instance_id: Some(expected_runner_instance_id.to_string()),
+        });
+        enqueue_pending_request_with_fence_locked(
             self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
@@ -870,15 +892,8 @@ impl RunnerRegistry {
             request,
             Some(tx),
             None,
+            fence,
         )?;
-        let pending = inner
-            .pending_by_id
-            .get_mut(&request_id)
-            .expect("project-file read was just enqueued");
-        pending.expected_runner_owner = expected_runner_owner;
-        pending.expected_project_id = Some(expected_project_id.to_string());
-        pending.expected_project_cwd = Some(expected_project_cwd.to_string());
-        pending.expected_project_runner_instance_id = Some(expected_runner_instance_id.to_string());
         notify_runner_locked(&inner, &body.client_id);
         Ok((request_id, rx))
     }
@@ -993,8 +1008,13 @@ impl RunnerRegistry {
                 body.client_id
             ));
         }
-        let expected_runner_owner = current.owner.clone();
-        enqueue_pending_request_locked(
+        let fence = PendingDispatchFence::Project(ProjectDispatchFence {
+            owner: current.owner.clone(),
+            project_id: expected_project_id.to_string(),
+            cwd: expected_project_cwd.to_string(),
+            runner_instance_id: Some(expected_runner_instance_id.to_string()),
+        });
+        enqueue_pending_request_with_fence_locked(
             self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
@@ -1002,15 +1022,8 @@ impl RunnerRegistry {
             request,
             Some(tx),
             None,
+            fence,
         )?;
-        let pending = inner
-            .pending_by_id
-            .get_mut(&request_id)
-            .expect("project-file mutation was just enqueued");
-        pending.expected_runner_owner = expected_runner_owner;
-        pending.expected_project_id = Some(expected_project_id.to_string());
-        pending.expected_project_cwd = Some(expected_project_cwd.to_string());
-        pending.expected_project_runner_instance_id = Some(expected_runner_instance_id.to_string());
         notify_runner_locked(&inner, &body.client_id);
         Ok((request_id, rx))
     }
@@ -1067,8 +1080,13 @@ impl RunnerRegistry {
                 "stale_project: target project {expected_project_id} is no longer registered at the resolved path"
             ));
         }
-        let expected_runner_owner = current.owner.clone();
-        enqueue_pending_request_locked(
+        let fence = PendingDispatchFence::Project(ProjectDispatchFence {
+            owner: current.owner.clone(),
+            project_id: expected_project_id.to_string(),
+            cwd: expected_project_cwd.to_string(),
+            runner_instance_id: None,
+        });
+        enqueue_pending_request_with_fence_locked(
             self.telemetry.as_ref(),
             &mut inner,
             &body.client_id,
@@ -1076,14 +1094,8 @@ impl RunnerRegistry {
             request,
             Some(tx),
             None,
+            fence,
         )?;
-        let pending = inner
-            .pending_by_id
-            .get_mut(&request_id)
-            .expect("computer snapshot artifact request was just enqueued");
-        pending.expected_runner_owner = expected_runner_owner;
-        pending.expected_project_id = Some(expected_project_id.to_string());
-        pending.expected_project_cwd = Some(expected_project_cwd.to_string());
         notify_runner_locked(&inner, &body.client_id);
         Ok((request_id, rx))
     }
@@ -1881,7 +1893,7 @@ impl RunnerRegistry {
                 client_id: client_id.to_string(),
             });
         }
-        enqueue_pending_request_locked(
+        enqueue_pending_request_with_fence_locked(
             self.telemetry.as_ref(),
             &mut inner,
             client_id,
@@ -1889,18 +1901,13 @@ impl RunnerRegistry {
             request,
             Some(tx),
             None,
+            PendingDispatchFence::Skill {
+                runner_instance_id: expected_runner_instance_id.to_string(),
+            },
         )
         .map_err(|error| EnqueueRunnerSkillError::DispatchUnavailable {
             message: error.to_string(),
         })?;
-        let pending = inner
-            .pending_by_id
-            .get_mut(&request_id)
-            .expect("Runner Skill request was just enqueued");
-        pending.skill_fence = Some(SkillDispatchFence {
-            runner_instance_id: expected_runner_instance_id.to_string(),
-            management,
-        });
         notify_runner_locked(&inner, client_id);
         Ok((request_id, rx))
     }
@@ -1955,7 +1962,7 @@ impl RunnerRegistry {
         if now_ts().saturating_sub(runner.last_seen) > super::RUNNER_ONLINE_WINDOW_SECS {
             return Err("exact Runner is offline; request was not started".to_string());
         }
-        enqueue_pending_request_locked(
+        enqueue_pending_request_with_fence_locked(
             self.telemetry.as_ref(),
             &mut inner,
             client_id,
@@ -1963,15 +1970,12 @@ impl RunnerRegistry {
             request,
             None,
             None,
+            PendingDispatchFence::McpGateway(McpGatewayDispatchFence {
+                runner_instance_id: expected_runner_instance_id.to_string(),
+                provider_id: expected_provider_id,
+                provider_instance_id: expected_provider_instance_id,
+            }),
         )?;
-        let pending = inner
-            .pending_by_id
-            .get_mut(&request_id)
-            .expect("MCP gateway request was just enqueued");
-        pending.expected_mcp_gateway_runner_instance_id =
-            Some(expected_runner_instance_id.to_string());
-        pending.expected_mcp_gateway_provider_id = Some(expected_provider_id);
-        pending.expected_mcp_gateway_provider_instance_id = Some(expected_provider_instance_id);
         inner.mcp_gateway_waiters.insert(request_id.clone(), tx);
         notify_runner_locked(&inner, client_id);
         Ok((request_id, rx))
@@ -2094,7 +2098,7 @@ impl RunnerRegistry {
         if now_ts().saturating_sub(runner.last_seen) > RUNNER_ONLINE_WINDOW_SECS {
             return Err("exact Runner is offline; request was not started".to_string());
         }
-        enqueue_pending_request_locked(
+        enqueue_pending_request_with_fence_locked(
             self.telemetry.as_ref(),
             &mut inner,
             client_id,
@@ -2102,13 +2106,10 @@ impl RunnerRegistry {
             request,
             Some(tx),
             None,
+            PendingDispatchFence::SshResource {
+                runner_instance_id: expected_runner_instance_id.to_string(),
+            },
         )?;
-        inner
-            .pending_by_id
-            .get_mut(&request_id)
-            .expect("SSH resource request was just enqueued")
-            .expected_ssh_resource_runner_instance_id =
-            Some(expected_runner_instance_id.to_string());
         notify_runner_locked(&inner, client_id);
         Ok((request_id, rx))
     }
@@ -2159,7 +2160,7 @@ impl RunnerRegistry {
         if now_ts().saturating_sub(runner.last_seen) > RUNNER_ONLINE_WINDOW_SECS {
             return Err("exact Runner is offline; request was not started".to_string());
         }
-        enqueue_pending_request_locked(
+        enqueue_pending_request_with_fence_locked(
             self.telemetry.as_ref(),
             &mut inner,
             client_id,
@@ -2167,13 +2168,10 @@ impl RunnerRegistry {
             request,
             Some(tx),
             None,
+            PendingDispatchFence::RunnerConfig {
+                runner_instance_id: expected_runner_instance_id.to_string(),
+            },
         )?;
-        inner
-            .pending_by_id
-            .get_mut(&request_id)
-            .expect("Runner config request was just enqueued")
-            .expected_runner_config_runner_instance_id =
-            Some(expected_runner_instance_id.to_string());
         notify_runner_locked(&inner, client_id);
         Ok((request_id, rx))
     }
@@ -2227,7 +2225,7 @@ impl RunnerRegistry {
         if now_ts().saturating_sub(runner.last_seen) > RUNNER_ONLINE_WINDOW_SECS {
             return Err("exact Runner is offline; request was not started".to_string());
         }
-        enqueue_pending_request_locked(
+        enqueue_pending_request_with_fence_locked(
             self.telemetry.as_ref(),
             &mut inner,
             client_id,
@@ -2235,13 +2233,10 @@ impl RunnerRegistry {
             request,
             Some(tx),
             None,
+            PendingDispatchFence::RunnerInstruction {
+                runner_instance_id: expected_runner_instance_id.to_string(),
+            },
         )?;
-        inner
-            .pending_by_id
-            .get_mut(&request_id)
-            .expect("Runner instruction request was just enqueued")
-            .expected_instruction_runner_instance_id =
-            Some(expected_runner_instance_id.to_string());
         notify_runner_locked(&inner, client_id);
         Ok((request_id, rx))
     }

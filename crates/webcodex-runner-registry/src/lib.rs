@@ -8,6 +8,7 @@ mod access;
 mod access_control;
 mod capabilities;
 mod console_snapshot;
+mod dispatch_fence;
 pub use console_snapshot::{
     ActiveJobAggregate, ConsoleRegistrySnapshot, WorkspaceObservationIdentity,
 };

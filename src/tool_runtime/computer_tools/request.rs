@@ -12,6 +12,26 @@ use super::effects::{
 };
 use super::responses::{validate_computer_response, ComputerResponseContext};
 use super::*;
+
+fn parse_computer_runner_output(
+    stdout: Option<&str>,
+    stdout_truncated: bool,
+) -> Result<Value, String> {
+    let Some(stdout) = stdout else {
+        return Err(format!(
+            "Runner returned invalid computer JSON: stdout_present=false; stdout_truncated={stdout_truncated}"
+        ));
+    };
+    serde_json::from_str(stdout).map_err(|error| {
+        // Parser Display may quote source content. Only its closed category and
+        // numeric location belong in this exceptional diagnostic.
+        format!(
+            "Runner returned invalid computer JSON: stdout_present=true; stdout_bytes={}; stdout_truncated={stdout_truncated}; parse_category={:?}; line={}; column={}",
+            stdout.len(), error.classify(), error.line(), error.column()
+        )
+    })
+}
+
 impl ToolRuntime {
     pub(super) async fn dispatch_computer_request(
         &self,
@@ -432,13 +452,11 @@ impl ToolRuntime {
             }
             return computer_error("runner_error", "Runner computer request failed");
         }
-        let output: Value = match response
-            .stdout
-            .as_deref()
-            .map(serde_json::from_str)
-            .transpose()
-        {
-            Ok(Some(output)) => output,
+        let output = match parse_computer_runner_output(
+            response.stdout.as_deref(),
+            response.stdout_truncated,
+        ) {
+            Ok(output) => output,
             _ if is_pointer => {
                 return computer_pointer_effect_delivery_failure(
                     "Runner returned invalid JSON after possible pointer dispatch",
@@ -469,12 +487,7 @@ impl ToolRuntime {
                     response.request_dispatched,
                 )
             }
-            _ => {
-                return computer_error(
-                    "invalid_runner_response",
-                    "Runner returned invalid computer JSON",
-                )
-            }
+            Err(message) => return computer_error("invalid_runner_response", &message),
         };
         validate_computer_response(
             output,
@@ -499,5 +512,51 @@ impl ToolRuntime {
                 clipboard_write_context,
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_computer_runner_output;
+    use serde_json::Value;
+
+    #[test]
+    fn computer_json_diagnostics_are_bounded_and_never_quote_payloads() {
+        for truncated in [false, true] {
+            let missing = parse_computer_runner_output(None, truncated).unwrap_err();
+            assert!(missing.contains("stdout_present=false"));
+            assert!(missing.contains(&format!("stdout_truncated={truncated}")));
+            for (raw, category) in [
+                ("", "Eof"),
+                ("{\n\"PRIVATE_SCREENSHOT\":", "Eof"),
+                ("{\"秘密PRIVATE_SCREENSHOT\":?}", "Syntax"),
+            ] {
+                let error = serde_json::from_str::<Value>(raw).unwrap_err();
+                let diagnostic = parse_computer_runner_output(Some(raw), truncated).unwrap_err();
+                assert!(diagnostic.contains(&format!("stdout_bytes={}", raw.len())));
+                assert!(diagnostic.contains(&format!("stdout_truncated={truncated}")));
+                assert!(diagnostic.contains(&format!("parse_category={category}")));
+                assert!(diagnostic.contains(&format!(
+                    "line={}; column={}",
+                    error.line(),
+                    error.column()
+                )));
+                assert!(!diagnostic.contains("PRIVATE_SCREENSHOT"));
+                assert!(!diagnostic.contains("秘密"));
+                assert!(diagnostic.len() < 256);
+            }
+        }
+    }
+
+    #[test]
+    fn computer_json_null_reaches_semantic_validation() {
+        assert_eq!(
+            parse_computer_runner_output(Some("null"), false).unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            parse_computer_runner_output(Some("{}"), false).unwrap(),
+            serde_json::json!({})
+        );
     }
 }

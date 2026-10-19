@@ -1,5 +1,14 @@
 use super::*;
 
+pub(super) fn test_tempdir() -> std::io::Result<tempfile::TempDir> {
+    // macOS exposes TMPDIR through /var -> /private/var. Keep fixtures under
+    // the real temp root so production no-symlink checks remain meaningful.
+    #[cfg(target_os = "macos")]
+    return tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?);
+    #[cfg(not(target_os = "macos"))]
+    tempfile::tempdir()
+}
+
 #[test]
 fn service_scope_is_only_a_new_setup_choice_not_a_control_retarget() {
     let selected = input(&["configure", "--create", "--runner", "--scope", "user"]).unwrap();
@@ -298,7 +307,7 @@ fn guarded_installer_options_never_fall_back_to_unbound_commands() {
 #[tokio::test]
 async fn guarded_handoff_rejects_missing_owner_and_unacknowledged_followups_without_creation() {
     use webcodex_environment::unified_update::PrivateUpdateCache;
-    let directory = tempfile::tempdir().unwrap();
+    let directory = test_tempdir().unwrap();
     let nonce = "a".repeat(32);
     let cache =
         PrivateUpdateCache::open(directory.path().join(format!("handoff-{nonce}"))).unwrap();
@@ -343,7 +352,7 @@ async fn guarded_handoff_rejects_missing_owner_and_unacknowledged_followups_with
 
 #[tokio::test]
 async fn same_package_verification_rejects_an_invalid_installer_target_before_candidate_access() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = test_tempdir().unwrap();
     let candidate = temp.path().join("absent-candidate");
     let runtime = temp.path().join("absent-runtime");
     let args = vec![
@@ -365,7 +374,7 @@ async fn same_package_verification_rejects_an_invalid_installer_target_before_ca
 
 #[tokio::test]
 async fn path_commands_are_read_only_and_manifest_is_explicitly_metadata_only() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = test_tempdir().unwrap();
     let directory = temp.path().join("absent-environment");
     for command in ["paths", "backup-manifest"] {
         let args = vec![
@@ -476,7 +485,7 @@ fn runner_join_does_not_accept_literal_pairing_or_tunnel_credentials() {
 
 #[tokio::test]
 async fn invalid_package_target_is_rejected_before_authorization_and_does_not_echo_it() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = test_tempdir().unwrap();
     let root = directory.path().join("absent");
     let args = vec![
         "installer-authorize".into(),
@@ -500,7 +509,7 @@ fn public_environment_fixture(test_name: &str) -> Option<PathBuf> {
     if let Some(root) = std::env::var_os(FIXTURE_ROOT) {
         return Some(root.into());
     }
-    let directory = tempfile::tempdir().unwrap();
+    let directory = test_tempdir().unwrap();
     let mut child = std::process::Command::new(std::env::current_exe().unwrap());
     child
         .args(["--exact", test_name, "--nocapture"])
@@ -940,7 +949,7 @@ fn parsed_tunnel_commands_retain_explicit_targets_and_recovery_fences() {
 
 #[tokio::test]
 async fn invalid_control_arguments_are_rejected_before_environment_creation() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = test_tempdir().unwrap();
     let directory = temp.path().join("must-stay-absent");
     let private_fixture = "unreadable-private-fixture";
     let cases = [
@@ -970,7 +979,7 @@ async fn invalid_control_arguments_are_rejected_before_environment_creation() {
 
 #[tokio::test]
 async fn typed_diagnosis_and_recovery_never_create_a_missing_selected_environment() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = test_tempdir().unwrap();
     let directory = temp.path().join("removed-environment");
     for command in ["tunnel-diagnose", "recover-tunnel"] {
         let args = [
@@ -989,7 +998,7 @@ async fn typed_diagnosis_and_recovery_never_create_a_missing_selected_environmen
 
 #[tokio::test]
 async fn typed_inventory_commands_preserve_text_and_manifest_output_without_a_store() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = test_tempdir().unwrap();
     let directory = temp.path().join("absent-environment");
     let paths = run(&[
         "paths".into(),

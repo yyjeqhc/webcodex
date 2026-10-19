@@ -40,7 +40,7 @@ function LocalServiceControls({ state, onState }: Props) {
       const transitioning = readiness === "starting" || readiness === "connecting";
       const primary = running ? "restart" : "start";
       return <div className="service-status-row" key={component}>
-        <div><h3>{p(component === "server" ? "serverConnection" : "localExecutionService")}</h3><span className="workspace-badge">{p(statusKey(state.readiness[component]))}</span></div>
+        <div><h3>{p(component === "server" ? "serverConnection" : "localRunner")}</h3><span className="workspace-badge">{p(statusKey(state.readiness[component]))}</span></div>
         {environmentId && local && <div className="shell-actions">
           <button type="button" className="secondary-button" disabled={disabled || transitioning} onClick={() => void act(component, primary)} aria-label={`${p(primary)} ${s(component === "server" ? "Local Server" : "Local Runner")}`}>{p(primary)}</button>
           <details className="workspace-technical"><summary>{p("advanced")}</summary>

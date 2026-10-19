@@ -33,7 +33,7 @@ describe("manual local project registration", () => {
     expect(screen.getByText(/Choose a local folder to register as a Project/)).toBeInTheDocument();
     expect(api.activateLocalProject).not.toHaveBeenCalled();
     expect(screen.getByText(folder.path)).toBeInTheDocument();
-    expect(screen.queryByLabelText("API Key")).toBeNull();
+    expect(screen.queryByLabelText("API key")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Authorize and add project" }));
     await waitFor(() => expect(onAdded).toHaveBeenCalledTimes(1));
     expect(api.activateLocalProject).toHaveBeenCalledExactlyOnceWith(folder.path);

@@ -201,7 +201,7 @@ function DiagnosticsContents({ state, onState, onActivity, onRuntime, onConnecti
     {confirmation && <WorkspaceDialog title={s(confirmation.kind === "trace" ? confirmation.mode === "full" ? "Confirm full tracing" : "Runtime restart warning" : "Restore configuration")} onClose={() => setConfirmation(null)} busy={disabled}>
       {confirmation.kind === "trace" ? <>
         {confirmation.mode === "full" && <p>{s("Full tracing may contain sensitive tool inputs and results. Enable it only temporarily.")}</p>}
-        {confirmation.restart && <><p>{s("Server restart may interrupt in-flight requests; the existing Runner will reconnect.")}</p><p>{confirmation.jobs == null ? s("Job count is not confirmed.") : `${s("Active Jobs")}: ${confirmation.jobs}`}</p></>}
+        {confirmation.restart && <><p>{s("Server restart may interrupt in-flight requests; the existing Runner will reconnect.")}</p><p>{confirmation.jobs == null ? s("Job count is not confirmed.") : s("Active jobs: {count}").replace("{count}", String(confirmation.jobs))}</p></>}
       </> : <p>{s("Restore the previous known-good configuration without deleting Projects or credentials. Runtime will remain stopped until explicitly started.")}</p>}
       {errorCard}
       <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => setConfirmation(null)}>{s("Cancel")}</button><button type="button" className="primary-button" disabled={disabled} onClick={() => void confirmAction()}>{confirmation.kind === "trace" && confirmation.restart ? p("traceSaveRestart") : s(confirmation.kind === "restore" ? "Restore previous configuration" : "Confirm full tracing")}</button></div>

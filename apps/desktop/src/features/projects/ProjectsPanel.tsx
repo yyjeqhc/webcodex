@@ -215,6 +215,8 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
       .toLocaleLowerCase()
       .includes(query.trim().toLocaleLowerCase()),
   );
+  const selectable = rows.filter(project => project.id && project.connected && projectRunnerId(project) === workspace.state.workspace_runner?.client_id).map(project => project.id);
+  const allSelectableSelected = selectable.length > 0 && selectable.every(id => selected.includes(id));
   return <section className="page-section workspace-page" aria-labelledby="projects-title" data-webcodex-page="projects">
     <header className="page-heading-row"><h1 id="projects-title">{p("projects")} <span className="heading-count">{workspace.projects.length}</span></h1>
       <div className="project-heading-actions">
@@ -234,10 +236,9 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
       <div className="project-selection-actions">
         {(device || query) && <button type="button" className="text-button" onClick={() => { selectDevice(""); setQuery(""); }}>{p("clearProjectFilters")}</button>}
         {canManageProjects && <>
-        <Button variant="subtle" size="sm" disabled={removing || !rows.some(project => project.id && project.connected && projectRunnerId(project) === workspace.state.workspace_runner?.client_id)} onClick={() => {
-          const visible = rows.filter(project => project.id && project.connected && projectRunnerId(project) === workspace.state.workspace_runner?.client_id).map(project => project.id);
-          setSelected(current => visible.every(id => current.includes(id)) ? current.filter(id => !visible.includes(id)) : Array.from(new Set([...current, ...visible])));
-        }}>{p("selectVisibleProjects")}</Button>
+        <Button variant="subtle" size="sm" disabled={removing || !selectable.length} onClick={() => {
+          setSelected(current => allSelectableSelected ? current.filter(id => !selectable.includes(id)) : Array.from(new Set([...current, ...selectable])));
+        }}>{p(allSelectableSelected ? "deselectVisibleProjects" : "selectVisibleProjects")}</Button>
         {selected.some(id => workspace.projects.some(project => project.id === id)) && <Button color="red.8" size="sm" disabled={removing} onClick={() => void prepareSelectedRemoval()}>{p("removeSelectedProjects").replace("{count}", String(selected.length))}</Button>}
         {batchProgress && <span role="status">{batchProgress}</span>}
         </>}

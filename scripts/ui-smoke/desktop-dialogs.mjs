@@ -19,7 +19,7 @@ const settings=async(p,id)=>{await nav(p,'settings');await tab(p,'settings',id);
 const cases=[
  ['project-add-folder',async p=>{await nav(p,'projects');await button(p,/Add local project|添加本机项目/).click();}],
  ['project-unregister',async p=>{await nav(p,'projects');await p.locator('.workspace-project-table tbody tr').first().getByRole('button',{name:/Remove project|移除项目/}).click();}],
- ['project-unregister-batch',async p=>{await nav(p,'projects');await button(p,/deselect visible|取消当前列表/).click();await button(p,/Remove selected|批量移除/).click();}],
+ ['project-unregister-batch',async p=>{await nav(p,'projects');await button(p,/Select all shown|全选当前列表/).click();await button(p,/Remove selected|批量移除/).click();}],
  ['project-add-device',async p=>{await nav(p,'projects');await button(p,/Add device|添加设备/).click();}],
  ['connection-create',async p=>{await nav(p,'connection');await p.locator('.page-heading-row > button').click();}],
  ['connection-cloudflare-named-create',async p=>{await nav(p,'connection');await p.locator('.page-heading-row > button').click();await p.locator('.workspace-dialog select').selectOption('cloudflare_named');}],

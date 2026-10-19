@@ -131,7 +131,7 @@ describe("Runtime candidate and ownership semantics", () => {
     render(wrap(<RuntimePanel state={state} onState={vi.fn()} />));
     fireEvent.click(await screen.findByRole("button", { name: "Use bundled Runtime" }));
     const confirm = await screen.findByRole("dialog", { name: "Runtime restart warning" });
-    expect(within(confirm).getByText("Active Jobs: 2")).toBeInTheDocument(); expect(api.switchRuntime).not.toHaveBeenCalled();
+    expect(within(confirm).getByText("Active jobs: 2")).toBeInTheDocument(); expect(api.switchRuntime).not.toHaveBeenCalled();
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(api.switchRuntime).not.toHaveBeenCalled();
@@ -446,8 +446,8 @@ describe("Diagnostics are explicit and secret-free", () => {
     expect(screen.queryByRole("button", { name: "Save and restart Server" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open Server configuration location" }));
     await waitFor(() => expect(api.openDiagnosticResource).toHaveBeenCalledWith("server_configuration"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Copy metadata configuration" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Copy metadata configuration" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Copy metadata-only setting" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Copy metadata-only setting" }));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledWith("WEBCODEX_TOOL_REQUEST_TRACE=metadata"));
     expect(api.setToolRequestTracing).not.toHaveBeenCalled();
   });
@@ -466,7 +466,7 @@ describe("Diagnostics are explicit and secret-free", () => {
     expect(screen.getByRole("combobox", { name: "Tool request tracing" })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Tool request tracing" })).toHaveValue("metadata");
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
-    expect(within(screen.getByText("Server recording now").parentElement!).getByText("Timing & status only")).toBeVisible();
+    expect(within(screen.getByText("Current Server setting").parentElement!).getByText("Timing & status only")).toBeVisible();
     expect(within(screen.getByText("Saved recording setting").parentElement!).getByText("Not yet confirmed")).toBeInTheDocument();
     expect(api.setToolRequestTracing).not.toHaveBeenCalled();
   });
@@ -483,12 +483,12 @@ describe("Diagnostics are explicit and secret-free", () => {
     api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, configured_mode: "metadata", effective_mode: "off", restart_required: true });
     render(wrap(<DiagnosticsPanel state={state} onState={vi.fn()} />));
     fireEvent.change(await screen.findByRole("combobox", { name: "Tool request tracing" }), { target: { value: "metadata" } });
-    expect(within(screen.getByText("Server recording now").parentElement!).getByText("Off")).toBeVisible();
+    expect(within(screen.getByText("Current Server setting").parentElement!).getByText("Off")).toBeVisible();
     expect(within(screen.getByText("Saved recording setting").parentElement!).getByText("Off")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText(/The saved setting is not active yet/);
     expect(within(screen.getByText("Saved recording setting").parentElement!).getByText("Timing & status only")).toBeVisible();
-    expect(within(screen.getByText("Server recording now").parentElement!).getByText("Off")).toBeVisible();
+    expect(within(screen.getByText("Current Server setting").parentElement!).getByText("Off")).toBeVisible();
   });
   it("confirms Server interruption before applying tracing through a service restart", async () => {
     const persistent = { ...state, persistent_environment: "env-fixture" };
@@ -555,7 +555,7 @@ it("keeps the six localized navigation labels and task-based Settings categories
   expect(diagnosticsPanel).not.toHaveAttribute("role", "region");
   expect(screen.queryByRole("checkbox", { name: "登录时启动 WebCodex" })).not.toBeInTheDocument();
   expect(await screen.findByRole("combobox", { name: "工具请求追踪" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "运行控制台" })).toHaveAttribute("aria-keyshortcuts", "Control+7 Meta+7");
+  expect(screen.getByRole("button", { name: "Runtime Console" })).toHaveAttribute("aria-keyshortcuts", "Control+7 Meta+7");
   expect(screen.getByRole("button", { name: "复制诊断报告" })).toBeInTheDocument();
 
   const runtimeTab = screen.getByRole("tab", { name: "Runtime 与服务" });

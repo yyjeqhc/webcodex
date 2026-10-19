@@ -62,7 +62,7 @@ describe("Desktop Coding Agents", () => {
     });
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Add Coding Agent" }));
-    const dialog = screen.getByRole("dialog", { name: "Add Coding Agent" });
+    const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
     fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Pi Agent" } });
     fireEvent.change(within(dialog).getByLabelText("Provider ID"), { target: { value: "pi" } });
     fireEvent.change(within(dialog).getByLabelText("Executable"), { target: { value: "/fixture/pi-acp" } });
@@ -223,7 +223,7 @@ describe("Desktop SSH Resources", () => {
     render(<Harness mode="ssh" />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Add SSH Resource" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Add SSH Resource" }));
-    await screen.findByRole("dialog", { name: "Add SSH Resource" });
+    await screen.findByRole("dialog", { name: "Add SSH resource" });
     fireEvent.change(screen.getByLabelText("Resource Name"), { target: { value: "temporary" } });
     fireEvent.change(screen.getByLabelText("Target"), { target: { value: "fixture-user@fixture-private-host" } });
     fireEvent.change(screen.getByLabelText("Default Working Directory"), { target: { value: "/fixture-private/cwd" } });
@@ -272,7 +272,7 @@ describe("Desktop SSH Resources", () => {
     render(<Harness mode={mode} />);
     fireEvent.click(await screen.findByRole("button", { name: "Authorize Runner Capabilities" }));
     expect(api.authorizeRunnerCapabilities).not.toHaveBeenCalled();
-    const dialog = screen.getByRole("dialog", { name: "Authorize Runner Capabilities" });
+    const dialog = screen.getByRole("dialog", { name: "Authorize Runner capabilities" });
     expect(within(dialog).getByText(/Existing tokens, expiry/)).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Authorize Runner Capabilities" }));
     await waitFor(() => expect(api.authorizeRunnerCapabilities).toHaveBeenCalledExactlyOnceWith(target));

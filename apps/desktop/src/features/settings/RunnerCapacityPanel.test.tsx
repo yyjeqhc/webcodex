@@ -26,15 +26,15 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 describe("local Runner concurrency settings", () => {
   it("separates saved and effective limits without restarting while saving", async () => {
-    render(view()); const input = await screen.findByRole("spinbutton", { name: "Maximum concurrent Jobs" });
-    expect(input).toHaveValue(4); expect(screen.getByText("4 running · 2 queued · 4 max")).toBeInTheDocument();
+    render(view()); const input = await screen.findByRole("spinbutton", { name: "Maximum concurrent jobs" });
+    expect(input).toHaveValue(4); expect(screen.getByText("4 running · 2 queued · limit 4")).toBeInTheDocument();
     expect(screen.getByText("Saved limit: — · Default: 4")).toBeInTheDocument();
     expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "12" } }); fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
     await waitFor(() => expect(api.saveRunnerJobConcurrency).toHaveBeenCalledExactlyOnceWith(target, null, 12));
     expect(api.restartOwnedRunner).not.toHaveBeenCalled();
     expect(await screen.findByText("Restart required to apply the saved limit.")).toBeInTheDocument();
-    expect(screen.getByText("4 running · 2 queued · 4 max")).toBeInTheDocument();
+    expect(screen.getByText("4 running · 2 queued · limit 4")).toBeInTheDocument();
   });
   it("requires an interruption warning and supports Cancel", async () => {
     settings.max_concurrent_jobs = 12; render(view());
@@ -60,7 +60,7 @@ describe("local Runner concurrency settings", () => {
     if (mode === "unsupported") runner.job_concurrency_limit = undefined as unknown as number;
     if (mode === "failed") query.mockRejectedValue(new Error("offline"));
     render(view()); await screen.findByRole("spinbutton");
-    expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
+    expect(screen.queryByText("4 running · 2 queued · limit 4")).not.toBeInTheDocument();
     expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
   });
   it("shows authorized Runner Jobs without exposing stale inventory", async () => {
@@ -74,7 +74,7 @@ describe("local Runner concurrency settings", () => {
     const mounted = render(view());
     expect(await screen.findByText(/wc_job_test/)).toBeInTheDocument();
     expect(screen.getByText(/stop_requested/)).toBeInTheDocument();
-    expect(screen.getByText("Inventory incomplete; some Jobs are not shown.")).toBeInTheDocument();
+    expect(screen.getByText("Inventory incomplete; some jobs are not shown.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Stop Job/ })).not.toBeInTheDocument();
     mounted.rerender(view({ ...state, readiness: { ...state.readiness, server: "stopped" } }));
     expect(screen.queryByText(/wc_job_test/)).not.toBeInTheDocument();
@@ -146,10 +146,10 @@ describe("local Runner concurrency settings", () => {
     settings.target = { ...target, client_id: "other" }; runner.client_id = "other";
     render(view()); expect(await screen.findByRole("alert")).toHaveTextContent("could not be read or verified");
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
-    expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
+    expect(screen.queryByText("4 running · 2 queued · limit 4")).not.toBeInTheDocument();
   });
   it("marks observations stale when the Server goes offline", async () => {
-    const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+    const mounted = render(view()); await screen.findByText("4 running · 2 queued · limit 4");
     mounted.rerender(view({ ...state, readiness: { ...state.readiness, server: "stopped" } }));
     expect(screen.getByText("Capacity needs refresh.")).toBeInTheDocument();
     expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
@@ -164,7 +164,7 @@ describe("local Runner concurrency settings", () => {
     expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
   });
   it.each(["restart", "server offline"])("keeps capacity stale after %s until a fresh observation arrives", async boundary => {
-    const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+    const mounted = render(view()); await screen.findByText("4 running · 2 queued · limit 4");
     const interrupted = boundary === "restart"
       ? { ...state, current_operation: { id: "restart", kind: "runner_restart", phase: "running" } as DesktopState["current_operation"] }
       : { ...state, readiness: { ...state.readiness, server: "stopped" as const } };
@@ -175,15 +175,15 @@ describe("local Runner concurrency settings", () => {
     settings.max_concurrent_jobs = 12;
     mounted.rerender(view());
     expect(screen.getByText("Capacity needs refresh.")).toBeInTheDocument();
-    expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
+    expect(screen.queryByText("4 running · 2 queued · limit 4")).not.toBeInTheDocument();
     expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
     await act(async () => resolve({ ...runner, jobs_running: 1, jobs_queued: 0, job_concurrency_limit: 12 }));
-    expect(await screen.findByText("1 running · 0 queued · 12 max")).toBeInTheDocument();
+    expect(await screen.findByText("1 running · 0 queued · limit 12")).toBeInTheDocument();
     expect(screen.getByText("Saved limit is in effect.")).toBeInTheDocument();
   });
   it("discards a pre-operation read without blocking the post-operation refresh", async () => {
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-    const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+    const mounted = render(view()); await screen.findByText("4 running · 2 queued · limit 4");
     let resolveOld!: (value: typeof runner) => void, resolveFresh!: (value: typeof runner) => void;
     query.mockReturnValueOnce(new Promise(done => { resolveOld = done; }));
     fireEvent(document, new Event("visibilitychange"));
@@ -193,18 +193,18 @@ describe("local Runner concurrency settings", () => {
     expect(query).toHaveBeenCalledTimes(3);
     await act(async () => resolveOld({ ...runner, jobs_running: 3, jobs_queued: 1 }));
     expect(screen.getByText("Capacity needs refresh.")).toBeInTheDocument();
-    expect(screen.queryByText("3 running · 1 queued · 4 max")).not.toBeInTheDocument();
+    expect(screen.queryByText("3 running · 1 queued · limit 4")).not.toBeInTheDocument();
     await act(async () => resolveFresh({ ...runner, jobs_running: 2, jobs_queued: 0 }));
-    expect(await screen.findByText("2 running · 0 queued · 4 max")).toBeInTheDocument();
+    expect(await screen.findByText("2 running · 0 queued · limit 4")).toBeInTheDocument();
   });
   it("does not revive expired counts while a hidden settings page refreshes", async () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1000000);
-    const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+    const mounted = render(view()); await screen.findByText("4 running · 2 queued · limit 4");
     mounted.rerender(view(state, false));
     clock.mockReturnValue(1060000); query.mockReturnValue(new Promise(() => undefined));
     mounted.rerender(view());
     expect(screen.getByText("Capacity needs refresh.")).toBeInTheDocument();
-    expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
+    expect(screen.queryByText("4 running · 2 queued · limit 4")).not.toBeInTheDocument();
   });
   it("ignores a late observation after unmount", async () => {
     let resolve!: (value: unknown) => void; query.mockReturnValue(new Promise(done => { resolve = done; }));

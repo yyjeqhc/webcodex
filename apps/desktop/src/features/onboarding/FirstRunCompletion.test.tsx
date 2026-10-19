@@ -29,7 +29,7 @@ describe("first-run connection completion", () => {
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Name"), {target:{value:"Primary"}});
     fireEvent.change(screen.getByLabelText("Tunnel ID"), {target:{value:"tunnel-id"}});
-    fireEvent.change(screen.getByLabelText("API Key"), {target:{value:"private-secret"}});
+    fireEvent.change(screen.getByLabelText("API key"), {target:{value:"private-secret"}});
     fireEvent.click(screen.getByRole("button", {name:"Save and apply"}));
     await waitFor(()=>expect(onState).toHaveBeenCalledWith(state));
     expect(api.saveTunnelProfile).toHaveBeenCalledWith(expect.objectContaining({id:null,name:"Primary",tunnel_id:"tunnel-id"}));
@@ -46,7 +46,7 @@ describe("first-run connection completion", () => {
     expect(screen.getByText(/main node owner manages/)).toBeInTheDocument();
     expect(screen.queryByRole("button",{name:"Add ChatGPT Tunnel"})).toBeNull();
     expect(screen.queryByLabelText("Tunnel ID")).toBeNull();
-    expect(screen.queryByLabelText("API Key")).toBeNull();
+    expect(screen.queryByLabelText("API key")).toBeNull();
   });
   it("copies a read-only request with exact IDs and keeps user reports separate from observation", async () => {
     const {rerender}=render(wrap(<FirstReadGuide state={state} />));

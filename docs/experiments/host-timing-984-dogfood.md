@@ -61,6 +61,12 @@ python3 scripts/host_timing_dogfood.py compare \
 
 Times are **examples**, not a claim these runs occurred. Run this only on self-hosted data that the operator is authorized to inspect.
 
+The offline CLI also bounds **each operator-supplied JSON input** (cohort policy,
+baseline summary, candidate summary) to 64 KiB **before UTF-8 decoding and JSON
+parsing**. A larger file fails with a static error; no file content, source path
+or private field is printed. This protects the existing read-only comparison
+workflow from unexpectedly large or untrusted input files.
+
 ## Interpretation and guardrails
 
 The read-only query streams at most 100,000 selected events. Each event's

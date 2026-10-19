@@ -33,20 +33,20 @@ afterEach(() => vi.restoreAllMocks());
 
 it("invalidates capacity during a restart and until a fresh observation arrives", async () => {
   const mounted = render(view());
-  expect(await screen.findByText("4 running · 2 queued · 4 max")).toBeVisible();
+  expect(await screen.findByText("4 running · 2 queued · limit 4")).toBeVisible();
   mounted.rerender(view({ ...state, current_operation: { id: "restart", kind: "runner_restart", phase: "running" } as DesktopState["current_operation"] }));
   expect(document.querySelector("[data-webcodex-capacity]")).toHaveAttribute("data-webcodex-capacity", "stale");
   native.invoke.mockReturnValue(new Promise(() => undefined));
   mounted.rerender(view());
-  expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
+  expect(screen.queryByText("4 running · 2 queued · limit 4")).not.toBeInTheDocument();
 });
 
 it("keeps capacity stale after Server recovery until a fresh observation arrives", async () => {
   vi.spyOn(Date, "now").mockReturnValue(1000000);
-  const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+  const mounted = render(view()); await screen.findByText("4 running · 2 queued · limit 4");
   mounted.rerender(view({ ...state, readiness: { ...state.readiness, server: "stopped", runtime_ready: false } }));
   expect(document.querySelector("[data-webcodex-capacity]")).toHaveAttribute("data-webcodex-capacity", "stale");
-  expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
+  expect(screen.queryByText("4 running · 2 queued · limit 4")).not.toBeInTheDocument();
 
   const normal = native.invoke.getMockImplementation()!;
   let resolve!: (value: ServerOverview) => void;
@@ -56,23 +56,23 @@ it("keeps capacity stale after Server recovery until a fresh observation arrives
   mounted.rerender(view());
   expect(native.invoke.mock.calls.length).toBeGreaterThan(queriesBeforeRecovery);
   expect(document.querySelector("[data-webcodex-capacity]")).toHaveAttribute("data-webcodex-capacity", "stale");
-  expect(screen.queryByText("4 running · 2 queued · 4 max")).not.toBeInTheDocument();
+  expect(screen.queryByText("4 running · 2 queued · limit 4")).not.toBeInTheDocument();
 
   await act(async () => resolve({ projects_available: true, visible_projects: 0, projects: [], projects_truncated: false,
     runners: [{ client_id: "local", connected: true, status: "online", jobs_running: 1, jobs_queued: 0, job_concurrency_limit: 4 }] }));
-  expect(await screen.findByText("1 running · 0 queued · 4 max")).toBeVisible();
+  expect(await screen.findByText("1 running · 0 queued · limit 4")).toBeVisible();
   expect(document.querySelector("[data-webcodex-capacity]")).toHaveAttribute("data-webcodex-capacity", "available");
 });
 
 it("does not show live capacity while polling is paused", async () => {
-  const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+  const mounted = render(view()); await screen.findByText("4 running · 2 queued · limit 4");
   mounted.rerender(view(state, true));
   expect(document.querySelector("[data-webcodex-capacity]")).toHaveAttribute("data-webcodex-capacity", "stale");
 });
 
 it("does not revive expired counts before an overdue refresh finishes", async () => {
   const clock = vi.spyOn(Date, "now").mockReturnValue(1000000);
-  const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+  const mounted = render(view()); await screen.findByText("4 running · 2 queued · limit 4");
   clock.mockReturnValue(1060000);
   mounted.rerender(view());
   expect(document.querySelector("[data-webcodex-capacity]")).toHaveAttribute("data-webcodex-capacity", "stale");

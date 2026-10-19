@@ -343,13 +343,15 @@ if (check.output?.execution_state === "pending") {
 }"#,
         })],
         CodeModeCallableStage::GuardedEdit => vec![json!({
-            "name": "guarded_edit_then_validation",
-            "source": r#"const path="src/example.rs";
-const read=await tools.read_files({items:[{path}]});
-const edit=await tools.edit_project_files({changes:[{kind:"edit",path,expected_read_revision:read.output.items[0].output.read_revision,edits:[{kind:"replace_exact",old_text:"old",new_text:"new"}]}]});
-if (!edit.success || typeof edit.output?.changed!=="boolean") throw Error("Inspect recovery");
-const check=await tools.project_validate({action:"check"});
-text({changed:edit.output.changed,success:check.success,source_state:check.output?.source_state,continuation:check.output?.continuation});"#,
+            "name": "edit_then_validate",
+            // Compact model example: keep the read-revision, mutation receipt,
+            // validation freshness and Job handoff without repeated prose.
+            "source": r#"const path="src/file.rs";
+const r=await tools.read_files({items:[{path}]});
+const e=await tools.edit_project_files({changes:[{kind:"edit",path,expected_read_revision:r.output.items[0].output.read_revision,edits:[{kind:"replace_exact",old_text:"old",new_text:"new"}]}]});
+if(!e.success||typeof e.output?.changed!=="boolean")throw Error("Inspect edit");
+const v=await tools.project_validate({action:"check"});
+text({changed:e.output.changed,success:v.success,source_state:v.output?.source_state,continuation:v.output?.continuation});"#,
         })],
     }
 }

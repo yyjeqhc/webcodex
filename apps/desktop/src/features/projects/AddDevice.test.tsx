@@ -42,7 +42,7 @@ describe("Add device invitation", () => {
     expect(api.createEnvironmentInvitation).not.toHaveBeenCalled();
     expect(screen.getByText("No invitation created")).toBeInTheDocument();
     expect(screen.getByText(/ChatGPT uses the separate OpenAI Tunnel/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Server URL for the other machine"), { target: { value: "https://other-machine.example:8787" } });
+    fireEvent.change(screen.getByLabelText("Server URL for the other device"), { target: { value: "https://other-machine.example:8787" } });
     const input = await invite();
     expect(api.createEnvironmentInvitation).toHaveBeenCalledExactlyOnceWith("saved-environment");
     expect(input).toHaveAttribute("type", "password"); expect(input).toHaveValue(code);
@@ -55,9 +55,9 @@ describe("Add device invitation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy pairing code" }));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledExactlyOnceWith(code));
     // Correcting connection guidance retains the same invitation and target.
-    fireEvent.change(screen.getByLabelText("Server URL for the other machine"), { target: { value: "http://127.0.0.1" } });
+    fireEvent.change(screen.getByLabelText("Server URL for the other device"), { target: { value: "http://127.0.0.1" } });
     expect(screen.getByRole("button", { name: "Copy Server URL" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Server URL for the other machine"), { target: { value: "https://corrected-server.example" } });
+    fireEvent.change(screen.getByLabelText("Server URL for the other device"), { target: { value: "https://corrected-server.example" } });
     fireEvent.click(screen.getByRole("button", { name: "Copy Server URL" }));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenLastCalledWith("https://corrected-server.example"));
     expect(api.createEnvironmentInvitation).toHaveBeenCalledTimes(1); expect(input).toHaveValue(code);
@@ -75,7 +75,7 @@ describe("Add device invitation", () => {
     ["not a URL", /without a path, credentials/],
   ])("blocks misleading remote address %s without signing an invitation", async (url, message) => {
     render(view()); await openDialog();
-    fireEvent.change(screen.getByLabelText("Server URL for the other machine"), { target: { value: url } });
+    fireEvent.change(screen.getByLabelText("Server URL for the other device"), { target: { value: url } });
     expect(screen.getByRole("alert")).toHaveTextContent(message);
     expect(screen.getByRole("button", { name: "Create invitation" })).toBeDisabled();
     fireEvent.submit(screen.getByRole("button", { name: "Create invitation" }).closest("form")!);
@@ -142,7 +142,7 @@ describe("Add device invitation", () => {
   it("supports keyboard form submission and returns focus to its trigger after Escape", async () => {
     render(view()); const trigger = screen.getByRole("button", { name: "Add device" }); trigger.focus();
     const dialog = await openDialog();
-    const url = screen.getByLabelText("Server URL for the other machine");
+    const url = screen.getByLabelText("Server URL for the other device");
     await waitFor(() => expect(url).toHaveFocus());
     fireEvent.submit(within(dialog).getByRole("button", { name: "Create invitation" }).closest("form")!);
     await screen.findByLabelText("One-time pairing code");

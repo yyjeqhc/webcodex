@@ -6,7 +6,7 @@ export function RunnerCapacitySummary({ capacity }: { capacity: RunnerCapacity }
   const labels = { offline: "Runner offline; capacity unknown.", stale: "Capacity needs refresh.", unsupported: "Job capacity is not reported by this Runner.", unavailable: "Job capacity unavailable." };
   return <p className="field-help" data-webcodex-capacity={capacity.state}>
     {capacity.state === "available"
-      ? `${capacity.running} ${s("running")} · ${capacity.queued} ${s("queued")} · ${capacity.limit} ${s("max")}`
+      ? s("{running} running · {queued} queued · limit {limit}").replace("{running}", String(capacity.running)).replace("{queued}", String(capacity.queued)).replace("{limit}", String(capacity.limit))
       : s(labels[capacity.state])}
   </p>;
 }

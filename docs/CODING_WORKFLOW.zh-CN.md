@@ -51,6 +51,8 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
 
 默认情况下，它还会返回一个很小且有界的 `extensions` selection catalog：Skill metadata 来自 canonical 的 project / Runner-configured `skills.roots` / Runner-managed Skill Store 三类来源；Plugin metadata 只包含 configured working directory 与当前 Project root 匹配、且已 ready/committed 的 provider。该 metadata 不授予任何 authority，也不会自动读取 Skill body 或创建 Plugin binding；模型选择后使用 `read_skill_file` 读取 Skill 文本，`run_skill_resource` 只执行可信 Runner-configured live `scripts/` resource（由 `expected_definition_revision` fence definition）或 Runner-installed managed resource（另由 `expected_package_revision` fence package），Plugin 则走 `plugin_tool describe -> call`。Configured resource bytes 会一直保持 live 到实际执行时，并不会预先被 package revision 固定。只有当前模型上下文仍明确保留这些 discovery metadata 时，才应设置 `include_extension_catalog=false`。
 
+Skill 读取（`load_skill` 和 `read_skill_file`）返回规范化的包内路径 `skill_path`，供 `read_skill_file.path` 使用。Project Skill 另返回权威的项目相对路径 `project_path`：项目引用应使用它和返回的来源行号，即使包目录与 metadata name 不同。Runner-configured 和 managed Skill 不返回 `project_path`；引用其 Skill identity、`skill_path`、resource `sha256`、revision 和来源行号，不要编造项目路径。不会暴露 Skill 的本机根目录。
+
 跨轮次的重要工作可以用 durable Goal 记录目标和完成标准，无需用户管理步骤。`update_goal` 使用精确的 `expected_revision` 和 `idempotency_key` 编辑 active Goal：省略 `completion_conditions` 会保留原列表，传入 `[]` 则清空。替换条件沿用创建时的限制（最多八项，每项去除首尾空白后非空，且不超过 512 UTF-8 字节）。编辑完成标准保留已有步骤、checkpoint 和进度；不会自动判断验收、恢复执行或重新打开 completed/cancelled Goal。revision 冲突时重新读取；结果不确定时复用同一个 key 和完全相同的请求。
 
 ## Workbench 应用

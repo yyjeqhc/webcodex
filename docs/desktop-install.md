@@ -53,8 +53,8 @@ issues, and shared logs.
    network** on **Automatic** unless your environment requires **Direct** or a
    **Custom HTTP proxy**. After changing this setting, stop and restart the
    Tunnel; restarting WebCodex Desktop is not required.
-6. **Start the Tunnel.** Open **Connection → OpenAI Secure Tunnel** and select
-   **Start secure tunnel**. Continue only after WebCodex Desktop reports
+6. **Start the Tunnel.** Open **Connections → OpenAI Secure Tunnel** and select
+   **Start**. Continue only after WebCodex Desktop reports
    **OpenAI Secure Tunnel ready; waiting for ChatGPT**.
 7. **Add the plugin in ChatGPT Web.** Open
    [Security and login](https://chatgpt.com/#settings/Security), enable
@@ -229,7 +229,7 @@ After saving any required change, continue to step 6.
 
 **Start automatically** in each connection controls restoration when Desktop opens. For a Desktop-managed local Runtime, enabled connections with autostart resume after Runtime becomes ready, including when Runtime autostart is off but Runtime is already running. **Stop** disables that connection, so reopening does not restart it. Persistent environments delegate Tunnel lifecycle to system services; opening Desktop observes their actual status without restarting stopped services.
 
-Open **Connection**, select **OpenAI Secure Tunnel**, then click **Start secure tunnel**. Selection alone does not start or stop processes. If an existing tunnel reports an error, stop it before starting again; failures remain visible with a retry path. When local handoff is ready, Desktop should show wording such as:
+Open **Connections**, select **OpenAI Secure Tunnel**, then click **Start**. Selection alone does not start or stop processes. If an existing tunnel reports an error, stop it before starting again; failures remain visible with a retry path. When local handoff is ready, Desktop should show wording such as:
 
 > OpenAI Secure Tunnel ready; waiting for ChatGPT
 

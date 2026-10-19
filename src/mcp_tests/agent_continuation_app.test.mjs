@@ -883,6 +883,54 @@ test("teardown before a prepare response never dispatches a Host message", async
   assert.equal(hostMessages(view).length, 0);
 });
 
+for (const { label, mode, outcome, duration } of [
+  { label: "accepted", mode: "accept", outcome: "dispatch_accepted", duration: 37 },
+  { label: "rejected", mode: "reject", outcome: "delivery_unknown", duration: 37 },
+  { label: "timed out", mode: "timeout", outcome: "delivery_unknown", duration: 10000 },
+]) {
+  test(`opt-in Host dispatch timing reports ${label} without disclosing the message or changing delivery`, async () => {
+    const view = await boundView();
+    assert.equal(view.document.getElementById("timing-log").textContent, "", "diagnostics must be disabled by default");
+    view.nodes["timing-toggle"].onclick();
+    await view.reply(view.calls("get_agent_continuation_state").at(-1), toolResult({ agent_continuation: projection }));
+    await view.reply(view.calls("acquire_agent_continuation_wake").at(-1), toolResult({ wake }));
+    const sensitiveMessage = "PRIVATE_CONTINUATION_MESSAGE_CONTENT";
+    await view.reply(view.calls("prepare_agent_continuation_wake").at(-1), prepared(wake, sensitiveMessage));
+
+    assert.equal(hostMessages(view).length, 1);
+    const hostMessage = hostMessages(view)[0];
+    const before = view.nodes["timing-log"].textContent.split("\n").map(JSON.parse);
+    const starts = before.filter(event => event.event === "host_dispatch_start");
+    assert.equal(starts.length, 1);
+    assert.deepEqual(Object.keys(starts[0]).sort(), ["at_ms", "event", "hidden"]);
+    if (mode === "timeout") {
+      await view.fireTimers(10000);
+    } else {
+      view.advanceTime(duration);
+      if (mode === "reject") {
+        await view.reject(hostMessage, { code: -32000, message: "PRIVATE_HOST_ERROR" });
+      } else {
+        await view.reply(hostMessage, {});
+      }
+    }
+    const finish = view.calls("finish_agent_continuation_wake").at(-1);
+    assert.equal(finish.params.arguments.outcome, outcome);
+    assert.equal(hostMessages(view).length, 1, "diagnostics must not repeat an unknown delivery");
+
+    const logged = view.nodes["timing-log"].textContent;
+    const events = logged.split("\n").map(JSON.parse);
+    const results = events.filter(event => event.event === "host_dispatch_result");
+    assert.equal(results.length, 1);
+    assert.deepEqual(Object.keys(results[0]).sort(), ["at_ms", "duration_ms", "event", "hidden", "outcome"]);
+    assert.equal(results[0].outcome, outcome);
+    assert.equal(results[0].duration_ms, duration);
+    assert.ok(!logged.includes(sensitiveMessage));
+    assert.ok(!logged.includes("PRIVATE_HOST_ERROR"));
+    assert.ok(!logged.includes(wake.wake_id));
+    assert.ok(!logged.includes(wake.attempt_id));
+  });
+}
+
 test("Host dispatch rejection after prepare is unknown and never resent", async () => {
   const view = await boundView();
   await view.visibility(true);

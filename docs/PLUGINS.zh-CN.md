@@ -169,9 +169,21 @@ live provider 与最近一次 disposable `check` candidate 保留 bounded、cont
 本机 stderr ring；这个 local projection 不属于 Plugin gateway response。
 
 `call` 的 dispatch identity 只有这个 opaque `binding`；call 阶段不再接受
-`runner`、`plugin`、`tool` 作为路由字段。每次 describe 都会创建独立 binding，精确
+`runner`、`plugin`、`tool` 或 `project` 作为路由字段。每次 describe 都会创建独立 binding，精确
 记录当时观察到的 Runner instance、provider instance、tool name 和 schema；handle
 本身不会编码或暴露这些内部 identity。
+
+对 `projectBound` 工具，在 `describe` 时显式传入目标已授权 `project`。缺少它时，
+错误保留 `plugin_project_required`，并提示对同一 Runner/provider/tool 补充该 Project
+重新 describe；此时没有调用 provider 工具，也没有创建 binding。WebCodex 生成的
+gateway 错误还会将已有 recovery 投影到有界的 MCP 错误文本，供只展示文本的 Host
+使用；结构化错误字段仍为权威数据。恢复指导优先显示，避免长错误消息挤占原有
+1,024 字节文本上限。provider 自身返回的工具结果保持原样。Project selector
+内容非法与在 `call` 上传入 Project 会得到不同的参数提示。
+同一目标 Project 可复用已保留的 schema/binding，call 只传 `binding` 和符合 schema
+的 `arguments`。更换目标 Project 必须 describe 新目标并取得新 binding；仅删除
+call 上冲突的 Project 可能仍会选中旧目标。Session 或 recorder metadata 不能提供
+业务 Project。修正参数或重新 describe 不代表可以重放先前结果不明的操作；应先核对结果。
 
 `reload` 是 Windows、macOS、Linux 都可用的 authoritative reload 入口。Runner
 自己重新读取自己的 `runner.toml`；Server 不会上传 executable、env 或 raw Plugin

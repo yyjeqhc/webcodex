@@ -36,7 +36,7 @@ cargo build --locked --profile dogfood -p webcodex-cli -p webcodex -p webcodex-r
 
 此时选择 `target/dogfood`。三个程序都支持单独运行 `--build-info-json`，在启动服务/读取 Runtime 配置之前输出 schema version 1 的构建信息。不能识别的外部程序不会被默认视为兼容。macOS 签名、Gatekeeper 和 Computer Use 权限是独立的操作系统约束，不能用协议兼容代替它们。
 
-## 故障排查与支持包
+## 故障排查与诊断包
 
 “设置 → Runtime 与服务”先展示服务状态和本机服务的启动、停止、重启操作，再展示程序来源与兼容性；构建信息在“版本与文件详情”中。已安装环境的程序统一通过“关于与更新”升级。
 
@@ -46,9 +46,9 @@ cargo build --locked --profile dogfood -p webcodex-cli -p webcodex -p webcodex-r
 
 “保存并重启 Server”使用原来的进程或 native 服务管理方式应用设置，有 Runner 时等待现有 Runner 重连，不杀掉健康 Runner，不接管用户自管服务。重启中断须明确确认；未确认生效时保留待应用状态和安全错误原因。重启失败仍保留已保存设置，readiness 进入终态，并记录具体 Runtime 错误。
 
-主侧栏的“运行控制台”说明 Console 的用途，“在浏览器中打开”使用当前本地 Server 的 `/runtime`，不在 URL 中放凭据。“复制 Runtime Console 凭据”是独立敏感操作，由 native 层读取当前托管用户凭据并复制到剪贴板，不显示、不写入 Activity，不复制 Runner token。剪贴板管理器可能保留数据，请勿分享。
+主侧栏的“Runtime Console”说明 Console 的用途，“在浏览器中打开”使用当前本地 Server 的 `/runtime`，不在 URL 中放凭据。“复制 Runtime Console 凭据”是独立敏感操作，由 native 层读取当前托管用户凭据并复制到剪贴板，不显示、不写入 Activity，不复制 Runner token。剪贴板管理器可能保留数据，请勿分享。
 
-“复制诊断报告”与“导出支持包”只使用固定安全投影，不包含项目代码、凭据、环境或 runner.toml 正文、任意 stdout/stderr、剪贴板或完整请求/结果。ZIP 只有报告 JSON、Markdown 与安全事件 JSON，不能覆盖已有文件。
+“复制诊断报告”与“导出诊断包”只使用固定安全投影，不包含项目代码、凭据、环境或 runner.toml 正文、任意 stdout/stderr、剪贴板或完整请求/结果。ZIP 只有报告 JSON、Markdown 与安全事件 JSON，不能覆盖已有文件。
 
 ## 活动与续轮证据
 

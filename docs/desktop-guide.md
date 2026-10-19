@@ -33,16 +33,16 @@ credential, database, log or project files and cannot restore an Environment.
 Incomplete inventories cannot be exported. Full secret backup and restore require
 a separate design. See the [schema and validation report](implementation/configuration-inventory-backup-manifest.md).
 
-## Runner Job capacity
+## Runner job capacity
 
-**Projects → execution devices** shows each Runner's reported durable Job usage:
+**Projects → Devices** shows each Runner's reported durable Job usage:
 running, queued, and the effective concurrency limit. Counts follow the Server's
 capacity aggregate: stop-requested Jobs remain in the running count until termination
 because they still occupy execution slots. Offline, stale, unavailable, or unsupported observations
 never mean zero usage; ordinary request-dispatch queues are separate.
 
-In **Settings → Runtime & services → Runner Job capacity**, Desktop-managed local
-Runners can save **Maximum concurrent Jobs** as a whole number from **1 to 64**.
+In **Settings → Runtime & services → Runner job capacity**, Desktop-managed local
+Runners can save **Maximum concurrent jobs** as a whole number from **1 to 64**.
 The default remains **4**. The saved value and current effective limit are shown
 separately. **Save for next restart** only writes the exact local Runner's
 configuration, preserves unrelated settings, and rejects a conflicting edit.
@@ -97,11 +97,11 @@ Persistent environments use the shared setup and service lifecycle described in 
 
 You do not need to stop the runtime or OpenAI Secure Tunnel when ChatGPT moves between workspace directories. Compatible paths are resolved against current Runner policy and registered lazily by the runtime.
 
-Projects lists working folders before **Task execution devices**. Runner reads files and runs commands on each device; **Connected to Server** describes its service connection. An unavailable desktop session concerns screenshots, windows, mouse and keyboard actions. File and command tools do not depend on that session. Missing or stale observations remain unconfirmed, and a connected desktop session does not establish system permissions. The local permission shortcut opens Settings without starting services or requesting permissions.
+Projects lists working folders before **Devices**. Runner reads files and runs commands on each device; **Connected to Server** describes its service connection. An unavailable desktop session concerns screenshots, windows, mouse and keyboard actions. File and command tools do not depend on that session. Missing or stale observations remain unconfirmed, and a connected desktop session does not establish system permissions. The local permission shortcut opens Settings without starting services or requesting permissions.
 
 Activity separates **Tool calls**, **Workflow Sessions**, and **Service events**. Call sources show their latest call and open the full history. **Call completed** describes execution, not ChatGPT receipt. Sessions show progress, running jobs, and outstanding items; **Open** does not imply running. Check results use readable states, without duplicate job counts or empty attention items. HTTP delivery evidence and internal identifiers remain in details.
 
-Home and the sidebar label the local Runner as **Local task service** and count locally ready tunnels without claiming current ChatGPT presence. Project session counts describe open sessions. On platforms without native permission probing, desktop access settings explain the missing probe and point to desktop sign-in and the Projects session status; missing permission evidence does not imply unavailable desktop tools.
+Home and the sidebar show the **Local Runner** status and count locally ready Tunnels without claiming current ChatGPT presence. Project session counts describe open sessions. On platforms without native permission probing, desktop access settings explain the missing probe and point to desktop sign-in and the Projects session status; missing permission evidence does not imply unavailable desktop tools.
 
 ## Connections and recovery
 
@@ -128,7 +128,7 @@ A real observed project call verifies prior client use, not current host presenc
 
 Paths appear as individual rows. Pick a file or folder, or enter its full path. Additions, edits, and removals remain drafts until **Save**; **Cancel** restores the selected category's saved paths. When a project has no Skills, use **Add Skill Folder** above the preview. Failed settings reads show a refresh prompt and retain existing path drafts.
 
-**Extensions** groups Coding Agents, SSH resources, MCP servers, Skills, and Instructions into categories. Configure shared local Runner paths without selecting a project; the separate project picker selects the read-only catalog preview. The global instruction editor remains independent of that preview. Extensions uses category navigation. Instructions and Skills show only their own path settings. Switching categories or project previews retains drafts; saving one category does not apply unsaved changes in another. Save up to 16 absolute instruction paths and 16 absolute Skill roots. Saves target the exact observed local Runner configuration and reject stale path edits, preserving unrelated configuration, comments, credentials, and existing provider settings. A viewer does not configure a remote Runner's local files through this panel.
+**Extensions** groups Coding agents, SSH resources, MCP servers, Skills, and Instructions into categories. Configure shared local Runner paths without selecting a project; the separate project picker selects the read-only catalog preview. The global instruction editor remains independent of that preview. Extensions uses category navigation. Instructions and Skills show only their own path settings. Switching categories or project previews retains drafts; saving one category does not apply unsaved changes in another. Save up to 16 absolute instruction paths and 16 absolute Skill roots. Saves target the exact observed local Runner configuration and reject stale path edits, preserving unrelated configuration, comments, credentials, and existing provider settings. A viewer does not configure a remote Runner's local files through this panel.
 
 **Add a native Tool Plugin** registers a new trusted provider by ID, display name, executable, string-array arguments, and optional absolute working directory. Existing IDs are never overwritten. Arguments are write-only and cleared after submission; use configuration profiles for credentials. The saved registration list is not a live health check. Existing registration edits/removal and advanced provider fields remain in the shown Runner configuration file.
 

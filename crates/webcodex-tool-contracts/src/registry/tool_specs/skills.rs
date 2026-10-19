@@ -12,7 +12,7 @@ pub(super) fn tool_descriptors() -> Vec<ToolDescriptor> {
     vec![
         tool_descriptor(
             "load_skill",
-            "Load one uniquely named Skill by exact case-insensitive name for an authorized Project. Returns the selected descriptor plus bounded SKILL.md text and revision metadata in one read-only call. Ambiguous names fail closed; scripts and other Skill resources are never executed.",
+            "Load one uniquely named Skill by exact case-insensitive name for an authorized Project. Returns the selected descriptor plus bounded SKILL.md text and revision metadata in one read-only call. Cite project_path with returned source lines for Project Skills; skill_path is package-relative for further Skill reads. Runner Skills have no project_path; never invent one. Ambiguous names fail closed; scripts and other Skill resources are never executed.",
         ),
         tool_descriptor(
             "run_skill_resource",
@@ -24,7 +24,7 @@ pub(super) fn tool_descriptors() -> Vec<ToolDescriptor> {
         ),
         tool_descriptor(
             "read_skill_file",
-            "Read one bounded UTF-8 text resource from a selected project, configured live Runner Skill, or active operator-installed immutable Skill. expected_definition_revision guards every source; expected_package_revision applies only to managed installed Skills. Configured live files are re-read from the Runner filesystem and carry no package revision. Scripts are text-only resources and are never executed by this tool.",
+            "Read one bounded UTF-8 text resource from a selected project, configured live Runner Skill, or active operator-installed immutable Skill. expected_definition_revision guards every source; expected_package_revision applies only to managed installed Skills. Configured live files are re-read from the Runner filesystem and carry no package revision. Use skill_path as the package-relative path input, and project_path with source lines for Project citations. Runner Skills omit project_path; cite their Skill identity, skill_path, sha256, revisions and source lines instead of inventing a Project path. Scripts are text-only resources and are never executed by this tool.",
         ),
         tool_descriptor(
             "list_skill_versions",

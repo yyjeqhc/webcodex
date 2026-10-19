@@ -168,6 +168,54 @@ class HostTimingReportTests(unittest.TestCase):
                 self.assertNotIn("private-secret", process.stderr)
                 self.assertNotIn(str(base), process.stderr)
 
+    def test_deeply_nested_json_reports_static_error_under_byte_limit(self):
+        # A bounded raw input can still exhaust json.loads parser recursion.
+        with tempfile.TemporaryDirectory() as root:
+            baseline = Path(root) / "private-baseline.json"
+            candidate = Path(root) / "candidate.json"
+            baseline.write_text("[" * 12_000 + "0" + "]" * 12_000, encoding="utf-8")
+            candidate.write_text(json.dumps(self.summarize()), encoding="utf-8")
+            self.assertLess(baseline.stat().st_size, report.MAX_INPUT_JSON_BYTES)
+            process = subprocess.run([
+                sys.executable, str(Path(report.__file__).resolve()),
+                "compare", "--baseline", str(baseline), "--candidate", str(candidate),
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(process.returncode, 2)
+            self.assertEqual(process.stdout, "")
+            self.assertEqual(process.stderr, "host_timing_dogfood: invalid input JSON\n")
+            self.assertNotIn(str(baseline), process.stderr)
+
+    def test_oversized_cohort_policy_is_rejected_even_when_valid_json(self):
+        # Valid policy with excessive whitespace used to be fully read and
+        # accepted, defeating bounded handling of local operator input.
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "cohort.json"
+            source.write_text(json.dumps(policy()) + " " * 70_000, encoding="utf-8")
+            with self.assertRaises(report.ReportError):
+                report._load_policy(source)
+
+    def test_compare_oversized_utf8_summary_fails_closed_without_leaking_input(self):
+        # Under 64k characters but over 64KiB UTF-8; unknown fields in old
+        # summaries were otherwise accepted after unbounded JSON parsing.
+        with tempfile.TemporaryDirectory() as root:
+            baseline = Path(root) / "baseline.json"
+            candidate = Path(root) / "candidate.json"
+            oversized = {**self.summarize(), "private_note": "SECRET_MARKER" + "ž" * 40_000}
+            baseline.write_text(json.dumps(oversized, ensure_ascii=False), encoding="utf-8")
+            other = self.summarize()
+            other["cohort"] = policy("candidate", wait=8)
+            candidate.write_text(json.dumps(other), encoding="utf-8")
+            process = subprocess.run([
+                sys.executable, str(Path(report.__file__).resolve()),
+                "compare", "--baseline", str(baseline), "--candidate", str(candidate),
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(process.returncode, 2)
+            self.assertEqual(process.stdout, "")
+            self.assertIn("host_timing_dogfood:", process.stderr)
+            self.assertNotIn("Traceback", process.stderr)
+            self.assertNotIn("SECRET_MARKER", process.stderr)
+            self.assertNotIn(str(baseline), process.stderr)
+
     def test_legacy_duration_is_not_labeled_host_latency(self):
         result = self.summarize()
         self.assertEqual(

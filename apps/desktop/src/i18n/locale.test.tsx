@@ -90,7 +90,7 @@ describe("LocaleProvider", () => {
     render(<LocaleProvider><LocaleProbe /><TextProbe /></LocaleProvider>);
     expect(screen.getByRole("combobox")).toHaveValue("zh-TW");
     expect(screen.getByRole("option", { name: "繁體中文" })).toBeInTheDocument();
-    expect(screen.getByText("設定 · 工作概覽 · 自動啟動 · 儲存指令 · 檢查連線")).toBeInTheDocument();
+    expect(screen.getByText("設定 · 概覽 · 自動啟動 · 儲存指令 · 檢查連線")).toBeInTheDocument();
   });
   it.each(LANGUAGES)("persists and restores $value", async ({ value }) => {
     const first = render(<LocaleProvider><LocaleProbe /></LocaleProvider>);

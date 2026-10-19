@@ -62,8 +62,8 @@ function ProjectRow({ project, compact = false, onUnregister, selected = false, 
   const name = projectName(project);
   const branch = gitStatus === "unconfirmed" || !project.connected ? p("projectStatusUnconfirmed") : git?.branch || (git?.non_git_project ? p("notGit") : "—");
   const changes = <ProjectGitChanges git={git} loading={gitStatus === "loading"} />;
-  const activity = project.sessions ? `${project.sessions.active_sessions}${project.sessions.sessions_truncated ? "+" : ""} ${p("activeSessions")}` : p(project.id ? "unknown" : "setup");
   const activityValue = project.sessions ? `${project.sessions.active_sessions}${project.sessions.sessions_truncated ? "+" : ""}` : "—";
+  const activity = project.sessions ? p("openSessionsCount").replace("{count}", activityValue) : p(project.id ? "unknown" : "setup");
   const path = displayProjectPath(project.path);
   const runner = projectRunnerId(project);
   const origin = runner ? <span className="project-table-meta" title={`${p("executionDevice")} · ${runner}`}>{runner === state.workspace_runner?.client_id ? p("thisComputer") : runner}</span> : null;

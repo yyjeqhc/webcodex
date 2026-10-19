@@ -22,6 +22,9 @@ MAX_ROWS = 100_000
 # Read only bounded diagnostic projections from potentially larger audit rows.
 # Oversized summaries remain selected events but cannot provide canonical proof.
 MAX_SUMMARY_BYTES = 64 * 1024
+# Operator-supplied cohort and comparison JSON must also be bounded before
+# decoding; a valid but huge input cannot exhaust memory during parsing.
+MAX_INPUT_JSON_BYTES = 64 * 1024
 STRUCTURED = frozenset({
     "run_process", "run_script", "run_shell", "run_skill_resource",
     "cargo_check", "cargo_test", "cargo_fmt", "go_test",
@@ -61,10 +64,25 @@ def _validate_policy(value: object) -> dict:
     return value
 
 
+def _read_bounded_json(path: Path) -> object:
+    try:
+        with path.open("rb") as source:
+            raw = source.read(MAX_INPUT_JSON_BYTES + 1)
+    except OSError as exc:
+        raise ReportError("cannot read input JSON") from exc
+    if len(raw) > MAX_INPUT_JSON_BYTES:
+        raise ReportError("input JSON exceeds bounded size")
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeError, ValueError, RecursionError) as exc:
+        # Deeply nested JSON can exhaust the parser stack below the byte cap.
+        raise ReportError("invalid input JSON") from exc
+
+
 def _load_policy(path: Path) -> dict:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError) as exc:
+        value = _read_bounded_json(path)
+    except ReportError as exc:
         raise ReportError("cannot read cohort configuration JSON") from exc
     return _validate_policy(value)
 
@@ -335,8 +353,8 @@ def main(argv: list[str] | None = None) -> int:
             result = summarize(args.audit_db, _load_policy(args.policy), args.project,
                                _timestamp(args.since_utc), _timestamp(args.until_utc))
         else:
-            result = compare(json.loads(args.baseline.read_text(encoding="utf-8")),
-                             json.loads(args.candidate.read_text(encoding="utf-8")))
+            result = compare(_read_bounded_json(args.baseline),
+                             _read_bounded_json(args.candidate))
         output = json.dumps(result, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
         if args.output:
             args.output.write_text(output, encoding="utf-8")

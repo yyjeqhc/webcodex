@@ -233,7 +233,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 nullable_schema("string", "Active immutable whole-package revision for runner-installed Skills; null for project/configured Skills."),
             ),
             ("definition_revision", schema_type("string", "Current SKILL.md content digest.")),
-            ("path", schema_type("string", "Package-relative SKILL.md path.")),
+            ("skill_path", schema_type("string", "Normalized package-relative SKILL.md path; use as read_skill_file.path.")),
+            ("project_path", schema_type("string", "Authoritative Project-relative citation path; present only for project-source Skills. Never infer it from the Skill name.")),
             ("sha256", schema_type("string", "Full current SKILL.md SHA-256.")),
             ("text", schema_type("string", "Bounded UTF-8 SKILL.md text.")),
             ("start_line", schema_type("integer", "Effective 1-based selected start line.")),
@@ -367,8 +368,12 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
             (
-                "path",
-                schema_type("string", "Package-relative resource path."),
+                "skill_path",
+                schema_type("string", "Normalized package-relative resource path; use as read_skill_file.path."),
+            ),
+            (
+                "project_path",
+                schema_type("string", "Authoritative Project-relative citation path; present only for project-source Skills. Never infer it from the Skill name."),
             ),
             (
                 "sha256",

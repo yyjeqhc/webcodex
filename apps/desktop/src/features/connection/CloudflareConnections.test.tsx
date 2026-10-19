@@ -35,7 +35,7 @@ describe("Cloudflare connection configuration",()=>{
     api.saveTunnelProfile.mockImplementation(async request=>{saved=structuredClone(request);return {};});
     render(wrap(<ConnectionEditor profile={null} persistentLocal onState={vi.fn()} onClose={vi.fn()} />));
     fireEvent.change(screen.getByLabelText("Connection provider"),{target:{value:"cloudflare_quick"}});
-    expect(screen.queryByLabelText("API Key")).toBeNull();expect(screen.queryByLabelText("Tunnel ID")).toBeNull();expect(screen.queryByLabelText("Tunnel token")).toBeNull();
+    expect(screen.queryByLabelText("API key")).toBeNull();expect(screen.queryByLabelText("Tunnel ID")).toBeNull();expect(screen.queryByLabelText("Tunnel token")).toBeNull();
     expect(screen.getByText(/addresses change on reconnect/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Name"),{target:{value:"Quick"}});
     fireEvent.click(screen.getByRole("button",{name:"Save and apply"}));

@@ -45,7 +45,7 @@ WebCodex 可以在已注册的项目范围内读取和修改文件、执行命�
 5. **只在有需要时配置网络。**一般保持**设置 → OpenAI Tunnel 网络 → 自动**；
    只有环境需要时才选择**直接连接**或**自定义 HTTP 代理**。修改后停止并重新
    启动 Tunnel 即可，不需要重启 WebCodex Desktop。
-6. **启动 Tunnel。**进入**连接 → OpenAI Secure Tunnel**，点击**启动安全隧道**。
+6. **启动 Tunnel。**进入**连接 → OpenAI Secure Tunnel**，点击**启动**。
    看到“**OpenAI Secure Tunnel 已就绪，等待 ChatGPT 连接**”后再继续。
 7. **在 ChatGPT 网页版添加插件。**打开[账户安全设置](https://chatgpt.com/#settings/Security)，
    开启**开发人员模式**，再打开[插件页面](https://chatgpt.com/plugins)。创建插件，
@@ -208,7 +208,7 @@ Runner；ChatGPT 的真实项目读取仍用于单独确认整条连接。
 
 连接配置中的**自动启动**控制重开 Desktop 时是否恢复该连接。使用桌面管理的本机 Runtime 时，Runtime 就绪后会恢复已启用且允许自动启动的连接；这也适用于 Runtime 本身关闭了自动启动、但已经在运行的情况。点击**停止**会停用该连接，重开不会再次启动它。持久环境中的 Tunnel 由系统服务管理，打开 Desktop 会读取实际服务状态，不会重启已停止的服务。
 
-进入 **连接**，选择 **OpenAI Secure Tunnel**，再点击 **启动安全隧道**。仅选择连接方式不会启动或停止进程。已有隧道报错时，先点击停止，再重新启动；失败后页面会保留错误和重试入口。运行成功后，Desktop 会显示类似：
+进入 **连接**，选择 **OpenAI Secure Tunnel**，再点击 **启动**。仅选择连接方式不会启动或停止进程。已有隧道报错时，先点击停止，再重新启动；失败后页面会保留错误和重试入口。运行成功后，Desktop 会显示类似：
 
 > OpenAI Secure Tunnel 已就绪，等待 ChatGPT 连接
 

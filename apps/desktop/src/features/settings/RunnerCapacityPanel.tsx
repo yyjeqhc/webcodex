@@ -119,14 +119,14 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
     ? <div className="error-card" role="alert">{s("Saved Runner settings could not be read or verified. Refresh before changing concurrency.")}</div>
     : error && <div className="error-card" role="alert"><strong>{error.message}</strong><span>{error.next_action}</span></div>;
   return <section className="settings-section" aria-labelledby="runner-capacity-title">
-    <h2 id="runner-capacity-title">{s("Runner Job capacity")}</h2>
-    <p className="field-help">{s("Server-reported durable Job capacity. Stop-requested Jobs remain in the running count until termination because they still occupy execution slots. Other request queues are separate.")}</p>
+    <h2 id="runner-capacity-title">{s("Runner job capacity")}</h2>
+    <p className="field-help">{s("Server-reported durable job capacity. Stop-requested jobs remain in the running count until termination because they still occupy execution slots. Other request queues are separate.")}</p>
     <RunnerCapacitySummary capacity={capacity} />
-    {!stale && observation?.runner.jobs && <section className="workspace-section" aria-label={s("Runner Jobs")}>
-      <h3>{s("Runner Jobs")}</h3>
-      <p className="field-help">{s("Read-only Job inventory. Stop controls require a separately authorized action.")}</p>
+    {!stale && observation?.runner.jobs && <section className="workspace-section" aria-label={s("Runner jobs")}>
+      <h3>{s("Runner jobs")}</h3>
+      <p className="field-help">{s("Read-only job inventory. Stop controls require a separately authorized action.")}</p>
       {observation.runner.jobs.length === 0
-        ? <p>{s("No retained Jobs in this inventory.")}</p>
+        ? <p>{s("No retained jobs in this inventory.")}</p>
         : <ul className="changed-files" data-testid="runner-job-inventory">{observation.runner.jobs.map(job => <li key={job.job_id}>
             <span><strong>{job.kind}</strong> · <code>{job.job_id}</code> · {job.status}
               {job.elapsed_secs !== undefined && ` · ${job.elapsed_secs}s`}
@@ -134,12 +134,12 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
               {job.session_id && <small> · {job.session_id}</small>}
             </span>
           </li>)}</ul>}
-      {observation.runner.jobs_truncated && <p className="field-help">{s("Inventory incomplete; some Jobs are not shown.")}</p>}
+      {observation.runner.jobs_truncated && <p className="field-help">{s("Inventory incomplete; some jobs are not shown.")}</p>}
     </section>}
     {loading ? <p role="status">{s("Loading…")}</p> : <>
-      <p>{s("Saved limit")}: {savedDisplay} · {s("Default")}: 4</p>
+      <p>{s("Saved limit: {saved} · Default: {default}").replace("{saved}", String(savedDisplay)).replace("{default}", "4")}</p>
       {saved != null && savedLimit !== null && <p role="status">{s(capacity.state !== "available" ? "Saved for the next Runner start; the effective limit is unknown." : capacity.limit !== savedLimit ? "Restart required to apply the saved limit." : "Saved limit is in effect.")}</p>}
-      {saved !== undefined && <div className="field-group"><label htmlFor="runner-job-concurrency">{s("Maximum concurrent Jobs")}</label>
+      {saved !== undefined && <div className="field-group"><label htmlFor="runner-job-concurrency">{s("Maximum concurrent jobs")}</label>
         <input id="runner-job-concurrency" type="number" min={1} max={64} step={1} value={draft ?? ""} onChange={event => {
           editBase.current = event.target.value === String(savedLimit) ? undefined : editBase.current === undefined ? saved : editBase.current;
           setDraft(event.target.value);
@@ -156,7 +156,7 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
     </>}
     {!confirm && errorCard}
     {confirm && <WorkspaceDialog title={s("Restart Runner?")} onClose={() => setConfirm(null)} busy={busy}>
-      <p>{s("Restarting applies the saved Runner configuration and may interrupt running or queued Jobs, browser sessions and handoffs. Save your work before continuing.")}</p>
+      <p>{s("Restarting applies the saved Runner configuration and may interrupt running or queued jobs, browser sessions and handoffs. Save your work before continuing.")}</p>
       <RunnerCapacitySummary capacity={capacity} />
       {errorCard}
       <div className="connection-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setConfirm(null)}>{s("Cancel")}</button>

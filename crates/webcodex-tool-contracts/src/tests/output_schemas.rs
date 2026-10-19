@@ -2772,6 +2772,8 @@ fn skill_load_declares_exact_loading_and_ambiguity_output_contract() {
         "catalog_revision",
         "descriptor",
         "skill_id",
+        "skill_path",
+        "project_path",
         "name",
         "text",
         "definition_revision",
@@ -2784,6 +2786,12 @@ fn skill_load_declares_exact_loading_and_ambiguity_output_contract() {
     ] {
         assert!(fields.contains(field), "load_skill missing {field}");
     }
+    assert!(!fields.contains("path"));
+    let skill_specs = crate::registry::skill_runtime_tool_specs();
+    let read_fields = output_schema_field_names(spec_named(&skill_specs, "read_skill_file"));
+    assert!(read_fields.contains("skill_path"));
+    assert!(read_fields.contains("project_path"));
+    assert!(!read_fields.contains("path"));
     assert_ne!(fields, default_output_schema_field_names());
 }
 

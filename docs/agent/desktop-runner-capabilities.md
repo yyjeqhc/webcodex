@@ -8,14 +8,14 @@ management.
 ## User workflow
 
 The existing **Extensions** route now starts with first-class tabs for **Coding
-Agents**, **SSH Resources**, **MCP Providers**, **Skills**, and **Instructions**.
+agents**, **SSH resources**, **MCP servers**, **Skills**, and **Instructions**.
 Native Tool Plugins remain under Advanced. Project selection and instruction/
 Skill path management stay on their project-specific tabs.
 
 ### Coding Agents
 
 1. Install an ACP-compatible executable through an operator-controlled process.
-2. Choose **Add Coding Agent**, then supply its name, logical Provider ID,
+2. Choose **Add coding agent**, then supply its name, logical Provider ID,
    absolute executable path, and JSON array of literal arguments.
 3. Advanced settings optionally map child environment variable names to Runner
    environment variable names, allow specific ACP configuration options, and
@@ -43,7 +43,7 @@ The inventory always comes from the exact Desktop Runner's canonical
 `manage_ssh_resource` gateway. It shows only name, Managed/Static source, active state,
 and pending-restart state. Static resources have no Remove action.
 
-**Add SSH Resource** accepts a name, a target, and optional default working
+**Add SSH resource** accepts a name, a target, and optional default working
 directory. A target can be `user@host`, a hostname, or an existing OpenSSH alias
 such as `special`. OpenSSH resolves aliases. Desktop does not parse or import
 `~/.ssh/config`, identity files, jump hosts, passwords, or keys.
@@ -153,7 +153,7 @@ operator authority. Old persisted codes migrate with the flag false, and old
 transport tokens do not gain SSH or coding-agent permissions.
 
 An existing Desktop-owned local connection can choose **Authorize Runner
-Capabilities** from either **Coding Agents** or **SSH Resources**, review the
+capabilities** from either **Coding agents** or **SSH resources**, review the
 same scope description, and explicitly confirm. The shared flow observes current
 user-token scopes through a closed native `runner_capability_authorization` call
 to `/api/pairing/runner-capabilities/status`. This read needs `runtime:read`, not

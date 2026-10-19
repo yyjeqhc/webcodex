@@ -69,7 +69,7 @@ confirmation additionally checks its geometry and action reachability.
 | Inventory | Mounted coverage in English and Chinese |
 | --- | --- |
 | Main destinations | Home, Projects, all three Activity tabs, Connection, Console |
-| Extensions | Coding Agents, SSH Resources, MCP providers, native plugins, skills, instructions |
+| Extensions | Coding agents, SSH resources, MCP servers, native plugins, skills, instructions |
 | Settings | General, access, network, runtime, configuration, diagnostics, about |
 | Setup and banners | First run, create/join/quick-share setup, setup completion, running operation, update confirmation |
 | Project dialogs | Add local folder/device, single and batch unregister |

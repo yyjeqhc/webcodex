@@ -131,8 +131,8 @@ function RuntimePanelContent({ state, onState, onActivity, onUpdates }: RuntimeP
     {!confirm && errorCard}
     {busy && <p role="status">{s("Loading…")}</p>}
     {confirm && <WorkspaceDialog title={s("Runtime restart warning")} onClose={() => setConfirm(null)} busy={disabled}>
-      <p>{s("Restarting the Desktop-owned Runner may interrupt active Jobs.")}</p>
-      <p>{settings?.active_jobs == null ? s("Job count is not confirmed.") : `${s("Active Jobs")}: ${settings.active_jobs}`}</p>
+      <p>{s("Switching restarts the Desktop-managed Runtime and may interrupt active jobs.")}</p>
+      <p>{settings?.active_jobs == null ? s("Job count is not confirmed.") : s("Active jobs: {count}").replace("{count}", String(settings.active_jobs))}</p>
       {errorCard}
       <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => setConfirm(null)}>{s("Cancel")}</button>
         {onActivity && <button type="button" className="text-button" disabled={disabled} onClick={onActivity}>{s("View activity")}</button>}

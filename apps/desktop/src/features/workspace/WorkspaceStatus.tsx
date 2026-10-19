@@ -43,7 +43,7 @@ export function desktopStatusPresentation(state: DesktopState, p: (key: ProductK
   const quickShareStatus = state.readiness.exposure === "remote_ready" ? "ready" : state.readiness.exposure;
   return {
     localRunnerConfigured,
-    primaryLabel: p(localRunnerConfigured ? "localExecutionService" : "serverConnection"),
+    primaryLabel: p(localRunnerConfigured ? "localRunner" : "serverConnection"),
     primaryStatus: localRunnerConfigured ? state.readiness.runner : state.readiness.server,
     primaryReady: localRunnerConfigured ? state.readiness.runtime_ready : state.readiness.server === "ready",
     connectionLabel: quickShare ? "Quick Share" : p("tunnels"),
@@ -56,7 +56,7 @@ export function WorkspaceStatus({ state }: { state: DesktopState }) {
   const p = useProduct();
   const presentation = desktopStatusPresentation(state, p);
   const values: Array<[string, string]> = [[p("serverConnection"), state.readiness.server]];
-  if (presentation.localRunnerConfigured) values.push([p("localExecutionService"), state.readiness.runner]);
+  if (presentation.localRunnerConfigured) values.push([p("localRunner"), state.readiness.runner]);
   if (state.topology?.experience === "quick_share") values.push(["Quick Share", state.readiness.exposure === "remote_ready" ? "ready" : state.readiness.exposure]);
   return <dl className="workspace-status-strip" aria-label={p("workspace")} role="status">
     {values.map(([name, status]) => <div key={name}><dt>{name}</dt><dd><i className={`status-dot ${status === "ready" ? "ready" : status === "error" ? "error" : "unknown"}`} aria-hidden="true" />{p(statusKey(status))}</dd></div>)}

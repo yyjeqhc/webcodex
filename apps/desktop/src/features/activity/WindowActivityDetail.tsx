@@ -26,13 +26,13 @@ export function WindowActivityDetail({ id, onClose }: { id: string; onClose: () 
   const detail = observed?.detail;
   const name = (project?: string) => projectName(workspace.projects.find(row => row.id === project) || { id: project || "—" });
   const calls = detail ? recentMeaningfulCalls(detail) : [];
-  return <WorkspaceDialog title={`${s("Request details")} · ${id.slice(-12)}`} onClose={onClose}>
+  return <WorkspaceDialog title={`${s("Call details")} · ${id.slice(-12)}`} onClose={onClose}>
     <div className="shell-actions"><button type="button" className="secondary-button" onClick={() => setRevision(value => value + 1)}>{p("refresh")}</button></div>
     {failed && <p role="alert">{p("loadError")}</p>}
     {!detail && !failed && <p role="status">{p("loading")}</p>}
     {detail && <>
-      <div className="session-detail-meta"><span className="workspace-badge">{detail.active_count ? `${s("Requests in progress")}: ${detail.active_count}` : s("Observed calls")}</span><span>{observationTime(detail.last_meaningful_activity_at_ms || detail.last_seen_at_ms, locale)}</span></div>
-      {!!detail.active_requests?.length && <section className="shell-subsection"><h3>{s("Requests in progress")}</h3>{detail.active_requests.map(request => <article className="active-request-row" key={request.server_trace_id}>
+      <div className="session-detail-meta"><span className="workspace-badge">{detail.active_count ? s("Calls in progress: {count}").replace("{count}", String(detail.active_count)) : s("Observed calls")}</span><span>{observationTime(detail.last_meaningful_activity_at_ms || detail.last_seen_at_ms, locale)}</span></div>
+      {!!detail.active_requests?.length && <section className="shell-subsection"><h3>{s("Calls in progress")}</h3>{detail.active_requests.map(request => <article className="active-request-row" key={request.server_trace_id}>
         <strong>{request.tool_name ?? s("Unknown")}</strong><span>{name(request.project)}</span><time>{Math.max(0, Math.floor(request.elapsed_ms / 1000))} s</time>
         <details><summary>{s("Details")}</summary><code>{request.server_trace_id}</code></details>
       </article>)}</section>}

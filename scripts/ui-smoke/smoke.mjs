@@ -232,7 +232,7 @@ try {
     await page.getByRole('button', { name: 'Add connection' }).click();
     await page.getByRole('dialog').getByLabel('Name').fill('Fixture connection');
     await page.getByRole('dialog').getByLabel('Tunnel ID').fill('tunnel_ui_fixture');
-    await page.getByRole('dialog').getByLabel('API Key').fill('fixture-only-api-key');
+    await page.getByRole('dialog').getByLabel('API key').fill('fixture-only-api-key');
     await page.getByRole('dialog').getByRole('button', { name: 'Save and apply' }).click();
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
     const saved = await page.evaluate(() => window.__fixtureCalls.find(call => call.cmd === 'save_tunnel_profile'));
@@ -250,7 +250,7 @@ try {
       assert.equal(await page.locator('.workspace-project-table tbody tr').count(), 3);
       report.checks.push('One Runner: select and add exact project roots');
       await desktopNav('extensions');
-      assert.equal(await page.getByRole('tab', { name: 'Coding Agents' }).getAttribute('aria-selected'), 'true');
+      assert.equal(await page.getByRole('tab', { name: 'Coding agents' }).getAttribute('aria-selected'), 'true');
       assert.equal(await page.locator('.activity-project-filter').count(), 0);
       await page.getByRole('button', { name: 'Authorize Runner Capabilities', exact: true }).click();
       await page.getByRole('dialog').waitFor();
@@ -271,7 +271,7 @@ try {
       await page.getByRole('button', { name: 'Restart Runner', exact: true }).click();
       await page.getByText('Configured · Active', { exact: true }).waitFor();
       await screenshot('desktop-acp-active-1440');
-      await page.getByRole('tab', { name: 'SSH Resources', exact: true }).click();
+      await page.getByRole('tab', { name: 'SSH resources', exact: true }).click();
       await page.getByRole('button', { name: 'Add SSH Resource', exact: true }).click();
       await page.getByRole('dialog').getByLabel('Resource Name', { exact: true }).waitFor();
       await screenshot('desktop-ssh-dialog-1440');
@@ -281,7 +281,7 @@ try {
       report.checks.push('Merged Coding Agents-only explicit authorization, deferred activation, and SSH dialog');
       await page.getByRole('tab', { name: 'Instructions', exact: true }).click();
       await page.getByLabel('Global instruction files').fill('/fixture/AGENTS.md');
-      await page.getByLabel('Configured Skill roots').fill('/fixture/skills-next');
+      await page.getByLabel('Configured Skill folders').fill('/fixture/skills-next');
       await page.locator('[data-webcodex-action="save-runner-settings"]').click();
       await page.waitForFunction(() => window.__fixtureCalls.some(call => call.cmd === 'update_runner_settings'));
       const request = await page.evaluate(() => window.__fixtureCalls.find(call => call.cmd === 'update_runner_settings').args.request);
@@ -346,7 +346,7 @@ try {
     await desktopNav('connection');
     await page.getByRole('button', { name: 'Add connection' }).click();
     assert(await page.getByRole('dialog').getByLabel('Tunnel ID').isEditable());
-    assert(await page.getByRole('dialog').getByLabel('API Key').isEditable());
+    assert(await page.getByRole('dialog').getByLabel('API key').isEditable());
     report.checks.push('Disconnected Tunnel credentials stay editable');
     await context.close();
   }

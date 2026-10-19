@@ -83,8 +83,12 @@ class RecordedSample(HostSample):
             else:
                 definition = self.call("load_skill", {"project": self.project_ref, "name": "receipt-audit"}, direct=True)
             self.old_definition = definition
-            self.call("read_skill_file", {"project": self.project_ref, "skill_id": definition["skill_id"],
+            reference = self.call("read_skill_file", {"project": self.project_ref, "skill_id": definition["skill_id"],
                 "path": "reference.md", "expected_definition_revision": definition["definition_revision"]}, direct=True)
+            for output, skill_path in ((definition, "SKILL.md"), (reference, "reference.md")):
+                if (output.get("skill_path") != skill_path or "path" in output
+                        or output.get("project_path") != SKILL.rsplit("/", 1)[0] + "/" + skill_path):
+                    raise AssertionError("Skill read did not return canonical citation locators")
         else:
             self.call("read_files", {"project": self.project_ref,
                 "items": [{"path": path} for path in fixture.required_sources],
@@ -211,6 +215,21 @@ def run(bin_dir, source_revision, *, mcp_apps_enabled=True):
                 session = started["session_id"]
                 sample.project_ref, sample.session_ref = started["project_ref"], started["session_ref"]
                 sample.source_reads(fixture, initial=True)
+                if case_id == "knowledge_identifier":
+                    # These real pre-Session parser failures are counted only as
+                    # adapter rejections, never as execution or source evidence.
+                    for arguments in [
+                        {"action": "call", "binding": "wc_pbind_AAAAAAAAAAAAAAAAAAAAAA",
+                         "arguments": {}, "project": sample.project},
+                        {"action": "describe", "runner": sample.client_id,
+                         "plugin": "project-knowledge", "tool": "index", "project": ""},
+                    ]:
+                        sample.rpc_id += 1
+                        reply = sample.post("/mcp", {"jsonrpc": "2.0", "id": sample.rpc_id,
+                            "method": "tools/call", "params": {"name": "plugin_tool",
+                                "arguments": dict(arguments, _wc={"record": sample.session_ref})}}, sample.owner)
+                        if reply.get("error", {}).get("code") != -32602 or "result" in reply:
+                            raise AssertionError("invalid Project arguments must fail before provider dispatch")
                 if case_id in evidence.UPDATES:
                     deadline = time.monotonic() + 5
                     while True:
@@ -243,6 +262,8 @@ def run(bin_dir, source_revision, *, mcp_apps_enabled=True):
                 fingerprint=report._case_fingerprint(case), answer=answer, advance=advance)
             if proof["passed"] is not True:
                 raise AssertionError("scripted knowledge verifier failed: " + json.dumps(proof))
+            if proof["adapter_rejection_count"] != (2 if case_id == "knowledge_identifier" else 0):
+                raise AssertionError("only the two actual parser rejections may be classified separately")
             results.append({"case_id": case_id, "checks": proof["checks"], "passed": True})
     return {"kind": "scripted_knowledge_mcp_ws_verifier", "model_samples": 0,
             "runtime_identity": builds, "mcp_apps_enabled": mcp_apps_enabled, "cases": results,

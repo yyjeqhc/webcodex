@@ -179,11 +179,11 @@ describe("product workspace task flows", () => {
       topology: { ...state.topology!, server: { kind: "remote" as const, url }, runner: { kind: "none" as const } } } as DesktopState;
     render(wrap(<><WorkspaceStatus state={viewer} /><Sidebar state={viewer} navigation="home" setNavigation={vi.fn()} /></>, viewer));
     expect(screen.getByRole("status")).toHaveTextContent("Server connectionRunning");
-    expect(screen.getByRole("status")).not.toHaveTextContent("Local task service");
+    expect(screen.getByRole("status")).not.toHaveTextContent("Local Runner");
     expect(screen.getByRole("status")).toHaveTextContent("Desktop Tunnel connectionsNo Tunnel connections saved in Desktop");
     expect(screen.getByRole("complementary")).toHaveTextContent("Server connection · Running");
     expect(screen.getByRole("complementary")).toHaveTextContent("No Tunnel connections saved in Desktop");
-    expect(screen.getByRole("complementary")).not.toHaveTextContent("Local task service");
+    expect(screen.getByRole("complementary")).not.toHaveTextContent("Local Runner");
     expect(screen.queryByText("ChatGPT connected")).not.toBeInTheDocument();
     expect(native.invoke.mock.calls.every(([command]) => command === "workspace_query")).toBe(true);
     expect(api.restartOwnedRunner).not.toHaveBeenCalled();
@@ -195,31 +195,31 @@ describe("product workspace task flows", () => {
       connections: connectionSnapshot(connectionFixture({ pid: null })) };
     render(wrap(<><WorkspaceStatus state={serverOnly} /><Sidebar state={serverOnly} navigation="home" setNavigation={vi.fn()} /></>, serverOnly));
     expect(screen.getByRole("status")).toHaveTextContent("Server connectionRunning");
-    expect(screen.getByRole("status")).not.toHaveTextContent("Local task service");
-    expect(screen.getByRole("status")).toHaveTextContent("1 of 1 Desktop tunnels locally ready");
+    expect(screen.getByRole("status")).not.toHaveTextContent("Local Runner");
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 1 Desktop Tunnels locally ready");
     expect(screen.getByRole("complementary")).toHaveTextContent("Server connection · Running");
   });
 
   it("does not invent a configured Runner before topology is available", () => {
     const unknown = { ...state, topology: null };
     render(wrap(<><WorkspaceStatus state={unknown} /><Sidebar state={unknown} navigation="home" setNavigation={vi.fn()} /></>, unknown));
-    expect(screen.getByRole("status")).not.toHaveTextContent("Local task service");
-    expect(screen.getByRole("complementary")).not.toHaveTextContent("Local task service");
+    expect(screen.getByRole("status")).not.toHaveTextContent("Local Runner");
+    expect(screen.getByRole("complementary")).not.toHaveTextContent("Local Runner");
   });
 
   it.each([null, "full-environment"])("keeps configured local Runner readiness in a Full Runtime (%s)", persistent_environment => {
     const full = { ...state, persistent_environment, readiness: { ...state.readiness, runner: "error" as const, runtime_ready: false } };
     render(wrap(<><WorkspaceStatus state={full} /><Sidebar state={full} navigation="home" setNavigation={vi.fn()} /></>, full));
-    expect(screen.getByRole("status")).toHaveTextContent("Local task serviceUnavailable");
-    expect(screen.getByRole("complementary")).toHaveTextContent("Local task service · Unavailable");
+    expect(screen.getByRole("status")).toHaveTextContent("Local RunnerUnavailable");
+    expect(screen.getByRole("complementary")).toHaveTextContent("Local Runner · Unavailable");
   });
 
   it("shows the configured Runner when joining an independently managed Server", () => {
     const joined = { ...state, persistent_environment: "joined-environment",
       topology: { ...state.topology!, server: { kind: "remote" as const, url: "https://central.example" } }, connections: connectionSnapshot() };
     render(wrap(<><WorkspaceStatus state={joined} /><Sidebar state={joined} navigation="home" setNavigation={vi.fn()} /></>, joined));
-    expect(screen.getByRole("status")).toHaveTextContent("Local task serviceRunning");
-    expect(screen.getByRole("complementary")).toHaveTextContent("Local task service · Running");
+    expect(screen.getByRole("status")).toHaveTextContent("Local RunnerRunning");
+    expect(screen.getByRole("complementary")).toHaveTextContent("Local Runner · Running");
     expect(screen.getByRole("status")).toHaveTextContent("No Tunnel connections saved in Desktop");
   });
 
@@ -243,8 +243,8 @@ describe("product workspace task flows", () => {
   it("describes locally ready tunnels without counting a live but unhealthy process as ready", () => {
     const selected = { ...state, connections: connectionSnapshot(connectionFixture({ ready: false, process_started: true, lifecycle: "running" })) };
     render(wrap(<><WorkspaceStatus state={selected} /><Sidebar state={selected} navigation="home" setNavigation={vi.fn()} /></>, selected));
-    expect(screen.getByRole("status")).toHaveTextContent("0 of 1 Desktop tunnels locally ready");
-    expect(screen.getByRole("complementary")).toHaveTextContent("0 of 1 Desktop tunnels locally ready");
+    expect(screen.getByRole("status")).toHaveTextContent("0 of 1 Desktop Tunnels locally ready");
+    expect(screen.getByRole("complementary")).toHaveTextContent("0 of 1 Desktop Tunnels locally ready");
     expect(screen.queryByText("ChatGPT connected")).not.toBeInTheDocument();
   });
   it.each([
@@ -283,7 +283,7 @@ describe("product workspace task flows", () => {
     native.invoke.mockImplementation((name, value) => value.request.kind === "overview"
       ? Promise.resolve({ ...overview, runners: [{ client_id: "mini", connected: true, computer_session_availability: true }] }) : normal(name, value));
     render(wrap(<ProjectsPanel />));
-    const fleet = await screen.findByRole("region", { name: "Task execution devices" });
+    const fleet = await screen.findByRole("region", { name: "Devices" });
     expect(fleet).toHaveTextContent("Desktop session connected");
     native.invoke.mockRejectedValue({ code: "workspace_server_unreachable" });
     fireEvent(document, new Event("visibilitychange"));
@@ -293,7 +293,7 @@ describe("product workspace task flows", () => {
     expect(fleet).not.toHaveTextContent("Desktop session unavailable");
     native.invoke.mockRejectedValue({ code: "workspace_permission_denied" });
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    await waitFor(() => expect(screen.queryByRole("region", { name: "Task execution devices" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Devices" })).not.toBeInTheDocument());
     expect(screen.queryByRole("row", { name: "alpha" })).not.toBeInTheDocument();
   });
 
@@ -308,7 +308,7 @@ describe("product workspace task flows", () => {
       ? Promise.resolve({ ...overview, runners: [{ client_id: "mini", connected: true, computer_session_availability: availability }] }) : normal(name, value));
     const openSettings = vi.fn();
     render(wrap(<ProjectsPanel onComputerSettings={openSettings} />));
-    const devices = await screen.findByRole("region", { name: "Task execution devices" });
+    const devices = await screen.findByRole("region", { name: "Devices" });
     expect(within(devices).getByRole("heading", { name: "This computer" })).toBeInTheDocument();
     expect(devices).toHaveTextContent(label);
     expect(within(screen.getByRole("row", { name: "alpha" })).getByTitle("Runs on · mini")).toHaveTextContent("This computer");
@@ -337,7 +337,7 @@ describe("product workspace task flows", () => {
         ] })
       : value.request.kind === "projects" ? Promise.resolve({ projects, total: 2, truncated: false }) : normal(name, value));
     render(wrap(<ProjectsPanel />, viewer));
-    const fleet = await screen.findByRole("region", { name: "Task execution devices" });
+    const fleet = await screen.findByRole("region", { name: "Devices" });
     const rows = within(fleet).getAllByRole("listitem");
     expect(rows[0]).toHaveTextContent("Runner identifier · B");
     expect(rows[0]).toHaveTextContent("Connected to Server");
@@ -359,7 +359,7 @@ describe("product workspace task flows", () => {
   });
 
   it("shows Runner Projects as read-only observed runtime inventory", async () => {
-    render(wrap(<ProjectsPanel />));    await screen.findByLabelText("2 open sessions"); expect(await screen.findAllByText("feat/export")).toHaveLength(2);
+    render(wrap(<ProjectsPanel />));    await screen.findByLabelText("Open sessions: 2"); expect(await screen.findAllByText("feat/export")).toHaveLength(2);
     expect(screen.getAllByRole("row")).toHaveLength(3);
     for (const row of screen.getAllByRole("row")) expect(within(row).queryByRole("button", { name: /Use project|Select project/ })).not.toBeInTheDocument();
     expect(screen.queryByText("Current")).not.toBeInTheDocument();
@@ -404,7 +404,7 @@ describe("product workspace task flows", () => {
     api.prepareProjectUnregister.mockResolvedValue(observation);
     api.unregisterProject.mockResolvedValue({ ...state, project: state.project, saved_projects: [state.saved_projects![0]] });
     render(wrap(<ProjectsPanel onState={onState} />));
-    await screen.findByLabelText("2 open sessions");
+    await screen.findByLabelText("Open sessions: 2");
     fireEvent.click(screen.getByRole("button", { name: "Remove project beta" }));
     const dialog = await screen.findByRole("dialog", { name: "Remove project" });
     expect(dialog).toHaveTextContent("file access permissions are unchanged");
@@ -465,8 +465,8 @@ describe("product workspace task flows", () => {
     const onState = vi.fn();
     const { rerender } = render(wrap(<ProjectsPanel onState={onState} />));
     // The local saved rows are not removable until the Runner inventory lands.
-    await waitFor(() => expect(screen.getByRole("button", { name: "Select / deselect visible" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Select / deselect visible" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Select all shown" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Select all shown" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove selected (2)" }));
     expect(api.prepareProjectsUnregister).toHaveBeenCalledTimes(1);
     const next = { ...state, workspace_runner: { ...state.workspace_runner!, config_path: "other.toml" } };
@@ -533,7 +533,7 @@ describe("product workspace task flows", () => {
     api.unregisterProjects.mockImplementation(async (items: { project: string }[]) => ({ state, items: items.map(item => ({ project: item.project, success: true, status: "unregistered" })) }));
     render(wrap(<ProjectsPanel onState={vi.fn()} />));
     await screen.findByRole("checkbox", { name: "Select project-16" });
-    fireEvent.click(screen.getByRole("button", { name: "Select / deselect visible" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all shown" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove selected (17)" }));
     // Confirm the large batch dialog and its title separately. Mantine can
     // register the dialog accessibility label after the content has mounted.
@@ -559,10 +559,14 @@ describe("product workspace task flows", () => {
     ] });
     const onState = vi.fn();
     render(wrap(<ProjectsPanel onState={onState} />));
-    await screen.findByLabelText("2 open sessions");
-    fireEvent.click(screen.getByRole("button", { name: "Select / deselect visible" }));
+    await screen.findByLabelText("Open sessions: 2");
+    fireEvent.click(screen.getByRole("button", { name: "Select all shown" }));
     expect(screen.getByRole("checkbox", { name: "Select alpha" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Select beta" })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Deselect shown" }));
+    expect(screen.getByRole("checkbox", { name: "Select alpha" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select beta" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Select all shown" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove selected (2)" }));
     const dialog = await screen.findByRole("dialog", { name: "Remove selected (2)" });
     expect(dialog).toHaveTextContent("Your folder and Git files stay on disk");
@@ -592,7 +596,7 @@ describe("product workspace task flows", () => {
         : value.request.kind === "project_git" && !savedId
         ? Promise.reject(new Error("Git metadata unavailable")) : normal(name, value));
     render(wrap(<ProjectsPanel />, selected));
-    await screen.findByLabelText("2 open sessions");
+    await screen.findByLabelText("Open sessions: 2");
     const row = screen.getByRole("row", { name: "repo" });
     expect(screen.getAllByRole("row")).toHaveLength(2);
     expect(within(row).getByText(observationTime(runner.sessions.latest_updated_at * 1000, "en-US"))).toBeInTheDocument();
@@ -606,14 +610,14 @@ describe("product workspace task flows", () => {
   it("keeps the Runner inventory observable without a Desktop default project", async () => {
     const emptyDefault = { ...state, project: null, saved_projects: [], readiness: { ...state.readiness, project: "none" as const, runtime_ready: false } };
     render(wrap(<ProjectsPanel />, emptyDefault));
-    await screen.findByLabelText("2 open sessions");
+    await screen.findByLabelText("Open sessions: 2");
     expect(screen.getAllByRole("row")).toHaveLength(3);
   });
   it("opens a Window's associated Workflow Session and presents product activity rather than a ledger", async () => {
     render(wrap(<ActivityPanel activity={[]} />));
     expect(screen.getByRole("tab", { name: "Tool calls" })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(await screen.findByRole("button", { name: /Open call details:.*window-001/ }));
-    const detail = await screen.findByRole("dialog", { name: "Request details · window-001" });
+    const detail = await screen.findByRole("dialog", { name: "Call details · window-001" });
     fireEvent.click(await within(detail).findByRole("button", { name: /Fix export workflow/ }));
     const workflow = await screen.findByRole("dialog", { name: "Fix export workflow" });
     await within(workflow).findByText("Review the export changes");
@@ -638,7 +642,7 @@ describe("product workspace task flows", () => {
     expect(row).not.toHaveTextContent("HTTP");
     expect(row).not.toHaveTextContent("Response handoff");
     fireEvent.click(row);
-    const dialog = await screen.findByRole("dialog", { name: "Request details · window-001" });
+    const dialog = await screen.findByRole("dialog", { name: "Call details · window-001" });
     expect((await within(dialog).findAllByText("Response handoff not confirmed")).length).toBeGreaterThan(0);
   });
   it("does not infer a call result when the preview observation fails", async () => {
@@ -709,7 +713,7 @@ describe("product workspace task flows", () => {
     const runner = { target: state.workspace_runner!, paths: { instruction_files: [], skill_roots: [] }, plugin_ids: ["safe-delete"], can_restart: true };
     api.runnerSettings.mockResolvedValue(runner);
     render(wrap(<ExtensionsPanel state={{ ...state, project: null }} onState={vi.fn()} />));
-    for (const [label, purpose] of [["Coding Agents", "codingAgentsPurpose"], ["SSH Resources", "sshPurpose"], ["MCP servers", "mcpPurpose"], ["Native Plugins", "pluginsPurpose"], ["Skills", "skillsPurpose"], ["Instructions", "instructionsPurpose"]] as const) {
+    for (const [label, purpose] of [["Coding agents", "codingAgentsPurpose"], ["SSH resources", "sshPurpose"], ["MCP servers", "mcpPurpose"], ["Native Plugins", "pluginsPurpose"], ["Skills", "skillsPurpose"], ["Instructions", "instructionsPurpose"]] as const) {
       fireEvent.click(screen.getByRole("tab", { name: label }));
       expect(screen.getByText(productText("en-US", purpose))).toBeVisible();
     }
@@ -746,7 +750,7 @@ describe("product workspace task flows", () => {
     await waitFor(() => expect(overviewCalls).toBe(1));
     const switched = { ...state, workspace_runner: { client_id: "mini", server_url: "http://localhost", config_path: "new-runner.toml" } };
     view.rerender(wrap(<ProjectsPanel />, switched));
-    await screen.findByLabelText("2 open sessions");
+    await screen.findByLabelText("Open sessions: 2");
     await act(async () => { complete({ ...overview, projects: [{ ...alpha, id: "agent:old:other", name: "Stale project", path: "/old" }] }); });
     expect(screen.queryByText("Stale project")).not.toBeInTheDocument();
     expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
@@ -831,7 +835,7 @@ describe("inventory convergence", () => {
 
 it("keeps Runner overview when only the default display Project disappears", async () => {
   const view = render(wrap(<ProjectsPanel />));
-  await screen.findByLabelText("2 open sessions");
+  await screen.findByLabelText("Open sessions: 2");
   const calls = native.invoke.mock.calls.filter(([, value]) => value.request.kind === "overview").length;
   const projectless = { ...state, project: null, saved_projects: [] };
   view.rerender(wrap(<ProjectsPanel />, projectless));

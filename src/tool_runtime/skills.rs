@@ -655,7 +655,7 @@ impl ToolRuntime {
             return skill_error_dynamic(
                 kind,
                 &project.resolved_id,
-                Some(json!({"skill_id": skill_id, "path": path})),
+                Some(json!({"skill_id": skill_id, "skill_path": path})),
                 false,
             );
         }
@@ -732,7 +732,7 @@ impl ToolRuntime {
             "trust": trust,
             "package_revision": package_revision,
             "definition_revision": definition_revision,
-            "path": read.path,
+            "skill_path": read.path,
             "sha256": read.sha256,
             "text": read.text,
             "start_line": read.start_line,
@@ -748,7 +748,7 @@ impl ToolRuntime {
             return skill_error(
                 "skill_read_result_too_large",
                 &project.resolved_id,
-                Some(json!({"skill_id": skill_id, "path": path})),
+                Some(json!({"skill_id": skill_id, "skill_path": path})),
             );
         }
         ToolResult::ok(output)
@@ -1361,7 +1361,7 @@ impl ToolRuntime {
             return skill_error(
                 "skill_sensitive_path",
                 &project.resolved_id,
-                Some(json!({"skill_id": skill_id, "path": resource_path})),
+                Some(json!({"skill_id": skill_id, "skill_path": resource_path})),
             );
         }
         let max_file_bytes = if resource_path == SKILL_DEFINITION_FILE {
@@ -1387,7 +1387,7 @@ impl ToolRuntime {
                 return skill_error(
                     error.resource_error_kind(),
                     &project.resolved_id,
-                    Some(json!({"skill_id": skill_id, "path": resource_path})),
+                    Some(json!({"skill_id": skill_id, "skill_path": resource_path})),
                 )
             }
         };
@@ -1450,7 +1450,8 @@ impl ToolRuntime {
             "trust": "project_content",
             "package_revision": null,
             "definition_revision": definition_revision,
-            "path": resource_path,
+            "skill_path": resource_path,
+            "project_path": full_path,
             "sha256": read.sha256,
             "text": read.content,
             "start_line": read.start_line,
@@ -1466,7 +1467,7 @@ impl ToolRuntime {
             return skill_error(
                 "skill_read_result_too_large",
                 &project.resolved_id,
-                Some(json!({"skill_id": skill_id, "path": resource_path})),
+                Some(json!({"skill_id": skill_id, "skill_path": resource_path})),
             );
         }
         ToolResult::ok(output)

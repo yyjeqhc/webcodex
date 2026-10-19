@@ -101,8 +101,39 @@ class KnowledgeSmoke(InteractiveSmoke):
         check(ready.get("ready") is True, "actual FTS5 provider admission failed")
         catalog = self.plugin({"action": "list", "runner": RUNNER, "plugin": PROVIDER})
         check({tool["name"] for tool in catalog["tools"]} == {"index", "status", "search", "read"}, "frozen Plugin catalog")
+        describe = {"action": "describe", "runner": RUNNER, "plugin": PROVIDER, "tool": "index"}
+        missing = self.plugin(describe, success=False)
+        check(missing.get("error", {}).get("code") == "plugin_project_required"
+              and missing.get("dispatchState") == "not_started" and "binding" not in missing,
+              "missing Project must fail without creating a binding")
+        recovery = missing.get("recovery", "")
+        check(all(phrase in recovery for phrase in ["action=describe", "intended explicit project",
+                  "only binding and arguments", "uncertain effect"]), "missing Project recovery is not actionable")
+        fallback = self.last_result["content"][0]["text"]
+        check(fallback.startswith("Recovery: " + recovery) and missing["error"]["message"] in fallback
+              and len(fallback.encode("utf-8")) <= 1024,
+              "text-only Hosts must receive bounded, complete missing-Project recovery")
+        api = self.post("/api/tools/call", {"tool": "plugin_tool", "params": describe}, self.owner)
+        check(api.get("success") is False and api.get("output", {}).get("failure_kind") == "plugin_project_required"
+              and api["output"].get("dispatch_certainty") == "not_started"
+              and api["output"].get("recovery") == recovery and "binding" not in api["output"],
+              "MCP and Runtime API must preserve the same describe recovery")
         bindings = {name: self.describe(name)["binding"] for name in ["index", "status", "search", "read"]}
         check(not self.invoke(bindings["status"], {})["indexed"], "index built automatically")
+        for project in [PROJECT, f"agent:{RUNNER}:other"]:
+            arguments = {"action": "call", "binding": bindings["index"], "arguments": {}, "project": project}
+            self.rpc_id += 1
+            rejected = self.post("/mcp", {"jsonrpc": "2.0", "id": self.rpc_id,
+                "method": "tools/call", "params": {"name": "plugin_tool", "arguments": arguments}}, self.owner)
+            message = rejected.get("error", {}).get("message", "")
+            check(rejected.get("error", {}).get("code") == -32602
+                  and all(phrase in message for phrase in ["only binding and arguments", "same intended Project",
+                          "another Project", "unknown outcome"]), "call-time Project needs precise parser recovery")
+            api = self.post("/api/tools/call", {"tool": "plugin_tool", "params": arguments}, self.owner)
+            check(api.get("status") == 400 and api.get("error") == message,
+                  "Runtime API must retain the canonical parser rejection")
+        check(not self.invoke(bindings["status"], {})["indexed"], "argument recovery dispatched rejected index calls")
+        print("PASS: action-specific Plugin recovery on MCP/API, explicit describe Project and rejected call retargeting")
         self.invoke(bindings["index"], {}, token=no_invoke, success=False)
         check(not self.invoke(bindings["status"], {})["indexed"], "missing invoke scope dispatched index")
         wrong = self.describe("index", project=f"agent:{RUNNER}:other")["binding"]
@@ -145,6 +176,14 @@ class KnowledgeSmoke(InteractiveSmoke):
         check(not reloaded.get("failures"), "provider removal failed")
         retired = self.invoke(bindings["status"], {}, success=False)
         check(retired.get("dispatchState") == "not_started", "removed binding retargeted")
+        missing_binding = self.invoke(bindings["status"], {}, success=False)
+        check(missing_binding.get("error", {}).get("code") == "describe_required"
+              and missing_binding.get("dispatchState") == "not_started",
+              "retired binding must require fresh describe without redispatch")
+        check("projectBound" in missing_binding.get("recovery", "") and "unknown outcome" in missing_binding["recovery"],
+              "lost binding recovery must retain Project selection and uncertain-effect guidance")
+        check(missing_binding["recovery"] in self.last_result["content"][0]["text"],
+              "text-only Hosts must retain lost-binding and unknown-outcome guidance")
         projects = self.post("/api/tools/call", {"tool": "list_projects", "params": {}}, self.owner)
         check(projects.get("success") and any(item.get("id") == PROJECT for item in projects["output"]["projects"]), "disabling provider affected Projects")
         print("PASS: removing optional provider retires bindings while Project discovery remains available")

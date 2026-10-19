@@ -383,7 +383,8 @@ fn skill_runtime_audit_results_are_metadata_only() {
             "project": "agent:test:demo",
             "skill_id": "wc_skill_ASNFZ4mrze8BI0VniavN7w",
             "definition_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "path": "SKILL.md",
+            "skill_path": "SKILL.md",
+            "project_path": ".agents/skills/actual-folder/SKILL.md",
             "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "text": "PRIVATE_SKILL_BODY",
             "start_line": 1,
@@ -396,7 +397,11 @@ fn skill_runtime_audit_results_are_metadata_only() {
     let read_serialized = serde_json::to_string(&read).unwrap();
     assert!(!read_serialized.contains("PRIVATE_SKILL_BODY"));
     assert!(read.get("text").is_none());
-    assert_eq!(read["path"], "SKILL.md");
+    assert_eq!(read["skill_path"], "SKILL.md");
+    assert_eq!(
+        read["project_path"],
+        ".agents/skills/actual-folder/SKILL.md"
+    );
     assert_eq!(read["returned_lines"], 2);
 }
 

@@ -6,6 +6,9 @@ use webcodex_core::plugin::{
     PluginGatewayResponsePayload, PluginProviderView, PluginTool, PluginToolResult,
 };
 
+#[path = "plugin_tools/argument_recovery.rs"]
+mod argument_recovery;
+
 async fn wait_for_plugin_request(
     registry: &crate::runner_http::RunnerRegistry,
     client_id: &str,

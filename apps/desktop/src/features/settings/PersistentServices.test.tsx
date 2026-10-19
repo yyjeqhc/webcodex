@@ -41,7 +41,7 @@ describe("persistent local services", () => {
     render(wrap(<LocalServicesPanel state={baseState} onState={onState} />));
     const section = await screen.findByTestId("persistent-services");
     expect(within(section).getByRole("heading", { name: "Server connection" })).toBeInTheDocument();
-    expect(within(section).getByRole("heading", { name: "Local task service" })).toBeInTheDocument();
+    expect(within(section).getByRole("heading", { name: "Local Runner" })).toBeInTheDocument();
     expect(api.environmentServiceAction).not.toHaveBeenCalled();
     fireEvent.click(within(section).getByRole("button", { name: "Restart Local Server" }));
     await waitFor(() => expect(api.environmentServiceAction).toHaveBeenCalledExactlyOnceWith({ environmentId: "environment-1", component: "server", action: "restart" }));
@@ -113,7 +113,7 @@ describe("persistent local services", () => {
     render(wrap(<LocalServicesPanel state={remote} onState={vi.fn()} />));
     expect(await screen.findByTestId("persistent-services")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Server connection" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Local task service" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Local Runner" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^(Start|Stop|Restart) Local/ })).not.toBeInTheDocument();
     expect(api.environmentServiceAction).not.toHaveBeenCalled();
   });

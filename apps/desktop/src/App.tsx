@@ -154,7 +154,7 @@ function DesktopApp() {
 }
 
 function AppError({ error }: { error: DesktopError }) {
-  const { t } = useLocale();
+  const { t } = useLocale(); const p = useProduct();
   const presentation = desktopErrorPresentation(error, t);
   const diagnostics = desktopCommandDiagnostics(error);
   return (
@@ -167,11 +167,11 @@ function AppError({ error }: { error: DesktopError }) {
         <p>{error.message}</p>
         {diagnostics && (
           <dl className="error-diagnostics">
-            {diagnostics.phase && <><dt>phase</dt><dd><code>{diagnostics.phase}</code></dd></>}
-            {diagnostics.logicalCommand && <><dt>command</dt><dd><code>{diagnostics.logicalCommand}</code></dd></>}
-            {diagnostics.executable && <><dt>executable</dt><dd><code>{diagnostics.executable}</code></dd></>}
-            {diagnostics.exitCode !== undefined && <><dt>exit code</dt><dd><code>{diagnostics.exitCode}</code></dd></>}
-            {diagnostics.reasonCode && <><dt>reason</dt><dd><code>{diagnostics.reasonCode}</code></dd></>}
+            {diagnostics.phase && <><dt>{p("errorPhase")}</dt><dd><code>{diagnostics.phase}</code></dd></>}
+            {diagnostics.logicalCommand && <><dt>{p("errorCommand")}</dt><dd><code>{diagnostics.logicalCommand}</code></dd></>}
+            {diagnostics.executable && <><dt>{p("errorExecutable")}</dt><dd><code>{diagnostics.executable}</code></dd></>}
+            {diagnostics.exitCode !== undefined && <><dt>{p("runtimeExitCode")}</dt><dd><code>{diagnostics.exitCode}</code></dd></>}
+            {diagnostics.reasonCode && <><dt>{p("errorReason")}</dt><dd><code>{diagnostics.reasonCode}</code></dd></>}
           </dl>
         )}
       </details>

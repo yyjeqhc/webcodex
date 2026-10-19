@@ -13,7 +13,7 @@ const definitions = [
   { id: "sshResources", Icon: Terminal, title: text => text.capabilities("sshResources"), purpose: "sshPurpose", showRefresh: false, Content: SshResourcesPanel },
   { id: "mcpProviders", Icon: Network, title: text => text.connections("mcpProviders"), purpose: "mcpPurpose", showRefresh: true, Content: McpProvidersPanel },
   { id: "nativePlugins", Icon: Blocks, title: text => text.product("nativePlugins"), purpose: "pluginsPurpose", showRefresh: true, projectPreview: { title: "projectRunnerPlugins", emptyKind: "skill" }, Configuration: NativePluginConfiguration, Content: NativePluginsPanel },
-  { id: "skills", Icon: Puzzle, title: () => "Skills", purpose: "skillsPurpose", showRefresh: true, pathKind: "skills", projectPreview: { title: "projectExtensions", emptyKind: "skill" }, Content: SkillsPreview },
+  { id: "skills", Icon: Puzzle, title: text => text.product("skills"), purpose: "skillsPurpose", showRefresh: true, pathKind: "skills", projectPreview: { title: "projectExtensions", emptyKind: "skill" }, Content: SkillsPreview },
   { id: "instructions", Icon: FileText, title: text => text.product("instructions"), purpose: "instructionsPurpose", showRefresh: true, pathKind: "instructions", projectPreview: { title: "projectExtensions", emptyKind: "document" }, PersistentConfiguration: InstructionConfiguration, Content: InstructionsPreview },
 ] as const satisfies readonly ExtensionPanelDefinition[];
 

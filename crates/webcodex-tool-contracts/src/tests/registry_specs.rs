@@ -1151,6 +1151,7 @@ fn extension_descriptions_distinguish_catalog_body_and_binding_reuse() {
         "exact Runner/provider/tool and bound Project",
         "another call/task/Session",
         "Never reuse a projectBound binding for another Project",
+        "do not just drop a call-time project",
         "not permission to replay an effect",
         "Unknown outcomes still require reconciliation",
     ] {

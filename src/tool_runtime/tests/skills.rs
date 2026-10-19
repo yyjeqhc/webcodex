@@ -152,7 +152,7 @@ async fn skill_load_is_exact_case_insensitive_and_fails_closed_on_ambiguity() {
     let root = tempfile::tempdir().unwrap();
     write_skill(
         root.path(),
-        "time-tracking",
+        "actual-folder",
         "time-tracking",
         "Generate timesheets",
         "load body\n",
@@ -171,7 +171,12 @@ async fn skill_load_is_exact_case_insensitive_and_fails_closed_on_ambiguity() {
     .await;
     assert!(loaded.success, "{:?}", loaded.error);
     assert_eq!(loaded.output["name"], "time-tracking");
-    assert_eq!(loaded.output["path"], "SKILL.md");
+    assert_eq!(loaded.output["skill_path"], "SKILL.md");
+    assert_eq!(
+        loaded.output["project_path"],
+        ".agents/skills/actual-folder/SKILL.md"
+    );
+    assert!(loaded.output.get("path").is_none());
     assert!(loaded.output["text"]
         .as_str()
         .unwrap()
@@ -184,6 +189,37 @@ async fn skill_load_is_exact_case_insensitive_and_fails_closed_on_ambiguity() {
         loaded.output["skill_id"]
     );
     assert!(loaded.output["catalog_revision"].as_str().is_some());
+
+    let references = root.path().join(".agents/skills/actual-folder/references");
+    fs::create_dir_all(&references).unwrap();
+    fs::write(references.join("guide.md"), "first\nsecond\nthird\n").unwrap();
+    let (reference, _) = call_kernel_with_local_agent(
+        &runtime,
+        "skill-load-project",
+        "read_skill_file",
+        json!({
+            "project": project,
+            "skill_id": loaded.output["skill_id"],
+            "path": " references\\guide.md ",
+            "expected_definition_revision": loaded.output["definition_revision"],
+            "start_line": 2,
+            "limit": 1,
+        }),
+        true,
+    )
+    .await;
+    assert!(reference.success, "{:?}", reference.error);
+    assert_eq!(reference.output["skill_path"], "references/guide.md");
+    assert_eq!(
+        reference.output["project_path"],
+        ".agents/skills/actual-folder/references/guide.md"
+    );
+    assert_eq!(reference.output["text"], "second");
+    assert_eq!(reference.output["start_line"], 2);
+    assert_eq!(reference.output["end_line"], 2);
+    assert_eq!(reference.output["has_more"], true);
+    assert_eq!(reference.output["next_start_line"], 3);
+    assert!(reference.output.get("path").is_none());
 
     write_skill(
         root.path(),
@@ -995,6 +1031,9 @@ async fn configured_skill_exact_read_uses_unified_resolve_then_read() {
     assert_eq!(loaded.output["source_scope"], "runner");
     assert_eq!(loaded.output["trust"], "operator_configured_guidance");
     assert_eq!(loaded.output["text"], "configured definition");
+    assert_eq!(loaded.output["skill_path"], "SKILL.md");
+    assert!(loaded.output.get("project_path").is_none());
+    assert!(loaded.output.get("path").is_none());
     assert_eq!(loaded.output["descriptor"]["name"], "configured");
 
     let (read, kinds) = call_kernel_with_fake_operator_store(
@@ -1012,6 +1051,9 @@ async fn configured_skill_exact_read_uses_unified_resolve_then_read() {
     .await;
     assert!(read.success, "{:?}", read.error);
     assert_eq!(read.output["text"], "configured resource");
+    assert_eq!(read.output["skill_path"], "references/guide.md");
+    assert!(read.output.get("project_path").is_none());
+    assert!(read.output.get("path").is_none());
     assert_eq!(
         kinds,
         vec!["file_skill_list_packages", "skill:resolve", "skill:read"]
@@ -1093,6 +1135,9 @@ async fn managed_skill_exact_read_uses_unified_resolve_then_read() {
     .await;
     assert!(read.success, "{:?}", read.error);
     assert_eq!(read.output["text"], "managed resource");
+    assert_eq!(read.output["skill_path"], "references/guide.md");
+    assert!(read.output.get("project_path").is_none());
+    assert!(read.output.get("path").is_none());
     assert_eq!(
         kinds,
         vec!["file_skill_list_packages", "skill:resolve", "skill:read"]
@@ -1561,7 +1606,12 @@ async fn project_skill_exact_read_request_fanout_is_characterized() {
     )
     .await;
     assert!(definition.success, "{:?}", definition.error);
-    assert_eq!(definition.output["path"], "SKILL.md");
+    assert_eq!(definition.output["skill_path"], "SKILL.md");
+    assert_eq!(
+        definition.output["project_path"],
+        ".agents/skills/alpha/SKILL.md"
+    );
+    assert!(definition.output.get("path").is_none());
     assert_eq!(
         definition_kinds,
         vec![
@@ -1658,7 +1708,12 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     )
     .await;
     assert!(definition.success, "{:?}", definition.error);
-    assert_eq!(definition.output["path"], "SKILL.md");
+    assert_eq!(definition.output["skill_path"], "SKILL.md");
+    assert_eq!(
+        definition.output["project_path"],
+        ".agents/skills/alpha/SKILL.md"
+    );
+    assert!(definition.output.get("path").is_none());
     assert_eq!(definition.output["sha256"], definition_a);
     assert_eq!(definition.output["has_more"], true);
     assert_eq!(definition.output["next_start_line"], 3);
@@ -1680,6 +1735,12 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     .await;
     assert!(reference.success);
     assert_eq!(reference.output["text"], "two");
+    assert_eq!(reference.output["skill_path"], "references/guide.md");
+    assert_eq!(
+        reference.output["project_path"],
+        ".agents/skills/alpha/references/guide.md"
+    );
+    assert!(reference.output.get("path").is_none());
     assert_eq!(reference.output["start_line"], 2);
     assert_eq!(reference.output["end_line"], 2);
     let resource_sha_a = reference.output["sha256"].as_str().unwrap().to_string();
@@ -1760,6 +1821,9 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     )
     .await;
     assert_eq!(sensitive.output["error_kind"], "skill_sensitive_path");
+    assert_eq!(sensitive.output["skill_path"], ".env");
+    assert!(sensitive.output.get("project_path").is_none());
+    assert!(sensitive.output.get("path").is_none());
 
     let (binary, _) = call_kernel_with_local_agent(
         &runtime,

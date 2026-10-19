@@ -744,6 +744,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     // This process-local marker is set before the Host call. Reload/loss cannot
     // cause a blind resend: replacement binding reconciles prepared -> unknown.
     dispatchStarted = wake.attempt_id;
+    const hostDispatchStartedAt = performance.now();
+    timing("host_dispatch_start");
     let outcome = "delivery_unknown";
     try {
       await request("ui/message", {
@@ -754,6 +756,9 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     } catch (_) {
       // After prepare, Host rejection/timeout/response loss is conservatively unknown.
     }
+    // Observation only: acceptance is not proof of a new turn or Wake consumption.
+    // Do not log the prepared message, private Attempt ids, or Host errors.
+    timing("host_dispatch_result", { outcome, duration_ms: performance.now() - hostDispatchStartedAt });
     await finishAttempt(wake, outcome);
   }
 

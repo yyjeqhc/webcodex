@@ -172,11 +172,27 @@ def _bind_fixture(calls, fixture_root, workflow_session_id):
     return projects
 
 
-# This exact message is emitted by PluginToolCall.validate before Session
-# canonicalization or provider invocation, not by a provider/runtime failure.
+# Exact historical/current PluginToolCall.validate diagnostics, emitted before
+# Session canonicalization or provider invocation. Keep the legacy observation
+# readable; current diagnostics must also match their action. None proves a read.
 _PLUGIN_PROJECT_VALIDATION_ERROR = (
     "invalid arguments for tool 'plugin_tool': "
     "project must be an exact bounded Project on action=describe")
+_PLUGIN_CALL_PROJECT_RECOVERY_ERROR = (
+    "invalid arguments for tool 'plugin_tool': "
+    "action=call accepts only binding and arguments; both are required. Project is selected on action=describe. "
+    "Reuse a retained binding only for the same intended Project. If no binding is retained or you intend another Project, "
+    "describe the exact runner, plugin, and tool (with the intended project when projectBound) and use its binding. "
+    "Reconcile any earlier unknown outcome before retrying an effect.")
+_PLUGIN_DESCRIBE_PROJECT_RECOVERY_ERROR = (
+    "invalid arguments for tool 'plugin_tool': "
+    "project on action=describe must be an exact bounded Project: a non-empty authorized Project selector of at most "
+    "512 bytes without control characters. Select the intended Project explicitly; do not infer it from a Session or recorder metadata.")
+_PLUGIN_PROJECT_VALIDATION_ACTIONS = {
+    _PLUGIN_PROJECT_VALIDATION_ERROR: ("call", "describe"),
+    _PLUGIN_CALL_PROJECT_RECOVERY_ERROR: ("call",),
+    _PLUGIN_DESCRIBE_PROJECT_RECOVERY_ERROR: ("describe",),
+}
 
 
 def _captured_plugin_rejection(root, identity, index, selected, audit_db):
@@ -215,8 +231,13 @@ def _captured_plugin_rejection(root, identity, index, selected, audit_db):
     payload = trace._payloads(root, identity, frozenset(("raw_arguments", "final_response")))
     raw, final = payload["raw_arguments"], payload["final_response"]
     if (not isinstance(raw, dict) or raw.get("action") not in ("call", "describe")
-            or not isinstance(final, dict) or "result" in final
-            or final.get("error") != {"code": -32602, "message": _PLUGIN_PROJECT_VALIDATION_ERROR}):
+            or not isinstance(final, dict) or "result" in final):
+        return False
+    error = final.get("error")
+    if (not isinstance(error, dict) or set(error) != {"code", "message"}
+            or type(error["code"]) is not int or error["code"] != -32602
+            or not isinstance(error["message"], str)
+            or raw["action"] not in _PLUGIN_PROJECT_VALIDATION_ACTIONS.get(error["message"], ())):
         return False
     connection = trace.report._open_sqlite_readonly(Path(audit_db))
     deadline = trace.time.monotonic() + 5
@@ -283,6 +304,30 @@ def check_answer(answer, fixture):
     return covered == set(expected)
 
 
+def _skill_project_path(output):
+    """Bind current locators or historical captures to the exact fixture folder."""
+    canonical = "skill_path" in output or "project_path" in output
+    if canonical:
+        if "path" in output or output.get("source_scope") != "project":
+            raise trace.EvidenceUnavailable("fixture_binding_mismatch")
+        relative = output.get("skill_path")
+    else:
+        # Persisted pre-citation-contract captures used package-relative path.
+        if output.get("source_scope", "project") != "project":
+            raise trace.EvidenceUnavailable("fixture_binding_mismatch")
+        relative = output.get("path", "SKILL.md")
+    if (not isinstance(relative, str) or not relative or relative != relative.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in relative)
+            or "\\" in relative or ":" in relative
+            or any(part in {"", ".", ".."} for part in relative.split("/"))):
+        raise trace.EvidenceUnavailable("fixture_binding_mismatch")
+    # This folder is part of the pinned fixture, not derived from Skill metadata.
+    project_path = SKILL.rsplit("/", 1)[0] + "/" + relative
+    if canonical and output.get("project_path") != project_path:
+        raise trace.EvidenceUnavailable("fixture_binding_mismatch")
+    return project_path
+
+
 def check_calls(calls, fixture, projects, advance=None):
     """Return truthful task/path checks, including observed model failures."""
     current_sources = {item["path"]: item for item in fixture.sources()}
@@ -343,10 +388,10 @@ def check_calls(calls, fixture, projects, advance=None):
             if output.get("name") == "receipt-audit" and isinstance(output.get("skill_id"), str):
                 skill_ids.add(output["skill_id"])
             selected = output.get("skill_id") or args.get("skill_id")
-            if selected in skill_ids:
-                path = ".agents/skills/receipt-audit/" + output.get("path", "SKILL.md")
+            if selected in skill_ids and "text" in output:
+                path = _skill_project_path(output)
                 source = sources.get(path)
-                if source is not None and "text" in output:
+                if source is not None:
                     definition = sources.get(SKILL)
                     if (definition is None or output.get("definition_revision") != definition["source_hash"]
                             or not _source_match(output, source, hash_key="sha256")):

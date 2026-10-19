@@ -1,3 +1,4 @@
+use super::dispatch_fence::PendingDispatchFence;
 use super::jobs::{
     assert_active_instance_locked, combine_result_stream_truncation, observe_job_terminal,
     replace_log_limited, request_preview, retain_ordinary_result_stream_with_evidence,
@@ -19,7 +20,7 @@ use webcodex_core::plugin::{
     validate_response_for_request as validate_plugin_gateway_response, PluginDispatchState,
     PluginGatewayResponse,
 };
-use webcodex_core::runner_operation::{RunnerFileOperation, RunnerJobOperation, RunnerOperation};
+use webcodex_core::runner_operation::{RunnerJobOperation, RunnerOperation};
 use webcodex_core::runner_protocol::{
     RunnerPersistentShellResultRequest, RunnerPollRequest, RunnerRequest, RunnerResultPayload,
     ShellCommandExecutionState, ShellRunResponse,
@@ -137,214 +138,56 @@ impl RunnerRegistry {
                 }
                 continue;
             }
-            let stale_instruction_error =
-                inner.pending_by_id.get(&request_id).and_then(|pending| {
-                    match (
-                        &pending.operation,
-                        pending.expected_instruction_runner_instance_id.as_deref(),
-                    ) {
-                        (RunnerOperation::RunnerInstruction(_), Some(expected)) => {
-                            let Some(runner) = inner.runners.get(&body.client_id) else {
-                                return Some((
-                                "runner_replaced",
-                                "Exact Runner disappeared before instruction observation dispatch"
-                                    .to_string(),
-                            ));
-                            };
-                            if runner.runner_instance_id != expected {
-                                return Some((
-                                    "runner_replaced",
-                                    "Exact Runner changed before instruction observation dispatch"
-                                        .to_string(),
-                                ));
-                            }
-                            (!runner
-                                .runner_features
-                                .supports(RunnerFeature::InstructionRuntime))
-                            .then_some((
-                                "capability_unavailable",
-                                "Runner instruction-runtime capability changed before dispatch"
-                                    .to_string(),
-                            ))
-                        }
-                        (RunnerOperation::RunnerInstruction(_), None) => Some((
-                            "runner_replaced",
-                            "Runner instruction exact-process fence is missing".to_string(),
-                        )),
-                        (_, Some(_)) => Some((
-                            "runner_replaced",
-                            "Runner instruction exact-process fence is inconsistent".to_string(),
-                        )),
-                        _ => None,
-                    }
-                });
-            if let Some((code, message)) = stale_instruction_error {
+            let stale_request_error = inner.pending_by_id.get(&request_id).and_then(|pending| {
+                pending
+                    .dispatch_fence
+                    .synchronous_rejection(&pending.operation, inner.runners.get(&body.client_id))
+            });
+            if let Some(error) = stale_request_error {
                 let Some(mut pending) = inner.pending_by_id.remove(&request_id) else {
                     continue;
                 };
                 if let Some(waiter) = pending.waiter.take() {
+                    let (cwd, command_preview) = match &pending.operation {
+                        RunnerOperation::RunnerInstruction(_)
+                        | RunnerOperation::RunnerConfig(_)
+                        | RunnerOperation::SshResource(_) => (None, String::new()),
+                        RunnerOperation::Skill(_) => (None, request_preview(&pending.request)),
+                        _ => (
+                            pending.request.cwd.clone(),
+                            request_preview(&pending.request),
+                        ),
+                    };
                     let _ = waiter.send(ShellRunResponse {
                         success: false,
                         request_id: request_id.clone(),
                         client_id: body.client_id.clone(),
-                        cwd: None,
-                        command_preview: String::new(),
+                        cwd,
+                        command_preview,
                         exit_code: None,
                         stdout: None,
                         stderr: None,
                         stdout_truncated: false,
                         stderr_truncated: false,
                         duration_ms: None,
-                        error: Some(format!("{code}: {message}")),
+                        error: Some(error),
                         request_dispatched: Some(false),
                         command_execution_state: Some(ShellCommandExecutionState::NotStarted),
                     });
                 }
-                continue;
-            }
-            let stale_runner_config_error =
-                inner.pending_by_id.get(&request_id).and_then(|pending| {
-                    match (
-                        &pending.operation,
-                        pending.expected_runner_config_runner_instance_id.as_deref(),
-                    ) {
-                        (RunnerOperation::RunnerConfig(_), Some(expected)) => {
-                            let Some(runner) = inner.runners.get(&body.client_id) else {
-                                return Some((
-                                    "runner_replaced",
-                                    "Exact Runner disappeared before config operation dispatch"
-                                        .to_string(),
-                                ));
-                            };
-                            if runner.runner_instance_id != expected {
-                                return Some((
-                                    "runner_replaced",
-                                    "Exact Runner changed before config operation dispatch"
-                                        .to_string(),
-                                ));
-                            }
-                            (!runner
-                                .runner_features
-                                .supports(RunnerFeature::RunnerConfigControl))
-                            .then_some((
-                                "capability_unavailable",
-                                "Runner config-control capability changed before dispatch"
-                                    .to_string(),
-                            ))
-                        }
-                        (RunnerOperation::RunnerConfig(_), None) => Some((
-                            "runner_replaced",
-                            "Runner config exact-process fence is missing".to_string(),
-                        )),
-                        (_, Some(_)) => Some((
-                            "runner_replaced",
-                            "Runner config exact-process fence is inconsistent".to_string(),
-                        )),
-                        _ => None,
-                    }
-                });
-            if let Some((code, message)) = stale_runner_config_error {
-                let Some(mut pending) = inner.pending_by_id.remove(&request_id) else {
-                    continue;
-                };
-                if let Some(waiter) = pending.waiter.take() {
-                    let _ = waiter.send(ShellRunResponse {
-                        success: false,
-                        request_id: request_id.clone(),
-                        client_id: body.client_id.clone(),
-                        cwd: None,
-                        command_preview: String::new(),
-                        exit_code: None,
-                        stdout: None,
-                        stderr: None,
-                        stdout_truncated: false,
-                        stderr_truncated: false,
-                        duration_ms: None,
-                        error: Some(format!("{code}: {message}")),
-                        request_dispatched: Some(false),
-                        command_execution_state: Some(ShellCommandExecutionState::NotStarted),
-                    });
-                }
-                continue;
-            }
-            let stale_ssh_resource_error =
-                inner.pending_by_id.get(&request_id).and_then(|pending| {
-                    match (
-                        &pending.operation,
-                        pending.expected_ssh_resource_runner_instance_id.as_deref(),
-                    ) {
-                        (RunnerOperation::SshResource(_), Some(expected_runner)) => {
-                            let Some(runner) = inner.runners.get(&body.client_id) else {
-                                return Some((
-                                    "runner_replaced",
-                                    "Exact Runner disappeared before SSH resource dispatch"
-                                        .to_string(),
-                                ));
-                            };
-                            if runner.runner_instance_id != expected_runner {
-                                return Some((
-                                    "runner_replaced",
-                                    "Exact Runner changed before SSH resource dispatch".to_string(),
-                                ));
-                            }
-                            (!runner
-                                .runner_features
-                                .supports(RunnerFeature::ManagedSshResources))
-                            .then_some((
-                                "ssh_resource_registry_unavailable",
-                                "Managed SSH resource capability changed before dispatch"
-                                    .to_string(),
-                            ))
-                        }
-                        (RunnerOperation::SshResource(_), None) => Some((
-                            "runner_replaced",
-                            "SSH resource exact Runner fence is missing".to_string(),
-                        )),
-                        (_, Some(_)) => Some((
-                            "runner_replaced",
-                            "SSH resource exact Runner fence is inconsistent".to_string(),
-                        )),
-                        _ => None,
-                    }
-                });
-            if let Some((code, message)) = stale_ssh_resource_error {
-                let Some(mut pending) = inner.pending_by_id.remove(&request_id) else {
-                    continue;
-                };
-                if let Some(waiter) = pending.waiter.take() {
-                    let _ = waiter.send(ShellRunResponse {
-                        success: false,
-                        request_id: request_id.clone(),
-                        client_id: body.client_id.clone(),
-                        cwd: None,
-                        command_preview: String::new(),
-                        exit_code: None,
-                        stdout: None,
-                        stderr: None,
-                        stdout_truncated: false,
-                        stderr_truncated: false,
-                        duration_ms: None,
-                        error: Some(format!("{code}: {message}")),
-                        request_dispatched: Some(false),
-                        command_execution_state: Some(ShellCommandExecutionState::NotStarted),
-                    });
-                }
+                inner.persistent_waiters.remove(&request_id);
                 continue;
             }
             let stale_bridge_error =
                 inner.pending_by_id.get(&request_id).and_then(|pending| {
-                    match (
-                        &pending.operation,
-                        pending.expected_mcp_gateway_runner_instance_id.as_deref(),
-                        pending.expected_mcp_gateway_provider_id.as_deref(),
-                        pending.expected_mcp_gateway_provider_instance_id.as_deref(),
-                    ) {
+                    match (&pending.operation, &pending.dispatch_fence) {
                         (
                             RunnerOperation::McpGateway(operation),
-                            Some(expected_runner),
-                            Some(expected_provider),
-                            Some(expected_provider_instance),
+                            PendingDispatchFence::McpGateway(fence),
                         ) => {
+                            let expected_runner = fence.runner_instance_id.as_str();
+                            let expected_provider = fence.provider_id.as_str();
+                            let expected_provider_instance = fence.provider_instance_id.as_str();
                             if operation.provider_id() != expected_provider
                                 || operation.provider_instance_id() != expected_provider_instance
                             {
@@ -385,8 +228,9 @@ impl RunnerRegistry {
                                     .to_string(),
                             ))
                         }
-                        (operation, None, None, None)
-                            if !matches!(operation, RunnerOperation::McpGateway(_)) =>
+                        (operation, fence)
+                            if !matches!(operation, RunnerOperation::McpGateway(_))
+                                && !matches!(fence, PendingDispatchFence::McpGateway(_)) =>
                         {
                             None
                         }
@@ -514,69 +358,6 @@ impl RunnerRegistry {
                 inner.persistent_waiters.remove(&request_id);
                 continue;
             }
-            let stale_skill_error = inner.pending_by_id.get(&request_id).and_then(|pending| {
-                match (&pending.operation, pending.skill_fence.as_ref()) {
-                    (RunnerOperation::Skill(_), Some(fence)) => {
-                        let Some(runner) = inner.runners.get(&body.client_id) else {
-                            return Some(
-                                "stale_runner: Skill target Runner disappeared before dispatch"
-                                    .to_string(),
-                            );
-                        };
-                        if runner.runner_instance_id != fence.runner_instance_id {
-                            return Some(
-                                "stale_runner: Skill target Runner changed before dispatch"
-                                    .to_string(),
-                            );
-                        }
-                        let required = if fence.management {
-                            RunnerFeature::SkillManagement
-                        } else {
-                            RunnerFeature::SkillRuntime
-                        };
-                        (!runner.runner_features.supports(required)).then(|| {
-                            format!(
-                                "skill_capability_unavailable: exact Runner no longer advertises {} before dispatch",
-                                required.as_wire_name()
-                            )
-                        })
-                    }
-                    (RunnerOperation::Skill(_), None) => Some(
-                        "stale_runner: Skill exact dispatch fence is missing".to_string(),
-                    ),
-                    (_, Some(_)) => Some(
-                        "stale_runner: Skill dispatch fence is attached to the wrong request kind"
-                            .to_string(),
-                    ),
-                    (_, None) => None,
-                }
-            });
-            if let Some(error) = stale_skill_error {
-                let Some(mut pending) = inner.pending_by_id.remove(&request_id) else {
-                    continue;
-                };
-                if let Some(waiter) = pending.waiter.take() {
-                    let response = ShellRunResponse {
-                        success: false,
-                        request_id: request_id.clone(),
-                        client_id: body.client_id.clone(),
-                        cwd: None,
-                        command_preview: request_preview(&pending.request),
-                        exit_code: None,
-                        stdout: None,
-                        stderr: None,
-                        stdout_truncated: false,
-                        stderr_truncated: false,
-                        duration_ms: None,
-                        error: Some(error),
-                        request_dispatched: Some(false),
-                        command_execution_state: Some(ShellCommandExecutionState::NotStarted),
-                    };
-                    let _ = waiter.send(response);
-                }
-                inner.persistent_waiters.remove(&request_id);
-                continue;
-            }
             let stale_coding_agent_error =
                 inner.pending_by_id.get(&request_id).and_then(|pending| {
                     if !matches!(&pending.operation, RunnerOperation::CodingAgent(_)) {
@@ -625,86 +406,6 @@ impl RunnerRegistry {
                 }
                 inner.coding_agent_fences.remove(&request_id);
                 inner.mcp_gateway_waiters.remove(&request_id);
-                inner.persistent_waiters.remove(&request_id);
-                continue;
-            }
-            let stale_project_error = inner.pending_by_id.get(&request_id).and_then(|pending| {
-                match (
-                    pending.expected_project_id.as_deref(),
-                    pending.expected_project_cwd.as_deref(),
-                ) {
-                    (Some(project_id), Some(project_cwd)) => match inner.runners.get(&body.client_id) {
-                        Some(runner)
-                            if pending
-                                .expected_project_runner_instance_id
-                                .as_deref()
-                                .is_some_and(|expected| runner.runner_instance_id != expected) =>
-                        {
-                            Some(
-                                "stale_runner: target Runner changed before project file dispatch"
-                                    .to_string(),
-                            )
-                        }
-                        Some(runner) if runner.owner != pending.expected_runner_owner => Some(
-                            "stale_authority: target Runner owner changed before dispatch".to_string(),
-                        ),
-                        Some(runner) => {
-                            let required_feature = match &pending.operation {
-                                RunnerOperation::File(RunnerFileOperation::Read(_)) => {
-                                    RunnerFeature::FileRead
-                                }
-                                _ => RunnerFeature::FileWrite,
-                            };
-                            if !runner.runner_features.supports(required_feature) {
-                                Some(format!(
-                                    "stale_authority: target Runner no longer advertises {} before dispatch",
-                                    required_feature.as_wire_name()
-                                ))
-                            } else if runner.projects.iter().any(|project| {
-                                !project.disabled
-                                    && project.id == project_id
-                                    && project.path == project_cwd
-                            }) {
-                                None
-                            } else {
-                                Some(format!(
-                                    "stale_project: target project {project_id} is no longer registered at the resolved path"
-                                ))
-                            }
-                        }
-                        None => Some(format!(
-                            "stale_project: target project {project_id} is no longer registered at the resolved path"
-                        )),
-                    },
-                    (None, None) => None,
-                    _ => Some(
-                        "stale_project: pending project placement fence is incomplete".to_string(),
-                    ),
-                }
-            });
-            if let Some(error) = stale_project_error {
-                let Some(mut pending) = inner.pending_by_id.remove(&request_id) else {
-                    continue;
-                };
-                if let Some(waiter) = pending.waiter.take() {
-                    let response = ShellRunResponse {
-                        success: false,
-                        request_id: request_id.clone(),
-                        client_id: body.client_id.clone(),
-                        cwd: pending.request.cwd.clone(),
-                        command_preview: request_preview(&pending.request),
-                        exit_code: None,
-                        stdout: None,
-                        stderr: None,
-                        stdout_truncated: false,
-                        stderr_truncated: false,
-                        duration_ms: None,
-                        error: Some(error),
-                        request_dispatched: Some(false),
-                        command_execution_state: Some(ShellCommandExecutionState::NotStarted),
-                    };
-                    let _ = waiter.send(response);
-                }
                 inner.persistent_waiters.remove(&request_id);
                 continue;
             }
@@ -889,25 +590,21 @@ impl RunnerRegistry {
                         ..
                     }),
                     Some(McpGatewayResponsePayload::ToolResult { result }),
-                    Some(runner_instance_id),
-                    Some(expected_provider_id),
-                    Some(expected_provider_instance_id),
+                    PendingDispatchFence::McpGateway(fence),
                 ) = (
                     &pending.operation,
                     response.payload.as_ref(),
-                    pending.expected_mcp_gateway_runner_instance_id.as_deref(),
-                    pending.expected_mcp_gateway_provider_id.as_deref(),
-                    pending.expected_mcp_gateway_provider_instance_id.as_deref(),
+                    &pending.dispatch_fence,
                 ) {
-                    if runner_instance_id == body.runner_instance_id
-                        && provider_id == expected_provider_id
-                        && provider_instance_id == expected_provider_instance_id
+                    if fence.runner_instance_id == body.runner_instance_id
+                        && provider_id == &fence.provider_id
+                        && provider_instance_id == &fence.provider_instance_id
                     {
                         self.telemetry
                             .mcp_tool_result_validated(crate::ValidatedMcpToolResult {
                                 request_id: &trace_request_id,
                                 client_id: &pending.request.client_id,
-                                runner_instance_id,
+                                runner_instance_id: &fence.runner_instance_id,
                                 provider_id,
                                 provider_instance_id,
                                 tool_name: name,

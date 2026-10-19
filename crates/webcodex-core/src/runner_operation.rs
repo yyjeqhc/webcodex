@@ -566,7 +566,10 @@ impl RunnerComputerOperationKind {
     }
 
     pub fn is_large_image(self) -> bool {
-        matches!(self, Self::Snapshot | Self::SnapshotDisplay)
+        matches!(
+            self,
+            Self::Snapshot | Self::SnapshotRegion | Self::SnapshotDisplay
+        )
     }
 }
 
@@ -2414,6 +2417,30 @@ fn ensure_empty_generic_execution_fields(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn computer_snapshot_kinds_share_the_native_image_response_budget() {
+        for kind in [
+            RunnerComputerOperationKind::Snapshot,
+            RunnerComputerOperationKind::SnapshotRegion,
+            RunnerComputerOperationKind::SnapshotDisplay,
+        ] {
+            assert!(kind.is_large_image(), "{kind:?}");
+            assert!(RunnerOperation::Computer(RunnerComputerOperation {
+                kind,
+                payload: "{}".to_string(),
+                timeout_secs: 30
+            })
+            .is_large_native_image_request());
+        }
+        for kind in [
+            RunnerComputerOperationKind::ListWindows,
+            RunnerComputerOperationKind::AccessibilityTree,
+            RunnerComputerOperationKind::KeyInput,
+        ] {
+            assert!(!kind.is_large_image(), "{kind:?}");
+        }
+    }
+
     #[test]
     fn browser_user_handoff_wire_roundtrip_preserves_exact_identity_and_bounds() {
         for kind in [

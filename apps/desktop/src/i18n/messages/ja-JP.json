@@ -467,6 +467,7 @@
   "completion.reported": "読み取り成功のご報告です。ユーザーの確認であり、自動観測された接続テストではありません。",
   "completion.overview": "概要を開く",
   "completion.copy": "読み取り依頼をコピー",
+  "completion.copyFailed": "コピーできませんでした。もう一度お試しください。",
   "completion.copied": "読み取り依頼をコピーしました",
   "completion.identityPending": "Runner ID はまだ取得できません。読み取り前に環境を更新してください。",
   "completion.runnerId": "Runner ID",

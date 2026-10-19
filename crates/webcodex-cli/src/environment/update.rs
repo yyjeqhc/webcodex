@@ -642,6 +642,7 @@ async fn recover(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::tests::test_tempdir;
     fn input(value: &str) -> Result<Input, &'static str> {
         parse(
             &value
@@ -720,7 +721,7 @@ mod tests {
     }
     #[test]
     fn apply_binds_candidate_flavor_platform_and_format_before_authorization() {
-        let root = tempfile::tempdir().unwrap();
+        let root = test_tempdir().unwrap();
         let selected = context(target(unified::PackageFlavor::Runtime));
         let manager = unified::UpdateManager::with_environment_root(
             root.path().join("cache"),
@@ -770,7 +771,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn verified_runtime_status_has_three_components_without_private_paths_or_desktop_claims() {
-        let root = tempfile::tempdir().unwrap();
+        let root = test_tempdir().unwrap();
         let selected = context(target(unified::PackageFlavor::Runtime));
         let manager = unified::UpdateManager::with_environment_root(
             root.path().join("cache"),
@@ -873,7 +874,7 @@ mod tests {
 
     #[tokio::test]
     async fn absent_status_does_not_create_environment_or_desktop_cache() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_tempdir().unwrap();
         let root = temp.path().join("unconfigured");
         let data = temp.path().join("desktop-app-data");
         let output = run_at(input("status --json").unwrap(), root.clone(), data.clone())

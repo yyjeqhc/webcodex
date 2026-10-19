@@ -63,7 +63,7 @@ function AuthorizationFlow({ target, capability, disabled, refreshKey, onAuthori
     } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
   if (!failed && status?.[capability]) return null;
-  return <div className="workspace-notice" aria-label="Runner Capability Authorization">
+  return <div className="workspace-notice runner-capability-authorization" aria-label="Runner Capability Authorization">
     {(unavailable || failed) && <p role="alert">{r(failed ? "authorizeFailed" : "authorizationUnavailable")}</p>}
     {status && !status[capability] && <>
       <p>{r(status.can_authorize ? "authorizationNeeded" : "operatorPairingNeeded")}</p>

@@ -84,9 +84,11 @@ try {
       const control = await page.locator('#desktop-settings-locale').evaluate(element => ({
         height: element.getBoundingClientRect().height, fontSize: parseFloat(getComputedStyle(element).fontSize),
       }));
-      assert(control.height >= 44 && control.fontSize >= 14, `readable controls: ${JSON.stringify(control)}`);
-      const checkbox = await page.locator('#desktop-launch-at-login').boundingBox();
-      assert(checkbox.width <= 24 && checkbox.height <= 24, 'checkbox remains a choice control');
+      assert(control.height >= 40 && control.fontSize >= 14, `readable controls: ${JSON.stringify(control)}`);
+      const toggle = page.locator('#desktop-launch-at-login');
+      const checkbox = await toggle.boundingBox();
+      // Launch at login is a compact switch that keeps native checkbox semantics.
+      assert(checkbox.width <= 40 && checkbox.height <= 24 && await toggle.getAttribute('type') === 'checkbox', 'launch at login remains a compact choice control');
       await page.locator('#settings-tab-network').click();
       assert.equal(await page.locator('#desktop-tunnel-proxy-url').inputValue(), 'http://127.0.0.1:7890');
       await page.locator('#settings-tab-diagnostics').click();

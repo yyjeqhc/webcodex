@@ -33,7 +33,7 @@ export function FirstReadGuide({ state, onProjects }: { state: DesktopState; onP
         setCopyFailed(false);
         void writeText(prompt).then(() => setCopiedIdentity(identity)).catch(() => setCopyFailed(true));
       }}>{t(copiedIdentity === identity ? "completion.copied" : "completion.copy")}</button>
-      {copyFailed && <p role="alert">{t("common.retry")}</p>}
+      {copyFailed && <p role="alert" className="workspace-notice">{t("completion.copyFailed")}</p>}
       <label className="checkbox-row"><input type="checkbox" checked={reportedIdentity === identity} disabled={busy}
         onChange={event => setReportedIdentity(event.target.checked ? identity : null)} />{t("completion.confirm")}</label>
       {reportedIdentity === identity && <p className="field-help" role="status">{t("completion.reported")}</p>}

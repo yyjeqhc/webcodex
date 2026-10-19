@@ -292,9 +292,7 @@ async fn bridge_dequeue_rejects_missing_exact_target_fence() {
     {
         let mut inner = registry.inner.lock().await;
         let pending = inner.pending_by_id.get_mut(&request_id).unwrap();
-        pending.expected_mcp_gateway_runner_instance_id = None;
-        pending.expected_mcp_gateway_provider_id = None;
-        pending.expected_mcp_gateway_provider_instance_id = None;
+        pending.dispatch_fence = crate::dispatch_fence::PendingDispatchFence::Unfenced;
     }
     let polled = registry
         .poll(RunnerPollRequest {
@@ -313,6 +311,99 @@ async fn bridge_dequeue_rejects_missing_exact_target_fence() {
     let inner = registry.inner.lock().await;
     assert!(!inner.pending_by_id.contains_key(&request_id));
     assert!(!inner.mcp_gateway_waiters.contains_key(&request_id));
+}
+
+#[tokio::test]
+async fn bridge_admission_rejects_missing_or_mismatched_fences_before_queue_mutation() {
+    use crate::dispatch_fence::{
+        McpGatewayDispatchFence, PendingDispatchFence, ProjectDispatchFence,
+    };
+    use crate::requests::{
+        enqueue_pending_request_locked, enqueue_pending_request_with_fence_locked,
+    };
+
+    let registry = RunnerRegistry::default();
+    register_bridge_runner(&registry).await;
+    let alice = auth_context(Some("alice"), false);
+    let (id, _receiver) = registry
+        .enqueue_mcp_gateway(
+            "bridge-runner",
+            "bridge-instance",
+            list_request("provider-instance"),
+            Some(&alice),
+            "test".into(),
+        )
+        .await
+        .unwrap();
+    let mut inner = registry.inner.lock().await;
+    let request = inner.pending_by_id[&id].request.clone();
+    let queue_before = inner.queues_by_runner["bridge-runner"].clone();
+    let pending_before = inner.pending_by_id.len();
+
+    let mut missing = request.clone();
+    missing.request_id = "missing-fence".into();
+    assert!(enqueue_pending_request_locked(
+        registry.telemetry.as_ref(),
+        &mut inner,
+        "bridge-runner",
+        missing.request_id.clone(),
+        missing,
+        None,
+        None,
+    )
+    .is_err());
+
+    for (index, fence) in [
+        PendingDispatchFence::RunnerConfig {
+            runner_instance_id: "bridge-instance".into(),
+        },
+        PendingDispatchFence::RunnerInstruction {
+            runner_instance_id: "bridge-instance".into(),
+        },
+        PendingDispatchFence::SshResource {
+            runner_instance_id: "bridge-instance".into(),
+        },
+        PendingDispatchFence::Skill {
+            runner_instance_id: "bridge-instance".into(),
+        },
+        PendingDispatchFence::Project(ProjectDispatchFence {
+            owner: None,
+            project_id: "project".into(),
+            cwd: "/project".into(),
+            runner_instance_id: Some("bridge-instance".into()),
+        }),
+        PendingDispatchFence::McpGateway(McpGatewayDispatchFence {
+            runner_instance_id: "bridge-instance".into(),
+            provider_id: "wrong-provider".into(),
+            provider_instance_id: "provider-instance".into(),
+        }),
+        PendingDispatchFence::McpGateway(McpGatewayDispatchFence {
+            runner_instance_id: String::new(),
+            provider_id: "demo".into(),
+            provider_instance_id: "provider-instance".into(),
+        }),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut mismatched = request.clone();
+        mismatched.request_id = format!("mismatched-fence-{index}");
+        assert!(enqueue_pending_request_with_fence_locked(
+            registry.telemetry.as_ref(),
+            &mut inner,
+            "bridge-runner",
+            mismatched.request_id.clone(),
+            mismatched,
+            None,
+            None,
+            fence,
+        )
+        .is_err());
+        assert_eq!(inner.pending_by_id.len(), pending_before);
+        assert_eq!(inner.queues_by_runner["bridge-runner"], queue_before);
+    }
+    assert_eq!(inner.pending_by_id.len(), pending_before);
+    assert_eq!(inner.queues_by_runner["bridge-runner"], queue_before);
 }
 
 #[tokio::test]

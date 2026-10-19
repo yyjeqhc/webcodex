@@ -146,22 +146,22 @@ function DiagnosticsContents({ state, onState, onActivity, onRuntime, onConnecti
       </section>}
       <div className="shell-subsection diagnostics-support"><h3>{p("supportHelp")}</h3><p>{p("supportPurpose")}</p>
         <p className="field-help">{s("The copied report excludes configuration contents. The support bundle adds an allowlisted nonsecret diagnostic configuration snapshot that may include private local paths; review it before sharing. Credentials, raw configuration and project code remain excluded.")}</p>
-        <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => void act(async valid => { await desktopApi.copyDiagnosticReport(); if (valid()) setNotice("Copied"); })}>{s("Copy Diagnostic Report")}</button>
+        <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => void act(async valid => { await desktopApi.copyDiagnosticReport(); if (valid()) setNotice("Copied"); })}>{s("Copy diagnostic report")}</button>
           <button type="button" className="secondary-button" disabled={disabled} onClick={() => void act(async valid => {
-            const path = await save({ title: s("Export Support Bundle"), defaultPath: "webcodex-support.zip", filters: [{ name: "ZIP", extensions: ["zip"] }] });
+            const path = await save({ title: s("Export support bundle"), defaultPath: "webcodex-support.zip", filters: [{ name: "ZIP", extensions: ["zip"] }] });
             if (!path || !valid()) return;
             await desktopApi.exportSupportBundle(path); if (valid()) setNotice("Support bundle exported");
-          })}>{s("Export Support Bundle")}</button></div>
+          })}>{s("Export support bundle")}</button></div>
       </div>
       <section className="shell-subsection" aria-labelledby="desktop-tracing-title">
-        <h3 id="desktop-tracing-title">{s("Tool Request Tracing")}</h3>
+        <h3 id="desktop-tracing-title">{s("Tool request tracing")}</h3>
         <p className="field-help">{p("tracePurpose")}</p>
         <dl className="runtime-facts">
           <div><dt>{p("traceCurrentMode")}</dt><dd>{data.trace.effective_mode ? traceLabel(data.trace.effective_mode) : p("traceUnconfirmed")}</dd></div>
           <div><dt>{p("traceSavedMode")}</dt><dd>{data.trace.configured_mode ? traceLabel(data.trace.configured_mode) : p("traceUnconfirmed")}</dd></div>
         </dl>
         <p className="field-help">{data.trace.effective_mode ? p("traceCurrentHelp") : p("traceUnconfirmedHelp")}</p>
-        <label htmlFor="desktop-trace-mode">{s("Tool Request Tracing")}</label>
+        <label htmlFor="desktop-trace-mode">{s("Tool request tracing")}</label>
         <select id="desktop-trace-mode" value={displayedMode ?? "unknown"} onChange={event => { dirtyMode.current = true; setMode(event.target.value as TraceMode); setConfirmation(null); }} disabled={disabled || !canTrace} aria-describedby={canTrace ? "desktop-trace-mode-help" : "desktop-trace-mode-help desktop-trace-authority-help"}>
           {!canTrace && !data.trace.effective_mode && <option value="unknown">{p("traceUnconfirmed")}</option>}
           <option value="off">{s("Off")}</option><option value="metadata">{p("traceMetadata")}</option><option value="full">{p("traceFull")}</option>

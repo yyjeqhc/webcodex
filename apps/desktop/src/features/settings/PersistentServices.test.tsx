@@ -40,7 +40,7 @@ describe("persistent local services", () => {
     const onState = vi.fn();
     render(wrap(<LocalServicesPanel state={baseState} onState={onState} />));
     const section = await screen.findByTestId("persistent-services");
-    expect(within(section).getByRole("heading", { name: "Server Connection" })).toBeInTheDocument();
+    expect(within(section).getByRole("heading", { name: "Server connection" })).toBeInTheDocument();
     expect(within(section).getByRole("heading", { name: "Local task service" })).toBeInTheDocument();
     expect(api.environmentServiceAction).not.toHaveBeenCalled();
     fireEvent.click(within(section).getByRole("button", { name: "Restart Local Server" }));
@@ -112,7 +112,7 @@ describe("persistent local services", () => {
     const remote = { ...baseState, topology: { ...baseState.topology!, server: { kind: "remote" as const, url: "https://example.test" }, runner: { kind: "none" as const } } } as DesktopState;
     render(wrap(<LocalServicesPanel state={remote} onState={vi.fn()} />));
     expect(await screen.findByTestId("persistent-services")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Server Connection" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Server connection" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Local task service" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^(Start|Stop|Restart) Local/ })).not.toBeInTheDocument();
     expect(api.environmentServiceAction).not.toHaveBeenCalled();
@@ -132,7 +132,7 @@ describe("persistent local services", () => {
 
   it("shows service observations without OS service controls when no persistent environment exists", async () => {
     render(wrap(<LocalServicesPanel state={{ ...baseState, persistent_environment: null }} onState={vi.fn()} />));
-    expect(screen.getByRole("heading", { name: "Server Connection" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Server connection" })).toBeInTheDocument();
     expect(screen.queryByTestId("persistent-services")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^(Start|Stop|Restart) Local/ })).not.toBeInTheDocument();
     expect(api.environmentServiceAction).not.toHaveBeenCalled();

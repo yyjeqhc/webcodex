@@ -164,7 +164,7 @@ describe("Settings observation and action ownership", () => {
     const save = deferred<DesktopState>(), onState = vi.fn(), original = state;
     api.updateTunnelProxy.mockReturnValueOnce(save.promise);
     const view = render(wrap(<SettingsPanel state={state} onState={onState} initialSection="network" />));
-    const button = screen.getByRole("button", { name: "Save and Apply" });
+    const button = screen.getByRole("button", { name: "Save and apply" });
     fireEvent.click(button); fireEvent.click(button);
     expect(api.updateTunnelProxy).toHaveBeenCalledTimes(1);
     if (boundary === "unmount") view.unmount();

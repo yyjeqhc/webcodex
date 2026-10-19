@@ -1,6 +1,7 @@
 use super::access_control::{
-    assert_runner_access, job_visible_to_access as shell_job_visible_to_auth,
+    assert_runner_access_typed, job_visible_to_access as shell_job_visible_to_auth,
 };
+use super::execution_admission::ExecutionAdmissionError;
 use super::jobs::{
     append_log_limited, assert_active_instance_locked, command_preview, is_final_job_status,
     job_view, notify_job_heartbeat, notify_job_update, observe_job_terminal, parse_job_lifecycle,
@@ -16,10 +17,7 @@ use super::state::{
     JobRecoveryReason, JobRecoveryState, ShellJobRecord, ShellJobVisibility,
 };
 use super::validation::{validate_id, validate_run_request, validate_runner_instance_id};
-use super::{
-    now_ts, RunnerFeature, RunnerRegistry, DETACHED_IDEMPOTENCY_CONFLICT,
-    DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
-};
+use super::{now_ts, RunnerFeature, RunnerRegistry};
 use crate::DetachedInitiatorIdentity;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -792,14 +790,35 @@ impl RunnerRegistry {
         access: Option<&crate::RunnerAccess>,
         detached_initiator: Option<&DetachedInitiatorIdentity>,
     ) -> Result<ShellJobInfo, String> {
+        self.start_job_with_metadata_for_access_typed(
+            body,
+            requested_by,
+            metadata,
+            access,
+            detached_initiator,
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    pub async fn start_job_with_metadata_for_access_typed(
+        &self,
+        body: ShellJobOpRequest,
+        requested_by: String,
+        metadata: ShellJobStartMetadata,
+        access: Option<&crate::RunnerAccess>,
+        detached_initiator: Option<&DetachedInitiatorIdentity>,
+    ) -> Result<ShellJobInfo, ExecutionAdmissionError> {
         let client_id = body
             .client_id
             .clone()
-            .ok_or_else(|| "client_id is required for op=start".to_string())?;
+            .ok_or_else(|| "client_id is required for op=start".to_string())
+            .map_err(ExecutionAdmissionError::invalid_request)?;
         let command = body
             .command
             .clone()
-            .ok_or_else(|| "command is required for op=start".to_string())?;
+            .ok_or_else(|| "command is required for op=start".to_string())
+            .map_err(ExecutionAdmissionError::invalid_request)?;
         let timeout_secs = body.timeout_secs.unwrap_or(120);
         let normalized_job_cwd = body.cwd.clone().map(|cwd| cwd.trim().to_string());
         let request_id = next_request_id();
@@ -808,15 +827,13 @@ impl RunnerRegistry {
         // SSH resource. Only the inverse is invalid: remote execution without
         // the Workflow Session that owns the SSH context.
         if metadata.ssh_resource.is_some() && metadata.session_id.is_none() {
-            return Err(
+            return Err(ExecutionAdmissionError::invalid_request(
                 "ssh_session_required: an SSH resource requires a Workflow Session id".to_string(),
-            );
+            ));
         }
         if metadata.ssh_resource.is_some() && metadata.explicit_shell.is_some() {
-            return Err(
-                "explicit_shell_selection is local-only; named SSH shell selection must stay in the remote compatibility path"
-                    .to_string(),
-            );
+            return Err(ExecutionAdmissionError::invalid_request("explicit_shell_selection is local-only; named SSH shell selection must stay in the remote compatibility path"
+                    .to_string()));
         }
         if metadata.ssh_resource.as_deref().is_some_and(|resource| {
             resource.is_empty()
@@ -826,7 +843,9 @@ impl RunnerRegistry {
                     character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')
                 })
         }) {
-            return Err("ssh_resource_invalid: resource name is invalid".to_string());
+            return Err(ExecutionAdmissionError::invalid_request(
+                "ssh_resource_invalid: resource name is invalid".to_string(),
+            ));
         }
         let validation_steps = metadata.validation_steps;
         let validation = metadata.validation;
@@ -838,7 +857,9 @@ impl RunnerRegistry {
         if login
             && (metadata.ssh_resource.is_some() || explicit_shell != Some(ExecutionShell::Bash))
         {
-            return Err("bash login mode requires local shell=bash".to_string());
+            return Err(ExecutionAdmissionError::invalid_request(
+                "bash login mode requires local shell=bash".to_string(),
+            ));
         }
         let structured_execution = metadata.structured_execution;
         let javascript_script_request = matches!(
@@ -914,9 +935,9 @@ impl RunnerRegistry {
                 || !validation_steps.is_empty()
                 || validation.is_some())
         {
-            return Err(
+            return Err(ExecutionAdmissionError::invalid_request(
                 "explicit_shell_selection is valid only for raw shell Job starts".to_string(),
-            );
+            ));
         }
         let structured_stdin = metadata.stdin;
         if validation_steps.len() > 3
@@ -934,41 +955,50 @@ impl RunnerRegistry {
                 .len()
                 != validation_steps.len()
         {
-            return Err("invalid structured validation plan".to_string());
+            return Err(ExecutionAdmissionError::invalid_request(
+                "invalid structured validation plan".to_string(),
+            ));
         }
         if validation
             .as_ref()
             .is_some_and(|metadata| !metadata.is_valid() || metadata.steps != validation_steps)
         {
-            return Err("invalid structured validation metadata".to_string());
+            return Err(ExecutionAdmissionError::invalid_request(
+                "invalid structured validation metadata".to_string(),
+            ));
         }
         if structured_execution.is_some()
             && (!validation_steps.is_empty() || validation.is_some() || !command.is_empty())
         {
-            return Err(
+            return Err(ExecutionAdmissionError::invalid_request(
                 "typed structured Job starts require command=\"\" and no validation plan"
                     .to_string(),
-            );
+            ));
         }
         let (safe_command_preview, structured_metadata, job_kind) = match structured_execution
             .as_ref()
         {
             Some(StructuredJobExecution::ProjectFormat { plan, .. }) => {
-                plan.digest().map_err(str::to_string)?;
+                plan.digest()
+                    .map_err(str::to_string)
+                    .map_err(ExecutionAdmissionError::invalid_request)?;
                 if structured_stdin.is_some()
                     || metadata.ssh_resource.is_some()
                     || metadata.visibility != ShellJobVisibility::Public
                     || metadata.project_id.as_deref()
                         != Some(format!("agent:{client_id}:{}", plan.request.project_id).as_str())
                 {
-                    return Err("invalid project format Job authority".into());
+                    return Err(ExecutionAdmissionError::permission_denied(
+                        "invalid project format Job authority",
+                    ));
                 }
                 validate_structured_job_common(
                     normalized_job_cwd.as_deref(),
                     None,
                     timeout_secs,
                     webcodex_core::project_format::PROJECT_FORMAT_TIMEOUT_MAX_SECS,
-                )?;
+                )
+                .map_err(ExecutionAdmissionError::invalid_request)?;
                 (
                     "project_format selected files".into(),
                     Some(webcodex_core::project_format::structured_metadata()),
@@ -977,15 +1007,19 @@ impl RunnerRegistry {
             }
             Some(StructuredJobExecution::ProjectBuild(plan)) => {
                 if !plan.is_valid() || structured_stdin.is_some() {
-                    return Err("invalid typed project build Job plan".to_string());
+                    return Err(ExecutionAdmissionError::invalid_request(
+                        "invalid typed project build Job plan".to_string(),
+                    ));
                 }
-                validate_process_argv(&plan.process)?;
+                validate_process_argv(&plan.process)
+                    .map_err(ExecutionAdmissionError::invalid_request)?;
                 validate_structured_job_common(
                     normalized_job_cwd.as_deref(),
                     None,
                     timeout_secs,
                     PROCESS_TIMEOUT_MAX_SECS,
-                )?;
+                )
+                .map_err(ExecutionAdmissionError::invalid_request)?;
                 let preview = process_preview(
                     &plan.process.executable,
                     plan.process.args.iter().map(String::as_str),
@@ -1003,13 +1037,14 @@ impl RunnerRegistry {
                 (preview, Some(safe), "project_build")
             }
             Some(StructuredJobExecution::Process(process)) => {
-                validate_process_argv(process)?;
+                validate_process_argv(process).map_err(ExecutionAdmissionError::invalid_request)?;
                 validate_structured_job_common(
                     normalized_job_cwd.as_deref(),
                     structured_stdin.as_deref(),
                     timeout_secs,
                     PROCESS_TIMEOUT_MAX_SECS,
-                )?;
+                )
+                .map_err(ExecutionAdmissionError::invalid_request)?;
                 let preview =
                     process_preview(&process.executable, process.args.iter().map(String::as_str));
                 let safe = ShellJobStructuredExecutionMetadata {
@@ -1025,19 +1060,20 @@ impl RunnerRegistry {
                 (preview, Some(safe), "run_process")
             }
             Some(StructuredJobExecution::InteractiveProcess(process)) => {
-                validate_process_argv(process)?;
+                validate_process_argv(process).map_err(ExecutionAdmissionError::invalid_request)?;
                 validate_structured_job_common(
                     normalized_job_cwd.as_deref(),
                     None,
                     timeout_secs,
                     PROCESS_TIMEOUT_MAX_SECS,
-                )?;
+                )
+                .map_err(ExecutionAdmissionError::invalid_request)?;
                 if structured_stdin.is_some()
                     || validation_identity.is_some()
                     || validation_tool.is_some()
                     || assertion_name.is_some()
                 {
-                    return Err("interactive process requires subsequent keyed input and is not validation evidence".into());
+                    return Err(ExecutionAdmissionError::invalid_request("interactive process requires subsequent keyed input and is not validation evidence"));
                 }
                 let safe = ShellJobStructuredExecutionMetadata {
                     execution_source: "run_process_interactive".into(),
@@ -1056,13 +1092,14 @@ impl RunnerRegistry {
                 )
             }
             Some(StructuredJobExecution::DetachedProcess(process)) => {
-                validate_process_argv(process)?;
+                validate_process_argv(process).map_err(ExecutionAdmissionError::invalid_request)?;
                 validate_structured_job_common(
                     normalized_job_cwd.as_deref(),
                     structured_stdin.as_deref(),
                     timeout_secs,
                     PROCESS_TIMEOUT_MAX_SECS,
-                )?;
+                )
+                .map_err(ExecutionAdmissionError::invalid_request)?;
                 let preview = format!("detached process ({} args)", process.args.len());
                 let safe = ShellJobStructuredExecutionMetadata {
                     execution_source: "run_detached_process".to_string(),
@@ -1082,7 +1119,8 @@ impl RunnerRegistry {
                     structured_stdin.as_deref(),
                     normalized_job_cwd.as_deref(),
                     timeout_secs,
-                )?;
+                )
+                .map_err(ExecutionAdmissionError::invalid_request)?;
                 let preview = script_preview(
                     script.language.as_str(),
                     script.script.len(),
@@ -1103,16 +1141,20 @@ impl RunnerRegistry {
             Some(StructuredJobExecution::SkillResource(request)) => {
                 request
                     .validate()
-                    .map_err(|error| format!("invalid Runner Skill execution request: {error}"))?;
+                    .map_err(|error| format!("invalid Runner Skill execution request: {error}"))
+                    .map_err(ExecutionAdmissionError::invalid_request)?;
                 if structured_stdin.is_some() {
-                    return Err("Skill resource Job does not accept generic stdin".to_string());
+                    return Err(ExecutionAdmissionError::invalid_request(
+                        "Skill resource Job does not accept generic stdin".to_string(),
+                    ));
                 }
                 validate_structured_job_common(
                     normalized_job_cwd.as_deref(),
                     None,
                     timeout_secs,
                     STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
-                )?;
+                )
+                .map_err(ExecutionAdmissionError::invalid_request)?;
                 let preview = format!("trusted Skill resource {}", request.path);
                 let safe = ShellJobStructuredExecutionMetadata {
                     execution_source: "run_skill_resource".to_string(),
@@ -1136,7 +1178,7 @@ impl RunnerRegistry {
                     timeout_secs,
                     wait_timeout_secs: 0,
                 };
-                validate_run_request(&run)?;
+                validate_run_request(&run).map_err(ExecutionAdmissionError::invalid_request)?;
                 let preview = if validation_steps.is_empty() {
                     command_preview(&run.command)
                 } else {
@@ -1158,10 +1200,10 @@ impl RunnerRegistry {
         );
         let detached_idempotency_key = metadata.detached_idempotency_key.as_deref();
         if detached_request != detached_idempotency_key.is_some() {
-            return Err(
+            return Err(ExecutionAdmissionError::invalid_request(
                 "detached idempotency_key must be present exactly for detached process Job starts"
                     .to_string(),
-            );
+            ));
         }
         let detached_intent = if let Some(StructuredJobExecution::DetachedProcess(process)) =
             structured_execution.as_ref()
@@ -1183,15 +1225,19 @@ impl RunnerRegistry {
         let mut inner = self.inner.lock().await;
         let job_id = match detached_idempotency_key {
             Some(key) => detached_job_id_for_key(
-                detached_initiator.ok_or_else(|| {
-                    "detached idempotency requires a stable authenticated caller identity"
-                        .to_string()
-                })?,
+                detached_initiator
+                    .ok_or_else(|| {
+                        "detached idempotency requires a stable authenticated caller identity"
+                            .to_string()
+                    })
+                    .map_err(ExecutionAdmissionError::permission_denied)?,
                 key,
-            )?,
+            )
+            .map_err(ExecutionAdmissionError::invalid_request)?,
             None => allocate_job_id(&inner.jobs_by_id, || {
                 format!("wc_job_{}", webcodex_core::compact::random_suffix::<12>())
-            })?,
+            })
+            .map_err(ExecutionAdmissionError::unavailable)?,
         };
         let validation_step_names = validation_steps
             .iter()
@@ -1313,74 +1359,77 @@ impl RunnerRegistry {
                 created_at,
             },
             RunnerOperation::Job(job_operation),
-        )?;
+        )
+        .map_err(ExecutionAdmissionError::invalid_request)?;
         let Some(runner) = inner.runners.get(&client_id) else {
-            return Err(format!("unknown shell client: {}", client_id));
+            return Err(ExecutionAdmissionError::unknown_runner(client_id.clone()));
         };
         if access.is_some() {
-            assert_runner_access(access, runner)?;
+            assert_runner_access_typed(access, runner)?;
         }
         if !(runner.runner_features.supports(RunnerFeature::AsyncJobs)
             || runner
                 .runner_features
                 .supports(RunnerFeature::AsyncShellJobs))
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "runner {} does not support async shell jobs",
                 client_id
-            ));
+            )));
         }
         if explicit_shell.is_some()
             && !runner
                 .runner_features
                 .supports(RunnerFeature::ExplicitShellSelection)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "capability_unavailable: runner {client_id} does not support explicit_shell_selection"
-            ));
+            )));
         }
         if login
             && !runner
                 .runner_features
                 .supports(RunnerFeature::BashLoginShell)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "capability_unavailable: runner {client_id} does not support bash_login_shell"
-            ));
+            )));
         }
         if structured_metadata.is_some()
             && !runner
                 .runner_features
                 .supports(RunnerFeature::StructuredExecutionJobs)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "capability_unavailable: runner {client_id} does not support structured_execution_jobs"
-            ));
+            )));
         }
         if let Some(expected_instance) = format_runner_instance {
             if !self.inner.has_receipt_store() {
-                return Err("format_execution_unavailable".into());
+                return Err(ExecutionAdmissionError::unavailable(
+                    "format_execution_unavailable",
+                ));
             }
             if !runner
                 .runner_features
                 .supports(RunnerFeature::ProjectFormat)
             {
-                return Err(capability_upgrade_error(
-                    &client_id,
-                    RunnerFeature::ProjectFormat,
+                return Err(ExecutionAdmissionError::capability_unavailable(
+                    capability_upgrade_error(&client_id, RunnerFeature::ProjectFormat),
                 ));
             }
             if runner.runner_instance_id != expected_instance {
-                return Err("format_runner_replaced".into());
+                return Err(ExecutionAdmissionError::target_changed(
+                    "format_runner_replaced",
+                ));
             }
             if go_format_request
                 && !runner
                     .runner_features
                     .supports(RunnerFeature::ProjectFormatGo)
             {
-                return Err(capability_upgrade_error(
-                    &client_id,
-                    RunnerFeature::ProjectFormatGo,
+                return Err(ExecutionAdmissionError::capability_unavailable(
+                    capability_upgrade_error(&client_id, RunnerFeature::ProjectFormatGo),
                 ));
             }
         }
@@ -1389,15 +1438,13 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectBuildNode)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectBuildNode,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectBuildNode),
             ));
         }
         if project_build_request && !runner.runner_features.supports(RunnerFeature::ProjectBuild) {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectBuild,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectBuild),
             ));
         }
         if python_build_request
@@ -1405,9 +1452,8 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectBuildPython)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectBuildPython,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectBuildPython),
             ));
         }
         if project_all_packages_request
@@ -1415,9 +1461,8 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectAllPackages)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectAllPackages,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectAllPackages),
             ));
         }
         if project_dependency_policy_request
@@ -1425,9 +1470,8 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectDependencyPolicy)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectDependencyPolicy,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectDependencyPolicy),
             ));
         }
         if project_go_single_module_request
@@ -1435,9 +1479,8 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectGoSingleModule)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectGoSingleModule,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectGoSingleModule),
             ));
         }
         if javascript_script_request
@@ -1445,68 +1488,66 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::StructuredScriptJavascript)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "capability_unavailable: runner {client_id} does not support structured_script_javascript"
-            ));
+            )));
         }
         if typescript_script_request
             && !runner
                 .runner_features
                 .supports(RunnerFeature::StructuredScriptTypescript)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "capability_unavailable: runner {client_id} does not support structured_script_typescript"
-            ));
+            )));
         }
         if python_script_request
             && !runner
                 .runner_features
                 .supports(RunnerFeature::StructuredScriptPython)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "capability_unavailable: runner {client_id} does not support structured_script_python"
-            ));
+            )));
         }
         if skill_resource_request
             && !runner
                 .runner_features
                 .supports(RunnerFeature::SkillResourceExecution)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "capability_unavailable: runner {client_id} does not support skill_resource_execution"
-            ));
+            )));
         }
         if interactive_request
             && !runner
                 .runner_features
                 .supports(RunnerFeature::JobProcessInput)
         {
-            return Err(
-                "capability_unavailable: upgrade target Runner for job_process_input_v1".into(),
-            );
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                "capability_unavailable: upgrade target Runner for job_process_input_v1",
+            ));
         }
         if detached_request
             && !runner
                 .runner_features
                 .supports(RunnerFeature::DetachedProcessJobs)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "capability_unavailable: runner {client_id} does not support detached_process_jobs"
-            ));
+            )));
         }
         if structured_metadata.is_some() && metadata.ssh_resource.is_some() {
-            return Err(
-                "ssh_resource_unsupported_for_request: typed structured Jobs do not support SSH resources"
-                    .to_string(),
-            );
+            return Err(ExecutionAdmissionError::invalid_request("ssh_resource_unsupported_for_request: typed structured Jobs do not support SSH resources"
+                    .to_string()));
         }
         if metadata.ssh_resource.is_some()
             && !runner.runner_features.supports(RunnerFeature::SshShell)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "agent_capability_unavailable: runner {} does not support ssh_shell",
                 client_id
-            ));
+            )));
         }
         if validation
             .as_ref()
@@ -1515,9 +1556,8 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectValidation)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectValidation,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidation),
             ));
         }
         // Auto-detected Node scripts need admission recheck against the actual
@@ -1533,9 +1573,11 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectValidationNodeScriptCheck)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectValidationNodeScriptCheck,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(
+                    &client_id,
+                    RunnerFeature::ProjectValidationNodeScriptCheck,
+                ),
             ));
         }
         let python_ruff = validation.as_ref().is_some_and(|v| {
@@ -1551,9 +1593,8 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectValidationPythonRuff)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectValidationPythonRuff,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidationPythonRuff),
             ));
         }
         let python_pytest = validation
@@ -1567,9 +1608,8 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectValidationPythonPytest)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectValidationPythonPytest,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidationPythonPytest),
             ));
         }
         if validation_steps
@@ -1579,9 +1619,8 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectValidationNodeJson)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectValidationNodeJson,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidationNodeJson),
             ));
         }
         let node_test = validation
@@ -1595,9 +1634,8 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectValidationNodeTap)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectValidationNodeTap,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidationNodeTap),
             ));
         }
         // Recheck at admission, not only during the earlier planning round trip:
@@ -1614,9 +1652,8 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::ProjectValidationTestOptions)
         {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectValidationTestOptions,
+            return Err(ExecutionAdmissionError::capability_unavailable(
+                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidationTestOptions),
             ));
         }
         if !validation_steps.is_empty()
@@ -1624,10 +1661,10 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::StructuredValidationArgv)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "structured_validation_unavailable: runner {} does not support structured argv validation jobs",
                 client_id
-            ));
+            )));
         }
         if validation
             .as_ref()
@@ -1637,10 +1674,10 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::StructuredCargoTestCountAssertion)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "structured_cargo_test_count_assertion_unavailable: runner {} does not support durable Cargo test-count assertions",
                 client_id
-            ));
+            )));
         }
         if validation
             .as_ref()
@@ -1649,10 +1686,10 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::StructuredCargoTestExecutionPolicy)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "structured_cargo_test_execution_policy_unavailable: runner {} does not support durable Cargo validation execution-policy metadata",
                 client_id
-            ));
+            )));
         }
         if validation_steps.iter().any(|step| {
             step.program == "cargo"
@@ -1662,10 +1699,10 @@ impl RunnerRegistry {
             .runner_features
             .supports(RunnerFeature::StructuredCargoTestLib)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "structured_cargo_test_lib_unavailable: runner {} does not support Cargo test --lib validation argv",
                 client_id
-            ));
+            )));
         }
         if validation_steps
             .iter()
@@ -1674,10 +1711,10 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::StructuredCargoCheckPackages)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "capability_unavailable: structured_cargo_check_packages_unavailable: runner {} does not support repeated Cargo check package selectors",
                 client_id
-            ));
+            )));
         }
         if validation_steps
             .iter()
@@ -1686,10 +1723,10 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::StructuredGoTestJson)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "structured_go_test_json_unavailable: runner {} does not support machine-readable Go test validation",
                 client_id
-            ));
+            )));
         }
         if validation_steps.iter().any(|step| {
             step.is_structured_go_test_json() && step.args.as_slice() != ["test", "-json", "./..."]
@@ -1697,10 +1734,10 @@ impl RunnerRegistry {
             .runner_features
             .supports(RunnerFeature::StructuredGoTestPackages)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "structured_go_test_packages_unavailable: runner {} does not support focused Go package validation argv",
                 client_id
-            ));
+            )));
         }
         if validation
             .as_ref()
@@ -1709,17 +1746,19 @@ impl RunnerRegistry {
                 .runner_features
                 .supports(RunnerFeature::StructuredGoTestTool)
         {
-            return Err(format!(
+            return Err(ExecutionAdmissionError::capability_unavailable(format!(
                 "structured_go_test_tool_unavailable: runner {} does not support the first-class go_test validation contract",
                 client_id
-            ));
+            )));
         }
         if metadata
             .project_id
             .as_deref()
             .is_some_and(|project| inner.unregistering_projects.contains_key(project))
         {
-            return Err("project_unregister_in_progress".to_string());
+            return Err(ExecutionAdmissionError::target_changed(
+                "project_unregister_in_progress".to_string(),
+            ));
         }
         let runner_instance_id = runner.runner_instance_id.clone();
         let auth_group = runner.auth_group.clone();
@@ -1727,8 +1766,8 @@ impl RunnerRegistry {
         if let Some(intent) = detached_intent.as_ref() {
             if let Some(existing) = inner.jobs_by_id.get(&job_id) {
                 if existing.kind != "run_detached_process" {
-                    return Err(format!(
-                        "{DETACHED_IDEMPOTENCY_CONFLICT}: idempotency key resolves to a non-detached Job"
+                    return Err(ExecutionAdmissionError::idempotency_conflict(
+                        "idempotency key resolves to a non-detached Job",
                     ));
                 }
                 match existing.detached_idempotency_intent.as_ref() {
@@ -1736,12 +1775,10 @@ impl RunnerRegistry {
                         return Ok(job_view(existing));
                     }
                     Some(_) => {
-                        return Err(format!(
-                            "{DETACHED_IDEMPOTENCY_CONFLICT}: idempotency key was already used for different detached process intent"
-                        ));
+                        return Err(ExecutionAdmissionError::idempotency_conflict("idempotency key was already used for different detached process intent"));
                     }
                     None => {
-                        return Err(format!("{DETACHED_IDEMPOTENCY_RECOVERY_PREFIX}{job_id}"));
+                        return Err(ExecutionAdmissionError::idempotency_recovery(job_id));
                     }
                 }
             }

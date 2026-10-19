@@ -467,6 +467,7 @@
   "completion.reported": "你回報讀取成功。這是你的確認，並非自動觀測的連線測試。",
   "completion.overview": "開啟概覽",
   "completion.copy": "複製讀取請求",
+  "completion.copyFailed": "複製失敗，請重試。",
   "completion.copied": "已複製讀取請求",
   "completion.identityPending": "Runner 標識尚不可用。嘗試讀取前請重新整理環境。",
   "completion.runnerId": "Runner ID",

@@ -58,7 +58,8 @@ export function useDesktopWorkspace() {
   useEffect(() => {
     const navigateWithKeyboard = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.repeat) return;
-      const page = NAVIGATION[Number(event.key) - 1];
+      // Ctrl/⌘+, is the conventional desktop shortcut for preferences.
+      const page = event.key === "," ? "settings" : NAVIGATION[Number(event.key) - 1];
       if (!page) return;
       event.preventDefault();
       setNavigation(page);

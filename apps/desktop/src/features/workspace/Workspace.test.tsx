@@ -178,10 +178,10 @@ describe("product workspace task flows", () => {
       persistent_environment, connections: connectionSnapshot(),
       topology: { ...state.topology!, server: { kind: "remote" as const, url }, runner: { kind: "none" as const } } } as DesktopState;
     render(wrap(<><WorkspaceStatus state={viewer} /><Sidebar state={viewer} navigation="home" setNavigation={vi.fn()} /></>, viewer));
-    expect(screen.getByRole("status")).toHaveTextContent("Server ConnectionRunning");
+    expect(screen.getByRole("status")).toHaveTextContent("Server connectionRunning");
     expect(screen.getByRole("status")).not.toHaveTextContent("Local task service");
     expect(screen.getByRole("status")).toHaveTextContent("Desktop Tunnel connectionsNo Tunnel connections saved in Desktop");
-    expect(screen.getByRole("complementary")).toHaveTextContent("Server Connection · Running");
+    expect(screen.getByRole("complementary")).toHaveTextContent("Server connection · Running");
     expect(screen.getByRole("complementary")).toHaveTextContent("No Tunnel connections saved in Desktop");
     expect(screen.getByRole("complementary")).not.toHaveTextContent("Local task service");
     expect(screen.queryByText("ChatGPT connected")).not.toBeInTheDocument();
@@ -194,10 +194,10 @@ describe("product workspace task flows", () => {
     const serverOnly = { ...state, persistent_environment, topology: { ...state.topology!, runner: { kind: "none" as const } },
       connections: connectionSnapshot(connectionFixture({ pid: null })) };
     render(wrap(<><WorkspaceStatus state={serverOnly} /><Sidebar state={serverOnly} navigation="home" setNavigation={vi.fn()} /></>, serverOnly));
-    expect(screen.getByRole("status")).toHaveTextContent("Server ConnectionRunning");
+    expect(screen.getByRole("status")).toHaveTextContent("Server connectionRunning");
     expect(screen.getByRole("status")).not.toHaveTextContent("Local task service");
     expect(screen.getByRole("status")).toHaveTextContent("1 of 1 Desktop tunnels locally ready");
-    expect(screen.getByRole("complementary")).toHaveTextContent("Server Connection · Running");
+    expect(screen.getByRole("complementary")).toHaveTextContent("Server connection · Running");
   });
 
   it("does not invent a configured Runner before topology is available", () => {
@@ -897,7 +897,7 @@ describe("Workflow Session loaded-record filters", () => {
     render(wrap(<ActivityPanel activity={[]} />));
     const filter = await openSessions(2);
     fireEvent.change(filter, { target: { value: "running" } });
-    fireEvent.click(screen.getByRole("button", { name: "Project: All Projects" }));
+    fireEvent.click(screen.getByRole("button", { name: "Project: All projects" }));
     const picker = screen.getByRole("dialog", { name: "Project" });
     fireEvent.click(within(picker).getByRole("button", { name: /beta/ }));
     expect(screen.getByText("No matching sessions")).toBeInTheDocument();
@@ -909,7 +909,7 @@ describe("Workflow Session loaded-record filters", () => {
     native.invoke.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(filter).toHaveValue("all");
-    expect(screen.getByRole("button", { name: "Project: All Projects" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Project: All projects" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Alpha running fixture/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Beta idle fixture/ })).toBeInTheDocument();
     expect(native.invoke).not.toHaveBeenCalled();
@@ -969,7 +969,7 @@ describe("Workflow Session loaded-record filters", () => {
     const content = <><ActivityPanel activity={[]} /><BoundaryFrames /></>;
     const view = render(wrap(content));
     fireEvent.change(await openSessions(1), { target: { value: "running" } });
-    fireEvent.click(screen.getByRole("button", { name: "Project: All Projects" }));
+    fireEvent.click(screen.getByRole("button", { name: "Project: All projects" }));
     fireEvent.click(within(screen.getByRole("dialog", { name: "Project" })).getByRole("button", { name: /beta/ }));
     view.rerender(wrap(content, { ...state, topology: { ...state.topology!, server: { kind: "remote", url: "https://fixture.example" } } }));
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Session filter" })).toHaveValue("all"));
@@ -988,7 +988,7 @@ describe("Workflow Session loaded-record filters", () => {
     expect(boundaryFrames.some(frame => frame.kind === "authorization")).toBe(true);
     for (const frame of boundaryFrames) {
       expect(frame.status).toBe("all");
-      expect(frame.project).toBe("Project: All Projects");
+      expect(frame.project).toBe("Project: All projects");
     }
   });
 
@@ -1004,7 +1004,7 @@ describe("Workflow Session loaded-record filters", () => {
       await waitFor(() => expect(screen.getByText("Loaded sessions")).toHaveTextContent("Loaded sessions 2"));
       const filter = screen.getByRole("combobox", { name: "Session filter" }); filter.focus();
       expect(filter).toHaveFocus(); fireEvent.change(filter, { target: { value: "running" } });
-      const trigger = screen.getByRole("button", { name: "Project: All Projects" });
+      const trigger = screen.getByRole("button", { name: "Project: All projects" });
       fireEvent.click(trigger);
       const picker = screen.getByRole("dialog", { name: "Project" });
       fireEvent.keyDown(picker, { key: "ArrowDown" });

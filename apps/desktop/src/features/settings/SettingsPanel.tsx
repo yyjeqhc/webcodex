@@ -21,6 +21,7 @@ import type { RuntimeUpdates } from "../../hooks/useRuntimeUpdates";
 
 import { ConfigurationDataPanel } from "./ConfigurationDataPanel";
 import { useConfigurationData } from "../../i18n/configuration-data";
+import { exposureStatusKey } from "../workspace/WorkspaceStatus";
 
 const SECTIONS = ["general", "access", "network", "runtime", "configuration", "diagnostics", "about"] as const;
 type SettingsSection = typeof SECTIONS[number];
@@ -203,7 +204,7 @@ function SettingsView({
         <div className="setting-row"><label htmlFor="desktop-settings-locale">{t("locale.label")}</label><select id="desktop-settings-locale" value={locale} onChange={event => setLocale(event.target.value as typeof locale)} data-webcodex-control="locale">{LANGUAGES.map(language => <option key={language.value} value={language.value}>{language.label}</option>)}</select></div>
         <div className="setting-row"><label htmlFor="desktop-settings-appearance">{t("appearance.label")}</label><select id="desktop-settings-appearance" value={appearance} onChange={event => setAppearance(event.target.value as typeof appearance)} data-webcodex-control="appearance">{APPEARANCES.map(value => <option key={value} value={value}>{t(`appearance.${value}`)}</option>)}</select></div>
         <div className="setting-row"><span>{t("accent.label")}</span><AccentPicker color={accent} onChange={setAccent} /></div>
-        <div className="setting-row"><label htmlFor="desktop-launch-at-login">{t("settings.launchAtLogin")}</label><input id="desktop-launch-at-login" type="checkbox" checked={launchAtLogin ?? false} onChange={event => void updateLaunchAtLogin(event.target.checked)} disabled={launchAtLogin === null || savingLaunchAtLogin} data-webcodex-control="launch-at-login" /></div>
+        <div className="setting-row"><label htmlFor="desktop-launch-at-login">{t("settings.launchAtLogin")}</label><input id="desktop-launch-at-login" className="desktop-switch" type="checkbox" checked={launchAtLogin ?? false} onChange={event => void updateLaunchAtLogin(event.target.checked)} disabled={launchAtLogin === null || savingLaunchAtLogin} data-webcodex-control="launch-at-login" /></div>
         {launchAtLoginError && <SettingsError error={launchAtLoginError} />}
         <div className="setting-row"><span>{p("background")}</span><span className="setting-value">{p("keepRunning")}</span></div>
       </section>
@@ -224,7 +225,7 @@ function SettingsView({
           <div><dt>{p("configuredMode")}</dt><dd>{configuredProxyMode}</dd></div>
           <div><dt>{p("detectedProxy")}</dt><dd>{detectedProxy}</dd></div>
           <div><dt>{p("effectiveConnectionPath")}</dt><dd>{effectiveProxyPath}</dd></div>
-          <div><dt>{p("tunnelStatus")}</dt><dd>{state.readiness.exposure}</dd></div>
+          <div><dt>{p("tunnelStatus")}</dt><dd>{p(exposureStatusKey(state.readiness.exposure))}</dd></div>
         </dl>
         <button type="button" className="secondary-button" onClick={() => void saveProxy()} disabled={savingProxy || operationBusy || (proxyMode === "custom" && !customProxy.trim())} data-webcodex-action="save-tunnel-proxy">{savingProxy ? p("loading") : p("saveApply")}</button>
         {proxyError && <SettingsError error={proxyError} />}

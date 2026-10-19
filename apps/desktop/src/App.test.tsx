@@ -566,9 +566,11 @@ beforeEach(() => {
     api.tunnelProfileAction.mockRejectedValueOnce({ code: "tunnel_unavailable", message: "Stop failed", next_action: "Retry stop" });
     renderApp(); fireEvent.click(await screen.findByRole("button", { name: "连接" }));
     expect(screen.queryByRole("button", { name: "启动 ChatGPT" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("高级 · ChatGPT"));
-    expect(screen.getByText("tunnel_control_plane")).toBeInTheDocument();
-    expect(screen.getByText("tunnel_control_plane_probe_failed")).toBeInTheDocument();
+    const profile = within(screen.getByRole("article", { name: "ChatGPT" }));
+    expect(profile.getByText("tunnel_control_plane")).not.toBeVisible();
+    fireEvent.click(profile.getByText("详情", { selector: "summary" }));
+    expect(profile.getByText("tunnel_control_plane")).toBeVisible();
+    expect(profile.getByText("tunnel_control_plane_probe_failed")).toBeVisible();
     const stop = screen.getByRole("button", { name: "停止 ChatGPT" });
     fireEvent.click(stop); expect(await screen.findByRole("alert")).toHaveTextContent("安全隧道不可用");
     await waitFor(() => expect(stop).toBeEnabled()); fireEvent.click(stop);

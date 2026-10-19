@@ -1,4 +1,5 @@
-const EDITABLE = "input, textarea, select, [contenteditable=''], [contenteditable='true']";
+const EDITABLE = "textarea, select, [contenteditable=''], [contenteditable='true'], [contenteditable='plaintext-only']";
+const TEXT_INPUT_TYPES = new Set(["text", "search", "password", "email", "url", "tel", "number", "date", "datetime-local", "month", "time", "week"]);
 
 /** Production WebViews otherwise expose page chrome that does not belong to a
  * desktop window: the browser context menu, print, and an accidental reload
@@ -7,9 +8,13 @@ const EDITABLE = "input, textarea, select, [contenteditable=''], [contenteditabl
 export function installDesktopWindowBehavior(target: Window = window): () => void {
   const onContextMenu = (event: MouseEvent) => {
     const element = event.target instanceof Element ? event.target : null;
+    const input = element?.closest("input");
+    if (input && TEXT_INPUT_TYPES.has(input.type)) return;
     if (element?.closest(EDITABLE)) return;
     const selection = target.getSelection();
-    if (selection && !selection.isCollapsed && selection.toString().trim()) return;
+    // A selection elsewhere on the page must not reopen browser chrome here.
+    if (element && selection && !selection.isCollapsed && selection.toString().trim()
+      && selection.rangeCount > 0 && selection.getRangeAt(0).intersectsNode(element)) return;
     event.preventDefault();
   };
   const onKeyDown = (event: KeyboardEvent) => {

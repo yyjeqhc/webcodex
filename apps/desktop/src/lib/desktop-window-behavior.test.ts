@@ -18,18 +18,21 @@ describe("installDesktopWindowBehavior", () => {
   });
 
   it("suppresses the page context menu but keeps it for editable fields and selected text", () => {
-    document.body.innerHTML = `<p id="text">Runner fixture-runner</p><input id="field" /><textarea id="area"></textarea><div id="editable" contenteditable="true"></div>`;
+    document.body.innerHTML = `<p id="text">Runner fixture-runner</p><button id="other">Other</button><input id="field" /><input id="checkbox" type="checkbox" /><textarea id="area"></textarea><div id="editable" contenteditable="true"></div><div id="plain" contenteditable="plaintext-only"></div>`;
     uninstall = installDesktopWindowBehavior();
     const text = document.getElementById("text")!;
     expect(dispatch(text, menu())).toBe(true);
     expect(dispatch(document.getElementById("field")!, menu())).toBe(false);
+    expect(dispatch(document.getElementById("checkbox")!, menu())).toBe(true);
     expect(dispatch(document.getElementById("area")!, menu())).toBe(false);
     expect(dispatch(document.getElementById("editable")!, menu())).toBe(false);
+    expect(dispatch(document.getElementById("plain")!, menu())).toBe(false);
 
     const range = document.createRange();
     range.selectNodeContents(text);
     window.getSelection()!.addRange(range);
     expect(dispatch(text, menu())).toBe(false);
+    expect(dispatch(document.getElementById("other")!, menu())).toBe(true);
   });
 
   it("blocks accidental reload and print while leaving deliberate and ordinary keys alone", () => {

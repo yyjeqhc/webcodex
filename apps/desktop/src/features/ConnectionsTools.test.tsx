@@ -287,8 +287,8 @@ describe("Connections + Tools control surfaces", () => {
     render(<Harness mode="connections" initial={initial} />);
 
     expect(screen.queryByRole("button", { name: "Start Server" })).not.toBeInTheDocument();
-    expect(screen.getByText("Runs with WebCodex Server")).toBeInTheDocument();
-    fireEvent.click(screen.getByText(/Advanced · Paused ChatGPT/));
+    expect(screen.getByText("Runs with WebCodex Server", { selector: ".workspace-observation" })).toBeVisible();
+    fireEvent.click(screen.getByText("Details"));
     expect(screen.getByText("Disabled")).toBeInTheDocument();
   });
 

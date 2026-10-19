@@ -246,6 +246,11 @@
 .project-browser-list { min-width: 0; position: sticky; top: 20px; max-height: calc(100dvh - 80px); overflow: auto; }
 .project-browser .project-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
 .project-browser .project-card { grid-template-columns: minmax(0, 1fr); min-height: 96px; gap: 12px; padding: 14px 12px; }
+.project-browser .project-card-head strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; font-size: 15px; line-height: 1.5; }
+.project-browser .project-card-head small, .project-browser .project-card-body > div, .project-browser .project-session-main small { font-size: 13px; line-height: 1.6; }
+.project-browser .section-heading { flex-wrap: wrap; gap: 8px 16px; }
+.project-browser .section-heading > div { min-width: 0; overflow-wrap: anywhere; }
+.project-browser .project-session-main strong { font-size: 14px; line-height: 1.5; }
 .project-browser .project-card-body { grid-template-columns: 1fr 1fr; padding-left: 46px; gap: 8px; }
 .project-browser .project-family-details { min-width: 0; width: 100%; margin: 0; gap: 24px; padding: 24px; border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-xl); background: var(--surface); box-shadow: var(--ui-shadow-surface); }
 .project-browser .project-family-heading { margin: 0; }

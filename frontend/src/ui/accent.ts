@@ -77,10 +77,15 @@ export function accentTokens(value: string, theme: "light" | "dark") {
   const hover = mix(base, dark ? [255, 255, 255] : [0, 0, 0], 0.12);
   const surface = dark ? [24, 24, 26] as Rgb : [255, 255, 255] as Rgb;
   const onAccent = contrastRatio(hex(base), "#ffffff") >= 4.5 ? "#ffffff" : "#111111";
+  const soft = hex(mix(surface, base, dark ? 0.23 : 0.12));
+  const softHover = hex(mix(surface, base, dark ? 0.32 : 0.18));
+  const onSoft = hex(contrastColor(base, softHover, dark ? [255, 255, 255] : [0, 0, 0], 4.6));
   return {
     accent: hex(base),
     hover: hex(hover),
-    soft: hex(mix(surface, base, dark ? 0.23 : 0.12)),
+    soft,
+    softHover,
+    onSoft,
     onAccent,
   };
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Badge, Button, Checkbox, Table } from "@mantine/core";
+import { ActionIcon, Badge, Checkbox, Table, Tooltip } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
-import { FolderClosed, GitBranch } from "lucide-react";
+import { FolderClosed, GitBranch, Trash2 } from "lucide-react";
 import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
 import type { GitSummary, WorkspaceProject } from "../../models/workspace";
@@ -11,12 +11,12 @@ import { observationTime } from "../workspace/WorkspaceStatus";
 
 export function ProjectRows({ projects, onUnregister, selected = [], onSelect, busy = false }: { projects: WorkspaceProject[]; onUnregister?: (project: WorkspaceProject) => void; selected?: string[]; onSelect?: (id: string, checked: boolean) => void; busy?: boolean }) {
   const p = useProduct();
-  const compact = useMediaQuery("(max-width: 600px)", undefined, { getInitialValueInEffect: false });
+  const compact = useMediaQuery("(max-width: 900px)", undefined, { getInitialValueInEffect: false });
   if (compact) return <div className="workspace-project-mobile-list">
     {projects.map(project => <ProjectRow key={project.id || project.path} project={project} onUnregister={onUnregister} selected={selected.includes(project.id)} onSelect={onSelect} busy={busy} compact />)}  </div>;
   return <Table.ScrollContainer minWidth={onUnregister ? 680 : 560} className="workspace-project-table" type="native">
     <Table striped={false} highlightOnHover={false} verticalSpacing="sm" horizontalSpacing="sm" layout="fixed" aria-label={p("projects")}>
-      <Table.Thead><Table.Tr>{onSelect && <Table.Th style={{ width: 44 }} aria-label="Select projects" />}<Table.Th>{p("projects")}</Table.Th><Table.Th className="project-column-branch">{p("branch")}</Table.Th><Table.Th className="project-column-activity">{p("activeSessions")}</Table.Th><Table.Th className="project-column-updated">{p("lastUsed")}</Table.Th>{onUnregister && <Table.Th className="project-column-action">{p("manage")}</Table.Th>}</Table.Tr></Table.Thead>
+      <Table.Thead><Table.Tr>{onSelect && <Table.Th style={{ width: 44 }} aria-label={p("selectVisibleProjects")} />}<Table.Th>{p("projects")}</Table.Th><Table.Th className="project-column-branch">{p("branch")}</Table.Th><Table.Th className="project-column-activity">{p("activeSessions")}</Table.Th><Table.Th className="project-column-updated">{p("lastUsed")}</Table.Th>{onUnregister && <Table.Th className="project-column-action"><span className="ui-sr-only">{p("manage")}</span></Table.Th>}</Table.Tr></Table.Thead>
       <Table.Tbody>{projects.map(project => <ProjectRow key={project.id || project.path} project={project} onUnregister={onUnregister} selected={selected.includes(project.id)} onSelect={onSelect} busy={busy} />)}</Table.Tbody>
     </Table>
   </Table.ScrollContainer>;
@@ -66,25 +66,27 @@ function ProjectRow({ project, compact = false, onUnregister, selected = false, 
   const activityValue = project.sessions ? `${project.sessions.active_sessions}${project.sessions.sessions_truncated ? "+" : ""}` : "—";
   const path = displayProjectPath(project.path);
   const runner = projectRunnerId(project);
-  const origin = runner ? <span className="project-table-meta">{p("executionDevice")} · {runner === state.workspace_runner?.client_id ? p("thisComputer") : runner}</span> : null;
+  const origin = runner ? <span className="project-table-meta" title={`${p("executionDevice")} · ${runner}`}>{runner === state.workspace_runner?.client_id ? p("thisComputer") : runner}</span> : null;
   const updated = observationTime(project.sessions?.latest_updated_at ? project.sessions.latest_updated_at * 1000 : null, locale);
-  const remove = onUnregister && runner === state.workspace_runner?.client_id && <Button variant="subtle" color="red" size="compact-sm" disabled={busy || !project.id || !project.connected}
-    aria-label={`${p("unregisterProject")} ${name}`} onClick={() => onUnregister(project)}>{p("unregisterProject")}</Button>;
+  const remove = onUnregister && runner === state.workspace_runner?.client_id && <Tooltip label={p("unregisterProject")} openDelay={400}>
+    <ActionIcon className="project-remove-action" variant="subtle" color="gray" size={36} disabled={busy || !project.id || !project.connected}
+      aria-label={`${p("unregisterProject")} ${name}`} onClick={() => onUnregister(project)}><Trash2 size={16} /></ActionIcon>
+  </Tooltip>;
   const selection = onSelect && runner === state.workspace_runner?.client_id && project.id && project.connected
-    ? <Checkbox aria-label={`Select ${name}`} checked={selected} disabled={busy} onChange={event => onSelect(project.id, event.currentTarget.checked)} /> : null;
+    ? <Checkbox aria-label={p("selectProject").replace("{name}", name)} checked={selected} disabled={busy} onChange={event => onSelect(project.id, event.currentTarget.checked)} /> : null;
   if (compact) return <article ref={node => { rowRef.current = node; }} className="workspace-project-mobile-row" aria-label={name}>
-    {selection}<h3>{name}</h3><div className="project-path" title={path}>{path}</div>{origin}
-    <div className="project-row-meta"><span>{branch}</span><span>{activity}</span><time>{updated}</time></div>{changes}{remove}
+    <div className="project-mobile-heading">{selection}<h3 title={name}>{name}</h3>{remove}</div><div className="project-path" title={path}>{path}</div>{origin}
+    <div className="project-row-meta"><span>{branch}</span><span>{activity}</span><time>{updated}</time></div>{changes}
   </article>;
   return <Table.Tr ref={node => { rowRef.current = node; }} aria-label={name}>
     {onSelect && <Table.Td>{selection}</Table.Td>}
     <Table.Td>
       <div className="project-table-name">
         <div className="project-avatar" aria-hidden="true"><FolderClosed size={17} strokeWidth={1.75} /></div>
-        <div className="project-row-main"><div className="project-row-title"><h3>{name}</h3></div><span className="project-path" title={path}>{path}</span>{origin}</div>
+        <div className="project-row-main"><div className="project-row-title"><h3 title={name}>{name}</h3></div><span className="project-path" title={path}>{path}</span>{origin}</div>
       </div>
     </Table.Td>
-    <Table.Td className="project-column-branch"><span className="project-table-meta"><GitBranch size={14} aria-hidden="true" />{branch}</span>{changes}</Table.Td>
+    <Table.Td className="project-column-branch"><span className="project-table-meta"><GitBranch size={14} aria-hidden="true" /><span className="project-branch-name" title={branch}>{branch}</span></span>{changes}</Table.Td>
     <Table.Td className="project-column-activity"><Badge className="project-activity-badge" size="sm" variant="light"
       color={project.sessions?.active_sessions ? "brand" : "gray"} aria-label={activity} title={activity}>{activityValue}</Badge></Table.Td>
     <Table.Td className="project-column-updated"><time className="project-table-time">{updated}</time></Table.Td>

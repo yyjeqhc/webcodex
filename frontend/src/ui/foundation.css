@@ -2,7 +2,8 @@
    these semantic values; the content layer remains opaque and calm. */
 :root {
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", ui-sans-serif, sans-serif;
+  --ui-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-family: var(--ui-font-family);
   font-synthesis: none;
 
   --ui-background: #f5f5f7;
@@ -135,7 +136,9 @@
 .ui-entity-row > * { min-width: 0; }
 .ui-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
 .ui-numeric { font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
-.ui-mantine-button { min-height: 38px; font-weight: 600; letter-spacing: -.01em; transition: background var(--ui-motion-fast) var(--ui-ease), border-color var(--ui-motion-fast) var(--ui-ease), box-shadow var(--ui-motion-fast) var(--ui-ease), transform var(--ui-motion-fast) var(--ui-ease); }
+.ui-mantine-button { max-width: 100%; height: auto; min-height: var(--button-height, 38px); padding-block: 8px; font-weight: 600; line-height: 1.5; letter-spacing: normal; transition: background var(--ui-motion-fast) var(--ui-ease), border-color var(--ui-motion-fast) var(--ui-ease), box-shadow var(--ui-motion-fast) var(--ui-ease), transform var(--ui-motion-fast) var(--ui-ease); }
+.ui-mantine-button .mantine-Button-inner { min-width: 0; }
+.ui-mantine-button .mantine-Button-label { height: auto; overflow: visible; white-space: normal; overflow-wrap: anywhere; }
 .ui-mantine-button:active:not(:disabled) { transform: scale(.985); }
 .ui-mantine-button[data-variant="default"] { border-color: var(--ui-border); background: var(--ui-content); color: var(--ui-text-primary); }
 .ui-mantine-button[data-variant="default"]:hover { background: var(--ui-surface-secondary); }

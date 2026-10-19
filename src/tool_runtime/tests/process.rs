@@ -2915,3 +2915,42 @@ async fn shell_recovery_requires_raw_shell_policy_and_explicit_selection_capabil
         assert!(probe_patch_agent_request(&runtime, client).await.is_none());
     }
 }
+
+#[tokio::test]
+async fn typed_execution_admission_projection_preserves_not_started_for_all_runner_names() {
+    let registry = crate::runner_http::RunnerRegistry::default();
+    let mut expected_output = None;
+    for client_id in ["demo", "offline-demo", "permission-denied-demo"] {
+        let error = registry
+            .enqueue_process_typed(
+                client_id.into(),
+                None,
+                crate::runner_protocol::ShellProcessArgv {
+                    executable: "echo".into(),
+                    args: vec!["test".into()],
+                },
+                None,
+                30,
+                30,
+                "test".into(),
+            )
+            .await
+            .err()
+            .expect("unknown Runner must reject before enqueue");
+        let result = crate::tool_runtime::process::execution_admission_failure_result(
+            error,
+            "confirm the Runner identity and connection before retrying.",
+        );
+        assert!(!result.success);
+        assert_eq!(result.output["failure_kind"], "agent_offline");
+        assert_eq!(result.output["execution_state"], "not_started");
+        assert_eq!(result.output["command_started"], false);
+        assert_eq!(result.output["command_completed"], false);
+        assert_eq!(result.output["tool_failure"], true);
+        if let Some(expected) = &expected_output {
+            assert_eq!(&result.output, expected);
+        } else {
+            expected_output = Some(result.output);
+        }
+    }
+}

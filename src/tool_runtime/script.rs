@@ -2,7 +2,8 @@ use serde_json::json;
 
 use super::helpers::{command_rejected_message, project_relative_runner_cwd, resolve_runner_cwd};
 use super::process::{
-    add_structured_continuation_facts, classify_process_failure, process_tool_failure_result,
+    add_structured_continuation_facts, execution_admission_failure_result,
+    process_tool_failure_result,
 };
 use super::structured_execution::{
     await_structured_job_result, await_structured_request_result, StructuredExecutionBudget,
@@ -146,7 +147,7 @@ impl ToolRuntime {
         if async_handoff_available && timeout > budget.sync_wait_secs {
             let job = self
                 .runner_registry
-                .start_job_with_metadata_for_access(
+                .start_job_with_metadata_for_access_typed(
                     ShellJobOpRequest {
                         login: false,
                         op: "start".to_string(),
@@ -190,14 +191,10 @@ impl ToolRuntime {
             let job = match job {
                 Ok(job) => job,
                 Err(error) => {
-                    let mut result = process_tool_failure_result(
-                            command_rejected_message(
-                                &error,
-                                "confirm the Runner is connected and advertises structured_execution_jobs, then retry only if target state proves no script started.",
-                            ),
-                            classify_process_failure(&error),
-                            ShellCommandExecutionState::NotStarted,
-                        );
+                    let mut result = execution_admission_failure_result(
+                        error,
+                        "confirm the Runner is connected and advertises structured_execution_jobs, then retry only if target state proves no script started.",
+                    );
                     decorate(
                         &mut result.output,
                         declared_purpose,
@@ -242,7 +239,7 @@ impl ToolRuntime {
         let wait_timeout = timeout;
         let (request_id, receiver) = match self
             .runner_registry
-            .enqueue_script(
+            .enqueue_script_typed(
                 client_id,
                 Some(effective_cwd),
                 payload,
@@ -255,19 +252,15 @@ impl ToolRuntime {
         {
             Ok(enqueued) => enqueued,
             Err(error) => {
-                return process_tool_failure_result(
-                    command_rejected_message(
-                        &error,
+                return execution_admission_failure_result(
+                        error,
                         match language {
                             ShellScriptLanguage::Javascript => "confirm the Runner is connected and advertises structured_script_payload plus structured_script_javascript, then retry only if target state proves no script started.",
                             ShellScriptLanguage::Typescript => "confirm the Runner is connected and advertises structured_script_payload plus structured_script_typescript, then retry only if target state proves no script started.",
                             ShellScriptLanguage::Python => "confirm the Runner is connected and advertises structured_script_payload plus structured_script_python, then retry only if target state proves no script started.",
                             _ => "confirm the Runner is connected and advertises structured_script_payload, then retry only if target state proves no script started.",
                         },
-                    ),
-                    classify_process_failure(&error),
-                    ShellCommandExecutionState::NotStarted,
-                )
+                    )
             }
         };
         let mut result = await_structured_request_result(

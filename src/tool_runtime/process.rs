@@ -15,7 +15,7 @@ use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_http::{
     process_preview, RunnerFeature, ShellJobStartMetadata, ShellJobVisibility,
-    StructuredJobExecution, DETACHED_IDEMPOTENCY_CONFLICT, DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
+    StructuredJobExecution,
 };
 use crate::runner_protocol::{
     validate_process_argv, ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest,
@@ -23,6 +23,7 @@ use crate::runner_protocol::{
     STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS, STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS,
 };
 use webcodex_core::runner_skill::RunnerSkillExecutionRequest;
+use webcodex_runner_registry::ExecutionAdmissionError;
 
 fn command_started(state: ShellCommandExecutionState) -> bool {
     !matches!(state, ShellCommandExecutionState::NotStarted)
@@ -136,6 +137,19 @@ pub(crate) fn process_tool_failure_result(
     )
 }
 
+/// Project the typed rejection for this admission attempt. Previously admitted
+/// Jobs retain their own lifecycle; callers handle detached recovery separately.
+pub(crate) fn execution_admission_failure_result(
+    error: ExecutionAdmissionError,
+    next_step: &str,
+) -> ToolResult {
+    process_tool_failure_result(
+        command_rejected_message(error.to_string(), next_step),
+        error.failure_kind(),
+        ShellCommandExecutionState::NotStarted,
+    )
+}
+
 pub(crate) fn outcome_unknown_result(reason: impl AsRef<str>) -> ToolResult {
     process_tool_failure_result(
         command_outcome_unknown_message(reason),
@@ -243,6 +257,8 @@ pub(crate) fn terminal_structured_job_result(
     result
 }
 
+// Compatibility boundary for untyped legacy errors. Registry admission errors
+// must retain ExecutionAdmissionError through execution_admission_failure_result.
 pub(crate) fn classify_process_failure(message: &str) -> &'static str {
     let lower = message.to_ascii_lowercase();
     if lower.contains("build_tool_unavailable") {
@@ -649,7 +665,7 @@ impl ToolRuntime {
         };
         match self
             .runner_registry
-            .start_job_with_metadata_for_access(
+            .start_job_with_metadata_for_access_typed(
                 ShellJobOpRequest {
                     login: false,
                     op: "start".to_string(),
@@ -729,7 +745,7 @@ impl ToolRuntime {
                 }))
             }
             Err(error) => {
-                if let Some(job_id) = error.strip_prefix(DETACHED_IDEMPOTENCY_RECOVERY_PREFIX) {
+                if let Some(job_id) = error.recovery_job_id() {
                     return ToolResult::err_with_output(
                         "detached initiation key already identifies a durable logical Job reconstructed after Server restart; the resent body was not redispatched. Observe the returned job_id instead of retrying execution.".to_string(),
                         json!({
@@ -744,24 +760,16 @@ impl ToolRuntime {
                         }),
                     );
                 }
-                if error.starts_with(DETACHED_IDEMPOTENCY_CONFLICT) {
-                    return process_tool_failure_result(
-                        command_rejected_message(
-                            &error,
-                            "use a fresh idempotency_key for a different detached process intent; the existing logical Job was left unchanged.",
-                        ),
-                        "idempotency_conflict",
-                        ShellCommandExecutionState::NotStarted,
+                if error.is_idempotency_conflict() {
+                    return execution_admission_failure_result(
+                        error,
+                        "use a fresh idempotency_key for a different detached process intent; the existing logical Job was left unchanged.",
                     );
                 }
-                process_tool_failure_result(
-                    command_rejected_message(
-                        &error,
+                execution_admission_failure_result(
+                        error,
                         "observe the deterministic logical Job if an initiating response may have been lost; do not retry with a fresh key unless no Job was admitted.",
-                    ),
-                    classify_process_failure(&error),
-                    ShellCommandExecutionState::NotStarted,
-                )
+                    )
             }
         }
     }
@@ -973,7 +981,7 @@ impl ToolRuntime {
         if async_handoff_available && timeout > budget.sync_wait_secs {
             let job = self
                 .runner_registry
-                .start_job_with_metadata_for_access(
+                .start_job_with_metadata_for_access_typed(
                     ShellJobOpRequest {
                         login: false,
                         op: "start".to_string(),
@@ -1024,14 +1032,10 @@ impl ToolRuntime {
             let job = match job {
                 Ok(job) => job,
                 Err(error) => {
-                    let mut result = process_tool_failure_result(
-                            command_rejected_message(
-                                &error,
-                                "confirm the Runner is connected and advertises structured_execution_jobs, then retry only if target state proves no process started.",
-                            ),
-                            classify_process_failure(&error),
-                            ShellCommandExecutionState::NotStarted,
-                        );
+                    let mut result = execution_admission_failure_result(
+                        error,
+                        "confirm the Runner is connected and advertises structured_execution_jobs, then retry only if target state proves no process started.",
+                    );
                     decorate(
                         &mut result.output,
                         declared_purpose,
@@ -1075,7 +1079,7 @@ impl ToolRuntime {
         let enqueued = match skill_execution {
             Some(request) => {
                 self.runner_registry
-                    .enqueue_skill_resource_execution(
+                    .enqueue_skill_resource_execution_typed(
                         client_id,
                         Some(effective_cwd),
                         request.clone(),
@@ -1087,7 +1091,7 @@ impl ToolRuntime {
             }
             None => {
                 self.runner_registry
-                    .enqueue_process(
+                    .enqueue_process_typed(
                         client_id,
                         Some(effective_cwd),
                         process,
@@ -1102,17 +1106,13 @@ impl ToolRuntime {
         let (request_id, receiver) = match enqueued {
             Ok(enqueued) => enqueued,
             Err(error) => {
-                return process_tool_failure_result(
-                    command_rejected_message(
-                        &error,
-                        if skill_execution.is_some() {
-                            "confirm the Runner is connected and advertises skill_resource_execution, then retry only if target state proves no process started."
-                        } else {
-                            "confirm the Runner is connected and advertises structured_process_argv, then retry only if target state proves no process started."
-                        },
-                    ),
-                    classify_process_failure(&error),
-                    ShellCommandExecutionState::NotStarted,
+                return execution_admission_failure_result(
+                    error,
+                    if skill_execution.is_some() {
+                        "confirm the Runner is connected and advertises skill_resource_execution, then retry only if target state proves no process started."
+                    } else {
+                        "confirm the Runner is connected and advertises structured_process_argv, then retry only if target state proves no process started."
+                    },
                 )
             }
         };

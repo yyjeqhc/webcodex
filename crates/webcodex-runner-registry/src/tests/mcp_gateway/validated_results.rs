@@ -328,14 +328,13 @@ async fn validated_tool_result_keeps_two_clients_and_shared_operation_separate()
 }
 
 #[tokio::test]
-async fn incomplete_or_mismatched_saved_fences_do_not_certify_observation() {
+async fn missing_or_mismatched_saved_fences_do_not_certify_observation() {
     let observer = Arc::new(Observer::default());
     let registry = RunnerRegistry::with_telemetry(observer.clone());
     register_bridge_runner(&registry).await;
     for field in [
-        "runner",
-        "provider",
-        "instance",
+        "missing",
+        "wrong_kind",
         "wrong_runner",
         "wrong_provider",
         "wrong_instance",
@@ -345,20 +344,26 @@ async fn incomplete_or_mismatched_saved_fences_do_not_certify_observation() {
         {
             let mut inner = registry.inner.lock().await;
             let pending = inner.pending_by_id.get_mut(&id).unwrap();
+            use crate::dispatch_fence::PendingDispatchFence;
             match field {
-                "runner" => pending.expected_mcp_gateway_runner_instance_id = None,
-                "provider" => pending.expected_mcp_gateway_provider_id = None,
-                "instance" => pending.expected_mcp_gateway_provider_instance_id = None,
-                "wrong_runner" => {
-                    pending.expected_mcp_gateway_runner_instance_id = Some("unrelated".into())
+                "missing" => pending.dispatch_fence = PendingDispatchFence::Unfenced,
+                "wrong_kind" => {
+                    pending.dispatch_fence = PendingDispatchFence::RunnerConfig {
+                        runner_instance_id: "bridge-instance".into(),
+                    }
                 }
-                "wrong_provider" => {
-                    pending.expected_mcp_gateway_provider_id = Some("unrelated".into())
+                _ => {
+                    let PendingDispatchFence::McpGateway(fence) = &mut pending.dispatch_fence
+                    else {
+                        panic!("admitted bridge request must retain its complete target fence");
+                    };
+                    match field {
+                        "wrong_runner" => fence.runner_instance_id = "unrelated".into(),
+                        "wrong_provider" => fence.provider_id = "unrelated".into(),
+                        "wrong_instance" => fence.provider_instance_id = "unrelated".into(),
+                        _ => unreachable!(),
+                    }
                 }
-                "wrong_instance" => {
-                    pending.expected_mcp_gateway_provider_instance_id = Some("unrelated".into())
-                }
-                _ => unreachable!(),
             }
         }
         registry

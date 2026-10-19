@@ -1,5 +1,5 @@
 import { MantineProvider } from "@mantine/core";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 import { LANGUAGES, LOCALE_STORAGE_KEY, LocaleProvider, messages } from "../i18n/locale";
@@ -73,4 +73,36 @@ it("preserves navigation callbacks, active state and shortcut numbering", () => 
   const projects = screen.getByRole("button", { name: /^Projects/ });
   fireEvent.click(projects);
   expect(setNavigation).toHaveBeenCalledWith("projects");
+});
+
+it("reveals shortcut keys only while Ctrl or Command is held on its own", () => {
+  vi.useFakeTimers();
+  try {
+    const view = show();
+    const root = document.documentElement;
+    fireEvent.keyDown(window, { key: "Control", ctrlKey: true });
+    expect(root).not.toHaveAttribute("data-shortcut-hints");
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(root).toHaveAttribute("data-shortcut-hints");
+    fireEvent.keyUp(window, { key: "Control" });
+    expect(root).not.toHaveAttribute("data-shortcut-hints");
+
+    // A chord such as Ctrl+C cancels the pending reveal instead of flashing hints.
+    fireEvent.keyDown(window, { key: "Meta", metaKey: true });
+    fireEvent.keyDown(window, { key: "c", metaKey: true });
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(root).not.toHaveAttribute("data-shortcut-hints");
+
+    fireEvent.keyDown(window, { key: "Control", ctrlKey: true });
+    act(() => { vi.advanceTimersByTime(400); });
+    fireEvent(window, new Event("blur"));
+    expect(root).not.toHaveAttribute("data-shortcut-hints");
+
+    fireEvent.keyDown(window, { key: "Control", ctrlKey: true });
+    view.unmount();
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(root).not.toHaveAttribute("data-shortcut-hints");
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -105,7 +105,7 @@ export function SshResourcesPanel({ state, onState, settings, onRestarted }: {
     </article>)}
     {inventory?.available && !inventory.resources.length && <p className="workspace-empty">{r("noResources")}</p>}
     {editor && <SshResourceEditor observed={editor} busy={disabled} onClose={() => setEditor(null)} onSubmit={request => void mutate(() => desktopApi.registerSshResource(request))} />}
-    {deleting && <WorkspaceDialog title={`${c("remove")} ${deleting.resource.name}`} onClose={() => setDeleting(null)} busy={busy}><p>{r("removeResourceHelp")}</p><div className="connection-actions"><button type="button" className="primary-button" aria-label={`Confirm Remove ${deleting.resource.name}`} disabled={disabled} onClick={() => void mutate(() => desktopApi.removeSshResource(deleting.expected, deleting.observationId, deleting.resource.name))}>{c("remove")}</button><button type="button" className="secondary-button" disabled={disabled} onClick={() => setDeleting(null)}>{p("cancel")}</button></div></WorkspaceDialog>}
+    {deleting && <WorkspaceDialog title={`${c("remove")} ${deleting.resource.name}`} onClose={() => setDeleting(null)} busy={busy}><p>{r("removeResourceHelp")}</p><div className="connection-actions"><button type="button" className="danger-button" aria-label={`Confirm Remove ${deleting.resource.name}`} disabled={disabled} onClick={() => void mutate(() => desktopApi.removeSshResource(deleting.expected, deleting.observationId, deleting.resource.name))}>{c("remove")}</button><button type="button" className="secondary-button" disabled={disabled} onClick={() => setDeleting(null)}>{p("cancel")}</button></div></WorkspaceDialog>}
   </div>;
 }
 

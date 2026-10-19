@@ -665,6 +665,8 @@ beforeEach(() => {
     fireEvent.keyDown(window, { key: "2", ctrlKey: true });
     expect(screen.getByRole("button", { name: "项目" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("main")).toHaveFocus();
+    fireEvent.keyDown(window, { key: ",", metaKey: true });
+    expect(screen.getByRole("button", { name: "设置" })).toHaveAttribute("aria-current", "page");
   });
 
   it("keeps a ready projectless Runtime usable without exposing project registration controls", async () => {

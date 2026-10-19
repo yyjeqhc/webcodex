@@ -42,7 +42,7 @@ export function ReadinessBanner({ state, onState, onDiagnostics, onRuntime, onCo
       {failedConnections.length === 1 && (!failedConnections[0].provider || failedConnections[0].provider.kind === "openai") && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(() => desktopApi.tunnelProfileAction(failedConnections[0].id, "restart"))}>{s("Restart Tunnel")}</button>}
       {connectionProblem && <button type="button" className="secondary-button" disabled={disabled} onClick={onConnection}>{s("Check connection")}</button>}
       {(!runtimeReady || failure) && !providerKind && <button type="button" className="secondary-button" onClick={onRuntime}>{s("Select Runtime folder…")}</button>}
-      <button type="button" className="secondary-button" onClick={onDiagnostics}>{s("Diagnostics")}</button>
+      <button type="button" className="secondary-button" onClick={onDiagnostics}>{p("troubleshooting")}</button>
     </div>}
     {failure && <div role="alert" className="runtime-start-error">
       {providerKind ? <><strong>{providerKind.toUpperCase()} · {provider?.provider_name}</strong><p>{p("providerProgramUnavailable")}</p>{provider?.provider_config_path ? <><p>{p("providerConfigRecoveryHelp")}</p><code>{provider.provider_config_path}</code></> : <p>{p("providerRecoveryHelp")}</p>}{onProviders && !provider?.provider_config_path && <button type="button" className="secondary-button" onClick={() => onProviders(providerKind)}>{p("manageFailedProvider")}</button>}</> : <><p>{failure.message}</p><p>{failure.next_action}</p></>}

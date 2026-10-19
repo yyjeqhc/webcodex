@@ -69,7 +69,7 @@ describe("workspace configuration boundaries", () => {
     expect(id).not.toBeDisabled(); expect(key).not.toBeDisabled();
     fireEvent.change(id, { target: { value: "tunnel_replacement" } });
     fireEvent.change(key, { target: { value: "fixture-only-key" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save and Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
     await waitFor(() => expect(api.updateTunnelConfig).toHaveBeenCalledWith({ action: "save", tunnelId: "tunnel_replacement", apiKey: "fixture-only-key" }));
     expect(key).toHaveValue(""); expect(document.body.textContent).not.toContain("fixture-only-key");
   });
@@ -78,7 +78,7 @@ describe("workspace configuration boundaries", () => {
     api.updateTunnelConfig.mockRejectedValue({ code: "tunnel_config_apply_failed", message: "Saved", next_action: "Retry" });
     api.getState.mockResolvedValue({ ...state, openai_tunnel_config: { ...state.openai_tunnel_config, saved_tunnel_id: "tunnel_saved", effective_tunnel_id: "tunnel_saved" } });
     render(wrap(<TunnelConfigDiagnostics state={state} onState={onState} />));
-    fireEvent.click(screen.getByRole("button", { name: "Save and Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Configuration saved, but the tunnel needs recovery");
     await waitFor(() => expect(api.getState).toHaveBeenCalledTimes(1));
     expect(api.updateTunnelConfig).toHaveBeenCalledTimes(1);
@@ -341,7 +341,7 @@ describe("workspace configuration boundaries", () => {
     fireEvent.click(screen.getByRole("button", { name: "Recheck permissions" }));
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
     expect(screen.getAllByText("Not granted")).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "Grant Permission · Desktop · Screen Recording" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Grant permission · Desktop · Screen Recording" })).toBeEnabled();
     expect(api.requestComputerPermission).not.toHaveBeenCalled();
   });
 });

@@ -467,6 +467,7 @@
   "completion.reported": "Vous avez signalé une lecture réussie. Il s’agit de votre confirmation, pas d’un test de connexion observé automatiquement.",
   "completion.overview": "Ouvrir la vue d’ensemble",
   "completion.copy": "Copier la demande de lecture",
+  "completion.copyFailed": "Échec de la copie. Réessayez.",
   "completion.copied": "Demande de lecture copiée",
   "completion.identityPending": "L’identité du Runner n’est pas encore disponible. Actualisez l’environnement avant la lecture.",
   "completion.runnerId": "ID du Runner",

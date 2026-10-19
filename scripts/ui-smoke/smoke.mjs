@@ -133,7 +133,7 @@ async function inspectProjectPicker(selector, label, capture = false) {
   await menu.getByRole('button', { name: /beta/i }).click();
   assert.match(await trigger.innerText(), /beta/i);
   await trigger.click();
-  await page.getByRole('dialog', { name: /Projects|Project/ }).getByRole('button', { name: 'All Projects' }).click();
+  await page.getByRole('dialog', { name: /Projects|Project/ }).getByRole('button', { name: /^All projects$/i }).click();
   report.checks.push(`${label} project picker bounds, exact selection, and reset`);
 }
 async function inspectRunnerPicker(label, capture = false) {
@@ -220,20 +220,20 @@ try {
       }
     }
     await desktopNav('connection');
-    const connectionTrigger = page.getByRole('button', { name: 'Add Connection' });
+    const connectionTrigger = page.getByRole('button', { name: 'Add connection' });
     await connectionTrigger.click();
     await page.getByRole('dialog').waitFor();
     assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"]'))), true);
     await screenshot(`desktop-connection-dialog-${width}`);
     await page.keyboard.press('Escape');
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
-    await page.waitForFunction(() => document.activeElement instanceof HTMLButtonElement && document.activeElement.textContent?.includes('Add Connection'));
+    await page.waitForFunction(() => document.activeElement instanceof HTMLButtonElement && document.activeElement.textContent?.includes('Add connection'));
     report.checks.push(`Desktop connection dialog Escape ${width}`);
-    await page.getByRole('button', { name: 'Add Connection' }).click();
+    await page.getByRole('button', { name: 'Add connection' }).click();
     await page.getByRole('dialog').getByLabel('Name').fill('Fixture connection');
     await page.getByRole('dialog').getByLabel('Tunnel ID').fill('tunnel_ui_fixture');
     await page.getByRole('dialog').getByLabel('API Key').fill('fixture-only-api-key');
-    await page.getByRole('dialog').getByRole('button', { name: 'Save & Apply' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Save and apply' }).click();
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
     const saved = await page.evaluate(() => window.__fixtureCalls.find(call => call.cmd === 'save_tunnel_profile'));
     assert.equal(saved.args.request.tunnel_id, 'tunnel_ui_fixture');
@@ -344,7 +344,7 @@ try {
   {
     const context = await prepare('/desktop/?state=disconnected');
     await desktopNav('connection');
-    await page.getByRole('button', { name: 'Add Connection' }).click();
+    await page.getByRole('button', { name: 'Add connection' }).click();
     assert(await page.getByRole('dialog').getByLabel('Tunnel ID').isEditable());
     assert(await page.getByRole('dialog').getByLabel('API Key').isEditable());
     report.checks.push('Disconnected Tunnel credentials stay editable');

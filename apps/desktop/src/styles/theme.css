@@ -28,6 +28,7 @@
   --ui-shadow-surface: 0 2px 8px rgb(0 0 0 / 2%);
   --ui-shadow-raised: 0 4px 20px rgb(0 0 0 / 4%);
   --ui-shadow-floating: 0 16px 48px rgb(0 0 0 / 12%);
+  --desktop-on-error: #fff;
 }
 :root[data-ui-renderer="desktop"][data-theme="dark"] {
   --ui-background: #141414;
@@ -44,6 +45,7 @@
   --ui-shadow-surface: 0 2px 8px rgb(0 0 0 / 8%);
   --ui-shadow-raised: 0 4px 20px rgb(0 0 0 / 12%);
   --ui-shadow-floating: 0 16px 48px rgb(0 0 0 / 32%);
+  --desktop-on-error: #1a1a1a;
 }
 :root[data-ui-renderer="desktop"] .appearance-preference-popover {
   border-color: var(--ui-border);

@@ -5,6 +5,7 @@ import { useProduct } from "../i18n/product";
 import { useConnectionsTools } from "../i18n/connections-tools";
 import { desktopStatusPresentation, statusKey } from "../features/workspace/WorkspaceStatus";
 import { useAppearance } from "../hooks/useAppearance";
+import { useShortcutHints } from "../hooks/useShortcutHints";
 import { AppearanceControls } from "../../../../frontend/src/ui/AppearanceControls";
 import { BrandMark } from "../../../../frontend/src/ui/BrandMark";
 import { ActionIcon, Menu, Tooltip } from "@mantine/core";
@@ -25,6 +26,7 @@ export function Sidebar({ state, navigation, setNavigation }: { state: DesktopSt
     Appearance: "appearance.label", System: "appearance.system", Light: "appearance.light", Dark: "appearance.dark",
   };
   const presentation = desktopStatusPresentation(state, p);
+  useShortcutHints();
   return (
       <aside className="sidebar">
         <div className="brand"><BrandMark /><div><strong>WebCodex</strong><span>Desktop</span></div></div>

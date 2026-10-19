@@ -467,6 +467,7 @@
   "completion.reported": "Sie haben eine erfolgreiche Leseabfrage bestätigt. Dies ist Ihre Angabe, kein automatisch beobachteter Verbindungstest.",
   "completion.overview": "Übersicht öffnen",
   "completion.copy": "Leseanfrage kopieren",
+  "completion.copyFailed": "Kopieren fehlgeschlagen. Bitte erneut versuchen.",
   "completion.copied": "Leseanfrage kopiert",
   "completion.identityPending": "Die Runner-Identität ist noch nicht verfügbar. Aktualisieren Sie die Umgebung vor der Leseabfrage.",
   "completion.runnerId": "Runner-ID",

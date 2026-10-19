@@ -12,6 +12,7 @@ import { useRuntimeUpdates } from "./hooks/useRuntimeUpdates";
 import { UpdateBanner } from "./features/settings/AboutPanel";
 import { ReadinessBanner } from "./features/dashboard/ReadinessBanner";
 import { useShellText } from "./i18n/runtime-shell";
+import { useProduct } from "./i18n/product";
 import type {
   DesktopError,
 } from "./models/topology";
@@ -33,6 +34,7 @@ export default function App() {
 function DesktopApp() {
   const { t } = useLocale();
   const s = useShellText();
+  const p = useProduct();
   const [completionEnvironment, setCompletionEnvironment] = useState<string | null>(null);
   const [extensionTab, setExtensionTab] = useState<ExtensionTab>();
   const [settingsSection, setSettingsSection] = useState<"diagnostics" | "runtime" | "network" | "access" | undefined>();
@@ -112,7 +114,7 @@ function DesktopApp() {
             )}
           </section>
         )}
-        {error && !(navigation === "home" && state.runtime_error?.code === error.code) && <><AppError error={error} /><div className="shell-actions"><button type="button" className="secondary-button" onClick={() => openSettings("diagnostics")}>{s("Diagnostics")}</button><button type="button" className="text-button" onClick={() => openSettings("runtime")}>{s("Select another Runtime")}</button></div></>}
+        {error && !(navigation === "home" && state.runtime_error?.code === error.code) && <><AppError error={error} /><div className="shell-actions"><button type="button" className="secondary-button" onClick={() => openSettings("diagnostics")}>{p("troubleshooting")}</button><button type="button" className="text-button" onClick={() => openSettings("runtime")}>{s("Select another Runtime")}</button></div></>}
         {navigation !== "settings" && <ComputerPermissions welcome />}
         {navigation === "home" && <UpdateBanner updates={updates} />}
         {navigation === "home" && (state.topology || state.configuration_issue || state.runtime_error) && <ReadinessBanner state={state} onState={commitState} onDiagnostics={() => openSettings("diagnostics")} onRuntime={() => openSettings("runtime")} onConnection={() => setNavigation("connection")} onProviders={kind => { setExtensionTab(kind === "mcp" ? "mcpProviders" : "codingAgents"); setNavigation("extensions"); }} />}

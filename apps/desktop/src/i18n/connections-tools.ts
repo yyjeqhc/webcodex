@@ -62,7 +62,7 @@ export const CONNECTIONS_TOOLS_MESSAGES = {
   localMcp: ["Local MCP", "本地 MCP", "Lokales MCP", "MCP local", "ローカル MCP", "로컬 MCP", "本機 MCP"],
 
   connections: ["Connections", "连接", "Verbindungen", "Connexions", "接続", "연결", "連線"],
-  addConnection: ["Add Connection", "添加连接", "Verbindung hinzufügen", "Ajouter une connexion", "接続を追加", "연결 추가", "新增連線"],
+  addConnection: ["Add connection", "添加连接", "Verbindung hinzufügen", "Ajouter une connexion", "接続を追加", "연결 추가", "新增連線"],
   name: ["Name", "名称", "Name", "Nom", "名前", "이름", "名稱"],
   autostart: ["Start automatically", "自动启动", "Automatisch starten", "Démarrer automatiquement", "自動的に起動", "자동으로 시작", "自動啟動"],
   connectionLifecycle: ["Connection lifecycle", "连接运行方式", "Verbindungslebenszyklus", "Cycle de vie de la connexion", "接続の実行方式", "연결 실행 방식", "連線執行方式"],
@@ -85,7 +85,7 @@ export const CONNECTIONS_TOOLS_MESSAGES = {
   startServer: ["Start Server", "启动 Server", "Server starten", "Démarrer le Server", "Server を起動", "Server 시작", "啟動 Server"],
   deleteServerOwnedHelp: ["Delete this saved Server-owned profile and its private credential. Stop WebCodex Server first so ownership is unambiguous. Other profiles are unchanged.", "删除此 Server-owned profile 及其私密凭据。请先停止 WebCodex Server，以便明确 ownership；其他 profile 不受影响。", "Dieses gespeicherte Server-eigene Profil und seine privaten Zugangsdaten löschen. WebCodex Server zuerst stoppen, damit der Besitz eindeutig ist. Andere Profile bleiben unverändert.", "Supprimez ce profil géré par le Server et son identifiant privé. Arrêtez d’abord WebCodex Server afin que la propriété soit sans ambiguïté. Les autres profils restent inchangés.", "この Server 管理プロファイルと非公開の認証情報を削除します。所有者を明確にするため、先に WebCodex Server を停止してください。他のプロファイルには影響しません。", "이 Server 관리 프로필과 비공개 자격 증명을 삭제합니다. 소유권을 명확히 하려면 먼저 WebCodex Server를 중지하세요. 다른 프로필은 변경되지 않습니다.", "刪除此 Server-owned profile 及其私密憑據。請先停止 WebCodex Server，以便明確 ownership；其他 profile 不受影響。"],
   secureTunnel: ["Secure MCP Tunnel", "安全 MCP Tunnel", "Sicherer MCP-Tunnel", "Tunnel MCP sécurisé", "セキュア MCP トンネル", "보안 MCP 터널", "安全 MCP Tunnel"],
-  saveApply: ["Save & Apply", "保存并应用", "Speichern und anwenden", "Enregistrer et appliquer", "保存して適用", "저장 및 적용", "儲存並應用"],
+  saveApply: ["Save and apply", "保存并应用", "Speichern und anwenden", "Enregistrer et appliquer", "保存して適用", "저장 및 적용", "儲存並應用"],
   credentials: ["Credentials present", "已配置凭据", "Zugangsdaten vorhanden", "Identifiants configurés", "認証情報を設定済み", "자격 증명 설정됨", "已設定憑據"],
   copyId: ["Copy ID", "复制 ID", "ID kopieren", "Copier l’ID", "ID をコピー", "ID 복사", "複製 ID"],
   localRuntimeNeeded: ["Start the local runtime to connect. Your settings remain saved.", "启动本地 Runtime 后即可连接，配置已保留。", "Lokale Laufzeit zum Verbinden starten. Einstellungen bleiben gespeichert.", "Démarrez l’environnement local. Vos paramètres restent enregistrés.", "接続するにはローカルランタイムを起動してください。設定は保存済みです。", "연결하려면 로컬 런타임을 시작하세요. 설정은 저장됩니다.", "啟動本機 Runtime 後即可連線，設定已保留。"],

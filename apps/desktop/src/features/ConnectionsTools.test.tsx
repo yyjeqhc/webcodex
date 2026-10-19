@@ -129,7 +129,7 @@ describe("Connections + Tools control surfaces", () => {
     });
     render(<Harness mode="connections" initial={initial} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add Connection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }));
     const serverOwned = screen.getByRole("radio", { name: /Run with WebCodex Server \(recommended\)/ });
     const separate = screen.getByRole("radio", { name: /Separate Tunnel service \(advanced\)/ });
     expect(serverOwned).toBeChecked();
@@ -137,7 +137,7 @@ describe("Connections + Tools control surfaces", () => {
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "ChatGPT Work" } });
     fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_work" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "write-only-server-key" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save & Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
 
     await waitFor(() => expect(captured).toHaveLength(1));
     expect(captured[0]).toMatchObject({
@@ -166,13 +166,13 @@ describe("Connections + Tools control surfaces", () => {
     });
     render(<Harness mode="connections" initial={initial} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add Connection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }));
     fireEvent.click(screen.getByRole("radio", { name: /Separate Tunnel service \(advanced\)/ }));
     expect(screen.queryByRole("checkbox", { name: "Start automatically" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Independent" } });
     fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_independent" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "write-only-separate-key" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save & Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
 
     await waitFor(() => expect(captured).toHaveLength(1));
     expect(captured[0]).toMatchObject({ host_mode: "standalone", autostart: true });
@@ -317,7 +317,7 @@ describe("Connections + Tools control surfaces", () => {
     expect(document.body.textContent).not.toContain("embedded");
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Work renamed" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "write-only-edit-key" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save & Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
 
     await waitFor(() => expect(captured).toHaveLength(1));
     expect(captured[0]).toMatchObject({
@@ -543,7 +543,7 @@ describe("Connections + Tools control surfaces", () => {
     expect(screen.getByLabelText("API Key")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Personal renamed" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "write-only-fixture-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save & Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
     await waitFor(() => expect(captured).toHaveLength(1));
     expect(captured[0]).toMatchObject({ id: "personal", expected_revision: 1, name: "Personal renamed", host_mode: "standalone", api_key: "write-only-fixture-secret" });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());

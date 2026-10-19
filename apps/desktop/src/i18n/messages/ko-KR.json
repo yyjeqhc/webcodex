@@ -467,6 +467,7 @@
   "completion.reported": "읽기 성공을 보고하셨습니다. 사용자 확인이며 자동으로 관측된 연결 테스트가 아닙니다.",
   "completion.overview": "개요 열기",
   "completion.copy": "읽기 요청 복사",
+  "completion.copyFailed": "복사하지 못했습니다. 다시 시도하세요.",
   "completion.copied": "읽기 요청 복사됨",
   "completion.identityPending": "Runner ID를 아직 사용할 수 없습니다. 읽기 전에 환경을 새로 고치세요.",
   "completion.runnerId": "Runner ID",

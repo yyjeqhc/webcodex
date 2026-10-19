@@ -30,7 +30,7 @@ describe("first-run connection completion", () => {
     fireEvent.change(screen.getByLabelText("Name"), {target:{value:"Primary"}});
     fireEvent.change(screen.getByLabelText("Tunnel ID"), {target:{value:"tunnel-id"}});
     fireEvent.change(screen.getByLabelText("API Key"), {target:{value:"private-secret"}});
-    fireEvent.click(screen.getByRole("button", {name:"Save & Apply"}));
+    fireEvent.click(screen.getByRole("button", {name:"Save and apply"}));
     await waitFor(()=>expect(onState).toHaveBeenCalledWith(state));
     expect(api.saveTunnelProfile).toHaveBeenCalledWith(expect.objectContaining({id:null,name:"Primary",tunnel_id:"tunnel-id"}));
     expect(document.body).not.toHaveTextContent("private-secret");

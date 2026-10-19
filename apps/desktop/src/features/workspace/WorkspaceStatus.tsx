@@ -1,6 +1,6 @@
 import { useLocale } from "../../i18n/locale";
 import { productText, useProduct, type ProductKey } from "../../i18n/product";
-import type { DesktopState } from "../../models/topology";
+import type { DesktopState, ExposureReadiness } from "../../models/topology";
 import type { ConnectionsSnapshot } from "../../models/connections-tools";
 
 export function observationTime(timestamp: number | null | undefined, locale: string, now = Date.now()): string {
@@ -18,6 +18,17 @@ export function statusKey(status: string | undefined): ProductKey {
   if (status === "error" || status === "unavailable") return "unavailable";
   if (!status || status === "stopped" || status === "disabled") return "stopped";
   return "unknown";
+}
+export function exposureStatusKey(exposure: ExposureReadiness): ProductKey {
+  switch (exposure) {
+    case "remote_ready": return "readyState";
+    case "local_ready": return "exposureLocalOnly";
+    case "degraded": return "exposureDegraded";
+    case "starting": return "starting";
+    case "disabled": return "exposureOff";
+    case "error": return "unavailable";
+    default: return "projectStatusUnconfirmed";
+  }
 }
 export function tunnelReadinessText(connections: ConnectionsSnapshot | undefined, p: (key: ProductKey) => string): string {
   if (!connections || connections.config_error) return p("tunnelStatusUnavailable");

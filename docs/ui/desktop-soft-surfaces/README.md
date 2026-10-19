@@ -9,6 +9,7 @@ Desktop follows the approved Web visual direction from [PR #1173](https://github
 - All destinations share a 1440px maximum reading measure, 24px page/panel insets and section gaps (16/20px in supplemental narrow layouts). The main scroller reserves its scrollbar gutter to keep page headings stable.
 - Selected primary/category navigation and activity tabs use black/white, inverted in dark mode. Entity selection retains a subtle full outline and restrained accent surface. No decorative selection rails remain.
 - Three 36px Mantine controls provide preset/custom accent, System/Light/Dark cycling and a seven-language radio menu. The same source-owned accent/appearance component is used by the pending Web implementation. Popups use solid theme surfaces and library-owned focus/dismissal.
+- One type scale applies across pages: 22px page titles, 18px panel titles, 16px sections, 14px body, 13px secondary text and 12px captions. Headings and emphasized values use weight 600; controls, labels and navigation use 500 so CJK system fonts do not fall back to bold. Native and Mantine buttons, inputs and selects share the foundation's 40px control height, and native selects, checkboxes and the launch-at-login switch use Desktop styling instead of per-OS defaults.
 - Long values wrap within their label/value regions. Tables scroll inside their bounded containers; dialogs remain reachable in short windows. Native-control styling excludes Mantine composite inputs.
 
 ## Reproducing UI evidence

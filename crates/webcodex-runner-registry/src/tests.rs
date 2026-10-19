@@ -332,6 +332,8 @@ mod computer_text_input;
 mod connection_lease;
 #[path = "tests/disconnect_reconciliation.rs"]
 mod disconnect_reconciliation;
+#[path = "tests/execution_admission.rs"]
+mod execution_admission;
 #[path = "tests/file_validation.rs"]
 mod file_validation;
 #[path = "tests/instance_lease.rs"]

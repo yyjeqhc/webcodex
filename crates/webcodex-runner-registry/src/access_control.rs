@@ -1,5 +1,5 @@
 use crate::state::{RunnerRecord, RunnerRegistryInner, ShellJobRecord};
-use crate::{RunnerAccess, RunnerAccessGroup};
+use crate::{ExecutionAdmissionError, RunnerAccess, RunnerAccessGroup};
 
 pub(crate) fn assert_runner_owner(
     access: Option<&RunnerAccess>,
@@ -64,13 +64,23 @@ pub(crate) fn assert_runner_access(
     access: Option<&RunnerAccess>,
     runner: &RunnerRecord,
 ) -> Result<(), String> {
+    assert_runner_access_typed(access, runner).map_err(|error| error.to_string())
+}
+
+pub(crate) fn assert_runner_access_typed(
+    access: Option<&RunnerAccess>,
+    runner: &RunnerRecord,
+) -> Result<(), ExecutionAdmissionError> {
     if !runner_visible_to_access(access, runner) {
-        return Err(format!("unknown shell client: {}", runner.client_id));
+        // Preserve concealment: an inaccessible Runner has the same typed
+        // rejection as an unknown one, regardless of its identifier.
+        return Err(ExecutionAdmissionError::unknown_runner(&runner.client_id));
     }
     if runner.auth_group.is_some() {
         return Ok(());
     }
     assert_runner_owner(access, &runner.client_id, runner.owner.as_deref())
+        .map_err(ExecutionAdmissionError::permission_denied)
 }
 
 pub(crate) fn job_visible_to_access(

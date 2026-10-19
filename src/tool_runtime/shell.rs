@@ -8,7 +8,7 @@ use super::helpers::{
     validate_raw_shell_command_length, COMMAND_STDIO_TAIL_CHARS, MAX_SYNC_TIMEOUT_SECS,
     MIN_SYNC_TIMEOUT_SECS,
 };
-use super::process::add_structured_continuation_facts;
+use super::process::{add_structured_continuation_facts, execution_admission_failure_result};
 use super::structured_execution::{
     await_hidden_structured_job, finalize_hidden_terminal_projection, HiddenStructuredJobWait,
     StructuredExecutionBudget,
@@ -180,7 +180,7 @@ impl ToolRuntime {
         )
     }
 
-    fn classify_run_shell_enqueue_failure(message: &str) -> &'static str {
+    fn classify_run_shell_response_failure(message: &str) -> &'static str {
         let lower = message.to_ascii_lowercase();
         if lower.contains("offline")
             || lower.contains("not connected")
@@ -361,7 +361,7 @@ impl ToolRuntime {
                         reason,
                         "inspect the rejection reason and retry only after confirming no command started.",
                     ),
-                    Self::classify_run_shell_enqueue_failure(reason),
+                    Self::classify_run_shell_response_failure(reason),
                     state,
                 )
             }
@@ -686,7 +686,7 @@ impl ToolRuntime {
         if async_handoff_available {
             let job = self
                 .runner_registry
-                .start_job_with_metadata_for_access(
+                .start_job_with_metadata_for_access_typed(
                     ShellJobOpRequest {
                         op: "start".to_string(),
                         client_id: Some(client_id.clone()),
@@ -719,14 +719,10 @@ impl ToolRuntime {
             let job = match job {
                 Ok(job) => job,
                 Err(error) => {
-                    let mut result = Self::run_shell_tool_failure_result(
-                            command_rejected_message(
-                                &error,
-                                "confirm the Runner is connected and retry only after confirming no shell Job started.",
-                            ),
-                            Self::classify_run_shell_enqueue_failure(&error),
-                            ShellCommandExecutionState::NotStarted,
-                        );
+                    let mut result = execution_admission_failure_result(
+                        error,
+                        "confirm the Runner is connected and retry only after confirming no shell Job started.",
+                    );
                     add_structured_continuation_facts(
                         &mut result,
                         timeout,
@@ -844,7 +840,7 @@ impl ToolRuntime {
         let wait_timeout = timeout;
         let (request_id, rx) = match self
             .runner_registry
-            .enqueue_run_with_ssh(
+            .enqueue_run_with_ssh_typed(
                 ShellRunRequest {
                     client_id,
                     cwd: effective_cwd,
@@ -865,14 +861,9 @@ impl ToolRuntime {
         {
             Ok(result) => result,
             Err(e) => {
-                let failure_kind = Self::classify_run_shell_enqueue_failure(&e);
-                return Self::run_shell_tool_failure_result(
-                        command_rejected_message(
-                            e,
-                            "confirm the agent is connected and the command request is allowed, then retry with the same shell path. Use run_job only when immediate asynchronous shell start is intentional; if a native child must survive Runner restart/replacement, use run_detached_process from the start.",
-                        ),
-                        failure_kind,
-                        ShellCommandExecutionState::NotStarted,
+                return execution_admission_failure_result(
+                        e,
+                        "confirm the agent is connected and the command request is allowed, then retry with the same shell path. Use run_job only when immediate asynchronous shell start is intentional; if a native child must survive Runner restart/replacement, use run_detached_process from the start.",
                     );
             }
         };
@@ -894,7 +885,7 @@ impl ToolRuntime {
                                     reason,
                                     "inspect the rejection reason, adjust the cwd/command/project, then retry.",
                                 ),
-                                Self::classify_run_shell_enqueue_failure(reason),
+                                Self::classify_run_shell_response_failure(reason),
                                 ShellCommandExecutionState::NotStarted,
                             )
                     }

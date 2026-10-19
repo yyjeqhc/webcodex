@@ -37,8 +37,7 @@ pub(crate) use webcodex_runner_registry::{
     command_preview, process_preview, recovery_timeout_sweep, script_preview, EnqueueLspError,
     EnqueueRunnerSkillError, RunnerFeature, RunnerFeatureSet, RunnerRegistry, RunnerSemanticView,
     RunnerTransport, ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution,
-    COMMAND_PREVIEW_MAX_CHARS, DETACHED_IDEMPOTENCY_CONFLICT, DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
-    RECOVERY_SWEEP_INTERVAL_SECS, RUNNER_ONLINE_WINDOW_SECS,
+    COMMAND_PREVIEW_MAX_CHARS, RECOVERY_SWEEP_INTERVAL_SECS, RUNNER_ONLINE_WINDOW_SECS,
 };
 #[cfg(test)]
 pub(crate) use webcodex_runner_registry::{TRANSPORT_POLLING, TRANSPORT_WEBSOCKET};

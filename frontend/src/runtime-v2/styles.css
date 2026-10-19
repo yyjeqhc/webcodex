@@ -337,7 +337,7 @@ code, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 
 .runtime-tabs { max-width:var(--web-content-max); display: flex; gap: 4px; margin: 0 auto var(--web-section-gap); border-bottom: 1px solid var(--line); }
 .runtime-tabs button { display: flex; gap: 6px; align-items: center; border: 0; border-bottom: 2px solid transparent; padding: 9px 10px 10px; background: transparent; color: var(--muted); font-size:12px; font-weight: 600; cursor: pointer; }
-.runtime-tabs button.active { color: var(--web-on-selection); }
+.runtime-tabs button.active { color: var(--ui-on-accent-soft); }
 .runtime-tabs button span { min-width: 20px; border-radius: 999px; padding: 1px 5px; background: var(--surface-muted); color: var(--quiet); font-size:12px; text-align: center; }
 
 .windows-workbench { max-width:var(--web-content-max); min-height: 650px; display: grid; grid-template-columns: 310px minmax(0,1fr); margin: 0 auto; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: 0 8px 28px rgba(30,38,54,.05); }

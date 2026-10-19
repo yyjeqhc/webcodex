@@ -21414,7 +21414,7 @@ function th(n, l) {
 }
 function bN(n, l, r = document.documentElement) {
   const i = th(n, l);
-  r.style.setProperty("--ui-accent", i.accent), r.style.setProperty("--ui-accent-hover", i.hover), r.style.setProperty("--ui-accent-soft", i.soft), r.style.setProperty("--ui-on-accent", i.onAccent), r.dataset.accent = Dx.find((c) => c.color === Va(n))?.id || "custom";
+  r.style.setProperty("--ui-accent", i.accent), r.style.setProperty("--ui-accent-hover", i.hover), r.style.setProperty("--ui-accent-soft", i.soft), r.style.setProperty("--ui-on-accent-soft", i.onSoft), r.style.setProperty("--ui-on-accent", i.onAccent), r.dataset.accent = Dx.find((c) => c.color === Va(n))?.id || "custom";
 }
 function SN(n, l) {
   const r = th(n, l);

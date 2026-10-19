@@ -43,11 +43,11 @@
 .sidebar nav button:active { transform: none; }
 .sidebar nav button.active {
   border: 0;
-  background: var(--desktop-selection);
-  color: var(--desktop-on-selection);
+  background: var(--ui-accent-soft);
+  color: var(--ui-on-accent-soft);
   box-shadow: none;
 }
-.sidebar nav button.active:hover { background: var(--desktop-selection); color: var(--desktop-on-selection); }
+.sidebar nav button.active:hover { background: var(--ui-accent-soft); color: var(--ui-on-accent-soft); }
 .sidebar nav button.active .navigation-icon, .sidebar nav button.active kbd { color: inherit; }
 .navigation-icon { color: inherit; }
 .navigation-icon { width: 18px; height: 18px; stroke-width: 1.75; }
@@ -202,7 +202,7 @@
   font-weight: 600;
   line-height: 1.4;
 }
-.workspace-tabs > button[aria-selected="true"] { background: var(--desktop-selection); color: var(--desktop-on-selection); font-weight: 600; }
+.workspace-tabs > button[aria-selected="true"] { background: var(--ui-accent-soft); color: var(--ui-on-accent-soft); font-weight: 600; }
 .activity-project-filter .filter-label { color: var(--ui-text-tertiary); font-size: var(--ui-font-label); font-weight: 600; }
 .activity-project-filter .project-picker { width: min(280px, 70%); }
 .workspace-window-row, .workspace-session-row, .extension-row { padding-inline: 8px; }
@@ -212,7 +212,7 @@
 .settings-navigation > button, .extensions-navigation > button { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 10px 12px; border: 0; border-radius: var(--ui-radius-sm); background: transparent; color: var(--ui-text-secondary); font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; }
 .settings-navigation > button svg, .extensions-navigation > button svg { flex-shrink: 0; }
 .settings-navigation > button:hover, .extensions-navigation > button:hover { background: var(--ui-surface-secondary); }
-.settings-navigation > button[aria-selected="true"], .extensions-navigation > button[aria-selected="true"] { background: var(--desktop-selection); color: var(--desktop-on-selection); }
+.settings-navigation > button[aria-selected="true"], .extensions-navigation > button[aria-selected="true"] { background: var(--ui-accent-soft); color: var(--ui-on-accent-soft); }
 .settings-content, .extensions-content { min-width: 0; padding: var(--desktop-panel-inset); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-xl); background: var(--ui-content); box-shadow: var(--ui-shadow-surface); }
 .settings-description { margin: 0 0 28px; color: var(--ui-text-secondary); font-size: 15px; }
 .settings-content .settings-section:first-child, .settings-content .runtime-settings-panel:first-child, .settings-content .diagnostics-panel:first-child { margin-top: 0; }

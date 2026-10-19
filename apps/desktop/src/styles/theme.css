@@ -12,8 +12,6 @@
   --ui-border: #e5e5e5;
   --ui-border-subtle: #ededed;
   --ui-border-strong: #a3a3a3;
-  --desktop-selection: #191919;
-  --desktop-on-selection: #fff;
   --desktop-content-max: 1440px;
   --desktop-shell-gap: 16px;
   --desktop-page-inset: 24px;
@@ -43,8 +41,6 @@
   --ui-border: #383838;
   --ui-border-subtle: #303030;
   --ui-border-strong: #737373;
-  --desktop-selection: #f5f5f5;
-  --desktop-on-selection: #191919;
   --ui-shadow-surface: 0 2px 8px rgb(0 0 0 / 8%);
   --ui-shadow-raised: 0 4px 20px rgb(0 0 0 / 12%);
   --ui-shadow-floating: 0 16px 48px rgb(0 0 0 / 32%);

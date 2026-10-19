@@ -95,6 +95,7 @@ export function applyAccentPreference(value: string, theme: "light" | "dark", ro
   root.style.setProperty("--ui-accent", tokens.accent);
   root.style.setProperty("--ui-accent-hover", tokens.hover);
   root.style.setProperty("--ui-accent-soft", tokens.soft);
+  root.style.setProperty("--ui-on-accent-soft", tokens.onSoft);
   root.style.setProperty("--ui-on-accent", tokens.onAccent);
   root.dataset.accent = ACCENT_PRESETS.find((preset) => preset.color === normalizeAccent(value))?.id || "custom";
 }

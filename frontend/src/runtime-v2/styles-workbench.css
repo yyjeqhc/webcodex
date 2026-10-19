@@ -22,7 +22,7 @@ summary:focus-visible, a:focus-visible { outline: 2px solid var(--ui-accent); ou
 .nav-button { grid-template-columns: 20px minmax(0, 1fr) auto; gap: 10px; padding-inline: 12px; min-height: 42px; border-radius: 10px; color: var(--muted); transition: background var(--ui-motion-fast) var(--ui-ease), color var(--ui-motion-fast) var(--ui-ease), transform var(--ui-motion-fast) var(--ui-ease); }
 .nav-button, .goal-list-row { position: relative; }
 .nav-button:hover { background: var(--ui-glass-hover); color: var(--text); }
-.nav-button.active { background: var(--web-selection); color: var(--web-on-selection); box-shadow: none; }
+.nav-button.active { background: var(--ui-accent-soft); color: var(--ui-on-accent-soft); box-shadow: none; }
 .nav-button.active small { background: transparent; color: inherit; }
 .nav-button small, .count-badge { background: var(--ui-surface-secondary); color: var(--muted); }
 /* Compact controls use Mantine geometry, with one strip at each entry. */
@@ -67,7 +67,7 @@ summary:focus-visible, a:focus-visible { outline: 2px solid var(--ui-accent); ou
   background: var(--ui-surface-secondary); box-shadow: none;
   -webkit-backdrop-filter: none; backdrop-filter: none;
 }
-.work-surface-switch button.active, .runtime-tabs button.active { background: var(--web-selection); color: var(--web-on-selection); box-shadow: none; }
+.work-surface-switch button.active, .runtime-tabs button.active { background: var(--ui-accent-soft); color: var(--ui-on-accent-soft); box-shadow: none; }
 .runtime-tabs { padding: 4px; gap: 4px; flex-wrap: wrap; }
 .runtime-tabs button { min-height: var(--web-control-height); border: 0; border-radius: 8px; padding: 8px 12px; }
 .runtime-tabs button.active span { background: transparent; color: inherit; }
@@ -76,7 +76,7 @@ summary:focus-visible, a:focus-visible { outline: 2px solid var(--ui-accent); ou
 .equal-view-tabs > button { width: 100%; min-width: 0; justify-content: center; white-space: nowrap; }
 .equal-view-tabs > button > svg { flex: 0 0 auto; }
 
-.segmented button.active { background: var(--web-selection); color: var(--web-on-selection); }
+.segmented button.active { background: var(--ui-accent-soft); color: var(--ui-on-accent-soft); }
 .segmented { border-color: var(--ui-border); border-radius: var(--ui-radius-md); background: var(--ui-surface); }
 .activity-source-badge.window, .activity-source-badge.session,
 .activity-source-badge.workspace, .activity-source-badge.job { background: var(--ui-surface-secondary); color: var(--ui-text-secondary); }
@@ -332,7 +332,7 @@ html[data-resolved-theme="dark"] .conversation-list { background: var(--ui-surfa
   .runtime-section { padding: 16px; }
   .mobile-primary-nav { left: 9px; right: 9px; bottom: max(8px, env(safe-area-inset-bottom)); height: 57px; border-radius: var(--ui-radius-lg); box-shadow: var(--ui-glass-highlight), 0 0 0 1px var(--ui-glass-edge), var(--ui-shadow-floating); }
   .mobile-primary-nav button { font-size: var(--ui-font-caption); }
-  .mobile-primary-nav button.active { background: var(--web-selection); color: var(--web-on-selection); border-radius: var(--ui-radius-md); font-weight: 700; }
+  .mobile-primary-nav button.active { background: var(--ui-accent-soft); color: var(--ui-on-accent-soft); border-radius: var(--ui-radius-md); font-weight: 700; }
 }
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .app-nav, .mobile-app-bar, .mobile-preferences, .mobile-primary-nav,

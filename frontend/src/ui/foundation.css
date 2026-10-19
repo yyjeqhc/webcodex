@@ -29,6 +29,7 @@
   --ui-accent: #2563eb;
   --ui-accent-hover: #1d4ed8;
   --ui-accent-soft: #e4ecfd;
+  --ui-on-accent-soft: #1d4ed8;
   --ui-on-accent: #ffffff;
   --ui-success: #20785b;
   --ui-success-soft: #e4f3eb;
@@ -102,6 +103,7 @@
   --ui-accent: #79a5ff;
   --ui-accent-hover: #95b8ff;
   --ui-accent-soft: #27334d;
+  --ui-on-accent-soft: #95b8ff;
   --ui-on-accent: #111111;
   --ui-success: #7bd1a5;
   --ui-success-soft: #1d4436;

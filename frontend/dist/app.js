@@ -12784,7 +12784,7 @@ function up(n, a) {
 }
 function FN(n, a, r = document.documentElement) {
   const l = up(n, a);
-  r.style.setProperty("--ui-accent", l.accent), r.style.setProperty("--ui-accent-hover", l.hover), r.style.setProperty("--ui-accent-soft", l.soft), r.style.setProperty("--ui-on-accent", l.onAccent), r.dataset.accent = n1.find((c) => c.color === ni(n))?.id || "custom";
+  r.style.setProperty("--ui-accent", l.accent), r.style.setProperty("--ui-accent-hover", l.hover), r.style.setProperty("--ui-accent-soft", l.soft), r.style.setProperty("--ui-on-accent-soft", l.onSoft), r.style.setProperty("--ui-on-accent", l.onAccent), r.dataset.accent = n1.find((c) => c.color === ni(n))?.id || "custom";
 }
 function QN(n, a, r) {
   return n.post("workflow-sessions", { project: a }, r);

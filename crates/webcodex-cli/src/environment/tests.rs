@@ -771,3 +771,247 @@ fn recovery_is_diagnostic_by_default_and_apply_requires_exact_authority() {
     ])
     .is_ok());
 }
+
+fn parsed_command(args: &[&str]) -> Result<commands::Command, String> {
+    commands::parse(
+        &args
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>(),
+    )
+}
+
+#[test]
+fn parsed_service_commands_bind_profile_identity_only_to_tunnel_targets() {
+    use commands::{Command, ControlCommand, ServiceTarget};
+
+    for (name, expected) in [
+        ("start", ServiceOperation::Start),
+        ("stop", ServiceOperation::Stop),
+        ("restart", ServiceOperation::Restart),
+        ("repair-credential", ServiceOperation::UpdateCredential),
+        ("uninstall-service", ServiceOperation::Uninstall),
+    ] {
+        let Command::Control(ControlCommand::Service(command)) =
+            parsed_command(&[name, "runner"]).unwrap()
+        else {
+            panic!("expected service command");
+        };
+        assert_eq!(command.operation, expected);
+        assert!(matches!(command.target, ServiceTarget::Runner));
+        assert!(command.environment.directory.is_none());
+        assert!(!command.environment.json);
+        assert!(parsed_command(&[name, "server", "--profile", "primary"]).is_err());
+    }
+
+    let Command::Control(ControlCommand::Service(command)) = parsed_command(&[
+        "start",
+        "tunnel",
+        "--profile",
+        "primary",
+        "--expected-revision",
+        "17",
+        "--environment-dir",
+        "/fixture",
+        "--json",
+    ])
+    .unwrap() else {
+        panic!("expected tunnel service command");
+    };
+    let ServiceTarget::Tunnel {
+        profile,
+        expected_revision,
+    } = command.target
+    else {
+        panic!("expected a tunnel target");
+    };
+    assert_eq!(profile, "primary");
+    assert_eq!(expected_revision, Some(17));
+    assert_eq!(
+        command.environment.directory.as_deref(),
+        Some(Path::new("/fixture"))
+    );
+    assert!(command.environment.json);
+
+    let Command::Control(ControlCommand::Service(command)) =
+        parsed_command(&["start", "tunnel"]).unwrap()
+    else {
+        panic!("expected tunnel service command");
+    };
+    assert!(
+        matches!(command.target, ServiceTarget::Tunnel { profile, expected_revision: None } if profile == "default")
+    );
+}
+
+#[test]
+fn parsed_tunnel_commands_retain_explicit_targets_and_recovery_fences() {
+    use commands::{Command, ControlCommand};
+
+    let Command::Control(ControlCommand::DiagnoseTunnel(target)) = parsed_command(&[
+        "tunnel-diagnose",
+        "primary",
+        "--environment-dir",
+        "/fixture",
+        "--json",
+    ])
+    .unwrap() else {
+        panic!("expected tunnel diagnosis");
+    };
+    assert_eq!(target.directory, Path::new("/fixture"));
+    assert_eq!(target.profile, "primary");
+    assert!(target.json);
+
+    let Command::Control(ControlCommand::RecoverTunnel { target, request }) = parsed_command(&[
+        "recover-tunnel",
+        "primary",
+        "--environment-dir",
+        "/fixture",
+        "--apply",
+        "--accept-uncertain-effects",
+        "--expected-environment-id",
+        "environment",
+        "--expected-revision",
+        "17",
+        "--expected-run-id",
+        "12345678-1234-1234-1234-123456789abc",
+    ])
+    .unwrap() else {
+        panic!("expected tunnel recovery");
+    };
+    assert_eq!(target.directory, Path::new("/fixture"));
+    assert_eq!(target.profile, "primary");
+    assert!(request.apply && request.accept_uncertain_effects);
+    assert_eq!(request.expected_revision, Some(17));
+    assert_eq!(
+        request.expected_environment_id.as_deref(),
+        Some("environment")
+    );
+    assert_eq!(
+        request.expected_run_id.as_deref(),
+        Some("12345678-1234-1234-1234-123456789abc")
+    );
+
+    let Command::Control(ControlCommand::RecoverTunnel { request, .. }) =
+        parsed_command(&["recover-tunnel", "primary", "--environment-dir", "/fixture"]).unwrap()
+    else {
+        panic!("expected diagnostic recovery");
+    };
+    assert!(!request.apply && !request.accept_uncertain_effects);
+    assert!(request.expected_revision.is_none() && request.expected_run_id.is_none());
+
+    let Command::Control(ControlCommand::SetTunnelHost {
+        environment,
+        profile,
+        mode,
+    }) = parsed_command(&[
+        "tunnel-host",
+        "primary",
+        "--host",
+        "embedded",
+        "--environment-dir",
+        "/fixture",
+    ])
+    .unwrap()
+    else {
+        panic!("expected tunnel host selection");
+    };
+    assert_eq!(
+        environment.directory.as_deref(),
+        Some(Path::new("/fixture"))
+    );
+    assert_eq!(profile, "primary");
+    assert_eq!(mode, TunnelHostMode::Embedded);
+
+    for args in [
+        vec!["tunnel-diagnose", "primary"],
+        vec!["recover-tunnel", "primary"],
+        vec![
+            "recover-tunnel",
+            "primary",
+            "--environment-dir",
+            "/fixture",
+            "--apply",
+        ],
+        vec!["tunnel-host", "primary"],
+    ] {
+        assert!(parsed_command(&args).is_err());
+    }
+}
+
+#[tokio::test]
+async fn invalid_control_arguments_are_rejected_before_environment_creation() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("must-stay-absent");
+    let private_fixture = "unreadable-private-fixture";
+    let cases = [
+        (vec!["start", "server", "--token-file", private_fixture], "Service control accepts only a component, --profile, --expected-revision, --environment-dir and --json"),
+        (vec!["restart", "server", "--profile", private_fixture], "--profile identifies a Tunnel profile"),
+        (vec!["stop"], "Specify server, runner or tunnel"),
+        (vec!["tunnel-host", "primary"], "Specify --host embedded or standalone"),
+        (vec!["tunnel-host", "primary", "--host", "embedded", "--candidate-dir", private_fixture], "tunnel-host accepts only PROFILE, --host, --environment-dir and --json"),
+        (vec!["tunnel-diagnose", "primary", "--token-file", private_fixture], "tunnel-diagnose accepts only PROFILE, --environment-dir and --json"),
+        (vec!["recover-tunnel", "primary", "--candidate-dir", private_fixture], "recover-tunnel accepts only PROFILE, --environment-dir, --json and its recovery confirmation options"),
+    ];
+    for (case, expected) in cases {
+        let mut args: Vec<String> = case.into_iter().map(str::to_owned).collect();
+        args.extend([
+            "--environment-dir".into(),
+            directory.display().to_string(),
+            "--json".into(),
+        ]);
+        let error = run(&args).await.unwrap_err();
+        let structured: serde_json::Value = serde_json::from_str(&error).unwrap();
+        assert_eq!(structured["ok"], false);
+        assert_eq!(structured["error"], expected);
+        assert!(!error.contains(private_fixture));
+        assert!(!directory.exists());
+    }
+}
+
+#[tokio::test]
+async fn typed_diagnosis_and_recovery_never_create_a_missing_selected_environment() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("removed-environment");
+    for command in ["tunnel-diagnose", "recover-tunnel"] {
+        let args = [
+            command.into(),
+            "primary".into(),
+            "--environment-dir".into(),
+            directory.display().to_string(),
+        ];
+        assert_eq!(
+            run(&args).await.unwrap_err(),
+            "Selected Environment is no longer available"
+        );
+        assert!(!directory.exists());
+    }
+}
+
+#[tokio::test]
+async fn typed_inventory_commands_preserve_text_and_manifest_output_without_a_store() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("absent-environment");
+    let paths = run(&[
+        "paths".into(),
+        "--environment-dir".into(),
+        directory.display().to_string(),
+    ])
+    .await
+    .unwrap();
+    assert!(paths.starts_with(
+        "WebCodex locations (configured metadata; running-effective locations are unconfirmed)"
+    ));
+    let manifest = run(&[
+        "backup-manifest".into(),
+        "--environment-dir".into(),
+        directory.display().to_string(),
+    ])
+    .await
+    .unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    assert_eq!(manifest["kind"], "manifest_only");
+    assert_eq!(manifest["cannot_restore"], true);
+    assert!(!directory.exists());
+    assert!(parsed_command(&["paths", "unexpected-operand"]).is_err());
+    assert!(parsed_command(&["backup-manifest", "--no-project"]).is_err());
+}

@@ -123,7 +123,11 @@ fn runner_windows_local_persistent_shell_preserves_state_and_existing_protocol()
         &projects,
         &request("open", "wc_shell_windows_runner", None),
     );
-    assert_eq!(opened.shell_state, "running");
+    assert_eq!(
+        opened.shell_state, "running",
+        "persistent shell open failed: code={:?}, error={:?}",
+        opened.error_code, opened.error
+    );
     assert_eq!(opened.shell.as_deref(), Some("powershell"));
 
     let set = manager.handle(

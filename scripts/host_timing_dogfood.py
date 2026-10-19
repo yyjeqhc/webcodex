@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 import json
 import math
@@ -18,6 +19,9 @@ import sqlite3
 import sys
 
 MAX_ROWS = 100_000
+# Read only bounded diagnostic projections from potentially larger audit rows.
+# Oversized summaries remain selected events but cannot provide canonical proof.
+MAX_SUMMARY_BYTES = 64 * 1024
 STRUCTURED = frozenset({
     "run_process", "run_script", "run_shell", "run_skill_resource",
     "cargo_check", "cargo_test", "cargo_fmt", "go_test",
@@ -82,7 +86,7 @@ def _percentile(values: list[int], fraction: float) -> int | None:
     return ordered[math.ceil(fraction * len(ordered)) - 1]
 
 
-def _query(db: Path, *, project: str, start: int, end: int) -> list[tuple]:
+def _query(db: Path, *, project: str, start: int, end: int) -> Iterator[tuple]:
     if not db.is_file():
         raise ReportError("audit database is not a file")
     try:
@@ -90,19 +94,22 @@ def _query(db: Path, *, project: str, start: int, end: int) -> list[tuple]:
         try:
             connection.execute("PRAGMA query_only=ON")
             rows = connection.execute(
-                """SELECT action_name, operation, duration_ms, summary_json, window_meaningful
+                """SELECT action_name, operation, duration_ms,
+                          CASE WHEN length(CAST(summary_json AS BLOB)) <= ?
+                               THEN summary_json ELSE NULL END,
+                          window_meaningful
                    FROM action_events
                    WHERE started_at >= ? AND started_at < ? AND project = ?
                    ORDER BY started_at, event_id LIMIT ?""",
-                (start, end, project, MAX_ROWS + 1),
-            ).fetchall()
+                (MAX_SUMMARY_BYTES, start, end, project, MAX_ROWS + 1),
+            )
+            # Stream bounded rows; a 100k-row selection should not accumulate
+            # all raw JSON summaries in Python memory before aggregation.
+            yield from rows
         finally:
             connection.close()
     except sqlite3.Error as exc:
         raise ReportError("could not query ActionAudit read-only") from exc
-    if len(rows) > MAX_ROWS:
-        raise ReportError("selection exceeds the 100000-event limit; split the time range")
-    return rows
 
 
 def summarize(db: Path, policy: dict, project: str, start: int, end: int) -> dict:
@@ -110,14 +117,19 @@ def summarize(db: Path, policy: dict, project: str, start: int, end: int) -> dic
         raise ReportError("an exact, bounded --project is required")
     if not 0 < end - start <= 7 * 86400:
         raise ReportError("select a positive UTC range of at most 7 days")
-    rows = _query(db, project=project, start=start, end=end)
+    row_count = 0
     counts = Counter()
     structured_ms: list[int] = []
     observation_ms: list[int] = []
     readiness_ms: list[int] = []
     unknown_states = 0
     unproven = 0
-    for action, operation, duration, raw, meaningful in rows:
+    for action, operation, duration, raw, meaningful in _query(
+        db, project=project, start=start, end=end
+    ):
+        row_count += 1
+        if row_count > MAX_ROWS:
+            raise ReportError("selection exceeds the 100000-event limit; split the time range")
         if action != "toolsCall" or not isinstance(operation, str):
             continue
         counts["outer_tool_calls"] += 1
@@ -167,7 +179,7 @@ def summarize(db: Path, policy: dict, project: str, start: int, end: int) -> dic
         "duration_basis": "legacy_action_audit_pre_response_handoff_not_host_latency",
         "selection": {"start_utc": datetime.fromtimestamp(start, tz=timezone.utc).isoformat(),
                       "end_utc": datetime.fromtimestamp(end, tz=timezone.utc).isoformat(),
-                      "project_filter_applied": True, "events_selected": len(rows)},
+                      "project_filter_applied": True, "events_selected": row_count},
         "counts": {
             **{key: counts[key] for key in (
                 "outer_tool_calls", "canonical_calls", "meaningful_outer_calls_proxy",

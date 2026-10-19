@@ -866,6 +866,11 @@ impl RunnerRegistry {
             }) => Some(runner_instance_id.clone()),
             _ => None,
         };
+        let go_format_request = matches!(
+            structured_execution.as_ref(),
+            Some(StructuredJobExecution::ProjectFormat { plan, .. })
+                if matches!(plan.profile, webcodex_core::project_format::ProjectFormatProfile::Go {})
+        );
         let project_node_build_request = matches!(structured_execution.as_ref(), Some(StructuredJobExecution::ProjectBuild(plan)) if plan.provenance.backend == "node");
         let python_build_request = matches!(&structured_execution, Some(StructuredJobExecution::ProjectBuild(plan)) if plan.provenance.backend == "python");
         let project_build_request = matches!(
@@ -1367,6 +1372,16 @@ impl RunnerRegistry {
             }
             if runner.runner_instance_id != expected_instance {
                 return Err("format_runner_replaced".into());
+            }
+            if go_format_request
+                && !runner
+                    .runner_features
+                    .supports(RunnerFeature::ProjectFormatGo)
+            {
+                return Err(capability_upgrade_error(
+                    &client_id,
+                    RunnerFeature::ProjectFormatGo,
+                ));
             }
         }
         if project_node_build_request

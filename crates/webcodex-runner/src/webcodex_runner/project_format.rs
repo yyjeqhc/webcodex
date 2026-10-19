@@ -248,6 +248,7 @@ pub(crate) fn plan(
     let adapter = match resolved.recipe {
         ProjectRecipeId::Rust => ProjectFormatAdapter::Rust,
         ProjectRecipeId::Python => ProjectFormatAdapter::Python,
+        ProjectRecipeId::Go => ProjectFormatAdapter::Go,
         _ => return Err(unavailable("format_adapter_unavailable")),
     };
     if request.adapter != ProjectFormatAdapter::Auto && request.adapter != adapter {
@@ -261,14 +262,21 @@ pub(crate) fn plan(
         .replace('\\', "/");
     let (manifest, manifest_identity) =
         read_source(&root, &marker, PROJECT_FORMAT_MANIFEST_MAX_BYTES).map_err(unavailable)?;
-    let value: toml::Value =
-        toml::from_str(&manifest).map_err(|_| unavailable("format_manifest_invalid"))?;
     let profile = match adapter {
         ProjectFormatAdapter::Rust => {
+            let value: toml::Value =
+                toml::from_str(&manifest).map_err(|_| unavailable("format_manifest_invalid"))?;
             reject_custom_rustfmt_config(&resolved.absolute_root).map_err(unavailable)?;
             rust_profile(&value).map_err(unavailable)?
         }
-        ProjectFormatAdapter::Python => python_profile(&value).map_err(unavailable)?,
+        ProjectFormatAdapter::Python => {
+            let value: toml::Value =
+                toml::from_str(&manifest).map_err(|_| unavailable("format_manifest_invalid"))?;
+            python_profile(&value).map_err(unavailable)?
+        }
+        // gofmt consumes only source bytes. The bounded go.mod bytes/identity
+        // fence recipe ownership, not module syntax or dependency resolution.
+        ProjectFormatAdapter::Go => ProjectFormatProfile::Go {},
         ProjectFormatAdapter::Auto => unreachable!(),
     };
     let mut sources = Vec::new();
@@ -456,6 +464,7 @@ pub(crate) fn format_candidates_with_deadline(
 
     let (python_executable, env_overrides, env_removals, rust_config_arg, _rust_fence) =
         match &planned.plan.profile {
+            ProjectFormatProfile::Go {} => (None, Vec::new(), Vec::new(), None, None),
             ProjectFormatProfile::Rust { .. } => {
                 let fence_dir = tempfile::tempdir().map_err(|_| "format_process_failed")?;
                 let config_path = fence_dir.path().join("rustfmt.toml");

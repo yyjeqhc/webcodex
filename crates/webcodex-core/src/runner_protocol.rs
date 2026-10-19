@@ -584,6 +584,13 @@ runner_capabilities! {
         #[serde(default, skip_serializing_if = "is_false")]
         pub project_format_v1: bool = false;
     }
+    /// Additive Go stdin/stdout formatting profile. Older formatting Runners
+    /// cannot decode this request/profile and must not receive it.
+    ProjectFormatGo => RUNNER_CAPABILITY_PROJECT_FORMAT_GO("project_format_go_v1"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub project_format_go_v1: bool = false;
+    }
     /// Additive portable dependency policy for project build/validation gateways.
     /// Missing on older Runners is false; policy-bearing plans must fail closed.
     ProjectDependencyPolicy => RUNNER_CAPABILITY_PROJECT_DEPENDENCY_POLICY("project_dependency_policy_v1"),
@@ -2892,6 +2899,7 @@ mod envelope_tests {
                 project_validation_node_json_v1: false,
                 project_build_python_v1: false,
                 project_format_v1: false,
+                project_format_go_v1: false,
                 project_dependency_policy_v1: false,
                 project_go_single_module_v1: false,
                 project_validation_package_scope_v1: false,

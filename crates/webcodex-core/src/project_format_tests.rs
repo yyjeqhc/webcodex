@@ -173,6 +173,11 @@ fn project_format_wire_roundtrip_rejects_execution_and_oversized_payloads() {
 fn project_format_capability_and_mutation_truth_default_closed() {
     let old: RunnerCapabilities = serde_json::from_str("{}").unwrap();
     assert!(!old.supports(RunnerCapabilityId::ProjectFormat));
+    assert!(!old.supports(RunnerCapabilityId::ProjectFormatGo));
+    let original: RunnerCapabilities =
+        serde_json::from_str(r#"{"project_format_v1":true}"#).unwrap();
+    assert!(original.supports(RunnerCapabilityId::ProjectFormat));
+    assert!(!original.supports(RunnerCapabilityId::ProjectFormatGo));
     assert_eq!(ProjectFormatMutationReport::default().state_changed(), None);
     for (report, changed) in [
         (ProjectFormatMutationReport::Unknown, None),
@@ -183,6 +188,49 @@ fn project_format_capability_and_mutation_truth_default_closed() {
             serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(retained.state_changed(), changed);
     }
+}
+
+#[test]
+fn project_format_go_selection_and_wire_preserve_closed_profiles() {
+    let mut request = request();
+    request.files = vec!["main.go".into(), "internal/code.go".into()];
+    for adapter in [ProjectFormatAdapter::Auto, ProjectFormatAdapter::Go] {
+        request.adapter = adapter;
+        assert!(request.validate().is_ok());
+        assert!(request.requires_go());
+        let decoded: ProjectFormatRequest =
+            serde_json::from_str(&serde_json::to_string(&request).unwrap()).unwrap();
+        assert_eq!(decoded, request);
+    }
+    let profile = ProjectFormatProfile::Go {};
+    assert_eq!(
+        serde_json::to_value(&profile).unwrap(),
+        serde_json::json!({"backend":"go"})
+    );
+    assert_eq!(profile.adapter(), ProjectFormatAdapter::Go);
+    let command = profile.process("internal/code.go").unwrap();
+    assert_eq!(command.executable, "gofmt");
+    assert!(command.args.is_empty());
+    assert!(profile.process("main.rs").is_err());
+    for files in [
+        vec!["main.go", "main.py"],
+        vec!["main.go", "main.go"],
+        vec!["../main.go"],
+        vec!["dir\\main.go"],
+    ] {
+        request.files = files.into_iter().map(str::to_string).collect();
+        assert!(request.validate().is_err());
+    }
+    request.files = vec!["main.go".into()];
+    request.adapter = ProjectFormatAdapter::Rust;
+    assert!(request.validate().is_err());
+    request.adapter = ProjectFormatAdapter::Go;
+    request.files = vec!["main.rs".into()];
+    assert!(request.validate().is_err());
+    assert!(serde_json::from_value::<ProjectFormatProfile>(
+        serde_json::json!({"backend":"go","args":["-w"]})
+    )
+    .is_err());
 }
 
 #[test]

@@ -2756,6 +2756,16 @@ impl RunnerRegistry {
                 RunnerFeature::ProjectFormat,
             ));
         }
+        if payload.requires_go()
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectFormatGo)
+        {
+            return Err(capability_upgrade_error(
+                &client_id,
+                RunnerFeature::ProjectFormatGo,
+            ));
+        }
         if !runner.projects.iter().any(|project| {
             project.id == payload.project_id && !project.disabled && project.allow_patch
         }) {

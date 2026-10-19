@@ -228,7 +228,7 @@ export function ProjectsView({ client, language, runners, onOpenSession, onOpenW
                   <div className="project-card-head">
                     <span className="project-icon"><Folder size={18} /></span>
                     <span>
-                      <strong title={family.id}>{family.name}</strong>
+                      <strong title={family.name}>{family.name}</strong>
                       <small title={displayProjectPath(family.primary.path) || family.primary.id}>{family.clientId} · {displayProjectPath(family.primary.path) || t("workspace path unavailable")}</small>
                     </span>
                     <span className={"status-pill " + (family.workspaces.some((project) => project.connected) ? "good" : "warn")}>

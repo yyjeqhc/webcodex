@@ -362,6 +362,8 @@ mod project_build;
 mod project_dependency_policy;
 #[path = "tests/project_file_read.rs"]
 mod project_file_read;
+#[path = "tests/project_format.rs"]
+mod project_format;
 #[path = "tests/project_inventory.rs"]
 mod project_inventory;
 #[path = "tests/project_projection.rs"]

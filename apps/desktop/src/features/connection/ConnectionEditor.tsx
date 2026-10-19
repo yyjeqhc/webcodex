@@ -67,7 +67,7 @@ export function ConnectionEditor({ profile, persistentLocal, onState, onClose, o
   };
   const selectedOwner = hostMode === "embedded" ? c("runWithServer") : c("separateTunnelService");
   return <WorkspaceDialog title={profile ? `${p("edit")} ${profile.name}` : c("addConnection")} onClose={onClose} busy={busy}>
-    <form className="profile-editor" onSubmit={event => void submit(event)} aria-busy={busy}>
+    <form className="profile-editor connection-profile-editor" onSubmit={event => void submit(event)} aria-busy={busy}>
       <NativeSelect label={c("provider")} aria-label={c("provider")} value={providerKind} onChange={event => { setProviderKind(event.currentTarget.value as TunnelProvider["kind"]); setApiKey(""); setCloudflareToken(""); }} disabled={busy || profile !== null} data={[{value:"openai",label:"OpenAI Tunnel"},{value:"cloudflare_named",label:c("cloudflareNamed")},{value:"cloudflare_quick",label:c("cloudflareQuick")}]} />
       <p className="field-help">{cloudflare ? c("cloudflareHelp") : p("tunnelCredentialHelp")}</p>
       {cloudflare && !persistentLocal && <Alert role="status"><p>{c("cloudflareEnvironment")}</p>{onSetup && <Button variant="default" onClick={() => { onClose(); onSetup(); }}>{c("openRuntimeSetup")}</Button>}</Alert>}

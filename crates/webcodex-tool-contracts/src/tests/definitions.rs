@@ -16,6 +16,22 @@ fn project_format_preserves_session_shell_and_write_guards() {
 }
 
 #[test]
+fn project_format_go_schema_exposes_only_the_closed_adapter() {
+    let schema = crate::input_schema_for_tool("project_format");
+    let sample =
+        serde_json::json!({"project":"agent:runner:demo", "adapter":"go", "files":["main.go"]});
+    assert!(test_support::validate_schema_instance(&sample, &schema).is_ok());
+    for field in ["command", "flags", "executable"] {
+        let mut injected = sample.clone();
+        injected[field] = serde_json::json!("gofmt -w");
+        assert!(test_support::validate_schema_instance(&injected, &schema).is_err());
+    }
+    let mut unsupported = sample;
+    unsupported["adapter"] = serde_json::json!("goimports");
+    assert!(test_support::validate_schema_instance(&unsupported, &schema).is_err());
+}
+
+#[test]
 fn tool_definition_source_has_no_module_wide_dead_code_allowance() {
     let source = include_str!("../tool_definition.rs");
     assert!(

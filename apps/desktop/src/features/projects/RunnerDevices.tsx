@@ -19,7 +19,7 @@ export function RunnerDevices({ onComputerSettings, selectedDevice, onSelectDevi
   const capacityExpired = observedAt == null || Math.max(now, Date.now()) - observedAt >= 30000;
   if (!workspace.runners.length) return null;
   return <section className="runner-devices" aria-labelledby="runner-devices-title">
-    <header><h2 id="runner-devices-title">{p("executionDevices")}</h2><p>{p("runnerRole")}</p></header>
+    <header><h2 id="runner-devices-title">{p("executionDevices")}</h2></header>
     <ul>{workspace.runners.map(runner => {
       const local = runner.client_id === workspace.state.workspace_runner?.client_id;
       const stale = workspace.fleetStale || runner.status === "stale";
@@ -30,12 +30,14 @@ export function RunnerDevices({ onComputerSettings, selectedDevice, onSelectDevi
         <div className="runner-device-heading"><Monitor size={20} aria-hidden="true" /><h3>{local ? p("thisComputer") : p("otherDevice")}</h3><span className={`workspace-badge${runner.connected && !stale ? " working" : ""}`}>{p(stale ? "deviceNeedsRefresh" : runner.connected ? "runnerConnected" : "runnerDisconnected")}</span></div>
         {!local && <p className="runner-device-identifier">{p("deviceIdentifier")} · <code>{runner.client_id}</code></p>}
         <RunnerCapacitySummary capacity={runnerCapacity(runner, stale || workspace.busy || capacityExpired)} />
-        <p className="runner-desktop-state">{p(desktopLabel)}</p>
-        <p className="runner-device-help">{p(help)}</p>
+        <details className="runner-device-details"><summary>{p(desktopLabel)}</summary>
+          <p className="runner-device-help">{p(help)}</p>
+          {local && <p>{p("deviceIdentifier")} · <code>{runner.client_id}</code></p>}
+          <p className="runner-device-help">{p("runnerRole")}</p>
+        </details>
         {onSelectDevice && <button type="button" className="secondary-button" aria-pressed={selectedDevice === runner.client_id}
           aria-label={`${p("viewDeviceProjects")} · ${runner.client_id}`} onClick={() => onSelectDevice(runner.client_id)}>{p("viewDeviceProjects")}</button>}
         {local && runner.connected && !stale && desktop !== true && onComputerSettings && <button type="button" className="secondary-button" onClick={onComputerSettings}>{p("checkDesktopPermissions")}</button>}
-        {local && <details className="runner-device-details"><summary>{p("deviceIdentifier")}</summary><code>{runner.client_id}</code></details>}
       </li>;
     })}</ul>
   </section>;

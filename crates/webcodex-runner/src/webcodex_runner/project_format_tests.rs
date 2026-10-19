@@ -1631,3 +1631,361 @@ fn project_format_candidates_with_deadline_fails_closed_on_deadline_across_multi
     );
     assert_eq!(result, Err("format_timeout"));
 }
+
+fn go_fixture() -> (Fixture, ProjectFormatRequest) {
+    let fixture = Fixture::new();
+    fs::remove_file(fixture.root.join("Cargo.toml")).unwrap();
+    fs::write(
+        fixture.root.join("go.mod"),
+        "module example.invalid/format\n\ngo 1.23\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.root.join("main.go"),
+        "package main\nfunc main( ){ }\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.root.join("other.go"),
+        "package main\nvar answer=42\n",
+    )
+    .unwrap();
+    let mut request = fixture.request();
+    request.files = vec!["main.go".into()];
+    (fixture, request)
+}
+
+#[test]
+fn project_format_go_plans_explicit_and_auto_without_toml_or_module_loading() {
+    let (fixture, mut request) = go_fixture();
+    let automatic = plan(&fixture.policy, &fixture.registry, &request).unwrap();
+    assert_eq!(automatic.plan.profile, ProjectFormatProfile::Go {});
+    request.adapter = ProjectFormatAdapter::Go;
+    let explicit = plan(&fixture.policy, &fixture.registry, &request).unwrap();
+    assert_eq!(explicit.plan.profile, automatic.plan.profile);
+    assert_eq!(explicit.sources, automatic.sources);
+    // go.mod is an identity-bound recipe marker. gofmt never loads its grammar,
+    // dependencies, toolchain directive, go.work, or project-authored scripts.
+    fs::write(
+        fixture.root.join("go.mod"),
+        "opaque Go recipe marker, not TOML\n",
+    )
+    .unwrap();
+    assert!(plan(&fixture.policy, &fixture.registry, &request).is_ok());
+    assert_eq!(
+        replan(&fixture.policy, &fixture.registry, &explicit.plan).err(),
+        Some("format_plan_stale")
+    );
+    let encoded = serde_json::to_string(&explicit.plan).unwrap();
+    assert!(!encoded.contains("func main"));
+}
+
+#[test]
+fn project_format_go_rejects_nested_modules_ambiguity_and_permission_changes() {
+    let (fixture, mut request) = go_fixture();
+    let original = plan(&fixture.policy, &fixture.registry, &request).unwrap();
+    fixture.register(false);
+    assert_eq!(
+        replan(&fixture.policy, &fixture.registry, &original.plan).err(),
+        Some("format_plan_stale")
+    );
+    assert_eq!(
+        rejection(plan(&fixture.policy, &fixture.registry, &request)),
+        "permission_denied"
+    );
+    fixture.register(true);
+    fs::create_dir(fixture.root.join("nested")).unwrap();
+    fs::write(
+        fixture.root.join("nested/go.mod"),
+        "module example.invalid/nested\n",
+    )
+    .unwrap();
+    fs::write(fixture.root.join("nested/main.go"), "package nested\n").unwrap();
+    request.files = vec!["nested/main.go".into()];
+    assert_eq!(
+        rejection(plan(&fixture.policy, &fixture.registry, &request)),
+        "format_scope_mismatch"
+    );
+    request.cwd = Some("nested".into());
+    assert!(plan(&fixture.policy, &fixture.registry, &request).is_ok());
+    fs::write(
+        fixture.root.join("nested/pyproject.toml"),
+        "[project]\nname='conflict'\n",
+    )
+    .unwrap();
+    assert_eq!(
+        rejection(plan(&fixture.policy, &fixture.registry, &request)),
+        "format_recipe_ambiguous"
+    );
+}
+
+#[test]
+fn project_format_go_rechecks_manifest_identity_and_stops_partial_commit() {
+    let (fixture, mut request) = go_fixture();
+    request.files.push("other.go".into());
+    let planned = plan(&fixture.policy, &fixture.registry, &request).unwrap();
+    let result = super::project_format::commit_candidates_with_hook(
+        &fixture.policy,
+        &fixture.registry,
+        &planned,
+        &[
+            "package main\n\nfunc main() {}\n".into(),
+            "package main\n\nvar answer = 42\n".into(),
+        ],
+        std::time::Instant::now() + std::time::Duration::from_secs(10),
+        &std::sync::atomic::AtomicBool::new(false),
+        |index, after| {
+            if index == 0 && after {
+                let marker = fixture.root.join("go.mod");
+                let bytes = fs::read(&marker).unwrap();
+                fs::rename(&marker, fixture.root.join("retired.mod")).unwrap();
+                fs::write(&marker, bytes).unwrap();
+            }
+        },
+    );
+    assert_eq!(result, Err("format_plan_stale"));
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("main.go")).unwrap(),
+        "package main\n\nfunc main() {}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("other.go")).unwrap(),
+        "package main\nvar answer=42\n"
+    );
+}
+
+#[test]
+fn project_format_go_missing_tool_and_pre_dispatch_stop_leave_sources_untouched() {
+    let (fixture, request) = go_fixture();
+    let planned = plan(&fixture.policy, &fixture.registry, &request).unwrap();
+    let mut shell = ShellConfig::default();
+    shell.environment_mode = super::config::ShellEnvironmentMode::Isolated;
+    shell.env.insert(
+        "PATH".into(),
+        fixture
+            .root
+            .join("empty-bin")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let cache = PreparedShellProfileCache::default();
+    assert_eq!(
+        format_candidates(
+            &fixture.policy,
+            &shell,
+            &fixture.registry,
+            &planned,
+            &cache,
+            1,
+            10,
+            None
+        ),
+        Err("format_process_failed")
+    );
+    assert_eq!(
+        format_candidates(
+            &fixture.policy,
+            &shell,
+            &fixture.registry,
+            &planned,
+            &cache,
+            1,
+            10,
+            Some(&std::sync::atomic::AtomicBool::new(true))
+        ),
+        Err("format_cancelled")
+    );
+    assert_eq!(
+        format_candidates_with_deadline(
+            &fixture.policy,
+            &shell,
+            &fixture.registry,
+            &planned,
+            &cache,
+            1,
+            std::time::Instant::now(),
+            None
+        ),
+        Err("format_timeout")
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("main.go")).unwrap(),
+        planned.sources[0]
+    );
+}
+
+#[test]
+fn project_format_go_manifest_and_source_bounds_are_not_bypassed() {
+    let (fixture, request) = go_fixture();
+    for (file, bytes, expected) in [
+        ("go.mod", vec![0xff], "format_invalid_utf8"),
+        (
+            "go.mod",
+            vec![b'x'; PROJECT_FORMAT_MANIFEST_MAX_BYTES + 1],
+            "format_input_too_large",
+        ),
+    ] {
+        fs::write(fixture.root.join(file), bytes).unwrap();
+        assert_eq!(
+            rejection(plan(&fixture.policy, &fixture.registry, &request)),
+            expected
+        );
+    }
+    fs::write(
+        fixture.root.join("go.mod"),
+        "module example.invalid/format\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.root.join("main.go"),
+        vec![b'x'; PROJECT_FORMAT_FILE_MAX_BYTES + 1],
+    )
+    .unwrap();
+    assert_eq!(
+        rejection(plan(&fixture.policy, &fixture.registry, &request)),
+        "format_input_too_large"
+    );
+}
+
+#[cfg(feature = "runner-real-process-tests")]
+#[test]
+#[ignore = "requires installed gofmt; exercises candidate output and guarded writes"]
+fn runner_real_process_project_format_gofmt_changes_only_selected_and_noop_does_not_write() {
+    let (fixture, request) = go_fixture();
+    let planned = plan(&fixture.policy, &fixture.registry, &request).unwrap();
+    let cache = PreparedShellProfileCache::default();
+    let candidates = format_candidates(
+        &fixture.policy,
+        &ShellConfig::default(),
+        &fixture.registry,
+        &planned,
+        &cache,
+        1,
+        10,
+        None,
+    )
+    .unwrap();
+    assert_eq!(candidates, ["package main\n\nfunc main() {}\n"]);
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("main.go")).unwrap(),
+        planned.sources[0]
+    );
+    assert_eq!(
+        commit(&fixture, &planned, &candidates),
+        Ok(ProjectFormatMutationReport::Changed)
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("other.go")).unwrap(),
+        "package main\nvar answer=42\n"
+    );
+    let planned = plan(&fixture.policy, &fixture.registry, &request).unwrap();
+    let metadata = fs::metadata(fixture.root.join("main.go")).unwrap();
+    let candidates = format_candidates(
+        &fixture.policy,
+        &ShellConfig::default(),
+        &fixture.registry,
+        &planned,
+        &cache,
+        1,
+        10,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        commit(&fixture, &planned, &candidates),
+        Ok(ProjectFormatMutationReport::Unchanged)
+    );
+    assert_eq!(
+        metadata.modified().unwrap(),
+        fs::metadata(fixture.root.join("main.go"))
+            .unwrap()
+            .modified()
+            .unwrap()
+    );
+}
+
+#[cfg(feature = "runner-real-process-tests")]
+#[test]
+#[ignore = "requires installed gofmt; exercises syntax failure and output limits"]
+fn runner_real_process_project_format_gofmt_errors_never_commit_candidates() {
+    let (fixture, mut request) = go_fixture();
+    request.files.push("other.go".into());
+    fs::write(
+        fixture.root.join("other.go"),
+        "package main\nfunc broken( {\n",
+    )
+    .unwrap();
+    let planned = plan(&fixture.policy, &fixture.registry, &request).unwrap();
+    let cache = PreparedShellProfileCache::default();
+    assert_eq!(
+        format_candidates(
+            &fixture.policy,
+            &ShellConfig::default(),
+            &fixture.registry,
+            &planned,
+            &cache,
+            1,
+            10,
+            None
+        ),
+        Err("format_process_failed")
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("main.go")).unwrap(),
+        planned.sources[0]
+    );
+    let mut policy = fixture.policy.clone();
+    policy.max_output_bytes = 4;
+    request.files.pop();
+    let planned = plan(&fixture.policy, &fixture.registry, &request).unwrap();
+    assert_eq!(
+        format_candidates(
+            &policy,
+            &ShellConfig::default(),
+            &fixture.registry,
+            &planned,
+            &cache,
+            1,
+            10,
+            None
+        ),
+        Err("format_output_truncated")
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("main.go")).unwrap(),
+        planned.sources[0]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn project_format_go_rejects_source_aliases_and_invalid_module_markers() {
+    use std::os::unix::fs::symlink;
+    let (fixture, mut request) = go_fixture();
+    let original = plan(&fixture.policy, &fixture.registry, &request).unwrap();
+    fs::write(fixture.root.join("main.go"), "package changed\n").unwrap();
+    assert_eq!(
+        replan(&fixture.policy, &fixture.registry, &original.plan).err(),
+        Some("format_plan_stale")
+    );
+    symlink(fixture.root.join("main.go"), fixture.root.join("alias.go")).unwrap();
+    request.files = vec!["alias.go".into()];
+    assert_eq!(
+        rejection(plan(&fixture.policy, &fixture.registry, &request)),
+        "format_path_invalid"
+    );
+    fs::hard_link(fixture.root.join("main.go"), fixture.root.join("hard.go")).unwrap();
+    request.files = vec!["hard.go".into()];
+    assert_eq!(
+        rejection(plan(&fixture.policy, &fixture.registry, &request)),
+        "format_alias_unavailable"
+    );
+    fs::remove_file(fixture.root.join("hard.go")).unwrap();
+    fs::rename(fixture.root.join("go.mod"), fixture.root.join("saved.mod")).unwrap();
+    symlink(fixture.root.join("saved.mod"), fixture.root.join("go.mod")).unwrap();
+    request.files = vec!["main.go".into()];
+    assert_eq!(
+        rejection(plan(&fixture.policy, &fixture.registry, &request)),
+        "format_manifest_invalid"
+    );
+}

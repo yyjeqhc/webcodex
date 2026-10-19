@@ -215,9 +215,12 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
       .includes(query.trim().toLocaleLowerCase()),
   );
   return <section className="page-section workspace-page" aria-labelledby="projects-title" data-webcodex-page="projects">
-    <header className="page-heading-row"><h1 id="projects-title">{p("projects")} <span className="heading-count">{workspace.projects.length}</span></h1><button type="button" className="secondary-button" onClick={workspace.refresh} disabled={workspace.busy}>{p("refresh")}</button></header>
-    {onState && <AddLocalProject state={workspace.state} onState={onState} onAdded={workspace.refresh} />}
-    {workspace.runner && <p className="workspace-notice">{p("projectAccessScope")}</p>}
+    <header className="page-heading-row"><h1 id="projects-title">{p("projects")} <span className="heading-count">{workspace.projects.length}</span></h1>
+      <div className="project-heading-actions">
+        {onState && <AddLocalProject state={workspace.state} onState={onState} onAdded={workspace.refresh} />}
+        <button type="button" className="secondary-button" onClick={workspace.refresh} disabled={workspace.busy}>{p("refresh")}</button>
+      </div>
+    </header>
     <div className="workspace-project-filters">
       <div className="workspace-search"><TextInput id="projects-search" label={p("search")} type="search" value={query} onChange={event => setQuery(event.currentTarget.value)} /></div>
       <div className="workspace-search"><NativeSelect size="md" classNames={{ input: "ui-mantine-input", label: "ui-mantine-label" }} id="projects-device-filter" label={p("executionDevice")} value={device} onChange={event => selectDevice(event.currentTarget.value)} data={[
@@ -225,18 +228,20 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
         ...deviceIds.map(id => ({ value: id, label: id === workspace.state.workspace_runner?.client_id ? `${p("thisComputer")} · ${id}` : id })),
       ]} /></div>
     </div>
-    <div className="project-filter-summary"><span role="status">{p("projectFilterCount").replace("{shown}", String(rows.length)).replace("{total}", String(workspace.projects.length))}</span>
-      {(device || query) && <button type="button" className="text-button" onClick={() => { selectDevice(""); setQuery(""); }}>{p("clearProjectFilters")}</button>}
-    </div>
     {workspace.error && <div className="workspace-notice" role="alert">{p(workspace.errorReason)}</div>}
-    {canManageProjects && <div className="shell-actions">
-      <Button variant="default" disabled={removing || !rows.some(project => project.id && project.connected && projectRunnerId(project) === workspace.state.workspace_runner?.client_id)} onClick={() => {
-        const visible = rows.filter(project => project.id && project.connected && projectRunnerId(project) === workspace.state.workspace_runner?.client_id).map(project => project.id);
-        setSelected(current => visible.every(id => current.includes(id)) ? current.filter(id => !visible.includes(id)) : Array.from(new Set([...current, ...visible])));
-      }}>{p("selectVisibleProjects")}</Button>
-      <Button color="red" disabled={removing || !selected.some(id => workspace.projects.some(project => project.id === id))} onClick={() => void prepareSelectedRemoval()}>{p("removeSelectedProjects").replace("{count}", String(selected.length))}</Button>
-      {batchProgress && <span role="status">{batchProgress}</span>}
-    </div>}
+    <div className="project-filter-summary"><span role="status">{p("projectFilterCount").replace("{shown}", String(rows.length)).replace("{total}", String(workspace.projects.length))}</span>
+      <div className="project-selection-actions">
+        {(device || query) && <button type="button" className="text-button" onClick={() => { selectDevice(""); setQuery(""); }}>{p("clearProjectFilters")}</button>}
+        {canManageProjects && <>
+        <Button variant="subtle" size="sm" disabled={removing || !rows.some(project => project.id && project.connected && projectRunnerId(project) === workspace.state.workspace_runner?.client_id)} onClick={() => {
+          const visible = rows.filter(project => project.id && project.connected && projectRunnerId(project) === workspace.state.workspace_runner?.client_id).map(project => project.id);
+          setSelected(current => visible.every(id => current.includes(id)) ? current.filter(id => !visible.includes(id)) : Array.from(new Set([...current, ...visible])));
+        }}>{p("selectVisibleProjects")}</Button>
+        {selected.some(id => workspace.projects.some(project => project.id === id)) && <Button color="red.8" size="sm" disabled={removing} onClick={() => void prepareSelectedRemoval()}>{p("removeSelectedProjects").replace("{count}", String(selected.length))}</Button>}
+        {batchProgress && <span role="status">{batchProgress}</span>}
+        </>}
+      </div>
+    </div>
     <ProjectRows projects={rows} onUnregister={canManageProjects ? prepareRemoval : undefined} onSelect={canManageProjects ? (id, checked) => setSelected(current => checked ? Array.from(new Set([...current, id])) : current.filter(value => value !== id)) : undefined} selected={selected} busy={removing || Boolean(workspace.state.current_operation)} />
     {removeError && <p role="alert" className="workspace-notice">{p("unregisterError")}</p>}
     {batchIssues.length > 0 && <ul aria-label={p("failedProjects")} className="workspace-notice">{batchIssues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
@@ -245,7 +250,7 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
       <ul>{batchConfirm.map(observation => <li key={observation.project}><strong>{projectName({ id: observation.project, path: observation.path })}</strong> <code>{displayProjectPath(observation.path)}</code></li>)}</ul>
       <div className="shell-actions">
         <Button variant="default" onClick={() => setBatchConfirm(null)} disabled={removing}>{p("cancel")}</Button>
-        <Button color="red" onClick={() => void unregisterSelected()} disabled={removing || Boolean(workspace.state.current_operation)}>{p("removeSelectedProjects").replace("{count}", String(batchConfirm.length))}</Button>
+        <Button color="red.8" onClick={() => void unregisterSelected()} disabled={removing || Boolean(workspace.state.current_operation)}>{p("removeSelectedProjects").replace("{count}", String(batchConfirm.length))}</Button>
       </div>
     </WorkspaceDialog>}
     {removal && <WorkspaceDialog title={p("unregisterProject")} onClose={() => setRemoval(null)} busy={removing}>
@@ -253,10 +258,11 @@ export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSetti
       <code>{displayProjectPath(removal.path)}</code>
       <div className="shell-actions">
         <Button variant="default" onClick={() => setRemoval(null)} disabled={removing}>{p("cancel")}</Button>
-        <Button color="red" onClick={() => void unregister()} disabled={removing || Boolean(workspace.state.current_operation)}>{p("unregisterProject")}</Button>
+        <Button color="red.8" onClick={() => void unregister()} disabled={removing || Boolean(workspace.state.current_operation)}>{p("unregisterProject")}</Button>
       </div>
     </WorkspaceDialog>}
     {!rows.length && !workspace.error && !workspace.loading && <p className="workspace-empty">{p(query || device ? "noMatches" : "noProjects")}</p>}    {workspace.runner?.projects_truncated && <p className="workspace-notice">{p("partial")}</p>}
+    {workspace.runner && <details className="project-access-help"><summary>{p("projectAccessHelp")}</summary><p>{p("projectAccessScope")}</p></details>}
     <AddDevice state={workspace.state} onViewDevices={workspace.refresh} />
     <RunnerDevices onComputerSettings={onComputerSettings} selectedDevice={device} onSelectDevice={fromDeviceCard} />
   </section>;

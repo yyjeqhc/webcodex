@@ -395,6 +395,10 @@ fn project_format_register_request_announces_platform_capability() {
         "project formatting capability replaces static config with real platform support"
     );
     assert_eq!(
+        body.capabilities.project_format_go_v1,
+        body.capabilities.project_format_v1
+    );
+    assert_eq!(
         body.capabilities
             .supports(RunnerCapabilityId::ProjectFormat),
         cfg!(any(target_os = "linux", target_os = "macos", windows))

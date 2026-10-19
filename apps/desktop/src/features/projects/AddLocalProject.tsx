@@ -33,8 +33,7 @@ export function AddLocalProject({ state, onState, onAdded }: {
     finally { inFlight.current = false; if (alive.current) setBusy(false); }
   };
   if (!local) return null;
-  return <div className="workspace-notice">
-    <p>{p("addLocalFolderHelp")}</p>
+  return <div className="project-add-action">
     <button type="button" className="secondary-button" disabled={disabled}
       onClick={() => void run(async isCurrent => {
         const path = await open({ title: p("addLocalFolder"), directory: true, multiple: false });
@@ -45,6 +44,7 @@ export function AddLocalProject({ state, onState, onAdded }: {
     {!state.readiness.runtime_ready && <p className="field-help">{p("addLocalFolderNotReady")}</p>}
     {!inspection && failed && <p role="alert">{p("addLocalFolderFailed")}</p>}
     {inspection && <WorkspaceDialog title={p("addLocalFolder")} busy={busy} onClose={() => { setInspection(null); setFailed(false); }}>
+      <p>{p("addLocalFolderHelp")}</p>
       <code className="runtime-directory">{inspection.project.path}</code>
       <p>{p(inspection.authorization_required ? "addLocalFolderConsent" : "addLocalFolderAlreadyAuthorized")}</p>
       {failed && <p role="alert">{p("addLocalFolderFailed")}</p>}

@@ -311,7 +311,8 @@ describe("product workspace task flows", () => {
     const devices = await screen.findByRole("region", { name: "Task execution devices" });
     expect(within(devices).getByRole("heading", { name: "This computer" })).toBeInTheDocument();
     expect(devices).toHaveTextContent(label);
-    expect(screen.getByRole("row", { name: "alpha" })).toHaveTextContent("Runs on · This computer");
+    expect(within(screen.getByRole("row", { name: "alpha" })).getByTitle("Runs on · mini")).toHaveTextContent("This computer");
+    expect(within(devices).getByText(label).closest("details")).not.toHaveAttribute("open");
     if (availability === true) {
       expect(devices).toHaveTextContent("still require system permissions");
       expect(within(devices).queryByRole("button", { name: "Desktop access settings" })).not.toBeInTheDocument();
@@ -344,8 +345,8 @@ describe("product workspace task flows", () => {
     expect(rows[1]).toHaveTextContent("Runner identifier · C");
     expect(rows[1]).toHaveTextContent("Refresh to confirm status");
     expect(rows[1]).not.toHaveTextContent("Desktop session connected");
-    expect(screen.getByRole("row", { name: "alpha" })).toHaveTextContent("Runs on · B");
-    expect(screen.getByRole("row", { name: "beta" })).toHaveTextContent("Runs on · C");
+    expect(within(screen.getByRole("row", { name: "alpha" })).getByTitle("Runs on · B")).toHaveTextContent(/^B$/);
+    expect(within(screen.getByRole("row", { name: "beta" })).getByTitle("Runs on · C")).toHaveTextContent(/^C$/);
     expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Remove project/ })).not.toBeInTheDocument();
   });
@@ -1125,7 +1126,7 @@ describe("project Git overview", () => {
 
   it("renders the same Git overview in narrow-screen project cards", async () => {
     const original = window.matchMedia;
-    const media = vi.spyOn(window, "matchMedia").mockImplementation(query => ({ ...original(query), matches: query === "(max-width: 600px)" }));
+    const media = vi.spyOn(window, "matchMedia").mockImplementation(query => ({ ...original(query), matches: query === "(max-width: 900px)" }));
     try {
       observe(dirty); render(wrap(<ProjectsPanel />));
       const card = await screen.findByRole("article", { name: "alpha" });
@@ -1248,7 +1249,7 @@ describe("project device filters", () => {
 
   it("shows device-filtered project cards on narrow screens", async () => {
     const original = window.matchMedia;
-    const media = vi.spyOn(window, "matchMedia").mockImplementation(query => ({ ...original(query), matches: query === "(max-width: 600px)" }));
+    const media = vi.spyOn(window, "matchMedia").mockImplementation(query => ({ ...original(query), matches: query === "(max-width: 900px)" }));
     try {
       fleet(); render(wrap(<ProjectsPanel />, viewer));
       fireEvent.click(await screen.findByRole("button", { name: "View projects · remote" }));

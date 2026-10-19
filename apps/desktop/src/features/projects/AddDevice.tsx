@@ -22,8 +22,7 @@ export function AddDevice({ state, onViewDevices }: { state: DesktopState; onVie
   useEffect(() => { setOpenedFor(null); }, [target]);
   if (!localServer || !state.persistent_environment) return null;
   const savedUrl = state.environment_setup?.server_url ?? state.workspace_runner?.server_url ?? "";
-  return <div className="workspace-notice">
-    <p>{text("intro")}</p>
+  return <div className="project-device-actions">
     <button type="button" className="secondary-button" onClick={() => setOpenedFor(target)}>{text("add")}</button>
     {openedFor === target && <DeviceInvitationDialog key={target} environmentId={state.persistent_environment}
       savedUrl={savedUrl} operationBusy={Boolean(state.current_operation)} onClose={() => setOpenedFor(null)}

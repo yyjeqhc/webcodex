@@ -32,7 +32,8 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 it("invalidates capacity during a restart and until a fresh observation arrives", async () => {
-  const mounted = render(view()); await screen.findByText("4 running · 2 queued · 4 max");
+  const mounted = render(view());
+  expect(await screen.findByText("4 running · 2 queued · 4 max")).toBeVisible();
   mounted.rerender(view({ ...state, current_operation: { id: "restart", kind: "runner_restart", phase: "running" } as DesktopState["current_operation"] }));
   expect(document.querySelector("[data-webcodex-capacity]")).toHaveAttribute("data-webcodex-capacity", "stale");
   native.invoke.mockReturnValue(new Promise(() => undefined));
@@ -59,7 +60,7 @@ it("keeps capacity stale after Server recovery until a fresh observation arrives
 
   await act(async () => resolve({ projects_available: true, visible_projects: 0, projects: [], projects_truncated: false,
     runners: [{ client_id: "local", connected: true, status: "online", jobs_running: 1, jobs_queued: 0, job_concurrency_limit: 4 }] }));
-  expect(await screen.findByText("1 running · 0 queued · 4 max")).toBeInTheDocument();
+  expect(await screen.findByText("1 running · 0 queued · 4 max")).toBeVisible();
   expect(document.querySelector("[data-webcodex-capacity]")).toHaveAttribute("data-webcodex-capacity", "available");
 });
 

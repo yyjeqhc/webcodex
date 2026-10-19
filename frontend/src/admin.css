@@ -20,7 +20,7 @@ button:focus-visible, input:focus-visible, a:focus-visible, .table-wrap:focus-vi
 .section-nav a { position: relative; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 12px; border-radius: var(--ui-radius-sm); color: var(--ui-text-secondary); font-size: 13px; font-weight: 600; text-decoration: none; transition: background var(--ui-motion-fast) var(--ui-ease), color var(--ui-motion-fast) var(--ui-ease); }
 .section-nav a svg { flex: 0 0 auto; width: 16px; height: 16px; stroke-width: 1.7; }
 .section-nav a:hover { background: var(--ui-surface-secondary); color: var(--ui-text-primary); }
-.section-nav a[aria-current] { background: var(--web-selection); color: var(--web-on-selection); }
+.section-nav a[aria-current] { background: var(--ui-accent-soft); color: var(--ui-on-accent-soft); }
 .rail-footer { display: grid; gap: 7px; margin-top: auto; padding: 14px 6px 2px; border-top: 1px solid var(--ui-glass-edge); }
 .rail-status { display: flex; align-items: center; gap: 8px; margin: 0 0 3px; color: var(--ui-text-tertiary); font-size: var(--ui-font-caption); }
 .rail-status span { width: 6px; height: 6px; border-radius: 50%; background: var(--ui-text-secondary); }

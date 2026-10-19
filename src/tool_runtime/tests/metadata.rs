@@ -518,6 +518,7 @@ async fn register_agent_projects_for_auth(
                         project_validation_node_json_v1: false,
                         project_build_python_v1: false,
                         project_format_v1: false,
+                        project_format_go_v1: false,
                         project_dependency_policy_v1: false,
                         project_go_single_module_v1: false,
                         project_validation_package_scope_v1: false,

@@ -10,9 +10,20 @@ export function accentVariantResolver(accent: string, scheme: "light" | "dark"):
     if (input.variant === "light") return {
       ...defaults,
       background: tokens.soft,
-      hover: `color-mix(in srgb, ${tokens.soft} 72%, ${tokens.accent})`,
-      color: tokens.accent,
+      hover: tokens.softHover,
+      color: tokens.onSoft,
+      hoverColor: tokens.onSoft,
       border: "1px solid transparent",
+    };
+    // brand uses a single accent, not a ten-shade palette. Mantine's default
+    // subtle/outline hover otherwise resolves to the same color as the label.
+    if (input.variant === "subtle" || input.variant === "outline") return {
+      ...defaults,
+      background: "transparent",
+      hover: tokens.soft,
+      color: tokens.accent,
+      hoverColor: tokens.onSoft,
+      border: input.variant === "outline" ? `1px solid ${tokens.accent}` : "1px solid transparent",
     };
     if (input.variant === "filled") return {
       ...defaults,

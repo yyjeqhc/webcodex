@@ -21,6 +21,7 @@ pub enum ProjectFormatAdapter {
     Auto,
     Rust,
     Python,
+    Go,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,6 +45,13 @@ pub fn valid_format_relative_path(path: &str, directory: bool) -> bool {
 }
 
 impl ProjectFormatRequest {
+    /// Go extends the original wire vocabulary, including when inferred by auto.
+    /// Callers validate the request before using this for capability admission.
+    pub fn requires_go(&self) -> bool {
+        self.adapter == ProjectFormatAdapter::Go
+            || self.files.iter().any(|file| file.ends_with(".go"))
+    }
+
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.project_id.is_empty()
             || self.project_id.len() > 200
@@ -62,6 +70,8 @@ impl ProjectFormatRequest {
                 ProjectFormatAdapter::Rust
             } else if file.ends_with(".py") || file.ends_with(".pyi") {
                 ProjectFormatAdapter::Python
+            } else if file.ends_with(".go") {
+                ProjectFormatAdapter::Go
             } else {
                 return Err("unsupported project format extension");
             };
@@ -81,6 +91,7 @@ impl ProjectFormatRequest {
 pub enum ProjectFormatProfile {
     Rust { edition: String },
     Python { target_version: String },
+    Go {},
 }
 
 impl ProjectFormatProfile {
@@ -88,11 +99,13 @@ impl ProjectFormatProfile {
         match self {
             Self::Rust { .. } => ProjectFormatAdapter::Rust,
             Self::Python { .. } => ProjectFormatAdapter::Python,
+            Self::Go {} => ProjectFormatAdapter::Go,
         }
     }
 
     pub fn is_valid(&self) -> bool {
         match self {
+            Self::Go {} => true,
             Self::Rust { edition } => matches!(edition.as_str(), "2015" | "2018" | "2021" | "2024"),
             Self::Python { target_version } => matches!(
                 target_version.as_str(),
@@ -141,6 +154,7 @@ impl ProjectFormatProfile {
                     .collect(),
                 )
             }
+            Self::Go {} if recipe_relative_file.ends_with(".go") => ("gofmt", Vec::new()),
             _ => return Err("project format scope mismatch"),
         };
         Ok(ShellProcessArgv {

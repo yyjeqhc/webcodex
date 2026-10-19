@@ -169,6 +169,10 @@ fn project_format_capability_matches_supported_native_backends() {
         capabilities.project_format_v1,
         cfg!(any(target_os = "linux", target_os = "macos", windows))
     );
+    assert_eq!(
+        capabilities.project_format_go_v1,
+        capabilities.project_format_v1
+    );
 }
 
 #[test]

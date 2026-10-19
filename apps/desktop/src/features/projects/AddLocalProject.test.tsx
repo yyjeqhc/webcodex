@@ -26,10 +26,11 @@ describe("manual local project registration", () => {
   it.each(["local", "remote"])("uses the existing %s Server connection and confirms folder access", async server => {
     const selected = server === "local" ? state : { ...state, topology: { ...state.topology!, server: { kind: "remote", url: "https://server.example" } } } as DesktopState;
     const onState = vi.fn(), onAdded = vi.fn(); render(view(selected, onState, onAdded));
-    expect(screen.getByText(/Choose a local folder to register as a Project/)).toBeInTheDocument();
+    expect(screen.queryByText(/Choose a local folder to register as a Project/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Tunnel ID|API key/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Add local project" }));
     await screen.findByRole("dialog");
+    expect(screen.getByText(/Choose a local folder to register as a Project/)).toBeInTheDocument();
     expect(api.activateLocalProject).not.toHaveBeenCalled();
     expect(screen.getByText(folder.path)).toBeInTheDocument();
     expect(screen.queryByLabelText("API Key")).toBeNull();

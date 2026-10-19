@@ -63,6 +63,11 @@ Times are **examples**, not a claim these runs occurred. Run this only on self-h
 
 ## Interpretation and guardrails
 
+The read-only query streams at most 100,000 selected events. Each event's
+`summary_json` must be no larger than 64 KiB in UTF-8 to enter the model
+ergonomics parser. Larger summaries remain in the selected-event total but
+count as unavailable canonical evidence; no raw summary text is exported.
+
 The report uses only ActionAudit `action_events` and `summary_json.model_ergonomics` (existing schema). Exact `toolsCall` records must have matching canonical `tool_name`, schema version and boolean `success`; anything else is counted as unavailable. `pending`/`running` are **observed handoff states**; `completed` is a separately observed in-call completion state; other or missing structured states are explicitly unclassified. Never replace missing states with `status=success`. No Job state is inferred from the HTTP status alone.
 
 The fields named `structured_request_p50/p90` and `observation_request_p50/p90` are retained for report compatibility, but their actual source is **`action_events.duration_ms`, the legacy ActionAudit pre-render interval**. It may end *before* MCP response handoff. This is explicitly asserted in `src/mcp_tests/http_transport.rs`; the ActionAudit duration is **not** full Host-visible request duration, transport latency, end-to-end task wall time or consumed Host budget. Reports now carry `duration_basis=legacy_action_audit_pre_response_handoff_not_host_latency`. For a real latency evaluation, correlate the existing transport `request_observed_at_ms` → `response_handed_at_ms` timestamps (and Host-side arrival/completion timing if available); only then make Host-budget/latency statements.

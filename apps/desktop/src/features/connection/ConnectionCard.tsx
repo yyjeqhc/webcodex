@@ -107,7 +107,7 @@ export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEd
   if (profile.local_mcp_url) detailRows.push({ label: "mcpAddress", value: <code>{profile.local_mcp_url}</code>, path: true });
   if (profile.runtime_directory) detailRows.push({ label: "runtimeDirectory", value: <code>{profile.runtime_directory}</code>, path: true });
   return <article className="connection-profile" aria-labelledby={`connection-${profile.id}`} data-tunnel-profile-id={profile.id}>
-    <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{owner} · {c("secureTunnel")}</span></div><span className={`connection-state ${profile.ready ? "ready" : ""}`} role="status"><i className={`status-dot ${profile.ready ? "ready" : failed ? "error" : "unknown"}`} aria-hidden="true" />{status}</span></header>
+    <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{owner}</span></div><span className={`connection-state ${profile.ready ? "ready" : ""}`} role="status"><i className={`status-dot ${profile.ready ? "ready" : failed ? "error" : "unknown"}`} aria-hidden="true" />{status}</span></header>
     {(active || failed) && <dl className="connection-checks">{([[c("secureTunnel"), healthStale ? null : profile.tunnel_ready], [c("localMcp"), healthStale ? null : profile.local_mcp_ready]] as const).map(([label, ready]) => <div key={label}><dt>{label}</dt><dd><i className={`status-dot ${ready === true ? "ready" : ready === false ? "error" : "unknown"}`} aria-hidden="true" />{ready === true ? c("reachable") : ready === false ? c("unreachable") : healthStale ? c("awaitingStatus") : p("unknown")}</dd></div>)}</dl>}
     <div className="connection-id"><span>{c("tunnelId")}</span><code>{profile.tunnel_id || "—"}</code>{profile.tunnel_id && <button type="button" className="text-button" aria-label={`${c("copyId")} ${profile.name}`} onClick={onCopy}>{copied ? p("copied") : c("copyId")}</button>}</div>
     {profile.server_restart_required && <div className="connection-apply-note" role="status"><strong>{c("pendingServerRestart")}</strong><span>{c("profileRestartHelp")}</span></div>}
@@ -122,7 +122,7 @@ export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEd
       {canStop && <button type="button" className="secondary-button" disabled={busy} aria-label={`${p("stop")} ${profile.name}`} onClick={() => onAction("stop")}>{p("stop")}</button>}
       <button type="button" className="text-button" disabled={busy} aria-label={`${c("delete")} ${profile.name}`} onClick={onDelete}>{c("delete")}</button>
     </div>
-    <details className="connection-details"><summary>{p("advanced")} · {profile.name}</summary>
+    <details className="connection-details"><summary aria-label={`${p("details")} ${profile.name}`}>{p("details")}</summary>
       {profile.credential_present && <p>{c("credentials")}</p>}
       <dl className="connection-meta-grid">
         {detailRows.map(({ label, value, path }) =>

@@ -255,6 +255,10 @@ pub(crate) fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabili
         RunnerCapabilityId::ProjectFormat,
         cfg!(any(target_os = "linux", target_os = "macos", windows)),
     );
+    capabilities.set(
+        RunnerCapabilityId::ProjectFormatGo,
+        cfg!(any(target_os = "linux", target_os = "macos", windows)),
+    );
     capabilities.set(RunnerCapabilityId::ProjectDependencyPolicy, true);
     // Go project gateways pin GO111MODULE=on and GOWORK=off after prepared shell/profile env is
     // applied. Keep this independent for mixed Server/Runner rolling upgrades.

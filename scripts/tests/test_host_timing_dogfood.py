@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from scripts import host_timing_dogfood as report
 
@@ -182,6 +183,38 @@ class HostTimingReportTests(unittest.TestCase):
         self.assertIsNone(result["timing_ms"]["structured_request_p90"])
         self.assertIsNone(result["final_job_outcomes"])
         self.assertEqual(result["availability"]["structured_request_duration_samples"], 0)
+
+    def test_oversized_audit_summary_is_unavailable_not_loaded_as_evidence(self):
+        # ActionAudit rows can contain more than the small model_ergonomics
+        # projection. An oversized summary must not reach the JSON parser.
+        large = json.dumps({
+            "model_ergonomics": {
+                "schema_version": 13, "tool_name": "run_process",
+                "success": True, "execution_state": "completed",
+            },
+            # Fewer than 64Ki characters, but more than 64KiB as UTF-8.
+            "private_extra": "sensitive" + ("ž" * 40_000),
+        }, ensure_ascii=False)
+        conn = sqlite3.connect(self.db)
+        conn.execute("INSERT INTO action_events VALUES (?,?,?,?,?,?,?,?)",
+                     ("8", "toolsCall", "run_process", 999, large, 1,
+                      100, "agent:special:webcodex"))
+        conn.commit()
+        conn.close()
+
+        result = self.summarize()
+        self.assertEqual(result["selection"]["events_selected"], 7)
+        self.assertEqual(result["counts"]["outer_tool_calls"], 7)
+        self.assertEqual(result["counts"]["canonical_calls"], 5)
+        self.assertEqual(result["counts"]["canonical_record_unavailable"], 2)
+        self.assertNotIn("sensitive", json.dumps(result))
+
+    def test_streamed_selection_still_rejects_excess_rows(self):
+        # Use the existing fixture with a lowered limit to exercise the same
+        # threshold logic without creating a large database.
+        with patch.object(report, "MAX_ROWS", 5):
+            with self.assertRaisesRegex(report.ReportError, "selection exceeds"):
+                self.summarize()
 
     def test_read_only_db_and_time_boundaries(self):
         before = self.db.read_bytes()

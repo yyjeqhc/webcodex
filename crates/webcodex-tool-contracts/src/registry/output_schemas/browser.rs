@@ -268,8 +268,8 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ("surface_id", json!({"type":"string", "maxLength":128})),
                 ("application", json!({"type":"string", "maxLength":512})),
                 ("title", json!({"type":"string", "maxLength":512})),
-                ("width", json!({"type":"integer", "minimum":0})),
-                ("height", json!({"type":"integer", "minimum":0})),
+                ("width", json!({"type":"integer", "minimum":1})),
+                ("height", json!({"type":"integer", "minimum":1})),
                 ("focused", json!({"type":["boolean","null"]})),
                 ("active", json!({"type":["boolean","null"]})),
                 (
@@ -381,14 +381,6 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
                     json!({"type": "string", "enum": ["image/png"]}),
                 ),
                 (
-                    "width",
-                    json!({"type": "integer", "minimum": 1, "maximum": 4096}),
-                ),
-                (
-                    "height",
-                    json!({"type": "integer", "minimum": 1, "maximum": 4096}),
-                ),
-                (
                     "file_bytes",
                     json!({"type": "integer", "minimum": 1, "maximum": 1048576}),
                 ),
@@ -399,6 +391,22 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             ]);
             let mut schema = wrapped_output_schema(fields);
             schema["properties"]["output"]["additionalProperties"] = json!(false);
+            // One width/height remains: integer minimum 1, no maximum. That is
+            // the surface floor list_windows emits. Screenshot pixels stay
+            // 1..=4096 when mime_type is present. MCP renames content_base64
+            // and leaves mime_type in place.
+            schema["properties"]["output"]["allOf"] = json!([{
+                "if": {
+                    "properties": {"mime_type": {"const": "image/png"}},
+                    "required": ["mime_type"]
+                },
+                "then": {
+                    "properties": {
+                        "width": {"type": "integer", "minimum": 1, "maximum": 4096},
+                        "height": {"type": "integer", "minimum": 1, "maximum": 4096}
+                    }
+                }
+            }]);
             Some(schema)
         }
         "control_browser" => {

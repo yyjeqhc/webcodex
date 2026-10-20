@@ -1,15 +1,18 @@
 use crate::auth::{
     clean_token_name, generate_api_token, hash_token, is_unique_constraint_error,
     normalize_token_hash, scopes_to_string, token_prefix, validate_scopes, validate_token_prefix,
-    validate_username, AuthContext, SCOPE_ADMIN,
+    validate_username, SCOPE_ADMIN,
 };
-use crate::json_error;
+use crate::management_http::{
+    auth_context, database, parse_json, require_admin_or_self, require_user_by_username,
+    JsonApiError, JsonApiResult,
+};
 use crate::models::ApiKeyRecord;
 use salvo::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::{reject_agent_token, require_admin_or_self, require_user_by_username};
+use super::reject_agent_token;
 
 /// Maximum number of tokens returned by `listApiTokens`.
 const MAX_TOKENS_LIST: usize = 200;
@@ -72,105 +75,39 @@ fn token_summary(key: &ApiKeyRecord) -> Value {
 /// token only for themselves. Returns the plaintext token **exactly once**
 /// alongside the token metadata (prefix, scopes, etc.).
 #[handler]
-pub(crate) async fn tokens_create(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let body: CreateApiTokenRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("invalid request body: {}", e),
-            ));
-            return;
-        }
-    };
+pub(crate) async fn tokens_create(req: &mut Request, depot: &mut Depot) -> JsonApiResult {
+    let body: CreateApiTokenRequest = parse_json(req).await?;
 
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "no auth context",
-        ));
-        return;
-    };
-    if let Err((code, msg)) = reject_agent_token(auth) {
-        res.status_code(code);
-        res.render(json_error(code, msg));
-        return;
-    }
-    let username = match validate_username(&body.username) {
-        Ok(u) => u,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
-        }
-    };
-    if let Err((code, msg)) = require_admin_or_self(auth, &username) {
-        res.status_code(code);
-        res.render(json_error(code, msg));
-        return;
-    }
+    let auth = auth_context(depot)?;
+    reject_agent_token(auth)?;
+    let username = validate_username(&body.username).map_err(JsonApiError::bad_request)?;
+    require_admin_or_self(auth, &username)?;
 
-    let token_name = match clean_token_name(body.name, "default") {
-        Ok(n) => n,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
-        }
-    };
+    let token_name = clean_token_name(body.name, "default").map_err(JsonApiError::bad_request)?;
 
-    let scopes = match validate_scopes(&body.scopes.unwrap_or_default()) {
-        Ok(s) => s,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
-        }
-    };
+    let scopes =
+        validate_scopes(&body.scopes.unwrap_or_default()).map_err(JsonApiError::bad_request)?;
     // A normal user may not grant themselves the `admin` scope; only
     // bootstrap/admin callers can mint admin-scoped tokens.
     if scopes.iter().any(|s| s == SCOPE_ADMIN) && !auth.is_admin_caller() {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(json_error(
+        return Err(JsonApiError::new(
             StatusCode::FORBIDDEN,
             "only admin/bootstrap callers may grant the admin scope",
         ));
-        return;
     }
     if let Some(exp) = body.expires_at {
         if exp <= chrono::Utc::now().timestamp() {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
+            return Err(JsonApiError::bad_request(
                 "expires_at must be in the future",
             ));
-            return;
         }
     }
 
-    let Some(db) = crate::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DB not available",
-        ));
-        return;
-    };
+    let db = database(depot)?;
 
-    let user = match require_user_by_username(&db, &username) {
-        Ok(u) => u,
-        Err((code, msg)) => {
-            res.status_code(code);
-            res.render(json_error(code, msg));
-            return;
-        }
-    };
+    let user = require_user_by_username(&db, &username)?;
     if user.is_disabled() {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(json_error(StatusCode::FORBIDDEN, "user is disabled"));
-        return;
+        return Err(JsonApiError::new(StatusCode::FORBIDDEN, "user is disabled"));
     }
 
     let plaintext = generate_api_token();
@@ -190,15 +127,12 @@ pub(crate) async fn tokens_create(req: &mut Request, depot: &mut Depot, res: &mu
         kind: crate::models::TOKEN_KIND_USER.to_string(),
         allowed_client_id: None,
     };
-    if let Err(e) = db.insert_api_key(&record, &key_hash) {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-        return;
-    }
+    db.insert_api_key(&record, &key_hash)
+        .map_err(JsonApiError::internal)?;
 
     // Return the plaintext token exactly once. It is never stored and never
     // logged. The response also carries the safe metadata (prefix, scopes).
-    res.render(Json(json!({
+    Ok(Json(json!({
         "success": true,
         "token": plaintext,
         "token_prefix": record.key_prefix,
@@ -209,134 +143,51 @@ pub(crate) async fn tokens_create(req: &mut Request, depot: &mut Depot, res: &mu
         "scopes": scopes,
         "created_at": record.created_at,
         "expires_at": record.expires_at,
-    })));
+    })))
 }
 
 #[handler]
-pub(crate) async fn tokens_register_hash(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let body: RegisterApiTokenHashRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("invalid request body: {}", e),
-            ));
-            return;
-        }
-    };
+pub(crate) async fn tokens_register_hash(req: &mut Request, depot: &mut Depot) -> JsonApiResult {
+    let body: RegisterApiTokenHashRequest = parse_json(req).await?;
 
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "no auth context",
-        ));
-        return;
-    };
-    if let Err((code, msg)) = reject_agent_token(auth) {
-        res.status_code(code);
-        res.render(json_error(code, msg));
-        return;
-    }
-    let username = match validate_username(&body.username) {
-        Ok(u) => u,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
-        }
-    };
-    if let Err((code, msg)) = require_admin_or_self(auth, &username) {
-        res.status_code(code);
-        res.render(json_error(code, msg));
-        return;
-    }
+    let auth = auth_context(depot)?;
+    reject_agent_token(auth)?;
+    let username = validate_username(&body.username).map_err(JsonApiError::bad_request)?;
+    require_admin_or_self(auth, &username)?;
 
-    let token_name = match clean_token_name(body.name, "default") {
-        Ok(n) => n,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
-        }
-    };
-    let token_hash = match normalize_token_hash(&body.token_hash) {
-        Ok(h) => h,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
-        }
-    };
-    let token_prefix = match validate_token_prefix(&body.token_prefix, "wc_pat_") {
-        Ok(p) => p,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
-        }
-    };
-    let scopes = match validate_scopes(&body.scopes) {
-        Ok(s) => s,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
-        }
-    };
+    let token_name = clean_token_name(body.name, "default").map_err(JsonApiError::bad_request)?;
+    let token_hash = normalize_token_hash(&body.token_hash).map_err(JsonApiError::bad_request)?;
+    let token_prefix =
+        validate_token_prefix(&body.token_prefix, "wc_pat_").map_err(JsonApiError::bad_request)?;
+    let scopes = validate_scopes(&body.scopes).map_err(JsonApiError::bad_request)?;
     if scopes.iter().any(|s| s == SCOPE_ADMIN) && !auth.is_admin_caller() {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(json_error(
+        return Err(JsonApiError::new(
             StatusCode::FORBIDDEN,
             "only admin/bootstrap callers may grant the admin scope",
         ));
-        return;
     }
     if let Some(exp) = body.expires_at {
         if exp <= chrono::Utc::now().timestamp() {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
+            return Err(JsonApiError::bad_request(
                 "expires_at must be in the future",
             ));
-            return;
         }
     }
 
-    let Some(db) = crate::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DB not available",
-        ));
-        return;
-    };
-    let user = match require_user_by_username(&db, &username) {
-        Ok(u) => u,
-        Err((code, msg)) => {
-            res.status_code(code);
-            res.render(json_error(code, msg));
-            return;
-        }
-    };
+    let db = database(depot)?;
+    let user = require_user_by_username(&db, &username)?;
     if user.is_disabled() {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(json_error(StatusCode::FORBIDDEN, "user is disabled"));
-        return;
+        return Err(JsonApiError::new(StatusCode::FORBIDDEN, "user is disabled"));
     }
-    match db.get_account_credential_by_hash(&token_hash) {
-        Ok(Some(_)) => {
-            res.status_code(StatusCode::CONFLICT);
-            res.render(json_error(StatusCode::CONFLICT, "credential hash conflict"));
-            return;
-        }
-        Ok(None) => {}
-        Err(e) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-            return;
-        }
+    if db
+        .get_account_credential_by_hash(&token_hash)
+        .map_err(JsonApiError::internal)?
+        .is_some()
+    {
+        return Err(JsonApiError::new(
+            StatusCode::CONFLICT,
+            "credential hash conflict",
+        ));
     }
 
     let now = chrono::Utc::now().timestamp();
@@ -353,24 +204,18 @@ pub(crate) async fn tokens_register_hash(req: &mut Request, depot: &mut Depot, r
         kind: crate::models::TOKEN_KIND_USER.to_string(),
         allowed_client_id: None,
     };
-    if let Err(e) = db.insert_api_key(&record, &token_hash) {
+    db.insert_api_key(&record, &token_hash).map_err(|e| {
         if is_unique_constraint_error(&e) {
-            res.status_code(StatusCode::CONFLICT);
-            res.render(json_error(
-                StatusCode::CONFLICT,
-                "token hash already exists",
-            ));
+            JsonApiError::new(StatusCode::CONFLICT, "token hash already exists")
         } else {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+            JsonApiError::internal(e)
         }
-        return;
-    }
+    })?;
 
-    res.render(Json(json!({
+    Ok(Json(json!({
         "success": true,
         "token": token_summary(&record),
-    })));
+    })))
 }
 
 /// `POST /api/tokens/list` — operationId `listApiTokens`.
@@ -378,78 +223,27 @@ pub(crate) async fn tokens_register_hash(req: &mut Request, depot: &mut Depot, r
 /// Bootstrap/admin may list anyone; a user may list only their own tokens.
 /// Returns token metadata only — never `key_hash` or the plaintext token.
 #[handler]
-pub(crate) async fn tokens_list(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let body: ListApiTokensRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("invalid request body: {}", e),
-            ));
-            return;
-        }
-    };
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "no auth context",
-        ));
-        return;
-    };
-    if let Err((code, msg)) = reject_agent_token(auth) {
-        res.status_code(code);
-        res.render(json_error(code, msg));
-        return;
-    }
-    let username = match validate_username(&body.username) {
-        Ok(u) => u,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
-        }
-    };
-    if let Err((code, msg)) = require_admin_or_self(auth, &username) {
-        res.status_code(code);
-        res.render(json_error(code, msg));
-        return;
-    }
+pub(crate) async fn tokens_list(req: &mut Request, depot: &mut Depot) -> JsonApiResult {
+    let body: ListApiTokensRequest = parse_json(req).await?;
+    let auth = auth_context(depot)?;
+    reject_agent_token(auth)?;
+    let username = validate_username(&body.username).map_err(JsonApiError::bad_request)?;
+    require_admin_or_self(auth, &username)?;
 
-    let Some(db) = crate::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DB not available",
-        ));
-        return;
-    };
-    let user = match require_user_by_username(&db, &username) {
-        Ok(u) => u,
-        Err((code, msg)) => {
-            res.status_code(code);
-            res.render(json_error(code, msg));
-            return;
-        }
-    };
-    let mut keys = match db.list_api_keys_by_user(&user.id) {
-        Ok(k) => k,
-        Err(e) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-            return;
-        }
-    };
+    let db = database(depot)?;
+    let user = require_user_by_username(&db, &username)?;
+    let mut keys = db
+        .list_api_keys_by_user(&user.id)
+        .map_err(JsonApiError::internal)?;
     keys.truncate(MAX_TOKENS_LIST);
     let tokens: Vec<Value> = keys.iter().map(token_summary).collect();
-    res.render(Json(json!({
+    Ok(Json(json!({
         "success": true,
         "username": user.username,
         "user_id": user.id,
         "tokens": tokens,
         "count": tokens.len(),
-    })));
+    })))
 }
 
 /// `POST /api/tokens/revoke` — operationId `revokeApiToken`.
@@ -458,111 +252,46 @@ pub(crate) async fn tokens_list(req: &mut Request, depot: &mut Depot, res: &mut 
 /// Idempotent: revoking an already-revoked token succeeds and returns the
 /// metadata with the original `revoked_at`. Never returns the plaintext token.
 #[handler]
-pub(crate) async fn tokens_revoke(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let body: RevokeApiTokenRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("invalid request body: {}", e),
-            ));
-            return;
-        }
-    };
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "no auth context",
-        ));
-        return;
-    };
-    if let Err((code, msg)) = reject_agent_token(auth) {
-        res.status_code(code);
-        res.render(json_error(code, msg));
-        return;
-    }
-    let username = match validate_username(&body.username) {
-        Ok(u) => u,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
-        }
-    };
-    if let Err((code, msg)) = require_admin_or_self(auth, &username) {
-        res.status_code(code);
-        res.render(json_error(code, msg));
-        return;
-    }
+pub(crate) async fn tokens_revoke(req: &mut Request, depot: &mut Depot) -> JsonApiResult {
+    let body: RevokeApiTokenRequest = parse_json(req).await?;
+    let auth = auth_context(depot)?;
+    reject_agent_token(auth)?;
+    let username = validate_username(&body.username).map_err(JsonApiError::bad_request)?;
+    require_admin_or_self(auth, &username)?;
 
     let token_id = body.token_id.trim().to_string();
     if token_id.is_empty() {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(json_error(
-            StatusCode::BAD_REQUEST,
-            "token_id cannot be empty",
-        ));
-        return;
+        return Err(JsonApiError::bad_request("token_id cannot be empty"));
     }
 
-    let Some(db) = crate::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DB not available",
-        ));
-        return;
-    };
-    let user = match require_user_by_username(&db, &username) {
-        Ok(u) => u,
-        Err((code, msg)) => {
-            res.status_code(code);
-            res.render(json_error(code, msg));
-            return;
-        }
-    };
+    let db = database(depot)?;
+    let user = require_user_by_username(&db, &username)?;
 
     // Verify the token actually belongs to the target user before revoking,
     // so a user cannot revoke another user's token by guessing an id.
-    let existing = match db.get_api_key_by_id(&token_id) {
-        Ok(o) => o,
-        Err(e) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-            return;
-        }
-    };
+    let existing = db
+        .get_api_key_by_id(&token_id)
+        .map_err(JsonApiError::internal)?;
     let existing = match existing {
         Some(k) if k.user_id == user.id => k,
         Some(_) => {
-            res.status_code(StatusCode::FORBIDDEN);
-            res.render(json_error(
+            return Err(JsonApiError::new(
                 StatusCode::FORBIDDEN,
                 "token does not belong to the specified user",
             ));
-            return;
         }
         None => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(json_error(StatusCode::NOT_FOUND, "token not found"));
-            return;
+            return Err(JsonApiError::new(StatusCode::NOT_FOUND, "token not found"));
         }
     };
 
     let now = chrono::Utc::now().timestamp();
-    let revoked = match db.revoke_api_key(&token_id, now) {
-        Ok(Some(k)) => k,
-        Ok(None) => existing,
-        Err(e) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-            return;
-        }
-    };
-    res.render(Json(json!({
+    let revoked = db
+        .revoke_api_key(&token_id, now)
+        .map_err(JsonApiError::internal)?
+        .unwrap_or(existing);
+    Ok(Json(json!({
         "success": true,
         "token": token_summary(&revoked),
-    })));
+    })))
 }

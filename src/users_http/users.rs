@@ -1,8 +1,8 @@
 use crate::auth::{
     generate_account_credential, hash_token, token_prefix, validate_role, validate_username,
-    AuthContext, AuthKind,
+    AuthKind,
 };
-use crate::json_error;
+use crate::management_http::{auth_context, database, parse_json, JsonApiError, JsonApiResult};
 use crate::models::{AccountCredentialRecord, UserRecord};
 use salvo::prelude::*;
 use serde::Deserialize;
@@ -53,58 +53,21 @@ fn auth_kind_name(kind: AuthKind) -> &'static str {
 /// and role. Duplicate usernames are rejected. Returns a user summary (no
 /// secrets).
 #[handler]
-pub(crate) async fn users_create(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let body: CreateUserRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("invalid request body: {}", e),
-            ));
-            return;
-        }
-    };
+pub(crate) async fn users_create(req: &mut Request, depot: &mut Depot) -> JsonApiResult {
+    let body: CreateUserRequest = parse_json(req).await?;
 
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "no auth context",
-        ));
-        return;
-    };
+    let auth = auth_context(depot)?;
     if !auth.is_admin_caller() {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(json_error(
+        return Err(JsonApiError::new(
             StatusCode::FORBIDDEN,
             "admin or bootstrap auth required",
         ));
-        return;
     }
-    if let Err((code, msg)) = reject_agent_token(auth) {
-        res.status_code(code);
-        res.render(json_error(code, msg));
-        return;
-    }
+    reject_agent_token(auth)?;
 
-    let username = match validate_username(&body.username) {
-        Ok(u) => u,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
-        }
-    };
+    let username = validate_username(&body.username).map_err(JsonApiError::bad_request)?;
     let role = match body.role {
-        Some(r) => match validate_role(&r) {
-            Ok(r) => r,
-            Err(e) => {
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(json_error(StatusCode::BAD_REQUEST, e));
-                return;
-            }
-        },
+        Some(r) => validate_role(&r).map_err(JsonApiError::bad_request)?,
         None => "user".to_string(),
     };
     let display_name = body
@@ -113,32 +76,21 @@ pub(crate) async fn users_create(req: &mut Request, depot: &mut Depot, res: &mut
         .filter(|s| !s.is_empty());
     if let Some(d) = display_name.as_ref() {
         if d.chars().count() > 128 {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                "display_name is too long",
-            ));
-            return;
+            return Err(JsonApiError::bad_request("display_name is too long"));
         }
     }
 
-    let Some(db) = crate::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DB not available",
-        ));
-        return;
-    };
+    let db = database(depot)?;
 
     if db
         .get_user_by_username(&username)
         .map(|o| o.is_some())
         .unwrap_or(false)
     {
-        res.status_code(StatusCode::CONFLICT);
-        res.render(json_error(StatusCode::CONFLICT, "username already exists"));
-        return;
+        return Err(JsonApiError::new(
+            StatusCode::CONFLICT,
+            "username already exists",
+        ));
     }
 
     let now = chrono::Utc::now().timestamp();
@@ -152,11 +104,7 @@ pub(crate) async fn users_create(req: &mut Request, depot: &mut Depot, res: &mut
         disabled_at: None,
         updated_at: Some(now),
     };
-    if let Err(e) = db.create_user(&user) {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-        return;
-    }
+    db.create_user(&user).map_err(JsonApiError::internal)?;
 
     let mut response = json!({
         "success": true,
@@ -173,60 +121,35 @@ pub(crate) async fn users_create(req: &mut Request, depot: &mut Depot, res: &mut
             last_used_at: None,
             revoked_at: None,
         };
-        if let Err(e) = db.insert_account_credential(&record, &credential_hash) {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-            return;
-        }
+        db.insert_account_credential(&record, &credential_hash)
+            .map_err(JsonApiError::internal)?;
         response["account_credential"] = json!(plaintext);
         response["account_credential_prefix"] = json!(record.credential_prefix);
     }
 
-    res.render(Json(response));
+    Ok(Json(response))
 }
 
 #[handler]
-pub(crate) async fn users_me(depot: &mut Depot, res: &mut Response) {
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "no auth context",
-        ));
-        return;
-    };
-    if let Err((code, msg)) = reject_agent_token(auth) {
-        res.status_code(code);
-        res.render(json_error(code, msg));
-        return;
-    }
+pub(crate) async fn users_me(depot: &mut Depot) -> JsonApiResult {
+    let auth = auth_context(depot)?;
+    reject_agent_token(auth)?;
 
-    let Some(db) = crate::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DB not available",
-        ));
-        return;
-    };
+    let db = database(depot)?;
     let user = match auth.user_id.as_deref() {
         Some(id) => match db.get_user_by_id(id) {
             Ok(Some(user)) => Some(user),
             Ok(None) => {
-                res.status_code(StatusCode::UNAUTHORIZED);
-                res.render(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
-                return;
+                return Err(JsonApiError::new(StatusCode::UNAUTHORIZED, "Unauthorized"));
             }
             Err(e) => {
-                res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-                res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-                return;
+                return Err(JsonApiError::internal(e));
             }
         },
         None => None,
     };
 
-    res.render(Json(json!({
+    Ok(Json(json!({
         "success": true,
         "auth": {
             "kind": auth_kind_name(auth.kind),
@@ -237,55 +160,28 @@ pub(crate) async fn users_me(depot: &mut Depot, res: &mut Response) {
             "token_kind": auth.token_kind,
         },
         "user": user.as_ref().map(user_summary),
-    })));
+    })))
 }
 
 /// `POST /api/users/list` — operationId `listUsers`.
 ///
 /// Bootstrap/admin only. Returns all user summaries.
 #[handler]
-pub(crate) async fn users_list(depot: &mut Depot, res: &mut Response) {
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "no auth context",
-        ));
-        return;
-    };
+pub(crate) async fn users_list(depot: &mut Depot) -> JsonApiResult {
+    let auth = auth_context(depot)?;
     if !auth.is_admin_caller() {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(json_error(
+        return Err(JsonApiError::new(
             StatusCode::FORBIDDEN,
             "admin or bootstrap auth required",
         ));
-        return;
     }
-    if let Err((code, msg)) = reject_agent_token(auth) {
-        res.status_code(code);
-        res.render(json_error(code, msg));
-        return;
-    }
-    let Some(db) = crate::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DB not available",
-        ));
-        return;
-    };
-    let users = match db.list_users() {
-        Ok(u) => u,
-        Err(e) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-            return;
-        }
-    };
+    reject_agent_token(auth)?;
+    let db = database(depot)?;
+    let users = db.list_users().map_err(JsonApiError::internal)?;
     let summaries: Vec<Value> = users.iter().map(user_summary).collect();
-    res.render(Json(json!({
+    Ok(Json(json!({
         "success": true,
         "users": summaries,
         "count": summaries.len(),
-    })));
+    })))
 }

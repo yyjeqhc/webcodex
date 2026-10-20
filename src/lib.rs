@@ -28,6 +28,7 @@ mod job_receipts;
 mod job_terminal_attention;
 mod json_digest;
 mod json_measurement;
+mod management_http;
 mod mcp;
 mod mcp_gateway;
 mod mcp_host;

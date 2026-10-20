@@ -86,6 +86,8 @@ use writer::LedgerWriterGuard;
 #[cfg(test)]
 mod borrowed_projection_tests;
 #[cfg(test)]
+mod event_tests;
+#[cfg(test)]
 mod scale_tests;
 
 #[derive(Debug, Clone)]
@@ -623,11 +625,7 @@ impl SessionStore {
                                 .retain_unavailable_scopes(record.project_instructions.as_ref()),
                         );
                     }
-                    record.events.push_back(Arc::new(event));
-                    record.events_observed = record.events_observed.saturating_add(1);
-                    while record.events.len() > max_events {
-                        record.events.pop_front();
-                    }
+                    append_event(record, event, max_events);
                 }
                 inner.touch(&session_id);
                 let summary = inner
@@ -1307,11 +1305,7 @@ impl SessionStore {
                 .expect("validated active Session must stay hot under store lock");
             record.execution_context = execution_context;
             record.updated_at = now;
-            record.events.push_back(Arc::new(event));
-            record.events_observed = record.events_observed.saturating_add(1);
-            while record.events.len() > max_events {
-                record.events.pop_front();
-            }
+            append_event(record, event, max_events);
             inner.touch(session_id);
             let summary = inner
                 .summary(session_id, Some(DEFAULT_SUMMARY_LIMIT))
@@ -1441,40 +1435,12 @@ impl SessionStore {
         let input_summary = Some(session_input_summary_for_tool(tool_name, arguments));
         let expectation = metadata.expectation;
         let start = ToolCallStart {
-            event_id: event_id.clone(),
-            call_id: call_id.clone(),
-            logical_invocation_id: metadata.logical_invocation_id.clone(),
-            logical_invocation_role: metadata.logical_invocation_role.clone(),
-            session_id: session_id.to_string(),
-            transport,
-            tool_name: tool_name.to_string(),
-            project: project.clone(),
-            resolved_project: resolved_project.clone(),
-            risk_class: risk_class.clone(),
-            read_like: classification.read_like,
-            write_like: classification.write_like,
-            shell_like: classification.shell_like,
-            git_like: classification.git_like,
-            change_summary_like: classification.change_summary_like,
-            diff_review_like,
-            changed_paths: changed_paths.clone(),
-            observed_paths: observed_paths.clone(),
-            started_at: now,
-            started_instant: Instant::now(),
-            permission: None,
-            expectation: expectation.clone(),
-        };
-        self.push_event(SessionEvent {
             event_id,
-            session_id: session_id.to_string(),
-            kind: "tool_call_started".to_string(),
-            legacy_context_revision: None,
-            context_result_summary: None,
-            call_id: Some(call_id),
+            call_id,
             logical_invocation_id: metadata.logical_invocation_id,
             logical_invocation_role: metadata.logical_invocation_role,
-            timestamp: now,
-            transport: transport.as_str().to_string(),
+            session_id: session_id.to_string(),
+            transport,
             tool_name: tool_name.to_string(),
             project,
             resolved_project,
@@ -1485,42 +1451,16 @@ impl SessionStore {
             git_like: classification.git_like,
             change_summary_like: classification.change_summary_like,
             diff_review_like,
-            started_at: Some(now),
-            finished_at: None,
-            duration_ms: None,
-            status: None,
-            exit_code: None,
-            failure_kind: None,
-            error_kind: None,
-            expected_failure: expectation.expected_failure.then_some(true),
-            expected_failure_kind: expectation.expected_failure_kind.clone(),
-            result_expectation: expectation.result_expectation.clone(),
-            accepted_exit_codes: expectation.accepted_exit_codes.clone(),
-            assertion_name: expectation.assertion_name.clone(),
-            actual_failure_kind: None,
-            failure_expectation_result: None,
-            warning_kind: None,
-            session_project: None,
-            request_project: None,
-            error_message_summary: None,
             changed_paths,
             observed_paths,
-            job_id: None,
-            persistent_shell: None,
-            effect_evidence: None,
-            input_summary,
-            validation_output_summary: None,
+            started_at: now,
+            started_instant: Instant::now(),
             permission: None,
-            instruction: None,
-            requested_mode: None,
-            previous_mode: None,
-            requested_guards: None,
-            previous_guards: None,
-            capability_changed: None,
-            context_refreshed: None,
-            execution_context: None,
-            previous_execution_context: None,
-            execution_context_changed: None,
+            expectation,
+        };
+        self.push_event(SessionEvent {
+            input_summary,
+            ..tool_call_event(start.clone(), "tool_call_started", now)
         });
         Some(start)
     }
@@ -1679,40 +1619,16 @@ impl SessionStore {
         }
         let event = SessionEvent {
             event_id,
-            session_id: start.session_id,
-            kind: "tool_call_finished".to_string(),
-            legacy_context_revision: None,
             context_result_summary: context_result_summary_for_tool_result(
                 &start.tool_name,
                 output,
             ),
-            call_id: Some(start.call_id),
-            logical_invocation_id: start.logical_invocation_id,
-            logical_invocation_role: start.logical_invocation_role,
-            timestamp: finished_at,
-            transport: start.transport.as_str().to_string(),
-            tool_name: start.tool_name,
-            project: start.project,
-            resolved_project: start.resolved_project,
-            risk_class: start.risk_class,
-            read_like: start.read_like,
-            write_like: start.write_like,
-            shell_like: start.shell_like,
-            git_like: start.git_like,
-            change_summary_like: start.change_summary_like,
-            diff_review_like: start.diff_review_like,
-            started_at: Some(start.started_at),
             finished_at: Some(finished_at),
             duration_ms: Some(duration_ms),
             status: Some(if success { "succeeded" } else { "failed" }.to_string()),
             exit_code: output.get("exit_code").and_then(Value::as_i64),
             failure_kind,
             error_kind: error.map(|_| error_kind.unwrap_or("runtime_error").to_string()),
-            expected_failure: start.expectation.expected_failure.then_some(true),
-            expected_failure_kind: start.expectation.expected_failure_kind,
-            result_expectation: start.expectation.result_expectation,
-            accepted_exit_codes: start.expectation.accepted_exit_codes,
-            assertion_name: start.expectation.assertion_name,
             actual_failure_kind,
             failure_expectation_result: Some(failure_expectation_result.to_string()),
             warning_kind,
@@ -1724,19 +1640,8 @@ impl SessionStore {
             job_id: extract_job_id(output),
             persistent_shell,
             effect_evidence,
-            input_summary: None,
             validation_output_summary,
-            permission: start.permission,
-            instruction: None,
-            requested_mode: None,
-            previous_mode: None,
-            requested_guards: None,
-            previous_guards: None,
-            capability_changed: None,
-            context_refreshed: None,
-            execution_context: None,
-            previous_execution_context: None,
-            execution_context_changed: None,
+            ..tool_call_event(start, "tool_call_finished", finished_at)
         };
         Some(event)
     }
@@ -1877,33 +1782,19 @@ impl SessionStore {
         let inherited_accepted_exit_codes = inherited_expectation.accepted_exit_codes.clone();
         let inherited_assertion_name = inherited_expectation.assertion_name.clone();
         let event = SessionEvent {
-            event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
-            call_id: None,
-            session_id: session_id.to_string(),
-            kind: "validation_job_terminal".to_string(),
-            logical_invocation_id: None,
-            logical_invocation_role: None,
-            legacy_context_revision: None,
-            context_result_summary: None,
-            timestamp,
-            transport: "job_terminal".to_string(),
-            tool_name: tool_name.to_string(),
             project: project.clone(),
             resolved_project: project.clone(),
-            risk_class: classification.risk_class.to_string(),
             read_like: classification.read_like,
             write_like: classification.write_like,
             shell_like: classification.shell_like,
             git_like: classification.git_like,
             change_summary_like: classification.change_summary_like,
-            diff_review_like: false,
             started_at,
             finished_at: Some(timestamp),
             duration_ms,
             status: Some(if succeeded { "succeeded" } else { "failed" }.to_string()),
             exit_code,
             failure_kind: failure_kind.clone(),
-            error_kind: None,
             expected_failure: inherited_expected_failure.then_some(true),
             expected_failure_kind: inherited_expected_failure_kind,
             result_expectation: inherited_result_expectation,
@@ -1911,28 +1802,18 @@ impl SessionStore {
             assertion_name: assertion_name.or(inherited_assertion_name),
             actual_failure_kind: failure_kind,
             failure_expectation_result: Some(failure_expectation_result.to_string()),
-            warning_kind: None,
-            session_project: None,
-            request_project: None,
-            error_message_summary: None,
-            changed_paths: Vec::new(),
-            observed_paths: Vec::new(),
             job_id: Some(job_id.to_string()),
-            persistent_shell: None,
-            effect_evidence: None,
             input_summary: Some(input_summary),
             validation_output_summary,
-            permission: None,
-            instruction: None,
-            requested_mode: None,
-            previous_mode: None,
-            requested_guards: None,
-            previous_guards: None,
-            capability_changed: None,
-            context_refreshed: None,
-            execution_context: None,
-            previous_execution_context: None,
-            execution_context_changed: None,
+            ..session_event(
+                format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+                session_id.to_string(),
+                "validation_job_terminal".to_string(),
+                timestamp,
+                "job_terminal".to_string(),
+                tool_name.to_string(),
+                classification.risk_class.to_string(),
+            )
         };
 
         let (cold, hot_closed, recorded) = {
@@ -2029,11 +1910,7 @@ impl SessionStore {
             .materialized_validation_job_ids
             .push_back(job_id.to_string());
         record.updated_at = record.updated_at.max(timestamp);
-        record.events.push_back(Arc::new(event.clone()));
-        record.events_observed = record.events_observed.saturating_add(1);
-        while record.events.len() > max_events {
-            record.events.pop_front();
-        }
+        append_event(record, event.clone(), max_events);
         true
     }
 
@@ -2098,11 +1975,7 @@ impl SessionStore {
                     if event_observes_repository_edit(&event) {
                         record.repository_edit_observed = true;
                     }
-                    record.events.push_back(Arc::new(event));
-                    record.events_observed = record.events_observed.saturating_add(1);
-                    while record.events.len() > max_events_per_session {
-                        record.events.pop_front();
-                    }
+                    append_event(record, event, max_events_per_session);
                     let hot_closed = !record.lifecycle.allows_mutation();
                     inner.touch(&session_id);
                     (None, hot_closed)
@@ -2115,11 +1988,7 @@ impl SessionStore {
                 let event = event.as_ref().expect("cold append keeps source event");
                 self.rewrite_cold_record(&session_id, cold, true, |record, max_events| {
                     record.updated_at = now_ts();
-                    record.events.push_back(Arc::new(event.clone()));
-                    record.events_observed = record.events_observed.saturating_add(1);
-                    while record.events.len() > max_events {
-                        record.events.pop_front();
-                    }
+                    append_event(record, event.clone(), max_events);
                     true
                 })
             }
@@ -2322,203 +2191,43 @@ fn lifecycle_blocks_tool(
         || lifecycle_effect == ToolSessionLifecycleEffect::Mutation
 }
 
-#[allow(clippy::too_many_arguments)]
-fn coding_instruction_event(
-    event_id: &str,
-    session_id: &str,
-    project: &str,
-    instruction: Option<String>,
-    transport: SessionTransport,
-    requested_mode: SessionMode,
-    previous_mode: Option<SessionMode>,
-    requested_guards: SessionGuards,
-    previous_guards: Option<SessionGuards>,
-    capability_changed: bool,
-    context_refreshed: bool,
-    execution_context: Option<SessionExecutionContext>,
-    previous_execution_context: Option<SessionExecutionContext>,
-    execution_context_changed: bool,
-    reused: bool,
-    explicit_resume: bool,
-    now: i64,
+/// Construct a new event without inventing identity, time, or outcome facts.
+/// This is deliberately private: the public/persisted model keeps its existing
+/// required fields and serde compatibility rules.
+fn session_event(
+    event_id: String,
+    session_id: String,
+    kind: String,
+    timestamp: i64,
+    transport: String,
+    tool_name: String,
+    risk_class: String,
 ) -> SessionEvent {
     SessionEvent {
-        event_id: event_id.to_string(),
-        session_id: session_id.to_string(),
-        kind: "task_instruction".to_string(),
-        legacy_context_revision: None,
-        context_result_summary: None,
+        event_id,
         call_id: None,
-        timestamp: now,
         logical_invocation_id: None,
         logical_invocation_role: None,
-        transport: transport.as_str().to_string(),
-        tool_name: "work_on_project".to_string(),
-        project: Some(project.to_string()),
-        resolved_project: Some(project.to_string()),
-        risk_class: "read_only".to_string(),
-        read_like: true,
-        write_like: false,
-        shell_like: false,
-        git_like: false,
-        change_summary_like: false,
-        diff_review_like: false,
-        started_at: Some(now),
-        finished_at: Some(now),
-        duration_ms: Some(0),
-        status: Some("succeeded".to_string()),
-        exit_code: None,
-        failure_kind: None,
-        error_kind: None,
-        expected_failure: None,
-        expected_failure_kind: None,
-        result_expectation: None,
-        accepted_exit_codes: Vec::new(),
-        assertion_name: None,
-        actual_failure_kind: None,
-        failure_expectation_result: None,
-        warning_kind: None,
-        session_project: None,
-        request_project: None,
-        error_message_summary: None,
-        changed_paths: Vec::new(),
-        observed_paths: Vec::new(),
-        job_id: None,
-        persistent_shell: None,
-        effect_evidence: None,
-        input_summary: Some(redact_and_bound_value(&serde_json::json!({
-            "requested_mode": requested_mode.as_str(),
-            "requested_guards": requested_guards,
-            "capability_changed": capability_changed,
-            "context_refreshed": context_refreshed,
-            "execution_context_provided": execution_context.is_some(),
-            "execution_context_changed": execution_context_changed,
-            "execution_context": execution_context,
-            "previous_execution_context": previous_execution_context,
-            "session_reused": reused,
-            "explicit_resume": explicit_resume,
-        }))),
-        validation_output_summary: None,
-        permission: None,
-        instruction,
-        requested_mode: Some(requested_mode.as_str().to_string()),
-        previous_mode: previous_mode.map(|mode| mode.as_str().to_string()),
-        requested_guards: Some(requested_guards),
-        previous_guards,
-        capability_changed: Some(capability_changed),
-        context_refreshed: Some(context_refreshed),
-        execution_context,
-        previous_execution_context,
-        execution_context_changed: Some(execution_context_changed),
-    }
-}
-
-fn coding_agent_lifecycle_event(
-    session_id: &str,
-    project: &str,
-    run_id: &str,
-    provider_id: &str,
-    kind: &str,
-    state: &str,
-    execution_state: &str,
-    terminal_stop_reason: Option<&str>,
-    terminal_error_code: Option<&str>,
-    now: i64,
-) -> SessionEvent {
-    let input_summary = serde_json::json!({
-        "run_id": bound_summary_string(run_id),
-        "provider_id": bound_summary_string(provider_id),
-        "state": bound_summary_string(state),
-        "execution_state": bound_summary_string(execution_state),
-        "terminal_stop_reason": terminal_stop_reason.map(bound_summary_string),
-        "terminal_error_code": terminal_error_code.map(bound_summary_string),
-    });
-    SessionEvent {
-        event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
-        session_id: session_id.to_string(),
-        kind: bound_summary_string(kind),
+        session_id,
+        kind,
         legacy_context_revision: None,
         context_result_summary: None,
-        call_id: None,
-        timestamp: now,
-        logical_invocation_id: None,
-        logical_invocation_role: None,
-        transport: "system".to_string(),
-        tool_name: "start_coding_agent".to_string(),
-        project: Some(project.to_string()),
-        resolved_project: Some(project.to_string()),
-        risk_class: "job_run".to_string(),
+        timestamp,
+        transport,
+        tool_name,
+        project: None,
+        resolved_project: None,
+        risk_class,
         read_like: false,
         write_like: false,
         shell_like: false,
         git_like: false,
         change_summary_like: false,
         diff_review_like: false,
-        started_at: Some(now),
-        finished_at: Some(now),
-        duration_ms: Some(0),
-        status: Some(bound_summary_string(state)),
-        exit_code: None,
-        failure_kind: None,
-        error_kind: terminal_error_code.map(bound_summary_string),
-        expected_failure: None,
-        expected_failure_kind: None,
-        result_expectation: None,
-        accepted_exit_codes: Vec::new(),
-        assertion_name: None,
-        actual_failure_kind: None,
-        failure_expectation_result: None,
-        warning_kind: None,
-        session_project: None,
-        request_project: None,
-        error_message_summary: None,
-        changed_paths: Vec::new(),
-        observed_paths: Vec::new(),
-        job_id: None,
-        persistent_shell: None,
-        effect_evidence: None,
-        input_summary: Some(input_summary),
-        validation_output_summary: None,
-        permission: None,
-        instruction: None,
-        requested_mode: None,
-        previous_mode: None,
-        requested_guards: None,
-        previous_guards: None,
-        capability_changed: None,
-        context_refreshed: None,
-        execution_context: None,
-        previous_execution_context: None,
-        execution_context_changed: None,
-    }
-}
-
-fn session_closed_system_event(session_id: &str, now: i64) -> SessionEvent {
-    SessionEvent {
-        event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
-        session_id: session_id.to_string(),
-        kind: "session_closed".to_string(),
-        legacy_context_revision: None,
-        context_result_summary: None,
-        call_id: None,
-        timestamp: now,
-        logical_invocation_id: None,
-        logical_invocation_role: None,
-        transport: "system".to_string(),
-        tool_name: "close_session".to_string(),
-        project: None,
-        resolved_project: None,
-        risk_class: "read_only".to_string(),
-        read_like: true,
-        write_like: false,
-        shell_like: false,
-        git_like: false,
-        change_summary_like: false,
-        diff_review_like: false,
-        started_at: Some(now),
-        finished_at: Some(now),
-        duration_ms: Some(0),
-        status: Some("succeeded".to_string()),
+        started_at: None,
+        finished_at: None,
+        duration_ms: None,
+        status: None,
         exit_code: None,
         failure_kind: None,
         error_kind: None,
@@ -2554,6 +2263,173 @@ fn session_closed_system_event(session_id: &str, now: i64) -> SessionEvent {
     }
 }
 
+/// Both halves of a tool call inherit the same accepted metadata. Completion
+/// supplies its new event id and result evidence at the call site.
+fn tool_call_event(start: ToolCallStart, kind: &str, timestamp: i64) -> SessionEvent {
+    SessionEvent {
+        call_id: Some(start.call_id),
+        logical_invocation_id: start.logical_invocation_id,
+        logical_invocation_role: start.logical_invocation_role,
+        project: start.project,
+        resolved_project: start.resolved_project,
+        read_like: start.read_like,
+        write_like: start.write_like,
+        shell_like: start.shell_like,
+        git_like: start.git_like,
+        change_summary_like: start.change_summary_like,
+        diff_review_like: start.diff_review_like,
+        started_at: Some(start.started_at),
+        expected_failure: start.expectation.expected_failure.then_some(true),
+        expected_failure_kind: start.expectation.expected_failure_kind,
+        result_expectation: start.expectation.result_expectation,
+        accepted_exit_codes: start.expectation.accepted_exit_codes,
+        assertion_name: start.expectation.assertion_name,
+        changed_paths: start.changed_paths,
+        observed_paths: start.observed_paths,
+        permission: start.permission,
+        ..session_event(
+            start.event_id,
+            start.session_id,
+            kind.to_string(),
+            timestamp,
+            start.transport.as_str().to_string(),
+            start.tool_name,
+            start.risk_class,
+        )
+    }
+}
+
+/// Caller retains the store lock and owns activity/persistence ordering.
+fn append_event(record: &mut SessionRecord, event: SessionEvent, max_events: usize) {
+    record.events.push_back(Arc::new(event));
+    record.events_observed = record.events_observed.saturating_add(1);
+    while record.events.len() > max_events {
+        record.events.pop_front();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn coding_instruction_event(
+    event_id: &str,
+    session_id: &str,
+    project: &str,
+    instruction: Option<String>,
+    transport: SessionTransport,
+    requested_mode: SessionMode,
+    previous_mode: Option<SessionMode>,
+    requested_guards: SessionGuards,
+    previous_guards: Option<SessionGuards>,
+    capability_changed: bool,
+    context_refreshed: bool,
+    execution_context: Option<SessionExecutionContext>,
+    previous_execution_context: Option<SessionExecutionContext>,
+    execution_context_changed: bool,
+    reused: bool,
+    explicit_resume: bool,
+    now: i64,
+) -> SessionEvent {
+    SessionEvent {
+        project: Some(project.to_string()),
+        resolved_project: Some(project.to_string()),
+        read_like: true,
+        started_at: Some(now),
+        finished_at: Some(now),
+        duration_ms: Some(0),
+        status: Some("succeeded".to_string()),
+        input_summary: Some(redact_and_bound_value(&serde_json::json!({
+            "requested_mode": requested_mode.as_str(),
+            "requested_guards": requested_guards,
+            "capability_changed": capability_changed,
+            "context_refreshed": context_refreshed,
+            "execution_context_provided": execution_context.is_some(),
+            "execution_context_changed": execution_context_changed,
+            "execution_context": execution_context,
+            "previous_execution_context": previous_execution_context,
+            "session_reused": reused,
+            "explicit_resume": explicit_resume,
+        }))),
+        instruction,
+        requested_mode: Some(requested_mode.as_str().to_string()),
+        previous_mode: previous_mode.map(|mode| mode.as_str().to_string()),
+        requested_guards: Some(requested_guards),
+        previous_guards,
+        capability_changed: Some(capability_changed),
+        context_refreshed: Some(context_refreshed),
+        execution_context,
+        previous_execution_context,
+        execution_context_changed: Some(execution_context_changed),
+        ..session_event(
+            event_id.to_string(),
+            session_id.to_string(),
+            "task_instruction".to_string(),
+            now,
+            transport.as_str().to_string(),
+            "work_on_project".to_string(),
+            "read_only".to_string(),
+        )
+    }
+}
+
+fn coding_agent_lifecycle_event(
+    session_id: &str,
+    project: &str,
+    run_id: &str,
+    provider_id: &str,
+    kind: &str,
+    state: &str,
+    execution_state: &str,
+    terminal_stop_reason: Option<&str>,
+    terminal_error_code: Option<&str>,
+    now: i64,
+) -> SessionEvent {
+    let input_summary = serde_json::json!({
+        "run_id": bound_summary_string(run_id),
+        "provider_id": bound_summary_string(provider_id),
+        "state": bound_summary_string(state),
+        "execution_state": bound_summary_string(execution_state),
+        "terminal_stop_reason": terminal_stop_reason.map(bound_summary_string),
+        "terminal_error_code": terminal_error_code.map(bound_summary_string),
+    });
+    SessionEvent {
+        project: Some(project.to_string()),
+        resolved_project: Some(project.to_string()),
+        started_at: Some(now),
+        finished_at: Some(now),
+        duration_ms: Some(0),
+        status: Some(bound_summary_string(state)),
+        error_kind: terminal_error_code.map(bound_summary_string),
+        input_summary: Some(input_summary),
+        ..session_event(
+            format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+            session_id.to_string(),
+            bound_summary_string(kind),
+            now,
+            "system".to_string(),
+            "start_coding_agent".to_string(),
+            "job_run".to_string(),
+        )
+    }
+}
+
+fn session_closed_system_event(session_id: &str, now: i64) -> SessionEvent {
+    SessionEvent {
+        read_like: true,
+        started_at: Some(now),
+        finished_at: Some(now),
+        duration_ms: Some(0),
+        status: Some("succeeded".to_string()),
+        ..session_event(
+            format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+            session_id.to_string(),
+            "session_closed".to_string(),
+            now,
+            "system".to_string(),
+            "close_session".to_string(),
+            "read_only".to_string(),
+        )
+    }
+}
+
 fn session_execution_context_updated_event(
     session_id: &str,
     project: &str,
@@ -2564,66 +2440,30 @@ fn session_execution_context_updated_event(
     now: i64,
 ) -> SessionEvent {
     SessionEvent {
-        event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
-        session_id: session_id.to_string(),
-        kind: "session_execution_context_updated".to_string(),
-        legacy_context_revision: None,
-        context_result_summary: None,
-        call_id: None,
-        timestamp: now,
-        logical_invocation_id: None,
-        logical_invocation_role: None,
-        transport: transport.as_str().to_string(),
-        tool_name: "update_session_context".to_string(),
         project: Some(project.to_string()),
         resolved_project: Some(project.to_string()),
-        risk_class: "read_only".to_string(),
         read_like: true,
-        write_like: false,
-        shell_like: false,
-        git_like: false,
-        change_summary_like: false,
-        diff_review_like: false,
         started_at: Some(now),
         finished_at: Some(now),
         duration_ms: Some(0),
         status: Some("succeeded".to_string()),
-        exit_code: None,
-        failure_kind: None,
-        error_kind: None,
-        expected_failure: None,
-        expected_failure_kind: None,
-        result_expectation: None,
-        accepted_exit_codes: Vec::new(),
-        assertion_name: None,
-        actual_failure_kind: None,
-        failure_expectation_result: None,
-        warning_kind: None,
-        session_project: None,
-        request_project: None,
-        error_message_summary: None,
-        changed_paths: Vec::new(),
-        observed_paths: Vec::new(),
-        job_id: None,
-        persistent_shell: None,
-        effect_evidence: None,
         input_summary: Some(redact_and_bound_value(&serde_json::json!({
             "execution_context": execution_context,
             "previous_execution_context": previous_execution_context,
             "execution_context_changed": changed,
         }))),
-        validation_output_summary: None,
-        permission: None,
-        instruction: None,
-        requested_mode: None,
-        previous_mode: None,
-        requested_guards: None,
-        previous_guards: None,
-        capability_changed: None,
-        context_refreshed: None,
         execution_context: Some(execution_context),
         previous_execution_context: Some(previous_execution_context),
         execution_context_changed: Some(changed),
+        ..session_event(
+            format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+            session_id.to_string(),
+            "session_execution_context_updated".to_string(),
+            now,
+            transport.as_str().to_string(),
+            "update_session_context".to_string(),
+            "read_only".to_string(),
+        )
     }
 }
 
@@ -2846,11 +2686,7 @@ impl SessionStoreInner {
                         .expect("active session must stay hot through close commit");
                     record.lifecycle = SessionLifecycle::Closed;
                     record.updated_at = now;
-                    record.events.push_back(Arc::new(event));
-                    record.events_observed = record.events_observed.saturating_add(1);
-                    while record.events.len() > max_events {
-                        record.events.pop_front();
-                    }
+                    append_event(record, event, max_events);
                 }
                 // Update eviction eligibility in the same locked lifecycle commit.
                 self.touch(session_id);

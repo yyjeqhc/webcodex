@@ -274,6 +274,39 @@ pub(crate) fn artifact_upload_begin_failure_is_definite(result: &ToolResult) -> 
     !result.output.is_null()
 }
 
+async fn wait_for_artifact_export_response(
+    registry: &crate::runner_http::RunnerRegistry,
+    (request_id, receiver): (String, tokio::sync::oneshot::Receiver<ShellRunResponse>),
+    deadline: Instant,
+    operation: &str,
+) -> Result<Value, String> {
+    let response = match tokio::time::timeout_at(deadline, receiver).await {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(_)) => Err(format!("{operation} request was dropped")),
+        Err(_) => Err(format!("timed out waiting for {operation}")),
+    };
+    if response.is_err() {
+        registry.cancel_request(&request_id).await;
+    }
+    let response = response?;
+    if let Some(error) = response.error {
+        return Err(error);
+    }
+    if response.exit_code != Some(0) {
+        return Err(response
+            .stderr
+            .unwrap_or_else(|| format!("{operation} failed with code {:?}", response.exit_code)));
+    }
+    let stdout = response.stdout.unwrap_or_default();
+    let stdout = stdout.trim();
+    serde_json::from_str(stdout).map_err(|error| {
+        format!(
+            "{operation} returned invalid JSON: {error} (got: {})",
+            &stdout[..stdout.len().min(200)]
+        )
+    })
+}
+
 impl ToolRuntime {
     /// Internal-only large-file metadata transport for MCP artifact export.
     /// The Runner registry atomically rechecks the generation-2 streaming
@@ -307,7 +340,7 @@ impl ToolRuntime {
             create_dirs: false,
             wait_timeout_secs: wait_timeout,
         };
-        let (request_id, rx) = self
+        let pending = self
             .runner_registry
             .enqueue_artifact_export_metadata(
                 request,
@@ -315,41 +348,13 @@ impl ToolRuntime {
                 crate::runner_http::runner_access_from_auth(auth).as_ref(),
             )
             .await?;
-        let response = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
-            Ok(Ok(response)) => response,
-            Ok(Err(_)) => {
-                self.runner_registry.cancel_request(&request_id).await;
-                return Err(
-                    "agent project artifact export metadata request was dropped".to_string()
-                );
-            }
-            Err(_) => {
-                self.runner_registry.cancel_request(&request_id).await;
-                return Err(
-                    "timed out waiting for agent project artifact export metadata".to_string(),
-                );
-            }
-        };
-        if let Some(error) = response.error {
-            return Err(error);
-        }
-        if response.exit_code != Some(0) {
-            return Err(response.stderr.unwrap_or_else(|| {
-                format!(
-                    "agent project artifact export metadata failed with code {:?}",
-                    response.exit_code
-                )
-            }));
-        }
-        let stdout = response.stdout.unwrap_or_default();
-        let stdout = stdout.trim();
-        let output = serde_json::from_str(stdout).map_err(|error| {
-            format!(
-                "agent project artifact export metadata returned invalid JSON: {error} (got: {})",
-                &stdout[..stdout.len().min(200)]
-            )
-        })?;
-        Ok(output)
+        wait_for_artifact_export_response(
+            &self.runner_registry,
+            pending,
+            Instant::now() + Duration::from_secs(wait_timeout + 4),
+            "agent project artifact export metadata",
+        )
+        .await
     }
 
     /// Internal-only segment transport for MCP artifact export. This is not a
@@ -423,7 +428,7 @@ impl ToolRuntime {
             create_dirs: false,
             wait_timeout_secs: wait_timeout,
         };
-        let (request_id, rx) = self
+        let pending = self
             .runner_registry
             .enqueue_artifact_export_chunk(
                 request,
@@ -431,37 +436,13 @@ impl ToolRuntime {
                 crate::runner_http::runner_access_from_auth(auth).as_ref(),
             )
             .await?;
-        let response = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
-            Ok(Ok(response)) => response,
-            Ok(Err(_)) => {
-                self.runner_registry.cancel_request(&request_id).await;
-                return Err("agent artifact export chunk request was dropped".to_string());
-            }
-            Err(_) => {
-                self.runner_registry.cancel_request(&request_id).await;
-                return Err("timed out waiting for agent artifact export chunk".to_string());
-            }
-        };
-        if let Some(error) = response.error {
-            return Err(error);
-        }
-        if response.exit_code != Some(0) {
-            return Err(response.stderr.unwrap_or_else(|| {
-                format!(
-                    "agent artifact export chunk failed with code {:?}",
-                    response.exit_code
-                )
-            }));
-        }
-        let stdout = response.stdout.unwrap_or_default();
-        let stdout = stdout.trim();
-        let output = serde_json::from_str(stdout).map_err(|error| {
-            format!(
-                "agent artifact export chunk returned invalid JSON: {error} (got: {})",
-                &stdout[..stdout.len().min(200)]
-            )
-        })?;
-        Ok(output)
+        wait_for_artifact_export_response(
+            &self.runner_registry,
+            pending,
+            Instant::now() + Duration::from_secs(wait_timeout + 4),
+            "agent artifact export chunk",
+        )
+        .await
     }
 
     pub(crate) async fn save_project_artifact(

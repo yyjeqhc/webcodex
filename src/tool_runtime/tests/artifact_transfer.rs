@@ -1754,3 +1754,115 @@ async fn accept_artifact_handoff_replays_completed_result_after_restart() {
         "completed replay must not touch either Runner"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn artifact_export_reads_preserve_wait_outcomes_and_cleanup() {
+    for (metadata, operation) in [
+        (true, "agent project artifact export metadata"),
+        (false, "agent artifact export chunk"),
+    ] {
+        for outcome in ["closed", "timeout", "failed", "completed"] {
+            let client = "artifact-read-wait";
+            let runtime = runtime_with_agent_project(client);
+            register_agent(&runtime, client, Some("alice"), transfer_caps(true, false)).await;
+            let project = agent_test_project_id(client);
+            let sha = sha256_hex(b"x");
+            let auth = transfer_auth("alice");
+            let read = async {
+                if metadata {
+                    let result = runtime
+                        .read_project_artifact_export_metadata_internal(
+                            &project,
+                            "report.bin",
+                            Some(&auth),
+                        )
+                        .await;
+                    if result.success {
+                        Ok(result.output)
+                    } else {
+                        Err(result
+                            .error
+                            .expect("metadata failure must retain its message"))
+                    }
+                } else {
+                    runtime
+                        .read_project_artifact_export_chunk_internal(
+                            &project,
+                            "report.bin",
+                            1,
+                            &sha,
+                            0,
+                            1,
+                            Some(&auth),
+                        )
+                        .await
+                }
+            };
+            tokio::pin!(read);
+            assert!(futures_util::poll!(&mut read).is_pending());
+            let request = wait_for_patch_agent_request(&runtime, client).await;
+            match outcome {
+                "timeout" => {
+                    tokio::time::advance(std::time::Duration::from_secs(63)).await;
+                    assert!(futures_util::poll!(&mut read).is_pending());
+                    tokio::time::advance(std::time::Duration::from_secs(1)).await;
+                }
+                "closed" => {
+                    assert!(
+                        runtime
+                            .runner_registry
+                            .cancel_request(&request.request_id)
+                            .await
+                    );
+                }
+                "failed" => {
+                    complete_patch_agent_request(
+                        &runtime,
+                        client,
+                        &request.request_id,
+                        1,
+                        "invalid JSON",
+                        "read refused",
+                    )
+                    .await;
+                }
+                "completed" => {
+                    complete_patch_agent_request(
+                        &runtime,
+                        client,
+                        &request.request_id,
+                        0,
+                        &json!({"path": "report.bin", "bytes": 1, "sha256": sha}).to_string(),
+                        "",
+                    )
+                    .await;
+                }
+                _ => unreachable!(),
+            }
+            let result = read.await;
+            match outcome {
+                "completed" => {
+                    let output = result.unwrap();
+                    assert_eq!(output["path"], "report.bin");
+                    assert_eq!(output["sha256"], sha);
+                }
+                "failed" => assert_eq!(result.unwrap_err(), "read refused"),
+                "timeout" => assert_eq!(
+                    result.unwrap_err(),
+                    format!("timed out waiting for {operation}"),
+                ),
+                _ => assert_eq!(
+                    result.unwrap_err(),
+                    format!("{operation} request was dropped")
+                ),
+            }
+            assert!(
+                !runtime
+                    .runner_registry
+                    .cancel_request(&request.request_id)
+                    .await,
+                "the original export request must already be cleaned up"
+            );
+        }
+    }
+}

@@ -1,51 +1,40 @@
 use super::*;
 
-#[test]
-fn selector_uses_bounded_authoritative_client_id_without_parsing_project_id() {
-    let projected = project_selector_row(&serde_json::json!({
-        "id": "agent:not-the-device:project",
-        "client_id": "device-real",
-        "name": "Demo",
-        "path": "C:\\Users\\demo\\worktree",
-        "connected": true,
-        "agent_status": "online"
-    }))
-    .unwrap();
+#[tokio::test]
+async fn selector_uses_bounded_authoritative_client_id_without_parsing_project_id() {
+    let runtime = test_runtime();
+    register_project(
+        &runtime,
+        "device-real",
+        "project",
+        r"C:\Users\demo\worktree",
+        None,
+    )
+    .await;
+    let mut row = runtime
+        .query_projects_for_runtime_console(None, None, None, None, 1)
+        .await
+        .unwrap()
+        .projects
+        .pop()
+        .unwrap();
+    row.id = "agent:not-the-device:project".into();
+    let projected = project_selector_row(&row).unwrap();
     assert_eq!(projected.client_id, "device-real");
     assert_ne!(projected.client_id, "not-the-device");
-    assert_eq!(projected.path.as_deref(), Some("C:\\Users\\demo\\worktree"));
+    assert_eq!(projected.path.as_deref(), Some(r"C:\Users\demo\worktree"));
 
-    let invalid_path = project_selector_row(&serde_json::json!({
-        "id": "agent:looks-valid:project",
-        "client_id": "device-real",
-        "path": "/private/bad\npath",
-        "connected": true
-    }))
-    .unwrap();
-    assert!(invalid_path.path.is_none());
-    let overlong_path = format!("/{}", "x".repeat(MAX_PROJECT_PATH_BYTES));
-    let invalid_path = project_selector_row(&serde_json::json!({
-        "id": "agent:looks-valid:project",
-        "client_id": "device-real",
-        "path": overlong_path,
-        "connected": true
-    }))
-    .unwrap();
-    assert!(invalid_path.path.is_none());
-
-    let overlong = "x".repeat(MAX_CLIENT_ID_CHARS + 1);
-    assert!(project_selector_row(&serde_json::json!({
-        "id": "agent:looks-valid:project",
-        "client_id": overlong,
-        "connected": true
-    }))
-    .is_none());
-    assert!(project_selector_row(&serde_json::json!({
-        "id": "agent:looks-valid:project",
-        "client_id": "bad\nclient",
-        "connected": true
-    }))
-    .is_none());
+    for path in [
+        "/private/bad\npath".into(),
+        format!("/{}", "x".repeat(MAX_PROJECT_PATH_BYTES)),
+    ] {
+        row.project.path = path;
+        assert!(project_selector_row(&row).unwrap().path.is_none());
+    }
+    for client_id in ["x".repeat(MAX_CLIENT_ID_CHARS + 1), "bad\nclient".into()] {
+        row.client_id = client_id;
+        assert!(project_selector_row(&row).is_none());
+    }
 }
 
 #[tokio::test]
@@ -134,37 +123,43 @@ async fn product_routes_reject_unknown_effect_selectors_and_invisible_projects()
     assert_eq!(retarget.status_code, Some(StatusCode::BAD_REQUEST));
 }
 
-#[test]
-fn runtime_console_project_projection_preserves_short_project_ref() {
-    let row = project_selector_row(&serde_json::json!({
-        "id": "agent:special:webcodex",
-        "client_id": "special",
-        "project_ref": "~p118",
-        "name": "WebCodex",
-        "path": "/root/git/webcodex",
-        "registration_source": "auto_registered",
-        "lineage": {
-            "kind": "managed_worktree_source",
-            "source_project_id": "webcodex-source",
-            "base_sha": "0123456789abcdef0123456789abcdef01234567"
-        },
-        "connected": true,
-        "agent_status": "online"
-    }))
-    .unwrap();
-    assert_eq!(row.project_ref.as_deref(), Some("~p118"));
-    assert_eq!(row.registration_source.as_deref(), Some("auto_registered"));
-    assert!(matches!(
-        row.lineage,
-        Some(RuntimeConsoleProjectLineage::ManagedWorktreeSource {
-            ref source_project_id,
-            ref base_sha,
-        }) if source_project_id == "webcodex-source"
-            && base_sha == "0123456789abcdef0123456789abcdef01234567"
-    ));
-    assert!(serde_json::to_string(&row)
+#[tokio::test]
+async fn runtime_console_project_projection_preserves_short_ref_and_existing_allowlist() {
+    let runtime = test_runtime();
+    register_project(&runtime, "special", "webcodex", "/root/git/webcodex", None).await;
+    let mut row = runtime
+        .query_projects_for_runtime_console(None, None, None, None, 1)
+        .await
         .unwrap()
-        .contains("\"project_ref\":\"~p118\""));
+        .projects
+        .pop()
+        .unwrap();
+    row.project_ref = Some("~p118".into());
+    row.project.registration_source = Some("auto_registered".into());
+    row.project.lineage = Some(
+        webcodex_core::runner_protocol::RunnerProjectLineage::ManagedWorktreeSource {
+            source_project_id: "webcodex-source".into(),
+            source_root_fingerprint: "private-root".into(),
+            base_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+        },
+    );
+    let projected = project_selector_row(&row).unwrap();
+    assert_eq!(projected.project_ref.as_deref(), Some("~p118"));
+    let value = serde_json::to_value(projected).unwrap();
+    assert_eq!(value["project_ref"], "~p118");
+    for omitted in [
+        "registration_source",
+        "lineage",
+        "description",
+        "hooks",
+        "revision",
+        "shell_profile",
+    ] {
+        assert!(
+            value.get(omitted).is_none(),
+            "unexpected Console field: {omitted}"
+        );
+    }
 }
 
 #[tokio::test]

@@ -2,12 +2,11 @@
 //! Project rows belong to explicit page inventories/full progressive hydration.
 use super::{
     active_window_count_for_auth, empty_console_aggregate, finalize_recent_sessions,
-    project_read_available, require_runtime_read, safe_string, AuthContext, RuntimeConsoleError,
+    project_read_available, require_runtime_read, AuthContext, RuntimeConsoleError,
     RuntimeConsoleOverview, RuntimeConsoleRunnerSummary, RuntimeConsoleWorkflowAggregate,
     ToolRuntime,
 };
-use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 pub(super) fn family_count(rows: &[super::RuntimeConsoleProject]) -> usize {
     rows.iter()
@@ -38,27 +37,11 @@ pub(super) async fn primary_for_auth(
         .active_job_summary_by_runner_for_auth(access.as_ref())
         .await;
     let compatibility = runtime.console_runner_alignment(&snapshot.runners);
-    let alignment_by_runner: HashMap<_, _> = compatibility
-        .get("runners")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            value
-                .get("client_id")
-                .and_then(Value::as_str)
-                .map(|id| (id, value))
-        })
-        .collect();
     let build = crate::build_info::runtime_build_info();
     let now = chrono::Utc::now().timestamp();
     let mut rows = Vec::with_capacity(snapshot.runners.len());
     let visible_projects = snapshot.projects_by_runner.values().sum();
-    for client in &snapshot.runners {
-        let aligned = alignment_by_runner
-            .get(client.client_id.as_str())
-            .copied()
-            .unwrap_or(&Value::Null);
+    for (client, aligned) in snapshot.runners.iter().zip(&compatibility.runners) {
         let active = jobs.get(&client.client_id);
         let project_count = snapshot
             .projects_by_runner
@@ -78,13 +61,12 @@ pub(super) async fn primary_for_auth(
             version: client.build.as_ref().and_then(|b| b.version.clone()),
             build_git_commit: client.build.as_ref().and_then(|b| b.git_commit.clone()),
             build_git_dirty: client.build.as_ref().and_then(|b| b.git_dirty),
-            source_alignment: safe_string(aligned.pointer("/source_alignment/status"), 40),
-            protocol_compatibility: safe_string(aligned.get("protocol_compatibility"), 40)
-                .unwrap_or_else(|| "unknown".into()),
-            build_alignment: safe_string(aligned.get("build_alignment"), 40),
-            version_matches_server: aligned
-                .get("version_matches_server")
-                .and_then(Value::as_bool),
+            source_alignment: Some(aligned.source_alignment.as_str().into()),
+            protocol_compatibility: aligned.status_name().into(),
+            build_alignment: Some(
+                crate::tool_runtime::build_alignment_name(aligned.build_alignment).into(),
+            ),
+            version_matches_server: aligned.version_matches_server,
             active_jobs: active.map_or(0, |j| j.active),
             job_concurrency_limit: client.job_concurrency_limit.map(|limit| limit as u64),
             jobs_running: active.map_or(0, |j| j.running),

@@ -20,7 +20,10 @@ use crate::tool_runtime::window_activity_projection::{
     project_visible_window_activity, project_window_activity, project_window_loop_timings,
     RuntimeConsoleWindowActivity,
 };
-use crate::tool_runtime::{ToolCall, ToolRuntime};
+use crate::tool_runtime::{
+    ListRunnersOptions, ProjectInventoryPage, ProjectInventoryRow, RunnerInventoryPage,
+    RunnerInventoryRow, ToolCall, ToolRuntime,
+};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -816,6 +819,13 @@ struct RuntimeConsoleProject {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum RuntimeConsoleProjectLineage {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Retained Console wire variant; the current inventory projection omits lineage"
+        )
+    )]
     ManagedWorktreeSource {
         source_project_id: String,
         base_sha: String,
@@ -884,8 +894,7 @@ fn valid_project_id(project: &str) -> bool {
         && !project.chars().any(char::is_control)
 }
 
-fn bounded_client_id(value: &Value) -> Option<String> {
-    let client_id = value.as_str()?;
+fn bounded_client_id(client_id: &str) -> Option<String> {
     if client_id.is_empty()
         || client_id.chars().count() > MAX_CLIENT_ID_CHARS
         || client_id.chars().any(char::is_control)
@@ -895,8 +904,7 @@ fn bounded_client_id(value: &Value) -> Option<String> {
     Some(client_id.to_string())
 }
 
-fn bounded_project_path(value: &Value) -> Option<String> {
-    let path = value.as_str()?;
+fn bounded_project_path(path: &str) -> Option<String> {
     if path.is_empty() || path.len() > MAX_PROJECT_PATH_BYTES || path.chars().any(char::is_control)
     {
         return None;
@@ -1006,13 +1014,6 @@ fn require_project_read(auth: &AuthContext) -> Result<(), RuntimeConsoleError> {
 
 fn project_read_available(auth: &AuthContext) -> bool {
     auth.has_scope(SCOPE_PROJECT_READ)
-}
-
-fn safe_usize(value: Option<&Value>) -> usize {
-    value
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-        .unwrap_or(0)
 }
 
 fn safe_bool(value: Option<&Value>) -> bool {
@@ -1367,22 +1368,15 @@ fn scan_runtime_home(
 }
 
 fn runner_fleet_rows(
-    runners: &Value,
-    status_clients: &[Value],
+    runners: &[RunnerInventoryRow],
     scan: &RuntimeConsoleHomeScan,
 ) -> Vec<RuntimeConsoleRunnerSummary> {
     let mut rows = runners
-        .get("runners")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|runner_value| {
-            let client_id = safe_string(runner_value.get("client_id"), MAX_CLIENT_ID_CHARS)?;
-            let status = status_clients.iter().find(|candidate| {
-                candidate.get("client_id").and_then(Value::as_str) == Some(client_id.as_str())
-            });
-            let build = runner_value.get("build").unwrap_or(&Value::Null);
-            let concurrency = runner_value.get("job_concurrency").unwrap_or(&Value::Null);
+        .iter()
+        .filter_map(|row| {
+            let client = &row.client;
+            let client_id = bounded_text_str(&client.client_id, MAX_CLIENT_ID_CHARS)?;
+            let build = client.build.as_ref();
             let projects_scanned = scan
                 .runner_projects_scanned
                 .get(&client_id)
@@ -1395,49 +1389,32 @@ fn runner_fleet_rows(
                 .unwrap_or_else(empty_console_aggregate);
             sessions.sessions_truncated |= scan.project_scan_truncated;
             Some(RuntimeConsoleRunnerSummary {
-                computer_session_availability: runner_value
-                    .get("computer_session_availability")
-                    .and_then(Value::as_bool),
-                protocol_compatibility: status
-                    .and_then(|value| value.get("protocol_compatibility"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_string(),
-                build_alignment: status
-                    .and_then(|value| safe_string(value.get("build_alignment"), MAX_STATUS_CHARS)),
-                client_id: client_id.clone(),
-                connected: safe_bool(runner_value.get("connected")),
-                status: safe_string(runner_value.get("status"), MAX_STATUS_CHARS),
-                transport: safe_string(runner_value.get("transport"), MAX_STATUS_CHARS),
-                runner_protocol_generation: runner_value
-                    .get("runner_protocol_generation")
-                    .and_then(Value::as_u64),
-                last_seen_age_secs: runner_value
-                    .get("last_seen_age_secs")
-                    .and_then(Value::as_i64),
-                version: safe_string(build.get("version"), 80),
-                build_git_commit: status
-                    .and_then(|value| safe_string(value.get("build_git_commit"), 80))
-                    .or_else(|| safe_string(build.get("git_commit"), 80)),
-                build_git_dirty: status
-                    .and_then(|value| value.get("build_git_dirty"))
-                    .and_then(Value::as_bool)
-                    .or_else(|| build.get("git_dirty").and_then(Value::as_bool)),
-                source_alignment: status.and_then(|value| {
-                    safe_string(
-                        value
-                            .get("source_alignment")
-                            .and_then(|alignment| alignment.get("status")),
-                        MAX_STATUS_CHARS,
-                    )
-                }),
-                version_matches_server: status
-                    .and_then(|value| value.get("version_matches_server"))
-                    .and_then(Value::as_bool),
-                active_jobs: safe_usize(runner_value.get("active_jobs")),
-                job_concurrency_limit: concurrency.get("limit").and_then(Value::as_u64),
-                jobs_running: safe_usize(concurrency.get("running")),
-                jobs_queued: safe_usize(concurrency.get("queued")),
+                computer_session_availability: client.computer_session_availability,
+                client_id,
+                connected: client.connected,
+                status: bounded_text_str(&client.status, MAX_STATUS_CHARS),
+                transport: bounded_text_str(&client.transport, MAX_STATUS_CHARS),
+                runner_protocol_generation: Some(u64::from(
+                    client.runner_protocol_generation.get(),
+                )),
+                last_seen_age_secs: Some(row.last_seen_age_secs),
+                version: build
+                    .and_then(|b| b.version.as_deref())
+                    .and_then(|s| bounded_text_str(s, 80)),
+                build_git_commit: build
+                    .and_then(|b| b.git_commit.as_deref())
+                    .and_then(|s| bounded_text_str(s, 80)),
+                build_git_dirty: build.and_then(|b| b.git_dirty),
+                // The existing full-home compact-status projection omits per-Runner
+                // compatibility. Keep that output contract separate from primary.
+                protocol_compatibility: "unknown".into(),
+                build_alignment: None,
+                source_alignment: None,
+                version_matches_server: None,
+                active_jobs: row.active.active,
+                job_concurrency_limit: client.job_concurrency_limit.map(|limit| limit as u64),
+                jobs_running: row.active.running,
+                jobs_queued: row.active.queued,
                 projects_scanned,
                 projects_scan_partial: scan.project_scan_truncated,
                 sessions,
@@ -1455,40 +1432,19 @@ async fn listed_projects_for_auth(
     project: Option<String>,
     query: Option<String>,
     limit: usize,
-) -> Result<(Vec<Value>, usize, bool), RuntimeConsoleError> {
+) -> Result<ProjectInventoryPage, RuntimeConsoleError> {
     require_project_read(auth)?;
-    let result = runtime
-        .list_projects_for_runtime_console(Some(auth), client_id, project, query, limit)
-        .await;
-    if !result.success {
-        return Err(
-            match result.output.get("error_kind").and_then(Value::as_str) {
+    runtime
+        .query_projects_for_runtime_console(Some(auth), client_id, project, query, limit)
+        .await
+        .map_err(
+            |result| match result.output.get("error_kind").and_then(Value::as_str) {
                 Some("invalid_client_id" | "invalid_project" | "invalid_query") => {
                     RuntimeConsoleError::Invalid
                 }
                 _ => RuntimeConsoleError::Internal,
             },
-        );
-    }
-    let values = result
-        .output
-        .get("projects")
-        .and_then(Value::as_array)
-        .cloned()
-        .ok_or(RuntimeConsoleError::Internal)?;
-    let total = safe_usize(
-        result
-            .output
-            .get("matched_count")
-            .or_else(|| result.output.get("count")),
-    )
-    .max(values.len());
-    let truncated = result
-        .output
-        .get("truncated")
-        .and_then(Value::as_bool)
-        .unwrap_or(total > values.len());
-    Ok((values, total, truncated))
+        )
 }
 
 async fn exact_console_project_for_auth(
@@ -1496,54 +1452,38 @@ async fn exact_console_project_for_auth(
     auth: &AuthContext,
     project: &str,
 ) -> Result<RuntimeConsoleProject, RuntimeConsoleError> {
-    let (values, _, _) =
-        listed_projects_for_auth(runtime, auth, None, Some(project.to_string()), None, 1).await?;
-    values
-        .into_iter()
-        .find_map(|value| project_selector_row(&value))
+    listed_projects_for_auth(runtime, auth, None, Some(project.to_string()), None, 1)
+        .await?
+        .projects
+        .iter()
+        .find_map(project_selector_row)
         .ok_or(RuntimeConsoleError::NotFound)
 }
 
-fn project_lineage(value: &Value) -> Option<RuntimeConsoleProjectLineage> {
-    let lineage = value.get("lineage")?;
-    if lineage.get("kind")?.as_str()? != "managed_worktree_source" {
-        return None;
-    }
-    let source_project_id = bounded_text(lineage.get("source_project_id")?, MAX_PROJECT_ID_CHARS)?;
-    let base_sha = bounded_text(lineage.get("base_sha")?, 64)?;
-    Some(RuntimeConsoleProjectLineage::ManagedWorktreeSource {
-        source_project_id,
-        base_sha,
-    })
-}
-
-fn project_selector_row(value: &Value) -> Option<RuntimeConsoleProject> {
-    let id = bounded_text(value.get("id")?, MAX_PROJECT_ID_CHARS)?;
+fn project_selector_row(row: &ProjectInventoryRow) -> Option<RuntimeConsoleProject> {
+    let id = bounded_text_str(&row.id, MAX_PROJECT_ID_CHARS)?;
     if !valid_project_id(&id) {
         return None;
     }
-    let client_id = bounded_client_id(value.get("client_id")?)?;
     Some(RuntimeConsoleProject {
         id,
-        client_id,
-        project_ref: value
-            .get("project_ref")
-            .and_then(|value| bounded_text(value, MAX_PROJECT_ID_CHARS)),
-        name: value
-            .get("name")
-            .and_then(|value| bounded_text(value, MAX_PROJECT_NAME_CHARS)),
-        path: value.get("path").and_then(bounded_project_path),
-        registration_source: value
-            .get("registration_source")
-            .and_then(|value| bounded_text(value, MAX_STATUS_CHARS)),
-        lineage: project_lineage(value),
-        connected: value
-            .get("connected")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        runner_status: value
-            .get("agent_status")
-            .and_then(|value| bounded_text(value, MAX_STATUS_CHARS)),
+        client_id: bounded_client_id(&row.client_id)?,
+        project_ref: row
+            .project_ref
+            .as_deref()
+            .and_then(|s| bounded_text_str(s, MAX_PROJECT_ID_CHARS)),
+        name: row
+            .project
+            .name
+            .as_deref()
+            .and_then(|s| bounded_text_str(s, MAX_PROJECT_NAME_CHARS)),
+        path: bounded_project_path(&row.project.path),
+        // These optional DTO fields were absent from the list_projects adapter.
+        // Sharing raw inventory must not expand the Console field allowlist.
+        registration_source: None,
+        lineage: None,
+        connected: row.connected,
+        runner_status: bounded_text_str(&row.runner_status, MAX_STATUS_CHARS),
         sessions: None,
     })
 }
@@ -1575,7 +1515,7 @@ async fn projects_for_filters_auth(
     let limit = limit
         .unwrap_or(DEFAULT_PROJECT_LIMIT)
         .clamp(1, MAX_PROJECT_LIMIT);
-    let (visible, total, source_truncated) = listed_projects_for_auth(
+    let visible = listed_projects_for_auth(
         runtime,
         auth,
         client_id.map(str::to_string),
@@ -1584,11 +1524,13 @@ async fn projects_for_filters_auth(
         limit,
     )
     .await?;
+    let total = visible.matched_count;
     let project_rows = visible
+        .projects
         .iter()
         .filter_map(project_selector_row)
         .collect::<Vec<_>>();
-    let truncated = source_truncated || project_rows.len() < total;
+    let truncated = project_rows.len() < total;
     Ok(RuntimeConsoleProjects {
         projects: project_rows,
         total,
@@ -1872,50 +1814,23 @@ async fn workflow_session_detail_with_windows(
     })
 }
 
-async fn runtime_status_value(
+async fn listed_runners_for_auth(
     runtime: &ToolRuntime,
     auth: &AuthContext,
     client_id: Option<String>,
-) -> Result<Value, RuntimeConsoleError> {
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RuntimeStatus {
-                compact: true,
-                summary_only: true,
-                client_id,
-            },
+) -> Result<RunnerInventoryPage, RuntimeConsoleError> {
+    runtime
+        .query_runner_inventory(
             Some(auth),
-        )
-        .await;
-    result
-        .success
-        .then_some(result.output)
-        .ok_or(RuntimeConsoleError::Internal)
-}
-
-async fn list_runners_value(
-    runtime: &ToolRuntime,
-    auth: &AuthContext,
-    client_id: Option<String>,
-) -> Result<Value, RuntimeConsoleError> {
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::ListRunners {
-                query: None,
-                status: None,
-                limit: None,
+            &ListRunnersOptions {
                 client_id,
-                client_ids: None,
                 include_projects: Some(false),
                 summary_only: true,
+                ..Default::default()
             },
-            Some(auth),
         )
-        .await;
-    result
-        .success
-        .then_some(result.output)
-        .ok_or(RuntimeConsoleError::Internal)
+        .await
+        .map_err(|_| RuntimeConsoleError::Internal)
 }
 
 #[cfg(test)]
@@ -1932,39 +1847,26 @@ async fn overview_for_auth_detail(
     include_sessions: bool,
 ) -> Result<RuntimeConsoleOverview, RuntimeConsoleError> {
     require_runtime_read(auth)?;
-    let (status, runners_value) = tokio::try_join!(
-        runtime_status_value(runtime, auth, None),
-        list_runners_value(runtime, auth, None),
-    )?;
-    let summary = runners_value.get("summary").unwrap_or(&Value::Null);
-    let build = status.get("build").unwrap_or(&Value::Null);
-    let status_clients = status
-        .get("runners")
-        .and_then(|value| value.get("clients"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let source_mismatched_runners = status_clients
+    let access = crate::runner_http::runner_access_from_auth(Some(auth));
+    let (runners, jobs) = tokio::join!(
+        listed_runners_for_auth(runtime, auth, None),
+        runtime
+            .runner_registry
+            .runtime_job_aggregate_for_auth(access.as_ref(), None),
+    );
+    let runners = runners?;
+    let runner_count = runners.runners.len();
+    let online = runners
+        .runners
         .iter()
-        .filter(|client| {
-            client
-                .get("source_alignment")
-                .and_then(|value| value.get("status"))
-                .and_then(Value::as_str)
-                == Some("different")
-        })
+        .filter(|row| row.client.connected)
         .count();
-    let mixed_builds_present = status_clients.iter().any(|client| {
-        client
-            .get("version_matches_server")
-            .and_then(Value::as_bool)
-            == Some(false)
-            || client
-                .get("source_alignment")
-                .and_then(|value| value.get("status"))
-                .and_then(Value::as_str)
-                == Some("different")
-    });
+    let stale = runners
+        .runners
+        .iter()
+        .filter(|row| row.client.status == "stale")
+        .count();
+    let build = crate::build_info::runtime_build_info();
     let project_access = project_read_available(auth);
     let visible = if project_access {
         Some(projects_for_auth(runtime, auth, Some(HOME_PROJECT_SCAN_LIMIT)).await?)
@@ -2005,10 +1907,7 @@ async fn overview_for_auth_detail(
             }
         },
     );
-    let runners = runner_fleet_rows(&runners_value, &status_clients, &home);
-    let runner_count = safe_usize(summary.get("count")).max(runners.len());
-    let online = safe_usize(summary.get("online"));
-    let stale = safe_usize(summary.get("stale"));
+    let runners = runner_fleet_rows(&runners.runners, &home);
     let unavailable = runner_count.saturating_sub(online.saturating_add(stale));
     let active_windows = active_window_count_for_auth(runtime, auth).await?;
     Ok(RuntimeConsoleOverview {
@@ -2017,21 +1916,17 @@ async fn overview_for_auth_detail(
         visible_project_families: overview_primary::family_count(&home.projects),
         authenticated_user: auth.username.clone(),
         effective_config: runtime.effective_config_status(),
-        service: safe_string(status.get("service"), 80),
-        version: safe_string(status.get("version"), 80),
-        build_git_commit: safe_string(build.get("git_commit"), 80),
-        build_git_dirty: build.get("git_dirty").and_then(Value::as_bool),
+        service: Some("webcodex".into()),
+        version: bounded_text_str(env!("CARGO_PKG_VERSION"), 80),
+        build_git_commit: build.git_commit.and_then(|s| bounded_text_str(s, 80)),
+        build_git_dirty: build.git_dirty,
         runner_count,
         runners_online: online,
         runners_stale: stale,
         runners_unavailable: unavailable,
-        source_mismatched_runners,
-        mixed_builds_present,
-        active_jobs: safe_usize(
-            status
-                .get("jobs")
-                .and_then(|value| value.get("active_count")),
-        ),
+        source_mismatched_runners: 0,
+        mixed_builds_present: false,
+        active_jobs: jobs.active_count,
         active_windows,
         projects_available: project_access,
         visible_projects: visible.as_ref().map_or(0, |value| value.total),
@@ -2056,16 +1951,14 @@ async fn runner_for_auth(
     {
         return Err(RuntimeConsoleError::Invalid);
     }
-    let runners = list_runners_value(runtime, auth, Some(client_id.to_string())).await?;
-    let runner_value = runners
-        .get("runners")
-        .and_then(Value::as_array)
-        .and_then(|values| values.first())
+    let runners = listed_runners_for_auth(runtime, auth, Some(client_id.to_string())).await?;
+    let row = runners
+        .runners
+        .first()
         .ok_or(RuntimeConsoleError::NotFound)?;
-    let status = runtime_status_value(runtime, auth, Some(client_id.to_string())).await?;
-    let focus = status.get("focus").unwrap_or(&Value::Null);
-    let build = runner_value.get("build").unwrap_or(&Value::Null);
-    let concurrency = runner_value.get("job_concurrency").unwrap_or(&Value::Null);
+    let client = &row.client;
+    let compatibility = runtime.console_runner_alignment(std::slice::from_ref(client));
+    let build = client.build.as_ref();
     let project_access = project_read_available(auth);
     let project_limit = project_limit
         .unwrap_or(DEFAULT_RUNNER_PROJECT_LIMIT)
@@ -2125,50 +2018,34 @@ async fn runner_for_auth(
         sessions: recent_sessions,
     };
     Ok(RuntimeConsoleRunner {
-        server: status.get("server").cloned().unwrap_or(Value::Null),
-        tool_request_trace_mode: safe_string(
-            status.pointer("/effective_config/tool_request_trace_mode"),
-            16,
+        // Retain the compact-status/summary inventory allowlist.
+        server: Value::Null,
+        tool_request_trace_mode: None,
+        capabilities: serde_json::json!({}),
+        runner_protocol_generation: Some(u64::from(client.runner_protocol_generation.get())),
+        computer_session_availability: client.computer_session_availability,
+        protocol_compatibility: compatibility.status.protocol_name().into(),
+        build_alignment: Some(
+            crate::tool_runtime::build_alignment_name(compatibility.build_alignment).into(),
         ),
-        runner_protocol_generation: runner_value
-            .get("runner_protocol_generation")
-            .and_then(Value::as_u64),
-        capabilities: runner_value
-            .get("capabilities")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({})),
-        computer_session_availability: runner_value
-            .get("computer_session_availability")
-            .and_then(Value::as_bool),
-        protocol_compatibility: focus
-            .get("protocol_compatibility")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string(),
-        build_alignment: safe_string(focus.get("build_alignment"), MAX_STATUS_CHARS),
         client_id: client_id.to_string(),
-        coding_agent_providers: runner_value
-            .get("coding_agent_providers")
-            .and_then(|value| serde_json::from_value(value.clone()).ok())
-            .unwrap_or_default(),
-        connected: runner_value
-            .get("connected")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        status: safe_string(runner_value.get("status"), MAX_STATUS_CHARS),
-        version: safe_string(build.get("version"), 80),
-        build_git_commit: safe_string(build.get("git_commit"), 80),
-        build_git_dirty: build.get("git_dirty").and_then(Value::as_bool),
-        source_alignment: safe_string(
-            focus
-                .get("source_alignment")
-                .and_then(|value| value.get("status")),
-            MAX_STATUS_CHARS,
+        coding_agent_providers: webcodex_core::coding_agent::safe_provider_inventory(
+            client.coding_agent_providers.as_deref(),
         ),
-        active_jobs: safe_usize(runner_value.get("active_jobs")),
-        job_concurrency_limit: concurrency.get("limit").and_then(Value::as_u64),
-        jobs_running: safe_usize(concurrency.get("running")),
-        jobs_queued: safe_usize(concurrency.get("queued")),
+        connected: client.connected,
+        status: bounded_text_str(&client.status, MAX_STATUS_CHARS),
+        version: build
+            .and_then(|b| b.version.as_deref())
+            .and_then(|s| bounded_text_str(s, 80)),
+        build_git_commit: build
+            .and_then(|b| b.git_commit.as_deref())
+            .and_then(|s| bounded_text_str(s, 80)),
+        build_git_dirty: build.and_then(|b| b.git_dirty),
+        source_alignment: None,
+        active_jobs: row.active.active,
+        job_concurrency_limit: client.job_concurrency_limit.map(|limit| limit as u64),
+        jobs_running: row.active.running,
+        jobs_queued: row.active.queued,
         jobs,
         jobs_truncated,
         projects_available: project_access,

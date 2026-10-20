@@ -29,6 +29,89 @@ pub(crate) struct ListRunnersOptions {
     pub(crate) limit: Option<usize>,
 }
 
+/// No serialization on query facts: each output owns its projection.
+pub(crate) struct RunnerInventoryPage {
+    pub(crate) runners: Vec<RunnerInventoryRow>,
+    pub(crate) matched_count: usize,
+}
+
+pub(crate) struct RunnerInventoryRow {
+    pub(crate) client: RunnerView,
+    pub(crate) active: webcodex_runner_registry::ActiveJobAggregate,
+    pub(crate) projects_count: usize,
+    pub(crate) last_seen_age_secs: i64,
+}
+
+impl RunnerInventoryPage {
+    fn into_tool_result(self, options: &ListRunnersOptions) -> ToolResult {
+        let online = self
+            .runners
+            .iter()
+            .filter(|row| row.client.connected)
+            .count();
+        let stale = self
+            .runners
+            .iter()
+            .filter(|row| row.client.status == "stale")
+            .count();
+        let runners: Vec<_> = self.runners.iter().map(|row| {
+            let client = &row.client;
+            let mut value = json!({
+                "client_id": client.client_id,
+                "runner_instance_id": client.runner_instance_id,
+                "display_name": client.display_name,
+                "status": client.status,
+                "connected": client.connected,
+                "runner_protocol_generation": client.runner_protocol_generation.get(),
+                "transport": client.transport,
+                "last_seen_age_secs": row.last_seen_age_secs,
+                "pending_requests": client.pending_requests,
+                "projects_count": row.projects_count,
+                "active_jobs": row.active.active,
+                "job_concurrency": {
+                    "limit": client.job_concurrency_limit,
+                    "running": row.active.running,
+                    "queued": row.active.queued,
+                },
+                "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
+                "build": client.build,
+            });
+            if let Some(availability) = client.computer_session_availability {
+                value["computer_session_availability"] = json!(availability);
+            }
+            if !options.summary_only {
+                value["owner"] = json!(client.owner);
+                value["hostname"] = json!(client.hostname);
+                value["host_context"] = host_context_projection(client.host_context.as_ref());
+                value["last_seen"] = json!(client.last_seen);
+                value["project_inventory"] = json!(client.project_inventory);
+                value["capabilities"] = json!(client.capabilities);
+                value["policy"] = sanitized_policy_summary(client.policy.as_ref());
+                value["shell_profiles"] = sanitized_shell_profiles_summary(
+                    client.policy.as_ref().and_then(|policy| policy.shell_profiles.as_ref()),
+                );
+                value["tool_providers"] = json!(client.policy.as_ref().and_then(|policy| policy.tool_providers.as_ref()));
+                if options.include_projects.unwrap_or(true) {
+                    value["projects"] = json!(client.projects);
+                }
+            }
+            value
+        }).collect();
+        ToolResult::ok(json!({
+            "count": runners.len(),
+            "matched_count": self.matched_count,
+            "truncated": runners.len() < self.matched_count,
+            "summary": {
+                "count": runners.len(),
+                "online": online,
+                "offline": runners.len().saturating_sub(online),
+                "stale": stale,
+            },
+            "runners": runners,
+        }))
+    }
+}
+
 /// Lightweight runtime metadata injected into `ToolRuntime` so observability
 /// tools (e.g. `get_runtime_status`) can report bounded auth/OAuth/public-url state
 /// without the runtime holding a full `Config` (which would couple it to HTTP/fs details).
@@ -143,52 +226,63 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         options: ListRunnersOptions,
     ) -> ToolResult {
+        match self.query_runner_inventory(auth, &options).await {
+            Ok(page) => page.into_tool_result(&options),
+            Err(result) => result,
+        }
+    }
+
+    pub(crate) async fn query_runner_inventory(
+        &self,
+        auth: Option<&AuthContext>,
+        options: &ListRunnersOptions,
+    ) -> Result<RunnerInventoryPage, ToolResult> {
         if options.client_id.is_some() && options.client_ids.is_some() {
-            return ToolResult::err_with_output(
+            return Err(ToolResult::err_with_output(
                 "invalid_client_filter: client_id and client_ids are mutually exclusive"
                     .to_string(),
                 json!({"error_kind": "invalid_client_filter"}),
-            );
+            ));
         }
         if options
             .client_id
             .as_deref()
             .is_some_and(|value| !valid_target_client_id(value))
         {
-            return ToolResult::err_with_output(
+            return Err(ToolResult::err_with_output(
                 "invalid_client_id: client_id must contain 1..=128 characters".to_string(),
                 json!({"error_kind": "invalid_client_id"}),
-            );
+            ));
         }
         if let Some(client_ids) = options.client_ids.as_ref() {
             if client_ids.is_empty() {
-                return ToolResult::err_with_output(
+                return Err(ToolResult::err_with_output(
                     "invalid_client_ids: at least one client id is required".to_string(),
                     json!({"error_kind": "invalid_client_ids"}),
-                );
+                ));
             }
             if client_ids.len() > LIST_RUNNERS_MAX_CLIENT_IDS {
-                return ToolResult::err_with_output(
+                return Err(ToolResult::err_with_output(
                     format!(
                         "invalid_client_ids: at most {LIST_RUNNERS_MAX_CLIENT_IDS} client ids are allowed"
                     ),
                     json!({"error_kind": "invalid_client_ids"}),
-                );
+                ));
             }
             let mut seen = std::collections::HashSet::new();
             for client_id in client_ids {
                 if !valid_target_client_id(client_id) {
-                    return ToolResult::err_with_output(
+                    return Err(ToolResult::err_with_output(
                         "invalid_client_ids: every client id must contain 1..=128 characters"
                             .to_string(),
                         json!({"error_kind": "invalid_client_ids"}),
-                    );
+                    ));
                 }
                 if !seen.insert(client_id.as_str()) {
-                    return ToolResult::err_with_output(
+                    return Err(ToolResult::err_with_output(
                         "invalid_client_ids: duplicate client ids are not allowed".to_string(),
                         json!({"error_kind": "invalid_client_ids"}),
-                    );
+                    ));
                 }
             }
         }
@@ -198,7 +292,7 @@ impl ToolRuntime {
             .as_ref()
             .is_some_and(|q| q.chars().count() > 200 || q.chars().any(char::is_control))
         {
-            return ToolResult::err("invalid_runner_query");
+            return Err(ToolResult::err("invalid_runner_query"));
         }
         let query = options
             .query
@@ -253,113 +347,30 @@ impl ToolRuntime {
         if let Some(limit) = options.limit {
             clients.truncate(limit.clamp(1, 100));
         }
-        let truncated = clients.len() < matched_count;
-        // Both projections need active aggregates, not historical Job bodies.
-        let active_counts = self
+        let mut active_counts = self
             .runner_registry
             .active_job_summary_by_runner_for_auth(access.as_ref())
             .await;
         let now = chrono::Utc::now().timestamp();
-        let include_projects = options.include_projects.unwrap_or(true);
-        let runners: Vec<Value> = if options.summary_only {
-            clients
-                .iter()
-                .map(|client| {
-                    let counts = active_counts.get(&client.client_id);
-                    let mut value = json!({
-                        "client_id": client.client_id,
-                        "runner_instance_id": client.runner_instance_id,
-                        "display_name": client.display_name,
-                        "status": client.status,
-                        "connected": client.connected,
-                        "runner_protocol_generation": client.runner_protocol_generation.get(),
-                        "transport": client.transport,
-                        "last_seen_age_secs": last_seen_age_secs(client, now),
-                        "pending_requests": client.pending_requests,
-                        "projects_count": project_counts.as_ref().and_then(|counts|counts.get(&client.client_id)).copied().unwrap_or(0),
-                        "active_jobs": counts.map_or(0, |counts|counts.active),
-                        "job_concurrency": {"limit":client.job_concurrency_limit,"running":counts.map_or(0,|counts|counts.running),"queued":counts.map_or(0,|counts|counts.queued)},
-                        "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
-                        "build": client.build,
-                    });
-                    if let Some(availability) = client.computer_session_availability {
-                        value["computer_session_availability"] = json!(availability);
-                    }
-                    value
-                })
-                .collect()
-        } else {
-            clients
-                .iter()
-                .map(|client| {
-                    let counts = active_counts.get(&client.client_id);
-                    let mut value = json!({
-                        "client_id": client.client_id,
-                        "runner_instance_id": client.runner_instance_id,
-                        "display_name": client.display_name,
-                        "owner": client.owner,
-                        "hostname": client.hostname,
-                        "host_context": host_context_projection(client.host_context.as_ref()),
-                        "status": client.status,
-                        "connected": client.connected,
-                        "runner_protocol_generation": client.runner_protocol_generation.get(),
-                        "transport": client.transport,
-                        "last_seen": client.last_seen,
-                        "last_seen_age_secs": last_seen_age_secs(client, now),
-                        "pending_requests": client.pending_requests,
-                        "projects_count": enabled_projects_count(client),
-                        "project_inventory": client.project_inventory,
-                        "active_jobs": counts.map_or(0, |counts| counts.active),
-                        "job_concurrency": {"limit":client.job_concurrency_limit,
-                            "running":counts.map_or(0,|counts|counts.running),
-                            "queued":counts.map_or(0,|counts|counts.queued)},
-                        "build": client.build,
-                        "capabilities": client.capabilities,
-                        "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
-                        "policy": sanitized_policy_summary(client.policy.as_ref()),
-                        "shell_profiles": sanitized_shell_profiles_summary(
-                            client.policy.as_ref().and_then(|policy| policy.shell_profiles.as_ref())
-                        ),
-                        "tool_providers": client.policy.as_ref().and_then(|policy| policy.tool_providers.as_ref()),
-                    });
-                    if let Some(availability) = client.computer_session_availability {
-                        value["computer_session_availability"] = json!(availability);
-                    }
-                    if include_projects {
-                        value["projects"] = json!(client.projects);
-                    }
-                    value
-                })
-                .collect()
-        };
-        if options.summary_only {
-            let online = clients.iter().filter(|client| client.connected).count();
-            let stale = clients
-                .iter()
-                .filter(|client| client.status == "stale")
-                .count();
-            return ToolResult::ok(json!({
-                // One canonical Runner collection for Console, admin/ops, and model consumers.
-                "runners": runners,
-                "summary": {
-                    "count": clients.len(),
-                    "online": online,
-                    "offline": clients.len().saturating_sub(online),
-                    "stale": stale,
-                },
-                "count": clients.len(),
-                "matched_count": matched_count,
-                "truncated": truncated,
-            }));
-        }
-        ToolResult::ok(json!({
-            // One canonical Runner collection for Console, admin/ops, and model consumers.
-            "runners": runners,
-            "summary": runner_health_summary(&clients),
-            "count": clients.len(),
-            "matched_count": matched_count,
-            "truncated": truncated,
-        }))
+        let runners = clients
+            .into_iter()
+            .map(|client| {
+                let projects_count = project_counts.as_ref().map_or_else(
+                    || enabled_projects_count(&client),
+                    |counts| counts.get(&client.client_id).copied().unwrap_or(0),
+                );
+                RunnerInventoryRow {
+                    active: active_counts.remove(&client.client_id).unwrap_or_default(),
+                    last_seen_age_secs: last_seen_age_secs(&client, now),
+                    client,
+                    projects_count,
+                }
+            })
+            .collect();
+        Ok(RunnerInventoryPage {
+            runners,
+            matched_count,
+        })
     }
 
     /// Build the runtime observability summary. Read-only; never exposes
@@ -1326,8 +1337,11 @@ pub(super) fn connection_layers(
 impl ToolRuntime {
     /// Reuse build/protocol truth without dispatching full runtime diagnostics
     /// or materializing Project/Job histories for the Console navigation bar.
-    pub(crate) fn console_runner_alignment(&self, clients: &[RunnerView]) -> Value {
-        version_compatibility(clients)
+    pub(crate) fn console_runner_alignment(
+        &self,
+        clients: &[RunnerView],
+    ) -> super::runtime_compatibility::FleetCompatibilityFacts {
+        super::runtime_compatibility::current_compatibility_facts(clients)
     }
 }
 

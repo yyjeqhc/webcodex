@@ -10,7 +10,7 @@ use webcodex_core::desktop_runtime_contract::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum FleetProtocolStatus {
+pub(crate) enum FleetProtocolStatus {
     NoRunners,
     Compatible,
     Incompatible,
@@ -18,7 +18,7 @@ pub(super) enum FleetProtocolStatus {
 }
 
 impl FleetProtocolStatus {
-    pub(super) const fn status_name(self) -> &'static str {
+    pub(crate) const fn status_name(self) -> &'static str {
         match self {
             Self::NoRunners => "no_runners",
             Self::Compatible => "compatible",
@@ -27,7 +27,7 @@ impl FleetProtocolStatus {
         }
     }
 
-    pub(super) const fn protocol_name(self) -> &'static str {
+    pub(crate) const fn protocol_name(self) -> &'static str {
         match self {
             Self::NoRunners | Self::Unknown => "unknown",
             Self::Compatible => "compatible",
@@ -37,7 +37,7 @@ impl FleetProtocolStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SourceAlignmentStatus {
+pub(crate) enum SourceAlignmentStatus {
     NoRunners,
     Aligned,
     Different,
@@ -45,7 +45,7 @@ pub(super) enum SourceAlignmentStatus {
 }
 
 impl SourceAlignmentStatus {
-    pub(super) const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::NoRunners => "no_runners",
             Self::Aligned => "aligned",
@@ -56,35 +56,35 @@ impl SourceAlignmentStatus {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct RunnerCompatibilityFacts {
-    pub(super) client_id: String,
-    pub(super) build_version: Option<String>,
-    pub(super) build_git_commit: Option<String>,
-    pub(super) build_git_dirty: Option<bool>,
-    pub(super) version_matches_server: Option<bool>,
-    pub(super) git_commit_matches_server: Option<bool>,
-    pub(super) source_matches_server: Option<bool>,
-    pub(super) source_alignment: SourceAlignmentStatus,
-    pub(super) protocol_compatibility: ProtocolCompatibility,
-    pub(super) build_alignment: BuildAlignment,
+pub(crate) struct RunnerCompatibilityFacts {
+    pub(crate) client_id: String,
+    pub(crate) build_version: Option<String>,
+    pub(crate) build_git_commit: Option<String>,
+    pub(crate) build_git_dirty: Option<bool>,
+    pub(crate) version_matches_server: Option<bool>,
+    pub(crate) git_commit_matches_server: Option<bool>,
+    pub(crate) source_matches_server: Option<bool>,
+    pub(crate) source_alignment: SourceAlignmentStatus,
+    pub(crate) protocol_compatibility: ProtocolCompatibility,
+    pub(crate) build_alignment: BuildAlignment,
 }
 
 impl RunnerCompatibilityFacts {
-    pub(super) const fn status_name(&self) -> &'static str {
+    pub(crate) const fn status_name(&self) -> &'static str {
         protocol_compatibility_name(self.protocol_compatibility)
     }
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct FleetCompatibilityFacts {
-    pub(super) status: FleetProtocolStatus,
-    pub(super) build_alignment: BuildAlignment,
-    pub(super) source_alignment: SourceAlignmentStatus,
-    pub(super) mixed_builds_present: bool,
-    pub(super) runners: Vec<RunnerCompatibilityFacts>,
+pub(crate) struct FleetCompatibilityFacts {
+    pub(crate) status: FleetProtocolStatus,
+    pub(crate) build_alignment: BuildAlignment,
+    pub(crate) source_alignment: SourceAlignmentStatus,
+    pub(crate) mixed_builds_present: bool,
+    pub(crate) runners: Vec<RunnerCompatibilityFacts>,
 }
 
-pub(super) const fn protocol_compatibility_name(value: ProtocolCompatibility) -> &'static str {
+pub(crate) const fn protocol_compatibility_name(value: ProtocolCompatibility) -> &'static str {
     match value {
         ProtocolCompatibility::Compatible => "compatible",
         ProtocolCompatibility::Incompatible => "incompatible",
@@ -92,7 +92,7 @@ pub(super) const fn protocol_compatibility_name(value: ProtocolCompatibility) ->
     }
 }
 
-pub(super) const fn build_alignment_name(value: BuildAlignment) -> &'static str {
+pub(crate) const fn build_alignment_name(value: BuildAlignment) -> &'static str {
     match value {
         BuildAlignment::Exact => "exact",
         BuildAlignment::Unknown => "unknown",

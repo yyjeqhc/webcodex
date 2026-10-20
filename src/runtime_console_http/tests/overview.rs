@@ -1,5 +1,23 @@
 use super::*;
 
+async fn fleet_test_row(runtime: &ToolRuntime, client_id: &str) -> RunnerInventoryRow {
+    register_project(runtime, client_id, "project", "/private/project", None).await;
+    runtime
+        .query_runner_inventory(
+            None,
+            &ListRunnersOptions {
+                client_id: Some(client_id.into()),
+                summary_only: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .runners
+        .pop()
+        .unwrap()
+}
+
 #[test]
 fn runtime_home_recent_ranking_is_working_then_updated_at_then_identity() {
     let rows = vec![
@@ -78,8 +96,8 @@ fn runtime_home_recent_bounded_topk_matches_stable_full_sort() {
         serde_json::to_value(reference).unwrap(),
     );
 }
-#[test]
-fn runtime_home_recent_and_project_scans_are_explicitly_bounded() {
+#[tokio::test]
+async fn runtime_home_recent_and_project_scans_are_explicitly_bounded() {
     let recent = finalize_recent_sessions(
         (0..HOME_RECENT_SESSION_LIMIT + 3)
             .map(|index| {
@@ -128,11 +146,8 @@ fn runtime_home_recent_and_project_scans_are_explicitly_bounded() {
     assert!(scan.workflow.truncated);
     assert!(scan.recent_sessions.scan_truncated);
 
-    let rows = runner_fleet_rows(
-        &serde_json::json!({"runners": [{"client_id": "runner", "connected": true}]}),
-        &[],
-        &scan,
-    );
+    let inventory = fleet_test_row(&runtime, "runner").await;
+    let rows = runner_fleet_rows(&[inventory], &scan);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].projects_scanned, HOME_PROJECT_SCAN_LIMIT);
     assert!(rows[0].projects_scan_partial);
@@ -141,8 +156,8 @@ fn runtime_home_recent_and_project_scans_are_explicitly_bounded() {
     assert!(!serialized.contains("visible_project_count"));
 }
 
-#[test]
-fn runtime_home_projects_all_retained_sessions_without_extra_presentation_truncation() {
+#[tokio::test]
+async fn runtime_home_projects_all_retained_sessions_without_extra_presentation_truncation() {
     let runtime = test_runtime();
     let project_id = "agent:runner:busy";
     for index in 0..HOME_SESSIONS_PER_PROJECT_LIMIT {
@@ -179,19 +194,16 @@ fn runtime_home_projects_all_retained_sessions_without_extra_presentation_trunca
     );
     assert!(!project_sessions.sessions_truncated);
 
-    let rows = runner_fleet_rows(
-        &serde_json::json!({"runners": [{"client_id": "runner", "connected": true}]}),
-        &[],
-        &scan,
-    );
+    let inventory = fleet_test_row(&runtime, "runner").await;
+    let rows = runner_fleet_rows(&[inventory], &scan);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].projects_scanned, 1);
     assert!(!rows[0].projects_scan_partial);
     assert!(!rows[0].sessions.sessions_truncated);
 }
 
-#[test]
-fn runtime_home_runner_fleet_joins_health_build_jobs_projects_and_sessions() {
+#[tokio::test]
+async fn runtime_home_runner_fleet_joins_health_build_jobs_projects_and_sessions() {
     let mut sessions = empty_console_aggregate();
     sessions.active_sessions = 2;
     sessions.running_sessions = 1;
@@ -204,27 +216,27 @@ fn runtime_home_runner_fleet_joins_health_build_jobs_projects_and_sessions() {
         runner_projects_scanned: HashMap::from([("runner-a".to_string(), 4)]),
         project_scan_truncated: false,
     };
-    let runners = serde_json::json!({
-        "runners": [{
-            "client_id": "runner-a",
-            "connected": true,
-            "status": "online",
-            "transport": "websocket",
-            "runner_protocol_generation": 2,
-            "last_seen_age_secs": 2,
-            "active_jobs": 3,
-            "job_concurrency": {"limit": 8, "running": 2, "queued": 1},
-            "build": {"version": "0.3.8", "git_commit": "agent-commit", "git_dirty": false}
-        }]
+    let runtime = test_runtime();
+    let mut inventory = fleet_test_row(&runtime, "runner-a").await;
+    inventory.client.connected = true;
+    inventory.client.status = "online".into();
+    inventory.client.transport = "websocket".into();
+    inventory.client.job_concurrency_limit = Some(8);
+    inventory.client.build = Some(crate::runner_protocol::RunnerBuildInfo {
+        version: Some("0.3.8".into()),
+        git_commit: Some("agent-commit".into()),
+        git_dirty: Some(false),
+        built_at: None,
+        target: None,
+        architecture: None,
     });
-    let status = vec![serde_json::json!({
-        "client_id": "runner-a",
-        "build_git_commit": "status-commit",
-        "build_git_dirty": true,
-        "version_matches_server": false,
-        "source_alignment": {"status": "different"}
-    })];
-    let rows = runner_fleet_rows(&runners, &status, &scan);
+    inventory.last_seen_age_secs = 2;
+    inventory.active = webcodex_runner_registry::ActiveJobAggregate {
+        active: 3,
+        running: 2,
+        queued: 1,
+    };
+    let rows = runner_fleet_rows(&[inventory], &scan);
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
     let serialized = serde_json::to_value(row).unwrap();
@@ -241,10 +253,12 @@ fn runtime_home_runner_fleet_joins_health_build_jobs_projects_and_sessions() {
     assert_eq!(row.sessions.active_sessions, 2);
     assert_eq!(row.sessions.running_sessions, 1);
     assert_eq!(row.sessions.attention.open_todos, 3);
-    assert_eq!(row.build_git_commit.as_deref(), Some("status-commit"));
-    assert_eq!(row.build_git_dirty, Some(true));
-    assert_eq!(row.source_alignment.as_deref(), Some("different"));
-    assert_eq!(row.version_matches_server, Some(false));
+    assert_eq!(row.build_git_commit.as_deref(), Some("agent-commit"));
+    assert_eq!(row.build_git_dirty, Some(false));
+    assert_eq!(row.protocol_compatibility, "unknown");
+    assert_eq!(row.source_alignment, None);
+    assert_eq!(row.build_alignment, None);
+    assert_eq!(row.version_matches_server, None);
     assert_eq!(row.transport.as_deref(), Some("websocket"));
     assert_eq!(row.runner_protocol_generation, Some(2));
 }

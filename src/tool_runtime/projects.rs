@@ -45,6 +45,96 @@ pub(crate) struct ListProjectsOptions {
     pub(crate) include_git_summary: bool,
 }
 
+/// Authorized, filtered and bounded facts shared by model and Console adapters.
+/// Rows are deliberately not serializable: each adapter owns its field allowlist.
+pub(crate) struct ProjectInventoryPage {
+    pub(crate) projects: Vec<ProjectInventoryRow>,
+    pub(crate) matched_count: usize,
+}
+
+pub(crate) struct ProjectInventoryRow {
+    pub(crate) id: String,
+    pub(crate) project_ref: Option<String>,
+    pub(crate) client_id: String,
+    pub(crate) runner_status: String,
+    pub(crate) connected: bool,
+    pub(crate) project: RunnerProjectSummary,
+    last_seen: i64,
+    active_jobs: usize,
+    resolved_shell_profile: Option<String>,
+    shell_profile_status: &'static str,
+    capabilities: ProjectCapabilities,
+}
+
+#[derive(serde::Serialize)]
+struct ProjectCapabilities {
+    git_available: Option<bool>,
+    safe_smoke_project: bool,
+    supports_artifact_smoke: bool,
+    supports_cleanup_verification: bool,
+    recommended_for_smoke: bool,
+}
+
+impl ProjectInventoryPage {
+    fn into_tool_result(self, options: &ListProjectsOptions) -> ToolResult {
+        let recommended: Vec<_> = self
+            .projects
+            .iter()
+            .filter(|row| row.capabilities.recommended_for_smoke)
+            .map(|row| row.id.as_str())
+            .collect();
+        let projects: Vec<_> = self
+            .projects
+            .iter()
+            .map(|row| {
+                let project = &row.project;
+                let mut value = json!({
+                    "id": row.id,
+                    "agent_project_id": project.id,
+                    "name": project.name,
+                    "path": project.path,
+                    "description": project.description,
+                    "executor": "agent",
+                    "client_id": row.client_id,
+                    "enabled": !project.disabled,
+                    "active_jobs": row.active_jobs,
+                    "source": project_source(project),
+                    "agent_status": row.runner_status,
+                    "connected": row.connected,
+                    "resolved_shell_profile": row.resolved_shell_profile,
+                    "shell_profile_status": row.shell_profile_status,
+                    "capabilities": {
+                        "git_available": row.capabilities.git_available,
+                        "recommended_for_smoke": row.capabilities.recommended_for_smoke,
+                    },
+                });
+                if !options.summary_only {
+                    value["allow_patch"] = json!(project.allow_patch);
+                    value["disabled"] = json!(project.disabled);
+                    value["revision"] = json!(project.revision);
+                    value["last_seen"] = json!(row.last_seen);
+                    value["shell_profile"] = json!(project.shell_profile);
+                    value["capabilities"] = json!(row.capabilities);
+                }
+                if options.include_git_summary {
+                    value["git"] = registered_git_summary(project);
+                }
+                if let Some(project_ref) = &row.project_ref {
+                    value["project_ref"] = json!(project_ref);
+                }
+                value
+            })
+            .collect();
+        ToolResult::ok(json!({
+            "count": projects.len(),
+            "matched_count": self.matched_count,
+            "truncated": projects.len() < self.matched_count,
+            "projects": projects,
+            "recommended_for_smoke": recommended,
+        }))
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ProjectCandidate {
     pub(super) runtime_id: String,
@@ -236,23 +326,22 @@ impl ToolRuntime {
             .await
     }
 
-    pub(crate) async fn list_projects_for_runtime_console(
+    pub(crate) async fn query_projects_for_runtime_console(
         &self,
         auth: Option<&AuthContext>,
         client_id: Option<String>,
         project: Option<String>,
         query: Option<String>,
         limit: usize,
-    ) -> ToolResult {
-        self.list_projects_with_options_cap(
+    ) -> Result<ProjectInventoryPage, ToolResult> {
+        self.query_project_inventory(
             auth,
-            ListProjectsOptions {
+            &ListProjectsOptions {
                 client_id,
                 project,
                 query,
                 limit: Some(limit),
-                summary_only: false,
-                include_git_summary: false,
+                ..Default::default()
             },
             RUNTIME_CONSOLE_LIST_PROJECTS_MAX_RESULTS,
         )
@@ -265,10 +354,22 @@ impl ToolRuntime {
         options: ListProjectsOptions,
         max_results: usize,
     ) -> ToolResult {
-        let (query, limit) = match validate_list_projects_options(&options, max_results) {
-            Ok(validated) => validated,
-            Err(result) => return result,
-        };
+        match self
+            .query_project_inventory(auth, &options, max_results)
+            .await
+        {
+            Ok(page) => page.into_tool_result(&options),
+            Err(result) => result,
+        }
+    }
+
+    async fn query_project_inventory(
+        &self,
+        auth: Option<&AuthContext>,
+        options: &ListProjectsOptions,
+        max_results: usize,
+    ) -> Result<ProjectInventoryPage, ToolResult> {
+        let (query, limit) = validate_list_projects_options(options, max_results)?;
         let access = crate::runner_http::runner_access_from_auth(auth);
         let clients = self
             .runner_registry
@@ -278,8 +379,15 @@ impl ToolRuntime {
                 options.project.as_deref(),
             )
             .await;
-        self.list_projects_from_semantic_clients(auth, &options, query.as_deref(), limit, &clients)
-            .await
+        Ok(self
+            .project_inventory_from_semantic_clients(
+                auth,
+                options,
+                query.as_deref(),
+                limit,
+                &clients,
+            )
+            .await)
     }
 
     /// Reuse the canonical Runner/project visibility projection for an exact
@@ -317,7 +425,7 @@ impl ToolRuntime {
             .cloned()
             .map(RunnerSemanticView::from_public_view_for_test)
             .collect::<Vec<_>>();
-        self.list_projects_from_semantic_clients(
+        self.project_inventory_from_semantic_clients(
             auth,
             &options,
             query.as_deref(),
@@ -325,23 +433,23 @@ impl ToolRuntime {
             &semantic_clients,
         )
         .await
+        .into_tool_result(&options)
     }
 
-    async fn list_projects_from_semantic_clients(
+    async fn project_inventory_from_semantic_clients(
         &self,
         auth: Option<&AuthContext>,
         options: &ListProjectsOptions,
         query: Option<&str>,
         limit: Option<usize>,
         clients: &[RunnerSemanticView],
-    ) -> ToolResult {
+    ) -> ProjectInventoryPage {
         let access = crate::runner_http::runner_access_from_auth(auth);
         let mut candidates = project_candidates(clients, options, query);
         let matched_count = candidates.len();
         if let Some(limit) = limit {
             candidates.truncate(limit);
         }
-        let truncated = candidates.len() < matched_count;
         let project_ids: Vec<&str> = candidates
             .iter()
             .map(|candidate| candidate.runtime_id.as_str())
@@ -351,126 +459,45 @@ impl ToolRuntime {
             .count_active_jobs_for_projects(access.as_ref(), &project_ids)
             .await;
 
-        let mut list = Vec::with_capacity(candidates.len());
-        for ProjectCandidate {
-            runtime_id,
-            client_index,
-            project_index,
-        } in candidates
-        {
-            // Extract only one selected Project and its small Runner projection.
-            // Candidate staging never clones a Runner's complete project inventory;
-            // Job counts above share one authorized registry snapshot.
-            let (
-                client_id,
-                runner_status,
-                connected,
-                last_seen,
-                project,
-                resolved_shell_profile,
-                shell_profile_status,
-                capabilities,
-            ) = {
-                let client = &clients[client_index];
+        let projects = candidates
+            .into_iter()
+            .map(|candidate| {
+                // Clone only the selected Project after filtering and limiting.
+                let client = &clients[candidate.client_index];
                 let view = &client.view;
-                let project = &view.projects[project_index];
-                let shell_profiles = view
-                    .policy
-                    .as_ref()
-                    .and_then(|policy| policy.shell_profiles.as_ref());
-                let (resolved_shell_profile, shell_profile_status) =
-                    resolve_project_shell_profile(project.shell_profile.as_deref(), shell_profiles);
-                (
-                    view.client_id.clone(),
-                    view.status.clone(),
-                    view.connected,
-                    view.last_seen,
-                    project.clone(),
+                let project = &view.projects[candidate.project_index];
+                let (resolved_shell_profile, shell_profile_status) = resolve_project_shell_profile(
+                    project.shell_profile.as_deref(),
+                    view.policy
+                        .as_ref()
+                        .and_then(|policy| policy.shell_profiles.as_ref()),
+                );
+                ProjectInventoryRow {
+                    project_ref: self.project_reference_for_identity(
+                        &candidate.runtime_id,
+                        project.root_fingerprint.as_deref(),
+                        auth,
+                    ),
+                    active_jobs: active_jobs_by_project
+                        .get(&candidate.runtime_id)
+                        .copied()
+                        .unwrap_or(0),
+                    id: candidate.runtime_id,
+                    client_id: view.client_id.clone(),
+                    runner_status: view.status.clone(),
+                    connected: view.connected,
+                    last_seen: view.last_seen,
+                    project: project.clone(),
                     resolved_shell_profile,
                     shell_profile_status,
-                    smoke_project_capabilities(client, project),
-                )
-            };
-            let active_jobs = active_jobs_by_project
-                .get(&runtime_id)
-                .copied()
-                .unwrap_or(0);
-            let project_ref = self.project_reference_for_identity(
-                &runtime_id,
-                project.root_fingerprint.as_deref(),
-                auth,
-            );
-            let mut value = if options.summary_only {
-                json!({
-                    "id": runtime_id,
-                    "agent_project_id": project.id,
-                    "name": project.name,
-                    "path": project.path,
-                    "description": project.description,
-                    "executor": "agent",
-                    "client_id": client_id,
-                    "enabled": !project.disabled,
-                    "active_jobs": active_jobs,
-                    "source": project_source(&project),
-                    // Runtime Console and CLI ops consume this established list_projects key.
-                    "agent_status": runner_status,
-                    "connected": connected,
-                    "resolved_shell_profile": resolved_shell_profile,
-                    "shell_profile_status": shell_profile_status,
-                    "capabilities": {
-                        "git_available": capabilities["git_available"],
-                        "recommended_for_smoke": capabilities["recommended_for_smoke"],
-                    },
-                })
-            } else {
-                json!({
-                    "id": runtime_id,
-                    "agent_project_id": project.id,
-                    "name": project.name,
-                    "path": project.path,
-                    "executor": "agent",
-                    "client_id": client_id,
-                    "allow_patch": project.allow_patch,
-                    "description": project.description,
-                    "enabled": !project.disabled,
-                    "disabled": project.disabled,
-                    "revision": project.revision,
-                    "active_jobs": active_jobs,
-                    "source": project_source(&project),
-                    // Runtime Console and CLI ops consume this established list_projects key.
-                    "agent_status": runner_status,
-                    "connected": connected,
-                    "last_seen": last_seen,
-                    "shell_profile": project.shell_profile,
-                    "resolved_shell_profile": resolved_shell_profile,
-                    "shell_profile_status": shell_profile_status,
-                    "capabilities": capabilities,
-                })
-            };
-            if options.include_git_summary {
-                value["git"] = registered_git_summary(&project);
-            }
-            if let Some(project_ref) = project_ref {
-                value["project_ref"] = json!(project_ref);
-            }
-            list.push(value);
-        }
-        let recommended_for_smoke: Vec<Value> = list
-            .iter()
-            .filter(|project| {
-                project["capabilities"]["recommended_for_smoke"]
-                    .as_bool()
-                    .unwrap_or(false)
+                    capabilities: smoke_project_capabilities(client, project),
+                }
             })
-            .filter_map(|project| project["id"].as_str().map(|id| json!(id)))
             .collect();
-        ToolResult::ok(json!({
-            "count": list.len(),
-            "matched_count": matched_count,
-            "truncated": truncated,
-            "projects": list,
-            "recommended_for_smoke": recommended_for_smoke,
-        }))
+        ProjectInventoryPage {
+            projects,
+            matched_count,
+        }
     }
 
     /// Register an existing directory as a WebCodex project on the selected
@@ -1049,7 +1076,7 @@ fn smoke_marker_present(project: &crate::runner_protocol::RunnerProjectSummary) 
 fn smoke_project_capabilities(
     client: &RunnerSemanticView,
     project: &crate::runner_protocol::RunnerProjectSummary,
-) -> Value {
+) -> ProjectCapabilities {
     let git_available = project_git_available(project);
     let safe_smoke_project =
         project.allow_patch && client.view.connected && smoke_marker_present(project);
@@ -1061,13 +1088,13 @@ fn smoke_project_capabilities(
         && git_available.is_some_and(|available| available)
         && supports_cleanup_verification;
 
-    json!({
-        "git_available": git_available,
-        "safe_smoke_project": safe_smoke_project,
-        "supports_artifact_smoke": supports_artifact_smoke,
-        "supports_cleanup_verification": supports_cleanup_verification,
-        "recommended_for_smoke": recommended_for_smoke,
-    })
+    ProjectCapabilities {
+        git_available,
+        safe_smoke_project,
+        supports_artifact_smoke,
+        supports_cleanup_verification,
+        recommended_for_smoke,
+    }
 }
 
 /// Resolve which shell profile a project uses and whether it is configured.

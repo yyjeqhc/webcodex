@@ -3,7 +3,7 @@ use serde_json::json;
 use super::helpers::{command_rejected_message, project_relative_runner_cwd, resolve_runner_cwd};
 use super::process::{
     add_structured_continuation_facts, execution_admission_failure_result,
-    process_tool_failure_result,
+    process_tool_failure_result, terminal_structured_job_result,
 };
 use super::structured_execution::{
     await_structured_job_result, await_structured_request_result, StructuredExecutionBudget,
@@ -220,6 +220,7 @@ impl ToolRuntime {
                 budget,
                 &summary,
                 declared_purpose,
+                terminal_structured_job_result,
             )
             .await
             {

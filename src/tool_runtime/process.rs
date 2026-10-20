@@ -1060,6 +1060,7 @@ impl ToolRuntime {
                 budget,
                 &summary,
                 declared_purpose,
+                terminal_structured_job_result,
             )
             .await
             {

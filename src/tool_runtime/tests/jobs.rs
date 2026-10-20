@@ -3258,6 +3258,7 @@ fn run_shell_recovered_terminal_snapshot_stays_rich_after_projection() {
     job.recovery_state = Some("reconciled".to_string());
     job.recovered_after_server_restart = true;
     job.reconciled_at = Some(42);
+    job.recovery_reason_code = Some("server_restart_reconciliation".to_string());
     let mut result =
         ToolRuntime::run_shell_terminal_job_result(&job, "witness".into(), String::new(), 60);
     super::super::process::add_structured_continuation_facts(&mut result, 60, 10, true);
@@ -3274,6 +3275,10 @@ fn run_shell_recovered_terminal_snapshot_stays_rich_after_projection() {
     assert_eq!(result.output["recovery_state"], "reconciled");
     assert_eq!(result.output["reconciled_at"], 42);
     assert_eq!(result.output["recovered_after_server_restart"], true);
+    assert_eq!(
+        result.output["recovery_reason_code"],
+        "server_restart_reconciliation"
+    );
     assert_run_shell_result_matches_schema(&result);
 }
 

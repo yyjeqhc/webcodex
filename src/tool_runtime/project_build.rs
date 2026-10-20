@@ -6,10 +6,7 @@ use super::process::{
     add_structured_continuation_facts, classify_process_failure, process_tool_failure_result,
     terminal_structured_job_result,
 };
-use super::structured_execution::{
-    await_hidden_structured_job, finalize_hidden_terminal_projection, HiddenStructuredJobWait,
-    StructuredExecutionBudget,
-};
+use super::structured_execution::{await_structured_job_result, StructuredExecutionBudget};
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_http::{
@@ -285,95 +282,21 @@ impl ToolRuntime {
                 return result;
             }
         };
-        let wait = self
-            .structured_execution_sync_wait
-            .min(Duration::from_secs(budget.sync_wait_secs));
-        let handoff = await_hidden_structured_job(
+        let mut result = match await_structured_job_result(
             self.runner_registry.clone(),
-            job.job_id.clone(),
-            wait,
-            auth.cloned(),
+            job.job_id,
+            self.structured_execution_sync_wait,
+            auth,
+            budget,
+            &summary,
+            ExecutionPurpose::Build,
+            terminal_structured_job_result,
         )
-        .await;
-        let mut result = match handoff {
-            Ok(HiddenStructuredJobWait::Terminal {
-                job,
-                stdout,
-                stderr,
-            }) => {
-                let mut result = terminal_structured_job_result(
-                    &job,
-                    stdout,
-                    stderr,
-                    budget.effective_timeout_secs,
-                );
-                finalize_hidden_terminal_projection(
-                    self.runner_registry.as_ref(),
-                    auth,
-                    &job,
-                    &mut result,
-                    budget,
-                )
-                .await;
-                result
-            }
-            Ok(HiddenStructuredJobWait::Continued {
-                observation,
-                execution_state,
-                command_started,
-            }) => {
-                let detected_summary =
-                    crate::tool_runtime::jobs::detected_job_summary_with_activity(
-                        Some(&summary),
-                        Some(ExecutionPurpose::Build.as_str()),
-                        &observation.job.status,
-                        observation.job.exit_code.map(i64::from),
-                        &observation.stdout_tail,
-                        &observation.stderr_tail,
-                        observation.stdout_truncated || observation.stderr_truncated,
-                        observation.job.activity.as_ref(),
-                    );
-                ToolResult::ok(json!({
-                    "execution_state": execution_state,
-                    "command_started": command_started,
-                    "command_completed": false,
-                    "command_ok": false,
-                    "exit_code": null,
-                    "failure_kind": null,
-                    "tool_failure": false,
-                    "promoted_to_job": true,
-                    "terminal": false,
-                    "job_id": observation.job.job_id,
-                    "job_status": observation.job.status,
-                    "observation_token": observation.job.observation_token,
-                    "continuation_semantics": crate::tool_runtime::jobs::job_observation_continuation_semantics(),
-                    "activity": observation.job.activity,
-                    "effective_timeout_secs": budget.effective_timeout_secs,
-                    "sync_wait_secs": budget.sync_wait_secs,
-                    "async_handoff_available": true,
-                    "stdout_tail": observation.stdout_tail,
-                    "stderr_tail": observation.stderr_tail,
-                    "stdout_lines": observation.stdout_lines,
-                    "stderr_lines": observation.stderr_lines,
-                    "stdout_truncated": observation.stdout_truncated,
-                    "stderr_truncated": observation.stderr_truncated,
-                    "detected_summary": detected_summary,
-                    "continuation": crate::tool_runtime::jobs::observe_job_continuation(
-                        &observation.job.job_id,
-                        observation.job.observation_token.as_deref(),
-                    ),
-                }))
-            }
+        .await
+        {
+            Ok(result) => result,
             Err(failure) => failure.into_tool_result(&project, budget),
         };
-        if result.output["promoted_to_job"] != json!(true) {
-            add_structured_continuation_facts(
-                &mut result,
-                budget.effective_timeout_secs,
-                budget.sync_wait_secs,
-                true,
-            );
-        }
         decorate(&mut result.output, &backend, &summary, &resolved_cwd);
         result
     }

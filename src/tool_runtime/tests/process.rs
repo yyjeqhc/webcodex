@@ -30,13 +30,13 @@ fn process_call(project: String, session_id: Option<String>) -> ToolCall {
     }
 }
 
-// The shared execution lifecycle is exercised through both public entry points.
+// The shared execution lifecycle is exercised through all three public entry points.
 // Reuse the fake Runner fixture so these checks never spawn a real process.
 fn structured_execution_calls(
     project: &str,
     timeout_secs: u64,
     sync_wait_secs: Option<u64>,
-) -> [(&'static str, ToolCall); 2] {
+) -> [(&'static str, ToolCall); 3] {
     let mut process = process_call(project.to_string(), None);
     if let ToolCall::RunProcess {
         timeout_secs: timeout,
@@ -59,7 +59,26 @@ fn structured_execution_calls(
         cwd: None,
         purpose: Some(ExecutionPurpose::Diagnostic),
     };
-    [("process", process), ("script", script)]
+    let shell = ToolCall::RunShell {
+        project: project.to_string(),
+        command: "printf lifecycle".to_string(),
+        login: false,
+        session_id: None,
+        timeout_secs: Some(timeout_secs),
+        sync_wait_secs,
+        cwd: None,
+        purpose: Some(ExecutionPurpose::Diagnostic),
+        shell: None,
+    };
+    [("process", process), ("script", script), ("shell", shell)]
+}
+
+fn structured_job_request_kind(entry: &str) -> String {
+    if entry == "shell" {
+        "start_job".to_string()
+    } else {
+        format!("start_{entry}_job")
+    }
 }
 
 fn process_sync_call(project: String, session_id: Option<String>) -> ToolCall {
@@ -1218,8 +1237,15 @@ async fn structured_execution_fast_terminal_jobs_project_back_without_visible_du
             let (task, request) =
                 dispatch_process_until_request(&runtime, "process-fast-job", call, auth.clone())
                     .await;
-            assert_eq!(request.kind, format!("start_{entry}_job"));
-            assert_eq!(request.command, "");
+            assert_eq!(request.kind, structured_job_request_kind(entry));
+            assert_eq!(
+                request.command,
+                if entry == "shell" {
+                    "printf lifecycle"
+                } else {
+                    ""
+                }
+            );
             assert_eq!(request.process.is_some(), entry == "process");
             assert_eq!(request.script.is_some(), entry == "script");
             update_process_job(
@@ -1274,9 +1300,12 @@ async fn structured_execution_fast_terminal_jobs_project_back_without_visible_du
                     "stdout_truncated",
                     "stderr_truncated",
                 ] {
+                    if entry == "shell" && matches!(omitted, "purpose" | "cwd") {
+                        continue; // Shell retains its command presentation on fast success.
+                    }
                     assert!(
                         result.output.get(omitted).is_none(),
-                        "boring terminal success field {omitted} should be omitted: {}",
+                        "{entry} boring terminal success field {omitted} should be omitted: {}",
                         result.output
                     );
                 }
@@ -1320,7 +1349,7 @@ async fn structured_execution_fast_outcome_unknown_preserves_visible_recovery_jo
         let (task, request) =
             dispatch_process_until_request(&runtime, "process-fast-unknown", call, auth.clone())
                 .await;
-        assert_eq!(request.kind, format!("start_{entry}_job"));
+        assert_eq!(request.kind, structured_job_request_kind(entry));
         let job_id = request.job_id.clone().expect("structured process Job id");
         update_process_job(
             &runtime,
@@ -1867,7 +1896,7 @@ async fn structured_execution_stop_job_preserves_handoff_identity_without_replac
         .await;
         let handoff = task.await.unwrap();
         let job_id = assert_sparse_pending_job_handoff(&handoff.output).to_string();
-        assert_eq!(start_request.kind, format!("start_{entry}_job"));
+        assert_eq!(start_request.kind, structured_job_request_kind(entry));
         assert_eq!(start_request.job_id.as_deref(), Some(job_id.as_str()));
         assert!(
             probe_patch_agent_request(&runtime, "process-stop-job")
@@ -2101,7 +2130,7 @@ async fn authority_denied_run_process_has_prestart_lifecycle() {
 }
 
 #[tokio::test]
-async fn structured_execution_wait_timeout_uses_dispatch_evidence_for_both_entries() {
+async fn structured_execution_wait_timeout_uses_dispatch_evidence_for_all_entries() {
     for dispatched in [false, true] {
         let temp = tempfile::tempdir().unwrap();
         let runtime = test_runtime();
@@ -2125,7 +2154,16 @@ async fn structured_execution_wait_timeout_uses_dispatch_evidence_for_both_entri
             assert!(!result.success, "{entry}, dispatched={dispatched}");
             assert_eq!(result.output["command_started"], dispatched);
             assert_eq!(result.output["command_completed"], false);
-            assert_eq!(result.output["terminal"], !dispatched);
+            if entry == "shell" {
+                for absent in ["terminal", "execution_source", "cwd", "shell"] {
+                    assert!(
+                        result.output.get(absent).is_none(),
+                        "wait failures carry no response presentation: {absent}"
+                    );
+                }
+            } else {
+                assert_eq!(result.output["terminal"], !dispatched);
+            }
             assert_eq!(
                 result.output["execution_state"],
                 if dispatched {
@@ -2169,6 +2207,7 @@ async fn structured_execution_dropped_waiter_without_dispatch_record_stays_unkno
     for kind in [
         StructuredRequestKind::Process,
         StructuredRequestKind::Script,
+        StructuredRequestKind::Shell,
     ] {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         drop(sender);
@@ -2189,6 +2228,64 @@ async fn structured_execution_dropped_waiter_without_dispatch_record_stays_unkno
             .as_deref()
             .unwrap()
             .contains("Do not automatically retry"));
+    }
+}
+
+#[tokio::test]
+async fn run_shell_received_failures_keep_presentation_and_response_classification() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let client_id = "shared-shell-response";
+    let project = register_process_job_agent(&runtime, client_id, temp.path()).await;
+    for (state, failure_kind) in [
+        (ShellCommandExecutionState::NotStarted, "runtime_error"),
+        (
+            ShellCommandExecutionState::OutcomeUnknown,
+            "outcome_unknown",
+        ),
+    ] {
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            async move {
+                runtime
+                    .run_shell_with_contract(
+                        project,
+                        "printf lifecycle".to_string(),
+                        Some(1),
+                        Some(1),
+                        None,
+                        Some(ExecutionPurpose::Diagnostic),
+                        None,
+                    )
+                    .await
+            }
+        });
+        let request = wait_for_patch_agent_request(&runtime, client_id).await;
+        assert_eq!(request.kind, "run_shell");
+        // This legacy Runner response code has a Script-specific classification.
+        // Sharing lifecycle mechanics must not silently apply it to Shell.
+        complete_process_lifecycle(
+            &runtime,
+            client_id,
+            request.request_id,
+            state,
+            None,
+            "",
+            "",
+            Some("interpreter_unavailable"),
+        )
+        .await;
+        let result = task.await.unwrap();
+        assert!(!result.success);
+        assert_eq!(result.output["failure_kind"], failure_kind);
+        assert_eq!(result.output["execution_source"], "run_shell");
+        assert!(result.output["cwd"].is_string());
+        assert!(result.output["shell"].is_string());
+        assert!(result.output.get("terminal").is_none());
+        assert!(probe_patch_agent_request(&runtime, client_id)
+            .await
+            .is_none());
     }
 }
 

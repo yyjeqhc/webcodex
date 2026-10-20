@@ -2,7 +2,6 @@ use super::helpers::{bounded_tail, command_rejected_message, COMMAND_STDIO_TAIL_
 use super::process::{
     add_structured_continuation_facts, classify_process_failure, command_failure_result,
     outcome_unknown_result, process_tool_failure_result, success_output,
-    terminal_structured_job_result,
 };
 use super::shell::{dispatch_uncertainty_lifecycle, runner_command_lifecycle};
 use super::{ExecutionPurpose, ToolResult};
@@ -90,6 +89,7 @@ impl StructuredExecutionBudget {
 
 /// Wait for an admitted durable execution and project its existing Job. Admission
 /// stays with the caller; this path cannot enqueue a replacement execution.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn await_structured_job_result(
     clients: Arc<RunnerRegistry>,
     job_id: String,
@@ -98,6 +98,7 @@ pub(crate) async fn await_structured_job_result(
     budget: StructuredExecutionBudget,
     summary: &str,
     purpose: ExecutionPurpose,
+    terminal_result: fn(&ShellJobInfo, String, String, u64) -> ToolResult,
 ) -> Result<ToolResult, StructuredJobHandoffFailure> {
     let wait = sync_wait_limit.min(Duration::from_secs(budget.sync_wait_secs));
     match await_hidden_structured_job(clients.clone(), job_id, wait, auth.cloned()).await? {
@@ -106,8 +107,7 @@ pub(crate) async fn await_structured_job_result(
             stdout,
             stderr,
         } => {
-            let mut result =
-                terminal_structured_job_result(&job, stdout, stderr, budget.effective_timeout_secs);
+            let mut result = terminal_result(&job, stdout, stderr, budget.effective_timeout_secs);
             add_structured_continuation_facts(
                 &mut result,
                 budget.effective_timeout_secs,
@@ -172,6 +172,7 @@ pub(crate) async fn await_structured_job_result(
 pub(crate) enum StructuredRequestKind {
     Process,
     Script,
+    Shell,
 }
 
 impl StructuredRequestKind {
@@ -179,6 +180,7 @@ impl StructuredRequestKind {
         match self {
             Self::Process => "process",
             Self::Script => "script",
+            Self::Shell => "shell",
         }
     }
 
@@ -186,6 +188,9 @@ impl StructuredRequestKind {
         match self {
             Self::Process => "inspect the rejection, correct executable/argv/cwd, then retry.",
             Self::Script => "inspect the rejection, correct language/script/args/cwd, then retry.",
+            Self::Shell => {
+                "inspect the rejection reason, adjust the cwd/command/project, then retry."
+            }
         }
     }
 }
@@ -205,21 +210,43 @@ pub(crate) async fn await_structured_request_result(
     timeout_secs: u64,
     kind: StructuredRequestKind,
 ) -> ToolResult {
+    match await_structured_request_response(clients, request_id, receiver, timeout_secs, kind).await
+    {
+        Ok(response) => structured_response_result(response, timeout_secs, kind),
+        Err(result) => result,
+    }
+}
+
+/// Keep a received Runner response distinct from a failed wait so callers can
+/// attach only facts actually supplied by that response.
+pub(crate) async fn await_structured_request_response(
+    clients: &RunnerRegistry,
+    request_id: &str,
+    receiver: tokio::sync::oneshot::Receiver<ShellRunResponse>,
+    timeout_secs: u64,
+    kind: StructuredRequestKind,
+) -> Result<ShellRunResponse, ToolResult> {
     let failure = match tokio::time::timeout(Duration::from_secs(timeout_secs + 2), receiver).await
     {
-        Ok(Ok(response)) => return structured_response_result(response, timeout_secs, kind),
+        Ok(Ok(response)) => return Ok(response),
         Ok(Err(_)) => StructuredRequestWaitFailure::WaiterDropped,
         Err(_) => StructuredRequestWaitFailure::TimedOut,
     };
     let dispatch = clients.cancel_request_dispatch_state(request_id).await;
     let state = dispatch_uncertainty_lifecycle(dispatch);
     let name = kind.name();
-    match (failure, state) {
+    Err(match (failure, state) {
         (StructuredRequestWaitFailure::WaiterDropped, ShellCommandExecutionState::NotStarted) => {
             process_tool_failure_result(
                 command_rejected_message(
-                    format!("{name} request waiter was dropped before Runner dispatch"),
-                    "check Runner connectivity, then retry.",
+                    match kind {
+                        StructuredRequestKind::Shell => "shell request waiter was dropped before the queued request was dispatched".to_string(),
+                        _ => format!("{name} request waiter was dropped before Runner dispatch"),
+                    },
+                    match kind {
+                        StructuredRequestKind::Shell => "check Runner connectivity, then retry with the same shell path. Use run_job only for intentional asynchronous shell start; use run_detached_process only when a native child must survive Runner restart/replacement.",
+                        _ => "check Runner connectivity, then retry.",
+                    },
                 ),
                 "runtime_error",
                 state,
@@ -228,23 +255,31 @@ pub(crate) async fn await_structured_request_result(
         (StructuredRequestWaitFailure::TimedOut, ShellCommandExecutionState::NotStarted) => {
             process_tool_failure_result(
                 command_rejected_message(
-                    format!("timed out waiting {timeout_secs} seconds before Runner dispatch"),
-                    "check Runner connectivity and availability, then retry.",
+                    match kind {
+                        StructuredRequestKind::Shell => format!("timed out waiting {timeout_secs} seconds before the queued Runner request was dispatched"),
+                        _ => format!("timed out waiting {timeout_secs} seconds before Runner dispatch"),
+                    },
+                    match kind {
+                        StructuredRequestKind::Shell => "check Runner connectivity and availability, then retry with the same shell path. Use run_job only for intentional asynchronous shell start; use run_detached_process only when a native child must survive Runner restart/replacement.",
+                        _ => "check Runner connectivity and availability, then retry.",
+                    },
                 ),
                 "timeout",
                 state,
             )
         }
-        (StructuredRequestWaitFailure::WaiterDropped, _) => outcome_unknown_result(format!(
-            "{name} request waiter was dropped after dispatch may have occurred"
-        )),
-        (StructuredRequestWaitFailure::TimedOut, _) => outcome_unknown_result(format!(
-            "timed out waiting {timeout_secs} seconds for the Runner {name} result"
-        )),
-    }
+        (StructuredRequestWaitFailure::WaiterDropped, _) => outcome_unknown_result(match kind {
+            StructuredRequestKind::Shell => "shell request waiter was dropped before a result was returned".to_string(),
+            _ => format!("{name} request waiter was dropped after dispatch may have occurred"),
+        }),
+        (StructuredRequestWaitFailure::TimedOut, _) => outcome_unknown_result(match kind {
+            StructuredRequestKind::Shell => format!("timed out waiting {timeout_secs} seconds for the agent shell result"),
+            _ => format!("timed out waiting {timeout_secs} seconds for the Runner {name} result"),
+        }),
+    })
 }
 
-fn structured_response_result(
+pub(crate) fn structured_response_result(
     response: ShellRunResponse,
     timeout_secs: u64,
     kind: StructuredRequestKind,
@@ -255,11 +290,21 @@ fn structured_response_result(
     let stderr = response.stderr.unwrap_or_default();
     match state {
         ShellCommandExecutionState::NotStarted => {
-            let fallback = format!("Runner rejected the {} before spawn", kind.name());
+            let fallback = match kind {
+                StructuredRequestKind::Shell => {
+                    "Runner rejected the command before process spawn".to_string()
+                }
+                _ => format!("Runner rejected the {} before spawn", kind.name()),
+            };
             let reason = response.error.as_deref().unwrap_or(&fallback);
             process_tool_failure_result(
                 command_rejected_message(reason, kind.rejection_hint()),
-                classify_process_failure(reason),
+                match kind {
+                    StructuredRequestKind::Shell => {
+                        super::ToolRuntime::classify_run_shell_response_failure(reason)
+                    }
+                    _ => classify_process_failure(reason),
+                },
                 state,
             )
         }

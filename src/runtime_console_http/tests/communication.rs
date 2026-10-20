@@ -21,7 +21,7 @@ async fn communication_canonical_not_found_errors_render_as_http_404() {
                 .with_recovery(RecoveryKind::FixInput);
         let expected_output = result.output.clone();
         let mut response = Response::new();
-        render_communication_result(&mut response, result);
+        super::super::communication::CommunicationResponse(result).render(&mut response);
         assert_eq!(response.status_code, Some(StatusCode::NOT_FOUND));
         let body = response.take_json::<Value>().await.unwrap();
         assert_eq!(body, expected_output, "{error_kind}");

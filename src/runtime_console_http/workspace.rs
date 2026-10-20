@@ -49,25 +49,14 @@ fn catalog(value: Result<Value, RuntimeConsoleError>) -> Value {
 }
 
 #[handler]
-pub(super) async fn extensions(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<ProjectInput>().await {
-        Ok(value) => value,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    if let Err(error) = authorize_exact_project(&runtime, &auth, &input.project).await {
-        return render_error(res, error);
-    }
-    let project = match runtime
+pub(super) async fn extensions(req: &mut Request, depot: &mut Depot) -> ConsoleResult {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: ProjectInput = parse_console_json(req).await?;
+    authorize_exact_project(&runtime, &auth, &input.project).await?;
+    let project = runtime
         .resolve_project_input_for_auth(&input.project, Some(&auth))
         .await
-    {
-        Ok(project) => project,
-        Err(_) => return render_error(res, RuntimeConsoleError::NotFound),
-    };
+        .map_err(|_| RuntimeConsoleError::NotFound)?;
     let instructions = runtime.load_effective_coding_instructions(&project, Some(&auth));
     let skills = product_call(
         &runtime,
@@ -93,41 +82,30 @@ pub(super) async fn extensions(req: &mut Request, depot: &mut Depot, res: &mut R
             })
         })
         .collect();
-    res.render(Json(json!({
+    Ok(Json(json!({
         "project":project.resolved_id,
         "runner":project.config.client_id,
         "instructions":{"files":files,"scan_complete":instructions.scan_complete,"truncated":instructions.truncated},
         "skills":catalog(skills), "plugins":catalog(plugins),
         "can_reload_plugins":auth.has_scope(webcodex_core::authority::SCOPE_PLUGIN_MANAGE),
-    })));
+    })))
 }
 
 #[handler]
-pub(super) async fn instruction(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<InstructionInput>().await {
-        Ok(value) => value,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
+pub(super) async fn instruction(req: &mut Request, depot: &mut Depot) -> ConsoleResult {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: InstructionInput = parse_console_json(req).await?;
     if input.path.len() > 4096
         || input.fingerprint.len() > 128
         || !matches!(input.source_scope.as_str(), "runner" | "project")
     {
-        return render_error(res, RuntimeConsoleError::Invalid);
+        return Err(RuntimeConsoleError::Invalid);
     }
-    if let Err(error) = authorize_exact_project(&runtime, &auth, &input.project).await {
-        return render_error(res, error);
-    }
-    let project = match runtime
+    authorize_exact_project(&runtime, &auth, &input.project).await?;
+    let project = runtime
         .resolve_project_input_for_auth(&input.project, Some(&auth))
         .await
-    {
-        Ok(project) => project,
-        Err(_) => return render_error(res, RuntimeConsoleError::NotFound),
-    };
+        .map_err(|_| RuntimeConsoleError::NotFound)?;
     let snapshot = runtime
         .load_effective_coding_instructions(&project, Some(&auth))
         .await;
@@ -140,69 +118,51 @@ pub(super) async fn instruction(req: &mut Request, depot: &mut Depot, res: &mut 
                 == Some(input.source_scope.as_str())
     });
     match file {
-        Some(file) if file.fingerprint == input.fingerprint => res.render(Json(
+        Some(file) if file.fingerprint == input.fingerprint => Ok(Json(
             json!({"content":file.content,"truncated":file.truncated,"path":file.path}),
         )),
-        Some(_) => render_error(res, RuntimeConsoleError::Conflict),
-        None => render_error(res, RuntimeConsoleError::NotFound),
+        Some(_) => Err(RuntimeConsoleError::Conflict),
+        None => Err(RuntimeConsoleError::NotFound),
     }
 }
 
 #[handler]
-pub(super) async fn project_git(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<ProjectInput>().await {
-        Ok(value) => value,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    if let Err(error) = authorize_exact_project(&runtime, &auth, &input.project).await {
-        return render_error(res, error);
-    }
-    match product_call(&runtime, &auth, "read_workspace_changes", json!({"project":input.project,"include_diff":false})).await {
-        Ok(value) => res.render(Json(json!({
-            "branch":value["branch"], "clean":value["clean"], "git_available":value["git_available"],
-            "non_git_project":value["non_git_project"], "files":value["files"],
-            "files_total":value["files_total"], "files_truncated":value["files_truncated"],
-        }))),
-        Err(error) => render_error(res, error),
-    }
+pub(super) async fn project_git(req: &mut Request, depot: &mut Depot) -> ConsoleResult {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: ProjectInput = parse_console_json(req).await?;
+    authorize_exact_project(&runtime, &auth, &input.project).await?;
+    let value = product_call(
+        &runtime,
+        &auth,
+        "read_workspace_changes",
+        json!({"project":input.project,"include_diff":false}),
+    )
+    .await?;
+    Ok(Json(json!({
+        "branch":value["branch"], "clean":value["clean"], "git_available":value["git_available"],
+        "non_git_project":value["non_git_project"], "files":value["files"],
+        "files_total":value["files_total"], "files_truncated":value["files_truncated"],
+    })))
 }
 
 #[handler]
-pub(super) async fn plugin_reload(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<PluginReloadInput>().await {
-        Ok(value) => value,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    if let Err(error) = authorize_exact_project(&runtime, &auth, &input.project).await {
-        return render_error(res, error);
-    }
-    let project = match runtime
+pub(super) async fn plugin_reload(req: &mut Request, depot: &mut Depot) -> ConsoleResult {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: PluginReloadInput = parse_console_json(req).await?;
+    authorize_exact_project(&runtime, &auth, &input.project).await?;
+    let project = runtime
         .resolve_project_input_for_auth(&input.project, Some(&auth))
         .await
-    {
-        Ok(project) => project,
-        Err(_) => return render_error(res, RuntimeConsoleError::NotFound),
-    };
+        .map_err(|_| RuntimeConsoleError::NotFound)?;
     // The canonical Plugin operation independently enforces manage scope and effect gates.
-    match product_call(
+    product_call(
         &runtime,
         &auth,
         "plugin_tool",
         json!({"action":"reload","runner":project.config.client_id,"plugin":input.plugin}),
     )
     .await
-    {
-        Ok(value) => res.render(Json(value)),
-        Err(error) => render_error(res, error),
-    }
+    .map(Json)
 }
 
 #[cfg(test)]

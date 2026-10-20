@@ -4,9 +4,9 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    exact_console_project_for_auth, prepared, render_error, require_communication_read,
+    exact_console_project_for_auth, parse_console_json, prepared, require_communication_read,
     require_project_read, workflow_session_detail_with_windows, workflow_session_locate_for_auth,
-    RuntimeConsoleError,
+    ConsoleResult, RuntimeConsoleError,
 };
 
 const GOAL_LIST_LIMIT: usize = 100;
@@ -372,43 +372,23 @@ async fn goal_detail_for_auth(
 }
 
 #[handler]
-pub(super) async fn goals_handler(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    if let Err(error) = require_communication_read(&auth).and_then(|_| require_project_read(&auth))
-    {
-        return render_error(res, error);
-    }
-    let input = match req.parse_json::<GoalsInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match goals_for_auth(&runtime, &auth, input.project.as_deref()).await {
-        Ok(value) => res.render(Json(value)),
-        Err(error) => render_error(res, error),
-    }
+pub(super) async fn goals_handler(req: &mut Request, depot: &mut Depot) -> ConsoleResult {
+    let (runtime, auth) = prepared(req, depot).await?;
+    require_communication_read(&auth).and_then(|_| require_project_read(&auth))?;
+    let input: GoalsInput = parse_console_json(req).await?;
+    goals_for_auth(&runtime, &auth, input.project.as_deref())
+        .await
+        .map(Json)
 }
 
 #[handler]
-pub(super) async fn goal_handler(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    if let Err(error) = require_communication_read(&auth).and_then(|_| require_project_read(&auth))
-    {
-        return render_error(res, error);
-    }
-    let input = match req.parse_json::<GoalInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match goal_detail_for_auth(&runtime, &auth, &input.goal_id).await {
-        Ok(value) => res.render(Json(value)),
-        Err(error) => render_error(res, error),
-    }
+pub(super) async fn goal_handler(req: &mut Request, depot: &mut Depot) -> ConsoleResult {
+    let (runtime, auth) = prepared(req, depot).await?;
+    require_communication_read(&auth).and_then(|_| require_project_read(&auth))?;
+    let input: GoalInput = parse_console_json(req).await?;
+    goal_detail_for_auth(&runtime, &auth, &input.goal_id)
+        .await
+        .map(Json)
 }
 
 #[cfg(test)]

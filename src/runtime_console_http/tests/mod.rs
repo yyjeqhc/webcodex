@@ -20,6 +20,7 @@ use serde_json::json;
 
 mod communication;
 mod goals;
+mod http_responses;
 mod overview;
 mod projects;
 mod session_collaboration;

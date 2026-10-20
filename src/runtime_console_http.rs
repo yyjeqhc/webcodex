@@ -22,6 +22,8 @@ use crate::tool_runtime::window_activity_projection::{
 };
 use crate::tool_runtime::{ToolCall, ToolRuntime};
 use salvo::prelude::*;
+use salvo::writing::Scribe;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -860,10 +862,26 @@ impl RuntimeConsoleError {
     }
 }
 
+type ConsoleResult<T = Value> = Result<Json<T>, RuntimeConsoleError>;
+
+impl Scribe for RuntimeConsoleError {
+    fn render(self, res: &mut Response) {
+        let status = self.status();
+        res.status_code(status);
+        res.render(crate::json_error(status, self.message()));
+    }
+}
+
 fn render_error(res: &mut Response, error: RuntimeConsoleError) {
-    let status = error.status();
-    res.status_code(status);
-    res.render(crate::json_error(status, error.message()));
+    error.render(res);
+}
+
+async fn parse_console_json<T: DeserializeOwned>(
+    req: &mut Request,
+) -> Result<T, RuntimeConsoleError> {
+    req.parse_json()
+        .await
+        .map_err(|_| RuntimeConsoleError::Invalid)
 }
 
 fn bounded_text(value: &Value, max_chars: usize) -> Option<String> {
@@ -963,34 +981,6 @@ fn require_communication_manage(auth: &AuthContext) -> Result<(), RuntimeConsole
             message: "Communication read and manage access required",
         })
     }
-}
-
-fn render_communication_result(res: &mut Response, result: crate::tool_runtime::ToolResult) {
-    if result.success {
-        res.render(Json(result.output));
-        return;
-    }
-    let error_kind = result
-        .output
-        .get("error_kind")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let status = match error_kind {
-        "communication_store_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
-        "communication_idempotency_conflict" | "agent_profile_changed" | "conversation_closed" => {
-            StatusCode::CONFLICT
-        }
-        "agent_not_found"
-        | "endpoint_not_found"
-        | "conversation_not_found"
-        | "message_not_found"
-        | "reply_message_not_found"
-        | "delivery_not_found" => StatusCode::NOT_FOUND,
-        "communication_principal_unavailable" => StatusCode::FORBIDDEN,
-        _ => StatusCode::BAD_REQUEST,
-    };
-    res.status_code(status);
-    res.render(Json(result.output));
 }
 
 fn require_project_read(auth: &AuthContext) -> Result<(), RuntimeConsoleError> {
@@ -2397,60 +2387,38 @@ async fn session_replace_message_for_auth(
 }
 
 #[handler]
-async fn overview(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<OverviewInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
+async fn overview(req: &mut Request, depot: &mut Depot) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: OverviewInput = parse_console_json(req).await?;
     let output = if input.include_projects == Some(false) {
         if input.include_sessions == Some(true) {
-            return render_error(res, RuntimeConsoleError::Invalid);
+            return Err(RuntimeConsoleError::Invalid);
         }
         overview_primary::primary_for_auth(&runtime, &auth).await
     } else {
         overview_for_auth_detail(&runtime, &auth, input.include_sessions.unwrap_or(true)).await
     };
-    match output {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+    output.map(Json)
 }
 
 #[handler]
-async fn runner(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<RunnerInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match runner_for_auth(&runtime, &auth, &input.client_id, input.project_limit).await {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+async fn runner(req: &mut Request, depot: &mut Depot) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: RunnerInput = parse_console_json(req).await?;
+    runner_for_auth(&runtime, &auth, &input.client_id, input.project_limit)
+        .await
+        .map(Json)
 }
 
 #[handler]
-async fn browser_status(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<BrowserStatusInput>().await {
-        Ok(value) => value,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
+async fn browser_status(req: &mut Request, depot: &mut Depot) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: BrowserStatusInput = parse_console_json(req).await?;
     if input.client_id.is_empty()
         || input.client_id.len() > 128
         || input.client_id.chars().any(char::is_control)
     {
-        return render_error(res, RuntimeConsoleError::Invalid);
+        return Err(RuntimeConsoleError::Invalid);
     }
     // Enforce the canonical BrowserObserve scope, capability, Runner visibility,
     // permission and dispatch path. This console route only projects the count.
@@ -2466,73 +2434,48 @@ async fn browser_status(req: &mut Request, depot: &mut Depot, res: &mut Response
         .await
     {
         Ok(result) if result.success => match browser_status_counts(&result.output) {
-            Some((count, owned_count, attached_count)) => res.render(Json(serde_json::json!({
+            Some((count, owned_count, attached_count)) => Ok(Json(serde_json::json!({
                 "client_id": input.client_id,
                 "state": "fresh",
                 "count": count,
                 "owned_count": owned_count,
                 "attached_count": attached_count,
             }))),
-            None => render_error(res, RuntimeConsoleError::Internal),
+            None => Err(RuntimeConsoleError::Internal),
         },
-        Ok(_) => res.render(Json(serde_json::json!({
+        Ok(_) => Ok(Json(serde_json::json!({
             "client_id": input.client_id,
             "state": "unavailable",
             "count": null,
         }))),
-        Err(_) => render_error(
-            res,
-            RuntimeConsoleError::Request {
-                status: 403,
-                message: "Browser observation not authorized",
-            },
-        ),
+        Err(_) => Err(RuntimeConsoleError::Request {
+            status: 403,
+            message: "Browser observation not authorized",
+        }),
     }
 }
 
 #[handler]
-async fn windows(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<WindowsInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match window_inventory::query_for_auth(&runtime, &auth, input).await {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+async fn windows(req: &mut Request, depot: &mut Depot) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: WindowsInput = parse_console_json(req).await?;
+    window_inventory::query_for_auth(&runtime, &auth, input)
+        .await
+        .map(Json)
 }
 
 #[handler]
-async fn window(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<WindowInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match window_for_auth(&runtime, &auth, input).await {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+async fn window(req: &mut Request, depot: &mut Depot) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: WindowInput = parse_console_json(req).await?;
+    window_for_auth(&runtime, &auth, input).await.map(Json)
 }
 
 #[handler]
-async fn projects(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<ProjectsInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match projects_for_filters_auth(
+async fn projects(req: &mut Request, depot: &mut Depot) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: ProjectsInput = parse_console_json(req).await?;
+    projects_for_filters_auth(
         &runtime,
         &auth,
         input.client_id.as_deref(),
@@ -2540,55 +2483,35 @@ async fn projects(req: &mut Request, depot: &mut Depot, res: &mut Response) {
         input.limit,
     )
     .await
-    {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+    .map(Json)
 }
 
 #[handler]
-async fn workflow_sessions(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<WorkflowSessionsInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match workflow_sessions_for_auth(&runtime, &auth, &input.project, input.limit).await {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+async fn workflow_sessions(req: &mut Request, depot: &mut Depot) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: WorkflowSessionsInput = parse_console_json(req).await?;
+    workflow_sessions_for_auth(&runtime, &auth, &input.project, input.limit)
+        .await
+        .map(Json)
 }
 
 #[handler]
-async fn workflow_session_locate(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<WorkflowSessionLocateInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match workflow_session_locate_for_auth(&runtime, &auth, &input.session_id).await {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+async fn workflow_session_locate(
+    req: &mut Request,
+    depot: &mut Depot,
+) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: WorkflowSessionLocateInput = parse_console_json(req).await?;
+    workflow_session_locate_for_auth(&runtime, &auth, &input.session_id)
+        .await
+        .map(Json)
 }
 
 #[handler]
-async fn workflow_session(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<WorkflowSessionInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match workflow_session_detail_with_windows(
+async fn workflow_session(req: &mut Request, depot: &mut Depot) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: WorkflowSessionInput = parse_console_json(req).await?;
+    workflow_session_detail_with_windows(
         &runtime,
         &auth,
         &input.project,
@@ -2596,101 +2519,67 @@ async fn workflow_session(req: &mut Request, depot: &mut Depot, res: &mut Respon
         input.limit,
     )
     .await
-    {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+    .map(Json)
 }
 
 #[handler]
-async fn workflow_session_messages(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<WorkflowSessionMessagesInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match session_messages_for_auth(&runtime, &auth, input).await {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+async fn workflow_session_messages(
+    req: &mut Request,
+    depot: &mut Depot,
+) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: WorkflowSessionMessagesInput = parse_console_json(req).await?;
+    session_messages_for_auth(&runtime, &auth, input)
+        .await
+        .map(Json)
 }
 
 #[handler]
-async fn workflow_session_observe(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<WorkflowSessionObserveInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match session_observe_for_auth(&runtime, &auth, input).await {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+async fn workflow_session_observe(
+    req: &mut Request,
+    depot: &mut Depot,
+) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: WorkflowSessionObserveInput = parse_console_json(req).await?;
+    session_observe_for_auth(&runtime, &auth, input)
+        .await
+        .map(Json)
 }
 
 #[handler]
-async fn workflow_session_post_message(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<WorkflowSessionPostMessageInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match session_post_message_for_auth(&runtime, &auth, input).await {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+async fn workflow_session_post_message(
+    req: &mut Request,
+    depot: &mut Depot,
+) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: WorkflowSessionPostMessageInput = parse_console_json(req).await?;
+    session_post_message_for_auth(&runtime, &auth, input)
+        .await
+        .map(Json)
 }
 
 #[handler]
 async fn workflow_session_withdraw_message(
     req: &mut Request,
     depot: &mut Depot,
-    res: &mut Response,
-) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req
-        .parse_json::<WorkflowSessionWithdrawMessageInput>()
+) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: WorkflowSessionWithdrawMessageInput = parse_console_json(req).await?;
+    session_withdraw_message_for_auth(&runtime, &auth, input)
         .await
-    {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match session_withdraw_message_for_auth(&runtime, &auth, input).await {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+        .map(Json)
 }
 
 #[handler]
 async fn workflow_session_replace_message(
     req: &mut Request,
     depot: &mut Depot,
-    res: &mut Response,
-) {
-    let (runtime, auth) = match prepared(req, depot).await {
-        Ok(value) => value,
-        Err(error) => return render_error(res, error),
-    };
-    let input = match req.parse_json::<WorkflowSessionReplaceMessageInput>().await {
-        Ok(input) => input,
-        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
-    };
-    match session_replace_message_for_auth(&runtime, &auth, input).await {
-        Ok(output) => res.render(Json(output)),
-        Err(error) => render_error(res, error),
-    }
+) -> ConsoleResult<impl Serialize> {
+    let (runtime, auth) = prepared(req, depot).await?;
+    let input: WorkflowSessionReplaceMessageInput = parse_console_json(req).await?;
+    session_replace_message_for_auth(&runtime, &auth, input)
+        .await
+        .map(Json)
 }
 
 #[cfg(test)]

@@ -1,9 +1,9 @@
 use serde_json::{json, Value};
 
 use super::common::{
-    cargo_test_count_assertion_schema, job_activity_schema, nullable_schema,
-    observe_job_continuation_schema, open_object_schema, permission_decision_schema, schema_type,
-    session_hint_schema,
+    cargo_diagnostic_schema, cargo_test_count_assertion_schema, failed_test_detail_schema,
+    job_activity_schema, nullable_schema, observe_job_continuation_schema, open_object_schema,
+    permission_decision_schema, schema_type, session_hint_schema,
 };
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
@@ -613,37 +613,6 @@ pub(super) fn cargo_test_diagnostics_schema(description: &str) -> Value {
             ),
         },
         "additionalProperties": false,
-    })
-}
-
-fn cargo_diagnostic_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "severity": { "type": "string", "enum": ["error", "warning", "unknown"] },
-            "code": { "type": "string", "maxLength": 64 },
-            "file": { "type": "string", "maxLength": 512 },
-            "line": { "type": "integer", "minimum": 1 },
-            "column": { "type": "integer", "minimum": 1 },
-            "message": { "type": "string", "maxLength": 240 }
-        },
-        "required": ["severity", "message"]
-    })
-}
-
-fn failed_test_detail_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "name": { "type": "string", "maxLength": 240 },
-            "failure_kind": { "type": "string", "enum": ["assertion", "panic", "unknown"] },
-            "file": { "anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}] },
-            "line": { "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}] },
-            "column": { "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}] }
-        },
-        "required": ["name", "failure_kind", "file", "line", "column"]
     })
 }
 

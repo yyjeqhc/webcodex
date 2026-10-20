@@ -5,12 +5,13 @@ use webcodex_core::workflow_session_contract::{
 };
 
 use super::common::{
-    acceptance_evidence_schema, array_schema, cargo_test_count_assertion_schema,
-    continuation_feedback_schema, evidence_history_schema, evidence_integrity_schema,
-    external_observation_schema, handoff_brief_schema, job_lifecycle_summary_schema,
-    nullable_schema, open_object_schema, permission_summary_schema, schema_type,
-    session_execution_context_schema, session_guards_schema, session_lifecycle_schema,
-    session_mode_schema, task_outcome_schema, validation_delta_schema, wrapped_output_schema,
+    acceptance_evidence_schema, array_schema, cargo_diagnostic_schema,
+    cargo_test_count_assertion_schema, continuation_feedback_schema, evidence_history_schema,
+    evidence_integrity_schema, external_observation_schema, failed_test_detail_schema,
+    handoff_brief_schema, job_lifecycle_summary_schema, nullable_schema, open_object_schema,
+    permission_summary_schema, schema_type, session_execution_context_schema,
+    session_guards_schema, session_lifecycle_schema, session_mode_schema, task_outcome_schema,
+    validation_delta_schema, wrapped_output_schema,
 };
 
 fn session_handoff_goal_context_schema() -> Value {
@@ -1156,37 +1157,6 @@ fn validation_diagnostics_schema() -> Value {
             "diagnostics_truncated", "invalid_diagnostics_omitted",
             "failed_test_details", "failed_test_details_truncated"
         ]
-    })
-}
-
-fn cargo_diagnostic_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "severity": { "type": "string", "enum": ["error", "warning", "unknown"] },
-            "code": { "type": "string", "maxLength": 64 },
-            "file": { "type": "string", "maxLength": 512 },
-            "line": { "type": "integer", "minimum": 1 },
-            "column": { "type": "integer", "minimum": 1 },
-            "message": { "type": "string", "maxLength": 240 }
-        },
-        "required": ["severity", "message"]
-    })
-}
-
-fn failed_test_detail_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "name": { "type": "string", "maxLength": 240 },
-            "failure_kind": { "type": "string", "enum": ["assertion", "panic", "unknown"] },
-            "file": { "anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}] },
-            "line": { "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}] },
-            "column": { "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}] }
-        },
-        "required": ["name", "failure_kind", "file", "line", "column"]
     })
 }
 

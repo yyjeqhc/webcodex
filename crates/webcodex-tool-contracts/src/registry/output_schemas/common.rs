@@ -13,6 +13,37 @@ use crate::input_property_schema_for_tool;
 use crate::schema_generation::typed_host_schema;
 use crate::tool_definition::exploration_tool_names;
 
+pub(super) fn cargo_diagnostic_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "severity": { "type": "string", "enum": ["error", "warning", "unknown"] },
+            "code": { "type": "string", "maxLength": 64 },
+            "file": { "type": "string", "maxLength": 512 },
+            "line": { "type": "integer", "minimum": 1 },
+            "column": { "type": "integer", "minimum": 1 },
+            "message": { "type": "string", "maxLength": 240 }
+        },
+        "required": ["severity", "message"]
+    })
+}
+
+pub(super) fn failed_test_detail_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "name": { "type": "string", "maxLength": 240 },
+            "failure_kind": { "type": "string", "enum": ["assertion", "panic", "unknown"] },
+            "file": { "anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}] },
+            "line": { "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}] },
+            "column": { "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}] }
+        },
+        "required": ["name", "failure_kind", "file", "line", "column"]
+    })
+}
+
 pub(super) fn validation_source_state_schema() -> Value {
     json!({
         "type": "object",

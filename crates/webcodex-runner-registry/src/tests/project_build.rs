@@ -82,6 +82,89 @@ fn registration(project_build: bool) -> RunnerRegisterRequest {
 }
 
 #[tokio::test]
+async fn missing_build_capabilities_preserve_stage_order_without_admission() {
+    for (base, node, planning_feature, job_feature) in [
+        (false, false, "project_build_v1", "project_build_node_v1"),
+        (false, true, "project_build_v1", "project_build_v1"),
+        (
+            true,
+            false,
+            "project_build_node_v1",
+            "project_build_node_v1",
+        ),
+    ] {
+        let registry = RunnerRegistry::default();
+        let access = auth_context(None, true);
+        let mut registration = registration(base);
+        registration.capabilities.project_build_node_v1 = node;
+        registry.register(registration).await.unwrap();
+
+        let mut plan = build_plan();
+        plan.provenance.request.adapter = ProjectBuildAdapter::Node;
+        plan.provenance.backend = "node".into();
+        plan.process = canonical_project_build_process("node", &plan.provenance.request).unwrap();
+        plan.provenance.invocation_digest = project_build_invocation_digest(&plan.process);
+        let expected_error = |feature| {
+            format!(
+            "capability_unavailable: Runner `build-runner` does not support {feature}; upgrade that Runner to use this operation"
+        )
+        };
+
+        let error = registry
+            .enqueue_project_build_plan(
+                "build-runner".into(),
+                plan.provenance.request.clone(),
+                Some(&access),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error, expected_error(planning_feature));
+
+        let error = registry
+            .start_job_with_metadata_for_access_typed(
+                ShellJobOpRequest {
+                    login: false,
+                    op: "start".into(),
+                    client_id: Some("build-runner".into()),
+                    cwd: Some("/tmp/demo".into()),
+                    command: Some(String::new()),
+                    timeout_secs: Some(60),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "test".into(),
+                ShellJobStartMetadata {
+                    project_id: Some("agent:build-runner:demo".into()),
+                    project_cwd: Some(".".into()),
+                    purpose: Some("build".into()),
+                    shell: Some("direct_argv".into()),
+                    structured_execution: Some(StructuredJobExecution::ProjectBuild(plan)),
+                    ..Default::default()
+                },
+                Some(&access),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.failure_kind(), "capability_unavailable");
+        assert_eq!(error.to_string(), expected_error(job_feature));
+        assert!(registry.list_jobs(Some(10)).await.is_empty());
+        assert!(registry
+            .poll(RunnerPollRequest {
+                client_id: "build-runner".into(),
+                runner_instance_id: "inst".into(),
+            })
+            .await
+            .unwrap()
+            .is_none());
+    }
+}
+
+#[tokio::test]
 async fn project_build_plan_requires_capability_and_stays_planning_only() {
     let registry = RunnerRegistry::default();
     let access = auth_context(None, true);

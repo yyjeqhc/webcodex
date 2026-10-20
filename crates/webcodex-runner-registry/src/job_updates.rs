@@ -10,7 +10,7 @@ use super::jobs::{
 use super::reconciliation::validate_stream_snapshot;
 use super::requests::{
     capability_upgrade_error, enqueue_pending_request_locked, next_request_id,
-    notify_runner_locked, retire_job_request_locked,
+    notify_runner_locked, require_capabilities, retire_job_request_locked,
 };
 use super::state::{
     DetachedIdempotencyIntent, JobLifecycleState, JobObservationState, JobRecoveryPhase,
@@ -1437,68 +1437,21 @@ impl RunnerRegistry {
                 ));
             }
         }
-        if project_node_build_request
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectBuildNode)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectBuildNode),
-            ));
-        }
-        if project_build_request && !runner.runner_features.supports(RunnerFeature::ProjectBuild) {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectBuild),
-            ));
-        }
-        if python_build_request
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectBuildPython)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectBuildPython),
-            ));
-        }
-        if project_all_packages_request
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectAllPackages)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectAllPackages),
-            ));
-        }
-        if project_dependency_policy_request
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectDependencyPolicy)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectDependencyPolicy),
-            ));
-        }
-        if project_resolution_offline_request
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectDependencyResolutionOffline)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(
-                    &client_id,
-                    RunnerFeature::ProjectDependencyResolutionOffline,
-                ),
-            ));
-        }
-        if project_go_single_module_request
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectGoSingleModule)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectGoSingleModule),
-            ));
-        }
+        require_capabilities(
+            &client_id,
+            &runner.runner_features,
+            [
+                project_node_build_request.then_some(RunnerFeature::ProjectBuildNode),
+                project_build_request.then_some(RunnerFeature::ProjectBuild),
+                python_build_request.then_some(RunnerFeature::ProjectBuildPython),
+                project_all_packages_request.then_some(RunnerFeature::ProjectAllPackages),
+                project_dependency_policy_request.then_some(RunnerFeature::ProjectDependencyPolicy),
+                project_resolution_offline_request
+                    .then_some(RunnerFeature::ProjectDependencyResolutionOffline),
+                project_go_single_module_request.then_some(RunnerFeature::ProjectGoSingleModule),
+            ],
+        )
+        .map_err(ExecutionAdmissionError::capability_unavailable)?;
         if javascript_script_request
             && !runner
                 .runner_features
@@ -1565,17 +1518,6 @@ impl RunnerRegistry {
                 client_id
             )));
         }
-        if validation
-            .as_ref()
-            .is_some_and(|v| v.project_validation.is_some())
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectValidation)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidation),
-            ));
-        }
         // Auto-detected Node scripts need admission recheck against the actual
         // retained Job adapter and step, including on Runner replacement.
         let node_script_check = validation
@@ -1584,18 +1526,6 @@ impl RunnerRegistry {
             || validation_steps
                 .iter()
                 .any(ShellJobValidationStep::is_structured_node_check);
-        if node_script_check
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectValidationNodeScriptCheck)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(
-                    &client_id,
-                    RunnerFeature::ProjectValidationNodeScriptCheck,
-                ),
-            ));
-        }
         let python_ruff = validation.as_ref().is_some_and(|v| {
             matches!(
                 v.adapter.as_str(),
@@ -1604,56 +1534,18 @@ impl RunnerRegistry {
         }) || validation_steps
             .iter()
             .any(ShellJobValidationStep::is_structured_ruff);
-        if python_ruff
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectValidationPythonRuff)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidationPythonRuff),
-            ));
-        }
         let python_pytest = validation
             .as_ref()
             .is_some_and(|v| v.adapter == "python:pytest:test")
             || validation_steps
                 .iter()
                 .any(ShellJobValidationStep::is_structured_pytest);
-        if python_pytest
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectValidationPythonPytest)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidationPythonPytest),
-            ));
-        }
-        if validation_steps
-            .iter()
-            .any(|step| step.node_json_framework().is_some())
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectValidationNodeJson)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidationNodeJson),
-            ));
-        }
         let node_test = validation
             .as_ref()
             .is_some_and(|v| v.adapter == "node:tap:test")
             || validation_steps
                 .iter()
                 .any(ShellJobValidationStep::is_structured_node_tap_test);
-        if node_test
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectValidationNodeTap)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidationNodeTap),
-            ));
-        }
         // Recheck at admission, not only during the earlier planning round trip:
         // a replacement/older Runner must never reinterpret new filters or counts.
         let project_test_options = validation
@@ -1663,15 +1555,27 @@ impl RunnerRegistry {
         let go_test_filter = validation_steps.iter().any(|step| {
             step.is_structured_go_test_json() && step.args.get(2).is_some_and(|arg| arg == "-run")
         });
-        if (project_test_options || go_test_filter)
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectValidationTestOptions)
-        {
-            return Err(ExecutionAdmissionError::capability_unavailable(
-                capability_upgrade_error(&client_id, RunnerFeature::ProjectValidationTestOptions),
-            ));
-        }
+        require_capabilities(
+            &client_id,
+            &runner.runner_features,
+            [
+                validation
+                    .as_ref()
+                    .is_some_and(|v| v.project_validation.is_some())
+                    .then_some(RunnerFeature::ProjectValidation),
+                node_script_check.then_some(RunnerFeature::ProjectValidationNodeScriptCheck),
+                python_ruff.then_some(RunnerFeature::ProjectValidationPythonRuff),
+                python_pytest.then_some(RunnerFeature::ProjectValidationPythonPytest),
+                validation_steps
+                    .iter()
+                    .any(|step| step.node_json_framework().is_some())
+                    .then_some(RunnerFeature::ProjectValidationNodeJson),
+                node_test.then_some(RunnerFeature::ProjectValidationNodeTap),
+                (project_test_options || go_test_filter)
+                    .then_some(RunnerFeature::ProjectValidationTestOptions),
+            ],
+        )
+        .map_err(ExecutionAdmissionError::capability_unavailable)?;
         if !validation_steps.is_empty()
             && !runner
                 .runner_features

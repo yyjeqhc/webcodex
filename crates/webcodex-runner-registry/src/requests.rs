@@ -14,7 +14,7 @@ use super::validation::{
     validate_file_request, validate_id, validate_process_request, validate_run_request,
     validate_script_enqueue_request,
 };
-use super::{now_ts, RunnerFeature, RunnerRegistry, RUNNER_ONLINE_WINDOW_SECS};
+use super::{now_ts, RunnerFeature, RunnerFeatureSet, RunnerRegistry, RUNNER_ONLINE_WINDOW_SECS};
 use std::fmt;
 use std::time::Instant;
 use tokio::sync::oneshot;
@@ -32,9 +32,7 @@ use webcodex_core::plugin::{
     validate_request as validate_plugin_gateway_request, PluginDispatchState, PluginGatewayRequest,
     PluginGatewayResponse,
 };
-use webcodex_core::runner_instruction::{
-    RunnerInstructionRequest, RUNNER_INSTRUCTION_REQUEST_MAX_BYTES,
-};
+use webcodex_core::runner_instruction::RunnerInstructionRequest;
 use webcodex_core::runner_operation::{
     RunnerBrowserOperation, RunnerBrowserOperationKind, RunnerComputerOperation,
     RunnerComputerOperationKind, RunnerFileOperation, RunnerInvocationMetadata, RunnerOperation,
@@ -59,10 +57,9 @@ use webcodex_core::runner_protocol::{
     RUNNER_CAPABILITY_PERSISTENT_SHELL, RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL,
     RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE, RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT, RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
-    RUNNER_CONFIG_REQUEST_MAX_BYTES,
 };
 use webcodex_core::runner_skill::{RunnerSkillExecutionRequest, RunnerSkillRequest};
-use webcodex_core::ssh_resource::{SshResourceRequest, SSH_RESOURCE_REQUEST_MAX_BYTES};
+use webcodex_core::ssh_resource::SshResourceRequest;
 use webcodex_core::workflow_session_contract::ExecutionShell;
 
 pub(super) fn capability_upgrade_error(client_id: &str, capability: RunnerFeature) -> String {
@@ -70,6 +67,23 @@ pub(super) fn capability_upgrade_error(client_id: &str, capability: RunnerFeatur
         "capability_unavailable: Runner `{client_id}` does not support {}; upgrade that Runner to use this operation",
         capability.as_wire_name()
     )
+}
+
+/// Check in the caller's order: the first missing requirement determines the
+/// existing diagnostic. `None` means this request does not need that feature.
+pub(super) fn require_capabilities(
+    client_id: &str,
+    features: &RunnerFeatureSet,
+    required: impl IntoIterator<Item = Option<RunnerFeature>>,
+) -> Result<(), String> {
+    if let Some(feature) = required
+        .into_iter()
+        .flatten()
+        .find(|feature| !features.supports(*feature))
+    {
+        return Err(capability_upgrade_error(client_id, feature));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1665,41 +1679,25 @@ impl RunnerRegistry {
             ));
         }
         let normalized_cwd = body.cwd.clone().map(|cwd| cwd.trim().to_string());
-        let shell_context = if let Some(resource) = ssh_resource {
-            Some(ShellJobContext {
-                runtime_project_id: None,
-                workflow_session_id: ssh_session_id,
-                ssh_resource: Some(resource),
-                project_cwd: None,
-                cwd: normalized_cwd.clone(),
-                purpose: None,
-                shell: None,
-                command_preview: command_preview(&body.command),
-                validation_steps: Vec::new(),
-                validation: None,
-                structured_execution: None,
-            })
-        } else {
-            explicit_shell.map(|shell| ShellJobContext {
-                runtime_project_id: None,
-                workflow_session_id: None,
-                ssh_resource: None,
-                project_cwd: None,
-                cwd: normalized_cwd.clone(),
-                purpose: None,
-                shell: Some(shell.as_str().to_string()),
-                command_preview: command_preview(&body.command),
-                validation_steps: Vec::new(),
-                validation: None,
-                structured_execution: None,
-            })
-        };
+        let has_ssh_context = ssh_resource.is_some();
+        let has_explicit_shell = explicit_shell.is_some() && !has_ssh_context;
+        let shell_context = (has_ssh_context || has_explicit_shell).then(|| ShellJobContext {
+            runtime_project_id: None,
+            workflow_session_id: ssh_session_id.filter(|_| has_ssh_context),
+            ssh_resource,
+            project_cwd: None,
+            cwd: normalized_cwd.clone(),
+            purpose: None,
+            shell: explicit_shell
+                .filter(|_| !has_ssh_context)
+                .map(|shell| shell.as_str().to_string()),
+            command_preview: command_preview(&body.command),
+            validation_steps: Vec::new(),
+            validation: None,
+            structured_execution: None,
+        });
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let has_ssh_context = shell_context
-            .as_ref()
-            .is_some_and(|context| context.ssh_resource.is_some());
-        let has_explicit_shell = explicit_shell.is_some() && !has_ssh_context;
         if body.login && (has_ssh_context || explicit_shell != Some(ExecutionShell::Bash)) {
             return Err(ExecutionAdmissionError::invalid_request(
                 "bash login mode requires local shell=bash".to_string(),
@@ -2059,59 +2057,14 @@ impl RunnerRegistry {
         auth: Option<&crate::RunnerAccess>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        operation
-            .validate()
-            .map_err(|_| "ssh_resource_invalid: request was not started".to_string())?;
-        let content = serde_json::to_string(&operation)
-            .map_err(|_| "ssh_resource_invalid: request was not started".to_string())?;
-        if content.len() > SSH_RESOURCE_REQUEST_MAX_BYTES {
-            return Err("ssh_resource_invalid: request was not started".to_string());
-        }
-        let request_id = next_request_id();
-        let (tx, rx) = oneshot::channel();
-        let request = encode_runner_operation(
-            &request_id,
+        self.enqueue_runner_control_operation(
             client_id,
-            requested_by,
+            expected_runner_instance_id,
             RunnerOperation::SshResource(operation),
+            auth,
+            requested_by,
         )
-        .map_err(|_| "ssh_resource_invalid: request was not started".to_string())?;
-        let mut inner = self.inner.lock().await;
-        let runner = inner
-            .runners
-            .get(client_id)
-            .ok_or_else(|| "exact Runner is unavailable".to_string())?;
-        assert_runner_access(auth, runner)
-            .map_err(|_| "exact Runner is unavailable".to_string())?;
-        if runner.runner_instance_id != expected_runner_instance_id {
-            return Err("runner_replaced: request was not started".to_string());
-        }
-        if !runner
-            .runner_features
-            .supports(RunnerFeature::ManagedSshResources)
-        {
-            return Err(
-                "ssh_resource_registry_unavailable: Runner does not support managed SSH resources"
-                    .to_string(),
-            );
-        }
-        if now_ts().saturating_sub(runner.last_seen) > RUNNER_ONLINE_WINDOW_SECS {
-            return Err("exact Runner is offline; request was not started".to_string());
-        }
-        enqueue_pending_request_with_fence_locked(
-            self.telemetry.as_ref(),
-            &mut inner,
-            client_id,
-            request_id.clone(),
-            request,
-            Some(tx),
-            None,
-            PendingDispatchFence::SshResource {
-                runner_instance_id: expected_runner_instance_id.to_string(),
-            },
-        )?;
-        notify_runner_locked(&inner, client_id);
-        Ok((request_id, rx))
+        .await
     }
 
     /// Enqueue one bounded first-class config operation against one exact live
@@ -2124,56 +2077,14 @@ impl RunnerRegistry {
         auth: Option<&crate::RunnerAccess>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        operation
-            .validate()
-            .map_err(|_| "invalid_runner_config_request: request was not started".to_string())?;
-        let content = serde_json::to_string(&operation)
-            .map_err(|_| "invalid_runner_config_request: request was not started".to_string())?;
-        if content.len() > RUNNER_CONFIG_REQUEST_MAX_BYTES {
-            return Err("invalid_runner_config_request: request was not started".to_string());
-        }
-        let request_id = next_request_id();
-        let (tx, rx) = oneshot::channel();
-        let request = encode_runner_operation(
-            &request_id,
+        self.enqueue_runner_control_operation(
             client_id,
-            requested_by,
+            expected_runner_instance_id,
             RunnerOperation::RunnerConfig(operation),
+            auth,
+            requested_by,
         )
-        .map_err(|_| "invalid_runner_config_request: request was not started".to_string())?;
-        let mut inner = self.inner.lock().await;
-        let runner = inner
-            .runners
-            .get(client_id)
-            .ok_or_else(|| "exact Runner is unavailable".to_string())?;
-        assert_runner_access(auth, runner)
-            .map_err(|_| "exact Runner is unavailable".to_string())?;
-        if runner.runner_instance_id != expected_runner_instance_id {
-            return Err("runner_replaced: request was not started".to_string());
-        }
-        if !runner
-            .runner_features
-            .supports(RunnerFeature::RunnerConfigControl)
-        {
-            return Err("capability_unavailable: Runner config control is unsupported".to_string());
-        }
-        if now_ts().saturating_sub(runner.last_seen) > RUNNER_ONLINE_WINDOW_SECS {
-            return Err("exact Runner is offline; request was not started".to_string());
-        }
-        enqueue_pending_request_with_fence_locked(
-            self.telemetry.as_ref(),
-            &mut inner,
-            client_id,
-            request_id.clone(),
-            request,
-            Some(tx),
-            None,
-            PendingDispatchFence::RunnerConfig {
-                runner_instance_id: expected_runner_instance_id.to_string(),
-            },
-        )?;
-        notify_runner_locked(&inner, client_id);
-        Ok((request_id, rx))
+        .await
     }
 
     /// Enqueue one narrow configured-instruction snapshot request against one
@@ -2186,24 +2097,55 @@ impl RunnerRegistry {
         auth: Option<&crate::RunnerAccess>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        operation.validate().map_err(|_| {
-            "invalid_runner_instruction_request: request was not started".to_string()
-        })?;
-        let content = serde_json::to_string(&operation).map_err(|_| {
-            "invalid_runner_instruction_request: request was not started".to_string()
-        })?;
-        if content.len() > RUNNER_INSTRUCTION_REQUEST_MAX_BYTES {
-            return Err("invalid_runner_instruction_request: request was not started".to_string());
-        }
+        self.enqueue_runner_control_operation(
+            client_id,
+            expected_runner_instance_id,
+            RunnerOperation::RunnerInstruction(operation),
+            auth,
+            requested_by,
+        )
+        .await
+    }
+
+    /// These operations all return ShellRunResponse and bind one exact Runner
+    /// process. Validate payloads before authorization; check the registration
+    /// and insert the complete dispatch fence under one lock.
+    async fn enqueue_runner_control_operation(
+        &self,
+        client_id: &str,
+        expected_runner_instance_id: &str,
+        operation: RunnerOperation,
+        auth: Option<&crate::RunnerAccess>,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        let runner_instance_id = expected_runner_instance_id.to_string();
+        let (required, invalid_request, unsupported, fence) = match &operation {
+            RunnerOperation::SshResource(_) => (
+                RunnerFeature::ManagedSshResources,
+                "ssh_resource_invalid: request was not started",
+                "ssh_resource_registry_unavailable: Runner does not support managed SSH resources",
+                PendingDispatchFence::SshResource { runner_instance_id },
+            ),
+            RunnerOperation::RunnerConfig(_) => (
+                RunnerFeature::RunnerConfigControl,
+                "invalid_runner_config_request: request was not started",
+                "capability_unavailable: Runner config control is unsupported",
+                PendingDispatchFence::RunnerConfig { runner_instance_id },
+            ),
+            RunnerOperation::RunnerInstruction(_) => (
+                RunnerFeature::InstructionRuntime,
+                "invalid_runner_instruction_request: request was not started",
+                "capability_unavailable: Runner instruction runtime is unsupported",
+                PendingDispatchFence::RunnerInstruction { runner_instance_id },
+            ),
+            _ => return Err("unsupported Runner control operation".to_string()),
+        };
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = encode_runner_operation(
-            &request_id,
-            client_id,
-            requested_by,
-            RunnerOperation::RunnerInstruction(operation),
-        )
-        .map_err(|_| "invalid_runner_instruction_request: request was not started".to_string())?;
+        // Canonical encoding validates the operation and its serialized byte
+        // limit. Keep each public entry point's existing redacted diagnostic.
+        let request = encode_runner_operation(&request_id, client_id, requested_by, operation)
+            .map_err(|_| invalid_request.to_string())?;
         let mut inner = self.inner.lock().await;
         let runner = inner
             .runners
@@ -2214,13 +2156,8 @@ impl RunnerRegistry {
         if runner.runner_instance_id != expected_runner_instance_id {
             return Err("runner_replaced: request was not started".to_string());
         }
-        if !runner
-            .runner_features
-            .supports(RunnerFeature::InstructionRuntime)
-        {
-            return Err(
-                "capability_unavailable: Runner instruction runtime is unsupported".to_string(),
-            );
+        if !runner.runner_features.supports(required) {
+            return Err(unsupported.to_string());
         }
         if now_ts().saturating_sub(runner.last_seen) > RUNNER_ONLINE_WINDOW_SECS {
             return Err("exact Runner is offline; request was not started".to_string());
@@ -2233,9 +2170,7 @@ impl RunnerRegistry {
             request,
             Some(tx),
             None,
-            PendingDispatchFence::RunnerInstruction {
-                runner_instance_id: expected_runner_instance_id.to_string(),
-            },
+            fence,
         )?;
         notify_runner_locked(&inner, client_id);
         Ok((request_id, rx))
@@ -2765,52 +2700,17 @@ impl RunnerRegistry {
         self.prune_expired_shared_key_runners_locked(&mut inner, now_ts());
         let runner = inner.runners.get(&client_id).ok_or("unknown Runner")?;
         assert_runner_access(access, runner)?;
-        if !runner.runner_features.supports(RunnerFeature::ProjectBuild) {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectBuild,
-            ));
-        }
-        if requires_node
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectBuildNode)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectBuildNode,
-            ));
-        }
-        if requires_python
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectBuildPython)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectBuildPython,
-            ));
-        }
-        if requires_all_packages
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectAllPackages)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectAllPackages,
-            ));
-        }
-        if requires_dependency_policy
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectDependencyPolicy)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectDependencyPolicy,
-            ));
-        }
+        require_capabilities(
+            &client_id,
+            &runner.runner_features,
+            [
+                Some(RunnerFeature::ProjectBuild),
+                requires_node.then_some(RunnerFeature::ProjectBuildNode),
+                requires_python.then_some(RunnerFeature::ProjectBuildPython),
+                requires_all_packages.then_some(RunnerFeature::ProjectAllPackages),
+                requires_dependency_policy.then_some(RunnerFeature::ProjectDependencyPolicy),
+            ],
+        )?;
         enqueue_pending_request_locked(
             self.telemetry.as_ref(),
             &mut inner,
@@ -2847,25 +2747,16 @@ impl RunnerRegistry {
         }
         let runner = inner.runners.get(&client_id).ok_or("unknown Runner")?;
         assert_runner_access(access, runner)?;
-        if !runner
-            .runner_features
-            .supports(RunnerFeature::ProjectFormat)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectFormat,
-            ));
-        }
-        if payload.requires_go()
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectFormatGo)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectFormatGo,
-            ));
-        }
+        require_capabilities(
+            &client_id,
+            &runner.runner_features,
+            [
+                Some(RunnerFeature::ProjectFormat),
+                payload
+                    .requires_go()
+                    .then_some(RunnerFeature::ProjectFormatGo),
+            ],
+        )?;
         if !runner.projects.iter().any(|project| {
             project.id == payload.project_id && !project.disabled && project.allow_patch
         }) {
@@ -2939,75 +2830,21 @@ impl RunnerRegistry {
         self.prune_expired_shared_key_runners_locked(&mut inner, now_ts());
         let runner = inner.runners.get(&client_id).ok_or("unknown Runner")?;
         assert_runner_access(access, runner)?;
-        if !runner
-            .runner_features
-            .supports(RunnerFeature::ProjectValidation)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectValidation,
-            ));
-        }
-        if let Some(capability) = python_capability {
-            if !runner.runner_features.supports(capability) {
-                return Err(capability_upgrade_error(&client_id, capability));
-            }
-        }
-        if let Some(capability) = node_capability {
-            if !runner.runner_features.supports(capability) {
-                return Err(capability_upgrade_error(&client_id, capability));
-            }
-        }
-        if requires_all_packages
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectAllPackages)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectAllPackages,
-            ));
-        }
-        if requires_dependency_policy
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectDependencyPolicy)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectDependencyPolicy,
-            ));
-        }
-        if requires_resolution_offline
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectDependencyResolutionOffline)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectDependencyResolutionOffline,
-            ));
-        }
-        if requires_test_options
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectValidationTestOptions)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectValidationTestOptions,
-            ));
-        }
-        if requires_package_scope
-            && !runner
-                .runner_features
-                .supports(RunnerFeature::ProjectValidationPackageScope)
-        {
-            return Err(capability_upgrade_error(
-                &client_id,
-                RunnerFeature::ProjectValidationPackageScope,
-            ));
-        }
+        require_capabilities(
+            &client_id,
+            &runner.runner_features,
+            [
+                Some(RunnerFeature::ProjectValidation),
+                python_capability,
+                node_capability,
+                requires_all_packages.then_some(RunnerFeature::ProjectAllPackages),
+                requires_dependency_policy.then_some(RunnerFeature::ProjectDependencyPolicy),
+                requires_resolution_offline
+                    .then_some(RunnerFeature::ProjectDependencyResolutionOffline),
+                requires_test_options.then_some(RunnerFeature::ProjectValidationTestOptions),
+                requires_package_scope.then_some(RunnerFeature::ProjectValidationPackageScope),
+            ],
+        )?;
         enqueue_pending_request_locked(
             self.telemetry.as_ref(),
             &mut inner,

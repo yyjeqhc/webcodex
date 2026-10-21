@@ -346,18 +346,24 @@ fn diff_path_policy_function() -> String {
         .join("|");
     // Rust's Unicode lowercase folds the Kelvin sign to ASCII k. C-locale
     // tr handles ASCII only, so the producer also preserves this policy fold.
-    r#"diff_path_allowed() {
+    // The header and ---/+++ lines repeat the same path. Cache one exact
+    // decoded, prefix-free path, including refusals, without sharing a decision
+    // between distinct rename sides or changing normalization and policy rules.
+    r#"path_policy_key=; path_policy_status=; tab=$(printf '\t');
+    diff_path_allowed() {
       gp=$1;
-      tab=$(printf '\t'); gp=${gp%%"$tab"*};
+      gp=${gp%%"$tab"*};
       case "$gp" in '"'*'"') gp=${gp#'"'}; gp=${gp%'"'}; gp=$(printf '%b.' "$gp"); gp=${gp%.} ;; esac;
       case "$gp" in /dev/null) return 0 ;; a/*|b/*) gp=${gp#??} ;; *) return 1 ;; esac;
+      if [ -n "$path_policy_status" ] && [ "$gp" = "$path_policy_key" ]; then return "$path_policy_status"; fi;
+      path_policy_key=$gp; path_policy_status=1;
       gp=$(printf '%s.' "$gp" | tr '\\' '/' | tr '[:upper:]' '[:lower:]' | sed 's/K/k/g'); gp=${gp%.};
       while [ -n "$gp" ]; do
         case "$gp" in */*) pc=${gp%%/*}; gp=${gp#*/}; last=0 ;; *) pc=$gp; gp=; last=1 ;; esac;
         if [ "$last" = 1 ]; then case "$pc" in __PUBLIC__) continue ;; esac; fi;
         case "$pc" in __SECRET__) return 1 ;; esac;
       done;
-      return 0;
+      path_policy_status=0; return 0;
     }
     # Binary or metadata-only patches lack ---/+++ headers. The fallback
     # accepts an unambiguous same-path header only when both paths are allowed.

@@ -257,6 +257,81 @@ fn workspace_diff_sensitive_guard_decodes_quoted_paths_before_capture() {
 }
 
 #[test]
+fn workspace_diff_sensitive_guard_preserves_path_identity_across_repeated_headers() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let cases = [
+        ("a/.env.example", "b/.env.example", true),
+        (r#""a/.env.example\n""#, r#""b/.env.example\n""#, false),
+        (
+            r#""a/secrets\\config.py""#,
+            r#""b/secrets\\config.py""#,
+            false,
+        ),
+        ("a/ordinary.txt", "b/.env", false),
+        ("a/.env", "b/ordinary.txt", false),
+        ("a/ordinary.txt", "b/ordinary.txt", true),
+        (
+            r#""a/to\342\204\252ens/config.py""#,
+            r#""b/to\342\204\252ens/config.py""#,
+            false,
+        ),
+        (r#""a/quote\"name.txt""#, r#""b/quote\"name.txt""#, true),
+        (r#""a/tab\tname.txt""#, r#""b/tab\tname.txt""#, true),
+        ("a/old.txt", "b/new.txt", true),
+    ];
+    // Feed Git-formatted paths without requiring Windows to create filenames
+    // containing quotes, tabs or newlines. All other Git observations stay real.
+    let mut diff = String::new();
+    for (index, (old, new, _)) in cases.iter().enumerate() {
+        diff.push_str(&format!(
+            "diff --git {old} {new}\n--- {old}\n+++ {new}\n@@ -1 +1 @@\n-before\n+PATH_POLICY_CASE_{index}\n"
+        ));
+    }
+    let git_fixture = format!(
+        "git() {{ for argument in \"$@\"; do case \"$argument\" in --unified=*) printf '%s' {}; return 0 ;; esac; done; command git \"$@\"; }};\n",
+        shell_single_quote(&diff),
+    );
+    let allowed_count = cases.iter().filter(|(_, _, allowed)| *allowed).count();
+    for max_hunks in [cases.len(), 1] {
+        let command = format!(
+            "{git_fixture}{}",
+            show_changes_command(true, max_hunks, 80)
+        );
+        let (exit, stdout, stderr) = run_command_full_capture(&command, tmp.path(), 30);
+        assert_eq!(exit, 0, "{stderr}\n{stdout}");
+        assert!(stdout.len() <= SHOW_CHANGES_OUTPUT_BUDGET_BYTES);
+        let frames = split_show_changes_stdout(&stdout, true);
+        assert!(frames.framing_valid);
+        assert_eq!(frames.diff_exit, Some(0));
+        assert_eq!(frames.diff_bytes, Some(frames.diff.len()));
+        assert_eq!(
+            frames.diff_policy_files_omitted,
+            Some(cases.len() - allowed_count),
+            "protected paths must still be counted after the output limit"
+        );
+        assert_eq!(
+            frames.diff_hunks_returned,
+            Some(allowed_count.min(max_hunks))
+        );
+        assert_eq!(frames.diff_trunc_hunk_count, Some(allowed_count > max_hunks));
+        assert_eq!(frames.diff_trunc_bytes, Some(false));
+        let mut admitted = 0;
+        for (index, (_, _, allowed)) in cases.iter().enumerate() {
+            let emitted = *allowed && admitted < max_hunks;
+            if *allowed {
+                admitted += 1;
+            }
+            assert_eq!(
+                stdout.contains(&format!("+PATH_POLICY_CASE_{index}\n")),
+                emitted,
+                "path case {index}, max_hunks={max_hunks}"
+            );
+        }
+    }
+}
+
+#[test]
 fn show_changes_command_emits_bounded_metadata_frames() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());

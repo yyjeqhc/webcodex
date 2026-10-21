@@ -19,6 +19,27 @@ fn is_structured_validation_tool(tool_name: &str) -> bool {
     )
 }
 
+/// Caller-specific lifecycle checks decide when stream metadata can be sparse.
+/// Only exact empty/zero/false values are redundant; preserve null or malformed
+/// fields, nonempty diagnostics, and all evidence of output loss.
+fn sparsify_empty_execution_streams(output: &mut serde_json::Map<String, Value>) {
+    for key in ["stdout_tail", "stderr_tail"] {
+        if output.get(key).and_then(Value::as_str) == Some("") {
+            output.remove(key);
+        }
+    }
+    for key in ["stdout_lines", "stderr_lines"] {
+        if output.get(key).and_then(Value::as_u64) == Some(0) {
+            output.remove(key);
+        }
+    }
+    for key in ["stdout_truncated", "stderr_truncated"] {
+        if output.get(key).and_then(Value::as_bool) == Some(false) {
+            output.remove(key);
+        }
+    }
+}
+
 fn sparsify_terminal_structured_validation_success(tool_name: &str, result: &mut ToolResult) {
     if !is_structured_validation_tool(tool_name) {
         return;
@@ -60,21 +81,7 @@ fn sparsify_terminal_structured_validation_success(tool_name: &str, result: &mut
     if output.get("failure_kind").is_some_and(Value::is_null) {
         output.remove("failure_kind");
     }
-    for key in ["stdout_tail", "stderr_tail"] {
-        if output.get(key).and_then(Value::as_str) == Some("") {
-            output.remove(key);
-        }
-    }
-    for key in ["stdout_lines", "stderr_lines"] {
-        if output.get(key).and_then(Value::as_u64) == Some(0) {
-            output.remove(key);
-        }
-    }
-    for key in ["stdout_truncated", "stderr_truncated"] {
-        if output.get(key).and_then(Value::as_bool) == Some(false) {
-            output.remove(key);
-        }
-    }
+    sparsify_empty_execution_streams(output);
 }
 
 fn sparsify_structured_validation_runtime_metadata(tool_name: &str, result: &mut ToolResult) {
@@ -100,21 +107,7 @@ fn sparsify_structured_validation_runtime_metadata(tool_name: &str, result: &mut
         ] {
             output.remove(key);
         }
-        for key in ["stdout_tail", "stderr_tail"] {
-            if output.get(key).and_then(Value::as_str) == Some("") {
-                output.remove(key);
-            }
-        }
-        for key in ["stdout_lines", "stderr_lines"] {
-            if output.get(key).and_then(Value::as_u64) == Some(0) {
-                output.remove(key);
-            }
-        }
-        for key in ["stdout_truncated", "stderr_truncated"] {
-            if output.get(key).and_then(Value::as_bool) == Some(false) {
-                output.remove(key);
-            }
-        }
+        sparsify_empty_execution_streams(output);
     }
 }
 
@@ -171,21 +164,7 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
     if output.get("tool_failure").and_then(Value::as_bool) == Some(false) {
         output.remove("tool_failure");
     }
-    for key in ["stdout_tail", "stderr_tail"] {
-        if output.get(key).and_then(Value::as_str) == Some("") {
-            output.remove(key);
-        }
-    }
-    for key in ["stdout_lines", "stderr_lines"] {
-        if output.get(key).and_then(Value::as_u64) == Some(0) {
-            output.remove(key);
-        }
-    }
-    for key in ["stdout_truncated", "stderr_truncated"] {
-        if output.get(key).and_then(Value::as_bool) == Some(false) {
-            output.remove(key);
-        }
-    }
+    sparsify_empty_execution_streams(output);
 
     let summary_key = match tool_name {
         "project_build" | "run_process" | "run_skill_resource" => "process_summary",
@@ -268,21 +247,7 @@ fn sparsify_terminal_shell_success(result: &mut ToolResult) {
     {
         output.remove("async_handoff_available");
     }
-    for key in ["stdout_tail", "stderr_tail"] {
-        if output.get(key).and_then(Value::as_str) == Some("") {
-            output.remove(key);
-        }
-    }
-    for key in ["stdout_lines", "stderr_lines"] {
-        if output.get(key).and_then(Value::as_u64) == Some(0) {
-            output.remove(key);
-        }
-    }
-    for key in ["stdout_truncated", "stderr_truncated"] {
-        if output.get(key).and_then(Value::as_bool) == Some(false) {
-            output.remove(key);
-        }
-    }
+    sparsify_empty_execution_streams(output);
 }
 
 /// Strip successful wrapper/audit facts only after every authority and Session

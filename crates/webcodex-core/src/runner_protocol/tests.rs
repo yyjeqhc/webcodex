@@ -1,5 +1,46 @@
 use super::*;
 
+#[test]
+fn validation_context_step_names_are_bounded_unique_and_closed() {
+    for (steps, expected) in [
+        (vec![], true),
+        (vec!["format", "check", "test"], true),
+        (vec!["lint"], true),
+        (vec!["check", "check"], false),
+        (vec!["format", "check", "lint", "test"], false),
+        (vec!["unknown"], false),
+    ] {
+        let context: ShellJobContext = serde_json::from_value(serde_json::json!({
+            "command_preview": "cargo check",
+            "validation_steps": steps,
+        }))
+        .unwrap();
+        assert_eq!(context.validation_steps_are_valid(), expected, "{steps:?}");
+    }
+}
+
+#[test]
+fn validation_context_metadata_must_match_retained_step_names() {
+    let mut context: ShellJobContext = serde_json::from_value(serde_json::json!({
+        "command_preview": "cargo check",
+        "validation_steps": ["check"],
+        "validation": {
+            "tool": "cargo_check", "kind": "check", "adapter": "cargo_check",
+            "steps": [{"name": "check", "program": "cargo", "args": ["check"]}],
+            "effective_timeout_secs": 60, "sync_wait_secs": 5,
+        },
+    }))
+    .unwrap();
+    assert!(context.validation_metadata_is_valid());
+    context.validation_steps = vec!["test".into()];
+    assert!(!context.validation_metadata_is_valid());
+    context.validation_steps = vec!["check".into()];
+    context.validation.as_mut().unwrap().adapter = "go_test".into();
+    assert!(!context.validation_metadata_is_valid());
+    context.validation = None;
+    assert!(context.validation_metadata_is_valid());
+}
+
 // Golden wire bytes captured against the explicit pre-catalog struct. These
 // freeze required false keys, omission and field order, not a capability inventory.
 const LEGACY_DEFAULT_JSON: &str = concat!(

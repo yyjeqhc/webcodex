@@ -2,6 +2,7 @@
 
 use super::lifecycle::{job_prestart_lifecycle, runner_job_is_active};
 use super::*;
+use webcodex_core::workflow_session_contract::ExecutionPurpose;
 pub(super) fn validate_runner_job_context_operation(
     context: &ShellJobContext,
     operation: &RunnerJobOperation,
@@ -41,19 +42,11 @@ pub(super) fn validate_runner_job_context_operation(
     if context.ssh_resource.is_some() && context.workflow_session_id.is_none() {
         return Err("job recovery context SSH resource requires a Workflow Session".to_string());
     }
-    if context.purpose.as_deref().is_some_and(|purpose| {
-        !matches!(
-            purpose,
-            "validation"
-                | "test"
-                | "build"
-                | "format"
-                | "release"
-                | "diagnostic"
-                | "operation"
-                | "other"
-        )
-    }) {
+    if context
+        .purpose
+        .as_deref()
+        .is_some_and(|purpose| ExecutionPurpose::parse(purpose).is_none())
+    {
         return Err("job recovery context purpose is invalid".to_string());
     }
     if context
@@ -100,31 +93,13 @@ pub(super) fn validate_runner_job_context_operation(
         }
         _ => Vec::new(),
     };
-    if context.validation_steps != validation_steps
-        || context
-            .validation_steps
-            .iter()
-            .collect::<std::collections::HashSet<_>>()
-            .len()
-            != context.validation_steps.len()
-        || context
-            .validation_steps
-            .iter()
-            .any(|step| !matches!(step.as_str(), "format" | "check" | "lint" | "test"))
-    {
+    if context.validation_steps != validation_steps || !context.validation_steps_are_valid() {
         return Err("job recovery context validation_steps are invalid".to_string());
     }
     let validation_context = matches!(operation, RunnerJobOperation::StartValidation(_));
-    if context.validation.as_ref().is_some_and(|metadata| {
-        !validation_context
-            || !metadata.is_valid()
-            || metadata
-                .steps
-                .iter()
-                .map(|step| step.name.clone())
-                .collect::<Vec<_>>()
-                != context.validation_steps
-    }) {
+    if (!validation_context && context.validation.is_some())
+        || !context.validation_metadata_is_valid()
+    {
         return Err("job recovery context validation metadata is invalid".to_string());
     }
     if context

@@ -79,17 +79,7 @@ fn validate_context(
         }
     }
     if context.purpose.as_deref().is_some_and(|purpose| {
-        !matches!(
-            purpose,
-            "validation"
-                | "test"
-                | "build"
-                | "format"
-                | "release"
-                | "diagnostic"
-                | "operation"
-                | "other"
-        )
+        webcodex_core::workflow_session_contract::ExecutionPurpose::parse(purpose).is_none()
     }) {
         return Err("job inventory purpose is invalid".to_string());
     }
@@ -98,29 +88,10 @@ fn validate_context(
     }) {
         return Err("job inventory shell is invalid".to_string());
     }
-    if context.validation_steps.len() > 3
-        || context
-            .validation_steps
-            .iter()
-            .collect::<HashSet<_>>()
-            .len()
-            != context.validation_steps.len()
-        || context
-            .validation_steps
-            .iter()
-            .any(|step| !matches!(step.as_str(), "format" | "check" | "lint" | "test"))
-    {
+    if !context.validation_steps_are_valid() {
         return Err("job inventory validation_steps are invalid".to_string());
     }
-    if context.validation.as_ref().is_some_and(|validation| {
-        !validation.is_valid()
-            || validation
-                .steps
-                .iter()
-                .map(|step| step.name.clone())
-                .collect::<Vec<_>>()
-                != context.validation_steps
-    }) {
+    if !context.validation_metadata_is_valid() {
         return Err("job inventory validation metadata is invalid".to_string());
     }
     if context

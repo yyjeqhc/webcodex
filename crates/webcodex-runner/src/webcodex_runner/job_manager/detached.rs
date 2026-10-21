@@ -3,6 +3,7 @@
 use super::lifecycle::{runner_job_is_active, runner_job_is_terminal};
 use super::retained::job_update_from_snapshot;
 use super::*;
+use webcodex_core::workflow_session_contract::ExecutionPurpose;
 pub(super) fn validate_detached_recovery_context(
     context: &ShellJobContext,
     client_id: &str,
@@ -32,19 +33,11 @@ pub(super) fn validate_detached_recovery_context(
     if context.ssh_resource.is_some() && context.workflow_session_id.is_none() {
         return Err("detached Job recovery SSH resource requires a Workflow Session".to_string());
     }
-    if context.purpose.as_deref().is_some_and(|purpose| {
-        !matches!(
-            purpose,
-            "validation"
-                | "test"
-                | "build"
-                | "format"
-                | "release"
-                | "diagnostic"
-                | "operation"
-                | "other"
-        )
-    }) {
+    if context
+        .purpose
+        .as_deref()
+        .is_some_and(|purpose| ExecutionPurpose::parse(purpose).is_none())
+    {
         return Err("detached Job recovery purpose is invalid".to_string());
     }
     if context.shell.as_deref().is_some_and(|shell| {
@@ -55,31 +48,10 @@ pub(super) fn validate_detached_recovery_context(
     }) {
         return Err("detached Job recovery shell is invalid".to_string());
     }
-    if !context.validation_steps.is_empty() {
-        if !(1..=3).contains(&context.validation_steps.len())
-            || context
-                .validation_steps
-                .iter()
-                .collect::<HashSet<_>>()
-                .len()
-                != context.validation_steps.len()
-            || context
-                .validation_steps
-                .iter()
-                .any(|step| !matches!(step.as_str(), "format" | "check" | "lint" | "test"))
-        {
-            return Err("detached Job recovery validation_steps are invalid".to_string());
-        }
+    if !context.validation_steps_are_valid() {
+        return Err("detached Job recovery validation_steps are invalid".to_string());
     }
-    if context.validation.as_ref().is_some_and(|metadata| {
-        !metadata.is_valid()
-            || metadata
-                .steps
-                .iter()
-                .map(|step| step.name.clone())
-                .collect::<Vec<_>>()
-                != context.validation_steps
-    }) {
+    if !context.validation_metadata_is_valid() {
         return Err("detached Job recovery validation metadata is invalid".to_string());
     }
     if context

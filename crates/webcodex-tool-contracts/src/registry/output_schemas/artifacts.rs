@@ -5,37 +5,45 @@ use super::common::{
     wrapped_output_schema,
 };
 
+fn artifact_read_arguments_schema(selector: (&str, &str), description: &str) -> Value {
+    let mut schema = json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": false,
+        "properties": {
+            "project": {"type": "string", "minLength": 1},
+            "path": {"type": "string", "minLength": 1},
+            "offset": {"type": "integer", "minimum": 0},
+            "length": {"type": "integer", "minimum": 1, "maximum": 65536},
+            "expected_sha256": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[0-9a-f]{64}$"
+            },
+            "session_id": {"type": "string", "pattern": "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"}
+        },
+        "required": [
+            "project",
+            "path",
+            selector.0,
+            "offset",
+            "length",
+            "expected_sha256"
+        ]
+    });
+    schema["properties"][selector.0] = json!({"type": "string", "const": selector.1});
+    schema
+}
+
 fn read_project_artifact_suggested_call_schema() -> Value {
     suggested_tool_call_schema(
         webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
         "read_project_artifact_chunk",
-        json!({
-            "type": "object",
-            "description": "Parser-ready next ranged read of the same exact full-file artifact incarnation.",
-            "additionalProperties": false,
-            "properties": {
-                "project": {"type": "string", "minLength": 1},
-                "path": {"type": "string", "minLength": 1},
-                "encoding": {"type": "string", "const": "base64"},
-                "offset": {"type": "integer", "minimum": 0},
-                "length": {"type": "integer", "minimum": 1, "maximum": 65536},
-                "expected_sha256": {
-                    "type": "string",
-                    "minLength": 64,
-                    "maxLength": 64,
-                    "pattern": "^[0-9a-f]{64}$"
-                },
-                "session_id": {"type": "string", "pattern": "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"}
-            },
-            "required": [
-                "project",
-                "path",
-                "encoding",
-                "offset",
-                "length",
-                "expected_sha256"
-            ]
-        }),
+        artifact_read_arguments_schema(
+            ("encoding", "base64"),
+            "Parser-ready next ranged read of the same exact full-file artifact incarnation.",
+        ),
         "Parser-ready advisory call for the next ranged read of the same exact artifact content snapshot. It grants no Project or Session authority.",
     )
 }
@@ -44,33 +52,10 @@ fn project_artifact_suggested_call_schema() -> Value {
     suggested_tool_call_schema(
         webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
         "inspect_project_artifact",
-        json!({
-            "type": "object",
-            "description": "Parser-ready continuation for one more bounded inspect of the same exact full-file artifact incarnation.",
-            "additionalProperties": false,
-            "properties": {
-                "project": {"type": "string", "minLength": 1},
-                "path": {"type": "string", "minLength": 1},
-                "action": {"type": "string", "const": "inspect"},
-                "offset": {"type": "integer", "minimum": 0},
-                "length": {"type": "integer", "minimum": 1, "maximum": 65536},
-                "expected_sha256": {
-                    "type": "string",
-                    "minLength": 64,
-                    "maxLength": 64,
-                    "pattern": "^[0-9a-f]{64}$"
-                },
-                "session_id": {"type": "string", "pattern": "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"}
-            },
-            "required": [
-                "project",
-                "path",
-                "action",
-                "offset",
-                "length",
-                "expected_sha256"
-            ]
-        }),
+        artifact_read_arguments_schema(
+            ("action", "inspect"),
+            "Parser-ready continuation for one more bounded inspect of the same exact full-file artifact incarnation.",
+        ),
         "Parser-ready advisory continuation for inspect_project_artifact(action=inspect). It carries the observed full-file SHA-256 fence and grants no Project or Session authority.",
     )
 }

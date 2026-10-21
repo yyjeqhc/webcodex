@@ -39,8 +39,8 @@ mod testing;
 
 use super::metadata::{
     metadata as make_tool_metadata, ToolApprovalPolicy, ToolAuthorityPolicy, ToolEffect,
-    ToolIdempotency, ToolMetadata, ToolPathHint, ToolRisk, ToolSemanticContract, RUNTIME_READ,
-    TOOL_PROVIDER_CONTROL,
+    ToolIdempotency, ToolMetadata, ToolPathHint, ToolRisk, ToolSemanticContract, PROJECT_READ,
+    RUNTIME_READ, TOOL_PROVIDER_CONTROL, TOOL_PROVIDER_RUNNER,
 };
 #[cfg(any(test, feature = "root-test-support"))]
 pub use super::tool_catalog::TOOL_MANIFEST_INTENTS;
@@ -1214,6 +1214,39 @@ const fn def(
         session_evidence,
         runner_capability,
     }
+}
+
+// Runner-backed Project reads share this authority/effect contract. Audit
+// redaction, capability, path selection, and Session evidence stay explicit
+// at each declaration; mutation and execution tools continue to use `def`.
+const fn runner_project_read_def(
+    name: &'static str,
+    audit: ToolAuditPolicy,
+    category: &'static str,
+    runner_capability: RunnerCapabilityRequirement,
+    path_hint: ToolPathHint,
+    session_evidence: ToolSessionEvidencePolicy,
+) -> ToolDefinition {
+    def(
+        name,
+        audit,
+        ToolVisibility::ModelVisible,
+        category,
+        Some(runner_capability),
+        TOOL_PROVIDER_RUNNER,
+        ToolSemanticContract {
+            effect: ToolEffect::Observe,
+            risk: ToolRisk::Read,
+            approval: ToolApprovalPolicy::None,
+            idempotency: ToolIdempotency::PureRead,
+        },
+        Some(PROJECT_READ),
+        true,
+        path_hint,
+        false,
+        false,
+        session_evidence,
+    )
 }
 
 // Server-owned Control operations without a Project, path, Runner dispatch, or

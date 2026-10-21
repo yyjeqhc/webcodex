@@ -2,17 +2,17 @@ use super::RunnerCapabilityRequirement::GitOrShell;
 use super::ToolVisibility::ModelVisible;
 use super::{
     adaptive_runtime_direct, change_summary_like, def, git_like, model_spec, require_all_scopes,
-    ToolDefinition, TOOL_CATEGORY_GIT,
+    runner_project_read_def, ToolDefinition, TOOL_CATEGORY_GIT,
 };
 use crate::metadata::{
     ToolPathHint::{None as NoPath, PathList},
-    ToolRisk::{ProjectWrite, Read},
-    JOB_RUN, PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_RUNNER,
+    ToolRisk::ProjectWrite,
+    JOB_RUN, PROJECT_WRITE, TOOL_PROVIDER_RUNNER,
 };
 
 pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
     change_summary_like(git_like(model_spec(
-        def(
+        runner_project_read_def(
             "read_git_review_summary",
             super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("project"),
@@ -28,21 +28,9 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolAuditResultField::array_len("file_count", "files"),
             ])
             .drop_null_request_values(),
-            ModelVisible,
             TOOL_CATEGORY_GIT,
-            Some(GitOrShell),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(PROJECT_READ),
-            true,
+            GitOrShell,
             NoPath,
-            false,
-            false,
             super::ToolSessionEvidencePolicy::NONE
                 .review(super::ToolReviewEvidence::ReadOnlyInspection),
         )
@@ -52,7 +40,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
     ).with_discovery_keywords(&["committed", "statistics", "summary", "commit", "range", "提交", "统计", "汇总", "范围"]))),
     adaptive_runtime_direct(
         change_summary_like(git_like(model_spec(
-            def(
+            runner_project_read_def(
                 "review_changes",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("project"),
@@ -65,21 +53,9 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                 .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
                     "continuation",
                 ])),
-                ModelVisible,
                 TOOL_CATEGORY_GIT,
-                Some(GitOrShell),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Observe,
-                    risk: Read,
-                    approval: super::ToolApprovalPolicy::None,
-                    idempotency: super::ToolIdempotency::PureRead,
-                },
-                Some(PROJECT_READ),
-                true,
+                GitOrShell,
                 NoPath,
-                false,
-                false,
                 super::ToolSessionEvidencePolicy::NONE
                     .review(super::ToolReviewEvidence::DiffReview)
                     .diff_review(super::ToolDiffReviewEvidence::Always),
@@ -92,7 +68,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
     ),
     change_summary_like(git_like(
             model_spec(
-                def(
+                runner_project_read_def(
                     "read_workspace_changes",
                     super::ToolAuditPolicy::TYPED_CANONICAL.context(
                         super::ToolAuditContextPolicy::Fields(&[
@@ -106,21 +82,9 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                             super::ToolAuditResultField::value("changed_files"),
                         ]),
                     ),
-                    ModelVisible,
                     TOOL_CATEGORY_GIT,
-                    Some(GitOrShell),
-                    TOOL_PROVIDER_RUNNER,
-                    super::ToolSemanticContract {
-                        effect: super::ToolEffect::Observe,
-                        risk: Read,
-                        approval: super::ToolApprovalPolicy::None,
-                        idempotency: super::ToolIdempotency::PureRead,
-                    },
-                    Some(PROJECT_READ),
-                    true,
+                    GitOrShell,
                     NoPath,
-                    false,
-                    false,
                     super::ToolSessionEvidencePolicy::NONE
                         .review(super::ToolReviewEvidence::WorkspaceReview)
                         .diff_review(super::ToolDiffReviewEvidence::ArgumentBool("include_diff")),
@@ -155,25 +119,13 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         "Commit exactly requested changed file paths with an atomic expected_head fence and isolated temporary index; normal Git clean filters may run under job:run authority, ordinary commit hooks are bypassed so they cannot add unrelated paths, and the tool never pushes.",
     )), &[PROJECT_WRITE, JOB_RUN]),
     git_like(model_spec(
-        def(
+        runner_project_read_def(
             "get_git_status",
             super::ToolAuditPolicy::TYPED_CANONICAL
                 .context(super::ToolAuditContextPolicy::WorkingTreeStatus),
-            ModelVisible,
             TOOL_CATEGORY_GIT,
-            Some(GitOrShell),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(PROJECT_READ),
-            true,
+            GitOrShell,
             NoPath,
-            false,
-            false,
             super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::WorkspaceReview),
         )
         .with_composition_policy(super::ToolCompositionPolicy::Parallel)
@@ -184,7 +136,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     ).with_discovery_keywords(&["check", "clean", "dirty", "working", "tree", "staged", "unstaged", "untracked", "status", "changes", "工作区", "干净", "状态", "暂存", "未暂存", "变动", "修改"])),
     change_summary_like(git_like(
         model_spec(
-            def(
+            runner_project_read_def(
                 "read_git_diff_hunks",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("project"),
@@ -202,21 +154,9 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
                 .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
                     "continuation",
                 ])),
-                ModelVisible,
                 TOOL_CATEGORY_GIT,
-                Some(GitOrShell),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Observe,
-                    risk: Read,
-                    approval: super::ToolApprovalPolicy::None,
-                    idempotency: super::ToolIdempotency::PureRead,
-                },
-                Some(PROJECT_READ),
-                true,
+                GitOrShell,
                 NoPath,
-                false,
-                false,
                 super::ToolSessionEvidencePolicy::NONE
                     .review(super::ToolReviewEvidence::DiffReview)
                     .diff_review(super::ToolDiffReviewEvidence::Always),
@@ -229,7 +169,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         ).with_discovery_keywords(&["staged", "unstaged", "diff", "patch", "hunks", "lines", "暂存", "未暂存", "差异", "补丁", "变动", "差异行"]),
     )),
     git_like(model_spec(
-        def(
+        runner_project_read_def(
             "read_git_log",
             super::ToolAuditPolicy::TYPED_CANONICAL.context(
                 super::ToolAuditContextPolicy::Fields(&[
@@ -240,21 +180,9 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolAuditResultField::value("truncated"),
                 ]),
             ),
-            ModelVisible,
             TOOL_CATEGORY_GIT,
-            Some(GitOrShell),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(PROJECT_READ),
-            true,
+            GitOrShell,
             NoPath,
-            false,
-            false,
             super::ToolSessionEvidencePolicy::NONE,
         ).with_composition_policy(super::ToolCompositionPolicy::Parallel),
         "Return bounded structured recent git commit history for a project. The first page resolves current HEAD to one exact 40-hex head_commit and reads that commit snapshot; later pages may supply the same head_commit so branch movement or rewrites cannot drift the traversal. When truncated and bounded forward progress is available, suggested_call is the sole parser-ready continuation and carries project, exact head_commit, effective limit, next skip, and Session identity when present. next_skip remains domain metadata only; null means the final page or the existing 10000 skip bound prevents a safe forward page. If the exact commit snapshot is no longer available, fail closed rather than falling back to current HEAD. Retained-tail or malformed source records also fail closed. Does not return commit bodies or modify the worktree.",

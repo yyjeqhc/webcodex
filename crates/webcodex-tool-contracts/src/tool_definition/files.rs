@@ -1,106 +1,55 @@
 use super::RunnerCapabilityRequirement::{FileRead, Shell};
-use super::ToolVisibility::ModelVisible;
 use super::{
-    adaptive_runtime_direct, def, model_spec, ToolDefinition, TOOL_CATEGORY_FILE,
-    TOOL_CATEGORY_PROJECT,
+    adaptive_runtime_direct, model_spec, runner_project_read_def, ToolDefinition,
+    TOOL_CATEGORY_FILE, TOOL_CATEGORY_PROJECT,
 };
-use crate::metadata::{
-    ToolPathHint::None as NoPath, ToolRisk::Read, PROJECT_READ, TOOL_PROVIDER_RUNNER,
-};
+use crate::metadata::ToolPathHint::None as NoPath;
 
 pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
-        def(
+        runner_project_read_def(
             "read_project_overview",
             super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
             TOOL_CATEGORY_PROJECT,
-            Some(FileRead),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(PROJECT_READ),
-            true,
+            FileRead,
             NoPath,
-            false,
-            false,
             super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::ReadOnlyInspection),
         ).with_composition_policy(super::ToolCompositionPolicy::Parallel),
         "Deterministic, bounded, metadata-only project overview. With the root/default scope it performs conservative project discovery from tracked state; with an explicit eligible path such as cache or build it can inspect ignored/generated directories through the bounded filesystem walk, while high-volume target/node_modules scopes remain excluded. Returns conventional project types, manifests, key files, roots, and direct children. Reads no file contents, uses no LLM, and is not semantic/LSP analysis; use read_files for exact file contents.",
     ).with_discovery_keywords(&["project", "overview", "structure", "manifests", "language", "framework", "项目", "概览", "结构", "清单", "框架"]),
     model_spec(
-        def(
+        runner_project_read_def(
             "list_project_files",
             super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
             TOOL_CATEGORY_FILE,
-            Some(FileRead),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(PROJECT_READ),
-            true,
+            FileRead,
             NoPath,
-            false,
-            false,
             super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::ReadOnlyInspection),
         ),
         "List one live Project directory, including named generated/non-Git directories. Returns sorted project-relative paths and file/dir kinds. Follow next_call for another page; offsets are not snapshots, so concurrent directory changes can shift entries. Current Runners bound pages before transport; older Runners require a complete source or fail closed. Use list_project_tracked_files with query/globs/depth for repository discovery, search_project_texts for content, and read_files for a known file. Do not enumerate directories merely to confirm a known path.",
     ).with_discovery_keywords(&["list", "directory", "folder", "entries", "files", "列出", "目录", "文件夹", "文件"]),
     model_spec(
-        def(
+        runner_project_read_def(
             "list_project_tracked_files",
             super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
             TOOL_CATEGORY_FILE,
             // Runs `git ls-files` on the Runner, so the shell capability is what
             // the Runner must actually hold — not FileRead's directory op.
-            Some(Shell),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(PROJECT_READ),
-            true,
+            Shell,
             NoPath,
-            false,
-            false,
             super::ToolSessionEvidencePolicy::NONE,
         ).with_composition_policy(super::ToolCompositionPolicy::Parallel),
         "Default discovery tool: what files does this project contain? Lists Git-tracked paths from a bounded producer source, so ignored directories like .venv and target never appear. Supports globs, a project-relative path scope, rollup, and offset paging when source acquisition is complete. If list_truncated=true, the source itself is incomplete: next_offset is null and offset must not be treated as recovery for the full repository; narrow path and retry. Retained-tail source truncation fails closed rather than exposing a false continuation.",
     ).with_discovery_keywords(&["find", "filename", "glob", "tracked", "repository", "files", "文件名", "通配符", "跟踪", "仓库", "文件"]),
     adaptive_runtime_direct(
         model_spec(
-            def(
+            runner_project_read_def(
                 "search_project_texts",
                 super::ToolAuditPolicy::TYPED_CANONICAL
                     .session_input(super::ToolAuditSessionInputPolicy::SearchProjectTexts),
-                ModelVisible,
                 TOOL_CATEGORY_FILE,
-                Some(Shell),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Observe,
-                    risk: Read,
-                    approval: super::ToolApprovalPolicy::None,
-                    idempotency: super::ToolIdempotency::PureRead,
-                },
-                Some(PROJECT_READ),
-                true,
+                Shell,
                 NoPath,
-                false,
-                false,
                 super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::Search).exploration(super::ToolExplorationEvidence::SearchBatch),
             )
             .with_composition_policy(super::ToolCompositionPolicy::Parallel)
@@ -115,25 +64,13 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
     ),
     adaptive_runtime_direct(
         model_spec(
-            def(
+            runner_project_read_def(
                 "search_file_context",
                 super::ToolAuditPolicy::TYPED_CANONICAL
                     .session_input(super::ToolAuditSessionInputPolicy::SearchAndRead),
-                ModelVisible,
                 TOOL_CATEGORY_FILE,
-                Some(Shell),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Observe,
-                    risk: Read,
-                    approval: super::ToolApprovalPolicy::None,
-                    idempotency: super::ToolIdempotency::PureRead,
-                },
-                Some(PROJECT_READ),
-                true,
+                Shell,
                 NoPath,
-                false,
-                false,
                 super::ToolSessionEvidencePolicy::NONE
                     .review(super::ToolReviewEvidence::ReadOnlyInspection)
                     .exploration(super::ToolExplorationEvidence::SearchCompound),
@@ -153,24 +90,12 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
 pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         model_spec(
-            def(
+            runner_project_read_def(
                 "read_files",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
-                ModelVisible,
                 TOOL_CATEGORY_FILE,
-                Some(FileRead),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Observe,
-                    risk: Read,
-                    approval: super::ToolApprovalPolicy::None,
-                    idempotency: super::ToolIdempotency::PureRead,
-                },
-                Some(PROJECT_READ),
-                true,
+                FileRead,
                 NoPath,
-                false,
-                false,
                 super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::ReadOnlyInspection).exploration(super::ToolExplorationEvidence::ReadBatch),
             )
             .with_composition_policy(super::ToolCompositionPolicy::Parallel)

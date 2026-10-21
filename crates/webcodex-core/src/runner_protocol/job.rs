@@ -1276,6 +1276,31 @@ pub struct ShellJobContext {
 }
 
 impl ShellJobContext {
+    /// Bounded ordered step names retained by admission and recovery.
+    pub fn validation_steps_are_valid(&self) -> bool {
+        self.validation_steps.len() <= 3
+            && self
+                .validation_steps
+                .iter()
+                .enumerate()
+                .all(|(index, step)| {
+                    matches!(step.as_str(), "format" | "check" | "lint" | "test")
+                        && !self.validation_steps[..index].contains(step)
+                })
+    }
+
+    /// Optional executable metadata must describe the same ordered steps.
+    pub fn validation_metadata_is_valid(&self) -> bool {
+        self.validation.as_ref().is_none_or(|metadata| {
+            metadata.is_valid()
+                && metadata
+                    .steps
+                    .iter()
+                    .map(|step| &step.name)
+                    .eq(self.validation_steps.iter())
+        })
+    }
+
     /// Semantic execution identities shared by Runner admission and Server
     /// reconciliation. Interpreter executable names are not shell identities.
     pub fn is_valid_shell(shell: &str) -> bool {

@@ -9,9 +9,9 @@ use super::common::{
     cargo_test_count_assertion_schema, continuation_feedback_schema, evidence_history_schema,
     evidence_integrity_schema, external_observation_schema, failed_test_detail_schema,
     handoff_brief_schema, job_lifecycle_summary_schema, nullable_schema, open_object_schema,
-    permission_summary_schema, schema_type, session_execution_context_schema,
-    session_guards_schema, session_lifecycle_schema, session_mode_schema, task_outcome_schema,
-    validation_delta_schema, wrapped_output_schema,
+    permission_summary_schema, review_evidence_schema, schema_type,
+    session_execution_context_schema, session_guards_schema, session_lifecycle_schema,
+    session_mode_schema, task_outcome_schema, validation_delta_schema, wrapped_output_schema,
 };
 
 fn session_handoff_goal_context_schema() -> Value {
@@ -1168,30 +1168,6 @@ fn cargo_test_summary_schema() -> Value {
             "passed": { "type": "integer", "minimum": 0 },
             "failed": { "type": "integer", "minimum": 0 },
             "ignored": { "type": "integer", "minimum": 0 }
-        }
-    })
-}
-
-fn review_evidence_schema(description: &str) -> Value {
-    json!({
-        "type": "object",
-        "description": description,
-        "additionalProperties": true,
-        "properties": {
-            "available": schema_type("boolean", "True when review evidence summary is available."),
-            "source": schema_type("string", "Review evidence source, usually session_ledger."),
-            "total": schema_type("integer", "Total successful review evidence tool calls counted."),
-            "read_only_inspection_count": schema_type("integer", "Successful read-only inspection tool calls counted."),
-            "search_count": schema_type("integer", "Successful search tool calls counted."),
-            "diff_review_count": schema_type("integer", "Successful diff review tool calls counted."),
-            "workspace_review_count": schema_type("integer", "Successful workspace review tool calls counted."),
-            "hygiene_review_count": schema_type("integer", "Successful hygiene review tool calls counted."),
-            "tools": {
-                "type": "array",
-                "maxItems": 20,
-                "description": "Bounded unique review evidence tool names only; never file contents, diff hunks, stdout/stderr, command text, tokens, secrets, or raw input payloads.",
-                "items": schema_type("string", "Review evidence tool name.")
-            }
         }
     })
 }

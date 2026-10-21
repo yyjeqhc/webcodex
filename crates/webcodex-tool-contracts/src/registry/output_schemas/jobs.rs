@@ -89,6 +89,16 @@ fn input_normalization_schema() -> Value {
     })
 }
 
+fn execution_state_constraint(state: &str, then: Value) -> Value {
+    json!({
+        "if": {
+            "properties": {"execution_state": {"const": state}},
+            "required": ["execution_state"]
+        },
+        "then": then
+    })
+}
+
 fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
     let mut continuation = observe_job_continuation_schema();
     continuation["properties"]["arguments"]["properties"]["items"]["items"]["required"] =
@@ -185,123 +195,81 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
                 }
             }
         },
-        {
-            "if": {
-                "properties": {"execution_state": {"const": "pending"}},
-                "required": ["execution_state"]
-            },
-            "then": {
-                "required": ["continuation"],
-                "properties": {
-                    "continuation": continuation,
-                    "job_id": {"enum": []},
-                    "job_status": {"enum": []},
-                    "observation_token": {"enum": []},
-                    "terminal": {"enum": []},
-                    "command_started": {"enum": []},
-                    "command_completed": {"enum": []},
-                    "command_ok": {"enum": []},
-                    "promoted_to_job": {"enum": []},
-                    "async_handoff_available": {"enum": []},
-                    "effective_timeout_secs": {"enum": []},
-                    "sync_wait_secs": {"enum": []},
-                    "activity": {"enum": []},
-                    "detected_summary": {"enum": []}
-                }
+        execution_state_constraint("pending", json!({
+            "required": ["continuation"],
+            "properties": {
+                "continuation": continuation,
+                "job_id": {"enum": []},
+                "job_status": {"enum": []},
+                "observation_token": {"enum": []},
+                "terminal": {"enum": []},
+                "command_started": {"enum": []},
+                "command_completed": {"enum": []},
+                "command_ok": {"enum": []},
+                "promoted_to_job": {"enum": []},
+                "async_handoff_available": {"enum": []},
+                "effective_timeout_secs": {"enum": []},
+                "sync_wait_secs": {"enum": []},
+                "activity": {"enum": []},
+                "detected_summary": {"enum": []}
             }
-        },
-        {
-            "if": {
-                "properties": {"execution_state": {"const": "not_started"}},
-                "required": ["execution_state"]
+        })),
+        execution_state_constraint("not_started", json!({
+            "properties": {
+                "command_started": {"const": false},
+                "command_completed": {"const": false},
+                "terminal": {"const": true}
             },
-            "then": {
-                "properties": {
-                    "command_started": {"const": false},
-                    "command_completed": {"const": false},
-                    "terminal": {"const": true}
-                },
-                "required": ["command_started", "command_completed"]
-            }
-        },
-        {
-            "if": {
-                "properties": {"execution_state": {"const": "outcome_unknown"}},
-                "required": ["execution_state"]
+            "required": ["command_started", "command_completed"]
+        })),
+        execution_state_constraint("outcome_unknown", json!({
+            "properties": {
+                "command_started": {"const": true},
+                "command_completed": {"const": false},
+                "terminal": {"const": false}
             },
-            "then": {
-                "properties": {
-                    "command_started": {"const": true},
-                    "command_completed": {"const": false},
-                    "terminal": {"const": false}
-                },
-                "required": ["command_started", "command_completed"]
-            }
-        },
-        {
-            "if": {
-                "properties": {"execution_state": {"const": "completed"}},
-                "required": ["execution_state"]
+            "required": ["command_started", "command_completed"]
+        })),
+        execution_state_constraint("completed", json!({
+            "properties": {
+                "command_started": {"const": true},
+                "command_completed": {"const": true},
+                "terminal": {"const": true}
             },
-            "then": {
-                "properties": {
-                    "command_started": {"const": true},
-                    "command_completed": {"const": true},
-                    "terminal": {"const": true}
-                },
-                "required": ["command_started", "command_completed"]
-            }
-        },
-        {
-            "if": {
-                "properties": {"execution_state": {"const": "timed_out"}},
-                "required": ["execution_state"]
+            "required": ["command_started", "command_completed"]
+        })),
+        execution_state_constraint("timed_out", json!({
+            "properties": {
+                "command_started": {"const": true},
+                "command_completed": {"const": false},
+                "terminal": {"const": true}
             },
-            "then": {
-                "properties": {
-                    "command_started": {"const": true},
-                    "command_completed": {"const": false},
-                    "terminal": {"const": true}
-                },
-                "required": ["command_started", "command_completed"]
-            }
-        },
-        {
-            "if": {
-                "properties": {"execution_state": {"const": "queued"}},
-                "required": ["execution_state"]
+            "required": ["command_started", "command_completed"]
+        })),
+        execution_state_constraint("queued", json!({
+            "properties": {
+                "command_started": {"const": false},
+                "command_completed": {"const": false},
+                "terminal": {"const": false}
             },
-            "then": {
-                "properties": {
-                    "command_started": {"const": false},
-                    "command_completed": {"const": false},
-                    "terminal": {"const": false}
-                },
-                "required": [
-                    "command_started",
-                    "command_completed",
-                    "terminal"
-                ]
-            }
-        },
-        {
-            "if": {
-                "properties": {"execution_state": {"const": "running"}},
-                "required": ["execution_state"]
+            "required": [
+                "command_started",
+                "command_completed",
+                "terminal"
+            ]
+        })),
+        execution_state_constraint("running", json!({
+            "properties": {
+                "command_started": {"const": true},
+                "command_completed": {"const": false},
+                "terminal": {"const": false}
             },
-            "then": {
-                "properties": {
-                    "command_started": {"const": true},
-                    "command_completed": {"const": false},
-                    "terminal": {"const": false}
-                },
-                "required": [
-                    "command_started",
-                    "command_completed",
-                    "terminal"
-                ]
-            }
-        },
+            "required": [
+                "command_started",
+                "command_completed",
+                "terminal"
+            ]
+        })),
         {
             "if": {
                 "properties": {"job_id": {"type": "string"}},
@@ -371,6 +339,51 @@ fn require_success_output_field(schema: &mut Value, field: &str) {
                 }
             }
         }));
+}
+
+fn structured_execution_output_properties() -> Vec<(&'static str, Value)> {
+    let mut properties = vec![
+        (
+            "stdout_tail",
+            schema_type("string", "Bounded stdout tail; omitted when empty on ordinary synchronous terminal success."),
+        ),
+        (
+            "stderr_tail",
+            schema_type("string", "Bounded stderr tail; omitted when empty on ordinary synchronous terminal success."),
+        ),
+        (
+            "stdout_lines",
+            schema_type("integer", "Captured stdout line count; omitted when zero on ordinary synchronous terminal success."),
+        ),
+        (
+            "stderr_lines",
+            schema_type("integer", "Captured stderr line count; omitted when zero on ordinary synchronous terminal success."),
+        ),
+        (
+            "stdout_truncated",
+            schema_type("boolean", "Whether stdout_tail was truncated; false is omitted on ordinary synchronous terminal success."),
+        ),
+        (
+            "stderr_truncated",
+            schema_type("boolean", "Whether stderr_tail was truncated; false is omitted on ordinary synchronous terminal success."),
+        ),
+        ("purpose", schema_type("string", "Declared execution purpose. Audit metadata: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.")),
+        (
+            "cwd",
+            schema_type("string", "Resolved project-relative cwd. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
+        ),
+        ("executor", json!({
+            "type": "string",
+            "const": "agent",
+            "description": "Runner-backed executor. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."
+        })),
+        (
+            "execution_state",
+            process_execution_state_schema(),
+        ),
+    ];
+    properties.extend(structured_continuation_properties());
+    properties
 }
 
 fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
@@ -1120,30 +1133,6 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     nullable_schema("integer", "Process exit code when it must be explicit; omitted when outer success already implies 0."),
                 ),
                 (
-                    "stdout_tail",
-                    schema_type("string", "Bounded stdout tail; omitted when empty on ordinary synchronous terminal success."),
-                ),
-                (
-                    "stderr_tail",
-                    schema_type("string", "Bounded stderr tail; omitted when empty on ordinary synchronous terminal success."),
-                ),
-                (
-                    "stdout_lines",
-                    schema_type("integer", "Captured stdout line count; omitted when zero on ordinary synchronous terminal success."),
-                ),
-                (
-                    "stderr_lines",
-                    schema_type("integer", "Captured stderr line count; omitted when zero on ordinary synchronous terminal success."),
-                ),
-                (
-                    "stdout_truncated",
-                    schema_type("boolean", "Whether stdout_tail was truncated; false is omitted on ordinary synchronous terminal success."),
-                ),
-                (
-                    "stderr_truncated",
-                    schema_type("boolean", "Whether stderr_tail was truncated; false is omitted on ordinary synchronous terminal success."),
-                ),
-                (
                     "command_started",
                     schema_type(
                         "boolean",
@@ -1175,7 +1164,6 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                         "True for WebCodex tool/runtime failures; false for child exit status failures. Omitted when false on ordinary synchronous terminal success.",
                     ),
                 ),
-                ("purpose", schema_type("string", "Declared execution purpose. Audit metadata: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.")),
                 (
                     "process_summary",
                     schema_type(
@@ -1184,24 +1172,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     ),
                 ),
                 (
-                    "cwd",
-                    schema_type("string", "Resolved project-relative cwd. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
-                ),
-                ("executor", json!({
-                    "type": "string",
-                    "const": "agent",
-                    "description": "Runner-backed executor. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."
-                })),
-                (
                     "execution_source",
                     schema_type("string", "Canonical executed surface; may differ from the requested surface after proven exact shell-input recovery."),
                 ),
                 ("requested_surface", schema_type("string", "Original requested tool name when an exact shell form was normalized.")),
                 ("input_normalization", input_normalization_schema()),
-                (
-                    "execution_state",
-                    process_execution_state_schema(),
-                ),
                 (
                     "expectation_satisfied",
                     schema_type(
@@ -1210,7 +1185,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     ),
                 ),
             ];
-            properties.extend(structured_continuation_properties());
+            properties.extend(structured_execution_output_properties());
             let mut schema = wrapped_output_schema(properties);
             schema["properties"]["output"]["properties"]["suggested_call"] =
                 list_jobs_recovery_call_schema(true);
@@ -1237,30 +1212,6 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 (
                     "exit_code",
                     nullable_schema("integer", "Interpreter exit code when it must be explicit; omitted when outer success already implies 0."),
-                ),
-                (
-                    "stdout_tail",
-                    schema_type("string", "Bounded stdout tail; omitted when empty on ordinary synchronous terminal success."),
-                ),
-                (
-                    "stderr_tail",
-                    schema_type("string", "Bounded stderr tail; omitted when empty on ordinary synchronous terminal success."),
-                ),
-                (
-                    "stdout_lines",
-                    schema_type("integer", "Captured stdout line count; omitted when zero on ordinary synchronous terminal success."),
-                ),
-                (
-                    "stderr_lines",
-                    schema_type("integer", "Captured stderr line count; omitted when zero on ordinary synchronous terminal success."),
-                ),
-                (
-                    "stdout_truncated",
-                    schema_type("boolean", "Whether stdout_tail was truncated; false is omitted on ordinary synchronous terminal success."),
-                ),
-                (
-                    "stderr_truncated",
-                    schema_type("boolean", "Whether stderr_tail was truncated; false is omitted on ordinary synchronous terminal success."),
                 ),
                 (
                     "command_started",
@@ -1297,7 +1248,6 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                         "True for WebCodex tool/runtime failures; false for interpreter exit status failures. Omitted when false on ordinary synchronous terminal success.",
                     ),
                 ),
-                ("purpose", schema_type("string", "Declared execution purpose. Audit metadata: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.")),
                 (
                     "script_summary",
                     schema_type(
@@ -1310,24 +1260,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     schema_type("string", "Explicit semantic script language."),
                 ),
                 (
-                    "cwd",
-                    schema_type("string", "Resolved project-relative cwd. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
-                ),
-                ("executor", json!({
-                    "type": "string",
-                    "const": "agent",
-                    "description": "Runner-backed executor. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."
-                })),
-                (
                     "execution_source",
                     schema_type("string", "Canonical source is run_script. Diagnostic telemetry: omitted on ordinary synchronous terminal success when canonical and from the default model-facing failure projection."),
                 ),
-                (
-                    "execution_state",
-                    process_execution_state_schema(),
-                ),
             ];
-            properties.extend(structured_continuation_properties());
+            properties.extend(structured_execution_output_properties());
             let mut schema = wrapped_output_schema(properties);
             schema["properties"]["output"]["properties"]["language"]["enum"] =
                 json!(["sh", "bash", "powershell", "python", "javascript", "typescript"]);

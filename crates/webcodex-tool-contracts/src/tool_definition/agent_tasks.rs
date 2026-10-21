@@ -1,35 +1,67 @@
 use super::RunnerCapabilityRequirement::CodingAgentRuns;
 use super::ToolVisibility::ModelVisible;
 use super::{
-    def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_JOB,
-    PERMISSION_RISK_WRITE, TOOL_CATEGORY_AGENT_TASK,
+    control_def, def, model_spec, permission_risk, require_all_scopes, ToolDefinition,
+    PERMISSION_RISK_JOB, PERMISSION_RISK_WRITE, TOOL_CATEGORY_AGENT_TASK,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{JobRun, Read, WorkflowManage},
-    CODING_AGENT_RUN, COMMUNICATION_MANAGE, COMMUNICATION_READ, TOOL_PROVIDER_CONTROL,
-    TOOL_PROVIDER_RUNNER,
+    CODING_AGENT_RUN, COMMUNICATION_MANAGE, COMMUNICATION_READ, TOOL_PROVIDER_RUNNER,
 };
 use webcodex_core::authority::{COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES};
+
+const TASK_MUTATION_AUDIT: super::ToolAuditPolicy = super::ToolAuditPolicy::typed_fields(&[
+    super::ToolAuditResultField::pointer("task_id", "/task/summary/task_id"),
+    super::ToolAuditResultField::pointer("state", "/task/summary/state"),
+    super::ToolAuditResultField::pointer("assignee_agent_id", "/task/summary/assignee_agent_id"),
+    super::ToolAuditResultField::value("created"),
+    super::ToolAuditResultField::value("replayed"),
+    super::ToolAuditResultField::value("state_changed"),
+    super::ToolAuditResultField::value("error_kind"),
+]);
+
+const ATTEMPT_MUTATION_AUDIT: super::ToolAuditPolicy = super::ToolAuditPolicy::typed_fields(&[
+    super::ToolAuditResultField::pointer("task_id", "/task/task_id"),
+    super::ToolAuditResultField::pointer("task_state", "/task/state"),
+    super::ToolAuditResultField::pointer("attempt_id", "/attempt/attempt_id"),
+    super::ToolAuditResultField::pointer("attempt_number", "/attempt/attempt_number"),
+    super::ToolAuditResultField::pointer("attempt_state", "/attempt/state"),
+    super::ToolAuditResultField::pointer(
+        "controller_generation",
+        "/attempt/attempt_controller_generation",
+    ),
+    super::ToolAuditResultField::value("replayed"),
+    super::ToolAuditResultField::value("state_changed"),
+    super::ToolAuditResultField::value("error_kind"),
+]);
+
+const CODING_RUN_AUDIT: super::ToolAuditPolicy = super::ToolAuditPolicy::typed_fields(&[
+    super::ToolAuditResultField::value("task_id"),
+    super::ToolAuditResultField::value("attempt_id"),
+    super::ToolAuditResultField::value("run_id"),
+    super::ToolAuditResultField::value("project"),
+    super::ToolAuditResultField::value("provider_id"),
+    super::ToolAuditResultField::value("dispatch_state"),
+    super::ToolAuditResultField::value("run_state"),
+    super::ToolAuditResultField::value("execution_state"),
+    super::ToolAuditResultField::value("execution_status"),
+    super::ToolAuditResultField::value("execution_recovery"),
+    super::ToolAuditResultField::value("task_state"),
+    super::ToolAuditResultField::value("attempt_state"),
+    super::ToolAuditResultField::value("replayed"),
+    super::ToolAuditResultField::value("state_changed"),
+    super::ToolAuditResultField::value("error_kind"),
+]);
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         model_spec(
-            def(
+            control_def(
                 "create_agent_task",
-                super::ToolAuditPolicy::typed_fields(&[
-                    super::ToolAuditResultField::pointer("task_id", "/task/summary/task_id"),
-                    super::ToolAuditResultField::pointer("state", "/task/summary/state"),
-                    super::ToolAuditResultField::pointer("assignee_agent_id", "/task/summary/assignee_agent_id"),
-                    super::ToolAuditResultField::value("created"),
-                    super::ToolAuditResultField::value("replayed"),
-                    super::ToolAuditResultField::value("state_changed"),
-                    super::ToolAuditResultField::value("error_kind"),
-                ]),
+                TASK_MUTATION_AUDIT,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
-                None,
-                TOOL_PROVIDER_CONTROL,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: WorkflowManage,
@@ -38,10 +70,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 },
                 Some(COMMUNICATION_MANAGE),
                 false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
             ),
             "Create explicit durable Agent work independent from windows, Endpoints, Conversation Messages, Workflow Sessions, Connector Tasks, Projects, and execution backends. Optional source/project fields are correlation only. Exact keyed replay returns the same Task.",
         ),
@@ -49,7 +77,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     require_all_scopes(
         model_spec(
-            def(
+            control_def(
                 "list_agent_tasks",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("total_count"),
@@ -61,8 +89,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ]),
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
-                None,
-                TOOL_PROVIDER_CONTROL,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
@@ -71,10 +97,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 },
                 Some(COMMUNICATION_READ),
                 false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
             ),
             "List bounded AgentTasks owned by the current communication principal, optionally filtered by assignee. Returns latest Attempt state without instruction bodies or attempt fences; a live latest Attempt may include its principal-scoped attempt_ref so heartbeat/completion recovery does not require retaining the fence. Lease state is derived from durable Server-time truth.",
         ),
@@ -82,7 +104,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     require_all_scopes(
         model_spec(
-            def(
+            control_def(
                 "read_agent_task",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::pointer("task_id", "/task/summary/task_id"),
@@ -96,8 +118,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ]),
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
-                None,
-                TOOL_PROVIDER_CONTROL,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
@@ -106,10 +126,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 },
                 Some(COMMUNICATION_READ),
                 false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
             ),
             "Read one exact owned durable AgentTask with its bounded instruction and latest Attempt metadata. A live latest Attempt may include its principal-scoped attempt_ref for heartbeat/completion recovery; the response never returns attempt_fence, credentials, Conversation bodies, or Project authority.",
         ),
@@ -118,21 +134,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             model_spec(
-            def(
+            control_def(
                 "assign_agent_task",
-                super::ToolAuditPolicy::typed_fields(&[
-                    super::ToolAuditResultField::pointer("task_id", "/task/summary/task_id"),
-                    super::ToolAuditResultField::pointer("state", "/task/summary/state"),
-                    super::ToolAuditResultField::pointer("assignee_agent_id", "/task/summary/assignee_agent_id"),
-                    super::ToolAuditResultField::value("created"),
-                    super::ToolAuditResultField::value("replayed"),
-                    super::ToolAuditResultField::value("state_changed"),
-                    super::ToolAuditResultField::value("error_kind"),
-                ]),
+                TASK_MUTATION_AUDIT,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
-                None,
-                TOOL_PROVIDER_CONTROL,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: WorkflowManage,
@@ -140,11 +146,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     idempotency: super::ToolIdempotency::DesiredState,
                 },
                 Some(COMMUNICATION_MANAGE),
-                false,
-                NoPath,
                 true,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
             ),
             "Explicitly assign or reassign an owned AgentTask to an owned durable Agent. A live unexpired Attempt fences reassignment; lease expiry never transfers work automatically. Assignment grants no Project or executor authority.",
             ),
@@ -154,23 +156,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     require_all_scopes(
         model_spec(
-            def(
+            control_def(
                 "start_agent_task_attempt",
-                super::ToolAuditPolicy::typed_fields(&[
-                    super::ToolAuditResultField::pointer("task_id", "/task/task_id"),
-                    super::ToolAuditResultField::pointer("task_state", "/task/state"),
-                    super::ToolAuditResultField::pointer("attempt_id", "/attempt/attempt_id"),
-                    super::ToolAuditResultField::pointer("attempt_number", "/attempt/attempt_number"),
-                    super::ToolAuditResultField::pointer("attempt_state", "/attempt/state"),
-                    super::ToolAuditResultField::pointer("controller_generation", "/attempt/attempt_controller_generation"),
-                    super::ToolAuditResultField::value("replayed"),
-                    super::ToolAuditResultField::value("state_changed"),
-                    super::ToolAuditResultField::value("error_kind"),
-                ]),
+                ATTEMPT_MUTATION_AUDIT,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
-                None,
-                TOOL_PROVIDER_CONTROL,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: WorkflowManage,
@@ -179,10 +169,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 },
                 Some(COMMUNICATION_MANAGE),
                 false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
             ),
             "Atomically claim execution ownership for the explicit current AgentTask assignee. Creates one leased fenced AgentTaskAttempt only; it does not dispatch CodingAgentRun, Job, shell, model, Wake, Endpoint, or Workflow Session work. Exact keyed retry returns the original Attempt, fence, and attempt_ref.",
         ),
@@ -191,7 +177,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             model_spec(
-                def(
+                control_def(
                     "start_agent_task_endpoint_continuation",
                     super::ToolAuditPolicy::typed_fields(&[
                         super::ToolAuditResultField::pointer("task_id", "/execution/task_id"),
@@ -206,8 +192,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     ]),
                     ModelVisible,
                     TOOL_CATEGORY_AGENT_TASK,
-                    None,
-                    TOOL_PROVIDER_CONTROL,
                     super::ToolSemanticContract {
                         effect: super::ToolEffect::Execute,
                         risk: WorkflowManage,
@@ -215,11 +199,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         idempotency: super::ToolIdempotency::FencedReplay,
                     },
                     Some(COMMUNICATION_MANAGE),
-                    false,
-                    NoPath,
                     true,
-                    false,
-                    super::ToolSessionEvidencePolicy::NONE,
                 ),
                 "Select the Agent Endpoint continuation backend for the exact latest unexpired fenced AgentTaskAttempt. Pass attempt_ref or the exact task, attempt, assignee, fence, and controller generation. This call never chooses an Endpoint: it durably creates/replays one Task-origin Wake with a nullable carrier, then the existing event-driven continuation controller dispatches only when a current wake-capable Endpoint later claims it. TaskAttempt and Endpoint leases remain independent; no synthetic Conversation Message or Inbox Delivery is created. The ref is not authority. Coding-run, heartbeat, and completion accept this ref or the explicit tuple.",
             ),
@@ -232,23 +212,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             require_all_scopes(
                 def(
                     "start_agent_task_coding_run",
-                    super::ToolAuditPolicy::typed_fields(&[
-                        super::ToolAuditResultField::value("task_id"),
-                        super::ToolAuditResultField::value("attempt_id"),
-                        super::ToolAuditResultField::value("run_id"),
-                        super::ToolAuditResultField::value("project"),
-                        super::ToolAuditResultField::value("provider_id"),
-                        super::ToolAuditResultField::value("dispatch_state"),
-                        super::ToolAuditResultField::value("run_state"),
-                        super::ToolAuditResultField::value("execution_state"),
-                        super::ToolAuditResultField::value("execution_status"),
-                        super::ToolAuditResultField::value("execution_recovery"),
-                        super::ToolAuditResultField::value("task_state"),
-                        super::ToolAuditResultField::value("attempt_state"),
-                        super::ToolAuditResultField::value("replayed"),
-                        super::ToolAuditResultField::value("state_changed"),
-                        super::ToolAuditResultField::value("error_kind"),
-                    ]),
+                    CODING_RUN_AUDIT,
                     ModelVisible,
                     TOOL_CATEGORY_AGENT_TASK,
                     Some(CodingAgentRuns),
@@ -282,23 +246,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             require_all_scopes(
                 def(
                 "reconcile_agent_task_coding_run",
-                super::ToolAuditPolicy::typed_fields(&[
-                    super::ToolAuditResultField::value("task_id"),
-                    super::ToolAuditResultField::value("attempt_id"),
-                    super::ToolAuditResultField::value("run_id"),
-                    super::ToolAuditResultField::value("project"),
-                    super::ToolAuditResultField::value("provider_id"),
-                    super::ToolAuditResultField::value("dispatch_state"),
-                    super::ToolAuditResultField::value("run_state"),
-                    super::ToolAuditResultField::value("execution_state"),
-                    super::ToolAuditResultField::value("execution_status"),
-                    super::ToolAuditResultField::value("execution_recovery"),
-                    super::ToolAuditResultField::value("task_state"),
-                    super::ToolAuditResultField::value("attempt_state"),
-                    super::ToolAuditResultField::value("replayed"),
-                    super::ToolAuditResultField::value("state_changed"),
-                    super::ToolAuditResultField::value("error_kind"),
-                ]),
+                CODING_RUN_AUDIT,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -325,23 +273,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             model_spec(
-            def(
+            control_def(
                 "heartbeat_agent_task_attempt",
-                super::ToolAuditPolicy::typed_fields(&[
-                    super::ToolAuditResultField::pointer("task_id", "/task/task_id"),
-                    super::ToolAuditResultField::pointer("task_state", "/task/state"),
-                    super::ToolAuditResultField::pointer("attempt_id", "/attempt/attempt_id"),
-                    super::ToolAuditResultField::pointer("attempt_number", "/attempt/attempt_number"),
-                    super::ToolAuditResultField::pointer("attempt_state", "/attempt/state"),
-                    super::ToolAuditResultField::pointer("controller_generation", "/attempt/attempt_controller_generation"),
-                    super::ToolAuditResultField::value("replayed"),
-                    super::ToolAuditResultField::value("state_changed"),
-                    super::ToolAuditResultField::value("error_kind"),
-                ]),
+                ATTEMPT_MUTATION_AUDIT,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
-                None,
-                TOOL_PROVIDER_CONTROL,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: WorkflowManage,
@@ -349,11 +285,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     idempotency: super::ToolIdempotency::NonIdempotent,
                 },
                 Some(COMMUNICATION_MANAGE),
-                false,
-                NoPath,
                 true,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
             ),
             "Renew only the exact latest unexpired AgentTaskAttempt. Pass attempt_ref or the exact task, attempt, assignee, fence, and controller generation, not both. The ref is not authority. Without active-turn proof this is the ordinary Server-owned 60-second heartbeat window. Supplying the paired exact consumed A4b Wake id + consume token proves the same online model-turn lineage and permits only another bounded Server-owned 30-minute reservation; callers cannot choose duration or expiry. Long A4b work must explicitly renew before expiry: App polling, Window activity, Endpoint heartbeat, Goal liveness, and ordinary model/tool traffic never renew the Attempt automatically. The proof grants no authority, and expired, superseded, wrong-generation, wrong-fence, unconsumed, or mismatched proofs fail closed without revival.",
             ),
@@ -364,23 +296,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             model_spec(
-            def(
+            control_def(
                 "complete_agent_task_attempt",
-                super::ToolAuditPolicy::typed_fields(&[
-                    super::ToolAuditResultField::pointer("task_id", "/task/task_id"),
-                    super::ToolAuditResultField::pointer("task_state", "/task/state"),
-                    super::ToolAuditResultField::pointer("attempt_id", "/attempt/attempt_id"),
-                    super::ToolAuditResultField::pointer("attempt_number", "/attempt/attempt_number"),
-                    super::ToolAuditResultField::pointer("attempt_state", "/attempt/state"),
-                    super::ToolAuditResultField::pointer("controller_generation", "/attempt/attempt_controller_generation"),
-                    super::ToolAuditResultField::value("replayed"),
-                    super::ToolAuditResultField::value("state_changed"),
-                    super::ToolAuditResultField::value("error_kind"),
-                ]),
+                ATTEMPT_MUTATION_AUDIT,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
-                None,
-                TOOL_PROVIDER_CONTROL,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Mutate,
                     risk: WorkflowManage,
@@ -388,11 +308,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     idempotency: super::ToolIdempotency::Keyed,
                 },
                 Some(COMMUNICATION_MANAGE),
-                false,
-                NoPath,
                 true,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
             ),
             "Commit terminal success or failure only from the exact latest unexpired AgentTaskAttempt. Pass attempt_ref or the exact task, attempt, assignee, fence, and controller generation, not both. The ref is not authority. Completion is independently keyed: exact retry replays once, changed reuse conflicts, and stale Attempts cannot write Task truth.",
             ),

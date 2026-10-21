@@ -1216,6 +1216,35 @@ const fn def(
     }
 }
 
+// Server-owned Control operations without a Project, path, Runner dispatch, or
+// Session evidence. Authority, effect, idempotency, and destructive intent stay
+// explicit at each declaration.
+const fn control_def(
+    name: &'static str,
+    audit: ToolAuditPolicy,
+    visibility: ToolVisibility,
+    category: &'static str,
+    semantic: ToolSemanticContract,
+    required_scope: Option<&'static str>,
+    destructive: bool,
+) -> ToolDefinition {
+    def(
+        name,
+        audit,
+        visibility,
+        category,
+        None,
+        TOOL_PROVIDER_CONTROL,
+        semantic,
+        required_scope,
+        false,
+        NoPath,
+        destructive,
+        false,
+        ToolSessionEvidencePolicy::NONE,
+    )
+}
+
 const fn model_spec(definition: ToolDefinition, description: &'static str) -> ToolDefinition {
     ToolDefinition {
         model_spec: Some(ToolModelSpecDeclaration {
@@ -1360,13 +1389,11 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
 ];
 
 const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[model_spec(
-    def(
+    control_def(
         "list_tools",
         ToolAuditPolicy::TYPED_CANONICAL,
         ModelVisible,
         TOOL_CATEGORY_RUNTIME,
-        None,
-        TOOL_PROVIDER_CONTROL,
         ToolSemanticContract {
             effect: ToolEffect::Observe,
             risk: Read,
@@ -1375,10 +1402,6 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[model_spec(
         },
         Some(RUNTIME_READ),
         false,
-        NoPath,
-        false,
-        false,
-        ToolSessionEvidencePolicy::NONE,
     )
     .with_activity(
         ToolActivityPresentation::Support,

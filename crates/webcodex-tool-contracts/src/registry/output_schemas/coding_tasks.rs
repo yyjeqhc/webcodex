@@ -4,7 +4,8 @@ use super::common::{
     acceptance_evidence_schema, array_schema, continuation_feedback_schema,
     evidence_history_schema, evidence_integrity_schema, handoff_brief_schema,
     job_lifecycle_summary_schema, nullable_schema, open_object_schema, permission_summary_schema,
-    schema_type, session_execution_context_schema, task_outcome_schema, wrapped_output_schema,
+    review_evidence_schema, schema_type, session_execution_context_schema, task_outcome_schema,
+    wrapped_output_schema,
 };
 #[cfg(any(test, feature = "root-test-support"))]
 use super::common::{
@@ -945,7 +946,6 @@ fn startup_failure_schema() -> Value {
     })
 }
 
-#[cfg(any(test, feature = "root-test-support"))]
 fn bounded_list_schema(items: Value, max_items: usize) -> Value {
     json!({
         "type": "object",
@@ -960,28 +960,32 @@ fn bounded_list_schema(items: Value, max_items: usize) -> Value {
     })
 }
 
+fn semantic_navigation_status_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": [
+            "running",
+            "available",
+            "initializing",
+            "crashed",
+            "unavailable",
+            "not_applicable",
+            "agent_unavailable",
+            "agent_capability_unavailable",
+            "not_observed",
+            "probe_timeout",
+            "probe_failed"
+        ]
+    })
+}
+
 #[cfg(any(test, feature = "root-test-support"))]
 fn startup_semantic_navigation_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
             "supported": {"type": "boolean", "description": "Whether LSP read-only navigation is advertised for this project."},
-            "status": {
-                "type": "string",
-                "enum": [
-                    "running",
-                    "available",
-                    "initializing",
-                    "crashed",
-                    "unavailable",
-                    "not_applicable",
-                    "agent_unavailable",
-                    "agent_capability_unavailable",
-                    "not_observed",
-                    "probe_timeout",
-                    "probe_failed"
-                ]
-            },
+            "status": semantic_navigation_status_schema(),
             "available": nullable_schema("boolean", "Observed semantic-navigation availability. Null means startup finished without waiting for availability, or the bounded status probe timed out or failed; this is advisory, not unavailability."),
             "provider": nullable_schema("string", "Semantic provider when applicable."),
             "capability": nullable_schema("string", "Bounded advertised capability summary."),
@@ -993,28 +997,15 @@ fn startup_semantic_navigation_schema() -> Value {
 }
 
 fn startup_repository_schema() -> Value {
-    let bounded_repository_list = |items: Value, max_items: usize| {
-        json!({
-            "type": "object",
-            "properties": {
-                "items": {"type": "array", "maxItems": max_items, "items": items},
-                "total": {"type": "integer", "minimum": 0},
-                "returned": {"type": "integer", "minimum": 0, "maximum": max_items},
-                "truncated": {"type": "boolean"}
-            },
-            "required": ["items", "total", "returned", "truncated"],
-            "additionalProperties": false
-        })
-    };
     let bounded_roots = json!({
         "type": "object",
         "properties": {
-            "source": bounded_repository_list(json!({"type": "string", "maxLength": 192}), 8),
-            "tests": bounded_repository_list(json!({"type": "string", "maxLength": 192}), 8),
-            "docs": bounded_repository_list(json!({"type": "string", "maxLength": 192}), 8),
-            "examples": bounded_repository_list(json!({"type": "string", "maxLength": 192}), 8),
-            "scripts": bounded_repository_list(json!({"type": "string", "maxLength": 192}), 8),
-            "ci": bounded_repository_list(json!({"type": "string", "maxLength": 192}), 8),
+            "source": bounded_list_schema(json!({"type": "string", "maxLength": 192}), 8),
+            "tests": bounded_list_schema(json!({"type": "string", "maxLength": 192}), 8),
+            "docs": bounded_list_schema(json!({"type": "string", "maxLength": 192}), 8),
+            "examples": bounded_list_schema(json!({"type": "string", "maxLength": 192}), 8),
+            "scripts": bounded_list_schema(json!({"type": "string", "maxLength": 192}), 8),
+            "ci": bounded_list_schema(json!({"type": "string", "maxLength": 192}), 8),
             "classification_basis": schema_type("string", "Classification basis; conventional_directory_name.")
         },
         "required": ["source", "tests", "docs", "examples", "scripts", "ci", "classification_basis"],
@@ -1027,12 +1018,12 @@ fn startup_repository_schema() -> Value {
         "properties": {
             "status": {"type": "string", "enum": ["available", "unavailable"]},
             "reason_code": nullable_schema("string", "Stable reason when unavailable."),
-            "project_types": bounded_repository_list(project_type_schema(), 8),
-            "manifests": bounded_repository_list(path_kind_schema("Detected build or package manifest."), 12),
-            "key_files": bounded_repository_list(key_file_schema(), 16),
+            "project_types": bounded_list_schema(project_type_schema(), 8),
+            "manifests": bounded_list_schema(path_kind_schema("Detected build or package manifest."), 12),
+            "key_files": bounded_list_schema(key_file_schema(), 16),
             "roots": bounded_roots,
-            "top_level": bounded_repository_list(top_level_entry_schema(), 24),
-            "suggested_next_reads": bounded_repository_list(suggested_read_schema(), 8),
+            "top_level": bounded_list_schema(top_level_entry_schema(), 24),
+            "suggested_next_reads": bounded_list_schema(suggested_read_schema(), 8),
             "scan": scan,
             "warnings": {
                 "type": "array",
@@ -1126,22 +1117,7 @@ fn semantic_navigation_schema() -> Value {
             "supported": schema_type("boolean", "True when the Project is Runner-backed, the owning Runner is connected, and it advertises lsp_read_only_navigation."),
             "available": nullable_schema("boolean", "Observed semantic-navigation availability. True means supported Rust/Go navigation has an available executable or an existing running/initializing server slot; false is a positive unavailable observation; null means a bounded startup status probe timed out or failed before availability could be observed; this is advisory, not unavailability."),
             "recommended": schema_type("boolean", "True only for available or running status."),
-            "status": {
-                "type": "string",
-                "enum": [
-                    "running",
-                    "available",
-                    "initializing",
-                    "crashed",
-                    "unavailable",
-                    "not_applicable",
-                    "agent_unavailable",
-                    "agent_capability_unavailable",
-                    "not_observed",
-                    "probe_timeout",
-                    "probe_failed"
-                ]
-            },
+            "status": semantic_navigation_status_schema(),
             "language": {
                 "anyOf": [
                     { "type": "string", "enum": ["rust", "go"] },
@@ -1305,22 +1281,7 @@ fn work_on_project_output_schema() -> Value {
         "properties": {
             "supported": {"type": "boolean"},
             "available": nullable_schema("boolean", "Observed semantic-navigation availability. Null means startup finished without waiting for availability, or the bounded status probe timed out or failed; this does not lower coding readiness."),
-            "status": {
-                "type": "string",
-                "enum": [
-                    "running",
-                    "available",
-                    "initializing",
-                    "crashed",
-                    "unavailable",
-                    "not_applicable",
-                    "agent_unavailable",
-                    "agent_capability_unavailable",
-                    "not_observed",
-                    "probe_timeout",
-                    "probe_failed"
-                ]
-            },
+            "status": semantic_navigation_status_schema(),
             "capability": nullable_schema("string", "Bounded advertised capability summary."),
             "reason_code": nullable_schema("string", "Stable semantic-navigation reason.")
         },
@@ -1465,28 +1426,4 @@ fn work_on_project_output_schema() -> Value {
         ),
     ];
     wrapped_output_schema(output_properties)
-}
-
-fn review_evidence_schema(description: &str) -> Value {
-    json!({
-        "type": "object",
-        "description": description,
-        "additionalProperties": true,
-        "properties": {
-            "available": schema_type("boolean", "True when review evidence summary is available."),
-            "source": schema_type("string", "Review evidence source, usually session_ledger."),
-            "total": schema_type("integer", "Total successful review evidence tool calls counted."),
-            "read_only_inspection_count": schema_type("integer", "Successful read-only inspection tool calls counted."),
-            "search_count": schema_type("integer", "Successful search tool calls counted."),
-            "diff_review_count": schema_type("integer", "Successful diff review tool calls counted."),
-            "workspace_review_count": schema_type("integer", "Successful workspace review tool calls counted."),
-            "hygiene_review_count": schema_type("integer", "Successful hygiene review tool calls counted."),
-            "tools": {
-                "type": "array",
-                "maxItems": 20,
-                "description": "Bounded unique review evidence tool names only; never file contents, diff hunks, stdout/stderr, command text, tokens, secrets, or raw input payloads.",
-                "items": schema_type("string", "Review evidence tool name.")
-            }
-        }
-    })
 }

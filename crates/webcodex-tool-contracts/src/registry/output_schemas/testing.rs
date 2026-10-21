@@ -201,25 +201,18 @@ fn cargo_output_schema(tool_name: &str) -> Value {
         .into_iter()
         .map(|(name, schema)| (name.to_string(), schema))
         .collect::<serde_json::Map<_, _>>();
-    let mut terminal_success_required = Vec::new();
-    match tool_name {
-        "cargo_check" => {
-            terminal_success_required.extend(["warnings_count", "errors_count", "diagnostics"])
-        }
-        "cargo_test" | "go_test" => terminal_success_required.extend([
+    let terminal_success_required: &[&str] = match tool_name {
+        "cargo_check" => &["warnings_count", "errors_count", "diagnostics"],
+        "cargo_test" | "go_test" => &[
             "tests_detected",
             "tests_run_count",
             "tests_passed",
             "tests_failed",
             "zero_tests_run",
             "diagnostics",
-        ]),
-        _ => {}
-    }
-    let terminal_success_required = terminal_success_required
-        .into_iter()
-        .map(Value::from)
-        .collect::<Vec<_>>();
+        ],
+        _ => &[],
+    };
     let mut terminal_failure_required = vec![
         "project",
         "command_summary",
@@ -241,25 +234,8 @@ fn cargo_output_schema(tool_name: &str) -> Value {
         "effective_timeout_secs",
         "sync_wait_secs",
     ];
-    match tool_name {
-        "cargo_check" => {
-            terminal_failure_required.extend(["warnings_count", "errors_count", "diagnostics"])
-        }
-        "cargo_test" | "go_test" => terminal_failure_required.extend([
-            "tests_detected",
-            "tests_run_count",
-            "tests_passed",
-            "tests_failed",
-            "zero_tests_run",
-            "diagnostics",
-        ]),
-        _ => {}
-    }
+    terminal_failure_required.extend_from_slice(terminal_success_required);
     terminal_failure_required.push("failure_kind");
-    let terminal_failure_required = terminal_failure_required
-        .into_iter()
-        .map(Value::from)
-        .collect::<Vec<_>>();
     let terminal_not_started_failure_kinds = if tool_name == "project_validate" {
         json!([
             "permission_denied",
@@ -385,7 +361,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                     "success": {"const": true},
                     "error": {"type": "null"},
                     "output": {
-                        "allOf": [validation_success_evidence_schema(tool_name, &terminal_success_required)],
+                        "allOf": [validation_success_evidence_schema(tool_name, terminal_success_required)],
                         "properties": {
                             "project": {"enum": []},
                             "command_summary": {"enum": []},
@@ -411,137 +387,113 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                     }
                 }
             },
-            {
-                "required": ["error"],
+            validation_failure_schema(json!({
+                "required": terminal_failure_required.clone(),
                 "properties": {
-                    "success": {"const": false},
-                    "error": {"type": "string", "minLength": 1},
-                    "output": {
-                        "required": terminal_failure_required.clone(),
+                    "promoted_to_job": {"const": false},
+                    "terminal": {"const": true},
+                    "command_started": {"const": true},
+                    "command_completed": {"const": false},
+                    "execution_state": {"const": "timed_out"},
+                    "passed": {"const": false},
+                    "failure_kind": {"const": "timeout"},
+                    "job_id": {"enum": []},
+                    "job_status": {"enum": []},
+                    "continuation": {"enum": []},
+                }
+            })),
+            validation_failure_schema(json!({
+                "required": ["execution_state", "command_started", "command_completed", "terminal", "failure_kind"],
+                "properties": {
+                    "terminal": {"const": false},
+                    "command_started": {"const": true},
+                    "command_completed": {"const": false},
+                    "execution_state": {"const": "outcome_unknown"},
+                    "passed": {"const": false},
+                    "failure_kind": {"const": "outcome_unknown"}
+                },
+                "allOf": [{
+                    "if": {
+                        "properties": {"job_id": {"type": "string"}},
+                        "required": ["job_id"]
+                    },
+                    "then": {
+                        "required": ["job_status", "continuation"],
                         "properties": {
+                            "job_id": {"type": "string", "minLength": 1},
+                            "job_status": {"type": "string", "minLength": 1},
+                            "promoted_to_job": {"const": true},
+                            "suggested_call": {"enum": []}
+                        }
+                    },
+                    "else": {
+                        "properties": {
+                            "job_id": {"type": "null"},
+                            "job_status": {"type": "null"},
                             "promoted_to_job": {"const": false},
-                            "terminal": {"const": true},
-                            "command_started": {"const": true},
-                            "command_completed": {"const": false},
-                            "execution_state": {"const": "timed_out"},
-                            "passed": {"const": false},
-                            "failure_kind": {"const": "timeout"},
-                            "job_id": {"enum": []},
-                            "job_status": {"enum": []},
-                            "continuation": {"enum": []},
+                            "continuation": {"enum": []}
                         }
                     }
-                }
-            },
-            {
-                "required": ["error"],
+                }]
+            })),
+            validation_failure_schema(json!({
+                "required": terminal_failure_required.clone(),
                 "properties": {
-                    "success": {"const": false},
-                    "error": {"type": "string", "minLength": 1},
-                    "output": {
-                        "required": ["execution_state", "command_started", "command_completed", "terminal", "failure_kind"],
-                        "properties": {
-                            "terminal": {"const": false},
-                            "command_started": {"const": true},
-                            "command_completed": {"const": false},
-                            "execution_state": {"const": "outcome_unknown"},
-                            "passed": {"const": false},
-                            "failure_kind": {"const": "outcome_unknown"}
-                        },
-                        "allOf": [{
-                            "if": {
-                                "properties": {"job_id": {"type": "string"}},
-                                "required": ["job_id"]
-                            },
-                            "then": {
-                                "required": ["job_status", "continuation"],
-                                "properties": {
-                                    "job_id": {"type": "string", "minLength": 1},
-                                    "job_status": {"type": "string", "minLength": 1},
-                                    "promoted_to_job": {"const": true},
-                                    "suggested_call": {"enum": []}
-                                }
-                            },
-                            "else": {
-                                "properties": {
-                                    "job_id": {"type": "null"},
-                                    "job_status": {"type": "null"},
-                                    "promoted_to_job": {"const": false},
-                                    "continuation": {"enum": []}
-                                }
-                            }
-                        }]
-                    }
+                    "promoted_to_job": {"const": false},
+                    "terminal": {"const": true},
+                    "command_started": {"const": false},
+                    "command_completed": {"const": false},
+                    "execution_state": {"const": "not_started"},
+                    "passed": {"const": false},
+                    "failure_kind": {"enum": terminal_not_started_failure_kinds},
+                    "job_id": {"enum": []},
+                    "job_status": {"enum": []},
+                    "continuation": {"enum": []},
                 }
-            },
-            {
-                "required": ["error"],
+            })),
+            validation_failure_schema(json!({
+                "required": terminal_failure_required,
                 "properties": {
-                    "success": {"const": false},
-                    "error": {"type": "string", "minLength": 1},
-                    "output": {
-                        "required": terminal_failure_required.clone(),
-                        "properties": {
-                            "promoted_to_job": {"const": false},
-                            "terminal": {"const": true},
-                            "command_started": {"const": false},
-                            "command_completed": {"const": false},
-                            "execution_state": {"const": "not_started"},
-                            "passed": {"const": false},
-                            "failure_kind": {"enum": terminal_not_started_failure_kinds},
-                            "job_id": {"enum": []},
-                            "job_status": {"enum": []},
-                            "continuation": {"enum": []},
-                        }
-                    }
+                    "promoted_to_job": {"const": false},
+                    "terminal": {"const": true},
+                    "command_started": {"const": true},
+                    "command_completed": {"const": true},
+                    "execution_state": {"const": "completed"},
+                    "passed": {"const": false},
+                    "failure_kind": {"enum": ["validation_failed", "process_exit"]},
+                    "job_id": {"enum": []},
+                    "job_status": {"enum": []},
+                    "continuation": {"enum": []},
                 }
-            },
-            {
-                "required": ["error"],
+            })),
+            validation_failure_schema(json!({
+                "required": ["command_started", "command_completed", "failure_kind"],
                 "properties": {
-                    "success": {"const": false},
-                    "error": {"type": "string", "minLength": 1},
-                    "output": {
-                        "required": terminal_failure_required,
-                        "properties": {
-                            "promoted_to_job": {"const": false},
-                            "terminal": {"const": true},
-                            "command_started": {"const": true},
-                            "command_completed": {"const": true},
-                            "execution_state": {"const": "completed"},
-                            "passed": {"const": false},
-                            "failure_kind": {"enum": ["validation_failed", "process_exit"]},
-                            "job_id": {"enum": []},
-                            "job_status": {"enum": []},
-                            "continuation": {"enum": []},
-                        }
-                    }
+                    "command_started": {"const": false},
+                    "command_completed": {"const": false},
+                    "failure_kind": {"enum": prestart_failure_kinds},
+                    "job_id": {"enum": []},
+                    "job_status": {"enum": []},
+                    "continuation": {"enum": []},
+                    "passed": {"enum": []},
+                    "promoted_to_job": {"enum": []},
+                    "terminal": {"enum": []}
                 }
-            },
-            {
-                "required": ["error"],
-                "properties": {
-                    "success": {"const": false},
-                    "error": {"type": "string", "minLength": 1},
-                    "output": {
-                        "required": ["command_started", "command_completed", "failure_kind"],
-                        "properties": {
-                            "command_started": {"const": false},
-                            "command_completed": {"const": false},
-                            "failure_kind": {"enum": prestart_failure_kinds},
-                            "job_id": {"enum": []},
-                            "job_status": {"enum": []},
-                            "continuation": {"enum": []},
-                            "passed": {"enum": []},
-                            "promoted_to_job": {"enum": []},
-                            "terminal": {"enum": []}
-                        }
-                    }
-                }
-            }
+            }))
                 ]
             }
         ]
+    })
+}
+
+fn validation_failure_schema(output: Value) -> Value {
+    json!({
+        "required": ["error"],
+        "properties": {
+            "success": {"const": false},
+            "error": {"type": "string", "minLength": 1},
+            "output": output
+        }
     })
 }
 
@@ -634,11 +586,11 @@ fn rich_assertion_schema() -> Value {
     json!({"properties":{"test_count_assertion":cargo_test_count_assertion_schema()}})
 }
 
-fn validation_success_evidence_schema(tool: &str, rich_required: &[Value]) -> Value {
+fn validation_success_evidence_schema(tool: &str, rich_required: &[&str]) -> Value {
     if tool == "cargo_fmt" {
         return json!({});
     }
-    let mut rich_required = rich_required.to_vec();
+    let mut rich_required: Vec<Value> = rich_required.iter().copied().map(Value::from).collect();
     // Every terminal-success validation receipt, compact or rich, must preserve
     // the independent source-coverage proposition. Exceptional success cannot
     // fall back to a schema shape that silently permits source_state to vanish.

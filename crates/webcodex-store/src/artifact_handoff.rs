@@ -471,22 +471,6 @@ impl Database {
                 ON wc_artifact_handoff_acceptances(grant_id, created_at_unix_ms, acceptance_id);
             ",
         )?;
-        let has_destination_reconcile_allowed: bool = conn.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM pragma_table_info('wc_artifact_handoff_acceptances')
-                WHERE name = 'destination_reconcile_allowed'
-            )",
-            [],
-            |row| row.get(0),
-        )?;
-        if !has_destination_reconcile_allowed {
-            conn.execute(
-                "ALTER TABLE wc_artifact_handoff_acceptances
-                 ADD COLUMN destination_reconcile_allowed INTEGER NOT NULL DEFAULT 0
-                 CHECK(destination_reconcile_allowed IN (0, 1))",
-                [],
-            )?;
-        }
         Ok(())
     }
 

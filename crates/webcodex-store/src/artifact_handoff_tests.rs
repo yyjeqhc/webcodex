@@ -523,32 +523,6 @@ fn acceptance_identity_and_completion_recover_after_restart() {
 }
 
 #[test]
-fn artifact_handoff_schema_migrates_destination_reconcile_allowed_fence() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("artifact-handoff-migration.db");
-    let db = Database::open(&path).unwrap();
-    db.conn_for_tests()
-        .execute(
-            "ALTER TABLE wc_artifact_handoff_acceptances DROP COLUMN destination_reconcile_allowed",
-            [],
-        )
-        .unwrap();
-    drop(db);
-
-    let reopened = Database::open(&path).unwrap();
-    let count: i64 = reopened
-        .conn_for_tests()
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('wc_artifact_handoff_acceptances')
-             WHERE name = 'destination_reconcile_allowed'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(count, 1);
-}
-
-#[test]
 fn import_request_hash_binds_every_semantic_field_and_prepared_claim_revalidates_live_authority() {
     let temp = tempfile::tempdir().unwrap();
     let db = Database::open(&temp.path().join("artifact-handoff-import.db")).unwrap();

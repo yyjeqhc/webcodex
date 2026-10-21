@@ -1994,53 +1994,7 @@ fn malformed_goal_id_in_durable_wait_fails_closed() {
 }
 
 #[test]
-fn old_wait_schema_migrates_mode_to_any_and_malformed_all_fails_closed() {
-    let mut conn = rusqlite::Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        "
-        CREATE TABLE wc_agent_waits (
-            wait_id TEXT PRIMARY KEY,
-            owner_principal_kind TEXT NOT NULL,
-            owner_principal_digest TEXT NOT NULL,
-            target_agent_id TEXT NOT NULL,
-            state TEXT NOT NULL CHECK(state IN ('waiting', 'triggered', 'resumed', 'cancelled')),
-            revision INTEGER NOT NULL CHECK(revision >= 1),
-            created_at_unix_ms INTEGER NOT NULL,
-            updated_at_unix_ms INTEGER NOT NULL,
-            triggered_at_unix_ms INTEGER,
-            resumed_at_unix_ms INTEGER,
-            cancelled_at_unix_ms INTEGER
-        );
-        INSERT INTO wc_agent_waits (
-            wait_id, owner_principal_kind, owner_principal_digest, target_agent_id,
-            state, revision, created_at_unix_ms, updated_at_unix_ms,
-            triggered_at_unix_ms, resumed_at_unix_ms, cancelled_at_unix_ms
-        ) VALUES (
-            'wc_agent_wait_aaaaaaaaaaaaaaaa', 'user',
-            'wc_principal_sha256_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-            'wc_dagent_aaaaaaaaaaaaaaaa', 'waiting', 1, 1, 1, NULL, NULL, NULL
-        );
-        ",
-    )
-    .unwrap();
-    Database::ensure_agent_wait_schema(&mut conn).unwrap();
-    let migrated_mode: String = conn
-        .query_row(
-            "SELECT mode FROM wc_agent_waits WHERE wait_id = 'wc_agent_wait_aaaaaaaaaaaaaaaa'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(migrated_mode, "any");
-    let migrated_goal_id: Option<String> = conn
-        .query_row(
-            "SELECT goal_id FROM wc_agent_waits WHERE wait_id = 'wc_agent_wait_aaaaaaaaaaaaaaaa'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(migrated_goal_id, None);
-
+fn malformed_all_wait_fails_closed() {
     let temp = tempfile::tempdir().unwrap();
     let db = Database::open(&temp.path().join("wait-all-malformed.db")).unwrap();
     let owner = principal('1');

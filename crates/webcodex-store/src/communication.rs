@@ -564,38 +564,6 @@ impl Database {
             );
             ",
         )?;
-        let has_recovery_fingerprint: i64 = transaction.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM pragma_table_info('wc_agent_endpoints')
-                WHERE name = 'mcp_app_recovery_fingerprint'
-            )",
-            [],
-            |row| row.get(0),
-        )?;
-        if has_recovery_fingerprint == 0 {
-            transaction.execute(
-                "ALTER TABLE wc_agent_endpoints
-                 ADD COLUMN mcp_app_recovery_fingerprint TEXT
-                 CHECK(mcp_app_recovery_fingerprint IS NULL OR length(mcp_app_recovery_fingerprint) = 64)",
-                [],
-            )?;
-        }
-        let has_client_window_key: i64 = transaction.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM pragma_table_info('wc_agent_endpoints')
-                WHERE name = 'mcp_app_client_window_key'
-            )",
-            [],
-            |row| row.get(0),
-        )?;
-        if has_client_window_key == 0 {
-            transaction.execute(
-                "ALTER TABLE wc_agent_endpoints
-                 ADD COLUMN mcp_app_client_window_key TEXT
-                 CHECK(mcp_app_client_window_key IS NULL OR length(mcp_app_client_window_key) = 64)",
-                [],
-            )?;
-        }
         transaction.commit()?;
         Ok(())
     }

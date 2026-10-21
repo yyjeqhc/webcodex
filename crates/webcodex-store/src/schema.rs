@@ -6,8 +6,9 @@ use std::path::PathBuf;
 impl Database {
     pub fn open(db_path: &PathBuf) -> anyhow::Result<Self> {
         let conn = Connection::open(db_path)?;
-        // Reject unsupported persisted Wake formats before WAL or schema writes.
+        // Reject unsupported persisted domains before WAL or schema writes.
         Self::validate_agent_wake_schema(&conn)?;
+        validate_supported_domain_schemas(&conn)?;
         // Single-operator deployment: prefer durability + predictable locking
         // over multi-writer shared-cache gymnastics. WAL lets readers (CLI
         // inspect, sqlite3) coexist with the server without default BUSY.
@@ -896,6 +897,46 @@ impl Database {
     }
 }
 
+// These columns are present after normal v0.4.6 initialization. Entirely absent
+// domains can still be created; existing older tables must use that bridge first.
+fn validate_supported_domain_schemas(conn: &Connection) -> anyhow::Result<()> {
+    const REQUIRED_COLUMNS: &[(&str, &[&str])] = &[
+        ("wc_agent_waits", &["mode", "goal_id"]),
+        (
+            "wc_agent_endpoints",
+            &["mcp_app_recovery_fingerprint", "mcp_app_client_window_key"],
+        ),
+        ("wc_goals", &["controller_agent_id", "plan_json"]),
+        (
+            "wc_agent_attention_events",
+            &[
+                "workflow_session_id",
+                "observed_window_key",
+                "observation_principal_kind",
+                "observation_principal_id",
+                "last_meaningful_activity_at_ms",
+                "last_seen_at_ms",
+                "goal_revision",
+            ],
+        ),
+        (
+            "wc_artifact_handoff_acceptances",
+            &["destination_reconcile_allowed"],
+        ),
+    ];
+    for &(table, required) in REQUIRED_COLUMNS {
+        let columns = table_columns(conn, table)?;
+        if !columns.is_empty()
+            && required
+                .iter()
+                .any(|required| !columns.iter().any(|column| column.as_str() == *required))
+        {
+            anyhow::bail!("unsupported pre-v0.4.6 {table} schema; upgrade through v0.4.6 first");
+        }
+    }
+    Ok(())
+}
+
 fn table_columns(conn: &Connection, table: &str) -> anyhow::Result<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -948,6 +989,10 @@ fn normalize_table_schema_sql(sql: &str) -> String {
     }
     normalized
 }
+
+#[cfg(test)]
+#[path = "schema_compatibility_tests.rs"]
+mod schema_compatibility_tests;
 
 #[cfg(test)]
 mod schema_normalization_tests {

@@ -226,32 +226,6 @@ impl Database {
                 ON wc_agent_wait_matches(wait_id, sequence);
             ",
         )?;
-        let has_mode: i64 = conn.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM pragma_table_info('wc_agent_waits')
-                WHERE name = 'mode'
-            )",
-            [],
-            |row| row.get(0),
-        )?;
-        if has_mode == 0 {
-            conn.execute(
-                "ALTER TABLE wc_agent_waits
-                 ADD COLUMN mode TEXT NOT NULL DEFAULT 'any' CHECK(mode IN ('any', 'all'))",
-                [],
-            )?;
-        }
-        let has_goal_id: i64 = conn.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM pragma_table_info('wc_agent_waits')
-                WHERE name = 'goal_id'
-            )",
-            [],
-            |row| row.get(0),
-        )?;
-        if has_goal_id == 0 {
-            conn.execute("ALTER TABLE wc_agent_waits ADD COLUMN goal_id TEXT", [])?;
-        }
         Ok(())
     }
 

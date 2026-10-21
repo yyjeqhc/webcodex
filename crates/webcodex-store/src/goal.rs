@@ -246,6 +246,7 @@ impl Database {
                 updated_at_unix_ms INTEGER NOT NULL,
                 terminal_at_unix_ms INTEGER,
                 terminal_reason TEXT,
+                plan_json TEXT NOT NULL DEFAULT '{\"completion_conditions\":[],\"steps\":[],\"progress_summary\":null,\"checkpoint_at_unix_ms\":null}',
                 CHECK(
                     (lifecycle = 'active' AND terminal_at_unix_ms IS NULL AND terminal_reason IS NULL)
                     OR (lifecycle IN ('completed', 'cancelled') AND terminal_at_unix_ms IS NOT NULL)
@@ -278,44 +279,16 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_wc_goal_idempotency_created
                 ON wc_goal_idempotency(created_at_unix_ms DESC);
+
+            CREATE TABLE IF NOT EXISTS wc_goal_plan_revisions (
+                goal_id TEXT NOT NULL REFERENCES wc_goals(goal_id),
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                revised_at_unix_ms INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                plan_json TEXT NOT NULL,
+                PRIMARY KEY(goal_id, revision)
+            );
             ",
-        )?;
-        let has_controller_agent_id: i64 = conn.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM pragma_table_info('wc_goals')
-                WHERE name = 'controller_agent_id'
-            )",
-            [],
-            |row| row.get(0),
-        )?;
-        if has_controller_agent_id == 0 {
-            conn.execute(
-                "ALTER TABLE wc_goals
-                 ADD COLUMN controller_agent_id TEXT REFERENCES wc_agent_identities(agent_id)",
-                [],
-            )?;
-        }
-        let has_plan: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('wc_goals') WHERE name = 'plan_json')",
-            [],
-            |row| row.get(0),
-        )?;
-        if !has_plan {
-            // One additive column; there is only one current plan encoding.
-            conn.execute(
-                "ALTER TABLE wc_goals ADD COLUMN plan_json TEXT NOT NULL DEFAULT '{\"completion_conditions\":[],\"steps\":[],\"progress_summary\":null,\"checkpoint_at_unix_ms\":null}'",
-                [],
-            )?;
-        }
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS wc_goal_plan_revisions (
-            goal_id TEXT NOT NULL REFERENCES wc_goals(goal_id),
-            revision INTEGER NOT NULL CHECK(revision >= 1),
-            revised_at_unix_ms INTEGER NOT NULL,
-            reason TEXT NOT NULL,
-            plan_json TEXT NOT NULL,
-            PRIMARY KEY(goal_id, revision)
-        );",
         )?;
         let has_count: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('wc_goals') WHERE name = 'plan_revision_count')", [], |row| row.get(0))?;

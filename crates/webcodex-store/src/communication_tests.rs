@@ -155,35 +155,6 @@ fn agent_message(
 }
 
 #[test]
-fn communication_schema_migrates_existing_endpoint_table_with_mcp_app_recovery_columns() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("communication-schema-migration.db");
-    let db = Database::open(&path).unwrap();
-    for column in ["mcp_app_recovery_fingerprint", "mcp_app_client_window_key"] {
-        db.conn_for_tests()
-            .execute(
-                &format!("ALTER TABLE wc_agent_endpoints DROP COLUMN {column}"),
-                [],
-            )
-            .unwrap();
-    }
-    drop(db);
-
-    let reopened = Database::open(&path).unwrap();
-    for column in ["mcp_app_recovery_fingerprint", "mcp_app_client_window_key"] {
-        let column_count: i64 = reopened
-            .conn_for_tests()
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('wc_agent_endpoints') WHERE name = ?1",
-                [column],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(column_count, 1, "missing migrated column {column}");
-    }
-}
-
-#[test]
 fn durable_agent_identity_profile_collision_owner_and_reopen() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("communication.db");

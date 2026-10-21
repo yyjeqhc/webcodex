@@ -116,31 +116,7 @@ const ATTENTION_TABLE_SQL: &str = "
 
 impl Database {
     pub(super) fn ensure_agent_attention_schema(conn: &mut Connection) -> anyhow::Result<()> {
-        let old_shape: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wc_agent_attention_events')
-               AND NOT EXISTS(SELECT 1 FROM pragma_table_info('wc_agent_attention_events') WHERE name = 'workflow_session_id')",
-            [], |row| row.get(0),
-        )?;
-        // A single transactional schema replacement preserves the existing Task
-        // attention facts. There is no legacy read/write shape or dual routing.
-        if old_shape {
-            let transaction =
-                conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            transaction.execute_batch("ALTER TABLE wc_agent_attention_events RENAME TO wc_agent_attention_events_before_goal_workflow;")?;
-            transaction.execute_batch(ATTENTION_TABLE_SQL)?;
-            transaction.execute_batch(
-                "INSERT INTO wc_agent_attention_events (
-                    event_id, kind, owner_principal_kind, owner_principal_digest,
-                    target_agent_id, goal_id, task_id, task_attempt_id, terminal_task_state, created_at_unix_ms
-                 ) SELECT event_id, kind, owner_principal_kind, owner_principal_digest,
-                          target_agent_id, goal_id, task_id, task_attempt_id, terminal_task_state, created_at_unix_ms
-                   FROM wc_agent_attention_events_before_goal_workflow;
-                 DROP TABLE wc_agent_attention_events_before_goal_workflow;",
-            )?;
-            transaction.commit()?;
-        } else {
-            conn.execute_batch(ATTENTION_TABLE_SQL)?;
-        }
+        conn.execute_batch(ATTENTION_TABLE_SQL)?;
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_wc_agent_attention_events_owner_created
                 ON wc_agent_attention_events(owner_principal_digest, created_at_unix_ms, event_id);

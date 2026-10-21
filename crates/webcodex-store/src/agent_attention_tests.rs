@@ -1090,9 +1090,9 @@ fn active_goal_fanout_is_bounded_before_completion_and_maximum_fanout_is_determi
 }
 
 #[test]
-fn goal_workflow_attention_schema_upgrade_preserves_task_fact_and_exact_wake_carrier() {
+fn goal_workflow_attention_reopen_preserves_task_fact_and_exact_wake_carrier() {
     let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("attention-goal-workflow-migration.db");
+    let path = temp.path().join("attention-goal-workflow-reopen.db");
     let db = Database::open(&path).unwrap();
     let owner = principal('a');
     let worker = create_agent(&db, &owner, "migration-worker");
@@ -1115,18 +1115,6 @@ fn goal_workflow_attention_schema_upgrade_preserves_task_fact_and_exact_wake_car
     .unwrap();
     let original_event = events(&db, &attempt_id).remove(0);
     let original_wake = wake_id_for_event(&db, &original_event.event_id);
-    // Reconstruct the single pre-G4 column shape; the migration must preserve
-    // its immutable fact and existing source_event_id, not mint replacements.
-    db.conn_for_tests()
-        .execute_batch(
-            "ALTER TABLE wc_agent_attention_events RENAME TO migration_fixture_attention;
-         CREATE TABLE wc_agent_attention_events AS SELECT
-            event_id, kind, owner_principal_kind, owner_principal_digest, target_agent_id,
-            goal_id, task_id, task_attempt_id, terminal_task_state, created_at_unix_ms
-         FROM migration_fixture_attention;
-         DROP TABLE migration_fixture_attention;",
-        )
-        .unwrap();
     drop(db);
     let reopened = Database::open(&path).unwrap();
     assert_eq!(events(&reopened, &attempt_id), vec![original_event.clone()]);

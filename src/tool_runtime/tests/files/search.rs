@@ -5,12 +5,7 @@ fn search_project_text_command_excludes_sensitive_dirs_and_bounds_output() {
         pattern: "fn main".to_string(),
         path: Some("src".to_string()),
         limit: Some(25),
-        context_before: None,
-        context_after: None,
-        include_globs: None,
-        exclude_globs: None,
-        result_mode: None,
-        timeout_secs: None,
+        ..Default::default()
     })
     .unwrap();
     let cmd = search_project_text_command(&options);
@@ -767,14 +762,7 @@ fn parse_search_project_text_output_accepts_leading_canonical_marker_and_reports
 fn raw_search_request() -> SearchRequest {
     SearchRequest {
         pattern: "needle".to_string(),
-        path: None,
-        limit: None,
-        context_before: None,
-        context_after: None,
-        include_globs: None,
-        exclude_globs: None,
-        result_mode: None,
-        timeout_secs: None,
+        ..Default::default()
     }
 }
 

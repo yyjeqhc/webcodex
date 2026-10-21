@@ -30,8 +30,7 @@ const SEARCH_PROJECT_TEXT_EXCLUDES: &[&str] = &[
 ];
 
 use webcodex_core::project_search::{
-    project_text_search_line_budget,
-    PROJECT_TEXT_SEARCH_EXCLUDE_GLOBS as SEARCH_PROJECT_TEXT_RG_EXCLUDE_GLOBS,
+    project_text_search_line_budget, project_text_search_rg_options,
 };
 
 pub(crate) use webcodex_tool_contracts::MAX_SEARCH_CONTEXT_LINES;
@@ -42,6 +41,7 @@ const MIN_SEARCH_TIMEOUT_SECS: i64 = 1;
 const MAX_SEARCH_TIMEOUT_SECS: i64 = 120;
 
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(Default))]
 pub(crate) struct SearchRequest {
     pub(crate) pattern: String,
     pub(crate) path: Option<String>,
@@ -293,25 +293,6 @@ fn search_project_text_exclude_args() -> String {
     SEARCH_PROJECT_TEXT_EXCLUDES.join(" ")
 }
 
-fn search_project_text_rg_glob_args(options: &SearchOptions) -> String {
-    let mut globs = options
-        .include_globs
-        .iter()
-        .map(|glob| glob.to_string())
-        .chain(options.exclude_globs.iter().map(|glob| format!("!{glob}")))
-        .collect::<Vec<_>>();
-    globs.extend(
-        SEARCH_PROJECT_TEXT_RG_EXCLUDE_GLOBS
-            .iter()
-            .map(|glob| (*glob).to_string()),
-    );
-    globs
-        .iter()
-        .map(|glob| format!("--glob {}", shell_escape_simple(glob)))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn search_project_text_marker_command(backend: &str, feature_unavailable: bool) -> String {
     let marker = json!({
         "webcodex_search": {
@@ -559,21 +540,22 @@ fn escape_search_literal_for_regex(pattern: &str) -> String {
 }
 
 fn ripgrep_search_command(options: &SearchOptions) -> String {
-    let globs = search_project_text_rg_glob_args(options);
+    let args = project_text_search_rg_options(
+        options.result_mode.as_str(),
+        options.context_before,
+        options.context_after,
+        &options.include_globs,
+        &options.exclude_globs,
+        shell_escape_simple,
+    )
+    .expect("normalized search result mode")
+    .join(" ");
     let pattern = shell_escape_simple(&options.pattern);
     let pattern_mode_arg = match options.pattern_mode {
         SearchPatternMode::Regex => "",
         SearchPatternMode::Literal => "--fixed-strings ",
     };
     let target = shell_escape_simple(&options.path);
-    let mode_args = match options.result_mode {
-        SearchResultMode::Matches => format!(
-            "--with-filename --null --line-number --no-heading -B {} -A {}",
-            options.context_before, options.context_after
-        ),
-        SearchResultMode::FilesWithMatches => "--files-with-matches".to_string(),
-        SearchResultMode::Count => "--with-filename --count --null".to_string(),
-    };
     // Deliberately no `--sort path`: a global sort forces ripgrep to scan and
     // buffer the whole search space before emitting anything, so a small
     // `limit` request still waits for a full-repo walk. Without it, matches
@@ -581,7 +563,7 @@ fn ripgrep_search_command(options: &SearchOptions) -> String {
     // record budget is satisfied, which SIGPIPEs the backend and stops the
     // work early. Match order is not stable, but the result is bounded and
     // timely, which matters more for this tool.
-    format!("rg {mode_args} --color never --hidden {globs} {pattern_mode_arg}-e {pattern} -- {target} 2>/dev/null")
+    format!("rg {args} {pattern_mode_arg}-e {pattern} -- {target} 2>/dev/null")
 }
 
 fn grep_search_command(options: &SearchOptions) -> String {
@@ -1766,14 +1748,8 @@ mod tests {
     fn parse_search_matches_default_output_has_empty_context_arrays() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "main".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let result = search_project_text_output(
@@ -1799,14 +1775,10 @@ mod tests {
         let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/lib.rs\x001-one\nsrc/lib.rs\x002-two\nsrc/lib.rs\x003:needle\nsrc/lib.rs\x004-four\nsrc/lib.rs\x005-five\n";
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
             context_before: Some(2),
             context_after: Some(2),
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let result = search_project_text_output("demo", &options, stdout, Some(0), "");
@@ -1840,14 +1812,8 @@ mod tests {
         // reported as an output_bytes truncation, never surfaced as a record.
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/a.rs:1:needle one\nsrc/b.rs:2:needle tw";
@@ -1867,14 +1833,8 @@ mod tests {
         // truncated merely because its final record ends with a newline.
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(50),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/a.rs:1:needle one\n";
@@ -1889,14 +1849,8 @@ mod tests {
     fn search_byte_probe_detects_exact_newline_boundary_truncation() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(50),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let prefix = "src/a.rs:1:";
@@ -1916,14 +1870,9 @@ mod tests {
     fn search_files_with_matches_reports_output_byte_truncation() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(50),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
             result_mode: Some(SearchResultMode::FilesWithMatches),
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let suffix = ".rs\n";
@@ -1944,14 +1893,9 @@ mod tests {
     fn search_count_reports_output_byte_truncation_and_incomplete_total() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(50),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
             result_mode: Some(SearchResultMode::Count),
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let count_suffix = "\x002\n";
@@ -1979,14 +1923,8 @@ mod tests {
         // truncation_reason = "limit".
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(2),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/a.rs:1:one\nsrc/b.rs:2:two\nsrc/c.rs:3:three\n";
@@ -2002,14 +1940,8 @@ mod tests {
         // Exit 1 (no matches) is a successful empty result, never an error.
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(5),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\n";
@@ -2027,14 +1959,9 @@ mod tests {
         // are returned as a partial success, not discarded.
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
             timeout_secs: Some(0),
+            ..Default::default()
         })
         .unwrap();
         let stdout = concat!(
@@ -2073,14 +2000,9 @@ mod tests {
     fn search_timeout_without_complete_records_returns_structured_failure() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
             timeout_secs: Some(0),
+            ..Default::default()
         })
         .unwrap();
         let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\n";
@@ -2103,14 +2025,10 @@ mod tests {
     fn search_count_timeout_never_claims_complete_total() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
             result_mode: Some(SearchResultMode::Count),
             timeout_secs: Some(0),
+            ..Default::default()
         })
         .unwrap();
         // Count mode: one complete file record followed by a partial tail.
@@ -2140,14 +2058,10 @@ mod tests {
     fn search_files_with_matches_timeout_returns_complete_files_truncated() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
             result_mode: Some(SearchResultMode::FilesWithMatches),
             timeout_secs: Some(0),
+            ..Default::default()
         })
         .unwrap();
         let stdout = concat!(
@@ -2179,14 +2093,8 @@ mod tests {
         // partial success.
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(5),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/a.rs:1:needle\n";
@@ -2199,14 +2107,8 @@ mod tests {
     fn search_rejects_absolute_and_temp_paths_in_output() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         // Absolute path, parent traversal, and a temp-file path must be
@@ -2243,14 +2145,8 @@ mod tests {
         let options = SearchOptions::normalize_with_pattern_mode(
             SearchRequest {
                 pattern: "RuntimeInfo { value.* }".to_string(),
-                path: None,
                 limit: Some(10),
-                context_before: None,
-                context_after: None,
-                include_globs: None,
-                exclude_globs: None,
-                result_mode: None,
-                timeout_secs: None,
+                ..Default::default()
             },
             Some(SearchPatternMode::Literal),
         )
@@ -2273,14 +2169,8 @@ mod tests {
     fn search_result_retention_truncated_stdout_cannot_recover_backend_identity() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let stdout = concat!(
@@ -2300,14 +2190,8 @@ mod tests {
     fn search_result_retention_marker_forms_cannot_recover_match_identity() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -2333,14 +2217,9 @@ mod tests {
     fn search_result_retention_marker_forms_cannot_recover_file_identity() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
             result_mode: Some(SearchResultMode::FilesWithMatches),
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -2366,14 +2245,9 @@ mod tests {
     fn search_result_retention_marker_forms_cannot_recover_count_identity() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
             result_mode: Some(SearchResultMode::Count),
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -2399,14 +2273,8 @@ mod tests {
     fn search_result_retention_marker_text_in_middle_is_not_prefix_loss() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
-            context_before: None,
-            context_after: None,
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let stdout = concat!(
@@ -2431,14 +2299,11 @@ mod tests {
         // truncation_reason, effective_timeout_secs.
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(2),
             context_before: Some(1),
             context_after: Some(1),
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
             timeout_secs: Some(5),
+            ..Default::default()
         })
         .unwrap();
         let stdout = concat!(
@@ -2481,14 +2346,10 @@ mod tests {
         .expect("write sample");
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
             limit: Some(10),
             context_before: Some(3),
             context_after: Some(3),
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         let cmd = search_project_text_command(&options);
@@ -2524,14 +2385,9 @@ mod tests {
     fn effective_search_context_clamps_values() {
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
-            path: None,
-            limit: None,
             context_before: Some(21),
             context_after: Some(99),
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: None,
-            timeout_secs: None,
+            ..Default::default()
         })
         .unwrap();
         assert_eq!((options.context_before, options.context_after), (21, 80));

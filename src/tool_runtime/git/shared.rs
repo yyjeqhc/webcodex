@@ -28,7 +28,7 @@ pub(super) fn parse_optional_bool(result: &str, key: &str) -> Option<bool> {
     })
 }
 
-pub(super) fn parse_fixed_decimal(bytes: &[u8]) -> Option<usize> {
+fn parse_fixed_decimal(bytes: &[u8]) -> Option<usize> {
     if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) {
         return None;
     }
@@ -41,4 +41,32 @@ pub(super) fn strip_wire_lf(value: &str) -> Option<String> {
     } else {
         value.strip_suffix('\n').map(ToOwned::to_owned)
     }
+}
+
+/// Consume one length-framed Git block from the end, without interpreting its metadata.
+/// The caller owns the expected frame order and validates each operation's budgets.
+pub(super) fn take_wire_block<'a>(
+    remaining: &mut &'a str,
+    magic: &[u8; 6],
+    kind: u8,
+) -> Option<(&'a str, &'a str)> {
+    let bytes = remaining.as_bytes();
+    let trailer_start = bytes.len().checked_sub(30)?;
+    let trailer = bytes.get(trailer_start..)?;
+    if trailer.get(..6)? != magic
+        || trailer.get(6).copied()? != kind
+        || trailer.get(7).copied()? != b':'
+        || trailer.get(18).copied()? != b':'
+        || trailer.get(29).copied()? != b'\n'
+    {
+        return None;
+    }
+    let data_wire_bytes = parse_fixed_decimal(trailer.get(8..18)?)?;
+    let meta_wire_bytes = parse_fixed_decimal(trailer.get(19..29)?)?;
+    let meta_start = trailer_start.checked_sub(meta_wire_bytes)?;
+    let data_start = meta_start.checked_sub(data_wire_bytes)?;
+    let data = std::str::from_utf8(bytes.get(data_start..meta_start)?).ok()?;
+    let meta = std::str::from_utf8(bytes.get(meta_start..trailer_start)?).ok()?;
+    *remaining = remaining.get(..data_start)?;
+    Some((data, meta))
 }

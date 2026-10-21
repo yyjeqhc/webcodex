@@ -97,7 +97,7 @@ pub(super) struct NativeSearchSpec {
 #[cfg(windows)]
 pub(super) fn native_search_spec(payload: &str) -> Option<NativeSearchSpec> {
     use webcodex_core::project_search::{
-        project_text_search_line_budget, PROJECT_TEXT_SEARCH_EXCLUDE_GLOBS,
+        project_text_search_line_budget, project_text_search_rg_options,
     };
     let payload: serde_json::Value = serde_json::from_str(payload).ok()?;
     let object = payload.as_object()?;
@@ -137,46 +137,15 @@ pub(super) fn native_search_spec(payload: &str) -> Option<NativeSearchSpec> {
     let after = usize::try_from(object.get("context_after")?.as_u64()?).ok()?;
     let result_mode = object.get("result_mode")?.as_str()?;
 
-    let mut args = Vec::with_capacity(20);
-    match result_mode {
-        "matches" => {
-            args.extend([
-                "--with-filename".to_string(),
-                "--null".to_string(),
-                "--line-number".to_string(),
-                "--no-heading".to_string(),
-                "-B".to_string(),
-                before.to_string(),
-                "-A".to_string(),
-                after.to_string(),
-            ]);
-        }
-        "files_with_matches" => args.push("--files-with-matches".to_string()),
-        "count" => args.extend([
-            "--with-filename".to_string(),
-            "--count".to_string(),
-            "--null".to_string(),
-        ]),
-        _ => return None,
-    }
-    args.extend([
-        "--color".to_string(),
-        "never".to_string(),
-        "--hidden".to_string(),
-        "--path-separator".to_string(),
-        "/".to_string(),
-    ]);
-    for glob in include {
-        args.extend(["--glob".to_string(), glob.to_string()]);
-    }
-    for glob in exclude {
-        args.extend(["--glob".to_string(), format!("!{glob}")]);
-    }
-    // Last matching glob wins in rg. Mandatory exclusions remain last, just
-    // like the generated POSIX backend, so user globs cannot override them.
-    for glob in PROJECT_TEXT_SEARCH_EXCLUDE_GLOBS {
-        args.extend(["--glob".to_string(), (*glob).to_string()]);
-    }
+    let mut args = project_text_search_rg_options(
+        result_mode,
+        before,
+        after,
+        &include,
+        &exclude,
+        str::to_string,
+    )?;
+    args.extend(["--path-separator".to_string(), "/".to_string()]);
     args.extend([
         "-e".to_string(),
         pattern.to_string(),

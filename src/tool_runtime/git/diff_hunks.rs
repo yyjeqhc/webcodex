@@ -19,8 +19,8 @@ use super::super::shell::{command_execution_state_name, ProjectCommandOutput};
 use super::super::tool_result::ToolResult;
 use super::super::{SuggestedToolCall, ToolRuntime};
 use super::shared::{
-    is_git_object_hex, parse_fixed_decimal, parse_optional_bool, parse_optional_usize,
-    parse_status_result_field, strip_wire_lf,
+    is_git_object_hex, parse_optional_bool, parse_optional_usize, parse_status_result_field,
+    strip_wire_lf, take_wire_block,
 };
 
 pub(super) const DEFAULT_MAX_HUNKS: usize = 30;
@@ -33,8 +33,6 @@ const GIT_DIFF_HUNKS_V2_COMMITTED_PAGE: u8 = 2;
 const GIT_DIFF_HUNKS_V2_WORKTREE_FRAGMENT: u8 = 3;
 const GIT_DIFF_HUNKS_V2_COMMITTED_FRAGMENT: u8 = 4;
 const GIT_DIFF_HUNKS_STDERR_BYTES: usize = 8 * 1024;
-const GIT_DIFF_HUNKS_BLOCK_TRAILER_BYTES: usize = 30;
-const GIT_DIFF_HUNKS_BLOCK_MAGIC: &[u8; 6] = b"WCDH1:";
 
 fn normalize_git_diff_hunks_page_bytes(max_page_bytes: Option<usize>) -> usize {
     max_page_bytes
@@ -1395,31 +1393,6 @@ struct GitDiffHunksPageWire {
     page_filter_exit: i32,
 }
 
-fn parse_git_diff_hunks_wire_block(
-    stdout: &str,
-    end: usize,
-    kind: u8,
-) -> Option<(&str, &str, usize)> {
-    let bytes = stdout.as_bytes();
-    let trailer_start = end.checked_sub(GIT_DIFF_HUNKS_BLOCK_TRAILER_BYTES)?;
-    let trailer = bytes.get(trailer_start..end)?;
-    if trailer.get(..6)? != GIT_DIFF_HUNKS_BLOCK_MAGIC
-        || trailer.get(6).copied()? != kind
-        || trailer.get(7).copied()? != b':'
-        || trailer.get(18).copied()? != b':'
-        || trailer.get(29).copied()? != b'\n'
-    {
-        return None;
-    }
-    let data_wire_bytes = parse_fixed_decimal(trailer.get(8..18)?)?;
-    let meta_wire_bytes = parse_fixed_decimal(trailer.get(19..29)?)?;
-    let meta_start = trailer_start.checked_sub(meta_wire_bytes)?;
-    let data_start = meta_start.checked_sub(data_wire_bytes)?;
-    let data = std::str::from_utf8(bytes.get(data_start..meta_start)?).ok()?;
-    let meta = std::str::from_utf8(bytes.get(meta_start..trailer_start)?).ok()?;
-    Some((data, meta, data_start))
-}
-
 fn parse_required_i32(meta: &str, key: &str) -> Option<i32> {
     parse_status_result_field(meta, key)?.parse().ok()
 }
@@ -1444,14 +1417,13 @@ fn parse_framed_git_diff_hunks_stdout(
     stdout: &str,
     max_page_bytes: usize,
 ) -> Option<GitDiffHunksPageWire> {
-    let mut cursor = stdout.len();
-    let (obs_data, obs_meta, start) = parse_git_diff_hunks_wire_block(stdout, cursor, b'O')?;
+    let mut remaining = stdout;
+    let (obs_data, obs_meta) = take_wire_block(&mut remaining, b"WCDH1:", b'O')?;
     if !obs_data.is_empty() {
         return None;
     }
-    cursor = start;
-    let (diff, page_meta, start) = parse_git_diff_hunks_wire_block(stdout, cursor, b'P')?;
-    if start != 0 || diff.len() > max_page_bytes {
+    let (diff, page_meta) = take_wire_block(&mut remaining, b"WCDH1:", b'P')?;
+    if !remaining.is_empty() || diff.len() > max_page_bytes {
         return None;
     }
     let obs_meta = strip_wire_lf(obs_meta)?;

@@ -19,16 +19,14 @@ use super::diff_hunks::{
     DEFAULT_MAX_HUNKS, DEFAULT_MAX_HUNK_LINES, MAX_MAX_HUNK_LINES,
 };
 use super::shared::{
-    parse_fixed_decimal, parse_optional_bool, parse_optional_usize, parse_status_result_field,
-    strip_wire_lf,
+    parse_optional_bool, parse_optional_usize, parse_status_result_field, strip_wire_lf,
+    take_wire_block,
 };
 use crate::runner_protocol::ShellRunRequest;
 use crate::tool_runtime::sessions::{SessionEvent, SessionSummary};
 
 #[cfg(test)]
 pub(crate) const SHOW_CHANGES_SENTINEL: &str = "@@WEBCODEX_SHOW_CHANGES_SEP@@";
-const SHOW_CHANGES_BLOCK_TRAILER_BYTES: usize = 30;
-const SHOW_CHANGES_BLOCK_MAGIC: &[u8; 6] = b"WCSF1:";
 
 const SHOW_CHANGES_DEFAULT_MAX_HUNKS: usize = 20;
 const SHOW_CHANGES_MAX_HUNKS: usize = 100;
@@ -705,31 +703,6 @@ pub(crate) struct ShowChangesStdout {
     pub(crate) diff_bytes: Option<usize>,
 }
 
-fn parse_show_changes_wire_block(
-    stdout: &str,
-    end: usize,
-    kind: u8,
-) -> Option<(&str, &str, usize)> {
-    let bytes = stdout.as_bytes();
-    let trailer_start = end.checked_sub(SHOW_CHANGES_BLOCK_TRAILER_BYTES)?;
-    let trailer = bytes.get(trailer_start..end)?;
-    if trailer.get(..6)? != SHOW_CHANGES_BLOCK_MAGIC
-        || trailer.get(6).copied()? != kind
-        || trailer.get(7).copied()? != b':'
-        || trailer.get(18).copied()? != b':'
-        || trailer.get(29).copied()? != b'\n'
-    {
-        return None;
-    }
-    let data_wire_bytes = parse_fixed_decimal(trailer.get(8..18)?)?;
-    let meta_wire_bytes = parse_fixed_decimal(trailer.get(19..29)?)?;
-    let meta_start = trailer_start.checked_sub(meta_wire_bytes)?;
-    let data_start = meta_start.checked_sub(data_wire_bytes)?;
-    let data = std::str::from_utf8(bytes.get(data_start..meta_start)?).ok()?;
-    let meta = std::str::from_utf8(bytes.get(meta_start..trailer_start)?).ok()?;
-    Some((data, meta, data_start))
-}
-
 #[cfg(test)]
 pub(crate) fn framed_show_changes_test_block(kind: char, body: &str, metadata: &str) -> String {
     format!(
@@ -777,22 +750,19 @@ pub(crate) fn framed_clean_show_changes_test_stdout(subject: &str, include_diff:
 }
 
 fn parse_framed_show_changes_stdout(stdout: &str, include_diff: bool) -> Option<ShowChangesStdout> {
-    let mut cursor = stdout.len();
+    let mut remaining = stdout;
+    let mut block = |kind| take_wire_block(&mut remaining, b"WCSF1:", kind);
     let (diff, diff_meta) = if include_diff {
-        let (body, meta, start) = parse_show_changes_wire_block(stdout, cursor, b'D')?;
-        cursor = start;
+        let (body, meta) = block(b'D')?;
         (strip_wire_lf(body)?, strip_wire_lf(meta)?)
     } else {
         (String::new(), String::new())
     };
-    let (numstat, numstat_meta, start) = parse_show_changes_wire_block(stdout, cursor, b'N')?;
-    cursor = start;
-    let (stat, stat_meta, start) = parse_show_changes_wire_block(stdout, cursor, b'T')?;
-    cursor = start;
-    let (head, head_meta, start) = parse_show_changes_wire_block(stdout, cursor, b'H')?;
-    cursor = start;
-    let (status, status_result, start) = parse_show_changes_wire_block(stdout, cursor, b'S')?;
-    if start != 0 {
+    let (numstat, numstat_meta) = block(b'N')?;
+    let (stat, stat_meta) = block(b'T')?;
+    let (head, head_meta) = block(b'H')?;
+    let (status, status_result) = block(b'S')?;
+    if !remaining.is_empty() {
         return None;
     }
     let status = strip_wire_lf(status)?;

@@ -705,9 +705,13 @@ fn spawn_runtime(
         .test_hook
         .as_ref()
         .map(|hook| Arc::clone(&hook.reaped));
+    let runtime_handle = tokio::runtime::Handle::current();
     let join = thread::Builder::new()
         .name("webcodex-code-mode-v8".to_string())
         .spawn(move || {
+            // Readiness timestamps must use the same clock as the caller's
+            // deadline, including when its Tokio runtime pauses virtual time.
+            let _runtime_context = runtime_handle.enter();
             run_runtime(
                 source,
                 allowed_tools,
@@ -1388,6 +1392,42 @@ mod tests {
             run_started_notify,
             reaped,
         )
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn startup_readiness_uses_callers_runtime_clock() {
+        tokio::time::advance(Duration::from_secs(60)).await;
+        let now = tokio::time::Instant::now();
+        let slots = Arc::new(Semaphore::new(1));
+        let permit = Arc::clone(&slots).acquire_owned().await.unwrap();
+        let mut startup = spawn_runtime(
+            "text('must not run')".to_string(),
+            Vec::new(),
+            permit,
+            RuntimeStartupConfig::default(),
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let signal = loop {
+            match startup.readiness_rx.try_recv() {
+                Ok(signal) => break signal,
+                Err(oneshot::error::TryRecvError::Empty) => {}
+                Err(error) => panic!("startup readiness closed: {error}"),
+            }
+            assert!(
+                Instant::now() < deadline,
+                "startup readiness was not published"
+            );
+            tokio::task::yield_now().await;
+        };
+        assert!(signal.result.is_ok());
+        assert_eq!(signal.observed_at, now);
+
+        // Close the activation gate and join the native thread without relying
+        // on a virtual timeout to schedule its cleanup.
+        startup.activation_tx.take();
+        join_runtime(startup.join.take().unwrap()).await;
+        assert_eq!(slots.available_permits(), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]

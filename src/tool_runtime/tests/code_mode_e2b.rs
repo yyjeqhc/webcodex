@@ -322,12 +322,21 @@ async fn service_e2b_call(
 }
 
 async fn wait_for_mutation_request(runtime: &ToolRuntime, client_id: &str) -> RunnerRequest {
+    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        let request = wait_for_patch_agent_request(runtime, client_id).await;
-        if request.kind == "file_apply_text_edits" {
-            return request;
+        assert!(
+            Instant::now() < deadline,
+            "mutation child was not dispatched"
+        );
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
+            if request.kind == "file_apply_text_edits" {
+                return request;
+            }
+            complete_agent_request_by_running_locally(runtime, client_id, request).await;
         }
-        complete_agent_request_by_running_locally(runtime, client_id, request).await;
+        // Remain runnable so paused-clock timeout tests cannot auto-advance
+        // while awaiting a V8 slot or a native thread's readiness.
+        tokio::task::yield_now().await;
     }
 }
 
@@ -688,9 +697,11 @@ async fn e2b_promise_all_never_dispatches_two_mutations() {
     assert_eq!(result.output["effect_receipt"]["consequential_calls"], 1);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(start_paused = true)]
 async fn e2b_timeout_after_mutation_dispatch_reconciles_known_true_result() {
     let (root, runtime, project, session_id) = e2b_fixture("e2b-timeout-known", "before\n").await;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let frontend_started_at = tokio::time::Instant::now();
     let source = r#"
         const before = await tools.read_files({items:[{path:"src/example.rs"}]});
         const revision = before.output.items[0].output.read_revision;
@@ -700,11 +711,13 @@ async fn e2b_timeout_after_mutation_dispatch_reconciles_known_true_result() {
         }]});
         while (true) {}
     "#;
-    // Keep the frontend deadline above host scheduling jitter so this test
-    // exercises timeout only after the mutation has entered canonical dispatch.
     let task = spawn_e2b_call(&runtime, &project, &session_id, source, Some(3000));
     let request = wait_for_mutation_request(&runtime, "e2b-timeout-known").await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(tokio::time::Instant::now(), frontend_started_at);
+    // Expire only after canonical dispatch; the started mutation may still
+    // complete during the unchanged drain grace period.
+    tokio::time::advance(Duration::from_millis(3000)).await;
+    tokio::time::resume();
     complete_mutation_fixture(
         &runtime,
         "e2b-timeout-known",
@@ -712,7 +725,10 @@ async fn e2b_timeout_after_mutation_dispatch_reconciles_known_true_result() {
         MutationFixtureReply::ApplyExact,
     )
     .await;
-    let result = task.await.unwrap();
+    let result = tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), task)
+        .await
+        .expect("timed-out Code Mode did not drain")
+        .unwrap();
     assert!(!result.success);
     assert_eq!(result.output["failure_kind"], "timeout");
     assert_eq!(
@@ -737,9 +753,10 @@ async fn e2b_timeout_after_mutation_dispatch_reconciles_known_true_result() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(start_paused = true)]
 async fn e2b_mutation_stall_beyond_bounded_drain_returns_outcome_unknown() {
     let (root, runtime, project, session_id) = e2b_fixture("e2b-timeout-unknown", "before\n").await;
+    let frontend_started_at = tokio::time::Instant::now();
     let source = r#"
         const before = await tools.read_files({items:[{path:"src/example.rs"}]});
         const revision = before.output.items[0].output.read_revision;
@@ -749,10 +766,12 @@ async fn e2b_mutation_stall_beyond_bounded_drain_returns_outcome_unknown() {
         }]});
         while (true) {}
     "#;
-    // Keep the frontend deadline above host scheduling jitter so the child
-    // reaches canonical dispatch before bounded drain is exercised.
     let task = spawn_e2b_call(&runtime, &project, &session_id, source, Some(1000));
     let request = wait_for_mutation_request(&runtime, "e2b-timeout-unknown").await;
+    assert_eq!(tokio::time::Instant::now(), frontend_started_at);
+    // Exercise the real five-second drain only after the child has started.
+    tokio::time::advance(Duration::from_millis(1000)).await;
+    tokio::time::resume();
     let result = tokio::time::timeout(Duration::from_secs(8), task)
         .await
         .expect("E2b must return after the bounded five-second reconciliation")

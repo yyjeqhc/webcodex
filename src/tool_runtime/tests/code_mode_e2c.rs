@@ -765,15 +765,25 @@ async fn e2c_external_write_is_not_covered_and_never_gets_current_proof() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(start_paused = true)]
 async fn e2c_frontend_timeout_after_validation_dispatch_preserves_edit_and_exact_job() {
     let client = "e2c-timeout";
     let (_root, runtime, project, session) = fixture(client).await;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let frontend_started_at = tokio::time::Instant::now();
     let source = format!("{EDIT} tools.cargo_check({{}}); while(true){{}}");
     let task = spawn_e2b_call(&runtime, &project, &session, &source, Some(1000));
     let request = reach_validation(&runtime, client, &task, MutationFixtureReply::ApplyExact).await;
+    assert_eq!(tokio::time::Instant::now(), frontend_started_at);
     validation_reply(&runtime, client, &request, None).await;
-    let result = task.await.unwrap();
+    // Queueing and edit setup cannot spend the frontend budget. Trigger its
+    // deadline only after validation dispatch, then restore normal drain time.
+    tokio::time::advance(Duration::from_millis(1000)).await;
+    tokio::time::resume();
+    let result = tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), task)
+        .await
+        .expect("timed-out Code Mode did not drain")
+        .unwrap();
     assert!(!result.success);
     assert_eq!(result.output["failure_kind"], "timeout");
     assert_eq!(

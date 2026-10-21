@@ -955,10 +955,12 @@ async fn e2a_js_error_after_job_handoff_preserves_effect_receipt_and_no_retry_cl
         .unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(start_paused = true)]
 async fn e2a_cpu_timeout_after_child_dispatch_preserves_started_job_truth() {
     let client_id = "code-mode-e2a-timeout-after-child";
     let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let frontend_started_at = tokio::time::Instant::now();
     let task = spawn_code_mode_call(
         &runtime,
         "execute_effectful_code_mode",
@@ -971,16 +973,29 @@ async fn e2a_cpu_timeout_after_child_dispatch_preserves_started_job_truth() {
         .to_string(),
         300,
     );
-    // This case intentionally burns a CPU-time budget after starting the child.
-    // Under a heavily parallel full suite, that CPU budget can span more than
-    // the generic 10-second wall-clock readiness fence. Widen only this positive
-    // dispatch wait; the production timeout contract remains unchanged.
-    let (request, job_id) = super::validation_handoff::poll_start_validation_job_with_timeout(
-        &runtime,
-        client_id,
-        std::time::Duration::from_secs(30),
-    )
-    .await;
+    // The frontend deadline includes waiting for a process-wide V8 slot. Freeze
+    // it until the child is actually dispatched, even when other tests own both
+    // slots. Keep this task runnable so Tokio cannot auto-advance paused time
+    // while the V8 thread or another test's runtime is making progress.
+    let request = loop {
+        if let Some(request) = probe_patch_agent_request(&runtime, client_id).await {
+            break request;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "validation child was not dispatched"
+        );
+        if task.is_finished() {
+            panic!(
+                "Code Mode finished before dispatch: {:?}",
+                task.await.unwrap()
+            );
+        }
+        tokio::task::yield_now().await;
+    };
+    assert_eq!(tokio::time::Instant::now(), frontend_started_at);
+    assert_eq!(request.kind, "start_validation_job");
+    let job_id = request.job_id.clone().expect("start_validation_job job_id");
     runtime
         .runner_registry
         .update_job(super::validation_handoff::cargo_test_update(
@@ -997,7 +1012,15 @@ async fn e2a_cpu_timeout_after_child_dispatch_preserves_started_job_truth() {
         .await
         .unwrap();
 
-    let outcome = task.await.unwrap();
+    tokio::time::advance(Duration::from_millis(300)).await;
+    // Canonical Job handoff also accounts for wall-clock time. Resume after
+    // firing the frontend deadline so its remaining waits and the drain grace
+    // period run normally, rather than Tokio auto-advancing past native work.
+    tokio::time::resume();
+    let outcome = tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), task)
+        .await
+        .expect("timed-out Code Mode did not drain")
+        .unwrap();
     assert!(!outcome.success);
     let result = outcome.result.expect("outer timeout ToolResult");
     assert_eq!(result.output["failure_kind"], "timeout");

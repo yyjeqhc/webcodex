@@ -159,18 +159,8 @@ async fn start_format(
     registry
         .start_job_with_metadata_for_access(
             ShellJobOpRequest {
-                login: false,
-                op: "start".into(),
-                client_id: Some("format-runner".into()),
                 cwd: Some("/tmp/demo".into()),
-                command: Some(String::new()),
-                timeout_secs: Some(60),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+                ..shell_job_start_request("format-runner", "", Some(60))
             },
             "test".into(),
             ShellJobStartMetadata {

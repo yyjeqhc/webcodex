@@ -136,24 +136,11 @@ async fn registry_inventory_snapshot_saves_projects() {
     let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
                 RunnerCapabilities::default(),
             ),
-            policy: None,
+            ..runner_registration("oe", "inst", Vec::new())
         }))
         .await
         .unwrap();
@@ -178,24 +165,11 @@ async fn registry_inventory_snapshot_updates_projects() {
     let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
                 RunnerCapabilities::default(),
             ),
-            policy: None,
+            ..runner_registration("oe", "inst", Vec::new())
         }))
         .await
         .unwrap();
@@ -228,24 +202,11 @@ async fn registry_poll_without_projects_preserves_existing_projection() {
     let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
                 RunnerCapabilities::default(),
             ),
-            policy: None,
+            ..runner_registration("oe", "inst", Vec::new())
         }))
         .await
         .unwrap();
@@ -277,47 +238,21 @@ async fn registry_project_owner_check_enforces_boundary() {
     let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "alice-client".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
                 RunnerCapabilities::default(),
             ),
-            policy: None,
+            ..runner_registration("alice-client", "inst", Vec::new())
         }))
         .await
         .unwrap();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "bob-client".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("bob".to_string()),
-            hostname: None,
-            host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
                 RunnerCapabilities::default(),
             ),
-            policy: None,
+            ..runner_registration("bob-client", "inst", Vec::new())
         }))
         .await
         .unwrap();

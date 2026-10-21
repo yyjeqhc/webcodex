@@ -193,20 +193,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
 
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "computer-region-only".to_string(),
-            runner_instance_id: "computer-inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
             capabilities: RunnerCapabilities {
                 shell: true,
                 file_read: true,
@@ -214,7 +201,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
                 computer_snapshot_region: true,
                 ..Default::default()
             },
-            policy: None,
+            ..runner_registration("computer-region-only", "computer-inst", Vec::new())
         }))
         .await
         .unwrap();
@@ -233,20 +220,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
 
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "computer-region-new".to_string(),
-            runner_instance_id: "computer-inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
             capabilities: RunnerCapabilities {
                 shell: true,
                 file_read: true,
@@ -254,7 +228,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
                 computer_snapshot_region: true,
                 ..Default::default()
             },
-            policy: None,
+            ..runner_registration("computer-region-new", "computer-inst", Vec::new())
         }))
         .await
         .unwrap();
@@ -347,27 +321,14 @@ async fn retained_computer_stdout(
     let alice = auth_context(Some("alice"), false);
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "computer-display-large".to_string(),
-            runner_instance_id: "display-large-inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
             capabilities: RunnerCapabilities {
                 computer_observe: true,
                 computer_snapshot_region: true,
                 computer_display_observe: true,
                 ..Default::default()
             },
-            policy: None,
+            ..runner_registration("computer-display-large", "display-large-inst", Vec::new())
         }))
         .await
         .unwrap();

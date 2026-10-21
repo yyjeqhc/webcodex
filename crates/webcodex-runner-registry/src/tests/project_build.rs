@@ -59,30 +59,26 @@ fn go_build_plan() -> ProjectBuildPlan {
     }
 }
 
+fn build_job_metadata(plan: ProjectBuildPlan) -> ShellJobStartMetadata {
+    ShellJobStartMetadata {
+        project_id: Some("agent:build-runner:demo".into()),
+        project_cwd: Some(".".into()),
+        purpose: Some("build".into()),
+        shell: Some("direct_argv".into()),
+        structured_execution: Some(StructuredJobExecution::ProjectBuild(plan)),
+        ..Default::default()
+    }
+}
+
 fn registration(project_build: bool) -> RunnerRegisterRequest {
     let mut capabilities =
         crate::test_support::current_runner_capabilities(RunnerCapabilities::default());
     capabilities.project_build_v1 = project_build;
     current_runner_registration(RunnerRegisterRequest {
-        computer_session_availability: None,
-        process_started_at: None,
-        build: None,
-        job_concurrency_limit: None,
-        job_inventory: None,
-        coding_agent_providers: None,
-        coding_agent_inventory: None,
-        client_id: "build-runner".into(),
-        runner_instance_id: "inst".into(),
-        runner_protocol_generation: RUNNER_PROTOCOL_GENERATION_V2,
-        display_name: None,
-        owner: None,
-        hostname: None,
-        host_context: None,
         capabilities,
-        policy: None,
+        ..runner_registration("build-runner", "inst", Vec::new())
     })
 }
-
 #[tokio::test]
 async fn missing_build_capabilities_preserve_stage_order_without_admission() {
     for (base, node, planning_feature, job_feature) in [
@@ -125,28 +121,11 @@ async fn missing_build_capabilities_preserve_stage_order_without_admission() {
         let error = registry
             .start_job_with_metadata_for_access_typed(
                 ShellJobOpRequest {
-                    login: false,
-                    op: "start".into(),
-                    client_id: Some("build-runner".into()),
                     cwd: Some("/tmp/demo".into()),
-                    command: Some(String::new()),
-                    timeout_secs: Some(60),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
+                    ..shell_job_start_request("build-runner", "", Some(60))
                 },
                 "test".into(),
-                ShellJobStartMetadata {
-                    project_id: Some("agent:build-runner:demo".into()),
-                    project_cwd: Some(".".into()),
-                    purpose: Some("build".into()),
-                    shell: Some("direct_argv".into()),
-                    structured_execution: Some(StructuredJobExecution::ProjectBuild(plan)),
-                    ..Default::default()
-                },
+                build_job_metadata(plan),
                 Some(&access),
                 None,
             )
@@ -248,28 +227,13 @@ async fn project_build_job_handoff_emits_typed_start_build() {
     let job = registry
         .start_job_with_metadata_for_access(
             ShellJobOpRequest {
-                login: false,
-                op: "start".into(),
-                client_id: Some("build-runner".into()),
                 cwd: Some("/tmp/demo".into()),
-                command: Some(String::new()),
-                timeout_secs: Some(60),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+                ..shell_job_start_request("build-runner", "", Some(60))
             },
             "test".into(),
             ShellJobStartMetadata {
-                project_id: Some("agent:build-runner:demo".into()),
-                project_cwd: Some(".".into()),
-                purpose: Some("build".into()),
-                shell: Some("direct_argv".into()),
                 visibility: ShellJobVisibility::Public,
-                structured_execution: Some(StructuredJobExecution::ProjectBuild(plan.clone())),
-                ..Default::default()
+                ..build_job_metadata(plan.clone())
             },
             None,
             None,
@@ -308,28 +272,13 @@ async fn project_build_base_capability_error_identifies_runner_without_job_admis
     let error = registry
         .start_job_with_metadata(
             ShellJobOpRequest {
-                login: false,
-                op: "start".into(),
-                client_id: Some("build-runner".into()),
                 cwd: Some("/tmp/demo".into()),
-                command: Some(String::new()),
-                timeout_secs: Some(60),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+                ..shell_job_start_request("build-runner", "", Some(60))
             },
             "test".into(),
             ShellJobStartMetadata {
-                project_id: Some("agent:build-runner:demo".into()),
-                project_cwd: Some(".".into()),
-                purpose: Some("build".into()),
-                shell: Some("direct_argv".into()),
                 visibility: ShellJobVisibility::Public,
-                structured_execution: Some(StructuredJobExecution::ProjectBuild(build_plan())),
-                ..Default::default()
+                ..build_job_metadata(build_plan())
             },
         )
         .await
@@ -361,28 +310,13 @@ async fn go_project_build_job_handoff_requires_single_module_capability() {
         let result = registry
             .start_job_with_metadata_for_access(
                 ShellJobOpRequest {
-                    login: false,
-                    op: "start".into(),
-                    client_id: Some("build-runner".into()),
                     cwd: Some("/tmp/demo".into()),
-                    command: Some(String::new()),
-                    timeout_secs: Some(60),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
+                    ..shell_job_start_request("build-runner", "", Some(60))
                 },
                 "test".into(),
                 ShellJobStartMetadata {
-                    project_id: Some("agent:build-runner:demo".into()),
-                    project_cwd: Some(".".into()),
-                    purpose: Some("build".into()),
-                    shell: Some("direct_argv".into()),
                     visibility: ShellJobVisibility::Public,
-                    structured_execution: Some(StructuredJobExecution::ProjectBuild(plan)),
-                    ..Default::default()
+                    ..build_job_metadata(plan)
                 },
                 None,
                 None,
@@ -432,28 +366,11 @@ async fn python_project_build_capability_is_checked_for_planning_and_auto_discov
     let error = registry
         .start_job_with_metadata_for_access(
             ShellJobOpRequest {
-                login: false,
-                op: "start".into(),
-                client_id: Some("build-runner".into()),
                 cwd: Some("/tmp/demo".into()),
-                command: Some(String::new()),
-                timeout_secs: Some(60),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+                ..shell_job_start_request("build-runner", "", Some(60))
             },
             "test".into(),
-            ShellJobStartMetadata {
-                project_id: Some("agent:build-runner:demo".into()),
-                project_cwd: Some(".".into()),
-                purpose: Some("build".into()),
-                shell: Some("direct_argv".into()),
-                structured_execution: Some(StructuredJobExecution::ProjectBuild(plan)),
-                ..Default::default()
-            },
+            build_job_metadata(plan),
             None,
             None,
         )
@@ -503,28 +420,13 @@ async fn node_project_build_job_handoff_requires_additive_capability() {
         let result = registry
             .start_job_with_metadata_for_access(
                 ShellJobOpRequest {
-                    login: false,
-                    op: "start".into(),
-                    client_id: Some("build-runner".into()),
                     cwd: Some("/tmp/demo".into()),
-                    command: Some(String::new()),
-                    timeout_secs: Some(60),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
+                    ..shell_job_start_request("build-runner", "", Some(60))
                 },
                 "test".into(),
                 ShellJobStartMetadata {
-                    project_id: Some("agent:build-runner:demo".into()),
-                    project_cwd: Some(".".into()),
-                    purpose: Some("build".into()),
-                    shell: Some("direct_argv".into()),
                     visibility: ShellJobVisibility::Public,
-                    structured_execution: Some(StructuredJobExecution::ProjectBuild(plan)),
-                    ..Default::default()
+                    ..build_job_metadata(plan)
                 },
                 None,
                 None,

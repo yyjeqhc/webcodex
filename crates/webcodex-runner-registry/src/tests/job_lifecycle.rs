@@ -23,40 +23,13 @@ fn registry_lifecycle_alias_consumes_core_contract_without_absorbing_recovery() 
 async fn terminal_observed_poll_complete_and_log() {
     let registry = RunnerRegistry::default();
     registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: async_job_capabilities(),
-            policy: None,
-        })
+        .register(runner_registration("oe", "inst", Vec::new()))
         .await
         .unwrap();
     let job = registry
         .start_job(
             ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("oe".to_string()),
                 cwd: Some("/tmp".to_string()),
-                command: Some("printf hello".to_string()),
-                timeout_secs: Some(10),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
                 codex: Some(ShellJobCodexMetadata {
                     project: Some("demo".to_string()),
                     goal_id: Some("goal-1".to_string()),
@@ -68,6 +41,7 @@ async fn terminal_observed_poll_complete_and_log() {
                     reason: Some("test job".to_string()),
                     max_runtime_secs: Some(10),
                 }),
+                ..shell_job_start_request("oe", "printf hello", Some(10))
             },
             "test".to_string(),
         )
@@ -148,41 +122,11 @@ async fn terminal_observed_poll_complete_and_log() {
 async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() {
     let registry = RunnerRegistry::default();
     registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: async_job_capabilities(),
-            policy: None,
-        })
+        .register(runner_registration("oe", "inst", Vec::new()))
         .await
         .unwrap();
 
-    let start = |command: &str| ShellJobOpRequest {
-        login: false,
-        op: "start".to_string(),
-        client_id: Some("oe".to_string()),
-        cwd: None,
-        command: Some(command.to_string()),
-        timeout_secs: Some(10),
-        job_id: None,
-        since_stdout_line: None,
-        since_stderr_line: None,
-        tail_lines: None,
-        limit: None,
-        codex: None,
-    };
+    let start = |command: &str| shell_job_start_request("oe", command, Some(10));
     let job_a = registry
         .start_job(start("job-a"), "test".to_string())
         .await
@@ -241,42 +185,12 @@ async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() 
 async fn dispatched_raw_shell_accepts_prestart_not_started_terminal_update() {
     let registry = RunnerRegistry::default();
     registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: async_job_capabilities(),
-            policy: None,
-        })
+        .register(runner_registration("oe", "inst", Vec::new()))
         .await
         .unwrap();
     let job = registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("oe".to_string()),
-                cwd: None,
-                command: Some("printf ok".to_string()),
-                timeout_secs: Some(30),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
-            },
+            shell_job_start_request("oe", "printf ok", Some(30)),
             "test".to_string(),
         )
         .await
@@ -332,42 +246,12 @@ async fn dispatched_raw_shell_accepts_prestart_not_started_terminal_update() {
 async fn terminal_observed_queued_stop_records_server_time() {
     let registry = RunnerRegistry::default();
     registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: async_job_capabilities(),
-            policy: None,
-        })
+        .register(runner_registration("oe", "inst", Vec::new()))
         .await
         .unwrap();
     let job = registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("oe".to_string()),
-                cwd: None,
-                command: Some("sleep 10".to_string()),
-                timeout_secs: Some(10),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
-            },
+            shell_job_start_request("oe", "sleep 10", Some(10)),
             "test".to_string(),
         )
         .await
@@ -397,42 +281,12 @@ async fn terminal_observed_queued_stop_records_server_time() {
 async fn registry_shell_job_stop_running_delivers_stop_to_client() {
     let registry = RunnerRegistry::default();
     registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: async_job_capabilities(),
-            policy: None,
-        })
+        .register(runner_registration("oe", "inst", Vec::new()))
         .await
         .unwrap();
     let job = registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("oe".to_string()),
-                cwd: None,
-                command: Some("sleep 10".to_string()),
-                timeout_secs: Some(10),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
-            },
+            shell_job_start_request("oe", "sleep 10", Some(10)),
             "test".to_string(),
         )
         .await
@@ -492,42 +346,12 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
 async fn registry_marks_running_job_lost_when_client_stale() {
     let registry = RunnerRegistry::default();
     registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: async_job_capabilities(),
-            policy: None,
-        })
+        .register(runner_registration("oe", "inst", Vec::new()))
         .await
         .unwrap();
     let job = registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("oe".to_string()),
-                cwd: None,
-                command: Some("sleep 10".to_string()),
-                timeout_secs: Some(10),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
-            },
+            shell_job_start_request("oe", "sleep 10", Some(10)),
             "test".to_string(),
         )
         .await

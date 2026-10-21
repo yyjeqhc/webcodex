@@ -74,20 +74,7 @@ async fn computer_element_state_requires_its_own_additive_capability() {
 
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "computer-state-capable".to_string(),
-            runner_instance_id: "computer-inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
             capabilities: RunnerCapabilities {
                 shell: true,
                 file_read: true,
@@ -96,7 +83,7 @@ async fn computer_element_state_requires_its_own_additive_capability() {
                 computer_element_state: true,
                 ..Default::default()
             },
-            policy: None,
+            ..runner_registration("computer-state-capable", "computer-inst", Vec::new())
         }))
         .await
         .unwrap();

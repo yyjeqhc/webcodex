@@ -5,24 +5,11 @@ async fn registry_rejects_enqueue_when_queue_full() {
     let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "full".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
                 RunnerCapabilities::default(),
             ),
-            policy: None,
+            ..runner_registration("full", "inst", Vec::new())
         }))
         .await
         .unwrap();
@@ -75,24 +62,10 @@ async fn registry_rejects_enqueue_when_client_offline() {
     let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "stale".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
             capabilities: crate::test_support::current_runner_capabilities(
                 RunnerCapabilities::default(),
             ),
-            policy: None,
+            ..runner_registration("stale", "inst", Vec::new())
         }))
         .await
         .unwrap();

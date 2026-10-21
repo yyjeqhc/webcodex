@@ -284,6 +284,7 @@ impl CodeModeHost for V8CodeModeHost {
 impl ToolRuntime {
     pub(crate) async fn code_mode_exec(
         &self,
+        stage: CodeModeCallableStage,
         project: ResolvedProject,
         session_id: String,
         source: String,
@@ -296,7 +297,7 @@ impl ToolRuntime {
             super::sessions::SessionTransport::Api => ToolTransport::Api,
             super::sessions::SessionTransport::Mcp => ToolTransport::Mcp,
         };
-        let policy = code_mode_orchestration_policy(CodeModeCallableStage::ReadOnly);
+        let policy = code_mode_orchestration_policy(stage);
         let orchestration = Arc::new(CanonicalOrchestrationHost::new(
             self.clone(),
             auth,
@@ -306,24 +307,45 @@ impl ToolRuntime {
             composition_parent_invocation_id.clone(),
             policy,
         ));
-        let host = Arc::new(V8CodeModeHost {
+        let host: Arc<dyn CodeModeHost> = Arc::new(V8CodeModeHost {
             orchestration: Arc::clone(&orchestration),
         });
         let input_bytes = source.len();
-        let execution = webcodex_code_mode::execute(
-            host as Arc<dyn CodeModeHost>,
-            CodeModeExecuteRequest {
-                source,
-                allowed_tools: policy
-                    .admitted_tools
-                    .iter()
-                    .map(|tool| (*tool).to_string())
-                    .collect(),
-                timeout_ms,
-            },
-        )
-        .await;
-        let (result, stats) = match execution {
+        let request = CodeModeExecuteRequest {
+            source,
+            allowed_tools: policy
+                .admitted_tools
+                .iter()
+                .map(|tool| (*tool).to_string())
+                .collect(),
+            timeout_ms,
+        };
+        let execution = match stage {
+            CodeModeCallableStage::ReadOnly => webcodex_code_mode::execute(host, request).await,
+            CodeModeCallableStage::Validation | CodeModeCallableStage::GuardedEdit => {
+                webcodex_code_mode::execute_with_termination_mode(
+                    host,
+                    request,
+                    CodeModeTerminationMode::DrainStartedChildren {
+                        max_drain_ms: CONSEQUENTIAL_MAX_STARTED_CHILD_DRAIN_MS,
+                    },
+                )
+                .await
+            }
+        };
+        let effect_receipt = match stage {
+            CodeModeCallableStage::ReadOnly => None,
+            CodeModeCallableStage::Validation | CodeModeCallableStage::GuardedEdit => {
+                Some(orchestration.effect_receipt())
+            }
+        };
+        let (job_handoffs, outcome_unknown) = effect_receipt.as_ref().map_or((0, 0), |receipt| {
+            (receipt.job_handoffs, receipt.outcome_unknown)
+        });
+        let consequential_receipt = effect_receipt
+            .as_ref()
+            .filter(|receipt| receipt.consequential_calls > 0);
+        let (mut result, stats) = match execution {
             Ok(execution) => {
                 let stats = execution.stats.clone();
                 (
@@ -336,15 +358,37 @@ impl ToolRuntime {
             }
             Err(error) => {
                 let stats = error.stats.clone();
+                let message = match (stage, consequential_receipt.is_some()) {
+                    (CodeModeCallableStage::Validation, true) => bounded_model_error(&format!(
+                        "{} One or more consequential child calls entered canonical execution. Do not blindly rerun the whole orchestration; inspect the effect receipt and any returned Job continuations.",
+                        error.message
+                    )),
+                    (CodeModeCallableStage::GuardedEdit, true) => bounded_model_error(&format!(
+                        "{} One or more consequential child calls entered canonical execution. Do not blindly rerun the whole orchestration; inspect the effect receipt and current workspace state before another mutation.",
+                        error.message
+                    )),
+                    _ => bounded_model_error(&error.message),
+                };
+                let failure = match stage {
+                    CodeModeCallableStage::ReadOnly => "code mode execution failed",
+                    CodeModeCallableStage::Validation => "effectful code mode execution failed",
+                    CodeModeCallableStage::GuardedEdit => "mutating code mode execution failed",
+                };
                 (
                     ToolResult::err_with_output(
-                        "code mode execution failed",
-                        code_mode_failure_output(&error, bounded_model_error(&error.message), 0, 0),
+                        failure,
+                        code_mode_failure_output(&error, message, job_handoffs, outcome_unknown),
                     ),
                     stats,
                 )
             }
         };
+        if let Some(receipt) = consequential_receipt {
+            result.output["effect_receipt"] = json!(receipt);
+            if result.success {
+                attach_effect_follow_up(&mut result.output, job_handoffs, outcome_unknown);
+            }
+        }
         let composition = orchestration.composition_summary(
             stats.duration_ms,
             input_bytes,
@@ -352,257 +396,51 @@ impl ToolRuntime {
             stats.slot_wait_ms,
         );
         super::runtime_metrics::observe_code_mode_composition(self.metrics.as_ref(), &composition);
-        tracing::debug!(
-            composition_parent_invocation_id = composition_parent_invocation_id
-                .as_deref()
-                .unwrap_or("unavailable"),
-            nested_calls = composition.nested_calls,
-            nested_successes = composition.nested_successes,
-            nested_failures = composition.nested_failures,
-            max_in_flight = composition.max_in_flight,
-            duration_ms = composition.duration_ms,
-            slot_wait_ms = composition.slot_wait_ms,
-            input_bytes = composition.input_bytes,
-            returned_bytes = composition.returned_bytes,
-            nested_raw_result_bytes_total = composition.nested_raw_result_bytes_total,
-            nested_tool_counts = ?composition.nested_tool_counts,
-            "code_mode_composition_finished"
-        );
-        (result, composition)
-    }
-
-    pub(crate) async fn code_mode_exec_effectful(
-        &self,
-        project: ResolvedProject,
-        session_id: String,
-        source: String,
-        timeout_ms: Option<u64>,
-        auth: Option<&AuthContext>,
-        transport: super::sessions::SessionTransport,
-        composition_parent_invocation_id: Option<String>,
-    ) -> (ToolResult, CodeModeCompositionSummary) {
-        let transport = match transport {
-            super::sessions::SessionTransport::Api => ToolTransport::Api,
-            super::sessions::SessionTransport::Mcp => ToolTransport::Mcp,
+        let event = match stage {
+            CodeModeCallableStage::ReadOnly => "code_mode_composition_finished",
+            CodeModeCallableStage::Validation => "code_mode_effectful_composition_finished",
+            CodeModeCallableStage::GuardedEdit => "code_mode_mutating_composition_finished",
         };
-        let policy = code_mode_orchestration_policy(CodeModeCallableStage::Validation);
-        let orchestration = Arc::new(CanonicalOrchestrationHost::new(
-            self.clone(),
-            auth,
-            project.resolved_id,
-            session_id,
-            transport,
-            composition_parent_invocation_id.clone(),
-            policy,
-        ));
-        let host = Arc::new(V8CodeModeHost {
-            orchestration: Arc::clone(&orchestration),
-        });
-        let input_bytes = source.len();
-        let execution = webcodex_code_mode::execute_with_termination_mode(
-            host as Arc<dyn CodeModeHost>,
-            CodeModeExecuteRequest {
-                source,
-                allowed_tools: policy
-                    .admitted_tools
-                    .iter()
-                    .map(|tool| (*tool).to_string())
-                    .collect(),
-                timeout_ms,
-            },
-            CodeModeTerminationMode::DrainStartedChildren {
-                max_drain_ms: CONSEQUENTIAL_MAX_STARTED_CHILD_DRAIN_MS,
-            },
-        )
-        .await;
-        let effect_receipt = orchestration.effect_receipt();
-        let has_consequential_work = effect_receipt.consequential_calls > 0;
-        let (result, stats) = match execution {
-            Ok(execution) => {
-                let stats = execution.stats.clone();
-                let mut output = json!({
-                    "content": execution.content,
-                    "stats": execution.stats,
-                });
-                if has_consequential_work {
-                    output["effect_receipt"] = json!(effect_receipt);
-                    attach_effect_follow_up(
-                        &mut output,
-                        effect_receipt.job_handoffs,
-                        effect_receipt.outcome_unknown,
-                    );
-                }
-                (ToolResult::ok(output), stats)
-            }
-            Err(error) => {
-                let stats = error.stats.clone();
-                let message = if has_consequential_work {
-                    bounded_model_error(&format!(
-                        "{} One or more consequential child calls entered canonical execution. Do not blindly rerun the whole orchestration; inspect the effect receipt and any returned Job continuations.",
-                        error.message
-                    ))
-                } else {
-                    bounded_model_error(&error.message)
-                };
-                let mut output = code_mode_failure_output(
-                    &error,
-                    message,
-                    effect_receipt.job_handoffs,
-                    effect_receipt.outcome_unknown,
-                );
-                if has_consequential_work {
-                    output["effect_receipt"] = json!(effect_receipt);
-                }
-                (
-                    ToolResult::err_with_output("effectful code mode execution failed", output),
-                    stats,
+        match stage {
+            CodeModeCallableStage::ReadOnly => tracing::debug!(
+                composition_parent_invocation_id = composition_parent_invocation_id
+                    .as_deref()
+                    .unwrap_or("unavailable"),
+                nested_calls = composition.nested_calls,
+                nested_successes = composition.nested_successes,
+                nested_failures = composition.nested_failures,
+                max_in_flight = composition.max_in_flight,
+                duration_ms = composition.duration_ms,
+                slot_wait_ms = composition.slot_wait_ms,
+                input_bytes = composition.input_bytes,
+                returned_bytes = composition.returned_bytes,
+                nested_raw_result_bytes_total = composition.nested_raw_result_bytes_total,
+                nested_tool_counts = ?composition.nested_tool_counts,
+                "{event}"
+            ),
+            CodeModeCallableStage::Validation | CodeModeCallableStage::GuardedEdit => {
+                tracing::debug!(
+                    composition_parent_invocation_id = composition_parent_invocation_id
+                        .as_deref()
+                        .unwrap_or("unavailable"),
+                    nested_calls = composition.nested_calls,
+                    nested_successes = composition.nested_successes,
+                    nested_failures = composition.nested_failures,
+                    max_in_flight = composition.max_in_flight,
+                    duration_ms = composition.duration_ms,
+                    slot_wait_ms = composition.slot_wait_ms,
+                    input_bytes = composition.input_bytes,
+                    returned_bytes = composition.returned_bytes,
+                    nested_raw_result_bytes_total = composition.nested_raw_result_bytes_total,
+                    nested_tool_counts = ?composition.nested_tool_counts,
+                    consequential_calls = composition.consequential_calls,
+                    known_results = composition.known_results,
+                    job_handoffs = composition.job_handoffs,
+                    outcome_unknown = composition.outcome_unknown,
+                    "{event}"
                 )
             }
-        };
-        let composition = orchestration.composition_summary(
-            stats.duration_ms,
-            input_bytes,
-            stats.returned_bytes,
-            stats.slot_wait_ms,
-        );
-        super::runtime_metrics::observe_code_mode_composition(self.metrics.as_ref(), &composition);
-        tracing::debug!(
-            composition_parent_invocation_id = composition_parent_invocation_id
-                .as_deref()
-                .unwrap_or("unavailable"),
-            nested_calls = composition.nested_calls,
-            nested_successes = composition.nested_successes,
-            nested_failures = composition.nested_failures,
-            max_in_flight = composition.max_in_flight,
-            duration_ms = composition.duration_ms,
-            slot_wait_ms = composition.slot_wait_ms,
-            input_bytes = composition.input_bytes,
-            returned_bytes = composition.returned_bytes,
-            nested_raw_result_bytes_total = composition.nested_raw_result_bytes_total,
-            nested_tool_counts = ?composition.nested_tool_counts,
-            consequential_calls = composition.consequential_calls,
-            known_results = composition.known_results,
-            job_handoffs = composition.job_handoffs,
-            outcome_unknown = composition.outcome_unknown,
-            "code_mode_effectful_composition_finished"
-        );
-        (result, composition)
-    }
-    pub(crate) async fn code_mode_exec_mutating(
-        &self,
-        project: ResolvedProject,
-        session_id: String,
-        source: String,
-        timeout_ms: Option<u64>,
-        auth: Option<&AuthContext>,
-        transport: super::sessions::SessionTransport,
-        composition_parent_invocation_id: Option<String>,
-    ) -> (ToolResult, CodeModeCompositionSummary) {
-        let transport = match transport {
-            super::sessions::SessionTransport::Api => ToolTransport::Api,
-            super::sessions::SessionTransport::Mcp => ToolTransport::Mcp,
-        };
-        let policy = code_mode_orchestration_policy(CodeModeCallableStage::GuardedEdit);
-        let orchestration = Arc::new(CanonicalOrchestrationHost::new(
-            self.clone(),
-            auth,
-            project.resolved_id,
-            session_id,
-            transport,
-            composition_parent_invocation_id.clone(),
-            policy,
-        ));
-        let host = Arc::new(V8CodeModeHost {
-            orchestration: Arc::clone(&orchestration),
-        });
-        let input_bytes = source.len();
-        let execution = webcodex_code_mode::execute_with_termination_mode(
-            host as Arc<dyn CodeModeHost>,
-            CodeModeExecuteRequest {
-                source,
-                allowed_tools: policy
-                    .admitted_tools
-                    .iter()
-                    .map(|tool| (*tool).to_string())
-                    .collect(),
-                timeout_ms,
-            },
-            CodeModeTerminationMode::DrainStartedChildren {
-                max_drain_ms: CONSEQUENTIAL_MAX_STARTED_CHILD_DRAIN_MS,
-            },
-        )
-        .await;
-        let effect_receipt = orchestration.effect_receipt();
-        let has_consequential_work = effect_receipt.consequential_calls > 0;
-        let (result, stats) = match execution {
-            Ok(execution) => {
-                let stats = execution.stats.clone();
-                let mut output = json!({
-                    "content": execution.content,
-                    "stats": execution.stats,
-                });
-                if has_consequential_work {
-                    output["effect_receipt"] = json!(effect_receipt);
-                    attach_effect_follow_up(
-                        &mut output,
-                        effect_receipt.job_handoffs,
-                        effect_receipt.outcome_unknown,
-                    );
-                }
-                (ToolResult::ok(output), stats)
-            }
-            Err(error) => {
-                let stats = error.stats.clone();
-                let message = if has_consequential_work {
-                    bounded_model_error(&format!(
-                        "{} One or more consequential child calls entered canonical execution. Do not blindly rerun the whole orchestration; inspect the effect receipt and current workspace state before another mutation.",
-                        error.message
-                    ))
-                } else {
-                    bounded_model_error(&error.message)
-                };
-                let mut output = code_mode_failure_output(
-                    &error,
-                    message,
-                    effect_receipt.job_handoffs,
-                    effect_receipt.outcome_unknown,
-                );
-                if has_consequential_work {
-                    output["effect_receipt"] = json!(effect_receipt);
-                }
-                (
-                    ToolResult::err_with_output("mutating code mode execution failed", output),
-                    stats,
-                )
-            }
-        };
-        let composition = orchestration.composition_summary(
-            stats.duration_ms,
-            input_bytes,
-            stats.returned_bytes,
-            stats.slot_wait_ms,
-        );
-        super::runtime_metrics::observe_code_mode_composition(self.metrics.as_ref(), &composition);
-        tracing::debug!(
-            composition_parent_invocation_id = composition_parent_invocation_id
-                .as_deref()
-                .unwrap_or("unavailable"),
-            nested_calls = composition.nested_calls,
-            nested_successes = composition.nested_successes,
-            nested_failures = composition.nested_failures,
-            max_in_flight = composition.max_in_flight,
-            duration_ms = composition.duration_ms,
-            slot_wait_ms = composition.slot_wait_ms,
-            input_bytes = composition.input_bytes,
-            returned_bytes = composition.returned_bytes,
-            nested_raw_result_bytes_total = composition.nested_raw_result_bytes_total,
-            nested_tool_counts = ?composition.nested_tool_counts,
-            consequential_calls = composition.consequential_calls,
-            known_results = composition.known_results,
-            job_handoffs = composition.job_handoffs,
-            outcome_unknown = composition.outcome_unknown,
-            "code_mode_mutating_composition_finished"
-        );
+        }
         (result, composition)
     }
 }

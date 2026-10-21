@@ -45,19 +45,20 @@ pub use console::{
 };
 pub use continuation::{
     continuation_feedback_value, not_applicable_continuation_feedback_value,
-    validation_delta_value, ContinuationFeedbackInput, ContinuationProjectionHooks,
-    ContinuationToolFailureSnapshot, ContinuationValidationSnapshot, EXPLORATION_CONTINUITY_ACTION,
+    validation_delta_value, ContinuationFeedbackInput, ContinuationJobSnapshot,
+    ContinuationProjectionHooks, ContinuationToolFailureSnapshot, ContinuationValidationSnapshot,
+    EXPLORATION_CONTINUITY_ACTION,
 };
 pub use events::{
     canonical_tool_call_finished_events, current_attempt_event_view, exploration_tool_kind,
     is_tool_call_expectation_metadata_field, is_valid_session_id, normalize_observed_project_path,
     public_result_expectation_satisfied, safe_model_facing_assertion_name,
-    strip_tool_call_expectation_metadata, tool_failure_summary_from_events,
-    tool_result_expectation_classification, tool_supports_model_facing_assertion_name,
-    tool_supports_model_facing_result_expectation, validate_model_facing_assertion_name,
-    validate_model_facing_result_expectation,
+    strip_tool_call_expectation_metadata, tool_failure_evidence_from_events,
+    tool_failure_summary_from_events, tool_result_expectation_classification,
+    tool_supports_model_facing_assertion_name, tool_supports_model_facing_result_expectation,
+    validate_model_facing_assertion_name, validate_model_facing_result_expectation,
     validation_output_summary_for_tool_result as execution_output_summary_for_tool_result,
-    ExplorationToolKind, SessionPathHint, SessionToolContract,
+    ExplorationToolKind, SessionPathHint, SessionToolContract, ToolFailureSummary,
 };
 pub use handoff_brief::{
     build_handoff_brief, handoff_brief_size, HandoffBriefInput, HANDOFF_BRIEF_HARD_MAX_BYTES,

@@ -11,10 +11,9 @@ use webcodex_tool_runtime_contracts::tool_audit::{
     assertion_validation_identity, is_structured_validation_target_identity,
     is_validation_execution_identity,
 };
-use webcodex_validation::{
-    event_is_job_acceptance_only, validation_evidence_profile_for_tool,
-    validation_summary_for_session_events,
-};
+#[cfg(test)]
+use webcodex_validation::validation_summary_for_session_events;
+use webcodex_validation::{event_is_job_acceptance_only, validation_evidence_profile_for_tool};
 use webcodex_workflow_session::{
     canonical_tool_call_finished_events, safe_model_facing_assertion_name, SessionEvent,
     SessionSummary,
@@ -26,10 +25,12 @@ use super::session_context::{
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 
+#[cfg(test)]
 pub(crate) use webcodex_validation::{
-    current_validation_evidence_for_session, event_observes_validation_activity,
-    skipped_validation_summary, validation_summary_from_events,
-    CurrentValidationEvidenceProjection,
+    current_validation_evidence_for_session, CurrentValidationEvidenceProjection,
+};
+pub(crate) use webcodex_validation::{
+    event_observes_validation_activity, validation_summary_from_events,
 };
 
 const DEFAULT_PUBLIC_VALIDATION_EVENT_LIMIT: usize = 20;
@@ -102,6 +103,17 @@ impl ToolRuntime {
         limit: usize,
         auth: Option<&AuthContext>,
     ) -> Value {
+        self.validation_report_for_session_with_jobs(summary, limit, auth)
+            .await
+            .to_value()
+    }
+
+    pub(crate) async fn validation_report_for_session_with_jobs(
+        &self,
+        summary: &SessionSummary,
+        limit: usize,
+        auth: Option<&AuthContext>,
+    ) -> webcodex_validation::ValidationReport {
         self.materialize_session_validation_job_terminals(summary, auth)
             .await;
         let refreshed = self
@@ -121,7 +133,8 @@ impl ToolRuntime {
                 event.finished_at.unwrap_or(event.timestamp),
             )
         });
-        validation_summary_for_session_events(&refreshed, &events, limit)
+        let refreshed = self.refresh_validation_source_summary(&refreshed);
+        webcodex_validation::ValidationReport::from_events(&refreshed, &events, limit)
     }
 
     /// Refresh only the in-memory validation-source projection. This never

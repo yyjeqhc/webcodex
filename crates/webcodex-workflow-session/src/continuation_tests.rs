@@ -1,10 +1,10 @@
 use crate::{
     continuation_feedback_value, validation_delta_value, CodingSessionRequest,
-    ContinuationFeedbackInput, ContinuationProjectionHooks, ContinuationToolFailureSnapshot,
-    ContinuationValidationSnapshot, ListSessionMessagesFilter, PostSessionMessageInput,
-    SessionDiscussionCounts, SessionDiscussionSummary, SessionGuards, SessionMessageKind,
-    SessionMessagePriority, SessionPathHint, SessionStore, SessionToolContract, SessionTransport,
-    ToolCallRecorderMetadata, TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT,
+    ContinuationFeedbackInput, ContinuationJobSnapshot, ContinuationProjectionHooks,
+    ContinuationToolFailureSnapshot, ContinuationValidationSnapshot, ListSessionMessagesFilter,
+    PostSessionMessageInput, SessionDiscussionCounts, SessionDiscussionSummary, SessionGuards,
+    SessionMessageKind, SessionMessagePriority, SessionPathHint, SessionStore, SessionToolContract,
+    SessionTransport, ToolCallRecorderMetadata, TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -173,7 +173,7 @@ fn feedback_for(store: &SessionStore, session_id: &str) -> Value {
     continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: &summary,
         validation: &validation,
-        jobs: &jobs,
+        jobs: ContinuationJobSnapshot::from_json(&jobs),
         discussion: &discussion,
         continuation: "continued",
         suggest_exploration_continuity: true,
@@ -194,7 +194,7 @@ fn feedback_with_jobs(store: &SessionStore, session_id: &str, jobs: &Value) -> V
     continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: &summary,
         validation: &validation,
-        jobs,
+        jobs: ContinuationJobSnapshot::from_json(jobs),
         discussion: &discussion,
         continuation: "continued",
         suggest_exploration_continuity: true,

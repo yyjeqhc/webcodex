@@ -217,6 +217,19 @@ and without promoting external reports into Session revision or native execution
 truth. No handoff generation or replacement model-context revision is introduced or
 returned.
 
+Internally, closeout gathers typed validation, Job, failure, and review evidence
+before producing presentation JSON. Closeout pairs a bounded Session summary
+(up to 200 events) with the existing Session fence; a display limit does not
+change the captured counts or failure actionability. Handoff retains its initial
+task snapshot while enriching validation evidence. Concurrent task corrections
+make that observation incomplete and require an explicit reread; they do not
+silently replace the captured task. `finish_coding_task`
+reuses the evidence collected by handoff instead of gathering a second Session
+and validation view. Continuation decisions use the same typed report, including
+Job-enriched validation identities and latest-observation details. Passive startup
+and WorkResult projections remain read-only and do not claim a live snapshot fence
+for historical evidence.
+
 Collaboration is independent: `ack_session_message_ids` still proves exact
 ACK-required Session/Peer message ids, while `session_attention.ack_ref` is the
 compact exact-set form carrying accepted Session ACK evidence plus messages newly

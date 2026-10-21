@@ -4,11 +4,12 @@ use super::projection::{
     append_workspace_warnings, resolved_project_payload, workspace_payload_from_show_changes,
 };
 use super::*;
+use crate::tool_runtime::acceptance_evidence::AcceptanceContext;
+use crate::tool_runtime::closeout_evidence::CLOSEOUT_SESSION_EVENT_LIMIT;
 use crate::tool_runtime::closeout_facts::{CloseoutFacts, Observation, ValidationStatus};
 use crate::tool_runtime::closeout_projection::{
-    closeout_facts, hygiene_observation, install_closeout_decision, workspace_observation,
+    hygiene_observation, install_closeout_decision, workspace_observation,
 };
-use webcodex_core::task_outputs::TaskOutputs;
 
 impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
@@ -51,7 +52,7 @@ impl ToolRuntime {
         };
         let session_summary = match self
             .sessions
-            .summary(&session_id, Some(FINISH_SESSION_EVENT_LIMIT))
+            .summary(&session_id, Some(CLOSEOUT_SESSION_EVENT_LIMIT))
         {
             Some(summary) => summary,
             None => {
@@ -234,16 +235,10 @@ impl ToolRuntime {
         };
         append_hygiene_warnings(&hygiene, &mut final_warnings);
 
-        let jobs = self
-            .active_jobs_summary(Some(&resolved.resolved_id), Some(&session_id), auth, 10)
-            .await;
-        if let Some(warnings) = jobs.get("warnings").and_then(Value::as_array) {
-            final_warnings.extend(warnings.iter().cloned());
-        }
-
-        let handoff = if include_handoff {
-            let result = self
-                .session_handoff_summary(
+        let mut failed_handoff = Value::Null;
+        let handoff_observation = if include_handoff {
+            match self
+                .session_handoff_observation(
                     session_id.clone(),
                     Some(resolved.resolved_id.clone()),
                     Some(include_workspace),
@@ -253,39 +248,52 @@ impl ToolRuntime {
                     Some(20),
                     auth,
                 )
-                .await;
-            if !result.success {
-                final_warnings.push(json!({
-                    "kind": "session_handoff_failed",
-                    "message": result.error,
-                }));
+                .await
+            {
+                Ok(observation) => Some(observation),
+                Err(result) => {
+                    final_warnings
+                        .push(json!({"kind": "session_handoff_failed", "message": result.error}));
+                    failed_handoff = result.output;
+                    None
+                }
             }
-            result.output
         } else {
-            Value::Null
+            None
         };
-        // Reconcile from the freshest post-inspection ledger snapshot. Validation
-        // materialization may itself append authoritative terminal evidence, so
-        // refresh once more after deriving validation before classifying tool
-        // failure actionability.
-        let closeout_pre_validation_summary = self
-            .sessions
-            .summary(&session_id, Some(FINISH_SESSION_EVENT_LIMIT))
-            .unwrap_or_else(|| session_summary.clone());
-        let validation = if include_validation_summary {
-            self.validation_summary_for_session_with_jobs(
-                &closeout_pre_validation_summary,
-                10,
-                auth,
+        // A nested handoff returns its captured evidence rather than making
+        // finish materialize the same validation Jobs and re-read the ledger.
+        let (handoff, evidence, job_snapshot, external_observations) = if let Some(observation) =
+            handoff_observation
+        {
+            (
+                observation.result.output,
+                observation.evidence,
+                observation.jobs,
+                observation.external_observations,
             )
-            .await
         } else {
-            skipped_validation_summary()
+            let jobs = self
+                .active_jobs_snapshot(Some(&resolved.resolved_id), Some(&session_id), auth, 10)
+                .await;
+            let evidence = self
+                .collect_closeout_session_evidence(
+                    &session_summary,
+                    include_validation_summary,
+                    20,
+                    auth,
+                )
+                .await;
+            let external_observations = self
+                .handoff_external_observations(&session_id, evidence.summary.project.as_deref());
+            (failed_handoff, evidence, jobs, external_observations)
         };
-        let closeout_session_summary = self
-            .sessions
-            .summary(&session_id, Some(FINISH_SESSION_EVENT_LIMIT))
-            .unwrap_or(closeout_pre_validation_summary);
+        let jobs = job_snapshot.to_value();
+        if let Some(warnings) = jobs.get("warnings").and_then(Value::as_array) {
+            final_warnings.extend(warnings.iter().cloned());
+        }
+        let validation = evidence.validation_value(10);
+        let closeout_session_summary = &evidence.summary;
         let work_result_presentation = match self
             .final_changes_presentation_needed(&resolved.resolved_id, &closeout_session_summary)
             .await
@@ -305,10 +313,8 @@ impl ToolRuntime {
                 None
             }
         };
-        let projection_closeout_session_summary =
-            self.refresh_validation_source_summary(&closeout_session_summary);
-        let review_evidence =
-            review_evidence_summary_for_session(&projection_closeout_session_summary);
+        let projection_closeout_session_summary = &evidence.summary;
+        let review_evidence = evidence.review.to_value();
         let (work_performed, changed_paths) =
             closeout_work_projection(&projection_closeout_session_summary.events);
 
@@ -323,25 +329,13 @@ impl ToolRuntime {
         } else {
             json!({ "available": false, "not_requested": true })
         };
-        let continuation_current_validation =
-            crate::tool_runtime::validation_events::current_validation_evidence_for_session(
-                &projection_closeout_session_summary,
-                20,
-            );
-        let raw_tool_failures =
-            tool_failure_summary_from_events(&projection_closeout_session_summary.events, 10);
-        let reconciliation = reconcile_closeout_evidence(
-            &raw_tool_failures,
-            &projection_closeout_session_summary,
-            &validation,
-        );
         let continuation_feedback = if closeout_session_summary.events.is_empty() {
             not_applicable_continuation_feedback_value("empty_session")
         } else {
             continuation_feedback_value(ContinuationFeedbackInput {
                 session_summary: &projection_closeout_session_summary,
                 validation: &continuation_validation,
-                jobs: &jobs,
+                jobs: job_snapshot.continuation_snapshot(),
                 discussion: &discussion,
                 continuation: "continued",
                 suggest_exploration_continuity: false,
@@ -350,27 +344,15 @@ impl ToolRuntime {
                     .and_then(|workspace| workspace.conflicts)
                     .is_some_and(|count| count > 0),
                 hooks: continuation_projection_hooks(),
-                current_validation: continuation_validation_snapshot(
-                    &continuation_current_validation,
-                ),
+                current_validation: evidence
+                    .validation
+                    .continuation_snapshot(include_validation_summary),
                 tool_failures: ContinuationToolFailureSnapshot::new(
-                    &reconciliation.actionable_unexpected_event_ids,
+                    &evidence.failures.actionable_unexpected_event_ids,
                 ),
             })
         };
 
-        // Reuse the handoff's exact read when present. An omitted or failed
-        // handoff still gets a single local report read for its own brief.
-        let external_observations = handoff
-            .pointer("/handoff_brief/external_observations")
-            .filter(|value| value.is_object())
-            .cloned()
-            .unwrap_or_else(|| {
-                self.handoff_external_observations(
-                    &session_id,
-                    projection_closeout_session_summary.project.as_deref(),
-                )
-            });
         // When a nested handoff supplied the first snapshot, this comparison also
         // spans the rest of closeout. With include_handoff=false it still fences
         // the local read against a concurrent accepted external report.
@@ -381,14 +363,23 @@ impl ToolRuntime {
             );
 
         // Capture policy inputs before constructing any full/compact result.
-        let facts = closeout_facts(
+        let facts = evidence.facts(
             observed_workspace,
             Some(observed_hygiene),
-            &jobs,
-            &reconciliation.validation,
-            &reconciliation.tool_failures,
-            &review_evidence,
+            job_snapshot.facts(),
         );
+        let session_changed_during_snapshot = evidence.revision.is_none()
+            || evidence.revision != self.sessions.handoff_revision(&session_id);
+        let acceptance_context = || AcceptanceContext {
+            outputs: task_outputs.as_ref(),
+            snapshot_changed: session_changed_during_snapshot
+                || external_observations_changed_during_snapshot,
+            history_partial: !webcodex_workflow_session::current_attempt_event_view(
+                &evidence.summary,
+            )
+            .complete,
+            ..Default::default()
+        };
         let review_continuation_available = changes_result
             .output
             .pointer("/diff_review_handoff/next_call/tool")
@@ -410,10 +401,10 @@ impl ToolRuntime {
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
             },
-            "validation": reconciliation.validation,
+            "validation": validation,
             "continuation_feedback": continuation_feedback,
             "permissions": permissions,
-            "tool_failures": reconciliation.tool_failures,
+            "tool_failures": evidence.failures.to_value(),
             "review_evidence": review_evidence,
             "work_performed": work_performed,
             "changed_paths": changed_paths,
@@ -443,14 +434,14 @@ impl ToolRuntime {
             external_observations: Some(&external_observations),
             guidance_available,
             existing_suggested_actions: output.get("suggested_next_actions"),
-            session_changed_during_snapshot: false,
+            session_changed_during_snapshot,
             external_observations_changed_during_snapshot,
         });
         if let Some(follow_up) = self.active_goal_context_for_session(auth, &session_id) {
             output["goal_follow_up"] = follow_up;
         }
         let mut decision =
-            finish_decision_output(&facts, &output, &initial_actions, task_outputs.as_ref());
+            finish_decision_output(&facts, &output, &initial_actions, acceptance_context());
         if !decision.blocking && presentation_needed {
             if let Err(result) = self
                 .seal_work_result_changes_for_closeout(
@@ -470,12 +461,8 @@ impl ToolRuntime {
                         "kind": "work_result_seal_failed",
                         "message": message,
                     }));
-                decision = finish_decision_output(
-                    &facts,
-                    &output,
-                    &initial_actions,
-                    task_outputs.as_ref(),
-                );
+                decision =
+                    finish_decision_output(&facts, &output, &initial_actions, acceptance_context());
             }
         }
         if summary_only {
@@ -562,7 +549,7 @@ pub(super) fn finish_decision_output(
     facts: &CloseoutFacts,
     presentation: &Value,
     initial_actions: &[String],
-    task_outputs: Option<&TaskOutputs>,
+    acceptance_context: AcceptanceContext<'_>,
 ) -> FinishDecisionOutput {
     let hygiene = facts.hygiene_observed();
     let mut decision = json!({
@@ -588,7 +575,7 @@ pub(super) fn finish_decision_output(
     }
     let policy = install_closeout_decision(&mut decision, facts, initial_actions);
     // The typed observation is retained from collection, not reconstructed from JSON.
-    let task_outputs = task_outputs.filter(|outputs| outputs.valid());
+    let task_outputs = acceptance_context.outputs.filter(|outputs| outputs.valid());
     if let Some(outputs) = task_outputs {
         super::super::task_outputs::attach_task_outputs(&mut decision, outputs);
     }
@@ -616,31 +603,9 @@ pub(super) fn finish_decision_output(
     decision["suggested_next_actions"] = json!(actions);
     decision["acceptance"] = super::super::acceptance_evidence::acceptance_evidence(
         facts,
-        super::super::acceptance_evidence::AcceptanceContext {
+        AcceptanceContext {
             outputs: task_outputs,
-            snapshot_changed: presentation
-                .pointer("/handoff_brief/basis/reason_codes")
-                .and_then(Value::as_array)
-                .is_some_and(|reasons| {
-                    reasons.iter().any(|reason| {
-                        matches!(
-                            reason.as_str(),
-                            Some(
-                                "session_changed_during_snapshot"
-                                    | "external_observations_changed_during_snapshot"
-                            )
-                        )
-                    })
-                }),
-            history_partial: presentation
-                .pointer("/handoff_brief/basis/reason_codes")
-                .and_then(Value::as_array)
-                .is_some_and(|reasons| {
-                    reasons
-                        .iter()
-                        .any(|reason| reason.as_str() == Some("attempt_boundary_evicted"))
-                }),
-            ..Default::default()
+            ..acceptance_context
         },
     );
     decision
@@ -753,5 +718,3 @@ fn append_hygiene_warnings(hygiene: &Value, warnings: &mut Vec<Value>) {
         }));
     }
 }
-
-const FINISH_SESSION_EVENT_LIMIT: usize = 200;

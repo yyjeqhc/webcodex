@@ -36,6 +36,7 @@ pub use evidence::{
     event_is_job_acceptance_only, event_observes_validation_activity, extract_validation_events,
     skipped_validation_summary, validation_kind_for_tool, validation_summary_for_session_events,
     validation_summary_from_events, CurrentValidationEvidenceProjection, ValidationEvent,
+    ValidationFacts, ValidationReport, ValidationStatus,
 };
 pub use recipe::{
     detect_validation_recipe, resolve_node_native_project_check, resolve_node_native_project_lint,

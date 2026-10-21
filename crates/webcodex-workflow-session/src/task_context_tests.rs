@@ -480,7 +480,7 @@ fn task_context_unknown_outcome_suppresses_execution_suggestions_in_both_briefs(
     let feedback = crate::continuation_feedback_value(crate::ContinuationFeedbackInput {
         session_summary: &summary,
         validation: &validation,
-        jobs: &jobs,
+        jobs: crate::ContinuationJobSnapshot::from_json(&jobs),
         discussion: &discussion,
         continuation: "continued",
         suggest_exploration_continuity: false,

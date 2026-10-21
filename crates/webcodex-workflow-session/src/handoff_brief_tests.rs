@@ -1,9 +1,9 @@
 use crate::{
     build_handoff_brief, continuation_feedback_value, handoff_brief_size, CodingSessionRequest,
-    ContinuationFeedbackInput, ContinuationProjectionHooks, ContinuationToolFailureSnapshot,
-    ContinuationValidationSnapshot, HandoffBriefInput, PostSessionMessageInput,
-    SessionDiscussionSummary, SessionGuards, SessionMessageKind, SessionMessagePriority,
-    SessionPathHint, SessionStore, SessionToolContract, SessionTransport,
+    ContinuationFeedbackInput, ContinuationJobSnapshot, ContinuationProjectionHooks,
+    ContinuationToolFailureSnapshot, ContinuationValidationSnapshot, HandoffBriefInput,
+    PostSessionMessageInput, SessionDiscussionSummary, SessionGuards, SessionMessageKind,
+    SessionMessagePriority, SessionPathHint, SessionStore, SessionToolContract, SessionTransport,
     HANDOFF_BRIEF_HARD_MAX_BYTES, HANDOFF_CHANGED_PATHS_MAX_ITEMS, HANDOFF_INSTRUCTION_MAX_CHARS,
     HANDOFF_NEXT_ACTIONS_MAX_ITEMS, HANDOFF_OPEN_FAILURES_MAX_ITEMS,
     HANDOFF_RECENT_FILES_MAX_ITEMS, TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT,
@@ -377,7 +377,7 @@ fn brief_for_with_external(
     let continuation = continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: &summary,
         validation: feedback_validation,
-        jobs: feedback_jobs,
+        jobs: ContinuationJobSnapshot::from_json(feedback_jobs),
         discussion: &discussion,
         continuation: "continued",
         suggest_exploration_continuity: false,
@@ -387,10 +387,10 @@ fn brief_for_with_external(
             .unwrap_or(0)
             > 0,
         hooks: projection_hooks(),
-        current_validation: ContinuationValidationSnapshot::new(
-            &current_evidence,
-            &current_validation,
-        ),
+        current_validation: ContinuationValidationSnapshot {
+            requested: validation_requested,
+            ..ContinuationValidationSnapshot::new(&current_evidence, &current_validation)
+        },
         tool_failures: ContinuationToolFailureSnapshot::new(&actionable),
     });
     build_handoff_brief(HandoffBriefInput {
@@ -1065,7 +1065,7 @@ fn handoff_brief_hard_limit_uses_actual_escaped_json_bytes() {
     let mut feedback = continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: &summary,
         validation: &validation,
-        jobs: &jobs,
+        jobs: ContinuationJobSnapshot::from_json(&jobs),
         discussion: &discussion,
         continuation: "continued",
         suggest_exploration_continuity: false,

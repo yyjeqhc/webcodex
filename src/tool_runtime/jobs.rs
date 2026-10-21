@@ -2210,19 +2210,16 @@ impl ToolRuntime {
         ))
     }
 
-    /// Bounded active job summary for finish/handoff. Never returns stdout,
-    /// stderr, tails, command text, or command previews.
-    pub(crate) async fn active_jobs_summary(
+    /// Project-wide facts are counted before the display limit; only continuation
+    /// selection is scoped to the caller's Session.
+    pub(crate) async fn active_jobs_snapshot(
         &self,
         project: Option<&str>,
         continuation_session_id: Option<&str>,
         auth: Option<&AuthContext>,
         limit: usize,
-    ) -> Value {
-        let max = limit.clamp(1, 20);
-        let mut active = Vec::new();
-        let mut continuation_candidates = Vec::new();
-        for job in self
+    ) -> ActiveJobsSummary {
+        let mut jobs = self
             .runner_registry
             .list_jobs_for_auth_filtered(
                 crate::runner_http::runner_access_from_auth(auth).as_ref(),
@@ -2230,57 +2227,94 @@ impl ToolRuntime {
                 project,
                 None,
             )
-            .await
-        {
-            if !webcodex_runner_registry::job_status_is_active(&job.status) {
-                continue;
-            }
-            let summary = self.model_job_summary_value(&job);
-            if continuation_session_id.is_some()
+            .await;
+        jobs.retain(|job| webcodex_runner_registry::job_status_is_active(&job.status));
+        jobs.sort_by_key(|job| std::cmp::Reverse(job.created_at));
+        let facts = super::closeout_facts::JobFacts {
+            blocking_active_count: jobs
+                .iter()
+                .filter(|job| is_blocking_active_job_status(&job.status))
+                .count() as u64,
+            terminal_pending_count: jobs
+                .iter()
+                .filter(|job| is_stop_pending_job_status(&job.status))
+                .count() as u64,
+        };
+        let mut candidates = jobs.iter().filter(|job| {
+            continuation_session_id.is_some()
                 && job.session_id.as_deref() == continuation_session_id
-            {
-                continuation_candidates.push(active_job_continuation_brief(&summary));
-            }
-            active.push(summary);
-        }
-
-        active.sort_by(|a, b| {
-            b["created_at"]
-                .as_i64()
-                .unwrap_or(0)
-                .cmp(&a["created_at"].as_i64().unwrap_or(0))
         });
-        let running_count = active
-            .iter()
-            .filter(|summary| {
-                summary
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .is_some_and(is_blocking_active_job_status)
-            })
-            .count();
-        // `recovering` jobs are a subset of running/blocking-active jobs that the
-        // runner must reconcile before their output can be trusted. Counted over
-        // the full active vector (not the truncated `recent` list) so the count is
-        // reliable regardless of how many recent jobs are surfaced.
-        let recovering_count = active
-            .iter()
-            .filter(|summary| summary.get("status").and_then(Value::as_str) == Some("recovering"))
-            .count();
-        let stop_requested_count = active
-            .iter()
-            .filter(|summary| {
-                summary
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .is_some_and(is_stop_pending_job_status)
-            })
-            .count();
-        let terminal_pending_count = stop_requested_count;
-        let blocking_active_count = running_count;
-        let nonblocking_active_count = terminal_pending_count;
-        let active_count = blocking_active_count + nonblocking_active_count;
-        let recent: Vec<Value> = active.iter().take(max).map(active_job_brief).collect();
+        let active_job = match (candidates.next(), candidates.next()) {
+            (Some(job), None) => Some(active_job_continuation_brief(
+                &self.model_job_summary_value(job),
+            )),
+            _ => None,
+        };
+        let recent_limit = limit.clamp(1, 20);
+        ActiveJobsSummary {
+            facts,
+            latest_job_status: jobs
+                .first()
+                .map_or("not_observed", |job| job.status.as_str())
+                .to_owned(),
+            recovering_count: jobs.iter().filter(|job| job.status == "recovering").count() as u64,
+            recent: jobs
+                .iter()
+                .take(recent_limit)
+                .map(|job| active_job_brief(&self.model_job_summary_value(job)))
+                .collect(),
+            recent_limit,
+            active_job,
+        }
+    }
+
+    /// Bounded display summary. Never returns output, tails, or command text.
+    pub(crate) async fn active_jobs_summary(
+        &self,
+        project: Option<&str>,
+        continuation_session_id: Option<&str>,
+        auth: Option<&AuthContext>,
+        limit: usize,
+    ) -> Value {
+        self.active_jobs_snapshot(project, continuation_session_id, auth, limit)
+            .await
+            .to_value()
+    }
+}
+
+/// Authoritative Job facts and their bounded presentation come from one inventory.
+pub(crate) struct ActiveJobsSummary {
+    facts: super::closeout_facts::JobFacts,
+    recovering_count: u64,
+    latest_job_status: String,
+    recent: Vec<Value>,
+    recent_limit: usize,
+    active_job: Option<Value>,
+}
+
+impl ActiveJobsSummary {
+    pub(crate) fn facts(&self) -> super::closeout_facts::JobFacts {
+        self.facts.clone()
+    }
+
+    pub(crate) fn continuation_snapshot(
+        &self,
+    ) -> webcodex_workflow_session::ContinuationJobSnapshot {
+        let active_count = self.facts.blocking_active_count + self.facts.terminal_pending_count;
+        webcodex_workflow_session::ContinuationJobSnapshot {
+            active_count,
+            running_count: self.facts.blocking_active_count,
+            recovering_count: self.recovering_count,
+            terminal_pending_count: self.facts.terminal_pending_count,
+            recent_truncated: active_count > self.recent_limit as u64,
+            latest_job_status: self.latest_job_status.clone(),
+        }
+    }
+
+    pub(crate) fn to_value(&self) -> Value {
+        let blocking_active_count = self.facts.blocking_active_count;
+        let terminal_pending_count = self.facts.terminal_pending_count;
+        let active_count = blocking_active_count + terminal_pending_count;
         let mut warnings = Vec::new();
         if blocking_active_count > 0 {
             warnings.push(json!({
@@ -2299,7 +2333,7 @@ impl ToolRuntime {
             warnings.push(json!({
                 "kind": "jobs_terminal_pending",
                 "blocking": false,
-                "stop_requested_count": stop_requested_count,
+                "stop_requested_count": terminal_pending_count,
                 "terminal_pending_count": terminal_pending_count,
                 "message": format!(
                     "{} job{} stop_requested and waiting for terminal status",
@@ -2310,19 +2344,19 @@ impl ToolRuntime {
         }
         let mut output = json!({
             "active_count": active_count,
-            "running_count": running_count,
-            "recovering_count": recovering_count,
-            "stop_requested_count": stop_requested_count,
+            "running_count": blocking_active_count,
+            "recovering_count": self.recovering_count,
+            "stop_requested_count": terminal_pending_count,
             "terminal_pending_count": terminal_pending_count,
             "blocking_active_count": blocking_active_count,
-            "nonblocking_active_count": nonblocking_active_count,
-            "recent": recent,
-            "recent_limit": max,
-            "truncated": active_count > max,
+            "nonblocking_active_count": terminal_pending_count,
+            "recent": self.recent,
+            "recent_limit": self.recent_limit,
+            "truncated": active_count > self.recent_limit as u64,
             "warnings": warnings,
         });
-        if continuation_candidates.len() == 1 {
-            output["active_job"] = continuation_candidates.pop().unwrap_or(Value::Null);
+        if let Some(job) = &self.active_job {
+            output["active_job"] = job.clone();
         }
         output
     }

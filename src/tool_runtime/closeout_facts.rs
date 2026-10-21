@@ -51,46 +51,7 @@ pub(crate) struct ToolFailureFacts {
     pub(crate) unexpected_success_count: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ValidationStatus {
-    Passed,
-    Failed,
-    NotRun,
-    Stale,
-    Unproven,
-    Inconclusive,
-    Mixed,
-    Unknown,
-    Other,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct ValidationFacts {
-    pub(crate) status: Option<ValidationStatus>,
-    pub(crate) current_evidence_status: Option<ValidationStatus>,
-    pub(crate) successes: u64,
-    pub(crate) failures: u64,
-    pub(crate) resolved_failure_count: u64,
-    pub(crate) unresolved_failure_count: u64,
-    pub(crate) current_unresolved_failure_count: u64,
-    pub(crate) historical_failures_resolved: bool,
-    pub(crate) historical_failures_unresolved: bool,
-    pub(crate) evidence_gap_count: u64,
-    pub(crate) cargo_test_zero_tests: bool,
-    pub(crate) skipped: bool,
-}
-
-impl ValidationFacts {
-    pub(crate) fn current_status(&self) -> Option<ValidationStatus> {
-        self.current_evidence_status.or(self.status)
-    }
-    pub(crate) fn validation_skipped(&self) -> bool {
-        matches!(
-            self.current_status(),
-            Some(ValidationStatus::NotRun | ValidationStatus::Stale)
-        ) || self.skipped
-    }
-}
+pub(crate) use webcodex_validation::{ValidationFacts, ValidationStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct CloseoutFacts {

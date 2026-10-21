@@ -34,19 +34,20 @@ fn failed_workspace_does_not_trust_a_clean_legacy_display() {
 }
 
 #[test]
-fn validation_adapter_preserves_current_history_and_zero_test_rules() {
-    let validation = json!({"status":"mixed", "successes":1,
-        "historical_failures":{"resolved":true,"unresolved":false},
-        "unresolved_failures":{"count":2}, "current_evidence":{"status":"passed","unresolved_failure_count":0},
-        "latest_status":"inconclusive", "cargo_test_zero_tests_run":true});
-    let facts = closeout_facts(
-        Observation::NotChecked,
-        None,
-        &Value::Null,
-        &validation,
-        &Value::Null,
-        &Value::Null,
-    );
+fn typed_validation_keeps_current_history_and_zero_test_rules_distinct() {
+    let facts = CloseoutFacts {
+        validation: ValidationFacts {
+            status: Some(ValidationStatus::Mixed),
+            current_evidence_status: Some(ValidationStatus::Passed),
+            successes: 1,
+            unresolved_failure_count: 2,
+            current_unresolved_failure_count: 0,
+            historical_failures_resolved: true,
+            cargo_test_zero_tests: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     assert_eq!(
         facts.validation.current_status(),
         Some(ValidationStatus::Passed)
@@ -63,14 +64,14 @@ fn validation_adapter_preserves_current_history_and_zero_test_rules() {
 #[test]
 fn changing_display_paths_or_counts_cannot_change_the_captured_decision() {
     let workspace = json!({"clean":false,"counts":{"conflicted":1}});
-    let facts = closeout_facts(
-        workspace_observation(&workspace, true, true),
-        None,
-        &Value::Null,
-        &json!({"status":"passed"}),
-        &Value::Null,
-        &Value::Null,
-    );
+    let facts = CloseoutFacts {
+        workspace: workspace_observation(&workspace, true, true),
+        validation: ValidationFacts {
+            status: Some(ValidationStatus::Passed),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let mut display =
         json!({"workspace_clean":true,"workspace_conflicts":0,"validation":{"status":"passed"}});
     let policy = install_closeout_decision(&mut display, &facts, &[]);

@@ -16,7 +16,7 @@ impl ToolRuntime {
         summary: &sessions::SessionSummary,
         pre_instruction_summary: Option<&sessions::SessionSummary>,
         continuation_kind: &'static str,
-        jobs: &Value,
+        jobs: ContinuationJobSnapshot,
         workspace_conflicts: bool,
     ) -> Value {
         // Fresh new session: nothing to continue from.
@@ -34,19 +34,9 @@ impl ToolRuntime {
         if projection_summary.events.is_empty() {
             return not_applicable_continuation_feedback_value("empty_session");
         }
-        let projection_summary = self.refresh_validation_source_summary(projection_summary);
-        let validation = crate::tool_runtime::validation_events::validation_summary_from_events(
-            &projection_summary.events,
-            20,
-        );
-        let current_validation =
-            crate::tool_runtime::validation_events::current_validation_evidence_for_session(
-                &projection_summary,
-                20,
-            );
-        let raw_tool_failures = tool_failure_summary_from_events(&projection_summary.events, 10);
-        let reconciliation =
-            reconcile_closeout_evidence(&raw_tool_failures, &projection_summary, &validation);
+        let evidence = self.passive_closeout_session_evidence(projection_summary, 20);
+        let projection_summary = &evidence.summary;
+        let validation = evidence.validation.historical_value();
         let (discussion, _) = self.discussion_snapshot(&summary.session_id);
         continuation_feedback_value(ContinuationFeedbackInput {
             session_summary: &projection_summary,
@@ -57,9 +47,9 @@ impl ToolRuntime {
             suggest_exploration_continuity: true,
             workspace_conflicts,
             hooks: continuation_projection_hooks(),
-            current_validation: continuation_validation_snapshot(&current_validation),
+            current_validation: evidence.validation.continuation_snapshot(true),
             tool_failures: ContinuationToolFailureSnapshot::new(
-                &reconciliation.actionable_unexpected_event_ids,
+                &evidence.failures.actionable_unexpected_event_ids,
             ),
         })
     }

@@ -2423,12 +2423,11 @@ fn failure_history_legacy_event_without_effect_evidence_restores_conservatively(
         .find(|event| event.kind == "tool_call_finished")
         .unwrap();
     assert!(finished.effect_evidence.is_none());
-    let projected = crate::tool_runtime::handoff::reconcile_closeout_evidence(
-        &json!({"unexpected_count": 1}),
-        &summary,
-        &json!({}),
-    )
-    .tool_failures;
+    let report = webcodex_validation::ValidationReport::from_events(&summary, &summary.events, 100);
+    let projected =
+        crate::tool_runtime::closeout_evidence::CloseoutSessionEvidence::new(summary, report, None)
+            .failures
+            .to_value();
     assert_eq!(projected["non_actionable_unexpected_count"], 0);
     assert_eq!(projected["actionable_unexpected_count"], 1);
 }

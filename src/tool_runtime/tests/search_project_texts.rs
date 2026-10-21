@@ -2276,7 +2276,8 @@ async fn search_project_texts_records_one_event_without_patterns_and_aggregates_
         ]
     );
     assert_eq!(
-        super::super::handoff::review_evidence_summary_for_session(&summary)["search_count"],
+        super::super::closeout_evidence::ReviewEvidence::from_events(&summary.events).to_value()
+            ["search_count"],
         1
     );
     let memory_ledger = serde_json::to_string(&summary.events).unwrap();

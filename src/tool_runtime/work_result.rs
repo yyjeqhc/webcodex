@@ -6,12 +6,8 @@ use crate::auth::{AuthContext, SCOPE_RUNTIME_READ};
 use crate::client_window::ClientWindow;
 use crate::json_digest::update_sha256_with_json;
 
-use super::handoff::review_evidence_summary_for_session;
 use super::session_context::{
     absent_workflow_session_result, session_project_mismatch_result, SessionProjectMismatch,
-};
-use super::validation_events::{
-    current_validation_evidence_for_session, validation_summary_from_events,
 };
 use super::{ToolResult, ToolRuntime};
 use webcodex_workflow_session::SessionSummary;
@@ -414,17 +410,11 @@ impl ToolRuntime {
             .work_result_workspace_observation(&resolved_project, auth, automatic)
             .await;
         let mut projection = if let Some(summary) = summary.as_ref() {
-            let projection_summary = self.refresh_validation_source_summary(summary);
-            let validation = validation_summary_from_events(
-                &projection_summary.events,
-                WORK_RESULT_VALIDATION_LIMIT,
-            );
-            let current_validation = current_validation_evidence_for_session(
-                &projection_summary,
-                WORK_RESULT_VALIDATION_LIMIT,
-            )
-            .evidence;
-            let review = review_evidence_summary_for_session(&projection_summary);
+            let evidence =
+                self.passive_closeout_session_evidence(summary, WORK_RESULT_VALIDATION_LIMIT);
+            let validation = evidence.validation.historical_value();
+            let current_validation = evidence.validation.current_projection().evidence;
+            let review = evidence.review.to_value();
             let mut projection = build_work_result_projection(
                 &resolved_project,
                 &summary.session_id,
@@ -440,24 +430,14 @@ impl ToolRuntime {
             if let Some(outputs) = super::task_outputs::retained_task_outputs(summary) {
                 projection["task_outputs"] = outputs;
             }
-            let reconciliation = super::handoff::reconcile_closeout_evidence(
-                &super::sessions::tool_failure_summary_from_events(&projection_summary.events, 10),
-                &projection_summary,
-                &validation,
-            );
-            let mut acceptance_validation = reconciliation.validation;
-            acceptance_validation["current_evidence"] = current_validation.clone();
-            let facts = super::closeout_projection::closeout_facts(
+            let facts = evidence.facts(
                 super::closeout_projection::workspace_observation(
                     &workspace_result.output,
                     true,
                     workspace_result.success,
                 ),
                 None,
-                &Value::Null,
-                &acceptance_validation,
-                &reconciliation.tool_failures,
-                &review,
+                super::closeout_facts::JobFacts::default(),
             );
             let outputs = projection.get("task_outputs").cloned().and_then(|value| {
                 serde_json::from_value::<webcodex_core::task_outputs::TaskOutputs>(value).ok()

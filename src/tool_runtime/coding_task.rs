@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::continuation_feedback::{
-    continuation_feedback_value, continuation_projection_hooks, continuation_validation_snapshot,
-    not_applicable_continuation_feedback_value, ContinuationFeedbackInput,
+    continuation_feedback_value, continuation_projection_hooks,
+    not_applicable_continuation_feedback_value, ContinuationFeedbackInput, ContinuationJobSnapshot,
     ContinuationToolFailureSnapshot,
 };
 use super::git_review_snapshot::{
@@ -20,8 +20,7 @@ use super::git_review_snapshot::{
 };
 use super::handoff::{
     closeout_work_projection, compact_jobs, compact_review_evidence, compact_tool_failures,
-    compact_validation, reconcile_closeout_evidence, review_evidence_summary_for_session,
-    validation_has_cargo_test_zero_tests,
+    compact_validation, validation_has_cargo_test_zero_tests,
 };
 use super::handoff_brief::{build_handoff_brief, HandoffBriefInput};
 use super::permissions::{
@@ -35,7 +34,6 @@ use super::session_context::{
     session_retention_expired_result, workflow_session_authority_fingerprint,
     SessionProjectMismatch,
 };
-use super::sessions::tool_failure_summary_from_events;
 use super::sessions::{self, SessionTransport, TOOL_CALL_RECORDING_SESSION_ID_FIELD};
 use super::startup_brief::{
     build_startup_brief, builtin_coding_workflow_projection, startup_brief_from_output,
@@ -48,7 +46,6 @@ use super::tool_catalog::model_visible_recommended_flows;
 use super::tool_inputs::{CodingGuidanceProfile, SessionMode, StartupDetail};
 use super::tool_result::{RecoveryKind, ToolResult};
 use super::unknown_session_result;
-use super::validation_events::skipped_validation_summary;
 use super::window_activity::{
     ToolCallCorrelation, WorkflowSessionCorrelation, WorkflowSessionCorrelationRelation,
 };

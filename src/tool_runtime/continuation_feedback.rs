@@ -4,12 +4,15 @@ use super::tool_definition::{
     runtime_tool_captures_validation_output, runtime_tool_is_git_like, runtime_tool_is_shell_like,
     runtime_tool_is_write_like,
 };
+#[cfg(test)]
 use super::validation_events::CurrentValidationEvidenceProjection;
 
+#[cfg(test)]
+pub(crate) use webcodex_workflow_session::ContinuationValidationSnapshot;
 pub(crate) use webcodex_workflow_session::{
     continuation_feedback_value, not_applicable_continuation_feedback_value,
-    validation_delta_value, ContinuationFeedbackInput, ContinuationProjectionHooks,
-    ContinuationToolFailureSnapshot, ContinuationValidationSnapshot, EXPLORATION_CONTINUITY_ACTION,
+    validation_delta_value, ContinuationFeedbackInput, ContinuationJobSnapshot,
+    ContinuationProjectionHooks, ContinuationToolFailureSnapshot, EXPLORATION_CONTINUITY_ACTION,
 };
 
 pub(crate) fn continuation_projection_hooks() -> ContinuationProjectionHooks {
@@ -17,9 +20,10 @@ pub(crate) fn continuation_projection_hooks() -> ContinuationProjectionHooks {
         .with_failure_identity(webcodex_validation::complete_failure_identity_for_session_event)
 }
 
+#[cfg(test)]
 pub(crate) fn continuation_validation_snapshot(
     current: &CurrentValidationEvidenceProjection,
-) -> ContinuationValidationSnapshot<'_> {
+) -> ContinuationValidationSnapshot {
     ContinuationValidationSnapshot::new(&current.evidence, &current.current_validation)
 }
 

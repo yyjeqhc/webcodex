@@ -187,50 +187,261 @@ pub struct CurrentValidationEvidenceProjection {
     pub non_actionable_tool_failure_event_ids: HashSet<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationStatus {
+    Passed,
+    Failed,
+    NotRun,
+    Stale,
+    Unproven,
+    Inconclusive,
+    Mixed,
+    Unknown,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ValidationFacts {
+    pub status: Option<ValidationStatus>,
+    pub current_evidence_status: Option<ValidationStatus>,
+    pub successes: u64,
+    pub failures: u64,
+    pub resolved_failure_count: u64,
+    pub unresolved_failure_count: u64,
+    pub current_unresolved_failure_count: u64,
+    pub historical_failures_resolved: bool,
+    pub historical_failures_unresolved: bool,
+    pub evidence_gap_count: u64,
+    pub cargo_test_zero_tests: bool,
+    pub skipped: bool,
+}
+
+impl ValidationFacts {
+    pub fn current_status(&self) -> Option<ValidationStatus> {
+        self.current_evidence_status.or(self.status)
+    }
+    pub fn validation_skipped(&self) -> bool {
+        matches!(
+            self.current_status(),
+            Some(ValidationStatus::NotRun | ValidationStatus::Stale)
+        ) || self.skipped
+    }
+}
+
+/// Typed evidence owned by the validation domain. Projection is deliberately
+/// delayed so closeout decisions never recover counts from model-facing JSON.
+#[derive(Debug, Clone)]
+pub struct ValidationReport {
+    historical: ValidationSummary,
+    current: CurrentValidationEvidence,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CurrentEvidence {
+    status: CurrentEvidenceStatus,
+    reason: Option<String>,
+    latest_status: &'static str,
+    events_total: usize,
+    successes: usize,
+    failures: usize,
+    resolved_failure_count: usize,
+    expected_results: usize,
+    unresolved_failure_count: usize,
+    evidence_gap_event_count: usize,
+    stale_failure_count: usize,
+    evidence_after_latest_content_change: bool,
+    boundary_reason: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct CurrentValidationEvidence {
+    evidence: CurrentEvidence,
+    current_validation: ValidationSummary,
+    non_actionable_tool_failure_event_ids: HashSet<String>,
+}
+
+impl CurrentEvidence {
+    fn unavailable(reason: &'static str) -> Self {
+        Self {
+            status: CurrentEvidenceStatus::Unknown,
+            reason: Some(reason.to_string()),
+            latest_status: "unknown",
+            events_total: 0,
+            successes: 0,
+            failures: 0,
+            resolved_failure_count: 0,
+            expected_results: 0,
+            unresolved_failure_count: 0,
+            evidence_gap_event_count: 0,
+            stale_failure_count: 0,
+            evidence_after_latest_content_change: false,
+            boundary_reason: "attempt_boundary_unavailable",
+        }
+    }
+}
+
+impl CurrentValidationEvidence {
+    fn projection(&self) -> CurrentValidationEvidenceProjection {
+        CurrentValidationEvidenceProjection {
+            evidence: serde_json::to_value(&self.evidence).expect("validation evidence serializes"),
+            current_validation: to_value(self.current_validation.clone()),
+            non_actionable_tool_failure_event_ids: self
+                .non_actionable_tool_failure_event_ids
+                .clone(),
+        }
+    }
+}
+
+impl ValidationReport {
+    pub fn from_events(summary: &SessionSummary, events: &[SessionEvent], limit: usize) -> Self {
+        Self {
+            historical: build_validation_summary(events, limit),
+            current: current_validation_evidence_for_events(summary, events, limit),
+        }
+    }
+
+    pub fn to_value(&self) -> Value {
+        self.bounded_value(self.historical.events.len())
+    }
+
+    pub fn bounded_value(&self, limit: usize) -> Value {
+        let mut summary = self.historical.clone();
+        let remove = summary.events.len().saturating_sub(limit);
+        summary.events.drain(..remove);
+        let mut historical = to_value(summary);
+        historical["current_evidence"] =
+            serde_json::to_value(&self.current.evidence).expect("validation evidence serializes");
+        historical
+    }
+
+    pub fn historical_value(&self) -> Value {
+        to_value(self.historical.clone())
+    }
+
+    pub fn current_projection(&self) -> CurrentValidationEvidenceProjection {
+        self.current.projection()
+    }
+
+    pub fn continuation_snapshot(
+        &self,
+        requested: bool,
+    ) -> webcodex_workflow_session::ContinuationValidationSnapshot {
+        let current = &self.current.evidence;
+        let latest = self.current.current_validation.latest.as_ref();
+        webcodex_workflow_session::ContinuationValidationSnapshot {
+            requested,
+            status: match current.status {
+                CurrentEvidenceStatus::Unknown => "unknown",
+                CurrentEvidenceStatus::NotRun => "not_run",
+                CurrentEvidenceStatus::Failed => "failed",
+                CurrentEvidenceStatus::Unproven => "unproven",
+                CurrentEvidenceStatus::Expected => "expected",
+                CurrentEvidenceStatus::Inconclusive => "inconclusive",
+                CurrentEvidenceStatus::Stale => "stale",
+            }
+            .to_string(),
+            latest_status: current.latest_status.to_string(),
+            resolved_failure_count: current.resolved_failure_count,
+            unresolved_failure_count: current.unresolved_failure_count,
+            evidence_gap_event_count: current.evidence_gap_event_count,
+            events_total: current.events_total,
+            stale_failure_count: current.stale_failure_count,
+            latest_kind: latest.map(|event| event.validation_kind.clone()),
+            latest_at: latest.and_then(|event| event.completed_at.or(event.started_at)),
+            current_validation: to_value(self.current.current_validation.clone()),
+        }
+    }
+
+    pub fn non_actionable_tool_failure_event_ids(&self) -> &HashSet<String> {
+        &self.current.non_actionable_tool_failure_event_ids
+    }
+
+    pub fn facts(&self) -> ValidationFacts {
+        let historical = &self.historical;
+        let successes = historical.successes.unwrap_or(0) as u64;
+        ValidationFacts {
+            status: Some(validation_fact_status(historical.status)),
+            current_evidence_status: Some(match self.current.evidence.status {
+                CurrentEvidenceStatus::Unknown => ValidationStatus::Unknown,
+                CurrentEvidenceStatus::NotRun => ValidationStatus::NotRun,
+                CurrentEvidenceStatus::Failed => ValidationStatus::Failed,
+                CurrentEvidenceStatus::Unproven => ValidationStatus::Unproven,
+                CurrentEvidenceStatus::Expected => ValidationStatus::Other,
+                CurrentEvidenceStatus::Inconclusive => ValidationStatus::Inconclusive,
+                CurrentEvidenceStatus::Stale => ValidationStatus::Stale,
+            }),
+            successes,
+            failures: historical.failures.unwrap_or(0) as u64,
+            resolved_failure_count: historical.resolved_failures.count as u64,
+            unresolved_failure_count: historical.unresolved_failures.count as u64,
+            current_unresolved_failure_count: self.current.evidence.unresolved_failure_count as u64,
+            historical_failures_resolved: successes > 0
+                && historical.historical_failures.resolved
+                && !historical.historical_failures.unresolved,
+            historical_failures_unresolved: historical.historical_failures.unresolved,
+            evidence_gap_count: historical.evidence_gaps.count as u64,
+            cargo_test_zero_tests: historical.latest_status == "inconclusive"
+                && historical.cargo_test_zero_tests_run,
+            skipped: historical.skipped,
+        }
+    }
+}
+
+fn validation_fact_status(status: &str) -> ValidationStatus {
+    match status {
+        "passed" => ValidationStatus::Passed,
+        "failed" => ValidationStatus::Failed,
+        "not_run" => ValidationStatus::NotRun,
+        "stale" => ValidationStatus::Stale,
+        "unproven" => ValidationStatus::Unproven,
+        "inconclusive" => ValidationStatus::Inconclusive,
+        "mixed" => ValidationStatus::Mixed,
+        "unknown" => ValidationStatus::Unknown,
+        _ => ValidationStatus::Other,
+    }
+}
+
 use crate::adapters::{
     execution_purpose_for_validation_kind, validation_evidence_profile_for_tool,
     ValidationEvidenceProfile, ValidationFailureEvidence,
 };
 
 pub fn skipped_validation_summary() -> Value {
-    let mut validation = to_value(ValidationSummary {
-        available: false,
-        status: "unknown",
-        reason: Some("validation_summary_not_requested"),
-        latest: None,
-        latest_status: "unknown",
-        historical_failures: no_historical_failures(),
-        resolved_failures: no_failures(),
-        unresolved_failures: no_failures(),
-        evidence_gaps: no_failures(),
-        source: VALIDATION_SOURCE,
-        events_total: 0,
-        successes: None,
-        failures: None,
-        expected_results: None,
-        latest_success: None,
-        latest_failure: None,
-        events: Vec::new(),
-        parser: parser_unavailable(),
-        cargo_test_zero_tests_run: false,
-        skipped: true,
-    });
-    validation["current_evidence"] = json!({
-        "status": "unknown",
-        "reason": "validation_summary_not_requested",
-        "latest_status": "unknown",
-        "events_total": 0,
-        "successes": 0,
-        "failures": 0,
-        "resolved_failure_count": 0,
-        "expected_results": 0,
-        "unresolved_failure_count": 0,
-        "evidence_gap_event_count": 0,
-        "stale_failure_count": 0,
-        "evidence_after_latest_content_change": false,
-        "boundary_reason": "attempt_boundary_unavailable",
-    });
-    validation
+    ValidationReport::skipped().to_value()
+}
+
+impl ValidationReport {
+    pub fn skipped() -> Self {
+        Self {
+            historical: ValidationSummary {
+                available: false,
+                status: "unknown",
+                reason: Some("validation_summary_not_requested"),
+                latest: None,
+                latest_status: "unknown",
+                historical_failures: no_historical_failures(),
+                resolved_failures: no_failures(),
+                unresolved_failures: no_failures(),
+                evidence_gaps: no_failures(),
+                source: VALIDATION_SOURCE,
+                events_total: 0,
+                successes: None,
+                failures: None,
+                expected_results: None,
+                latest_success: None,
+                latest_failure: None,
+                events: Vec::new(),
+                parser: parser_unavailable(),
+                cargo_test_zero_tests_run: false,
+                skipped: true,
+            },
+            current: CurrentValidationEvidence {
+                evidence: CurrentEvidence::unavailable("validation_summary_not_requested"),
+                current_validation: build_validation_summary(&[], 0),
+                non_actionable_tool_failure_event_ids: HashSet::new(),
+            },
+        }
+    }
 }
 
 pub fn validation_summary_for_session_events(
@@ -238,43 +449,26 @@ pub fn validation_summary_for_session_events(
     events: &[SessionEvent],
     limit: usize,
 ) -> Value {
-    let mut historical = validation_summary_from_events(events, limit);
-    let current = current_validation_evidence_for_events(summary, events, limit);
-    historical["current_evidence"] = current.evidence;
-    historical
+    ValidationReport::from_events(summary, events, limit).to_value()
 }
 
 pub fn current_validation_evidence_for_session(
     summary: &SessionSummary,
     limit: usize,
 ) -> CurrentValidationEvidenceProjection {
-    current_validation_evidence_for_events(summary, &summary.events, limit)
+    current_validation_evidence_for_events(summary, &summary.events, limit).projection()
 }
 
 fn current_validation_evidence_for_events(
     summary: &SessionSummary,
     events: &[SessionEvent],
     limit: usize,
-) -> CurrentValidationEvidenceProjection {
+) -> CurrentValidationEvidence {
     let attempt = current_attempt_event_view(summary);
     if !attempt.complete {
-        return CurrentValidationEvidenceProjection {
-            evidence: json!({
-                "status": "unknown",
-                "reason": "attempt_boundary_unavailable",
-                "latest_status": "unknown",
-                "events_total": 0,
-                "successes": 0,
-                "failures": 0,
-                "resolved_failure_count": 0,
-                "expected_results": 0,
-                "unresolved_failure_count": 0,
-                "evidence_gap_event_count": 0,
-                "stale_failure_count": 0,
-                "evidence_after_latest_content_change": false,
-                "boundary_reason": "attempt_boundary_unavailable",
-            }),
-            current_validation: validation_summary_from_events(&[], limit),
+        return CurrentValidationEvidence {
+            evidence: CurrentEvidence::unavailable("attempt_boundary_unavailable"),
+            current_validation: build_validation_summary(&[], limit),
             non_actionable_tool_failure_event_ids: HashSet::new(),
         };
     }
@@ -421,23 +615,23 @@ fn current_validation_evidence_for_events(
         .map(|(_, record)| record.source_event_id.clone())
         .collect();
 
-    CurrentValidationEvidenceProjection {
-        evidence: json!({
-            "status": status,
-            "reason": reason,
-            "latest_status": latest_status,
-            "events_total": current_events_total,
-            "successes": 0,
-            "failures": failures,
-            "resolved_failure_count": resolved_failure_count,
-            "expected_results": expected_results,
-            "unresolved_failure_count": unresolved_failure_count,
-            "evidence_gap_event_count": evidence_gap_event_count,
-            "stale_failure_count": stale_failure_count,
-            "evidence_after_latest_content_change": reset_index.is_some() && current_events_total > 0,
-            "boundary_reason": boundary_reason,
-        }),
-        current_validation: to_value(current_validation),
+    CurrentValidationEvidence {
+        evidence: CurrentEvidence {
+            status,
+            reason,
+            latest_status,
+            events_total: current_events_total,
+            successes: 0,
+            failures,
+            resolved_failure_count,
+            expected_results,
+            unresolved_failure_count,
+            evidence_gap_event_count,
+            stale_failure_count,
+            evidence_after_latest_content_change: reset_index.is_some() && current_events_total > 0,
+            boundary_reason,
+        },
+        current_validation,
         non_actionable_tool_failure_event_ids,
     }
 }
@@ -1843,36 +2037,9 @@ fn cargo_test_zero_tests_success(event: &ValidationEvent) -> bool {
 }
 
 fn to_value(summary: ValidationSummary) -> Value {
-    serde_json::to_value(summary).unwrap_or_else(|_| {
-        json!({
-            "available": false,
-            "status": "unknown",
-            "reason": "validation_summary_unavailable",
-            "latest": null,
-            "latest_status": "unknown",
-            "historical_failures": {
-                "count": 0,
-                "resolved": false,
-                "unresolved": false,
-            },
-            "resolved_failures": {"count": 0, "events": []},
-            "unresolved_failures": {"count": 0, "events": []},
-            "evidence_gaps": {"count": 0, "events": []},
-            "source": VALIDATION_SOURCE,
-            "events_total": 0,
-            "events": [],
-            "parser": {
-                "available": false,
-                "kind": PARSER_KIND,
-                "version": PARSER_VERSION,
-                "source": VALIDATION_PARSER_SOURCE,
-                "raw_output_exposed": false,
-                "limitations": PARSER_LIMITATIONS,
-                "reason": VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
-            },
-            "cargo_test_zero_tests_run": false
-        })
-    })
+    // Every field uses an infallible JSON representation. A programming error
+    // must not become a successful-looking report with zero failure counts.
+    serde_json::to_value(summary).expect("typed validation summary serializes")
 }
 
 fn is_false(value: &bool) -> bool {

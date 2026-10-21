@@ -481,8 +481,8 @@ impl ToolRuntime {
         // Read the lifecycle-aware, project-scoped summary once, after the
         // potentially slow startup probes, then share it across continuation,
         // the legacy full verdict, and the model-facing brief.
-        let active_jobs = self
-            .active_jobs_summary(
+        let job_snapshot = self
+            .active_jobs_snapshot(
                 Some(&resolved.resolved_id),
                 Some(&session_outcome.summary.session_id),
                 auth,
@@ -494,13 +494,14 @@ impl ToolRuntime {
                 &session_outcome.summary,
                 session_outcome.pre_instruction_summary.as_ref(),
                 continuation_kind,
-                &active_jobs,
+                job_snapshot.continuation_snapshot(),
                 git.pointer("/counts/conflicted")
                     .and_then(Value::as_u64)
                     .unwrap_or(0)
                     > 0,
             )
             .await;
+        let active_jobs = job_snapshot.to_value();
         let session_ref = self.session_reference_for_id(&session_summary.session_id, auth);
         let mut output = json!({
             "detail": detail.as_str(),

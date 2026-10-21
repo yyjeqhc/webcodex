@@ -320,21 +320,111 @@ impl ContinuationProjectionHooks {
     }
 }
 
-/// Bounded current-validation view computed by the canonical Validation owner.
-/// The full validation summary remains a separate input because it may carry
-/// job-enriched history while this snapshot is derived from durable Session
-/// events using the exact current-evidence fence semantics.
-#[derive(Clone, Copy)]
-pub struct ContinuationValidationSnapshot<'a> {
-    current_evidence: &'a Value,
-    current_validation: &'a Value,
+/// Current validation facts provided directly by the canonical Validation owner.
+/// The serialized detail is used only for bounded failure-identity presentation.
+#[derive(Clone)]
+pub struct ContinuationValidationSnapshot {
+    pub requested: bool,
+    pub status: String,
+    pub latest_status: String,
+    pub resolved_failure_count: usize,
+    pub unresolved_failure_count: usize,
+    pub evidence_gap_event_count: usize,
+    pub events_total: usize,
+    pub stale_failure_count: usize,
+    pub latest_kind: Option<String>,
+    pub latest_at: Option<i64>,
+    pub current_validation: Value,
 }
 
-impl<'a> ContinuationValidationSnapshot<'a> {
-    pub fn new(current_evidence: &'a Value, current_validation: &'a Value) -> Self {
+#[derive(Clone)]
+pub struct ContinuationJobSnapshot {
+    pub active_count: u64,
+    pub running_count: u64,
+    pub recovering_count: u64,
+    pub terminal_pending_count: u64,
+    pub recent_truncated: bool,
+    pub latest_job_status: String,
+}
+
+impl Default for ContinuationJobSnapshot {
+    fn default() -> Self {
         Self {
-            current_evidence,
-            current_validation,
+            active_count: 0,
+            running_count: 0,
+            recovering_count: 0,
+            terminal_pending_count: 0,
+            recent_truncated: false,
+            latest_job_status: "not_observed".to_string(),
+        }
+    }
+}
+
+// Historical JSON fixtures remain convenient test inputs, never runtime facts.
+#[cfg(any(test, feature = "root-test-support"))]
+impl ContinuationValidationSnapshot {
+    pub fn new(current_evidence: &Value, current_validation: &Value) -> Self {
+        let count = |key| {
+            current_evidence
+                .get(key)
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize
+        };
+        let latest = current_validation.get("latest");
+        Self {
+            requested: true,
+            status: current_evidence
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            latest_status: current_evidence
+                .get("latest_status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            resolved_failure_count: count("resolved_failure_count"),
+            unresolved_failure_count: count("unresolved_failure_count"),
+            evidence_gap_event_count: count("evidence_gap_event_count"),
+            events_total: count("events_total"),
+            stale_failure_count: count("stale_failure_count"),
+            latest_kind: latest
+                .and_then(|event| event.get("validation_kind"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            latest_at: latest
+                .and_then(|event| {
+                    event
+                        .get("completed_at")
+                        .or_else(|| event.get("started_at"))
+                })
+                .and_then(Value::as_i64),
+            current_validation: current_validation.clone(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "root-test-support"))]
+impl ContinuationJobSnapshot {
+    pub fn from_json(jobs: &Value) -> Self {
+        let count = |key| jobs.get(key).and_then(Value::as_u64).unwrap_or(0);
+        Self {
+            active_count: count("active_count"),
+            running_count: count("running_count"),
+            recovering_count: count("recovering_count"),
+            terminal_pending_count: count("terminal_pending_count"),
+            recent_truncated: jobs
+                .get("truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            latest_job_status: jobs
+                .get("recent")
+                .and_then(Value::as_array)
+                .and_then(|recent| recent.first())
+                .and_then(|job| job.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("not_observed")
+                .to_string(),
         }
     }
 }
@@ -367,8 +457,8 @@ pub struct ContinuationFeedbackInput<'a> {
     /// Ledger-derived validation summary value (`validation_summary_from_events`
     /// output) for the *current* session events, already job-enriched.
     pub validation: &'a Value,
-    /// `active_jobs_summary` value, already bounded by the caller.
-    pub jobs: &'a Value,
+    /// Counts over the authorized active inventory, independent of display limits.
+    pub jobs: ContinuationJobSnapshot,
     /// Discussion/message-board summary with open guidance/risk/todo lists.
     pub discussion: &'a SessionDiscussionSummary,
     /// Continuation kind reported by the session start path:
@@ -381,7 +471,7 @@ pub struct ContinuationFeedbackInput<'a> {
     /// projection. It gates the optional exploration continuity suggestion.
     pub workspace_conflicts: bool,
     pub hooks: ContinuationProjectionHooks,
-    pub current_validation: ContinuationValidationSnapshot<'a>,
+    pub current_validation: ContinuationValidationSnapshot,
     /// Exact raw failed ToolCall event ids that the canonical runtime closeout
     /// projection still considers actionable.
     pub tool_failures: ContinuationToolFailureSnapshot<'a>,
@@ -552,9 +642,9 @@ fn build_attempt_summary(
     session_summary: &SessionSummary,
     validation: &Value,
     hooks: ContinuationProjectionHooks,
-    current_validation: ContinuationValidationSnapshot<'_>,
+    current_validation: ContinuationValidationSnapshot,
     tool_failures: ContinuationToolFailureSnapshot<'_>,
-    jobs: &Value,
+    jobs: ContinuationJobSnapshot,
     discussion: &SessionDiscussionSummary,
     continuation: &'static str,
     suggest_exploration_continuity: bool,
@@ -624,18 +714,8 @@ fn build_attempt_summary(
     // material workspace-content change. Historical validation remains intact
     // in the session-wide summary, while activity/open-failure counts use only
     // evidence that still describes the current workspace state.
-    let current_evidence = validation
-        .get("current_evidence")
-        .filter(|value| value.is_object())
-        .unwrap_or(current_validation.current_evidence);
-    let resolved_failures = current_evidence
-        .get("resolved_failure_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    let unresolved_failures = current_evidence
-        .get("unresolved_failure_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
+    let resolved_failures = current_validation.resolved_failure_count;
+    let unresolved_failures = current_validation.unresolved_failure_count;
 
     // --- changes (deduped, deterministic order via closeout_work_projection) ---
     let (_, changed_paths_value) = closeout_work_projection(semantic_attempt_events);
@@ -656,7 +736,7 @@ fn build_attempt_summary(
 
     // --- validation (current attempt verdict, history must not pollute) ---
     let delta = validation_delta(validation);
-    let validation_block = build_attempt_validation(validation, current_validation, &delta);
+    let validation_block = build_attempt_validation(&current_validation, &delta);
 
     // --- jobs (reuse existing lifecycle fields) ---
     let jobs_block = build_attempt_jobs(jobs);
@@ -848,60 +928,36 @@ fn instruction_from_boundary(
 }
 
 fn build_attempt_validation(
-    validation: &Value,
-    current_validation: ContinuationValidationSnapshot<'_>,
+    current_validation: &ContinuationValidationSnapshot,
     delta: &ValidationDelta,
 ) -> AttemptValidation {
-    // When the caller explicitly did not request validation (handoff with
-    // `include_validation=false`), report it as unavailable with a stable
-    // reason rather than masquerading the absence as `not_run`.
-    let not_requested = validation
-        .get("not_requested")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let evidence = validation
-        .get("current_evidence")
-        .filter(|value| value.is_object())
-        .unwrap_or(current_validation.current_evidence);
+    let not_requested = !current_validation.requested;
     let current_status = if not_requested {
         "unknown"
     } else {
-        evidence
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
+        &current_validation.status
     };
     let current_unresolved = if not_requested {
         0
     } else {
-        evidence
-            .get("unresolved_failure_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize
+        current_validation.unresolved_failure_count
     };
     let evidence_gap_event_count = if not_requested {
         0
     } else {
-        evidence
-            .get("evidence_gap_event_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize
+        current_validation.evidence_gap_event_count
     };
     let (open_failures, observed_open_failures, observed_truncated) = if not_requested {
         (Vec::new(), 0, false)
     } else {
-        attempt_open_failures(current_validation.current_validation)
+        attempt_open_failures(&current_validation.current_validation)
     };
     let total_open_failures = observed_open_failures.max(current_unresolved);
     let failures_truncated = observed_truncated || total_open_failures > open_failures.len();
     let latest_status = if not_requested {
         "unavailable".to_string()
     } else {
-        evidence
-            .get("latest_status")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string()
+        current_validation.latest_status.clone()
     };
     let delta_available = !not_requested && delta.comparison.status == "available";
     let delta_reason_code = if not_requested {
@@ -915,33 +971,17 @@ fn build_attempt_validation(
             .map(|code| code.to_string())
             .or_else(|| Some("no_previous_validation".to_string()))
     };
-    let latest = current_validation.current_validation.get("latest");
-    let latest_kind = latest
-        .and_then(|event| event.get("validation_kind"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let latest_at = latest
-        .and_then(|event| {
-            event
-                .get("completed_at")
-                .or_else(|| event.get("started_at"))
-        })
-        .and_then(Value::as_i64);
+    let latest_kind = current_validation.latest_kind.clone();
+    let latest_at = current_validation.latest_at;
     let validation_events = if not_requested {
         0
     } else {
-        evidence
-            .get("events_total")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize
+        current_validation.events_total
     };
     let stale_failure_count = if not_requested {
         0
     } else {
-        evidence
-            .get("stale_failure_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize
+        current_validation.stale_failure_count
     };
     AttemptValidation {
         status: current_status.to_string(),
@@ -967,35 +1007,15 @@ fn build_attempt_validation(
 /// with healthy `running`, runner-offline is never equated with process-lost,
 /// and `failed`/`lost`/`orphaned` counts are not reported because the active
 /// aggregate never includes terminal jobs. No Runner query or network call.
-fn build_attempt_jobs(jobs: &Value) -> AttemptJobs {
-    let active_count = jobs
-        .get("active_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let running_count = jobs
-        .get("running_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let recovering_count = jobs
-        .get("recovering_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let terminal_pending_count = jobs
-        .get("terminal_pending_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let recent_truncated = jobs
-        .get("truncated")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let latest_job_status = jobs
-        .get("recent")
-        .and_then(Value::as_array)
-        .and_then(|recent| recent.first())
-        .and_then(|job| job.get("status"))
-        .and_then(Value::as_str)
-        .unwrap_or("not_observed")
-        .to_string();
+fn build_attempt_jobs(jobs: ContinuationJobSnapshot) -> AttemptJobs {
+    let ContinuationJobSnapshot {
+        active_count,
+        running_count,
+        recovering_count,
+        terminal_pending_count,
+        recent_truncated,
+        latest_job_status,
+    } = jobs;
     let recovery_state = if active_count == 0 && terminal_pending_count == 0 {
         "none".to_string()
     } else if recovering_count > 0 {

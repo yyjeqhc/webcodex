@@ -225,11 +225,13 @@ fn runtime_with_db() -> (tempfile::TempDir, Arc<crate::db::Database>, ToolRuntim
 fn create_agent(runtime: &ToolRuntime, handle: &str) -> String {
     let result = runtime.create_agent_identity(
         None,
-        handle.to_string(),
-        format!("{handle} display"),
-        None,
-        Vec::new(),
-        format!("create-{handle}"),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: handle.to_string(),
+            display_name: format!("{handle} display"),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: format!("create-{handle}"),
+        },
     );
     assert!(result.success, "{:?}", result.output);
     result.output["agent"]["agent_id"]
@@ -245,10 +247,12 @@ fn wait_runtime_surface_returns_exact_wait_and_existing_continuation_projection(
     let worker = create_agent(&runtime, "wait-runtime-worker");
     let endpoint = runtime.attach_agent_endpoint(
         None,
-        watcher.clone(),
-        "ChatGPT".to_string(),
-        Some("wait-runtime-view".to_string()),
-        "wait-runtime-endpoint".to_string(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: watcher.clone(),
+            host: "ChatGPT".to_string(),
+            client_attachment_id: Some("wait-runtime-view".to_string()),
+            idempotency_key: "wait-runtime-endpoint".to_string(),
+        },
     );
     assert!(endpoint.success, "{:?}", endpoint.output);
     let endpoint_id = endpoint.output["endpoint"]["endpoint_id"]
@@ -426,10 +430,12 @@ fn goal_scoped_wait_model_projection_exposes_only_exact_goal_reference() {
     let worker = create_agent(&runtime, "goal-scoped-projection-worker");
     let endpoint = runtime.attach_agent_endpoint(
         None,
-        controller.clone(),
-        "ChatGPT".to_string(),
-        Some("goal-scoped-projection-view".to_string()),
-        "goal-scoped-projection-endpoint".to_string(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: controller.clone(),
+            host: "ChatGPT".to_string(),
+            client_attachment_id: Some("goal-scoped-projection-view".to_string()),
+            idempotency_key: "goal-scoped-projection-endpoint".to_string(),
+        },
     );
     assert!(endpoint.success, "{:?}", endpoint.output);
     let endpoint_id = endpoint.output["endpoint"]["endpoint_id"]
@@ -578,11 +584,13 @@ async fn agent_wait_dispatch_is_sparse_while_app_and_durable_read_remain_complet
     let auth = super::support::auth_context(None, true);
     let created_agent = runtime.create_agent_identity(
         Some(&auth),
-        "sparse-wait-agent".into(),
-        "Sparse Wait".into(),
-        None,
-        Vec::new(),
-        "sparse-agent".into(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: "sparse-wait-agent".into(),
+            display_name: "Sparse Wait".into(),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: "sparse-agent".into(),
+        },
     );
     assert!(created_agent.success);
     let agent = created_agent.output["agent"]["agent_id"]
@@ -591,10 +599,12 @@ async fn agent_wait_dispatch_is_sparse_while_app_and_durable_read_remain_complet
         .to_string();
     let endpoint = runtime.attach_agent_endpoint(
         Some(&auth),
-        agent.clone(),
-        "test".into(),
-        None,
-        "sparse-endpoint".into(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: agent.clone(),
+            host: "test".into(),
+            client_attachment_id: None,
+            idempotency_key: "sparse-endpoint".into(),
+        },
     );
     let task = runtime.create_agent_task(
         Some(&auth),

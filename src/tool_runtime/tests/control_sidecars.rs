@@ -648,11 +648,13 @@ async fn control_sidecars_wake_exact_consume_replay_and_stale_proofs() {
     let principal = communication_principal(Some(&f.auth)).unwrap();
     let agent = f.runtime.create_agent_identity(
         Some(&f.auth),
-        "control-agent".into(),
-        "Control Agent".into(),
-        None,
-        vec![],
-        "agent".into(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: "control-agent".into(),
+            display_name: "Control Agent".into(),
+            description: None,
+            specialty_labels: vec![],
+            idempotency_key: "agent".into(),
+        },
     );
     assert!(agent.success);
     let agent_id = agent.output["agent"]["agent_id"].as_str().unwrap();
@@ -762,11 +764,13 @@ async fn control_sidecars_heartbeat_exact_lease_and_no_implicit_renewal() {
     let f = Fixture::new();
     let agent = f.runtime.create_agent_identity(
         Some(&f.auth),
-        "heartbeat-agent".into(),
-        "Heartbeat Agent".into(),
-        None,
-        vec![],
-        "agent".into(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: "heartbeat-agent".into(),
+            display_name: "Heartbeat Agent".into(),
+            description: None,
+            specialty_labels: vec![],
+            idempotency_key: "agent".into(),
+        },
     );
     let agent_id = agent.output["agent"]["agent_id"]
         .as_str()

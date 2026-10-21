@@ -213,8 +213,14 @@ async fn exact_agent(
     auth: &crate::auth::AuthContext,
     agent_id: &str,
 ) -> Option<Value> {
-    let result =
-        runtime.list_agent_identities(Some(auth), Some(agent_id.to_string()), Some(0), Some(1));
+    let result = runtime.list_agent_identities(
+        Some(auth),
+        webcodex_tool_contracts::ListAgentIdentitiesInput {
+            agent_id: Some(agent_id.to_string()),
+            offset: Some(0),
+            limit: Some(1),
+        },
+    );
     if !result.success {
         return None;
     }

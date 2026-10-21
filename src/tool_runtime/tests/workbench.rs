@@ -88,11 +88,13 @@ async fn workbench_runner_submission_is_durable_and_same_key_replay_never_starts
     let auth = bootstrap_auth_context();
     let agent = runtime.create_agent_identity(
         Some(&auth),
-        "workbench-runner-agent".into(),
-        "Workbench Runner Agent".into(),
-        None,
-        Vec::new(),
-        "workbench-runner-agent-create".into(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: "workbench-runner-agent".into(),
+            display_name: "Workbench Runner Agent".into(),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: "workbench-runner-agent-create".into(),
+        },
     );
     assert!(agent.success, "{:?}", agent.output);
     let agent_id = agent.output["agent"]["agent_id"].as_str().unwrap();
@@ -411,11 +413,13 @@ async fn workbench_rejects_missing_project_and_stale_chat_route_before_creating_
     let auth = bootstrap_auth_context();
     let agent = runtime.create_agent_identity(
         Some(&auth),
-        "workbench-reject-agent".into(),
-        "Workbench Reject Agent".into(),
-        None,
-        Vec::new(),
-        "workbench-reject-agent-create".into(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: "workbench-reject-agent".into(),
+            display_name: "Workbench Reject Agent".into(),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: "workbench-reject-agent-create".into(),
+        },
     );
     assert!(agent.success, "{:?}", agent.output);
     let agent_id = agent.output["agent"]["agent_id"].as_str().unwrap();
@@ -481,11 +485,13 @@ async fn workbench_chat_executor_is_projected_and_usable_only_in_its_bound_windo
     let auth = bootstrap_auth_context();
     let agent = runtime.create_agent_identity(
         Some(&auth),
-        "workbench-chat-agent".into(),
-        "Workbench Chat Agent".into(),
-        None,
-        Vec::new(),
-        "workbench-chat-agent-create".into(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: "workbench-chat-agent".into(),
+            display_name: "Workbench Chat Agent".into(),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: "workbench-chat-agent-create".into(),
+        },
     );
     assert!(agent.success, "{:?}", agent.output);
     let agent_id = agent.output["agent"]["agent_id"]
@@ -494,10 +500,12 @@ async fn workbench_chat_executor_is_projected_and_usable_only_in_its_bound_windo
         .to_owned();
     let attached = runtime.attach_agent_endpoint(
         Some(&auth),
-        agent_id.clone(),
-        "ChatGPT".into(),
-        None,
-        "workbench-chat-endpoint".into(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: agent_id.clone(),
+            host: "ChatGPT".into(),
+            client_attachment_id: None,
+            idempotency_key: "workbench-chat-endpoint".into(),
+        },
     );
     assert!(attached.success, "{:?}", attached.output);
     let endpoint_id = attached.output["endpoint"]["endpoint_id"]

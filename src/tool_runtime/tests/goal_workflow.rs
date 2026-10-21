@@ -40,11 +40,13 @@ impl Workflow {
                 .session_id;
         let agent = runtime.create_agent_identity(
             Some(&auth),
-            "workflow-agent".into(),
-            "Workflow Agent".into(),
-            None,
-            Vec::new(),
-            "workflow-agent".into(),
+            webcodex_tool_contracts::CreateAgentIdentityInput {
+                handle: "workflow-agent".into(),
+                display_name: "Workflow Agent".into(),
+                description: None,
+                specialty_labels: Vec::new(),
+                idempotency_key: "workflow-agent".into(),
+            },
         );
         assert!(agent.success, "{:?}", agent.output);
         let agent_id = agent.output["agent"]["agent_id"]
@@ -253,10 +255,12 @@ async fn goal_continuity_carrier_readiness_tracks_exact_endpoint_generation() {
 
     let first = fixture.runtime.attach_agent_endpoint(
         Some(&fixture.auth),
-        fixture.agent_id.clone(),
-        "ChatGPT".into(),
-        Some("goal-continuity-view-1".into()),
-        "goal-continuity-endpoint-1".into(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: fixture.agent_id.clone(),
+            host: "ChatGPT".into(),
+            client_attachment_id: Some("goal-continuity-view-1".into()),
+            idempotency_key: "goal-continuity-endpoint-1".into(),
+        },
     );
     assert!(first.success, "{:?}", first.output);
     let first_endpoint = first.output["endpoint"]["endpoint_id"]
@@ -291,10 +295,12 @@ async fn goal_continuity_carrier_readiness_tracks_exact_endpoint_generation() {
 
     let second = fixture.runtime.attach_agent_endpoint(
         Some(&fixture.auth),
-        fixture.agent_id.clone(),
-        "ChatGPT".into(),
-        Some("goal-continuity-view-2".into()),
-        "goal-continuity-endpoint-2".into(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: fixture.agent_id.clone(),
+            host: "ChatGPT".into(),
+            client_attachment_id: Some("goal-continuity-view-2".into()),
+            idempotency_key: "goal-continuity-endpoint-2".into(),
+        },
     );
     assert!(second.success, "{:?}", second.output);
     let second_endpoint = second.output["endpoint"]["endpoint_id"]
@@ -519,11 +525,13 @@ async fn goal_continuity_does_not_retarget_an_existing_stall_wake_after_controll
 
     let replacement = fixture.runtime.create_agent_identity(
         Some(&fixture.auth),
-        "replacement-controller".into(),
-        "Replacement Controller".into(),
-        None,
-        Vec::new(),
-        "replacement-controller-agent".into(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: "replacement-controller".into(),
+            display_name: "Replacement Controller".into(),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: "replacement-controller-agent".into(),
+        },
     );
     assert!(replacement.success, "{:?}", replacement.output);
     let replacement_id = replacement.output["agent"]["agent_id"]
@@ -671,10 +679,12 @@ async fn goal_continuity_ignores_unrelated_task_wait_and_other_goal_wakes_on_sam
 
     let endpoint = fixture.runtime.attach_agent_endpoint(
         Some(&fixture.auth),
-        fixture.agent_id.clone(),
-        "ChatGPT".into(),
-        Some("unrelated-wait-view".into()),
-        "unrelated-wait-endpoint".into(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: fixture.agent_id.clone(),
+            host: "ChatGPT".into(),
+            client_attachment_id: Some("unrelated-wait-view".into()),
+            idempotency_key: "unrelated-wait-endpoint".into(),
+        },
     );
     assert!(endpoint.success, "{:?}", endpoint.output);
     let endpoint_id = endpoint.output["endpoint"]["endpoint_id"]
@@ -686,11 +696,13 @@ async fn goal_continuity_ignores_unrelated_task_wait_and_other_goal_wakes_on_sam
         .unwrap();
     let worker = fixture.runtime.create_agent_identity(
         Some(&fixture.auth),
-        "unrelated-wait-worker".into(),
-        "Unrelated Wait Worker".into(),
-        None,
-        Vec::new(),
-        "unrelated-wait-worker-agent".into(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: "unrelated-wait-worker".into(),
+            display_name: "Unrelated Wait Worker".into(),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: "unrelated-wait-worker-agent".into(),
+        },
     );
     assert!(worker.success, "{:?}", worker.output);
     let worker_id = worker.output["agent"]["agent_id"]
@@ -1146,10 +1158,12 @@ async fn goal_workflow_revoked_correlated_project_is_partial_even_with_older_wor
     let fixture = Workflow::new(true).await;
     let endpoint = fixture.runtime.attach_agent_endpoint(
         Some(&fixture.auth),
-        fixture.agent_id.clone(),
-        "ChatGPT".into(),
-        Some("goal-partial-readiness-view".into()),
-        "goal-partial-readiness-endpoint".into(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: fixture.agent_id.clone(),
+            host: "ChatGPT".into(),
+            client_attachment_id: Some("goal-partial-readiness-view".into()),
+            idempotency_key: "goal-partial-readiness-endpoint".into(),
+        },
     );
     assert!(endpoint.success, "{:?}", endpoint.output);
     let bound = fixture.runtime.agent_continuation_bind_for_window(
@@ -1738,11 +1752,13 @@ async fn goal_workflow_same_durable_agent_is_worker_and_controller_and_stall_use
 
         let replacement = fixture.runtime.create_agent_identity(
             Some(&fixture.auth),
-            "post-resume-replacement".into(),
-            "Post Resume Replacement".into(),
-            None,
-            Vec::new(),
-            format!("post-resume-replacement-{delivery_unknown}"),
+            webcodex_tool_contracts::CreateAgentIdentityInput {
+                handle: "post-resume-replacement".into(),
+                display_name: "Post Resume Replacement".into(),
+                description: None,
+                specialty_labels: Vec::new(),
+                idempotency_key: format!("post-resume-replacement-{delivery_unknown}"),
+            },
         );
         assert!(replacement.success, "{:?}", replacement.output);
         let replacement_id = replacement.output["agent"]["agent_id"]

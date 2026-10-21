@@ -50,5 +50,6 @@ pub const TOOL_CALL_WRAPPER_FIELDS: &[&str] = &[TOOL_CALL_TOOL_FIELD, TOOL_CALL_
 pub const AGENT_CONTINUATION_REF_PATTERN: &str = "^~ac[1-9][0-9]{0,18}$";
 
 include!("tool_call/input_types.rs");
+include!("tool_call/communication_inputs.rs");
 include!("tool_call/canonical_enum.rs");
 include!("tool_call/parsing.rs");

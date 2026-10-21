@@ -10,56 +10,15 @@ impl ToolRuntime {
         window: Option<&crate::client_window::ClientWindow>,
     ) -> ToolResult {
         match call {
-            ToolCall::CreateAgentIdentity {
-                handle,
-                display_name,
-                description,
-                specialty_labels,
-                idempotency_key,
-            } => self.create_agent_identity(
-                auth,
-                handle,
-                display_name,
-                description,
-                specialty_labels,
-                idempotency_key,
-            ),
+            ToolCall::CreateAgentIdentity(input) => self.create_agent_identity(auth, input),
 
-            ToolCall::ListAgentIdentities {
-                agent_id,
-                offset,
-                limit,
-            } => self.list_agent_identities(auth, agent_id, offset, limit),
+            ToolCall::ListAgentIdentities(input) => self.list_agent_identities(auth, input),
 
-            ToolCall::UpdateAgentIdentity {
-                agent_id,
-                expected_profile_revision,
-                handle,
-                display_name,
-                description,
-                specialty_labels,
-            } => self.update_agent_identity(
-                auth,
-                agent_id,
-                expected_profile_revision,
-                handle,
-                display_name,
-                description,
-                specialty_labels,
-            ),
+            ToolCall::UpdateAgentIdentity(input) => self.update_agent_identity(auth, input),
 
-            ToolCall::RotateAgentContinuationEndpoint {
-                agent_id,
-                host,
-                client_attachment_id,
-                idempotency_key,
-            } => self.attach_agent_endpoint(
-                auth,
-                agent_id,
-                host,
-                client_attachment_id,
-                idempotency_key,
-            ),
+            ToolCall::RotateAgentContinuationEndpoint(input) => {
+                self.attach_agent_endpoint(auth, input)
+            }
 
             ToolCall::PresentAgentContinuation {
                 agent_continuation_ref,
@@ -182,100 +141,19 @@ impl ToolRuntime {
                 binding_id,
             ),
 
-            ToolCall::DetachAgentEndpoint { endpoint_id } => {
-                self.detach_agent_endpoint(auth, endpoint_id)
-            }
+            ToolCall::DetachAgentEndpoint(input) => self.detach_agent_endpoint(auth, input),
 
-            ToolCall::CreateConversation {
-                title,
-                agent_ids,
-                idempotency_key,
-            } => self.create_conversation(auth, title, agent_ids, idempotency_key),
+            ToolCall::CreateConversation(input) => self.create_conversation(auth, input),
 
-            ToolCall::ListConversations {
-                agent_id,
-                endpoint_id,
-                expected_controller_generation,
-                offset,
-                limit,
-            } => self.list_conversations(
-                auth,
-                agent_id,
-                endpoint_id,
-                expected_controller_generation,
-                offset,
-                limit,
-            ),
+            ToolCall::ListConversations(input) => self.list_conversations(auth, input),
 
-            ToolCall::ReadConversation {
-                conversation_id,
-                agent_id,
-                endpoint_id,
-                expected_controller_generation,
-                after_seq,
-                limit,
-            } => self.read_conversation(
-                auth,
-                conversation_id,
-                agent_id,
-                endpoint_id,
-                expected_controller_generation,
-                after_seq,
-                limit,
-            ),
+            ToolCall::ReadConversation(input) => self.read_conversation(auth, input),
 
-            ToolCall::PostConversationMessage {
-                conversation_id,
-                body,
-                author_agent_id,
-                endpoint_id,
-                expected_controller_generation,
-                recipient_agent_ids,
-                reply_to,
-                idempotency_key,
-                wake_reply_id,
-                reply_operation_index,
-            } => self.post_conversation_message(
-                auth,
-                conversation_id,
-                body,
-                author_agent_id,
-                endpoint_id,
-                expected_controller_generation,
-                recipient_agent_ids,
-                reply_to,
-                idempotency_key,
-                wake_reply_id,
-                reply_operation_index,
-            ),
+            ToolCall::PostConversationMessage(input) => self.post_conversation_message(auth, input),
 
-            ToolCall::ListAgentInbox {
-                agent_id,
-                endpoint_id,
-                expected_controller_generation,
-                after_delivery_order,
-                limit,
-            } => self.list_agent_inbox(
-                auth,
-                agent_id,
-                endpoint_id,
-                expected_controller_generation,
-                after_delivery_order,
-                limit,
-            ),
+            ToolCall::ListAgentInbox(input) => self.list_agent_inbox(auth, input),
 
-            ToolCall::ConsumeAgentDeliveries {
-                agent_id,
-                endpoint_id,
-                expected_controller_generation,
-                delivery_ids,
-            } => self.consume_agent_deliveries(
-                auth,
-                agent_id,
-                endpoint_id,
-                expected_controller_generation,
-                delivery_ids,
-            ),
+            ToolCall::ConsumeAgentDeliveries(input) => self.consume_agent_deliveries(auth, input),
 
             ToolCall::BootstrapAgentConversation {
                 agent_id,

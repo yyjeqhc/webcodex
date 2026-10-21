@@ -3,6 +3,12 @@ use serde::Deserialize;
 
 use salvo::writing::Scribe;
 use serde_json::Value;
+use webcodex_tool_contracts::tool_call::{
+    ConsumeAgentDeliveriesInput, CreateAgentIdentityInput, CreateConversationInput,
+    DetachAgentEndpointInput, ListAgentIdentitiesInput, ListAgentInboxInput,
+    ListConversationsInput, PostConversationMessageInput, ReadConversationInput,
+    RotateAgentContinuationEndpointInput, UpdateAgentIdentityInput,
+};
 
 use super::{
     parse_console_json, prepared, require_communication_manage, require_communication_read,
@@ -46,147 +52,9 @@ type CommunicationResult = Result<CommunicationResponse, RuntimeConsoleError>;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CommunicationAgentsInput {
-    #[serde(default)]
-    agent_id: Option<String>,
-    #[serde(default)]
-    offset: Option<usize>,
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CommunicationAgentCreateInput {
-    handle: String,
-    display_name: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    specialty_labels: Vec<String>,
-    idempotency_key: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CommunicationAgentUpdateInput {
-    agent_id: String,
-    expected_profile_revision: i64,
-    #[serde(default)]
-    handle: Option<String>,
-    #[serde(default)]
-    display_name: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    specialty_labels: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CommunicationEndpointAttachInput {
-    agent_id: String,
-    host: String,
-    #[serde(default)]
-    client_attachment_id: Option<String>,
-    idempotency_key: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CommunicationEndpointDetachInput {
-    endpoint_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct CommunicationEndpointRenewInput {
     endpoint_id: String,
     expected_controller_generation: i64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CommunicationConversationsInput {
-    #[serde(default)]
-    agent_id: Option<String>,
-    #[serde(default)]
-    endpoint_id: Option<String>,
-    #[serde(default)]
-    expected_controller_generation: Option<i64>,
-    #[serde(default)]
-    offset: Option<usize>,
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CommunicationConversationCreateInput {
-    #[serde(default)]
-    title: Option<String>,
-    agent_ids: Vec<String>,
-    idempotency_key: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CommunicationConversationInput {
-    conversation_id: String,
-    #[serde(default)]
-    agent_id: Option<String>,
-    #[serde(default)]
-    endpoint_id: Option<String>,
-    #[serde(default)]
-    expected_controller_generation: Option<i64>,
-    #[serde(default)]
-    after_seq: Option<i64>,
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CommunicationMessagePostInput {
-    conversation_id: String,
-    body: String,
-    #[serde(default)]
-    author_agent_id: Option<String>,
-    #[serde(default)]
-    endpoint_id: Option<String>,
-    #[serde(default)]
-    expected_controller_generation: Option<i64>,
-    #[serde(default)]
-    recipient_agent_ids: Option<Vec<String>>,
-    #[serde(default)]
-    reply_to: Option<String>,
-    #[serde(default)]
-    idempotency_key: Option<String>,
-    #[serde(default)]
-    wake_reply_id: Option<String>,
-    #[serde(default)]
-    reply_operation_index: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CommunicationInboxInput {
-    agent_id: String,
-    endpoint_id: String,
-    expected_controller_generation: i64,
-    #[serde(default)]
-    after_delivery_order: Option<i64>,
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CommunicationInboxConsumeInput {
-    agent_id: String,
-    endpoint_id: String,
-    expected_controller_generation: i64,
-    delivery_ids: Vec<String>,
 }
 
 #[handler]
@@ -196,13 +64,10 @@ pub(super) async fn communication_agents(
 ) -> CommunicationResult {
     let (runtime, auth) = prepared(req, depot).await?;
     require_communication_read(&auth)?;
-    let input: CommunicationAgentsInput = parse_console_json(req).await?;
-    Ok(CommunicationResponse(runtime.list_agent_identities(
-        Some(&auth),
-        input.agent_id,
-        input.offset,
-        input.limit,
-    )))
+    let input: ListAgentIdentitiesInput = parse_console_json(req).await?;
+    Ok(CommunicationResponse(
+        runtime.list_agent_identities(Some(&auth), input),
+    ))
 }
 
 #[handler]
@@ -212,15 +77,10 @@ pub(super) async fn communication_agent_create(
 ) -> CommunicationResult {
     let (runtime, auth) = prepared(req, depot).await?;
     require_communication_manage(&auth)?;
-    let input: CommunicationAgentCreateInput = parse_console_json(req).await?;
-    Ok(CommunicationResponse(runtime.create_agent_identity(
-        Some(&auth),
-        input.handle,
-        input.display_name,
-        input.description,
-        input.specialty_labels,
-        input.idempotency_key,
-    )))
+    let input: CreateAgentIdentityInput = parse_console_json(req).await?;
+    Ok(CommunicationResponse(
+        runtime.create_agent_identity(Some(&auth), input),
+    ))
 }
 
 #[handler]
@@ -230,16 +90,10 @@ pub(super) async fn communication_agent_update(
 ) -> CommunicationResult {
     let (runtime, auth) = prepared(req, depot).await?;
     require_communication_manage(&auth)?;
-    let input: CommunicationAgentUpdateInput = parse_console_json(req).await?;
-    Ok(CommunicationResponse(runtime.update_agent_identity(
-        Some(&auth),
-        input.agent_id,
-        input.expected_profile_revision,
-        input.handle,
-        input.display_name,
-        input.description,
-        input.specialty_labels,
-    )))
+    let input: UpdateAgentIdentityInput = parse_console_json(req).await?;
+    Ok(CommunicationResponse(
+        runtime.update_agent_identity(Some(&auth), input),
+    ))
 }
 
 #[handler]
@@ -249,14 +103,10 @@ pub(super) async fn communication_endpoint_attach(
 ) -> CommunicationResult {
     let (runtime, auth) = prepared(req, depot).await?;
     require_communication_manage(&auth)?;
-    let input: CommunicationEndpointAttachInput = parse_console_json(req).await?;
-    Ok(CommunicationResponse(runtime.attach_agent_endpoint(
-        Some(&auth),
-        input.agent_id,
-        input.host,
-        input.client_attachment_id,
-        input.idempotency_key,
-    )))
+    let input: RotateAgentContinuationEndpointInput = parse_console_json(req).await?;
+    Ok(CommunicationResponse(
+        runtime.attach_agent_endpoint(Some(&auth), input),
+    ))
 }
 
 #[handler]
@@ -281,9 +131,9 @@ pub(super) async fn communication_endpoint_detach(
 ) -> CommunicationResult {
     let (runtime, auth) = prepared(req, depot).await?;
     require_communication_manage(&auth)?;
-    let input: CommunicationEndpointDetachInput = parse_console_json(req).await?;
+    let input: DetachAgentEndpointInput = parse_console_json(req).await?;
     Ok(CommunicationResponse(
-        runtime.detach_agent_endpoint(Some(&auth), input.endpoint_id),
+        runtime.detach_agent_endpoint(Some(&auth), input),
     ))
 }
 
@@ -294,15 +144,10 @@ pub(super) async fn communication_conversations(
 ) -> CommunicationResult {
     let (runtime, auth) = prepared(req, depot).await?;
     require_communication_read(&auth)?;
-    let input: CommunicationConversationsInput = parse_console_json(req).await?;
-    Ok(CommunicationResponse(runtime.list_conversations(
-        Some(&auth),
-        input.agent_id,
-        input.endpoint_id,
-        input.expected_controller_generation,
-        input.offset,
-        input.limit,
-    )))
+    let input: ListConversationsInput = parse_console_json(req).await?;
+    Ok(CommunicationResponse(
+        runtime.list_conversations(Some(&auth), input),
+    ))
 }
 
 #[handler]
@@ -312,13 +157,10 @@ pub(super) async fn communication_conversation_create(
 ) -> CommunicationResult {
     let (runtime, auth) = prepared(req, depot).await?;
     require_communication_manage(&auth)?;
-    let input: CommunicationConversationCreateInput = parse_console_json(req).await?;
-    Ok(CommunicationResponse(runtime.create_conversation(
-        Some(&auth),
-        input.title,
-        input.agent_ids,
-        input.idempotency_key,
-    )))
+    let input: CreateConversationInput = parse_console_json(req).await?;
+    Ok(CommunicationResponse(
+        runtime.create_conversation(Some(&auth), input),
+    ))
 }
 
 #[handler]
@@ -328,16 +170,10 @@ pub(super) async fn communication_conversation(
 ) -> CommunicationResult {
     let (runtime, auth) = prepared(req, depot).await?;
     require_communication_read(&auth)?;
-    let input: CommunicationConversationInput = parse_console_json(req).await?;
-    Ok(CommunicationResponse(runtime.read_conversation(
-        Some(&auth),
-        input.conversation_id,
-        input.agent_id,
-        input.endpoint_id,
-        input.expected_controller_generation,
-        input.after_seq,
-        input.limit,
-    )))
+    let input: ReadConversationInput = parse_console_json(req).await?;
+    Ok(CommunicationResponse(
+        runtime.read_conversation(Some(&auth), input),
+    ))
 }
 
 #[handler]
@@ -347,20 +183,10 @@ pub(super) async fn communication_message_post(
 ) -> CommunicationResult {
     let (runtime, auth) = prepared(req, depot).await?;
     require_communication_manage(&auth)?;
-    let input: CommunicationMessagePostInput = parse_console_json(req).await?;
-    Ok(CommunicationResponse(runtime.post_conversation_message(
-        Some(&auth),
-        input.conversation_id,
-        input.body,
-        input.author_agent_id,
-        input.endpoint_id,
-        input.expected_controller_generation,
-        input.recipient_agent_ids,
-        input.reply_to,
-        input.idempotency_key,
-        input.wake_reply_id,
-        input.reply_operation_index,
-    )))
+    let input: PostConversationMessageInput = parse_console_json(req).await?;
+    Ok(CommunicationResponse(
+        runtime.post_conversation_message(Some(&auth), input),
+    ))
 }
 
 #[handler]
@@ -370,15 +196,10 @@ pub(super) async fn communication_inbox(
 ) -> CommunicationResult {
     let (runtime, auth) = prepared(req, depot).await?;
     require_communication_read(&auth)?;
-    let input: CommunicationInboxInput = parse_console_json(req).await?;
-    Ok(CommunicationResponse(runtime.list_agent_inbox(
-        Some(&auth),
-        input.agent_id,
-        input.endpoint_id,
-        input.expected_controller_generation,
-        input.after_delivery_order,
-        input.limit,
-    )))
+    let input: ListAgentInboxInput = parse_console_json(req).await?;
+    Ok(CommunicationResponse(
+        runtime.list_agent_inbox(Some(&auth), input),
+    ))
 }
 
 #[handler]
@@ -388,12 +209,8 @@ pub(super) async fn communication_inbox_consume(
 ) -> CommunicationResult {
     let (runtime, auth) = prepared(req, depot).await?;
     require_communication_manage(&auth)?;
-    let input: CommunicationInboxConsumeInput = parse_console_json(req).await?;
-    Ok(CommunicationResponse(runtime.consume_agent_deliveries(
-        Some(&auth),
-        input.agent_id,
-        input.endpoint_id,
-        input.expected_controller_generation,
-        input.delivery_ids,
-    )))
+    let input: ConsumeAgentDeliveriesInput = parse_console_json(req).await?;
+    Ok(CommunicationResponse(
+        runtime.consume_agent_deliveries(Some(&auth), input),
+    ))
 }

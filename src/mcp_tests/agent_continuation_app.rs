@@ -146,11 +146,13 @@ fn create_agent(
 ) -> String {
     let result = runtime.create_agent_identity(
         Some(auth),
-        handle.to_string(),
-        display_name.to_string(),
-        Some("PRIVATE Agent description".to_string()),
-        vec!["PRIVATE-specialty-label".to_string()],
-        key.to_string(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: handle.to_string(),
+            display_name: display_name.to_string(),
+            description: Some("PRIVATE Agent description".to_string()),
+            specialty_labels: vec!["PRIVATE-specialty-label".to_string()],
+            idempotency_key: key.to_string(),
+        },
     );
     assert!(result.success, "{:?}", result.output);
     result.output["agent"]["agent_id"]
@@ -167,10 +169,12 @@ fn attach(
 ) -> (String, i64) {
     let result = runtime.attach_agent_endpoint(
         Some(auth),
-        agent_id.to_string(),
-        "ChatGPT".to_string(),
-        Some(format!("attachment-{key}")),
-        key.to_string(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: agent_id.to_string(),
+            host: "ChatGPT".to_string(),
+            client_attachment_id: Some(format!("attachment-{key}")),
+            idempotency_key: key.to_string(),
+        },
     );
     assert!(result.success, "{:?}", result.output);
     (
@@ -193,9 +197,11 @@ fn create_conversation(
 ) -> String {
     let result = runtime.create_conversation(
         Some(auth),
-        Some("PRIVATE conversation title".to_string()),
-        vec![a.to_string(), b.to_string()],
-        key.to_string(),
+        webcodex_tool_contracts::CreateConversationInput {
+            title: Some("PRIVATE conversation title".to_string()),
+            agent_ids: vec![a.to_string(), b.to_string()],
+            idempotency_key: key.to_string(),
+        },
     );
     assert!(result.success, "{:?}", result.output);
     result.output["conversation"]["conversation"]["conversation_id"]
@@ -218,16 +224,18 @@ fn post_message(
 ) {
     let result = runtime.post_conversation_message(
         Some(auth),
-        conversation_id.to_string(),
-        body.to_string(),
-        Some(sender.to_string()),
-        Some(sender_endpoint.to_string()),
-        Some(sender_generation),
-        Some(vec![receiver.to_string()]),
-        None,
-        Some(key.to_string()),
-        None,
-        None,
+        webcodex_tool_contracts::PostConversationMessageInput {
+            conversation_id: conversation_id.to_string(),
+            body: body.to_string(),
+            author_agent_id: Some(sender.to_string()),
+            endpoint_id: Some(sender_endpoint.to_string()),
+            expected_controller_generation: Some(sender_generation),
+            recipient_agent_ids: Some(vec![receiver.to_string()]),
+            reply_to: None,
+            idempotency_key: Some(key.to_string()),
+            wake_reply_id: None,
+            reply_operation_index: None,
+        },
     );
     assert!(result.success, "{:?}", result.output);
 }

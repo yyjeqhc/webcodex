@@ -18,11 +18,13 @@ fn create_agent(
 ) -> String {
     let result = runtime.create_agent_identity(
         auth,
-        format!("agent-{key}"),
-        format!("Agent {key}"),
-        None,
-        Vec::new(),
-        key.to_string(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: format!("agent-{key}"),
+            display_name: format!("Agent {key}"),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: key.to_string(),
+        },
     );
     assert!(result.success, "{:?}", result.output);
     result.output["agent"]["agent_id"]

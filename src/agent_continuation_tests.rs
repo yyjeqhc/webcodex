@@ -146,11 +146,13 @@ fn create_agent(
 ) -> String {
     let result = runtime.create_agent_identity(
         None,
-        handle.to_string(),
-        display_name.to_string(),
-        Some(description.to_string()),
-        vec![label.to_string()],
-        key.to_string(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: handle.to_string(),
+            display_name: display_name.to_string(),
+            description: Some(description.to_string()),
+            specialty_labels: vec![label.to_string()],
+            idempotency_key: key.to_string(),
+        },
     );
     assert!(result.success, "{:?}", result.output);
     result.output["agent"]["agent_id"]
@@ -162,10 +164,12 @@ fn create_agent(
 fn attach(runtime: &ToolRuntime, agent_id: &str, key: &str) -> (String, i64) {
     let result = runtime.attach_agent_endpoint(
         None,
-        agent_id.to_string(),
-        "Deterministic Host".to_string(),
-        Some(format!("attachment-{key}")),
-        key.to_string(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: agent_id.to_string(),
+            host: "Deterministic Host".to_string(),
+            client_attachment_id: Some(format!("attachment-{key}")),
+            idempotency_key: key.to_string(),
+        },
     );
     assert!(result.success, "{:?}", result.output);
     assert_eq!(result.output["endpoint"]["wake_capable"], false);
@@ -183,9 +187,11 @@ fn attach(runtime: &ToolRuntime, agent_id: &str, key: &str) -> (String, i64) {
 fn create_conversation(runtime: &ToolRuntime, agent_a: &str, agent_b: &str, key: &str) -> String {
     let result = runtime.create_conversation(
         None,
-        Some("Natural durable conversation".to_string()),
-        vec![agent_a.to_string(), agent_b.to_string()],
-        key.to_string(),
+        webcodex_tool_contracts::CreateConversationInput {
+            title: Some("Natural durable conversation".to_string()),
+            agent_ids: vec![agent_a.to_string(), agent_b.to_string()],
+            idempotency_key: key.to_string(),
+        },
     );
     assert!(result.success, "{:?}", result.output);
     result.output["conversation"]["conversation"]["conversation_id"]
@@ -209,16 +215,18 @@ fn post_as_agent(
 ) -> Value {
     let result = runtime.post_conversation_message(
         None,
-        conversation_id.to_string(),
-        body.to_string(),
-        Some(author_agent_id.to_string()),
-        Some(endpoint_id.to_string()),
-        Some(controller_generation),
-        Some(vec![recipient_agent_id.to_string()]),
-        None,
-        idempotency_key.map(ToOwned::to_owned),
-        wake_reply_id.map(ToOwned::to_owned),
-        reply_operation_index,
+        webcodex_tool_contracts::PostConversationMessageInput {
+            conversation_id: conversation_id.to_string(),
+            body: body.to_string(),
+            author_agent_id: Some(author_agent_id.to_string()),
+            endpoint_id: Some(endpoint_id.to_string()),
+            expected_controller_generation: Some(controller_generation),
+            recipient_agent_ids: Some(vec![recipient_agent_id.to_string()]),
+            reply_to: None,
+            idempotency_key: idempotency_key.map(ToOwned::to_owned),
+            wake_reply_id: wake_reply_id.map(ToOwned::to_owned),
+            reply_operation_index: reply_operation_index,
+        },
     );
     assert!(result.success, "{:?}", result.output);
     result.output
@@ -300,7 +308,14 @@ fn bind_mcp_app(
 }
 
 fn listed_agent(runtime: &ToolRuntime, agent_id: &str) -> Value {
-    let result = runtime.list_agent_identities(None, Some(agent_id.to_string()), None, None);
+    let result = runtime.list_agent_identities(
+        None,
+        webcodex_tool_contracts::ListAgentIdentitiesInput {
+            agent_id: Some(agent_id.to_string()),
+            offset: None,
+            limit: None,
+        },
+    );
     assert!(result.success, "{:?}", result.output);
     let agents = result.output["agents"].as_array().unwrap();
     assert_eq!(agents.len(), 1);
@@ -713,7 +728,12 @@ fn agent_listing_projects_only_current_production_continuation_readiness() {
         listed_agent(&runtime, &detached)["production_auto_resume_available"],
         true
     );
-    let detached_result = runtime.detach_agent_endpoint(None, detached_endpoint.clone());
+    let detached_result = runtime.detach_agent_endpoint(
+        None,
+        webcodex_tool_contracts::DetachAgentEndpointInput {
+            endpoint_id: detached_endpoint.clone(),
+        },
+    );
     assert!(detached_result.success, "{:?}", detached_result.output);
     let detached_listing = listed_agent(&runtime, &detached);
     assert_eq!(detached_listing["active_endpoint_count"], 0);
@@ -998,10 +1018,12 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
     );
     let replayed_old = runtime.attach_agent_endpoint(
         None,
-        agent_b.clone(),
-        "Deterministic Host".to_string(),
-        Some("attachment-restart-endpoint-b".to_string()),
-        "restart-endpoint-b".to_string(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: agent_b.clone(),
+            host: "Deterministic Host".to_string(),
+            client_attachment_id: Some("attachment-restart-endpoint-b".to_string()),
+            idempotency_key: "restart-endpoint-b".to_string(),
+        },
     );
     assert!(replayed_old.success, "{:?}", replayed_old.output);
     assert_eq!(replayed_old.output["replayed"], true);
@@ -1964,9 +1986,12 @@ fn mcp_app_restart_recovery_never_bypasses_endpoint_lifecycle() {
         &detached.receiver_endpoint,
         detached.receiver_generation,
     );
-    let detached_result = detached
-        .runtime
-        .detach_agent_endpoint(None, detached.receiver_endpoint.clone());
+    let detached_result = detached.runtime.detach_agent_endpoint(
+        None,
+        webcodex_tool_contracts::DetachAgentEndpointInput {
+            endpoint_id: detached.receiver_endpoint.clone(),
+        },
+    );
     assert!(detached_result.success, "{:?}", detached_result.output);
     assert!(endpoint_recovery_fingerprint(&detached.db, &detached.receiver_endpoint).is_none());
     let detached_state = detached.runtime.agent_continuation_state(
@@ -2173,16 +2198,18 @@ fn wake_derived_reply_identity_closes_response_loss_without_merging_consumption(
     assert!(pending_bootstrap.output["reply_replay"].is_null());
     let pending_reply = runtime.post_conversation_message(
         None,
-        conversation_id.clone(),
-        "must activate before using Wake reply identity".to_string(),
-        Some(agent_b.clone()),
-        Some(endpoint_b.clone()),
-        Some(generation_b),
-        Some(vec![agent_a.clone()]),
-        None,
-        None,
-        Some(wake_id.clone()),
-        Some(0),
+        webcodex_tool_contracts::PostConversationMessageInput {
+            conversation_id: conversation_id.clone(),
+            body: "must activate before using Wake reply identity".to_string(),
+            author_agent_id: Some(agent_b.clone()),
+            endpoint_id: Some(endpoint_b.clone()),
+            expected_controller_generation: Some(generation_b),
+            recipient_agent_ids: Some(vec![agent_a.clone()]),
+            reply_to: None,
+            idempotency_key: None,
+            wake_reply_id: Some(wake_id.clone()),
+            reply_operation_index: Some(0),
+        },
     );
     assert!(!pending_reply.success);
     assert_eq!(pending_reply.output["error_kind"], "wake_not_dispatched");
@@ -2248,16 +2275,18 @@ fn wake_derived_reply_identity_closes_response_loss_without_merging_consumption(
 
     let changed = runtime.post_conversation_message(
         None,
-        conversation_id.clone(),
-        "changed replay must conflict".to_string(),
-        Some(agent_b.clone()),
-        Some(replacement_endpoint_b.clone()),
-        Some(replacement_generation_b),
-        Some(vec![agent_a.clone()]),
-        None,
-        None,
-        Some(wake_id.clone()),
-        Some(0),
+        webcodex_tool_contracts::PostConversationMessageInput {
+            conversation_id: conversation_id.clone(),
+            body: "changed replay must conflict".to_string(),
+            author_agent_id: Some(agent_b.clone()),
+            endpoint_id: Some(replacement_endpoint_b.clone()),
+            expected_controller_generation: Some(replacement_generation_b),
+            recipient_agent_ids: Some(vec![agent_a.clone()]),
+            reply_to: None,
+            idempotency_key: None,
+            wake_reply_id: Some(wake_id.clone()),
+            reply_operation_index: Some(0),
+        },
     );
     assert!(!changed.success);
     assert_eq!(
@@ -2278,10 +2307,12 @@ fn wake_derived_reply_identity_closes_response_loss_without_merging_consumption(
         .unwrap();
     let consumed = runtime.consume_agent_deliveries(
         None,
-        agent_b.clone(),
-        replacement_endpoint_b,
-        replacement_generation_b,
-        vec![delivery_id],
+        webcodex_tool_contracts::ConsumeAgentDeliveriesInput {
+            agent_id: agent_b.clone(),
+            endpoint_id: replacement_endpoint_b,
+            expected_controller_generation: replacement_generation_b,
+            delivery_ids: vec![delivery_id],
+        },
     );
     assert!(consumed.success);
     assert_eq!(
@@ -3234,11 +3265,13 @@ fn explicit_activation_bootstrap_is_replayable_and_consumes_wake_separately() {
     assert!(consumed.success, "{:?}", consumed.output);
     let inbox = runtime.list_agent_inbox(
         None,
-        agent_b.clone(),
-        endpoint_b,
-        generation_b,
-        Some(0),
-        Some(10),
+        webcodex_tool_contracts::ListAgentInboxInput {
+            agent_id: agent_b.clone(),
+            endpoint_id: endpoint_b,
+            expected_controller_generation: generation_b,
+            after_delivery_order: Some(0),
+            limit: Some(10),
+        },
     );
     assert!(inbox.success, "{:?}", inbox.output);
     assert_eq!(

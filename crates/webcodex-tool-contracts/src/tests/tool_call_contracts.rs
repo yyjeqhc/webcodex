@@ -1281,7 +1281,7 @@ fn continuation_endpoint_rotation_rejects_retired_name() {
     assert_eq!(canonical.tool_name(), "rotate_agent_continuation_endpoint");
     assert!(matches!(
         canonical,
-        ToolCall::RotateAgentContinuationEndpoint { .. }
+        ToolCall::RotateAgentContinuationEndpoint(..)
     ));
 
     {

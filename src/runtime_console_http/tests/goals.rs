@@ -20,11 +20,13 @@ async fn goal_workbench_projects_durable_goal_truth_without_new_authority() {
     );
     let agent = runtime.create_agent_identity(
         Some(&auth),
-        "goal-controller".into(),
-        "Goal Controller".into(),
-        None,
-        vec!["runtime-v2".into()],
-        "goal-workbench-controller".into(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: "goal-controller".into(),
+            display_name: "Goal Controller".into(),
+            description: None,
+            specialty_labels: vec!["runtime-v2".into()],
+            idempotency_key: "goal-workbench-controller".into(),
+        },
     );
     assert!(agent.success, "{:?}", agent.output);
     let agent_id = agent.output["agent"]["agent_id"]
@@ -99,10 +101,12 @@ async fn goal_workbench_projects_durable_goal_truth_without_new_authority() {
     assert!(task_link.success, "{:?}", task_link.output);
     let endpoint = runtime.attach_agent_endpoint(
         Some(&auth),
-        agent_id.clone(),
-        "ChatGPT".into(),
-        Some("goal-workbench-test".into()),
-        "goal-workbench-endpoint".into(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: agent_id.clone(),
+            host: "ChatGPT".into(),
+            client_attachment_id: Some("goal-workbench-test".into()),
+            idempotency_key: "goal-workbench-endpoint".into(),
+        },
     );
     assert!(endpoint.success, "{:?}", endpoint.output);
     let endpoint_id = endpoint.output["endpoint"]["endpoint_id"]

@@ -9,6 +9,12 @@ use crate::db::{
 use serde::Serialize;
 use serde_json::{json, to_value};
 use sha2::{Digest, Sha256};
+use webcodex_tool_contracts::tool_call::{
+    ConsumeAgentDeliveriesInput, CreateAgentIdentityInput, CreateConversationInput,
+    DetachAgentEndpointInput, ListAgentIdentitiesInput, ListAgentInboxInput,
+    ListConversationsInput, PostConversationMessageInput, ReadConversationInput,
+    RotateAgentContinuationEndpointInput, UpdateAgentIdentityInput,
+};
 
 const DEFAULT_COMMUNICATION_LIST_LIMIT: usize = 50;
 
@@ -289,11 +295,7 @@ impl ToolRuntime {
     pub(crate) fn create_agent_identity(
         &self,
         auth: Option<&AuthContext>,
-        handle: String,
-        display_name: String,
-        description: Option<String>,
-        specialty_labels: Vec<String>,
-        idempotency_key: String,
+        input: CreateAgentIdentityInput,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
@@ -305,11 +307,11 @@ impl ToolRuntime {
         match db.create_agent_identity(
             &principal,
             NewAgentIdentity {
-                handle,
-                display_name,
-                description: description.unwrap_or_default(),
-                specialty_labels,
-                idempotency_key,
+                handle: input.handle,
+                display_name: input.display_name,
+                description: input.description.unwrap_or_default(),
+                specialty_labels: input.specialty_labels,
+                idempotency_key: input.idempotency_key,
             },
         ) {
             Ok(result) => serialized_success(result),
@@ -320,9 +322,7 @@ impl ToolRuntime {
     pub(crate) fn list_agent_identities(
         &self,
         auth: Option<&AuthContext>,
-        agent_id: Option<String>,
-        offset: Option<usize>,
-        limit: Option<usize>,
+        input: ListAgentIdentitiesInput,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
@@ -333,9 +333,9 @@ impl ToolRuntime {
         };
         match db.list_agent_identities(
             &principal,
-            agent_id.as_deref(),
-            offset.unwrap_or(0),
-            communication_list_limit(limit),
+            input.agent_id.as_deref(),
+            input.offset.unwrap_or(0),
+            communication_list_limit(input.limit),
         ) {
             Ok(result) => {
                 let agents = result
@@ -371,16 +371,10 @@ impl ToolRuntime {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn update_agent_identity(
         &self,
         auth: Option<&AuthContext>,
-        agent_id: String,
-        expected_profile_revision: i64,
-        handle: Option<String>,
-        display_name: Option<String>,
-        description: Option<String>,
-        specialty_labels: Option<Vec<String>>,
+        input: UpdateAgentIdentityInput,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
@@ -391,13 +385,13 @@ impl ToolRuntime {
         };
         match db.update_agent_identity(
             &principal,
-            &agent_id,
-            expected_profile_revision,
+            &input.agent_id,
+            input.expected_profile_revision,
             AgentProfilePatch {
-                handle,
-                display_name,
-                description,
-                specialty_labels,
+                handle: input.handle,
+                display_name: input.display_name,
+                description: input.description,
+                specialty_labels: input.specialty_labels,
             },
         ) {
             Ok(result) => serialized_success(result),
@@ -405,14 +399,10 @@ impl ToolRuntime {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn attach_agent_endpoint(
         &self,
         auth: Option<&AuthContext>,
-        agent_id: String,
-        host: String,
-        client_attachment_id: Option<String>,
-        idempotency_key: String,
+        input: RotateAgentContinuationEndpointInput,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
@@ -424,14 +414,14 @@ impl ToolRuntime {
         match db.attach_agent_endpoint(
             &principal,
             NewAgentEndpoint {
-                agent_id,
-                host,
-                client_attachment_id,
+                agent_id: input.agent_id,
+                host: input.host,
+                client_attachment_id: input.client_attachment_id,
                 // Public/model/Console attachment cannot self-assert Host
                 // continuation capability. Only process-local adapter
                 // registration may transition this field to true.
                 wake_capable: false,
-                idempotency_key,
+                idempotency_key: input.idempotency_key,
             },
         ) {
             Ok(result) => {
@@ -1280,7 +1270,7 @@ impl ToolRuntime {
     pub(crate) fn detach_agent_endpoint(
         &self,
         auth: Option<&AuthContext>,
-        endpoint_id: String,
+        input: DetachAgentEndpointInput,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
@@ -1289,7 +1279,7 @@ impl ToolRuntime {
         let Some(db) = self.communication_db.as_ref() else {
             return communication_store_unavailable();
         };
-        match db.detach_agent_endpoint(&principal, &endpoint_id) {
+        match db.detach_agent_endpoint(&principal, &input.endpoint_id) {
             Ok(result) => {
                 if let Some(controller) = self.agent_continuations.as_ref() {
                     controller.endpoint_detached(
@@ -1310,9 +1300,7 @@ impl ToolRuntime {
     pub(crate) fn create_conversation(
         &self,
         auth: Option<&AuthContext>,
-        title: Option<String>,
-        agent_ids: Vec<String>,
-        idempotency_key: String,
+        input: CreateConversationInput,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
@@ -1324,9 +1312,9 @@ impl ToolRuntime {
         match db.create_conversation(
             &principal,
             NewConversation {
-                title,
-                agent_ids,
-                idempotency_key,
+                title: input.title,
+                agent_ids: input.agent_ids,
+                idempotency_key: input.idempotency_key,
             },
         ) {
             Ok(result) => serialized_success(result),
@@ -1334,88 +1322,73 @@ impl ToolRuntime {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn list_conversations(
         &self,
         auth: Option<&AuthContext>,
-        agent_id: Option<String>,
-        endpoint_id: Option<String>,
-        expected_controller_generation: Option<i64>,
-        offset: Option<usize>,
-        limit: Option<usize>,
+        input: ListConversationsInput,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
             Err(result) => return result,
         };
-        let access =
-            match access_from_endpoint(agent_id, endpoint_id, expected_controller_generation) {
-                Ok(access) => access,
-                Err(result) => return result,
-            };
+        let access = match access_from_endpoint(
+            input.agent_id,
+            input.endpoint_id,
+            input.expected_controller_generation,
+        ) {
+            Ok(access) => access,
+            Err(result) => return result,
+        };
         let Some(db) = self.communication_db.as_ref() else {
             return communication_store_unavailable();
         };
         match db.list_conversations(
             &principal,
             &access,
-            offset.unwrap_or(0),
-            communication_list_limit(limit),
+            input.offset.unwrap_or(0),
+            communication_list_limit(input.limit),
         ) {
             Ok(result) => serialized_success(result),
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn read_conversation(
         &self,
         auth: Option<&AuthContext>,
-        conversation_id: String,
-        agent_id: Option<String>,
-        endpoint_id: Option<String>,
-        expected_controller_generation: Option<i64>,
-        after_seq: Option<i64>,
-        limit: Option<usize>,
+        input: ReadConversationInput,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
             Err(result) => return result,
         };
-        let access =
-            match access_from_endpoint(agent_id, endpoint_id, expected_controller_generation) {
-                Ok(access) => access,
-                Err(result) => return result,
-            };
+        let access = match access_from_endpoint(
+            input.agent_id,
+            input.endpoint_id,
+            input.expected_controller_generation,
+        ) {
+            Ok(access) => access,
+            Err(result) => return result,
+        };
         let Some(db) = self.communication_db.as_ref() else {
             return communication_store_unavailable();
         };
         match db.read_conversation(
             &principal,
             &access,
-            &conversation_id,
-            after_seq.unwrap_or(0),
-            communication_list_limit(limit),
+            &input.conversation_id,
+            input.after_seq.unwrap_or(0),
+            communication_list_limit(input.limit),
         ) {
             Ok(result) => serialized_success(result),
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn post_conversation_message(
         &self,
         auth: Option<&AuthContext>,
-        conversation_id: String,
-        body: String,
-        author_agent_id: Option<String>,
-        endpoint_id: Option<String>,
-        expected_controller_generation: Option<i64>,
-        recipient_agent_ids: Option<Vec<String>>,
-        reply_to: Option<String>,
-        idempotency_key: Option<String>,
-        wake_reply_id: Option<String>,
-        reply_operation_index: Option<i64>,
+        input: PostConversationMessageInput,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
@@ -1427,16 +1400,16 @@ impl ToolRuntime {
         match db.post_conversation_message(
             &principal,
             NewConversationMessage {
-                conversation_id,
-                body,
-                author_agent_id,
-                endpoint_id,
-                expected_controller_generation,
-                recipient_agent_ids,
-                reply_to,
-                idempotency_key,
-                wake_reply_id,
-                reply_operation_index,
+                conversation_id: input.conversation_id,
+                body: input.body,
+                author_agent_id: input.author_agent_id,
+                endpoint_id: input.endpoint_id,
+                expected_controller_generation: input.expected_controller_generation,
+                recipient_agent_ids: input.recipient_agent_ids,
+                reply_to: input.reply_to,
+                idempotency_key: input.idempotency_key,
+                wake_reply_id: input.wake_reply_id,
+                reply_operation_index: input.reply_operation_index,
             },
         ) {
             Ok(result) => {
@@ -1464,11 +1437,7 @@ impl ToolRuntime {
     pub(crate) fn list_agent_inbox(
         &self,
         auth: Option<&AuthContext>,
-        agent_id: String,
-        endpoint_id: String,
-        expected_controller_generation: i64,
-        after_delivery_order: Option<i64>,
-        limit: Option<usize>,
+        input: ListAgentInboxInput,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
@@ -1479,11 +1448,11 @@ impl ToolRuntime {
         };
         match db.list_agent_inbox(
             &principal,
-            &agent_id,
-            &endpoint_id,
-            expected_controller_generation,
-            after_delivery_order.unwrap_or(0),
-            communication_list_limit(limit),
+            &input.agent_id,
+            &input.endpoint_id,
+            input.expected_controller_generation,
+            input.after_delivery_order.unwrap_or(0),
+            communication_list_limit(input.limit),
         ) {
             Ok(result) => serialized_success(result),
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
@@ -1493,10 +1462,7 @@ impl ToolRuntime {
     pub(crate) fn consume_agent_deliveries(
         &self,
         auth: Option<&AuthContext>,
-        agent_id: String,
-        endpoint_id: String,
-        expected_controller_generation: i64,
-        delivery_ids: Vec<String>,
+        input: ConsumeAgentDeliveriesInput,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
@@ -1507,10 +1473,10 @@ impl ToolRuntime {
         };
         match db.consume_agent_deliveries(
             &principal,
-            &agent_id,
-            &endpoint_id,
-            expected_controller_generation,
-            delivery_ids,
+            &input.agent_id,
+            &input.endpoint_id,
+            input.expected_controller_generation,
+            input.delivery_ids,
         ) {
             Ok(result) => serialized_success(result),
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
@@ -1762,11 +1728,13 @@ mod tests {
 
         let created_agent = runtime.create_agent_identity(
             Some(&bob),
-            "bob-agent".to_string(),
-            "Bob Agent".to_string(),
-            Some("private profile".to_string()),
-            vec!["privacy".to_string()],
-            "bob-agent-create".to_string(),
+            CreateAgentIdentityInput {
+                handle: "bob-agent".to_string(),
+                display_name: "Bob Agent".to_string(),
+                description: Some("private profile".to_string()),
+                specialty_labels: vec!["privacy".to_string()],
+                idempotency_key: "bob-agent-create".to_string(),
+            },
         );
         assert!(created_agent.success, "{:?}", created_agent.error);
         let bob_agent_id = created_agent.output["agent"]["agent_id"]
@@ -1777,29 +1745,35 @@ mod tests {
 
         let foreign_agent = runtime.update_agent_identity(
             Some(&alice),
-            bob_agent_id.clone(),
-            1,
-            None,
-            None,
-            Some("probe".to_string()),
-            None,
+            UpdateAgentIdentityInput {
+                agent_id: bob_agent_id.clone(),
+                expected_profile_revision: 1,
+                handle: None,
+                display_name: None,
+                description: Some("probe".to_string()),
+                specialty_labels: None,
+            },
         );
         let missing_agent_result = runtime.update_agent_identity(
             Some(&alice),
-            missing_agent,
-            1,
-            None,
-            None,
-            Some("probe".to_string()),
-            None,
+            UpdateAgentIdentityInput {
+                agent_id: missing_agent,
+                expected_profile_revision: 1,
+                handle: None,
+                display_name: None,
+                description: Some("probe".to_string()),
+                specialty_labels: None,
+            },
         );
         assert_same_public_failure(foreign_agent, missing_agent_result, "agent_not_found");
 
         let created_conversation = runtime.create_conversation(
             Some(&bob),
-            Some("Bob private room".to_string()),
-            vec![bob_agent_id],
-            "bob-room-create".to_string(),
+            CreateConversationInput {
+                title: Some("Bob private room".to_string()),
+                agent_ids: vec![bob_agent_id],
+                idempotency_key: "bob-room-create".to_string(),
+            },
         );
         assert!(
             created_conversation.success,
@@ -1814,21 +1788,25 @@ mod tests {
         let missing_conversation = "wc_conv_iIiIiIiIiIiIiIiI".to_string();
         let foreign_conversation = runtime.read_conversation(
             Some(&alice),
-            bob_conversation_id,
-            None,
-            None,
-            None,
-            Some(0),
-            Some(10),
+            ReadConversationInput {
+                conversation_id: bob_conversation_id,
+                agent_id: None,
+                endpoint_id: None,
+                expected_controller_generation: None,
+                after_seq: Some(0),
+                limit: Some(10),
+            },
         );
         let missing_conversation_result = runtime.read_conversation(
             Some(&alice),
-            missing_conversation,
-            None,
-            None,
-            None,
-            Some(0),
-            Some(10),
+            ReadConversationInput {
+                conversation_id: missing_conversation,
+                agent_id: None,
+                endpoint_id: None,
+                expected_controller_generation: None,
+                after_seq: Some(0),
+                limit: Some(10),
+            },
         );
         assert_same_public_failure(
             foreign_conversation,

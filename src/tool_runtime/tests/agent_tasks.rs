@@ -30,11 +30,13 @@ fn runtime_with_db() -> (tempfile::TempDir, Arc<crate::db::Database>, ToolRuntim
 fn create_agent(runtime: &ToolRuntime, handle: &str) -> String {
     let result = runtime.create_agent_identity(
         None,
-        handle.to_string(),
-        format!("{handle} display"),
-        None,
-        Vec::new(),
-        format!("create-{handle}"),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: handle.to_string(),
+            display_name: format!("{handle} display"),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: format!("create-{handle}"),
+        },
     );
     assert!(result.success, "{:?}", result.output);
     result.output["agent"]["agent_id"]
@@ -630,11 +632,13 @@ async fn coding_run_attempt_ref_executes_then_reconciles_from_reopened_db_and_fr
     .await;
     let agent_result = runtime.create_agent_identity(
         Some(&auth),
-        "a4a-runtime-agent".to_string(),
-        "A4a Runtime Agent".to_string(),
-        None,
-        Vec::new(),
-        "a4a-runtime-agent-create".to_string(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: "a4a-runtime-agent".to_string(),
+            display_name: "A4a Runtime Agent".to_string(),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: "a4a-runtime-agent-create".to_string(),
+        },
     );
     assert!(agent_result.success, "{:?}", agent_result.output);
     let assignee = agent_result.output["agent"]["agent_id"]
@@ -1088,11 +1092,13 @@ fn foreign_runtime_task_ids_are_existence_hidden_and_project_reference_grants_no
     let alice = auth_context(Some("alice"), false);
     let bob_agent = runtime.create_agent_identity(
         Some(&bob),
-        "bob-task-agent".to_string(),
-        "Bob Task Agent".to_string(),
-        None,
-        Vec::new(),
-        "bob-task-agent-create".to_string(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: "bob-task-agent".to_string(),
+            display_name: "Bob Task Agent".to_string(),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: "bob-task-agent-create".to_string(),
+        },
     );
     assert!(bob_agent.success);
     let bob_agent_id = bob_agent.output["agent"]["agent_id"]

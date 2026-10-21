@@ -1,7 +1,7 @@
 use super::RunnerCapabilityRequirement::{GitOrShell, InternalPosixScript, OwnerOnly};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, def, model_spec, permission_risk, require_all_scopes,
+    adaptive_runtime_direct, control_def, def, model_spec, permission_risk, require_all_scopes,
     requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_WRITE,
     TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION,
 };
@@ -88,13 +88,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Read all retained external reports for an exact Session/Project (at most 256). Reports are untrusted adapter claims, separate from native Job and validation evidence. They never establish task completion or authorize replaying work. coverage remains incomplete until a durable source sequence can prove gaps/order.",
     )),
 
-    def(
+    control_def(
         "start_session",
         super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelHidden,
         TOOL_CATEGORY_SESSION,
-        None,
-        TOOL_PROVIDER_CONTROL,
         super::ToolSemanticContract {
             effect: super::ToolEffect::Mutate,
             risk: super::ToolRisk::WorkflowManage,
@@ -103,10 +101,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         },
         Some(RUNTIME_READ),
         false,
-        NoPath,
-        false,
-        false,
-        super::ToolSessionEvidencePolicy::NONE,
     ),
     adaptive_runtime_direct(
         model_spec(
@@ -322,13 +316,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         super::ToolActivityInteraction::NonMeaningful,
     ),
     requires_explicit_business_session(model_spec(
-        def(
+        control_def(
             "read_session_summary",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -337,10 +329,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             },
             Some(RUNTIME_READ),
             false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
         ),
         "Return a bounded structured summary from the session ledger for an explicit session_id: recorded events, message-board summary, task mode, guards, and lifecycle. Uses durable ledger data where session persistence is configured.",
     )),
@@ -456,7 +444,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )),
 
     requires_explicit_business_session(model_spec(
-        def(
+        control_def(
             "list_session_messages",
             super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("success"),
@@ -465,8 +453,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ]),
             ModelVisible,
             TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -475,15 +461,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             },
             Some(RUNTIME_READ),
             false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
         ),
         "Read bounded session-local messages with exact filters. For an executable todo, prefer get_session_assignment so the todo, all retained direct replies, and its completion fence come from one store snapshot.",
     )),
     requires_explicit_business_session(model_spec(
-        def(
+        control_def(
             "get_session_assignment",
             super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("success"),
@@ -495,8 +477,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ]),
             ModelVisible,
             TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -505,15 +485,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             },
             Some(RUNTIME_READ),
             false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
         ),
         "Atomically read one exact open todo plus all retained direct replies and return the opaque assignment_fence required by complete_session_message. Unrelated Session traffic and ACK bookkeeping do not stale it; incomplete retained assignment history fails closed.",
     )),
     requires_explicit_business_session(model_spec(
-        def(
+        control_def(
             "observe_session_messages",
             super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("success"),
@@ -526,8 +502,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ]),
             ModelVisible,
             TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -536,10 +510,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             },
             Some(RUNTIME_READ),
             false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
         ),
         "Observe Session message-state delta after an opaque durable cursor. No token establishes the current baseline and returns no history; token calls may wait once for change. Reports retention loss; never a subscription, delivery receipt, or model-context proof.",
     )),
@@ -611,7 +581,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )),
     adaptive_runtime_direct(
         requires_explicit_business_session(model_spec(
-            def(
+            control_def(
                 "read_session_discussion_summary",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("success"),
@@ -621,59 +591,47 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolAuditResultField::array_len("recent_answer_count", "recent_answers"),
                     super::ToolAuditResultField::array_len("recent_completion_count", "recent_completions"),
                 ]),
-            ModelVisible,
-            TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(RUNTIME_READ),
-            false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
+                ModelVisible,
+                TOOL_CATEGORY_SESSION,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(RUNTIME_READ),
+                false,
+            ),
         "Return a bounded structured aggregate of session-local discussion from the recorded session ledger. Does not call an LLM or generate natural-language summaries.",
         )),
         15,
         super::ToolDirectReason::CoreWorkflow,
     ),
     requires_explicit_business_session(model_spec(
-            def(
+            control_def(
                 "read_session_handoff",
-            super::ToolAuditPolicy::typed_fields(&[
-                super::ToolAuditResultField::value("session_id"),
-                super::ToolAuditResultField::value("project"),
-                super::ToolAuditResultField::value("lifecycle"),
-                super::ToolAuditResultField::value("counts"),
-                super::ToolAuditResultField::array_len("open_todo_count", "open_todos"),
-                super::ToolAuditResultField::array_len("recent_answer_count", "recent_answers"),
-                super::ToolAuditResultField::array_len("recent_completion_count", "recent_completions"),
-                super::ToolAuditResultField::value("diagnostic"),
-                super::ToolAuditResultField::value("error_kind"),
-            ]),
-            ModelVisible,
-            TOOL_CATEGORY_SESSION,
-            None,
-            TOOL_PROVIDER_CONTROL,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(RUNTIME_READ),
-            false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        )
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("session_id"),
+                    super::ToolAuditResultField::value("project"),
+                    super::ToolAuditResultField::value("lifecycle"),
+                    super::ToolAuditResultField::value("counts"),
+                    super::ToolAuditResultField::array_len("open_todo_count", "open_todos"),
+                    super::ToolAuditResultField::array_len("recent_answer_count", "recent_answers"),
+                    super::ToolAuditResultField::array_len("recent_completion_count", "recent_completions"),
+                    super::ToolAuditResultField::value("diagnostic"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
+                ModelVisible,
+                TOOL_CATEGORY_SESSION,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(RUNTIME_READ),
+                false,
+            )
         .with_activity(
             super::ToolActivityPresentation::Support,
             super::ToolActivityInteraction::Meaningful,

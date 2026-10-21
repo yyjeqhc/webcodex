@@ -510,13 +510,13 @@ fn communication_audit_omits_profile_and_message_bodies() {
     const PRIVATE_BODY: &str = "PRIVATE CONVERSATION BODY";
     const PRIVATE_KEY: &str = "PRIVATE_IDEMPOTENCY_KEY";
 
-    let create = ToolCall::CreateAgentIdentity {
+    let create = ToolCall::CreateAgentIdentity(webcodex_tool_contracts::CreateAgentIdentityInput {
         handle: PRIVATE_HANDLE.to_string(),
         display_name: PRIVATE_DISPLAY.to_string(),
         description: Some(PRIVATE_DESCRIPTION.to_string()),
         specialty_labels: vec![PRIVATE_LABEL.to_string()],
         idempotency_key: PRIVATE_KEY.to_string(),
-    }
+    })
     .session_log_arguments();
     let create_text = create.to_string();
     for private in [
@@ -535,19 +535,20 @@ fn communication_audit_omits_profile_and_message_bodies() {
     assert_eq!(create["specialty_label_count"], 1);
     assert_eq!(create["idempotency_key_present"], true);
 
-    let post = ToolCall::PostConversationMessage {
-        conversation_id: "wc_conv_iavN7wEjRWeJq83v".to_string(),
-        body: PRIVATE_BODY.to_string(),
-        author_agent_id: None,
-        endpoint_id: None,
-        expected_controller_generation: None,
-        recipient_agent_ids: Some(vec!["wc_dagent_iavN7wEjRWeJq83v".to_string()]),
-        reply_to: None,
-        idempotency_key: Some(PRIVATE_KEY.to_string()),
-        wake_reply_id: None,
-        reply_operation_index: None,
-    }
-    .session_log_arguments();
+    let post =
+        ToolCall::PostConversationMessage(webcodex_tool_contracts::PostConversationMessageInput {
+            conversation_id: "wc_conv_iavN7wEjRWeJq83v".to_string(),
+            body: PRIVATE_BODY.to_string(),
+            author_agent_id: None,
+            endpoint_id: None,
+            expected_controller_generation: None,
+            recipient_agent_ids: Some(vec!["wc_dagent_iavN7wEjRWeJq83v".to_string()]),
+            reply_to: None,
+            idempotency_key: Some(PRIVATE_KEY.to_string()),
+            wake_reply_id: None,
+            reply_operation_index: None,
+        })
+        .session_log_arguments();
     let post_text = post.to_string();
     assert!(!post_text.contains(PRIVATE_BODY));
     assert!(!post_text.contains(PRIVATE_KEY));

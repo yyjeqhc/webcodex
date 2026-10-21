@@ -1,8 +1,8 @@
 use super::RunnerCapabilityRequirement::{FileRead, SkillManagement};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, def, model_spec, require_all_scopes, ToolDefinition,
-    ToolOperatorExtensionFamily, TOOL_CATEGORY_SKILL,
+    adaptive_runtime_direct, def, model_spec, require_all_scopes, runner_project_read_def,
+    ToolDefinition, ToolOperatorExtensionFamily, TOOL_CATEGORY_SKILL,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
@@ -16,7 +16,7 @@ use crate::metadata::{
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         model_spec(
-            def(
+            runner_project_read_def(
                 "load_skill",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("project"),
@@ -54,21 +54,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolAuditResultField::value("error_kind"),
                     super::ToolAuditResultField::value("state_changed"),
                 ])),
-                ModelVisible,
                 TOOL_CATEGORY_SKILL,
-                Some(FileRead),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Observe,
-                    risk: Read,
-                    approval: super::ToolApprovalPolicy::None,
-                    idempotency: super::ToolIdempotency::PureRead,
-                },
-                Some(PROJECT_READ),
-                true,
+                FileRead,
                 NoPath,
-                false,
-                false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
             "Load one uniquely named Skill by exact Unicode case folding. Returns descriptor, bounded SKILL.md, and revisions read-only. Reuse a complete Skill body and revisions retained for the same Project; a new task/Session alone does not require reloading. Refresh for changed revisions, missing/truncated body, context loss/uncertainty, or user request. Catalog metadata is not the Skill body. Cite project_path with source lines for Project Skills; skill_path is package-relative for further Skill reads. Runner Skills have no project_path; never invent one. Guidance grants no authority. Missing, ambiguous, or truncated discovery fails closed; Skill resources are never executed.",

@@ -17,7 +17,10 @@ fn validate_coding_project_source_shape(tool_name: &str, arguments: &Value) -> R
             .and_then(Value::as_str)
             .is_some_and(|value| value.trim().is_empty())
         {
-            return Err(coding_project_source_error(tool_name, &format!("{field} must not be empty")));
+            return Err(coding_project_source_error(
+                tool_name,
+                &format!("{field} must not be empty"),
+            ));
         }
     }
     if let Some(path) = arguments.get("path").and_then(Value::as_str) {
@@ -36,18 +39,27 @@ fn validate_coding_project_source_shape(tool_name: &str, arguments: &Value) -> R
         return if conflicts.is_empty() {
             Ok(())
         } else {
-            Err(coding_project_source_error(tool_name, &format!("conflicting fields project and {}", conflicts.join(", "))))
+            Err(coding_project_source_error(
+                tool_name,
+                &format!("conflicting fields project and {}", conflicts.join(", ")),
+            ))
         };
     }
     if path {
         return if client_id {
             Ok(())
         } else {
-            Err(coding_project_source_error(tool_name, "missing client_id required with path"))
+            Err(coding_project_source_error(
+                tool_name,
+                "missing client_id required with path",
+            ))
         };
     }
     if client_id {
-        return Err(coding_project_source_error(tool_name, "missing path required with client_id"));
+        return Err(coding_project_source_error(
+            tool_name,
+            "missing path required with client_id",
+        ));
     }
     // A Session is an exact continuation selector, not a worktree source or
     // permission to infer a current Project. The runtime authorizes its binding.
@@ -526,10 +538,10 @@ impl ToolCall {
             Self::ReconcileAgentTaskCodingRun { .. } => "reconcile_agent_task_coding_run",
             Self::HeartbeatAgentTaskAttempt { .. } => "heartbeat_agent_task_attempt",
             Self::CompleteAgentTaskAttempt { .. } => "complete_agent_task_attempt",
-            Self::CreateAgentIdentity { .. } => "create_agent_identity",
-            Self::ListAgentIdentities { .. } => "list_agent_identities",
-            Self::UpdateAgentIdentity { .. } => "update_agent_identity",
-            Self::RotateAgentContinuationEndpoint { .. } => "rotate_agent_continuation_endpoint",
+            Self::CreateAgentIdentity(_) => "create_agent_identity",
+            Self::ListAgentIdentities(_) => "list_agent_identities",
+            Self::UpdateAgentIdentity(_) => "update_agent_identity",
+            Self::RotateAgentContinuationEndpoint(_) => "rotate_agent_continuation_endpoint",
 
             Self::PresentAgentContinuation { .. } => "present_agent_continuation",
             Self::AgentContinuationBind { .. } => "bind_agent_continuation",
@@ -539,13 +551,13 @@ impl ToolCall {
             Self::AgentContinuationWakePrepare { .. } => "prepare_agent_continuation_wake",
             Self::AgentContinuationWakeFinish { .. } => "finish_agent_continuation_wake",
             Self::AgentContinuationUnbind { .. } => "unbind_agent_continuation",
-            Self::DetachAgentEndpoint { .. } => "detach_agent_endpoint",
-            Self::CreateConversation { .. } => "create_conversation",
-            Self::ListConversations { .. } => "list_conversations",
-            Self::ReadConversation { .. } => "read_conversation",
-            Self::PostConversationMessage { .. } => "post_conversation_message",
-            Self::ListAgentInbox { .. } => "list_agent_inbox",
-            Self::ConsumeAgentDeliveries { .. } => "consume_agent_deliveries",
+            Self::DetachAgentEndpoint(_) => "detach_agent_endpoint",
+            Self::CreateConversation(_) => "create_conversation",
+            Self::ListConversations(_) => "list_conversations",
+            Self::ReadConversation(_) => "read_conversation",
+            Self::PostConversationMessage(_) => "post_conversation_message",
+            Self::ListAgentInbox(_) => "list_agent_inbox",
+            Self::ConsumeAgentDeliveries(_) => "consume_agent_deliveries",
             Self::BootstrapAgentConversation { .. } => "bootstrap_agent_conversation",
             Self::ConsumeAgentWake { .. } => "consume_agent_wake",
             Self::MemorySearch { .. } => "search_memory",

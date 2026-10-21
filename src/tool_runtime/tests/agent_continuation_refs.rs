@@ -19,11 +19,13 @@ fn create_agent(
 ) -> String {
     let result = runtime.create_agent_identity(
         auth,
-        format!("agent-{key}"),
-        format!("Agent {key}"),
-        None,
-        Vec::new(),
-        key.to_string(),
+        webcodex_tool_contracts::CreateAgentIdentityInput {
+            handle: format!("agent-{key}"),
+            display_name: format!("Agent {key}"),
+            description: None,
+            specialty_labels: Vec::new(),
+            idempotency_key: key.to_string(),
+        },
     );
     assert!(result.success, "{:?}", result.output);
     result.output["agent"]["agent_id"]
@@ -40,10 +42,12 @@ fn rotate(
 ) -> serde_json::Value {
     let result = runtime.attach_agent_endpoint(
         auth,
-        agent_id.to_string(),
-        "ChatGPT".to_string(),
-        None,
-        key.to_string(),
+        webcodex_tool_contracts::RotateAgentContinuationEndpointInput {
+            agent_id: agent_id.to_string(),
+            host: "ChatGPT".to_string(),
+            client_attachment_id: None,
+            idempotency_key: key.to_string(),
+        },
     );
     assert!(result.success, "{:?}", result.output);
     result.output
@@ -88,7 +92,14 @@ fn agent_continuation_ref_presents_the_pinned_tuple_and_fails_closed() {
     let first_generation = first["endpoint"]["controller_generation"].as_i64().unwrap();
     assert!(first_ref.starts_with("~ac"));
 
-    let listed = runtime.list_agent_identities(Some(&alice), Some(agent_id.clone()), None, None);
+    let listed = runtime.list_agent_identities(
+        Some(&alice),
+        webcodex_tool_contracts::ListAgentIdentitiesInput {
+            agent_id: Some(agent_id.clone()),
+            offset: None,
+            limit: None,
+        },
+    );
     assert!(listed.success, "{:?}", listed.output);
     assert_eq!(
         listed.output["agents"][0]["agent_continuation_ref"],
@@ -182,7 +193,14 @@ fn agent_continuation_ref_presents_the_pinned_tuple_and_fails_closed() {
         current.output["agent_continuation"]["endpoint_id"],
         second_endpoint
     );
-    let relisted = runtime.list_agent_identities(Some(&alice), Some(agent_id.clone()), None, None);
+    let relisted = runtime.list_agent_identities(
+        Some(&alice),
+        webcodex_tool_contracts::ListAgentIdentitiesInput {
+            agent_id: Some(agent_id.clone()),
+            offset: None,
+            limit: None,
+        },
+    );
     assert_eq!(
         relisted.output["agents"][0]["agent_continuation_ref"],
         second_ref
@@ -264,12 +282,24 @@ fn agent_continuation_ref_presents_the_pinned_tuple_and_fails_closed() {
         "a workflow session must not join the continuation selector"
     );
 
-    let detached = runtime.detach_agent_endpoint(Some(&alice), second_endpoint.to_string());
+    let detached = runtime.detach_agent_endpoint(
+        Some(&alice),
+        webcodex_tool_contracts::DetachAgentEndpointInput {
+            endpoint_id: second_endpoint.to_string(),
+        },
+    );
     assert!(detached.success, "{:?}", detached.output);
     assert!(detached.output["agent_continuation_ref"].is_null());
     let after_detach = present_ref(&runtime, Some(&alice), &second_ref);
     assert_eq!(after_detach.output["error_kind"], "endpoint_detached");
-    let unattached = runtime.list_agent_identities(Some(&alice), Some(agent_id), None, None);
+    let unattached = runtime.list_agent_identities(
+        Some(&alice),
+        webcodex_tool_contracts::ListAgentIdentitiesInput {
+            agent_id: Some(agent_id),
+            offset: None,
+            limit: None,
+        },
+    );
     assert!(unattached.output["agents"][0]["agent_continuation_ref"].is_null());
 }
 

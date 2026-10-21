@@ -1,35 +1,44 @@
 use super::ToolVisibility::ModelVisible;
 use super::{
-    adaptive_runtime_direct, def, model_spec, ToolDefinition, TOOL_CATEGORY_PROJECT,
+    adaptive_runtime_direct, control_def, model_spec, ToolDefinition, TOOL_CATEGORY_PROJECT,
     TOOL_CATEGORY_RUNTIME,
 };
 use crate::metadata::{
-    ToolPathHint::None as NoPath,
     ToolRisk::{ProjectWrite, Read},
-    PROJECT_READ, PROJECT_WRITE, RUNTIME_READ, TOOL_PROVIDER_CONTROL,
+    PROJECT_READ, PROJECT_WRITE, RUNTIME_READ,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
-        def("resolve_workspace", super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
+        control_def(
+            "resolve_workspace",
+            super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
             super::ToolAuditSessionInputPolicy::OmitTopLevel(&["path", "query", "client_id"])),
-            ModelVisible, TOOL_CATEGORY_PROJECT, None, TOOL_PROVIDER_CONTROL,
+            ModelVisible,
+            TOOL_CATEGORY_PROJECT,
             super::ToolSemanticContract { effect: super::ToolEffect::Observe, risk: Read,
-                approval: super::ToolApprovalPolicy::None, idempotency: super::ToolIdempotency::PureRead },
-            Some(PROJECT_READ), false, NoPath, false, false, super::ToolSessionEvidencePolicy::NONE),
+            approval: super::ToolApprovalPolicy::None, idempotency: super::ToolIdempotency::PureRead },
+            Some(PROJECT_READ),
+            false,
+        ),
         "Locate a registered workspace by exact Runner plus path or literal query; no Session or registration is created. Returns one resolved workspace or bounded ambiguous candidates, never the first fuzzy match. Git fields are cached Runner inventory, not current filesystem proof; incomplete inventory stays explicit. Starting or resuming work is a separate action. Gateway via call_runtime_tool.",
     ).with_discovery_keywords(&["locate", "resolve", "registered", "workspace", "path", "project", "定位", "已注册", "工作区", "路径", "项目"]),
     model_spec(
-        def("unregister_projects", super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible, TOOL_CATEGORY_PROJECT, None, TOOL_PROVIDER_CONTROL,
+        control_def(
+            "unregister_projects",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
+            ModelVisible,
+            TOOL_CATEGORY_PROJECT,
             super::ToolSemanticContract { effect: super::ToolEffect::Mutate, risk: ProjectWrite,
-                approval: super::ToolApprovalPolicy::Standard, idempotency: super::ToolIdempotency::NonIdempotent },
-            Some(PROJECT_WRITE), false, NoPath, true, false, super::ToolSessionEvidencePolicy::NONE),
+            approval: super::ToolApprovalPolicy::Standard, idempotency: super::ToolIdempotency::NonIdempotent },
+            Some(PROJECT_WRITE),
+            true,
+        ),
         "Preview or batch-remove (unregister) up to 16 explicit Project registrations with exact revisions; never delete files, directories, branches or Session history. Default dry_run=true inspects current registrations, not a lease. Execution requires dry_run=false and confirm=true; each item uses canonical owner/CAS/active-Job checks. Sequential, non-atomic, per-item outcomes; uncertainty stops remaining items. Never replay the batch blindly; reconcile exact failed or unknown items.",
     ).with_discovery_keywords(&["batch", "unregister", "remove", "registrations", "projects", "批量", "注销", "移除", "注册", "项目"]),
 
     model_spec(
-        def(
+        control_def(
             "list_projects",
             super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
                 super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
@@ -40,8 +49,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ),
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
-            None,
-            TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -50,10 +57,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             },
             Some(PROJECT_READ),
             false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
         )
         .with_activity(
             super::ToolActivityPresentation::Support,
@@ -62,13 +65,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "List registered Projects on an exact Runner; use resolve_workspace for unique path/name selection, or include_git_summary for cached maintenance facts. Results keep canonical Runtime Project ids and, when stable root identity is available, also issue a short principal-scoped project_ref for later model calls. project_ref is convenience only and grants no authority. When Runner/Project identity is known, pass exact client_id/project filters; use bounded query and summary_only instead of reading the full registry.",
     ),
     model_spec(
-        def(
+        control_def(
             "register_project",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
-            None,
-            TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
@@ -76,22 +77,16 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 idempotency: super::ToolIdempotency::NonIdempotent,
             },
             Some(PROJECT_WRITE),
-            false,
-            NoPath,
             true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
         ),
         "Register an existing directory, including a non-Git or ad-hoc workspace, as a Project on one Runner. Successful onboarding returns the canonical Runtime Project id and a Server-issued project_ref when a stable root identity is available. Use this when the directory already exists; policy still bounds allowed paths.",
     ).with_discovery_keywords(&["register", "existing", "project", "directory", "注册", "现有", "项目", "目录"]),
     model_spec(
-        def(
+        control_def(
             "unregister_project",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
-            None,
-            TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
@@ -99,22 +94,16 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 idempotency: super::ToolIdempotency::NonIdempotent,
             },
             Some(PROJECT_WRITE),
-            false,
-            NoPath,
             true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
         ),
         "Unregister one exact Runner project using the revision from list_projects. Removes registration only; never deletes source, worktree, or branch. Re-list after an indeterminate outcome.",
     ),
     model_spec(
-        def(
+        control_def(
             "create_project",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
-            None,
-            TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Mutate,
                 risk: ProjectWrite,
@@ -122,24 +111,18 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 idempotency: super::ToolIdempotency::NonIdempotent,
             },
             Some(PROJECT_WRITE),
-            false,
-            NoPath,
             true,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
         ),
         "Create a directory on one Runner and register it as a Project. Successful onboarding returns the canonical Runtime Project id and a Server-issued project_ref when a stable root identity is available. Use this for a new workspace; existing directories belong on the registration path.",
     ).with_discovery_keywords(&["create", "new", "project", "directory", "scaffold", "创建", "新建", "项目", "目录"]),
     model_spec(
-        def(
+        control_def(
             "list_runners",
             super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
                 super::ToolAuditSessionInputPolicy::OmitTopLevel(&["client_id", "client_ids"]),
             ),
             ModelVisible,
             TOOL_CATEGORY_RUNTIME,
-            None,
-            TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
                 effect: super::ToolEffect::Observe,
                 risk: Read,
@@ -148,10 +131,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             },
             Some(RUNTIME_READ),
             false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
         )
         .with_activity(
             super::ToolActivityPresentation::Support,
@@ -161,15 +140,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     adaptive_runtime_direct(
         model_spec(
-            def(
+            control_def(
                 "get_runtime_status",
                 super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
                     super::ToolAuditSessionInputPolicy::OmitTopLevel(&["client_id"]),
                 ),
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
-                None,
-                TOOL_PROVIDER_CONTROL,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
@@ -178,10 +155,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 },
                 Some(RUNTIME_READ),
                 false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
             )
             .with_activity(
                 super::ToolActivityPresentation::Support,
@@ -196,13 +169,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         super::ToolDirectReason::CoreWorkflow,
     ),
     model_spec(
-            def(
+            control_def(
                 "read_current_window_activity",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
-                None,
-                TOOL_PROVIDER_CONTROL,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
@@ -211,10 +182,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 },
                 Some(RUNTIME_READ),
                 false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
             )
             .with_activity(
                 super::ToolActivityPresentation::Support,
@@ -224,13 +191,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ),
     adaptive_runtime_direct(
         model_spec(
-            def(
+            control_def(
                 "read_tool_manifest",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
-                None,
-                TOOL_PROVIDER_CONTROL,
                 super::ToolSemanticContract {
                     effect: super::ToolEffect::Observe,
                     risk: Read,
@@ -239,10 +204,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 },
                 Some(RUNTIME_READ),
                 false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
             )
             .with_activity(
                 super::ToolActivityPresentation::Support,

@@ -327,6 +327,13 @@ fn project_build_schema_is_closed_bounded_and_has_no_raw_execution_fields() {
         &schema
     )
     .is_ok());
+    assert!(test_support::validate_schema_instance(
+        &serde_json::json!({"project":"demo","adapter":"rust","dependency_resolution_policy":"offline"}), &schema).is_ok());
+    assert!(test_support::validate_schema_instance(
+        &serde_json::json!({"project":"demo","dependency_resolution_policy":"online"}),
+        &schema
+    )
+    .is_err());
     for forbidden in [
         "executable",
         "args",

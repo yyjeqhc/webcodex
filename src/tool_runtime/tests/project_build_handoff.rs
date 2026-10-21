@@ -37,6 +37,7 @@ fn call() -> ToolCall {
         adapter: Some(ProjectBuildAdapter::Rust),
         scope: None,
         dependency_policy: None,
+        dependency_resolution_policy: None,
         timeout_secs: Some(60),
     }
 }
@@ -216,6 +217,41 @@ async fn project_build_pending_projection_returns_the_same_durable_job() {
     .await;
     let job = runtime.runner_registry.get_job(&job_id).await.unwrap();
     assert_eq!(job.kind, "project_build");
+}
+
+#[tokio::test]
+async fn rust_project_build_offline_policy_is_fenced_before_runner_plan() {
+    let runtime = runtime_with_agent_project(CLIENT);
+    register_agent(
+        &runtime,
+        CLIENT,
+        None,
+        RunnerCapabilities {
+            project_build_v1: true,
+            project_dependency_resolution_offline_v1: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    let mut input = call();
+    if let ToolCall::ProjectBuild {
+        dependency_resolution_policy,
+        ..
+    } = &mut input
+    {
+        *dependency_resolution_policy =
+            Some(webcodex_core::project_build::ProjectDependencyResolutionPolicy::Offline);
+    }
+    let result = runtime
+        .dispatch_with_auth(input, Some(&auth_context(None, true)))
+        .await;
+    assert!(!result.success);
+    assert!(result
+        .error
+        .unwrap()
+        .contains("project_dependency_resolution_offline_v1"));
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
+    assert!(probe_patch_agent_request(&runtime, CLIENT).await.is_none());
 }
 
 #[tokio::test]

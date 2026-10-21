@@ -922,7 +922,11 @@ impl RunnerRegistry {
             .as_ref()
             .and_then(|metadata| metadata.project_validation.as_ref())
             .is_some_and(|provenance| provenance.request.dependency_policy.is_some());
-        let project_resolution_offline_request = validation
+        let project_resolution_offline_request = matches!(
+            structured_execution.as_ref(),
+            Some(StructuredJobExecution::ProjectBuild(plan))
+                if plan.provenance.request.dependency_resolution_policy.is_some()
+        ) || validation
             .as_ref()
             .and_then(|metadata| metadata.project_validation.as_ref())
             .is_some_and(|provenance| provenance.request.dependency_resolution_policy.is_some());

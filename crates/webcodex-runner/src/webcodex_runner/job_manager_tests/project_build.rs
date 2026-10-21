@@ -67,6 +67,7 @@ edition = "2021"
             ..Default::default()
         };
         let request = ProjectBuildRequest {
+            dependency_resolution_policy: None,
             project_id: "demo".into(),
             cwd: member_cwd.then(|| "member".into()),
             adapter: ProjectBuildAdapter::Auto,
@@ -208,6 +209,7 @@ fn go_project_build_overrides_ambient_gowork_at_spawn() {
         ..Default::default()
     };
     let request = ProjectBuildRequest {
+        dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,
         adapter: ProjectBuildAdapter::Go,
@@ -300,6 +302,7 @@ fn enqueue_python_build_fixture(
         ..Default::default()
     };
     let request = ProjectBuildRequest {
+        dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,
         adapter: ProjectBuildAdapter::Python,
@@ -579,6 +582,7 @@ fn node_project_build_real_declared_script_and_no_adapter_installation() {
         ..Default::default()
     };
     let request = ProjectBuildRequest {
+        dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,
         adapter: ProjectBuildAdapter::Node,

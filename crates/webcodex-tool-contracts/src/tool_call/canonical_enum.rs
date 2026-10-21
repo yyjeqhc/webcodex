@@ -1554,6 +1554,9 @@ pub enum ToolCall {
         /// repairing dependency selection state; it does not imply offline execution.
         #[serde(default)]
         dependency_policy: Option<webcodex_core::project_build::ProjectDependencyPolicy>,
+        /// Rust-only Cargo dependency fetching (not an OS/network sandbox).
+        #[serde(default)]
+        dependency_resolution_policy: Option<webcodex_core::project_build::ProjectDependencyResolutionPolicy>,
         /// Total build execution budget, default 1800 seconds, clamped to 7 days.
         /// Host handoff timing never extends this budget or starts a second build.
         #[serde(default)]
@@ -1994,8 +1997,7 @@ pub enum ToolCall {
         summary: String,
         /// Exact keyed replay does not mutate; changed reuse conflicts.
         #[schemars(length(min = 1, max = 128))]
-        idempotency_key: String,
-    },
+        idempotency_key: String,    },
 
     /// Open the readonly workbench. Empty arguments show a chooser; a Project is selected only
     /// when explicitly supplied. Session selection never creates a recorder or execution context.
@@ -3994,7 +3996,6 @@ pub enum ToolCall {
         #[serde(default)]
         session_id: Option<String>,
     },
-
     /// Locate an already registered workspace without creating a Session or registration.
     /// Exactly one selector is required: an exact registered path or a non-empty literal query.
     ResolveWorkspace {

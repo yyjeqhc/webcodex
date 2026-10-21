@@ -3077,6 +3077,7 @@ mod tests {
         let mut validation_context = job_context(Some("/repo"));
         validation_context.validation_steps = vec!["check".to_string()];
         let build_request = crate::project_build::ProjectBuildRequest {
+            dependency_resolution_policy: None,
             project_id: "demo".to_string(),
             cwd: None,
             adapter: crate::project_build::ProjectBuildAdapter::Rust,

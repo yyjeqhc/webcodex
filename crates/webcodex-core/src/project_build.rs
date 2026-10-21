@@ -4,6 +4,8 @@ use crate::project_operation::ProjectOperationScopeError;
 use crate::runner_protocol::{normalize_cargo_packages, normalize_go_packages, ShellProcessArgv};
 use serde::{Deserialize, Serialize};
 
+pub use crate::project_validation::ProjectDependencyResolutionPolicy;
+
 /// Portable project-operation scope retained under the project_build API name.
 pub use crate::project_operation::{
     ProjectDependencyMode, ProjectDependencyPolicy, ProjectOperationScope as ProjectBuildScope,
@@ -36,6 +38,8 @@ pub struct ProjectBuildRequest {
     pub scope: Option<ProjectBuildScope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dependency_policy: Option<ProjectDependencyPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_resolution_policy: Option<ProjectDependencyResolutionPolicy>,
 }
 
 impl ProjectBuildRequest {
@@ -59,6 +63,14 @@ impl ProjectBuildRequest {
                     "invalid project build package scope".to_string()
                 }
             })?;
+        }
+        if self.dependency_resolution_policy.is_some()
+            && !matches!(
+                self.adapter,
+                ProjectBuildAdapter::Auto | ProjectBuildAdapter::Rust
+            )
+        {
+            return Err("dependency_resolution_policy requires Rust project_build".into());
         }
         Ok(())
     }
@@ -103,6 +115,7 @@ impl ProjectBuildProvenance {
                     | (ProjectBuildAdapter::Python, "python")
                     | (ProjectBuildAdapter::Node, "node")
             )
+            && (self.request.dependency_resolution_policy.is_none() || self.backend == "rust")
             && [
                 &self.root_digest,
                 &self.manifest_digest,
@@ -159,6 +172,9 @@ pub fn canonical_project_build_process_with_manager(
     request: &ProjectBuildRequest,
     manager: &str,
 ) -> Result<ShellProcessArgv, &'static str> {
+    if request.dependency_resolution_policy.is_some() && backend != "rust" {
+        return Err("dependency_resolution_policy_unsupported");
+    }
     let packages = request
         .scope
         .as_ref()
@@ -176,6 +192,11 @@ pub fn canonical_project_build_process_with_manager(
                 .is_some_and(|policy| policy.mode == ProjectDependencyMode::Locked)
             {
                 args.push("--locked".to_string());
+            }
+            if request.dependency_resolution_policy
+                == Some(ProjectDependencyResolutionPolicy::Offline)
+            {
+                args.push("--offline".to_string());
             }
             if all_packages {
                 args.push("--workspace".to_string());

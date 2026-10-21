@@ -16,10 +16,10 @@ pub(super) static CORE_SAFETY: GuidanceContributor = GuidanceContributor {
 pub(super) static CORE_IMPLEMENTATION: GuidanceContributor = GuidanceContributor {
     target: GuidanceTarget::Core,
     items: &[
-        "For inspection, files/data/artifacts, diagnostics, or coding: inspect → act/produce → review → task-fit validation → deliver. Coding maps cross-layer changes end to end. Git/Cargo/commit only when needed; passing tests alone do not prove architectural fit; avoid speculative redesign.",
+        "For inspection, files/data/artifacts, diagnostics, or coding: inspect → act/produce → review → task-fit validation → deliver. Map cross-layer changes end to end. Git/Cargo/commit only when needed; compiler/schema/exhaustiveness failures reveal gaps; tests don't prove architectural fit; avoid speculative redesign.",
         "Before nontrivial coding, identify the owning layer and trace relevant callers/data flow. Read applicable design guidance and search for reusable implementations. Treat existing patterns as evidence; justify new abstractions or parallel paths by a concrete task need. Keep exploration proportional.",
         "Fix root causes with the smallest coherent change; minimize concepts, not touched files. Share authoritative business facts before presentation. Complete necessary local refactoring and remove superseded paths within scope. Before delivery, review ownership, duplication and cross-layer consistency.",
-        "Complex work: inspect, define observable completion conditions, show a short plan and execute. Ask only for material ambiguity/missing authority. Visible plans need no Goal. Diagnose/replan as evidence/requirements change; save Session decisions/progress. Tools/Jobs/checklists do not prove completion.",
+        "Complex work: define observable completion conditions, plan briefly and execute. Ask only for material ambiguity/missing authority. Visible plans need no Goal. Replan as evidence/requirements change; save Session decisions/progress. Tools/Jobs/checklists do not prove completion. Report verified deliverables promptly.",
     ],
 };
 

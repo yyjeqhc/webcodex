@@ -85,6 +85,12 @@ necessary local refactoring and removal of superseded paths within scope.
 Before delivery, review ownership, duplication and cross-layer consistency as
 well as behavior; passing tests alone do not establish architectural fit.
 
+Compiler, schema and exhaustiveness failures can reveal missing cross-layer
+changes. For lengthy tasks, report verified milestones as they become available;
+after creating an authorized PR or other external deliverable, communicate its
+actual link and validation status promptly rather than relying entirely on a
+final reply. Guidance cannot prevent a provider quota interruption.
+
 `independent_review` is the only optional named role because it changes behavior.
 Use it only when the task explicitly asks for an independent review pass:
 

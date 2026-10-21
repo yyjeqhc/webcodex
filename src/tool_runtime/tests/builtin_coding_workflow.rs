@@ -107,8 +107,9 @@ fn builtin_coding_workflow_defaults_cover_unnamed_tasks_without_granting_authori
         "continue independent work",
         "wait only on real dependencies",
         "For inspection, files/data/artifacts, diagnostics, or coding",
-        "Coding maps cross-layer changes end to end",
-        "passing tests alone do not prove architectural fit",
+        "Map cross-layer changes end to end",
+        "compiler/schema/exhaustiveness failures reveal gaps",
+        "tests don't prove architectural fit",
         "avoid speculative redesign",
         "Before nontrivial coding",
         "identify the owning layer",
@@ -139,11 +140,12 @@ fn builtin_coding_workflow_defaults_cover_unnamed_tasks_without_granting_authori
         "finish ready work",
         "After Rust stabilizes, format once",
         "observable completion conditions",
-        "show a short plan and execute",
+        "plan briefly and execute",
         "Visible plans need no Goal",
-        "Diagnose/replan as evidence/requirements change",
+        "Replan as evidence/requirements change",
         "save Session decisions/progress",
         "Tools/Jobs/checklists do not prove completion",
+        "Report verified deliverables promptly",
     ] {
         assert!(defaults.contains(boundary), "missing guidance: {boundary}");
     }

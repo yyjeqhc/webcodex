@@ -83,6 +83,12 @@ pub(crate) fn plan(
     let resolved = resolve_project_recipe_root(&root, request.cwd.as_deref(), hint)
         .map_err(|error| unavailable(map_recipe_error(error), None))?;
     let backend = resolved.recipe;
+    if request.dependency_resolution_policy.is_some() && backend != ProjectRecipeId::Rust {
+        return Err(unavailable(
+            "dependency_resolution_policy_unsupported",
+            Some(backend.as_str()),
+        ));
+    }
 
     if backend == ProjectRecipeId::Python {
         // Default `build` output is dist/. Never follow a pre-existing redirected

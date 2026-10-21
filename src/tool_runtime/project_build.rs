@@ -55,6 +55,9 @@ impl ToolRuntime {
         adapter: Option<ProjectBuildAdapter>,
         scope: Option<ProjectBuildScope>,
         dependency_policy: Option<webcodex_core::project_build::ProjectDependencyPolicy>,
+        dependency_resolution_policy: Option<
+            webcodex_core::project_build::ProjectDependencyResolutionPolicy,
+        >,
         timeout_secs: Option<u64>,
         handoff_max_secs: Option<u64>,
         ssh_resource: Option<&str>,
@@ -120,6 +123,7 @@ impl ToolRuntime {
             adapter: adapter.unwrap_or_default(),
             scope,
             dependency_policy,
+            dependency_resolution_policy,
         };
         if let Err(error) = request.validate() {
             return process_tool_failure_result(

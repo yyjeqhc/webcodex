@@ -6,6 +6,7 @@ use crate::runner_protocol::{RunnerRequest, ShellJobContext, ShellJobStructuredE
 
 fn request() -> ProjectBuildRequest {
     ProjectBuildRequest {
+        dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: Some("src".into()),
         adapter: ProjectBuildAdapter::Auto,
@@ -116,6 +117,7 @@ fn project_build_all_packages_maps_to_portable_native_scope() {
 #[test]
 fn start_build_wire_roundtrip_preserves_typed_process_and_provenance() {
     let request = ProjectBuildRequest {
+        dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,
         adapter: ProjectBuildAdapter::Rust,
@@ -214,6 +216,65 @@ fn start_build_wire_roundtrip_preserves_typed_process_and_provenance() {
 }
 
 #[test]
+fn offline_build_policy_preserves_defaults_and_fences_canonical_execution() {
+    let mut request = request();
+    let original = canonical_project_build_process("rust", &request).unwrap();
+    assert_eq!(original.args, ["build"]);
+    assert!(serde_json::to_value(&request)
+        .unwrap()
+        .get("dependency_resolution_policy")
+        .is_none());
+    request.adapter = ProjectBuildAdapter::Rust;
+    request.dependency_resolution_policy = Some(ProjectDependencyResolutionPolicy::Offline);
+    assert!(request.validate().is_ok());
+    assert_eq!(
+        serde_json::to_value(&request).unwrap()["dependency_resolution_policy"],
+        "offline"
+    );
+    let offline = canonical_project_build_process("rust", &request).unwrap();
+    assert_eq!(offline.args, ["build", "--offline"]);
+    assert_ne!(
+        project_build_invocation_digest(&original),
+        project_build_invocation_digest(&offline)
+    );
+    let mut plan = ProjectBuildPlan {
+        provenance: ProjectBuildProvenance {
+            request: request.clone(),
+            backend: "rust".into(),
+            recipe_root: ".".into(),
+            root_digest: digest('a'),
+            manifest_digest: digest('b'),
+            invocation_digest: project_build_invocation_digest(&offline),
+        },
+        process: offline,
+    };
+    assert!(plan.is_valid());
+    plan.provenance.request.dependency_resolution_policy = None;
+    assert!(
+        !plan.is_valid(),
+        "offline argv cannot be replayed as an online request"
+    );
+    request.dependency_policy = Some(ProjectDependencyPolicy {
+        mode: ProjectDependencyMode::Locked,
+    });
+    assert_eq!(
+        canonical_project_build_process("rust", &request)
+            .unwrap()
+            .args,
+        ["build", "--locked", "--offline"]
+    );
+    request.adapter = ProjectBuildAdapter::Auto;
+    for backend in ["go", "node", "python"] {
+        assert!(canonical_project_build_process(backend, &request).is_err());
+    }
+    request.adapter = ProjectBuildAdapter::Go;
+    assert!(request.validate().is_err());
+    let mut invalid = serde_json::to_value(&request).unwrap();
+    invalid["dependency_resolution_policy"] = serde_json::json!("online");
+    assert!(serde_json::from_value::<ProjectBuildRequest>(invalid).is_err());
+}
+
+#[test]
 fn project_build_locked_dependency_policy_maps_to_native_readonly_flags() {
     let locked = ProjectDependencyPolicy {
         mode: ProjectDependencyMode::Locked,
@@ -223,6 +284,7 @@ fn project_build_locked_dependency_policy_maps_to_native_readonly_flags() {
         ("go", vec!["build", "-mod=readonly", "./..."]),
     ] {
         let request = ProjectBuildRequest {
+            dependency_resolution_policy: None,
             project_id: "demo".into(),
             cwd: None,
             adapter: ProjectBuildAdapter::Auto,
@@ -237,6 +299,7 @@ fn project_build_locked_dependency_policy_maps_to_native_readonly_flags() {
 #[test]
 fn project_build_default_dependency_policy_preserves_historical_argv() {
     let request = ProjectBuildRequest {
+        dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,
         adapter: ProjectBuildAdapter::Auto,
@@ -353,6 +416,7 @@ fn build_artifact_observations_are_bounded_private_and_never_validation_evidence
 #[test]
 fn node_build_canonical_manager_process_rejects_extra_authority() {
     let request = ProjectBuildRequest {
+        dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,
         adapter: ProjectBuildAdapter::Node,
@@ -382,6 +446,7 @@ fn node_build_canonical_manager_process_rejects_extra_authority() {
 fn node_build_provenance_rejects_explicit_backend_mismatch() {
     let mut provenance = ProjectBuildProvenance {
         request: ProjectBuildRequest {
+            dependency_resolution_policy: None,
             project_id: "demo".into(),
             cwd: None,
             adapter: ProjectBuildAdapter::Node,

@@ -44,6 +44,7 @@ fn registration(supported: bool) -> RunnerRegisterRequest {
 
 fn locked_build_request() -> ProjectBuildRequest {
     ProjectBuildRequest {
+        dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,
         adapter: ProjectBuildAdapter::Rust,
@@ -399,6 +400,73 @@ async fn project_validation_optional_capability_errors_identify_runner_without_d
             .await
             .unwrap()
             .is_none());
+    }
+}
+
+#[tokio::test]
+async fn offline_project_build_requires_additive_capability_at_planning_and_job_admission() {
+    for supported in [false, true] {
+        let registry = RunnerRegistry::default();
+        let mut runner = registration(true);
+        runner.capabilities.project_dependency_resolution_offline_v1 = supported;
+        registry.register(runner).await.unwrap();
+        let access = auth_context(None, true);
+        let mut request = locked_build_request();
+        request.dependency_policy = None;
+        request.dependency_resolution_policy = Some(ProjectDependencyResolutionPolicy::Offline);
+        let planned = registry
+            .enqueue_project_build_plan("policy-runner".into(), request.clone(), Some(&access))
+            .await;
+        if supported {
+            assert!(planned.is_ok(), "{planned:?}");
+        } else {
+            let error = planned.unwrap_err();
+            assert!(
+                error.contains("project_dependency_resolution_offline_v1"),
+                "{error}"
+            );
+            assert!(registry
+                .poll(RunnerPollRequest {
+                    client_id: "policy-runner".into(),
+                    runner_instance_id: "inst".into(),
+                })
+                .await
+                .unwrap()
+                .is_none());
+        }
+        let process = canonical_project_build_process("rust", &request).unwrap();
+        let mut plan = locked_build_plan();
+        plan.provenance.request = request;
+        plan.provenance.invocation_digest = project_build_invocation_digest(&process);
+        plan.process = process;
+        assert!(plan.is_valid());
+        let result = registry
+            .start_job_with_metadata_for_access(
+                start_request(""),
+                "test".into(),
+                ShellJobStartMetadata {
+                    project_id: Some("agent:policy-runner:demo".into()),
+                    project_cwd: Some(".".into()),
+                    purpose: Some("build".into()),
+                    shell: Some("direct_argv".into()),
+                    visibility: ShellJobVisibility::Public,
+                    structured_execution: Some(StructuredJobExecution::ProjectBuild(plan)),
+                    ..Default::default()
+                },
+                None,
+                None,
+            )
+            .await;
+        if supported {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            let error = result.unwrap_err();
+            assert!(
+                error.contains("project_dependency_resolution_offline_v1"),
+                "{error}"
+            );
+            assert!(registry.list_jobs(Some(10)).await.is_empty());
+        }
     }
 }
 

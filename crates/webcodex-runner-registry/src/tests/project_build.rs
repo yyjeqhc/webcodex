@@ -12,6 +12,7 @@ fn build_request() -> ProjectBuildRequest {
         adapter: ProjectBuildAdapter::Rust,
         scope: None,
         dependency_policy: None,
+        dependency_resolution_policy: None,
     }
 }
 
@@ -38,6 +39,7 @@ fn go_build_request() -> ProjectBuildRequest {
         adapter: ProjectBuildAdapter::Go,
         scope: None,
         dependency_policy: None,
+        dependency_resolution_policy: None,
     }
 }
 

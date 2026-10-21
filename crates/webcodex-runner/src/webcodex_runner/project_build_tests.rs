@@ -34,12 +34,44 @@ fn fixture(marker: &str) -> (tempfile::TempDir, PathBuf, PathBuf, RunnerPolicy) 
 
 fn request() -> ProjectBuildRequest {
     ProjectBuildRequest {
+        dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,
         adapter: ProjectBuildAdapter::Auto,
         scope: None,
         dependency_policy: None,
     }
+}
+
+#[test]
+fn rust_build_offline_planning_is_opt_in_and_non_rust_is_rejected() {
+    let (_tmp, _root, registry, policy) = fixture("Cargo.toml");
+    let mut request = request();
+    request.adapter = ProjectBuildAdapter::Rust;
+    let (default, _) = project_build::plan(&policy, &registry, &request).unwrap();
+    request.dependency_resolution_policy = Some(ProjectDependencyResolutionPolicy::Offline);
+    let (offline, _) = project_build::plan(&policy, &registry, &request).unwrap();
+    assert_eq!(offline.process.args, ["build", "--offline"]);
+    assert_ne!(
+        default.provenance.invocation_digest,
+        offline.provenance.invocation_digest
+    );
+    assert_eq!(offline.provenance.request, request);
+    assert!(offline.is_valid());
+    request.dependency_policy = Some(ProjectDependencyPolicy {
+        mode: ProjectDependencyMode::Locked,
+    });
+    let (locked, _) = project_build::plan(&policy, &registry, &request).unwrap();
+    assert_eq!(locked.process.args, ["build", "--locked", "--offline"]);
+
+    let (_tmp, _root, registry, policy) = fixture("go.mod");
+    let mut non_rust = self::request();
+    non_rust.dependency_resolution_policy = Some(ProjectDependencyResolutionPolicy::Offline);
+    assert!(
+        matches!(project_build::plan(&policy, &registry, &non_rust).unwrap_err(),
+        ProjectBuildPlanningResult::Unavailable { ref code, .. }
+            if code == "dependency_resolution_policy_unsupported")
+    );
 }
 
 #[test]
@@ -58,6 +90,7 @@ fn project_build_runner_plans_locked_dependency_policy_for_rust_and_go() {
     ] {
         let (_tmp, _root, registry, policy) = fixture(marker);
         let request = ProjectBuildRequest {
+            dependency_resolution_policy: None,
             project_id: "demo".into(),
             cwd: None,
             adapter,

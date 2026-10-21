@@ -745,33 +745,24 @@ pub(in crate::tool_runtime::tests) async fn register_agent(
     owner: Option<&str>,
     caps: RunnerCapabilities,
 ) {
-    runtime
-        .runner_registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: owner.map(str::to_string),
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(caps),
-            policy: None,
-        })
-        .await
-        .unwrap();
-    crate::test_support::apply_project_inventory_snapshot(
-        &runtime.runner_registry,
+    register_agent_with_instance(runtime, client_id, "inst", owner, caps).await;
+}
+
+/// Register the ordinary async structured-validation fixture without enabling
+/// optional validation languages or package-selection capabilities.
+pub(in crate::tool_runtime::tests) async fn register_async_validation_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+) {
+    register_agent(
+        runtime,
         client_id,
-        "inst",
-        vec![registered_project("agent-proj", "/tmp/agent-proj")],
+        None,
+        RunnerCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            ..Default::default()
+        },
     )
     .await;
 }

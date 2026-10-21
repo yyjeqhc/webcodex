@@ -2,7 +2,10 @@
 
 mod continuity;
 
+use self::dispatch_handoff_with_agent as dispatch_handoff_diagnostic_with_agent;
+use self::handoff_diagnostic as handoff_summary;
 use super::super::*;
+use super::support::record_session_tool_event as record_handoff_tool_event;
 use super::support::*;
 use crate::auth::AuthContext;
 use crate::runner_protocol::RunnerCapabilities;
@@ -3652,54 +3655,6 @@ fn handoff_checkpoint_validation(
     }
 }
 
-fn record_handoff_tool_event(
-    runtime: &ToolRuntime,
-    session_id: &str,
-    tool_name: &str,
-    arguments: Value,
-    success: bool,
-    output: Value,
-) {
-    let start = runtime.sessions.record_tool_call_started(
-        Some(session_id),
-        SessionTransport::Api,
-        tool_name,
-        &arguments,
-        crate::tool_runtime::sessions::session_tool_contract(tool_name),
-    );
-    let error = (!success).then_some("tool failed");
-    runtime
-        .sessions
-        .record_tool_call_finished(start, success, &output, error, None);
-}
-
-fn json_contains_key(value: &Value, key: &str) -> bool {
-    match value {
-        Value::Object(map) => {
-            map.contains_key(key) || map.values().any(|value| json_contains_key(value, key))
-        }
-        Value::Array(values) => values.iter().any(|value| json_contains_key(value, key)),
-        _ => false,
-    }
-}
-
-fn assert_no_raw_validation_output_fields(value: &Value, context: &str) {
-    for key in [
-        "stdout",
-        "stderr",
-        "stdout_tail",
-        "stderr_tail",
-        "stdout_tail_excerpt",
-        "stderr_tail_excerpt",
-        "validation_output_summary",
-    ] {
-        assert!(
-            !json_contains_key(value, key),
-            "{context} must not include {key}: {value}"
-        );
-    }
-}
-
 async fn call_recorded_tool(
     runtime: &ToolRuntime,
     session_id: &str,
@@ -3867,23 +3822,6 @@ async fn complete_agent_shell_requests_until_finished<T>(
     }
 }
 
-async fn handoff_summary(runtime: &ToolRuntime, session_id: &str) -> ToolResult {
-    runtime
-        .dispatch(
-            ToolCall::from_tool_name(
-                "read_session_handoff",
-                json!({
-                    "session_id": session_id,
-                    "include_workspace": false,
-                    "include_checkpoints": false,
-                    "diagnostic": true
-                }),
-            )
-            .unwrap(),
-        )
-        .await
-}
-
 async fn handoff_diagnostic(runtime: &ToolRuntime, session_id: &str) -> ToolResult {
     runtime
         .dispatch(
@@ -3964,75 +3902,6 @@ async fn dispatch_context_recovery_handoff_with_agent(
     task.await.unwrap()
 }
 
-async fn dispatch_handoff_diagnostic_with_agent(
-    runtime: &ToolRuntime,
-    client_id: &str,
-    session_id: String,
-    project: Option<String>,
-    include_workspace: bool,
-    include_checkpoints: bool,
-) -> ToolResult {
-    let runtime_for_task = runtime.clone();
-    let task = tokio::spawn(async move {
-        runtime_for_task
-            .dispatch(ToolCall::SessionHandoffSummary {
-                session_id,
-                project,
-                include_workspace: Some(include_workspace),
-                include_checkpoints: Some(include_checkpoints),
-                include_validation: Some(true),
-                diagnostic: true,
-                limit: None,
-            })
-            .await
-    });
-
-    if include_workspace {
-        let req = wait_for_patch_agent_request(runtime, client_id).await;
-        complete_agent_request_by_running_locally(runtime, client_id, req).await;
-    }
-
-    task.await.unwrap()
-}
-
-fn assert_reason_list_contains(verdict: &Value, key: &str, reason: &str) {
-    let reasons = verdict[key].as_array().expect("reason list");
-    assert!(
-        reasons.iter().any(|value| value.as_str() == Some(reason)),
-        "{key} should contain {reason}: {verdict}"
-    );
-}
-
-fn assert_reason_list_not_contains(verdict: &Value, key: &str, reason: &str) {
-    let reasons = verdict[key].as_array().expect("reason list");
-    assert!(
-        !reasons.iter().any(|value| value.as_str() == Some(reason)),
-        "{key} should not contain {reason}: {verdict}"
-    );
-}
-
-fn assert_action_list_contains(actions: &Value, action: &str) {
-    assert!(
-        actions
-            .as_array()
-            .expect("suggested_next_actions array")
-            .iter()
-            .any(|candidate| candidate.as_str() == Some(action)),
-        "suggested_next_actions should contain {action}: {actions}"
-    );
-}
-
-fn assert_action_list_not_contains(actions: &Value, action: &str) {
-    assert!(
-        !actions
-            .as_array()
-            .expect("suggested_next_actions array")
-            .iter()
-            .any(|candidate| candidate.as_str() == Some(action)),
-        "suggested_next_actions should not contain {action}: {actions}"
-    );
-}
-
 fn assert_workflow_verdict_shape(verdict: &Value) {
     let status = verdict["status"].as_str().expect("status string");
     assert!(
@@ -4046,18 +3915,6 @@ fn assert_workflow_verdict_shape(verdict: &Value) {
         "suggested_next_actions",
     ] {
         assert!(verdict[key].is_array(), "{key} array: {verdict}");
-    }
-}
-
-fn assert_compact_verdict_safe(value: &Value, context: &str) {
-    let serialized = serde_json::to_string(value).unwrap();
-    for forbidden in [
-        "stdout", "stderr", "tail", "excerpt", "command", "token", "secret", "env",
-    ] {
-        assert!(
-            !serialized.contains(forbidden),
-            "{context} leaked {forbidden}: {serialized}"
-        );
     }
 }
 

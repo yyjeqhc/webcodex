@@ -1,7 +1,10 @@
+use crate::auth::AuthContext;
 use crate::projects::ProjectConfig;
 use crate::runner_http::RunnerRegistry;
+use crate::tool_runtime::kernel::{HostFileImportTrust, ToolCallContext, ToolTransport};
+use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::{RuntimeInfo, ToolRuntime, ToolSpec};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -146,4 +149,41 @@ pub(in crate::tool_runtime::tests) fn runtime_with_project(
 
 pub(in crate::tool_runtime::tests) fn runtime_with_info(info: RuntimeInfo) -> ToolRuntime {
     ToolRuntime::new(Arc::new(RunnerRegistry::default()), Arc::new(info))
+}
+
+pub(in crate::tool_runtime::tests) fn record_session_tool_event(
+    runtime: &ToolRuntime,
+    session_id: &str,
+    tool_name: &str,
+    arguments: Value,
+    success: bool,
+    output: Value,
+) {
+    let start = runtime.sessions.record_tool_call_started(
+        Some(session_id),
+        SessionTransport::Api,
+        tool_name,
+        &arguments,
+        crate::tool_runtime::sessions::session_tool_contract(tool_name),
+    );
+    let error = (!success).then_some("tool failed");
+    runtime
+        .sessions
+        .record_tool_call_finished(start, success, &output, error, None);
+}
+
+/// MCP calls with a separate recording Session and ordinary untrusted input.
+/// Invocation metadata and protocol capabilities stay explicit at each call site.
+pub(in crate::tool_runtime::tests) fn mcp_recording_context<'a>(
+    session_id: &'a str,
+    auth: &'a AuthContext,
+) -> ToolCallContext<'a> {
+    ToolCallContext {
+        transport: ToolTransport::Mcp,
+        session_id: Some(session_id),
+        auth: Some(auth),
+        window: None,
+        record_oauth_scope_denials: false,
+        host_file_import_trust: HostFileImportTrust::Untrusted,
+    }
 }

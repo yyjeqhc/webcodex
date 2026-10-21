@@ -2,7 +2,7 @@ use super::support::*;
 use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::validation_parser::{NO_STABLE_DIAGNOSTICS_REASON, PARSER_KIND};
 use crate::tool_runtime::{ExecutionPurpose, ExecutionShell, ToolCall};
-use serde_json::{json, Value};
+use serde_json::json;
 
 #[tokio::test]
 async fn run_shell_declared_validation_enters_unified_summary_with_shell_and_root_cwd() {
@@ -597,33 +597,6 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     assert!(finish_compact.output["validation"].get("events").is_none());
     assert!(finish_compact.output["validation"].get("latest").is_none());
 }
-fn json_contains_key(value: &Value, key: &str) -> bool {
-    match value {
-        Value::Object(map) => {
-            map.contains_key(key) || map.values().any(|value| json_contains_key(value, key))
-        }
-        Value::Array(values) => values.iter().any(|value| json_contains_key(value, key)),
-        _ => false,
-    }
-}
-
-fn assert_no_raw_validation_output_fields(value: &Value, context: &str) {
-    for key in [
-        "stdout",
-        "stderr",
-        "stdout_tail",
-        "stderr_tail",
-        "stdout_tail_excerpt",
-        "stderr_tail_excerpt",
-        "validation_output_summary",
-    ] {
-        assert!(
-            !json_contains_key(value, key),
-            "{context} must not include {key}: {value}"
-        );
-    }
-}
-
 fn cargo_toml() -> &'static str {
     "[package]\nname = \"validation-finish\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n"
 }

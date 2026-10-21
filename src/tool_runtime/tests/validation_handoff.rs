@@ -255,6 +255,56 @@ pub(super) fn cargo_test_update(
     }
 }
 
+/// Bind the dispatched Job identity once while keeping every progress update explicit.
+struct ValidationJobUpdates<'a> {
+    runtime: &'a ToolRuntime,
+    client_id: &'a str,
+    request_id: &'a str,
+    job_id: &'a str,
+}
+
+impl<'a> ValidationJobUpdates<'a> {
+    fn new(
+        runtime: &'a ToolRuntime,
+        client_id: &'a str,
+        request_id: &'a str,
+        job_id: &'a str,
+    ) -> Self {
+        Self {
+            runtime,
+            client_id,
+            request_id,
+            job_id,
+        }
+    }
+
+    async fn update(
+        &self,
+        status: &str,
+        stdout_chunk: &str,
+        stderr_chunk: &str,
+        exit_code: Option<i32>,
+        progress: ShellJobValidationProgress,
+        finished: bool,
+    ) {
+        self.runtime
+            .runner_registry
+            .update_job(cargo_test_update(
+                self.client_id,
+                self.request_id,
+                self.job_id,
+                status,
+                stdout_chunk,
+                stderr_chunk,
+                exit_code,
+                progress,
+                finished,
+            ))
+            .await
+            .unwrap();
+    }
+}
+
 pub(super) fn running_progress(step: &str) -> ShellJobValidationProgress {
     ShellJobValidationProgress {
         completed: 0,
@@ -340,36 +390,28 @@ async fn seed_retained_terminal_validation_job(
     let request = wait_for_patch_agent_request(runtime, client_id).await;
     assert_eq!(request.kind, "start_validation_job");
     assert_eq!(request.job_id.as_deref(), Some(job.job_id.as_str()));
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job.job_id,
+    let job_updates =
+        ValidationJobUpdates::new(runtime, client_id, &request.request_id, &job.job_id);
+    job_updates
+        .update(
             "running",
             "Checking seeded v0.1.0\n",
             "",
             None,
             running_progress("check"),
             false,
-        ))
-        .await
-        .unwrap();
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job.job_id,
+        )
+        .await;
+    job_updates
+        .update(
             "completed",
             "Finished `dev` profile [unoptimized + debuginfo] target(s)\n",
             "",
             Some(0),
             completed_progress(),
             true,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     let status = runtime
         .job_status_for_auth(job.job_id.clone(), false, None)
         .await;
@@ -543,17 +585,7 @@ async fn multi_package_cargo_check_reports_legacy_runner_capability_before_job_c
     let client_id = "vhandoff-cargo-check-packages-legacy-runner";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(20));
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        RunnerCapabilities {
-            async_shell_jobs: true,
-            structured_validation_argv: true,
-            ..Default::default()
-        },
-    )
-    .await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let call = ToolCall::from_tool_name(
@@ -581,17 +613,7 @@ async fn multi_package_cargo_check_direct_sync_still_requires_runner_capability(
     let client_id = "vhandoff-cargo-check-packages-legacy-direct";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(20));
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        RunnerCapabilities {
-            async_shell_jobs: true,
-            structured_validation_argv: true,
-            ..Default::default()
-        },
-    )
-    .await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let call = ToolCall::from_tool_name(
@@ -695,21 +717,10 @@ async fn fast_go_test_uses_exact_structured_argv_cwd_and_records_session_evidenc
         "{\"Action\":\"skip\",\"Package\":\"example/pkg\",\"Test\":\"TestSkip\",\"Elapsed\":0}\n",
         "{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Elapsed\":0}\n"
     );
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
-            "completed",
-            stdout,
-            "",
-            Some(0),
-            completed_progress(),
-            true,
-        ))
-        .await
-        .unwrap();
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update("completed", stdout, "", Some(0), completed_progress(), true)
+        .await;
 
     let result = task.await.unwrap();
     assert_sparse_validation_terminal_success(&result);
@@ -792,21 +803,10 @@ async fn go_test_failure_reports_failed_test_identity_in_result_and_session() {
         "{\"Action\":\"fail\",\"Package\":\"example/pkg\",\"Test\":\"TestFail\",\"Elapsed\":0}\n",
         "{\"Action\":\"fail\",\"Package\":\"example/pkg\",\"Elapsed\":0}\n"
     );
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
-            "failed",
-            stdout,
-            "",
-            Some(1),
-            completed_progress(),
-            true,
-        ))
-        .await
-        .unwrap();
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update("failed", stdout, "", Some(1), completed_progress(), true)
+        .await;
 
     let result = task.await.unwrap();
     assert!(!result.success);
@@ -925,21 +925,10 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
         "{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Test\":\"TestLater\",\"Elapsed\":0}\n",
         "{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Elapsed\":0}\n"
     );
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
-            "completed",
-            stdout,
-            "",
-            Some(0),
-            completed_progress(),
-            true,
-        ))
-        .await
-        .unwrap();
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update("completed", stdout, "", Some(0), completed_progress(), true)
+        .await;
 
     let session = runtime.sessions.summary(&session_id, Some(50)).unwrap();
     let validation = runtime
@@ -962,12 +951,7 @@ async fn fast_cargo_check_completes_in_windows_and_leaves_no_visible_job() {
     let client_id = "vhandoff-fast-check";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(300));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let session = runtime.sessions.start_session(Some(project.clone()), None);
@@ -999,21 +983,17 @@ async fn fast_cargo_check_completes_in_windows_and_leaves_no_visible_job() {
         }
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update(
             "completed",
             "Finished `dev` profile [unoptimized + debuginfo] target(s)\n",
             "",
             Some(0),
             completed_progress(),
             true,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     let result = task.await.unwrap();
     assert_sparse_validation_terminal_success(&result);
@@ -1063,17 +1043,7 @@ async fn finish_in_window_cargo_check(
 ) -> (crate::tool_runtime::ToolResult, serde_json::Value) {
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(300));
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        RunnerCapabilities {
-            async_shell_jobs: true,
-            structured_validation_argv: true,
-            ..Default::default()
-        },
-    )
-    .await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let session = runtime.sessions.start_session(Some(project.clone()), None);
@@ -1266,17 +1236,7 @@ async fn default_cargo_check_handoff_preserves_same_execution_through_terminal()
     let client_id = "vhandoff-long-check";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(20));
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        RunnerCapabilities {
-            async_shell_jobs: true,
-            structured_validation_argv: true,
-            ..Default::default()
-        },
-    )
-    .await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
 
     let task = tokio::spawn({
@@ -1302,21 +1262,17 @@ async fn default_cargo_check_handoff_preserves_same_execution_through_terminal()
         }
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update(
             "running",
             "Checking demo v0.1.0\n",
             "",
             None,
             running_progress("check"),
             false,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
@@ -1358,21 +1314,16 @@ async fn default_cargo_check_handoff_preserves_same_execution_through_terminal()
         "handoff must not enqueue a replacement validation"
     );
 
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    job_updates
+        .update(
             "completed",
             "Finished `dev` profile [unoptimized + debuginfo] target(s)\n",
             "",
             Some(0),
             completed_progress(),
             true,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     let terminal = runtime
         .job_status_for_auth(job_id.clone(), false, None)
         .await;
@@ -1449,21 +1400,17 @@ async fn multi_package_cargo_check_uses_one_execution_and_one_same_process_job()
         .await
         .is_none());
 
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update(
             "running",
             "Checking package-a v0.1.0\n",
             "",
             None,
             running_progress("check"),
             false,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(assert_sparse_pending_job_handoff(&result.output), job_id);
@@ -1479,17 +1426,7 @@ async fn default_validation_handoff_beats_host_like_observation_deadline() {
     // runtime wait cap is shortened.
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(20));
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        RunnerCapabilities {
-            async_shell_jobs: true,
-            structured_validation_argv: true,
-            ..Default::default()
-        },
-    )
-    .await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
 
     let task = tokio::spawn({
@@ -1515,21 +1452,17 @@ async fn default_validation_handoff_beats_host_like_observation_deadline() {
         }
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update(
             "running",
             "Checking host-fence v0.1.0\n",
             "",
             None,
             running_progress("check"),
             false,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     // The caller observation fence is deliberately longer than the test-scaled
     // handoff grace but shorter than simulated validation completion.
@@ -1589,12 +1522,7 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
     let client_id = "vhandoff-long-test";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
 
     let task = tokio::spawn({
@@ -1629,21 +1557,17 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
         "hidden pre-handoff jobs must not enter public active counts"
     );
     // Mark it running (the agent polls and starts executing).
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update(
             "running",
             "running 1 test\n",
             "",
             None,
             running_progress("test"),
             false,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
@@ -1749,12 +1673,7 @@ async fn validation_command_starts_exactly_once_across_handoff() {
     let counter = tmp.path().join("starts.txt");
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
 
     let task = tokio::spawn({
@@ -1786,21 +1705,17 @@ async fn validation_command_starts_exactly_once_across_handoff() {
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
     // The runner "executes" the job once: append to the counter.
     std::fs::write(&counter, "1\n").unwrap();
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update(
             "running",
             "running 1 test\n",
             "",
             None,
             running_progress("test"),
             false,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
@@ -1826,21 +1741,16 @@ async fn validation_command_starts_exactly_once_across_handoff() {
         "the command must start exactly once"
     );
     // Advance to terminal; still exactly one start.
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    job_updates
+        .update(
             "completed",
             "\ntest result: ok. 1 passed; 0 failed\n",
             "",
             Some(0),
             completed_progress(),
             true,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     assert_eq!(
         std::fs::read_to_string(&counter).unwrap().trim(),
         "1",
@@ -1855,12 +1765,7 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
     let client_id = "vhandoff-success";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let session = runtime.sessions.start_session(Some(project.clone()), None);
@@ -1896,42 +1801,33 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
         }
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update(
             "running",
             "running 3 tests\n",
             "",
             None,
             running_progress("test"),
             false,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     let handoff = task.await.unwrap();
     assert!(handoff.success);
     let _ = sparse_validation_handoff_token(&handoff.output, &job_id);
 
     // Advance the job to terminal success.
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    job_updates
+        .update(
             "completed",
             "\ntest result: ok. 3 passed; 0 failed; 0 ignored\n",
             "",
             Some(0),
             completed_progress(),
             true,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     // Job status terminal + structured counts.
     let status = runtime
@@ -2040,21 +1936,17 @@ async fn e3_cargo_test_lib_handoff_arms_terminal_attention_without_polling() {
         }
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update(
             "running",
             "running 1 test\n",
             "",
             None,
             running_progress("test"),
             false,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     let handoff = validation.await.unwrap();
     assert!(handoff.success, "{:?}", handoff.error);
     let _handoff_token = sparse_validation_handoff_token(&handoff.output, &job_id);
@@ -2072,21 +1964,16 @@ async fn e3_cargo_test_lib_handoff_arms_terminal_attention_without_polling() {
     assert_eq!(armed.output["state"], "waiting");
     assert_eq!(armed.output["automatic_resume_available"], false);
 
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    job_updates
+        .update(
             "completed",
             "\ntest result: ok. 1 passed; 0 failed; 0 ignored\n",
             "",
             Some(0),
             completed_progress(),
             true,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     let principal = crate::job_terminal_attention::principal_for_auth(Some(&auth));
     let wait_id = armed.output["wait_id"].as_str().unwrap();
@@ -2130,17 +2017,7 @@ async fn e3_cargo_test_lib_handoff_arms_terminal_attention_without_polling() {
 async fn stale_validation_terminal_snapshot_cannot_evict_newer_materialization_marker() {
     let client_id = "vhandoff-stale-terminal-snapshot";
     let runtime = runtime_with_agent_project(client_id);
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        RunnerCapabilities {
-            async_shell_jobs: true,
-            structured_validation_argv: true,
-            ..Default::default()
-        },
-    )
-    .await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
     let session = runtime.sessions.start_session(Some(project.clone()), None);
     let session_id = session.session_id.clone();
@@ -2326,17 +2203,7 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
     let client_id = "vhandoff-resolve-prior";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    register_agent(
-        &runtime,
-        client_id,
-        None,
-        RunnerCapabilities {
-            async_shell_jobs: true,
-            structured_validation_argv: true,
-            ..Default::default()
-        },
-    )
-    .await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let session = runtime.sessions.start_session(Some(project.clone()), None);
@@ -2369,12 +2236,14 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
         }
     });
     let (failed_request, failed_job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &failed_request.request_id,
-            &failed_job_id,
+    let failed_job_updates = ValidationJobUpdates::new(
+        &runtime,
+        client_id,
+        &failed_request.request_id,
+        &failed_job_id,
+    );
+    failed_job_updates
+        .update(
             "failed",
             "",
             "error[E0308]: mismatched types\n --> src/lib.rs:1:1\n",
@@ -2385,9 +2254,8 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
                 failed_step: Some("check".to_string()),
             },
             true,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     let failed = failed_task.await.unwrap();
     assert!(
         !failed.success,
@@ -2424,40 +2292,36 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
         }
     });
     let (success_request, success_job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &success_request.request_id,
-            &success_job_id,
+    let success_job_updates = ValidationJobUpdates::new(
+        &runtime,
+        client_id,
+        &success_request.request_id,
+        &success_job_id,
+    );
+    success_job_updates
+        .update(
             "running",
             "Checking demo v0.1.0\n",
             "",
             None,
             running_progress("check"),
             false,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     let handoff = success_task.await.unwrap();
     assert!(handoff.success, "{:?}", handoff.error);
     let _ = sparse_validation_handoff_token(&handoff.output, &success_job_id);
 
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &success_request.request_id,
-            &success_job_id,
+    success_job_updates
+        .update(
             "completed",
             "Finished `dev` profile [unoptimized + debuginfo] target(s)\n",
             "",
             Some(0),
             completed_progress(),
             true,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     let before_materialize = runtime.sessions.summary(&session_id, None).unwrap();
     // Two independent read-driven reconcilers may race on the same terminal Job.
@@ -2538,12 +2402,7 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
     let client_id = "vhandoff-partial-counts";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let session = runtime.sessions.start_session(Some(project.clone()), None);
@@ -2579,21 +2438,17 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
         }
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update(
             "running",
             "running 3 tests\n",
             "",
             None,
             running_progress("test"),
             false,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     let handoff = task.await.unwrap();
     assert!(handoff.success, "{:?}", handoff.error);
     let _ = sparse_validation_handoff_token(&handoff.output, &job_id);
@@ -2605,21 +2460,16 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
             .collect::<String>(),
     );
     stdout.push_str("test result: ok. 3 passed; 0 failed; 0 ignored\n");
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    job_updates
+        .update(
             "running",
             &stdout,
             "",
             None,
             running_progress("test"),
             false,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     let running_log = runtime
         .job_log_for_auth(job_id.clone(), None, Some(200), Some(&auth), None, None)
         .await;
@@ -2631,21 +2481,9 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
         .unwrap()
         .to_string();
 
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
-            "completed",
-            "",
-            "",
-            Some(0),
-            completed_progress(),
-            true,
-        ))
-        .await
-        .unwrap();
+    job_updates
+        .update("completed", "", "", Some(0), completed_progress(), true)
+        .await;
 
     let status = runtime
         .job_status_for_auth(job_id.clone(), false, Some(&auth))
@@ -2714,12 +2552,7 @@ async fn handoff_job_terminal_failure_is_validation_failed_not_timeout() {
     let client_id = "vhandoff-fail";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
 
     let task = tokio::spawn({
@@ -2742,31 +2575,16 @@ async fn handoff_job_terminal_failure_is_validation_failed_not_timeout() {
         }
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
-            "running",
-            "",
-            "",
-            None,
-            running_progress("test"),
-            false,
-        ))
-        .await
-        .unwrap();
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update("running", "", "", None, running_progress("test"), false)
+        .await;
     let handoff = task.await.unwrap();
     assert!(handoff.success);
     assert_eq!(handoff.output["promoted_to_job"], true);
 
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    job_updates
+        .update(
             "failed",
             "test result: FAILED. 0 passed; 1 failed; 0 ignored\n",
             "",
@@ -2777,9 +2595,8 @@ async fn handoff_job_terminal_failure_is_validation_failed_not_timeout() {
                 failed_step: Some("test".to_string()),
             },
             true,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     let status = runtime
         .job_status_for_auth(job_id.clone(), false, None)
@@ -2798,12 +2615,7 @@ async fn handoff_job_total_timeout_is_classified_timeout() {
     let client_id = "vhandoff-timeout";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
 
     let task = tokio::spawn({
@@ -2815,41 +2627,25 @@ async fn handoff_job_total_timeout_is_classified_timeout() {
         }
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
-            "running",
-            "",
-            "",
-            None,
-            running_progress("check"),
-            false,
-        ))
-        .await
-        .unwrap();
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update("running", "", "", None, running_progress("check"), false)
+        .await;
     let handoff = task.await.unwrap();
     assert!(handoff.success);
     assert_eq!(handoff.output["promoted_to_job"], true);
 
     // The runner enforces the total budget and reports a timeout terminal.
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    job_updates
+        .update(
             "timeout",
             "Compiling webcodex...\n",
             "Command timed out after 3600 seconds\n",
             Some(-1),
             completed_progress(),
             true,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     let status = runtime
         .job_status_for_auth(job_id.clone(), false, None)
@@ -2869,12 +2665,7 @@ async fn handoff_job_total_timeout_is_classified_timeout() {
 async fn explicit_short_timeout_never_creates_a_job() {
     let client_id = "vhandoff-short";
     let runtime = runtime_with_agent_project(client_id);
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
 
     let task = tokio::spawn({
@@ -2923,12 +2714,7 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
     let client_id = "vhandoff-invalid-args";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
 
@@ -3089,12 +2875,7 @@ async fn cancel_queued_before_handoff_removes_start_request_and_hidden_record() 
     let client_id = "vhandoff-cancel-queued";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_secs(60));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
 
     let task = tokio::spawn({
@@ -3170,12 +2951,7 @@ async fn cancel_running_before_handoff_retains_record_until_runner_stops() {
     let client_id = "vhandoff-cancel-running";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_secs(60));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
 
     let task = tokio::spawn({
@@ -3198,21 +2974,17 @@ async fn cancel_running_before_handoff_retains_record_until_runner_stops() {
         }
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update(
             "running",
             "running 1 test\n",
             "",
             None,
             running_progress("test"),
             false,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
 
     task.abort();
     let _ = task.await;
@@ -3277,12 +3049,7 @@ async fn stop_job_stops_a_handoff_job() {
     let client_id = "vhandoff-stop";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
     let session = runtime.sessions.start_session(Some(project.clone()), None);
@@ -3319,21 +3086,10 @@ async fn stop_job_stops_a_handoff_job() {
         }
     });
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
-            "running",
-            "",
-            "",
-            None,
-            running_progress("test"),
-            false,
-        ))
-        .await
-        .unwrap();
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update("running", "", "", None, running_progress("test"), false)
+        .await;
     let handoff = task.await.unwrap();
     assert!(handoff.success);
     let _ = sparse_validation_handoff_token(&handoff.output, &job_id);
@@ -3364,12 +3120,7 @@ async fn terminal_validation_result_fields_are_consistent_between_executors() {
     let _ = tmp;
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
 
     let task = tokio::spawn({
@@ -3384,21 +3135,17 @@ async fn terminal_validation_result_fields_are_consistent_between_executors() {
     // This exercises the agent terminal result path and returns a full
     // terminal projection in-window.
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
-    runtime
-        .runner_registry
-        .update_job(cargo_test_update(
-            client_id,
-            &request.request_id,
-            &job_id,
+    let job_updates = ValidationJobUpdates::new(&runtime, client_id, &request.request_id, &job_id);
+    job_updates
+        .update(
             "completed",
             "Finished `dev` profile [unoptimized + debuginfo] target(s)\n",
             "",
             Some(0),
             completed_progress(),
             true,
-        ))
-        .await
-        .unwrap();
+        )
+        .await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     for field in [
@@ -3424,12 +3171,7 @@ async fn terminal_validation_result_fields_are_consistent_between_executors() {
 async fn cargo_fmt_ensure_formatted_ignores_sync_wait_and_skips_mutation_when_already_formatted() {
     let client_id = "vhandoff-fmt-mutate";
     let runtime = runtime_with_agent_project(client_id);
-    let caps = RunnerCapabilities {
-        async_shell_jobs: true,
-        structured_validation_argv: true,
-        ..Default::default()
-    };
-    register_agent(&runtime, client_id, None, caps).await;
+    register_async_validation_agent(&runtime, client_id).await;
     let project = agent_test_project_id(client_id);
 
     let task = tokio::spawn({

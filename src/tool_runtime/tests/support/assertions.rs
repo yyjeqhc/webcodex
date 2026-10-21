@@ -141,3 +141,94 @@ pub(in crate::tool_runtime::tests) fn assert_observe_job_continuation(output: &V
             <= webcodex_core::runtime_contract::MAX_JOB_OBSERVATION_WAIT_SECS
     );
 }
+
+pub(in crate::tool_runtime::tests) fn assert_reason_list_contains(
+    verdict: &Value,
+    key: &str,
+    reason: &str,
+) {
+    let reasons = verdict[key].as_array().expect("reason list");
+    assert!(
+        reasons.iter().any(|value| value.as_str() == Some(reason)),
+        "{key} should contain {reason}: {verdict}"
+    );
+}
+
+pub(in crate::tool_runtime::tests) fn assert_reason_list_not_contains(
+    verdict: &Value,
+    key: &str,
+    reason: &str,
+) {
+    let reasons = verdict[key].as_array().expect("reason list");
+    assert!(
+        !reasons.iter().any(|value| value.as_str() == Some(reason)),
+        "{key} should not contain {reason}: {verdict}"
+    );
+}
+
+pub(in crate::tool_runtime::tests) fn assert_action_list_contains(actions: &Value, action: &str) {
+    assert!(
+        actions
+            .as_array()
+            .expect("suggested_next_actions array")
+            .iter()
+            .any(|candidate| candidate.as_str() == Some(action)),
+        "suggested_next_actions should contain {action}: {actions}"
+    );
+}
+
+pub(in crate::tool_runtime::tests) fn assert_action_list_not_contains(
+    actions: &Value,
+    action: &str,
+) {
+    assert!(
+        !actions
+            .as_array()
+            .expect("suggested_next_actions array")
+            .iter()
+            .any(|candidate| candidate.as_str() == Some(action)),
+        "suggested_next_actions should not contain {action}: {actions}"
+    );
+}
+
+pub(in crate::tool_runtime::tests) fn assert_compact_verdict_safe(value: &Value, context: &str) {
+    let serialized = serde_json::to_string(value).unwrap();
+    for forbidden in [
+        "stdout", "stderr", "tail", "excerpt", "command", "token", "secret", "env",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "{context} leaked {forbidden}: {serialized}"
+        );
+    }
+}
+
+pub(in crate::tool_runtime::tests) fn json_contains_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.contains_key(key) || map.values().any(|value| json_contains_key(value, key))
+        }
+        Value::Array(values) => values.iter().any(|value| json_contains_key(value, key)),
+        _ => false,
+    }
+}
+
+pub(in crate::tool_runtime::tests) fn assert_no_raw_validation_output_fields(
+    value: &Value,
+    context: &str,
+) {
+    for key in [
+        "stdout",
+        "stderr",
+        "stdout_tail",
+        "stderr_tail",
+        "stdout_tail_excerpt",
+        "stderr_tail_excerpt",
+        "validation_output_summary",
+    ] {
+        assert!(
+            !json_contains_key(value, key),
+            "{context} must not include {key}: {value}"
+        );
+    }
+}

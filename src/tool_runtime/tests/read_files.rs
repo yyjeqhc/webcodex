@@ -2394,8 +2394,7 @@ async fn ordinary_read_delivers_terminal_attention_without_host_continuation_sup
 #[tokio::test]
 async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
     use crate::tool_runtime::kernel::{
-        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
-        ToolProtocolCapabilities, ToolTransport,
+        ToolCallRequest, ToolInvocationMetadata, ToolProtocolCapabilities,
     };
 
     let root = tempfile::tempdir().unwrap();
@@ -2422,14 +2421,7 @@ async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
                         tool_name: "read_files".to_string(),
                         arguments,
                     },
-                    ToolCallContext {
-                        transport: ToolTransport::Mcp,
-                        session_id: Some(&session_id),
-                        auth: Some(&auth),
-                        window: None,
-                        record_oauth_scope_denials: false,
-                        host_file_import_trust: HostFileImportTrust::Untrusted,
-                    },
+                    mcp_recording_context(&session_id, &auth),
                     ToolInvocationMetadata {
                         ..Default::default()
                     },
@@ -2475,8 +2467,7 @@ async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
 #[tokio::test]
 async fn read_files_outer_recorder_observes_canonical_batch_before_primary_projection() {
     use crate::tool_runtime::kernel::{
-        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
-        ToolProtocolCapabilities, ToolTransport,
+        ToolCallRequest, ToolInvocationMetadata, ToolProtocolCapabilities,
     };
 
     let root = tempfile::tempdir().unwrap();
@@ -2510,14 +2501,7 @@ async fn read_files_outer_recorder_observes_canonical_batch_before_primary_proje
                         tool_name: "read_files".to_string(),
                         arguments,
                     },
-                    ToolCallContext {
-                        transport: ToolTransport::Mcp,
-                        session_id: Some(&session_id),
-                        auth: Some(&auth),
-                        window: None,
-                        record_oauth_scope_denials: false,
-                        host_file_import_trust: HostFileImportTrust::Untrusted,
-                    },
+                    mcp_recording_context(&session_id, &auth),
                     ToolInvocationMetadata::default(),
                     ToolProtocolCapabilities::default(),
                 )
@@ -2567,8 +2551,7 @@ async fn read_files_outer_recorder_observes_canonical_batch_before_primary_proje
 #[tokio::test]
 async fn read_files_ignores_context_ack_and_preserves_bounded_attention() {
     use crate::tool_runtime::kernel::{
-        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
-        ToolProtocolCapabilities, ToolTransport,
+        ToolCallRequest, ToolInvocationMetadata, ToolProtocolCapabilities,
     };
     use crate::tool_runtime::sessions::{
         PostSessionMessageInput, SessionMessageKind, SessionMessagePriority,
@@ -2689,14 +2672,7 @@ async fn read_files_ignores_context_ack_and_preserves_bounded_attention() {
                         tool_name: "read_files".to_string(),
                         arguments,
                     },
-                    ToolCallContext {
-                        transport: ToolTransport::Mcp,
-                        session_id: Some(&session_id),
-                        auth: Some(&auth),
-                        window: None,
-                        record_oauth_scope_denials: false,
-                        host_file_import_trust: HostFileImportTrust::Untrusted,
-                    },
+                    mcp_recording_context(&session_id, &auth),
                     ToolInvocationMetadata {
                         context_request: vec!["webcodex.workflow".to_string()],
 
@@ -2747,8 +2723,7 @@ async fn read_files_ignores_context_ack_and_preserves_bounded_attention() {
 #[tokio::test]
 async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap() {
     use crate::tool_runtime::kernel::{
-        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
-        ToolProtocolCapabilities, ToolTransport,
+        ToolCallRequest, ToolInvocationMetadata, ToolProtocolCapabilities,
     };
     use webcodex_core::runtime_contract::MODEL_INSPECTION_MAX_RESULT_BYTES as MAX_SERIALIZED_OUTPUT_BYTES;
 
@@ -2784,14 +2759,7 @@ async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap(
                         tool_name: "read_files".to_string(),
                         arguments,
                     },
-                    ToolCallContext {
-                        transport: ToolTransport::Mcp,
-                        session_id: Some(&session_id),
-                        auth: Some(&auth),
-                        window: None,
-                        record_oauth_scope_denials: false,
-                        host_file_import_trust: HostFileImportTrust::Untrusted,
-                    },
+                    mcp_recording_context(&session_id, &auth),
                     ToolInvocationMetadata {
                         ..Default::default()
                     },

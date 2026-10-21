@@ -1,15 +1,15 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use salvo::http::header::CONTENT_TYPE;
 use salvo::prelude::*;
 use sha2::{Digest, Sha256};
 
 use crate::auth::{generate_oauth_access_token, generate_oauth_refresh_token, hash_token};
 use crate::models::{OAuthAccessTokenRecord, OAuthRefreshTokenRecord};
 
-use super::{
-    apply_oauth_no_store_headers, oauth_error, validate_authorize_resource,
-    MAX_OAUTH_TOKEN_FORM_BYTES,
+use super::responses::{
+    authenticate_token_client, enabled_token_config, parse_token_form, required_token_parameter,
+    OAuthTokenError,
 };
+use super::{apply_oauth_no_store_headers, validate_authorize_resource};
 
 /// Verify a PKCE S256 code verifier against the stored code challenge.
 ///
@@ -55,301 +55,69 @@ fn resolve_token_resource(
 }
 
 #[handler]
-pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    // --- Config ---
-    let Some(config) = crate::auth::get_config(depot) else {
-        oauth_error(
-            res,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "server_error",
-            "no config",
-        );
-        return;
-    };
+pub(crate) async fn oauth_token(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) -> Result<(), OAuthTokenError> {
+    let config = enabled_token_config(depot)?;
+    let form: TokenRequest = parse_token_form(req).await?;
+    let grant_type = form
+        .grant_type
+        .as_deref()
+        .ok_or_else(|| OAuthTokenError::invalid_request("missing grant_type"))?;
 
-    // --- OAuth2 enable gate ---
-    if !config.oauth2.enabled {
-        oauth_error(
-            res,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "server_error",
-            "OAuth2 is not enabled",
-        );
-        return;
-    }
-
-    // --- Content-Type enforcement ---
-    let content_type_ok = req
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|ct| {
-            ct.eq_ignore_ascii_case("application/x-www-form-urlencoded")
-                || ct
-                    .to_ascii_lowercase()
-                    .starts_with("application/x-www-form-urlencoded;")
-        })
-        .unwrap_or(false);
-
-    if !content_type_ok {
-        oauth_error(
-            res,
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "invalid_request",
-            "content-type must be application/x-www-form-urlencoded",
-        );
-        return;
-    }
-
-    // --- Body size limit (Content-Length pre-check) ---
-    if let Some(cl) = req.headers().get("content-length") {
-        if let Ok(len) = cl.to_str().unwrap_or("").parse::<usize>() {
-            if len > MAX_OAUTH_TOKEN_FORM_BYTES {
-                oauth_error(
-                    res,
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    "invalid_request",
-                    "request body too large",
-                );
-                return;
-            }
-        }
-    }
-
-    // --- Parse form body ---
-    let body = match req.payload().await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("failed to read request body: {}", e),
-            );
-            return;
-        }
-    };
-
-    // --- Body size limit (actual body check) ---
-    if body.len() > MAX_OAUTH_TOKEN_FORM_BYTES {
-        oauth_error(
-            res,
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "invalid_request",
-            "request body too large",
-        );
-        return;
-    }
-
-    let form: TokenRequest = match serde_urlencoded::from_bytes(body) {
-        Ok(f) => f,
-        Err(e) => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("invalid form body: {}", e),
-            );
-            return;
-        }
-    };
-
-    // --- grant_type ---
-    let grant_type = match form.grant_type.as_deref() {
-        Some(gt) => gt,
-        None => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "missing grant_type",
-            );
-            return;
-        }
-    };
-
-    // Validate grant_type before checking other parameters.
-    match grant_type {
-        "authorization_code" | "refresh_token" => {}
-        _ => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "unsupported_grant_type",
-                "only authorization_code and refresh_token grants are supported",
-            );
-            return;
-        }
-    }
-
-    // Reject scope parameter on refresh_token grant (not yet supported).
-    if grant_type == "refresh_token" && form.scope.is_some() {
-        oauth_error(
-            res,
+    // Grant validation precedes client parameters, authentication and DB access.
+    if !matches!(grant_type, "authorization_code" | "refresh_token") {
+        return Err(OAuthTokenError::new(
             StatusCode::BAD_REQUEST,
-            "invalid_request",
+            "unsupported_grant_type",
+            "only authorization_code and refresh_token grants are supported",
+        ));
+    }
+    if grant_type == "refresh_token" && form.scope.is_some() {
+        return Err(OAuthTokenError::invalid_request(
             "scope narrowing is not supported for refresh_token grant yet",
-        );
-        return;
+        ));
     }
-
-    // --- Required parameters (common to both grants) ---
-    let client_id = match form.client_id.as_deref() {
-        Some(c) if !c.is_empty() => c,
-        _ => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "missing client_id",
-            );
-            return;
-        }
-    };
-
-    let client_secret = match form.client_secret.as_deref() {
-        Some(s) if !s.is_empty() => s,
-        _ => {
-            oauth_error(
-                res,
-                StatusCode::UNAUTHORIZED,
-                "invalid_client",
-                "missing client_secret",
-            );
-            return;
-        }
-    };
-
-    // --- DB ---
-    let Some(db) = crate::auth::get_db(depot) else {
-        oauth_error(
-            res,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "server_error",
-            "DB not available",
-        );
-        return;
-    };
-
-    // --- Client authentication (before any token operations) ---
-    let secret_ok = match crate::auth::verify_oauth_client_secret(&db, client_id, client_secret) {
-        Ok(ok) => ok,
-        Err(_) => {
-            oauth_error(
-                res,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "server_error",
-                "internal error",
-            );
-            return;
-        }
-    };
-
-    if !secret_ok {
-        oauth_error(
-            res,
-            StatusCode::UNAUTHORIZED,
-            "invalid_client",
-            "client authentication failed",
-        );
-        return;
-    }
-
-    // Also verify the client is not revoked (verify_oauth_client_secret
-    // already filters revoked via get_oauth_client_by_client_id, but fetch
-    // the record again for downstream fields).
-    let client = match db.get_oauth_client_by_client_id(client_id) {
-        Ok(Some(c)) => c,
-        _ => {
-            oauth_error(
-                res,
-                StatusCode::UNAUTHORIZED,
-                "invalid_client",
-                "client authentication failed",
-            );
-            return;
-        }
-    };
-
+    let (db, client) = authenticate_token_client(
+        depot,
+        form.client_id.as_deref(),
+        form.client_secret.as_deref(),
+    )?;
     let now = chrono::Utc::now().timestamp();
-
-    // --- Dispatch by grant_type ---
-    match grant_type {
-        "authorization_code" => {
-            handle_authorization_code_grant(&config, &db, &client, &form, now, res).await;
-        }
-        "refresh_token" => {
-            handle_refresh_token_grant(&config, &db, &client, &form, now, res).await;
-        }
-        _ => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "unsupported_grant_type",
-                "only authorization_code and refresh_token grants are supported",
-            );
-        }
-    }
+    let body = if grant_type == "authorization_code" {
+        handle_authorization_code_grant(&config, &db, &client, &form, now)?
+    } else {
+        handle_refresh_token_grant(&config, &db, &client, &form, now)?
+    };
+    apply_oauth_no_store_headers(res);
+    res.render(Json(body));
+    Ok(())
 }
 
-async fn handle_authorization_code_grant(
+fn handle_authorization_code_grant(
     config: &crate::Config,
     db: &crate::Database,
     client: &crate::models::OAuthClientRecord,
     form: &TokenRequest,
     now: i64,
-    res: &mut Response,
-) {
-    let plaintext_code = match form.code.as_deref() {
-        Some(c) if !c.is_empty() => c,
-        _ => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "missing code",
-            );
-            return;
-        }
-    };
+) -> Result<serde_json::Value, OAuthTokenError> {
+    let plaintext_code = required_token_parameter(form.code.as_deref(), "code")?;
 
-    let redirect_uri = match form.redirect_uri.as_deref() {
-        Some(r) if !r.is_empty() => r,
-        _ => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "missing redirect_uri",
-            );
-            return;
-        }
-    };
+    let redirect_uri = required_token_parameter(form.redirect_uri.as_deref(), "redirect_uri")?;
 
     // --- Read authorization code metadata (without consuming) ---
     let code_hash = hash_token(plaintext_code);
 
-    let code_record = match db.get_oauth_authorization_code_by_hash(&code_hash) {
-        Ok(Some(c)) => c,
-        Ok(None) => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
+    let code_record = db
+        .get_oauth_authorization_code_by_hash(&code_hash)
+        .map_err(|_| OAuthTokenError::server_error("internal error"))?
+        .ok_or_else(|| {
+            OAuthTokenError::invalid_grant(
                 "authorization code is invalid, expired, or already used",
-            );
-            return;
-        }
-        Err(_) => {
-            oauth_error(
-                res,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "server_error",
-                "internal error",
-            );
-            return;
-        }
-    };
+            )
+        })?;
 
     // --- Pre-exchange validation (using metadata, code is NOT yet consumed) ---
 
@@ -361,13 +129,9 @@ async fn handle_authorization_code_grant(
     .is_err()
     {
         let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
-        oauth_error(
-            res,
-            StatusCode::BAD_REQUEST,
-            "invalid_grant",
+        return Err(OAuthTokenError::invalid_grant(
             "authorization grant is no longer active",
-        );
-        return;
+        ));
     }
     if code_record.subject_kind == crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND {
         let owner_matches = crate::auth::parse_project_share_subject_id(&code_record.subject_id)
@@ -378,36 +142,24 @@ async fn handle_authorization_code_grant(
             });
         if !owner_matches {
             let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
+            return Err(OAuthTokenError::invalid_grant(
                 "authorization grant does not belong to this client",
-            );
-            return;
+            ));
         }
     }
 
     if code_record.client_id != client.client_id {
         let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
-        oauth_error(
-            res,
-            StatusCode::BAD_REQUEST,
-            "invalid_grant",
+        return Err(OAuthTokenError::invalid_grant(
             "authorization code was not issued to this client",
-        );
-        return;
+        ));
     }
 
     if code_record.redirect_uri != redirect_uri {
         let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
-        oauth_error(
-            res,
-            StatusCode::BAD_REQUEST,
-            "invalid_grant",
+        return Err(OAuthTokenError::invalid_grant(
             "redirect_uri does not match",
-        );
-        return;
+        ));
     }
 
     // --- PKCE S256 (before code consumption) ---
@@ -417,13 +169,9 @@ async fn handle_authorization_code_grant(
             Some(v) if !v.is_empty() => v,
             _ => {
                 let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
-                oauth_error(
-                    res,
-                    StatusCode::BAD_REQUEST,
-                    "invalid_grant",
+                return Err(OAuthTokenError::invalid_grant(
                     "missing code_verifier for PKCE",
-                );
-                return;
+                ));
             }
         };
 
@@ -431,35 +179,21 @@ async fn handle_authorization_code_grant(
             Some("S256") => {}
             _ => {
                 let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
-                oauth_error(
-                    res,
-                    StatusCode::BAD_REQUEST,
-                    "invalid_grant",
+                return Err(OAuthTokenError::invalid_grant(
                     "unsupported code_challenge_method; only S256 is supported",
-                );
-                return;
+                ));
             }
         }
 
         if !verify_pkce_s256(verifier, challenge) {
             let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
-                "PKCE verification failed",
-            );
-            return;
+            return Err(OAuthTokenError::invalid_grant("PKCE verification failed"));
         }
     } else if require_pkce {
         let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
-        oauth_error(
-            res,
-            StatusCode::BAD_REQUEST,
-            "invalid_grant",
+        return Err(OAuthTokenError::invalid_grant(
             "PKCE is required but no code_challenge was provided during authorization",
-        );
-        return;
+        ));
     }
 
     let token_resource = match resolve_token_resource(
@@ -470,13 +204,9 @@ async fn handle_authorization_code_grant(
         Ok(resource) => resource,
         Err(()) => {
             let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_target",
+            return Err(OAuthTokenError::invalid_target(
                 "resource does not match authorization grant",
-            );
-            return;
+            ));
         }
     };
 
@@ -523,66 +253,31 @@ async fn handle_authorization_code_grant(
         rotated_from_id: None,
     };
 
-    let code_record = match db
+    let code_record = db
         .exchange_oauth_authorization_code_for_tokens(&code_hash, now, &at_record, &rt_record)
-    {
-        Ok(Some(r)) => r,
-        Ok(None) => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
+        .map_err(|_| OAuthTokenError::server_error("internal error"))?
+        .ok_or_else(|| {
+            OAuthTokenError::invalid_grant(
                 "authorization code is invalid, expired, or already used",
-            );
-            return;
-        }
-        Err(_) => {
-            oauth_error(
-                res,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "server_error",
-                "internal error",
-            );
-            return;
-        }
-    };
+            )
+        })?;
 
-    // --- Success response ---
-    let mut body = serde_json::json!({
-        "access_token": access_token,
-        "token_type": "Bearer",
-        "expires_in": config.oauth2.access_token_ttl_secs,
-        "refresh_token": refresh_token,
-    });
-
-    if !code_record.scopes.is_empty() {
-        body["scope"] = serde_json::Value::String(code_record.scopes.clone());
-    }
-
-    apply_oauth_no_store_headers(res);
-    res.render(Json(body));
+    Ok(token_response(
+        config,
+        access_token,
+        refresh_token,
+        &code_record.scopes,
+    ))
 }
 
-async fn handle_refresh_token_grant(
+fn handle_refresh_token_grant(
     config: &crate::Config,
     db: &crate::Database,
     client: &crate::models::OAuthClientRecord,
     form: &TokenRequest,
     now: i64,
-    res: &mut Response,
-) {
-    let plaintext_rt = match form.refresh_token.as_deref() {
-        Some(r) if !r.is_empty() => r,
-        _ => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "missing refresh_token",
-            );
-            return;
-        }
-    };
+) -> Result<serde_json::Value, OAuthTokenError> {
+    let plaintext_rt = required_token_parameter(form.refresh_token.as_deref(), "refresh_token")?;
 
     let rt_hash = hash_token(plaintext_rt);
     let at_expires_at = now + config.oauth2.access_token_ttl_secs;
@@ -602,55 +297,21 @@ async fn handle_refresh_token_grant(
     // To avoid TOCTOU, the rotation helper re-validates everything inside
     // its transaction. The metadata read here is only for constructing the
     // records.
-    let old_rt_metadata = match db.get_oauth_refresh_token_by_hash(&rt_hash) {
-        Ok(Some(rt)) => rt,
-        Ok(None) => {
-            // Could be not found, revoked, or expired. Check the full table
-            // for a better error message.
-            match db.get_oauth_refresh_token_by_hash_for_rotate(&rt_hash) {
-                Ok(Some(rt)) => {
-                    if rt.revoked_at.is_some() {
-                        oauth_error(
-                            res,
-                            StatusCode::BAD_REQUEST,
-                            "invalid_grant",
-                            "refresh token has been revoked",
-                        );
-                    } else if rt.is_expired(now) {
-                        oauth_error(
-                            res,
-                            StatusCode::BAD_REQUEST,
-                            "invalid_grant",
-                            "refresh token has expired",
-                        );
-                    } else {
-                        oauth_error(
-                            res,
-                            StatusCode::BAD_REQUEST,
-                            "invalid_grant",
-                            "refresh token client_id mismatch",
-                        );
-                    }
-                }
-                _ => {
-                    oauth_error(
-                        res,
-                        StatusCode::BAD_REQUEST,
-                        "invalid_grant",
-                        "refresh token is invalid",
-                    );
-                }
-            }
-            return;
-        }
-        Err(_) => {
-            oauth_error(
-                res,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "server_error",
-                "internal error",
-            );
-            return;
+    let old_rt_metadata = match db
+        .get_oauth_refresh_token_by_hash(&rt_hash)
+        .map_err(|_| OAuthTokenError::server_error("internal error"))?
+    {
+        Some(rt) => rt,
+        None => {
+            // Preserve the existing diagnostic lookup without rotating or
+            // changing the refresh token when its metadata is unavailable.
+            let description = match db.get_oauth_refresh_token_by_hash_for_rotate(&rt_hash) {
+                Ok(Some(rt)) if rt.revoked_at.is_some() => "refresh token has been revoked",
+                Ok(Some(rt)) if rt.is_expired(now) => "refresh token has expired",
+                Ok(Some(_)) => "refresh token client_id mismatch",
+                _ => "refresh token is invalid",
+            };
+            return Err(OAuthTokenError::invalid_grant(description));
         }
     };
 
@@ -661,13 +322,9 @@ async fn handle_refresh_token_grant(
     )
     .is_err()
     {
-        oauth_error(
-            res,
-            StatusCode::BAD_REQUEST,
-            "invalid_grant",
+        return Err(OAuthTokenError::invalid_grant(
             "refresh token is no longer active",
-        );
-        return;
+        ));
     }
     if old_rt_metadata.subject_kind == crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND {
         let owner_matches =
@@ -678,32 +335,18 @@ async fn handle_refresh_token_grant(
                         && client.owner_project_grant_id.as_deref() == Some(grant_id)
                 });
         if !owner_matches {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
+            return Err(OAuthTokenError::invalid_grant(
                 "refresh token does not belong to this client",
-            );
-            return;
+            ));
         }
     }
 
-    let token_resource = match resolve_token_resource(
+    let token_resource = resolve_token_resource(
         config,
         form.resource.as_deref(),
         old_rt_metadata.resource.as_deref(),
-    ) {
-        Ok(resource) => resource,
-        Err(()) => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_target",
-                "resource does not match refresh token",
-            );
-            return;
-        }
-    };
+    )
+    .map_err(|()| OAuthTokenError::invalid_target("resource does not match refresh token"))?;
 
     let at_record = OAuthAccessTokenRecord {
         admin_authority: old_rt_metadata.admin_authority,
@@ -747,60 +390,48 @@ async fn handle_refresh_token_grant(
         &at_record,
         &new_rt_record,
     ) {
-        Ok(crate::RotateResult::Rotated(old_rt)) => {
-            let mut body = serde_json::json!({
-                "access_token": new_access_token,
-                "token_type": "Bearer",
-                "expires_in": config.oauth2.access_token_ttl_secs,
-                "refresh_token": new_refresh_token,
-            });
-
-            if !old_rt.scopes.is_empty() {
-                body["scope"] = serde_json::Value::String(old_rt.scopes.clone());
-            }
-
-            apply_oauth_no_store_headers(res);
-            res.render(Json(body));
-        }
+        Ok(crate::RotateResult::Rotated(old_rt)) => Ok(token_response(
+            config,
+            new_access_token,
+            new_refresh_token,
+            &old_rt.scopes,
+        )),
         Ok(crate::RotateResult::NotFound) => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
-                "refresh token is invalid",
-            );
+            return Err(OAuthTokenError::invalid_grant("refresh token is invalid"));
         }
         Ok(crate::RotateResult::Revoked) => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
+            return Err(OAuthTokenError::invalid_grant(
                 "refresh token has been revoked",
-            );
+            ));
         }
         Ok(crate::RotateResult::Expired) => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
-                "refresh token has expired",
-            );
+            return Err(OAuthTokenError::invalid_grant("refresh token has expired"));
         }
         Ok(crate::RotateResult::ClientMismatch) => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
+            return Err(OAuthTokenError::invalid_grant(
                 "refresh token does not belong to this client",
-            );
+            ));
         }
         Err(_) => {
-            oauth_error(
-                res,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "server_error",
-                "internal error",
-            );
+            return Err(OAuthTokenError::server_error("internal error"));
         }
     }
+}
+
+fn token_response(
+    config: &crate::Config,
+    access_token: String,
+    refresh_token: String,
+    scopes: &str,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "expires_in": config.oauth2.access_token_ttl_secs,
+        "refresh_token": refresh_token,
+    });
+    if !scopes.is_empty() {
+        body["scope"] = serde_json::Value::String(scopes.to_string());
+    }
+    body
 }

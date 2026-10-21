@@ -2,6 +2,7 @@ use salvo::prelude::*;
 
 use crate::auth::{hash_token, AuthContext};
 
+use super::responses::{parse_management_json, OAuthManagementError as ManagementError};
 use super::{apply_oauth_no_store_headers, is_authorize_identity_allowed, oauth_scopes_supported};
 
 const MAX_CLIENT_NAME_LEN: usize = 128;
@@ -159,73 +160,78 @@ fn auth_can_manage_managed_oauth_client(
         && (auth.is_admin() || auth.user_id.as_deref() == client.owner_user_id.as_deref())
 }
 
-#[handler]
-pub(crate) async fn oauth_clients_create(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::UNAUTHORIZED);
-        res.render(Json(
-            serde_json::json!({"error": "authenticated user required"}),
-        ));
-        return;
-    };
-    // Double-check first-party identity. The route policy + AuthMiddleware
-    // already block OAuth2Token/AgentToken/AccountCredential, but we defend
-    // in depth here too.
+fn management_context(
+    depot: &Depot,
+) -> Result<(&AuthContext, std::sync::Arc<crate::Database>), ManagementError> {
+    let auth = depot.obtain::<AuthContext>().map_err(|_| {
+        ManagementError::new(StatusCode::UNAUTHORIZED, "authenticated user required")
+    })?;
+    // Keep the route policy's first-party/account authority check here too.
     if !is_authorize_identity_allowed(auth)
         || !auth.has_scope(webcodex_core::authority::SCOPE_ACCOUNT_MANAGE)
     {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(serde_json::json!({
-            "error": "first-party account:manage authority required"
-        })));
-        return;
+        return Err(ManagementError::new(
+            StatusCode::FORBIDDEN,
+            "first-party account:manage authority required",
+        ));
     }
-    let Some(db) = crate::auth::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(serde_json::json!({"error": "DB not available"})));
-        return;
-    };
+    let db =
+        crate::auth::get_db(depot).ok_or_else(|| ManagementError::internal("DB not available"))?;
+    Ok((auth, db))
+}
 
-    let body: CreateOAuthClientRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(serde_json::json!({
-                "error": "invalid request body",
-                "detail": e.to_string()
-            })));
-            return;
-        }
-    };
+fn managed_client(
+    db: &crate::Database,
+    auth: &AuthContext,
+    client_id: &str,
+) -> Result<Option<crate::models::OAuthClientRecord>, ManagementError> {
+    let client = db
+        .get_oauth_client_by_client_id(client_id)
+        .map_err(|error| ManagementError::internal("failed to read client").with_detail(error))?;
+    if client
+        .as_ref()
+        .is_some_and(|client| !auth_can_manage_managed_oauth_client(auth, client))
+    {
+        return Err(ManagementError::new(
+            StatusCode::NOT_FOUND,
+            "OAuth client not found",
+        ));
+    }
+    Ok(client)
+}
+
+#[handler]
+pub(crate) async fn oauth_clients_create(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) -> Result<(), ManagementError> {
+    let (auth, db) = management_context(depot)?;
+
+    let body: CreateOAuthClientRequest = parse_management_json(req).await?;
 
     let name = body.name.as_deref().unwrap_or("").trim().to_string();
     if name.is_empty() {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(serde_json::json!({"error": "name is required"})));
-        return;
+        return Err(ManagementError::bad_request("name is required"));
     }
     if name.chars().count() > MAX_CLIENT_NAME_LEN {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(serde_json::json!({
-            "error": format!("name is too long; maximum is {} characters", MAX_CLIENT_NAME_LEN)
-        })));
-        return;
+        return Err(ManagementError::bad_request(format!(
+            "name is too long; maximum is {} characters",
+            MAX_CLIENT_NAME_LEN
+        )));
     }
 
     let redirect_uris: Vec<String> = body.redirect_uris.unwrap_or_default();
     if redirect_uris.is_empty() {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(
-            serde_json::json!({"error": "redirect_uris must be a non-empty array"}),
+        return Err(ManagementError::bad_request(
+            "redirect_uris must be a non-empty array",
         ));
-        return;
     }
     if redirect_uris.len() > MAX_CLIENT_REDIRECT_URIS {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(serde_json::json!({
-            "error": format!("too many redirect_uris; maximum is {}", MAX_CLIENT_REDIRECT_URIS)
-        })));
-        return;
+        return Err(ManagementError::bad_request(format!(
+            "too many redirect_uris; maximum is {}",
+            MAX_CLIENT_REDIRECT_URIS
+        )));
     }
     // Trim each redirect URI, validate the trimmed value, and dedup the
     // trimmed values so whitespace-padded duplicates collapse and the stored
@@ -234,25 +240,15 @@ pub(crate) async fn oauth_clients_create(req: &mut Request, depot: &mut Depot, r
     let mut trimmed_uris: Vec<String> = Vec::new();
     for uri in &redirect_uris {
         let trimmed = uri.trim().to_string();
-        if let Err(msg) = validate_redirect_uri(&trimmed) {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(serde_json::json!({"error": msg})));
-            return;
-        }
+        validate_redirect_uri(&trimmed).map_err(ManagementError::bad_request)?;
         if seen.insert(trimmed.clone()) {
             trimmed_uris.push(trimmed);
         }
     }
     let redirect_uris_str = trimmed_uris.join("\n");
 
-    let allowed_scopes = match normalize_client_allowed_scopes(body.allowed_scopes.as_deref()) {
-        Ok(s) => s,
-        Err(msg) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(serde_json::json!({"error": msg})));
-            return;
-        }
-    };
+    let allowed_scopes = normalize_client_allowed_scopes(body.allowed_scopes.as_deref())
+        .map_err(ManagementError::bad_request)?;
     let allowed_scopes_str = allowed_scopes.join(" ");
 
     // Bootstrap has no real user_id; attribute the client to the first
@@ -264,11 +260,9 @@ pub(crate) async fn oauth_clients_create(req: &mut Request, depot: &mut Depot, r
         None => match db.list_users().map(|mut u| u.pop()) {
             Ok(Some(u)) => u.id,
             _ => {
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(serde_json::json!({
-                    "error": "no registered users; create a user or use a PAT to create OAuth clients"
-                })));
-                return;
+                return Err(ManagementError::bad_request(
+                    "no registered users; create a user or use a PAT to create OAuth clients",
+                ));
             }
         },
     };
@@ -289,13 +283,8 @@ pub(crate) async fn oauth_clients_create(req: &mut Request, depot: &mut Depot, r
         created_at: now,
         revoked_at: None,
     };
-    if let Err(e) = db.insert_oauth_client(&record) {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(
-            serde_json::json!({"error": "failed to create client", "detail": e.to_string()}),
-        ));
-        return;
-    }
+    db.insert_oauth_client(&record)
+        .map_err(|error| ManagementError::internal("failed to create client").with_detail(error))?;
 
     apply_oauth_no_store_headers(res);
     res.render(Json(serde_json::json!({
@@ -310,40 +299,19 @@ pub(crate) async fn oauth_clients_create(req: &mut Request, depot: &mut Depot, r
         },
         "client_secret": plaintext_secret,
     })));
+    Ok(())
 }
 
 #[handler]
-pub(crate) async fn oauth_clients_list(depot: &mut Depot, res: &mut Response) {
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::UNAUTHORIZED);
-        res.render(Json(
-            serde_json::json!({"error": "authenticated user required"}),
-        ));
-        return;
-    };
-    if !is_authorize_identity_allowed(auth)
-        || !auth.has_scope(webcodex_core::authority::SCOPE_ACCOUNT_MANAGE)
-    {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(serde_json::json!({
-            "error": "first-party account:manage authority required"
-        })));
-        return;
-    }
-    let Some(db) = crate::auth::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(serde_json::json!({"error": "DB not available"})));
-        return;
-    };
+pub(crate) async fn oauth_clients_list(
+    depot: &mut Depot,
+    res: &mut Response,
+) -> Result<(), ManagementError> {
+    let (auth, db) = management_context(depot)?;
 
-    let clients = match db.list_oauth_clients() {
-        Ok(c) => c,
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Json(serde_json::json!({"error": "failed to list clients"})));
-            return;
-        }
-    };
+    let clients = db
+        .list_oauth_clients()
+        .map_err(|_| ManagementError::internal("failed to list clients"))?;
 
     let clients_json: Vec<serde_json::Value> = clients
         .into_iter()
@@ -365,6 +333,7 @@ pub(crate) async fn oauth_clients_list(depot: &mut Depot, res: &mut Response) {
         "success": true,
         "clients": clients_json,
     })));
+    Ok(())
 }
 
 #[handler]
@@ -372,8 +341,8 @@ pub(crate) async fn oauth_clients_add_redirect_uri(
     req: &mut Request,
     depot: &mut Depot,
     res: &mut Response,
-) {
-    oauth_clients_update_redirect_uri(req, depot, res, true).await;
+) -> Result<(), ManagementError> {
+    oauth_clients_update_redirect_uri(req, depot, res, true).await
 }
 
 #[handler]
@@ -381,8 +350,8 @@ pub(crate) async fn oauth_clients_remove_redirect_uri(
     req: &mut Request,
     depot: &mut Depot,
     res: &mut Response,
-) {
-    oauth_clients_update_redirect_uri(req, depot, res, false).await;
+) -> Result<(), ManagementError> {
+    oauth_clients_update_redirect_uri(req, depot, res, false).await
 }
 
 async fn oauth_clients_update_redirect_uri(
@@ -390,87 +359,39 @@ async fn oauth_clients_update_redirect_uri(
     depot: &mut Depot,
     res: &mut Response,
     add: bool,
-) {
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::UNAUTHORIZED);
-        res.render(Json(
-            serde_json::json!({"error": "authenticated user required"}),
-        ));
-        return;
-    };
-    if !is_authorize_identity_allowed(auth)
-        || !auth.has_scope(webcodex_core::authority::SCOPE_ACCOUNT_MANAGE)
-    {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(
-            serde_json::json!({"error": "first-party account:manage authority required"}),
-        ));
-        return;
-    }
-    let Some(db) = crate::auth::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(serde_json::json!({"error": "DB not available"})));
-        return;
-    };
-    let body: UpdateOAuthClientRedirectUriRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(
-                serde_json::json!({"error": "invalid request body", "detail": e.to_string()}),
-            ));
-            return;
-        }
-    };
+) -> Result<(), ManagementError> {
+    let (auth, db) = management_context(depot)?;
+    let body: UpdateOAuthClientRedirectUriRequest = parse_management_json(req).await?;
     let redirect_uri = body.redirect_uri.trim().to_string();
-    if let Err(error) = validate_redirect_uri(&redirect_uri) {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(serde_json::json!({"error": error})));
-        return;
-    }
-    let current = match db.get_oauth_client_by_client_id(&body.client_id) {
-        Ok(Some(client)) if auth_can_manage_managed_oauth_client(auth, &client) => client,
-        Ok(_) => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Json(serde_json::json!({"error": "OAuth client not found"})));
-            return;
-        }
-        Err(e) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Json(
-                serde_json::json!({"error": "failed to read client", "detail": e.to_string()}),
-            ));
-            return;
-        }
-    };
+    validate_redirect_uri(&redirect_uri).map_err(ManagementError::bad_request)?;
+    let current = managed_client(&db, auth, &body.client_id)?
+        .ok_or_else(|| ManagementError::new(StatusCode::NOT_FOUND, "OAuth client not found"))?;
     let mut redirects = current.redirect_uris_vec();
     let contains = redirects.iter().any(|uri| uri == &redirect_uri);
     if add {
         if contains {
             apply_oauth_no_store_headers(res);
             res.render(Json(serde_json::json!({"success": true, "changed": false, "client": {"client_id": current.client_id, "redirect_uris": redirects}})));
-            return;
+            return Ok(());
         }
         if redirects.len() >= MAX_CLIENT_REDIRECT_URIS {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(serde_json::json!({"error": format!("too many redirect_uris; maximum is {}", MAX_CLIENT_REDIRECT_URIS)})));
-            return;
+            return Err(ManagementError::bad_request(format!(
+                "too many redirect_uris; maximum is {}",
+                MAX_CLIENT_REDIRECT_URIS
+            )));
         }
         redirects.push(redirect_uri);
     } else {
         if !contains {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Json(
-                serde_json::json!({"error": "redirect_uri is not registered"}),
+            return Err(ManagementError::new(
+                StatusCode::NOT_FOUND,
+                "redirect_uri is not registered",
             ));
-            return;
         }
         if redirects.len() <= 1 {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(
-                serde_json::json!({"error": "OAuth client must retain at least one redirect_uri"}),
+            return Err(ManagementError::bad_request(
+                "OAuth client must retain at least one redirect_uri",
             ));
-            return;
         }
         redirects.retain(|uri| uri != &redirect_uri);
     }
@@ -486,16 +407,16 @@ async fn oauth_clients_update_redirect_uri(
             })));
         }
         Ok(false) => {
-            res.status_code(StatusCode::CONFLICT);
-            res.render(Json(
-                serde_json::json!({"error": "OAuth client changed or is no longer active"}),
+            return Err(ManagementError::new(
+                StatusCode::CONFLICT,
+                "OAuth client changed or is no longer active",
             ));
         }
         Err(e) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Json(serde_json::json!({"error": "failed to update redirect_uris", "detail": e.to_string()})));
+            return Err(ManagementError::internal("failed to update redirect_uris").with_detail(e));
         }
     }
+    Ok(())
 }
 
 #[handler]
@@ -503,88 +424,29 @@ pub(crate) async fn oauth_clients_update_scopes(
     req: &mut Request,
     depot: &mut Depot,
     res: &mut Response,
-) {
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::UNAUTHORIZED);
-        res.render(Json(
-            serde_json::json!({"error": "authenticated user required"}),
-        ));
-        return;
-    };
-    if !is_authorize_identity_allowed(auth)
-        || !auth.has_scope(webcodex_core::authority::SCOPE_ACCOUNT_MANAGE)
-    {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(serde_json::json!({
-            "error": "first-party account:manage authority required"
-        })));
-        return;
-    }
-    let Some(db) = crate::auth::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(serde_json::json!({"error": "DB not available"})));
-        return;
-    };
+) -> Result<(), ManagementError> {
+    let (auth, db) = management_context(depot)?;
 
-    let body: UpdateOAuthClientScopesRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(serde_json::json!({
-                "error": "invalid request body",
-                "detail": e.to_string()
-            })));
-            return;
-        }
-    };
+    let body: UpdateOAuthClientScopesRequest = parse_management_json(req).await?;
     let client_id = body.client_id.trim().to_string();
     if client_id.is_empty() {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(serde_json::json!({"error": "client_id is required"})));
-        return;
+        return Err(ManagementError::bad_request("client_id is required"));
     }
     if !body
         .allowed_scopes
         .iter()
         .any(|scope| !scope.trim().is_empty())
     {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(serde_json::json!({
-            "error": "allowed_scopes must be a non-empty array"
-        })));
-        return;
+        return Err(ManagementError::bad_request(
+            "allowed_scopes must be a non-empty array",
+        ));
     }
-    let allowed_scopes = match normalize_client_allowed_scopes(Some(&body.allowed_scopes)) {
-        Ok(scopes) => scopes,
-        Err(message) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(serde_json::json!({"error": message})));
-            return;
-        }
-    };
+    let allowed_scopes = normalize_client_allowed_scopes(Some(&body.allowed_scopes))
+        .map_err(ManagementError::bad_request)?;
     let allowed_scopes_str = allowed_scopes.join(" ");
 
-    let current = match db.get_oauth_client_by_client_id(&client_id) {
-        Ok(Some(client)) => client,
-        Ok(None) => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Json(serde_json::json!({"error": "OAuth client not found"})));
-            return;
-        }
-        Err(e) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Json(serde_json::json!({
-                "error": "failed to read client",
-                "detail": e.to_string()
-            })));
-            return;
-        }
-    };
-    if !auth_can_manage_managed_oauth_client(auth, &current) {
-        res.status_code(StatusCode::NOT_FOUND);
-        res.render(Json(serde_json::json!({"error": "OAuth client not found"})));
-        return;
-    }
+    let current = managed_client(&db, auth, &client_id)?
+        .ok_or_else(|| ManagementError::new(StatusCode::NOT_FOUND, "OAuth client not found"))?;
 
     let now = chrono::Utc::now().timestamp();
     let (changed, access_tokens, refresh_tokens, authorization_codes) = match db
@@ -596,19 +458,13 @@ pub(crate) async fn oauth_clients_update_scopes(
         ) {
         Ok(Some(result)) => result,
         Ok(None) => {
-            res.status_code(StatusCode::CONFLICT);
-            res.render(Json(serde_json::json!({
-                "error": "OAuth client changed or is no longer active"
-            })));
-            return;
+            return Err(ManagementError::new(
+                StatusCode::CONFLICT,
+                "OAuth client changed or is no longer active",
+            ));
         }
         Err(e) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Json(serde_json::json!({
-                "error": "failed to update client scopes",
-                "detail": e.to_string()
-            })));
-            return;
+            return Err(ManagementError::internal("failed to update client scopes").with_detail(e));
         }
     };
 
@@ -631,105 +487,41 @@ pub(crate) async fn oauth_clients_update_scopes(
             "authorization_codes": authorization_codes,
         }
     })));
+    Ok(())
 }
 
 #[handler]
-pub(crate) async fn oauth_clients_revoke(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::UNAUTHORIZED);
-        res.render(Json(
-            serde_json::json!({"error": "authenticated user required"}),
-        ));
-        return;
-    };
-    if !is_authorize_identity_allowed(auth)
-        || !auth.has_scope(webcodex_core::authority::SCOPE_ACCOUNT_MANAGE)
-    {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(serde_json::json!({
-            "error": "first-party account:manage authority required"
-        })));
-        return;
-    }
-    let Some(db) = crate::auth::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(serde_json::json!({"error": "DB not available"})));
-        return;
-    };
+pub(crate) async fn oauth_clients_revoke(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) -> Result<(), ManagementError> {
+    let (auth, db) = management_context(depot)?;
 
-    let body: RevokeOAuthClientRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(serde_json::json!({
-                "error": "invalid request body",
-                "detail": e.to_string()
-            })));
-            return;
-        }
-    };
+    let body: RevokeOAuthClientRequest = parse_management_json(req).await?;
     let client_id = body.client_id.trim().to_string();
     if client_id.is_empty() {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(serde_json::json!({"error": "client_id is required"})));
-        return;
+        return Err(ManagementError::bad_request("client_id is required"));
     }
 
-    match db.get_oauth_client_by_client_id(&client_id) {
-        Ok(Some(client)) if !auth_can_manage_managed_oauth_client(auth, &client) => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Json(serde_json::json!({"error": "OAuth client not found"})));
-            return;
-        }
-        Ok(_) => {}
-        Err(e) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Json(serde_json::json!({
-                "error": "failed to read client",
-                "detail": e.to_string()
-            })));
-            return;
-        }
-    }
+    // Missing clients remain an idempotent success; a different owner is hidden.
+    let _ = managed_client(&db, auth, &client_id)?;
 
     let now = chrono::Utc::now().timestamp();
     // Revoke the client (idempotent — a missing client_id is a no-op that
     // still returns success), then cascade to all tokens/codes. Each step
     // must succeed; a DB failure returns 500 rather than silently leaving
     // partial revocation state.
-    if let Err(e) = db.revoke_oauth_client_by_client_id(&client_id, now) {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(serde_json::json!({
-            "error": "failed to revoke client",
-            "detail": e.to_string()
-        })));
-        return;
-    }
-    if let Err(e) = db.revoke_oauth_access_tokens_for_client(&client_id, now) {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(serde_json::json!({
-            "error": "failed to revoke client",
-            "detail": e.to_string()
-        })));
-        return;
-    }
-    if let Err(e) = db.revoke_oauth_refresh_tokens_for_client(&client_id, now) {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(serde_json::json!({
-            "error": "failed to revoke client",
-            "detail": e.to_string()
-        })));
-        return;
-    }
-    if let Err(e) = db.revoke_oauth_authorization_codes_for_client(&client_id, now) {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(serde_json::json!({
-            "error": "failed to revoke client",
-            "detail": e.to_string()
-        })));
-        return;
-    }
+    db.revoke_oauth_client_by_client_id(&client_id, now)
+        .map_err(|error| ManagementError::internal("failed to revoke client").with_detail(error))?;
+    db.revoke_oauth_access_tokens_for_client(&client_id, now)
+        .map_err(|error| ManagementError::internal("failed to revoke client").with_detail(error))?;
+    db.revoke_oauth_refresh_tokens_for_client(&client_id, now)
+        .map_err(|error| ManagementError::internal("failed to revoke client").with_detail(error))?;
+    db.revoke_oauth_authorization_codes_for_client(&client_id, now)
+        .map_err(|error| ManagementError::internal("failed to revoke client").with_detail(error))?;
 
     apply_oauth_no_store_headers(res);
     res.render(Json(serde_json::json!({"success": true})));
+    Ok(())
 }

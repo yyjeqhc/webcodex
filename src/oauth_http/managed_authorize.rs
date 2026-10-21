@@ -48,59 +48,7 @@ pub(super) fn redirect_with_oauth_error(
     error: &str,
     state: Option<&str>,
 ) {
-    let location = match append_authorize_error_params(
-        redirect_uri,
-        error,
-        state,
-        authorization_response_issuer(config),
-    ) {
-        Ok(location) => location,
-        Err(_) => {
-            oauth_authorize_direct_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "invalid redirect_uri",
-            );
-            return;
-        }
-    };
-
-    let location = match HeaderValue::from_str(&location) {
-        Ok(location) => location,
-        Err(_) => {
-            oauth_authorize_direct_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "invalid redirect_uri",
-            );
-            return;
-        }
-    };
-
-    res.status_code(StatusCode::FOUND);
-    res.headers_mut().insert("location", location);
-}
-
-fn append_authorize_error_params(
-    redirect_uri: &str,
-    error: &str,
-    state: Option<&str>,
-    issuer: Option<&str>,
-) -> Result<String, url::ParseError> {
-    let mut url = url::Url::parse(redirect_uri)?;
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("error", error);
-        if let Some(state) = state {
-            query.append_pair("state", state);
-        }
-        if let Some(issuer) = issuer {
-            query.append_pair("iss", issuer);
-        }
-    }
-    Ok(url.into())
+    redirect_with_authorize_parameter(res, config, redirect_uri, "error", error, state);
 }
 
 pub(super) fn redirect_with_authorization_code(
@@ -110,59 +58,45 @@ pub(super) fn redirect_with_authorization_code(
     code: &str,
     state: Option<&str>,
 ) {
-    let location = match append_authorize_success_params(
-        redirect_uri,
-        code,
-        state,
-        authorization_response_issuer(config),
-    ) {
-        Ok(location) => location,
-        Err(_) => {
-            oauth_authorize_direct_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "invalid redirect_uri",
-            );
-            return;
-        }
-    };
-
-    let location = match HeaderValue::from_str(&location) {
-        Ok(location) => location,
-        Err(_) => {
-            oauth_authorize_direct_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "invalid redirect_uri",
-            );
-            return;
-        }
-    };
-
-    res.status_code(StatusCode::FOUND);
-    res.headers_mut().insert("location", location);
+    redirect_with_authorize_parameter(res, config, redirect_uri, "code", code, state);
 }
 
-fn append_authorize_success_params(
+fn redirect_with_authorize_parameter(
+    res: &mut Response,
+    config: &crate::Config,
     redirect_uri: &str,
-    code: &str,
+    parameter: &str,
+    value: &str,
     state: Option<&str>,
-    issuer: Option<&str>,
-) -> Result<String, url::ParseError> {
-    let mut url = url::Url::parse(redirect_uri)?;
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("code", code);
-        if let Some(state) = state {
-            query.append_pair("state", state);
+) {
+    let location = url::Url::parse(redirect_uri)
+        .map_err(|_| ())
+        .and_then(|mut url| {
+            {
+                let mut query = url.query_pairs_mut();
+                query.append_pair(parameter, value);
+                if let Some(state) = state {
+                    query.append_pair("state", state);
+                }
+                if let Some(issuer) = authorization_response_issuer(config) {
+                    query.append_pair("iss", issuer);
+                }
+            }
+            let location: String = url.into();
+            HeaderValue::from_str(&location).map_err(|_| ())
+        });
+    match location {
+        Ok(location) => {
+            res.status_code(StatusCode::FOUND);
+            res.headers_mut().insert("location", location);
         }
-        if let Some(issuer) = issuer {
-            query.append_pair("iss", issuer);
-        }
+        Err(()) => oauth_authorize_direct_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "invalid redirect_uri",
+        ),
     }
-    Ok(url.into())
 }
 
 /// Parsed query shape for the future `GET /oauth/authorize` endpoint.
@@ -838,118 +772,17 @@ pub(crate) async fn oauth_authorize_consent(
         return;
     }
 
-    // Allow: revalidate response_type / PKCE / scope / resource.
-    if parsed.response_type != "code" {
-        redirect_with_oauth_error(
-            res,
-            &config,
-            &parsed.redirect_uri,
-            "unsupported_response_type",
-            parsed.state.as_deref(),
-        );
-        return;
-    }
-    if parsed.code_challenge.is_empty() || parsed.code_challenge_method != "S256" {
-        redirect_with_oauth_error(
-            res,
-            &config,
-            &parsed.redirect_uri,
-            "invalid_request",
-            parsed.state.as_deref(),
-        );
-        return;
-    }
-    let scopes = match normalize_oauth_scopes(parsed.scope.as_deref(), &client.allowed_scopes) {
-        Ok(s) => s,
-        Err(_) => {
-            redirect_with_oauth_error(
-                res,
-                &config,
-                &parsed.redirect_uri,
-                "invalid_scope",
-                parsed.state.as_deref(),
-            );
-            return;
-        }
-    };
-    if !client.is_managed_user_owned()
-        || db
-            .get_user_by_id(&session.user_id)
-            .ok()
-            .flatten()
-            .is_none_or(|user| user.is_disabled())
-    {
-        oauth_authorize_direct_error(
-            res,
-            StatusCode::FORBIDDEN,
-            "access_denied",
-            "invalid managed authorization subject",
-        );
-        return;
-    }
-    if !delegated_scopes_allowed(&scopes, &session.scopes) {
-        redirect_with_oauth_error(
-            res,
-            &config,
-            &parsed.redirect_uri,
-            "invalid_scope",
-            parsed.state.as_deref(),
-        );
-        return;
-    }
-    let resource = match validate_authorize_resource(parsed.resource.as_deref(), &config) {
-        Ok(resource) => resource,
-        Err(_) => {
-            redirect_with_oauth_error(
-                res,
-                &config,
-                &parsed.redirect_uri,
-                "invalid_target",
-                parsed.state.as_deref(),
-            );
-            return;
-        }
-    };
-
-    // Issue the authorization code bound to the session's user.
-    let now = chrono::Utc::now().timestamp();
-    let plaintext_code = generate_oauth_authorization_code();
-    let code_hash = hash_token(&plaintext_code);
-    let record = OAuthAuthorizationCodeRecord {
-        admin_authority: managed_admin_authority(&client, &session.user_id, &session.scopes),
-        id: uuid::Uuid::new_v4().to_string(),
-        code_hash,
-        client_id: client.client_id.clone(),
-        subject_kind: "managed_user".to_string(),
-        subject_id: session.user_id.clone(),
-        user_id: Some(session.user_id.clone()),
-        redirect_uri: parsed.redirect_uri.clone(),
-        scopes,
-        resource,
-        code_challenge: Some(parsed.code_challenge.clone()),
-        code_challenge_method: Some("S256".to_string()),
-        shared_key_hash: None,
-        created_at: now,
-        expires_at: now + config.oauth2.authorization_code_ttl_secs,
-        used_at: None,
-        revoked_at: None,
-    };
-    if insert_authorization_code(&db, &record, crate::public_ingress_auth::entry(depot)).is_err() {
-        oauth_authorize_direct_error(
-            res,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "server_error",
-            "internal error",
-        );
-        return;
-    }
-
-    redirect_with_authorization_code(
+    // Both first-party entrypoints share validation and fenced issuance only
+    // after their own identity, client/redirect and consent checks have passed.
+    issue_managed_authorization_code(
         res,
         &config,
-        &parsed.redirect_uri,
-        &plaintext_code,
-        parsed.state.as_deref(),
+        &db,
+        &client,
+        &parsed,
+        &session.user_id,
+        &session.scopes,
+        crate::public_ingress_auth::entry(depot),
     );
 }
 
@@ -1336,11 +1169,35 @@ async fn authorize_issue_with_context(
         }
     };
 
+    issue_managed_authorization_code(
+        res,
+        config,
+        db,
+        &client,
+        &parsed,
+        user_id,
+        authority_scopes,
+        ingress,
+    );
+}
+
+/// The managed subject, delegation and ingress fence are identical for a PAT
+/// and an accepted browser consent. No other subject kind enters this path.
+fn issue_managed_authorization_code(
+    res: &mut Response,
+    config: &crate::Config,
+    db: &crate::Database,
+    client: &crate::models::OAuthClientRecord,
+    parsed: &OAuthAuthorizeRequest,
+    user_id: &str,
+    authority_scopes: &[String],
+    ingress: Option<&webcodex_store::PublicIngressEntry>,
+) {
     if parsed.response_type.is_empty() || parsed.response_type != "code" {
         redirect_with_oauth_error(
             res,
             config,
-            &redirect_uri,
+            &parsed.redirect_uri,
             "unsupported_response_type",
             parsed.state.as_deref(),
         );
@@ -1351,7 +1208,7 @@ async fn authorize_issue_with_context(
         redirect_with_oauth_error(
             res,
             config,
-            &redirect_uri,
+            &parsed.redirect_uri,
             "invalid_request",
             parsed.state.as_deref(),
         );
@@ -1362,7 +1219,7 @@ async fn authorize_issue_with_context(
         redirect_with_oauth_error(
             res,
             config,
-            &redirect_uri,
+            &parsed.redirect_uri,
             "invalid_request",
             parsed.state.as_deref(),
         );
@@ -1375,7 +1232,7 @@ async fn authorize_issue_with_context(
             redirect_with_oauth_error(
                 res,
                 config,
-                &redirect_uri,
+                &parsed.redirect_uri,
                 "invalid_scope",
                 parsed.state.as_deref(),
             );
@@ -1414,7 +1271,7 @@ async fn authorize_issue_with_context(
             redirect_with_oauth_error(
                 res,
                 config,
-                &redirect_uri,
+                &parsed.redirect_uri,
                 "invalid_target",
                 parsed.state.as_deref(),
             );
@@ -1426,14 +1283,14 @@ async fn authorize_issue_with_context(
     let plaintext_code = generate_oauth_authorization_code();
     let code_hash = hash_token(&plaintext_code);
     let record = OAuthAuthorizationCodeRecord {
-        admin_authority: managed_admin_authority(&client, user_id, authority_scopes),
+        admin_authority: managed_admin_authority(client, user_id, authority_scopes),
         id: uuid::Uuid::new_v4().to_string(),
         code_hash,
         client_id: client.client_id.clone(),
         subject_kind: "managed_user".to_string(),
         subject_id: user_id.to_string(),
         user_id: Some(user_id.to_string()),
-        redirect_uri: redirect_uri.clone(),
+        redirect_uri: parsed.redirect_uri.clone(),
         scopes,
         resource,
         code_challenge: Some(parsed.code_challenge.clone()),
@@ -1458,7 +1315,7 @@ async fn authorize_issue_with_context(
     redirect_with_authorization_code(
         res,
         config,
-        &redirect_uri,
+        &parsed.redirect_uri,
         &plaintext_code,
         parsed.state.as_deref(),
     );

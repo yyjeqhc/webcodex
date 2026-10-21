@@ -11,6 +11,7 @@ use crate::auth::{
 use crate::models::OAuthAuthorizationCodeRecord;
 use crate::runner_http::{RunnerFeature, RunnerFeatureSet};
 
+use super::responses::OAuthManagementError as ManagementError;
 use super::{
     apply_oauth_no_store_headers, authorize_bridge_html, decoded_authorize_param, form_field,
     normalize_oauth_scopes, oauth_authorize_direct_error, parse_authorize_query, parse_form_body,
@@ -707,75 +708,58 @@ pub(crate) async fn oauth_shared_key_client_provision(
     req: &mut Request,
     depot: &mut Depot,
     res: &mut Response,
-) {
+) -> Result<(), ManagementError> {
     let Some(config) = crate::auth::get_config(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(serde_json::json!({"error": "no config"})));
-        return;
+        return Err(ManagementError::internal("no config"));
     };
     if !config.oauth2.enabled || !config.oauth2.shared_key_bridge_enabled {
-        res.status_code(StatusCode::NOT_FOUND);
-        res.render(Json(
-            serde_json::json!({"error": "shared-key OAuth bridge is not enabled"}),
+        return Err(ManagementError::new(
+            StatusCode::NOT_FOUND,
+            "shared-key OAuth bridge is not enabled",
         ));
-        return;
     }
     let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        res.status_code(StatusCode::UNAUTHORIZED);
-        res.render(Json(
-            serde_json::json!({"error": "direct shared key required"}),
+        return Err(ManagementError::new(
+            StatusCode::UNAUTHORIZED,
+            "direct shared key required",
         ));
-        return;
     };
     if !auth.is_shared_key() {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(
-            serde_json::json!({"error": "direct shared key required"}),
+        return Err(ManagementError::new(
+            StatusCode::FORBIDDEN,
+            "direct shared key required",
         ));
-        return;
     }
     let Some(shared_key_hash) = auth.shared_key_hash.as_deref() else {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(
-            serde_json::json!({"error": "direct shared key identity is unavailable"}),
+        return Err(ManagementError::new(
+            StatusCode::FORBIDDEN,
+            "direct shared key identity is unavailable",
         ));
-        return;
     };
     let Some(db) = crate::auth::get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(serde_json::json!({"error": "DB not available"})));
-        return;
+        return Err(ManagementError::internal("DB not available"));
     };
     let Some(registry) = depot.obtain::<std::sync::Arc<crate::RunnerRegistry>>().ok() else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(
-            serde_json::json!({"error": "Runner registry unavailable"}),
-        ));
-        return;
+        return Err(ManagementError::internal("Runner registry unavailable"));
     };
     if !registry
         .has_connected_shared_key_group(shared_key_hash)
         .await
     {
-        res.status_code(StatusCode::CONFLICT);
-        res.render(Json(serde_json::json!({
-            "error": "shared-key Runner group is not connected"
-        })));
-        return;
+        return Err(ManagementError::new(
+            StatusCode::CONFLICT,
+            "shared-key Runner group is not connected",
+        ));
     }
     let body: ProvisionSharedKeyOAuthClientRequest = match req.parse_json().await {
         Ok(body) => body,
         Err(_) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(serde_json::json!({"error": "invalid request body"})));
-            return;
+            return Err(ManagementError::bad_request("invalid request body"));
         }
     };
     let redirect_uri = body.redirect_uri.trim().to_string();
     if let Err(error) = validate_redirect_uri(&redirect_uri) {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(serde_json::json!({"error": error})));
-        return;
+        return Err(ManagementError::bad_request(error));
     }
 
     if let Some(client_id) = body
@@ -788,21 +772,19 @@ pub(crate) async fn oauth_shared_key_client_provision(
                 if !client.is_shared_key_owned()
                     || client.owner_shared_key_hash.as_deref() != Some(shared_key_hash)
                 {
-                    res.status_code(StatusCode::FORBIDDEN);
-                    res.render(Json(serde_json::json!({"error": "OAuth client belongs to a different shared-key group"})));
-                    return;
+                    return Err(ManagementError::new(
+                        StatusCode::FORBIDDEN,
+                        "OAuth client belongs to a different shared-key group",
+                    ));
                 }
                 if client.redirect_uris_vec() != vec![redirect_uri.clone()] {
-                    res.status_code(StatusCode::CONFLICT);
-                    res.render(Json(
-                        serde_json::json!({"error": "OAuth client redirect URI does not match"}),
+                    return Err(ManagementError::new(
+                        StatusCode::CONFLICT,
+                        "OAuth client redirect URI does not match",
                     ));
-                    return;
                 }
                 if !bridge_client_scopes_are_current(&client) {
-                    res.status_code(StatusCode::CONFLICT);
-                    res.render(Json(serde_json::json!({"error": "persisted OAuth client exceeds the current ordinary shared-key OAuth scope ceiling"})));
-                    return;
+                    return Err(ManagementError::new(StatusCode::CONFLICT, "persisted OAuth client exceeds the current ordinary shared-key OAuth scope ceiling"));
                 }
                 if !body.browser_permissions
                     && client
@@ -810,45 +792,23 @@ pub(crate) async fn oauth_shared_key_client_provision(
                         .iter()
                         .any(|s| OPTIONAL_BROWSER.contains(&s.as_str()))
                 {
-                    res.status_code(StatusCode::CONFLICT);
-                    res.render(Json(serde_json::json!({"error": "OAuth client is Browser-enabled; reconnect with --oauth-browser-permissions"})));
-                    return;
+                    return Err(ManagementError::new(StatusCode::CONFLICT, "OAuth client is Browser-enabled; reconnect with --oauth-browser-permissions"));
                 }
                 if !body.computer_permissions && bridge_client_has_optional_computer_scope(&client)
                 {
-                    res.status_code(StatusCode::CONFLICT);
-                    res.render(Json(serde_json::json!({
-                        "error": "OAuth client has optional Computer permissions enabled; reconnect with --oauth-computer-permissions to reuse this client"
-                    })));
-                    return;
+                    return Err(ManagementError::new(StatusCode::CONFLICT, "OAuth client has optional Computer permissions enabled; reconnect with --oauth-computer-permissions to reuse this client"));
                 }
                 if !body.local_mcp && bridge_client_has_local_mcp_scope(&client) {
-                    res.status_code(StatusCode::CONFLICT);
-                    res.render(Json(serde_json::json!({
-                        "error": "OAuth client has local MCP authority enabled; reconnect with --oauth-local-mcp to reuse this client"
-                    })));
-                    return;
+                    return Err(ManagementError::new(StatusCode::CONFLICT, "OAuth client has local MCP authority enabled; reconnect with --oauth-local-mcp to reuse this client"));
                 }
                 if !body.local_plugins && bridge_client_has_local_plugin_scopes(&client) {
-                    res.status_code(StatusCode::CONFLICT);
-                    res.render(Json(serde_json::json!({
-                        "error": "OAuth client has local Plugin authority enabled; reconnect with --oauth-local-plugins to reuse this client"
-                    })));
-                    return;
+                    return Err(ManagementError::new(StatusCode::CONFLICT, "OAuth client has local Plugin authority enabled; reconnect with --oauth-local-plugins to reuse this client"));
                 }
                 if !body.local_ssh && bridge_client_has_local_ssh_scope(&client) {
-                    res.status_code(StatusCode::CONFLICT);
-                    res.render(Json(serde_json::json!({
-                        "error": "OAuth client has local SSH authority enabled; reconnect with --oauth-local-ssh to reuse this client"
-                    })));
-                    return;
+                    return Err(ManagementError::new(StatusCode::CONFLICT, "OAuth client has local SSH authority enabled; reconnect with --oauth-local-ssh to reuse this client"));
                 }
                 if !body.coding_agent && bridge_client_has_coding_agent_scope(&client) {
-                    res.status_code(StatusCode::CONFLICT);
-                    res.render(Json(serde_json::json!({
-                        "error": "OAuth client has coding-agent authority enabled; reconnect with --oauth-coding-agent to reuse this client"
-                    })));
-                    return;
+                    return Err(ManagementError::new(StatusCode::CONFLICT, "OAuth client has coding-agent authority enabled; reconnect with --oauth-coding-agent to reuse this client"));
                 }
 
                 let current_scopes = client.allowed_scopes_vec();
@@ -861,17 +821,16 @@ pub(crate) async fn oauth_shared_key_client_provision(
                     body.local_ssh,
                     body.coding_agent,
                 ) else {
-                    res.status_code(StatusCode::CONFLICT);
-                    res.render(Json(serde_json::json!({
-                        "error": bridge_scope_profile_error(
+                    return Err(ManagementError::new(
+                        StatusCode::CONFLICT,
+                        bridge_scope_profile_error(
                             body.computer_permissions,
                             body.local_mcp,
                             body.local_plugins,
                             body.local_ssh,
                             body.coding_agent,
-                        )
-                    })));
-                    return;
+                        ),
+                    ));
                 };
                 let desired_scopes = if desired_scope_vec == current_scopes {
                     // Preserve byte-for-byte formatting for a semantic no-op so
@@ -888,18 +847,12 @@ pub(crate) async fn oauth_shared_key_client_provision(
                 ) {
                     Ok(Some(update)) => update,
                     Ok(None) => {
-                        res.status_code(StatusCode::CONFLICT);
-                        res.render(Json(serde_json::json!({
-                            "error": "OAuth client changed while reconnecting; retry the explicit connect operation"
-                        })));
-                        return;
+                        return Err(ManagementError::new(StatusCode::CONFLICT, "OAuth client changed while reconnecting; retry the explicit connect operation"));
                     }
                     Err(_) => {
-                        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-                        res.render(Json(serde_json::json!({
-                            "error": "failed to update OAuth client scope ceiling"
-                        })));
-                        return;
+                        return Err(ManagementError::internal(
+                            "failed to update OAuth client scope ceiling",
+                        ));
                     }
                 };
                 let scope_ceiling_changed = update.0;
@@ -915,15 +868,13 @@ pub(crate) async fn oauth_shared_key_client_provision(
                         "allowed_scopes": client.allowed_scopes_vec(),
                     }
                 })));
-                return;
+                return Ok(());
             }
             Ok(None) => {}
             Err(_) => {
-                res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-                res.render(Json(serde_json::json!({
-                    "error": "failed to read existing OAuth client"
-                })));
-                return;
+                return Err(ManagementError::internal(
+                    "failed to read existing OAuth client",
+                ));
             }
         }
     }
@@ -939,56 +890,34 @@ pub(crate) async fn oauth_shared_key_client_provision(
             .iter()
             .any(|s| OPTIONAL_BROWSER.contains(&s.as_str()))
     {
-        res.status_code(StatusCode::CONFLICT);
-        res.render(Json(serde_json::json!({"error": "persisted OAuth profile is Browser-enabled; reconnect with --oauth-browser-permissions"})));
-        return;
+        return Err(ManagementError::new(StatusCode::CONFLICT, "persisted OAuth profile is Browser-enabled; reconnect with --oauth-browser-permissions"));
     }
     if !body.computer_permissions
         && base_scopes
             .iter()
             .any(|scope| SHARED_KEY_OAUTH_OPTIONAL_COMPUTER_SCOPES.contains(&scope.as_str()))
     {
-        res.status_code(StatusCode::CONFLICT);
-        res.render(Json(serde_json::json!({
-            "error": "persisted OAuth profile is Computer-enabled; reconnect with --oauth-computer-permissions"
-        })));
-        return;
+        return Err(ManagementError::new(StatusCode::CONFLICT, "persisted OAuth profile is Computer-enabled; reconnect with --oauth-computer-permissions"));
     }
     if !body.local_mcp && base_scopes.iter().any(|scope| scope == SCOPE_MCP_LOCAL) {
-        res.status_code(StatusCode::CONFLICT);
-        res.render(Json(serde_json::json!({
-            "error": "persisted OAuth profile has local MCP authority enabled; reconnect with --oauth-local-mcp"
-        })));
-        return;
+        return Err(ManagementError::new(StatusCode::CONFLICT, "persisted OAuth profile has local MCP authority enabled; reconnect with --oauth-local-mcp"));
     }
     if !body.local_plugins
         && base_scopes
             .iter()
             .any(|scope| matches!(scope.as_str(), SCOPE_PLUGIN_INSPECT | SCOPE_PLUGIN_INVOKE))
     {
-        res.status_code(StatusCode::CONFLICT);
-        res.render(Json(serde_json::json!({
-            "error": "persisted OAuth profile has local Plugin authority enabled; reconnect with --oauth-local-plugins"
-        })));
-        return;
+        return Err(ManagementError::new(StatusCode::CONFLICT, "persisted OAuth profile has local Plugin authority enabled; reconnect with --oauth-local-plugins"));
     }
     if !body.local_ssh && base_scopes.iter().any(|scope| scope == SCOPE_SSH_LOCAL) {
-        res.status_code(StatusCode::CONFLICT);
-        res.render(Json(serde_json::json!({
-            "error": "persisted OAuth profile has local SSH authority enabled; reconnect with --oauth-local-ssh"
-        })));
-        return;
+        return Err(ManagementError::new(StatusCode::CONFLICT, "persisted OAuth profile has local SSH authority enabled; reconnect with --oauth-local-ssh"));
     }
     if !body.coding_agent
         && base_scopes
             .iter()
             .any(|scope| scope == SCOPE_CODING_AGENT_RUN)
     {
-        res.status_code(StatusCode::CONFLICT);
-        res.render(Json(serde_json::json!({
-            "error": "persisted OAuth profile has coding-agent authority enabled; reconnect with --oauth-coding-agent"
-        })));
-        return;
+        return Err(ManagementError::new(StatusCode::CONFLICT, "persisted OAuth profile has coding-agent authority enabled; reconnect with --oauth-coding-agent"));
     }
     let Some(create_scopes) = bridge_scope_ceiling_with_options(
         &base_scopes,
@@ -999,17 +928,16 @@ pub(crate) async fn oauth_shared_key_client_provision(
         body.local_ssh,
         body.coding_agent,
     ) else {
-        res.status_code(StatusCode::CONFLICT);
-        res.render(Json(serde_json::json!({
-            "error": bridge_scope_profile_error(
+        return Err(ManagementError::new(
+            StatusCode::CONFLICT,
+            bridge_scope_profile_error(
                 body.computer_permissions,
                 body.local_mcp,
                 body.local_plugins,
                 body.local_ssh,
                 body.coding_agent,
-            )
-        })));
-        return;
+            ),
+        ));
     };
 
     let plaintext_secret = crate::auth::generate_oauth_client_secret();
@@ -1027,11 +955,7 @@ pub(crate) async fn oauth_shared_key_client_provision(
         revoked_at: None,
     };
     if db.insert_oauth_client(&record).is_err() {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(
-            serde_json::json!({"error": "failed to create OAuth client"}),
-        ));
-        return;
+        return Err(ManagementError::internal("failed to create OAuth client"));
     }
     apply_oauth_no_store_headers(res);
     res.render(Json(serde_json::json!({
@@ -1044,6 +968,7 @@ pub(crate) async fn oauth_shared_key_client_provision(
         },
         "client_secret": plaintext_secret,
     })));
+    Ok(())
 }
 
 #[handler]

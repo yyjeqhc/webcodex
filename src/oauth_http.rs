@@ -67,7 +67,7 @@ pub(crate) use project_share::oauth_authorize_project;
 pub(crate) use project_share::{
     normalize_project_share_oauth_scopes, PROJECT_SHARE_OAUTH_INVALID_SCOPE_MESSAGE,
 };
-use responses::{apply_oauth_no_store_headers, oauth_error};
+use responses::apply_oauth_no_store_headers;
 pub(crate) use revoke::oauth_revoke;
 pub(crate) use scope_registry::{
     normalize_oauth_scopes, oauth_discovery_scopes_supported, oauth_scopes_supported,

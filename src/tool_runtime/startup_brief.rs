@@ -104,6 +104,7 @@ pub(crate) fn builtin_coding_workflow_projection_with_policy(
                 "purpose": "Review independently within task scope.",
                 "guidance": [
                     "Challenge authority, bounds, malformed data, privacy, replay/races, timeouts, fail-closed behavior.",
+                    "Challenge duplicated facts or execution flows, misplaced responsibilities, presentation round-trips and incomplete migrations introduced or worsened by the change. Cite code and concrete correctness, drift or maintenance impact; distinguish required fixes from optional cleanup. Style alone is not a finding.",
                     "For review-only tasks, report concrete file/line findings and impact; do not edit. Fix only when the task authorizes corrections, with focused regression validation."
                 ]
             }

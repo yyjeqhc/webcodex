@@ -1,6 +1,6 @@
 # AGENTS.md — WebCodex Repository Rules
 
-These rules govern work on the WebCodex source repository with the current host's available tools. A deeper `AGENTS.md` governs its directory. Load linked domain guidance only when the task reaches that boundary. The builtin `webcodex.workflow` guides callers of a connected WebCodex runtime; it is not a prerequisite for local checkout work. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contributor setup and validation.
+Use the host's tools for local WebCodex work and [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup/validation. Deeper `AGENTS.md` files govern their directories. Load domain guidance at the relevant boundary; `webcodex.workflow` applies to connected-runtime callers.
 
 WebCodex is actively developed. Features, fixes, and reliability work are welcome, but preserve credential, process-tree, transport, durability, authority, replay-safety, and boundedness contracts.
 
@@ -19,8 +19,10 @@ Product direction: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## 2. WebCodex implementation conventions
 
-- Follow existing authoritative paths and naming. For cross-layer changes, complete the relevant enums, registries, schemas, adapters, persistence/recovery rules, and projections end to end; do not create a parallel representation for convenience.
-- Treat existing implementation, comments, tests, and compatibility code as evidence, not permanent product requirements. Remove obsolete adapters/configuration/tests together when their concrete consumer is gone, while preserving real wire, authority, durability, and release boundaries.
+- Before nontrivial edits, locate the owning layer, trace relevant callers/data flow, and find reusable code. Read applicable design guidance; scale exploration to the task. Follow authoritative paths and naming, completing cross-layer enums, registries, schemas, adapters, persistence/recovery and projections end to end.
+- Share typed facts, request contracts and lifecycle logic where semantics agree; keep transport authorization and presentation in adapters. Do not reparse model-facing JSON for internal queries or couple distinct domains merely for similar syntax.
+- Minimize concepts and maintenance points in a coherent root-cause fix. Include necessary local refactoring and superseded-path cleanup; keep unrelated redesign separate.
+- Existing implementation, comments, tests and compatibility code are evidence, not permanent requirements. Retire obsolete adapters/configuration/tests together when their concrete consumer is gone; preserve wire, authority, durability and release boundaries.
 - Retain supported published installation/data formats and named external protocol consumers; unreleased main history alone does not justify compatibility. Check the actual stable tag before pruning, and separate migration-only code from current installer/recovery duties. See [`docs/compatibility-policy.md`](docs/compatibility-policy.md).
 - Model-facing directness is exposure/ergonomics, not authority. Generic dispatch may serve an admitted tool only through the same canonical schema, authorization, permission, capability, and effect checks; hidden or unadmitted tools remain unavailable.
 - ToolSpec descriptions must be self-contained about selection, authority, effects, retries, continuation, uncertainty, and recovery. Use the available description budget when semantics require it; arbitrary brevity must not erase safety or recovery meaning.
@@ -40,6 +42,7 @@ Product direction: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 - For console-only or flaky failures, reproduce with one controlled boundary changed and add a deterministic regression that also fails headlessly. Retries, larger timeouts, and lower concurrency are diagnostic/resource controls, not substitutes for the demonstrated fix.
 - Distinguish current failures, pre-existing failures, expected negative cases, and failures resolved by retry. Never weaken authentication, authorization, validation, schemas, sandboxing, ownership checks, or tests merely to make validation green.
 - Public or persisted contract changes need focused compatibility/privacy/boundedness coverage. Recovery tests should prove identity/effect semantics, not only happy-path output.
+- Review behavior and structure: cite code and impact for duplication, misplaced responsibilities or incomplete migrations introduced or worsened by the change. Separate required fixes from optional cleanup; passing tests do not prove architectural fit, and style alone is not a finding. Review-only work does not authorize edits.
 
 Testing guidance: [`docs/TESTING.md`](docs/TESTING.md).
 

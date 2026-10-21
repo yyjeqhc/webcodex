@@ -52,8 +52,21 @@ collection allocation.
 deployment policy, role selection, and the orchestration catalog derived from
 ToolDefinition. Startup and explicit workflow refresh use the same composition.
 Profile selection remains model guidance only, not admission or Session state.
-The migration preserves all 31 existing core/profile guidance strings and their
-order; this is not a policy or wording change.
+The original registry extraction preserved all 31 then-existing core/profile
+guidance strings and their order. Current implementation guidance also requires
+proportional architecture discovery, reuse and necessary local refactoring;
+review includes evidence-backed structural findings. These are default coding
+expectations, not a new role or execution gate. See
+[Coding workflow](../CODING_WORKFLOW.md#start-or-continue-a-task).
+
+The core bundle has nine items, within the updated ergonomic item-count target.
+Architecture and review advice adds about 0.9 KiB to the common startup fixture;
+its regression target is 17 KiB, up from 16 KiB. The per-item target, 10 KiB
+instruction-content budget and hard 30 KiB startup / 20 KiB context budgets are
+unchanged; repository instructions must still fit without truncation. The
+workflow version identifies the revised guidance. Existing conversations can
+request `_wc.context=["webcodex.workflow"]` to refresh retained guidance through
+the existing context channel; this does not require a Host tool-schema refresh.
 
 ## Incremental rollout and rollback
 

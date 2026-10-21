@@ -75,6 +75,16 @@ concrete, reviewable completion, map cross-layer changes end to end, keep the
 design minimal, validate proportionally, and report evidence honestly. Use only
 tools and protocol fields supported by the current exposed schemas.
 
+For nontrivial coding, locate the owning layer, trace relevant callers and data
+flow, and look for reusable implementations before editing. Read design guidance
+for the affected boundaries and keep exploration proportional to the task.
+Existing patterns are evidence to assess; new abstractions or parallel paths
+need a concrete task reason. Share authoritative business facts before
+presentation. Solve the root cause with the smallest coherent change, including
+necessary local refactoring and removal of superseded paths within scope.
+Before delivery, review ownership, duplication and cross-layer consistency as
+well as behavior; passing tests alone do not establish architectural fit.
+
 `independent_review` is the only optional named role because it changes behavior.
 Use it only when the task explicitly asks for an independent review pass:
 
@@ -86,6 +96,12 @@ report concrete findings with file/line evidence and impact, and do not edit.
 To request corrections as well, explicitly add “fix concrete findings and run
 focused regression validation.” Naming a review role alone does not authorize edits,
 and no role ever grants authority.
+
+Independent review also examines duplicated facts or execution flows, misplaced
+responsibilities, presentation round-trips and incomplete migrations introduced
+or worsened by the change. Findings need concrete code and correctness, drift or
+maintenance impact; distinguish required fixes from optional cleanup. Style
+preference alone is not a finding, and unrelated redesign stays outside scope.
 
 Guidance is delivered in tool results; it is not the client's system prompt and
 does not grant execution authority. Host instructions, the user's task,

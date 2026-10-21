@@ -63,15 +63,17 @@ class GuidanceContractPreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(GuidancePreflightError, missing):
             self.check(tests=changed)
 
-    def test_reject_extra_host_item(self):
+    def test_reject_host_items_above_target(self):
         needle = 'pub(super) static HOST_CONTINUATION:'
         assert needle in self.source
         head, tail = self.source.split(needle, 1)
         start = tail.index("items: &[")
         changed = head + needle + tail[:start] + tail[start:].replace(
-            "items: &[", 'items: &[\n        "Extra guidance field",', 1
+            "items: &[",
+            'items: &[\n        "Extra guidance field",\n        "Another guidance field",',
+            1,
         )
-        with self.assertRaisesRegex(GuidancePreflightError, "host: 9 items exceed 8"):
+        with self.assertRaisesRegex(GuidancePreflightError, "host: 10 items exceed 9"):
             self.check(source=changed)
 
     def test_reject_oversize_single_item(self):
@@ -101,7 +103,7 @@ class GuidanceContractPreflightTests(unittest.TestCase):
 
     def test_reject_contract_constant_mismatch(self):
         changed = self.contract.replace(
-            "BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS: usize = 8;",
+            "BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS: usize = 9;",
             "BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS: usize = 7;",
         )
         self.assertNotEqual(self.contract, changed)

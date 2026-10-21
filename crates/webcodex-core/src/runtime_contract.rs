@@ -163,13 +163,13 @@ impl ContinuationSemantics {
 }
 
 pub const BUILTIN_CODING_WORKFLOW_CONTRACT: &str = "webcodex.coding_workflow";
-pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 29;
+pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 30;
 /// Per-field bootstrap prose ceiling, independent of aggregate startup/context byte budgets.
 /// Allows first-use, reuse, refresh and authority boundaries without lossy compression.
 pub const BUILTIN_BOOTSTRAP_GUIDANCE_MAX_CHARS: usize = 1536;
 /// Ergonomic regression targets for built-in model guidance. These are not
 /// wire/schema limits; the serialized startup budget remains the hard bound.
-pub const BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS: usize = 8;
+pub const BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS: usize = 9;
 pub const BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEM_CHARS: usize = 320;
 /// Validate a Runner project path without applying host-local filesystem semantics.
 /// The Server may route to an agent on another OS, so both POSIX and Windows

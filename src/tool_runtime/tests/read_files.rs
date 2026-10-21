@@ -5,6 +5,7 @@ use super::support::*;
 use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, RunnerPollRequest, RunnerResultRequest,
 };
+use crate::tool_runtime::dispatch::DispatchContext;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -2165,7 +2166,7 @@ async fn read_files_direct_session_overlay_pressure_keeps_final_response_under_h
         let auth = auth.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata(
+                .dispatch_with_context(
                     ToolCall::ReadFiles {
                         project,
                         items: vec![
@@ -2178,10 +2179,11 @@ async fn read_files_direct_session_overlay_pressure_keeps_final_response_under_h
                         with_line_numbers: None,
                         max_result_bytes: Some(MAX_SERIALIZED_OUTPUT_BYTES),
                     },
-                    Some(&auth),
-                    SessionTransport::Mcp,
-                    ToolCallRecorderMetadata {
-                        ..Default::default()
+                    DispatchContext {
+                        recorder: ToolCallRecorderMetadata {
+                            ..Default::default()
+                        },
+                        ..DispatchContext::internal(Some(&auth), SessionTransport::Mcp, None)
                     },
                 )
                 .await

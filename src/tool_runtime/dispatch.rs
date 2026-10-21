@@ -2,7 +2,9 @@
 
 use super::context_projection::ContextProjectionRequest;
 use super::edit_tool_telemetry;
+use super::kernel::{ToolCallContext, ToolProtocolCapabilities, ToolTransport};
 use super::result_projection::ModelFacingProjectionPlan;
+use super::return_timing::ToolReturnTimingPolicy;
 use super::session_context::{
     add_session_hint, session_guard_denied_result, session_lifecycle_denied_result,
     session_project_mismatch_result, SessionProjectMismatch,
@@ -25,7 +27,6 @@ mod job_continuation;
 mod memory;
 mod observations;
 mod preflight;
-mod routing;
 mod skills;
 mod workflows;
 
@@ -33,154 +34,88 @@ use observations::add_run_process_expectation_projection;
 pub(super) use preflight::decorate_structured_execution_prestart_denial;
 use preflight::{canonical_execution_project_binding, CanonicalProjectOutput};
 
+/// Request metadata carried intact from the adapter through governance. The
+/// caller.session_id is only the outer Kernel recorder; the ToolCall retains
+/// the business Session. Recorder presence selects the existing recording owner,
+/// never the business Session, execution target or authority.
+pub(crate) struct DispatchContext<'a> {
+    pub(crate) caller: ToolCallContext<'a>,
+    pub(crate) recorder: sessions::ToolCallRecorderMetadata,
+    pub(crate) context_request: Vec<String>,
+    pub(crate) capabilities: ToolProtocolCapabilities,
+    pub(crate) return_timing: ToolReturnTimingPolicy,
+}
+
+impl<'a> DispatchContext<'a> {
+    pub(crate) fn new(caller: ToolCallContext<'a>) -> Self {
+        Self {
+            caller,
+            recorder: Default::default(),
+            context_request: Vec::new(),
+            capabilities: Default::default(),
+            return_timing: ToolReturnTimingPolicy::unconstrained(),
+        }
+    }
+
+    pub(crate) fn internal(
+        auth: Option<&'a AuthContext>,
+        transport: sessions::SessionTransport,
+        window: Option<&'a crate::client_window::ClientWindow>,
+    ) -> Self {
+        Self::new(ToolCallContext {
+            auth,
+            transport: match transport {
+                sessions::SessionTransport::Api => ToolTransport::Api,
+                sessions::SessionTransport::Mcp => ToolTransport::Mcp,
+            },
+            session_id: None,
+            window,
+            record_oauth_scope_denials: false,
+            host_file_import_trust: super::HostFileImportProvenance::Untrusted,
+        })
+    }
+
+    fn material_capabilities(&self) -> super::context_projection::ContextMaterialCapabilities {
+        super::context_projection::ContextMaterialCapabilities {
+            skill_runtime: self.capabilities.skill_runtime,
+            memory_surface: self.capabilities.memory_surface,
+        }
+    }
+}
+
 impl ToolRuntime {
-    /// Main dispatch — call from MCP or Runtime HTTP handlers.
-    ///
-    /// This no-auth convenience defaults the caller context to `None`, which
-    /// means Runner-backed tools are rejected (no owner can be proven). HTTP
-    /// wrappers should prefer `dispatch_with_auth` so the depot `AuthContext`
-    /// is forwarded. Tests use this wrapper for local-executor projects.
+    /// No-auth convenience for local-executor tests. Runner-backed tools still
+    /// require the owner context supplied by `dispatch_with_auth`.
     #[cfg(test)]
     pub async fn dispatch(&self, call: ToolCall) -> ToolResult {
         self.dispatch_with_auth(call, None).await
     }
 
-    /// Dispatch carrying the caller's auth context. Runner-backed tools enforce
-    /// the owner boundary and capability requirements through
-    /// `authorize_runner_tool`; local-executor tools are unaffected. Wrappers
-    /// stay thin: they only forward the depot `AuthContext` here.
+    /// Keep the canonical dispatch future on the heap at the public boundary.
     pub fn dispatch_with_auth<'a>(
         &'a self,
         call: ToolCall,
         auth: Option<&'a AuthContext>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolResult> + Send + 'a>> {
-        // The canonical dispatcher has grown into a large multi-specialist future. Keep that
-        // state on the heap at the public dispatch boundary so direct callers do not need a
-        // multi-megabyte stack frame merely to enter ToolRuntime.
         Box::pin(async move {
-            self.dispatch_with_auth_transport(call, auth, sessions::SessionTransport::Api)
-                .await
+            self.dispatch_with_context(
+                call,
+                DispatchContext::internal(auth, sessions::SessionTransport::Api, None),
+            )
+            .await
         })
     }
 
-    pub(crate) async fn dispatch_with_auth_transport(
+    pub(crate) async fn dispatch_with_context(
         &self,
         call: ToolCall,
-        auth: Option<&AuthContext>,
-        transport: sessions::SessionTransport,
+        context: DispatchContext<'_>,
     ) -> ToolResult {
-        self.dispatch_with_auth_transport_options(call, auth, transport)
-            .await
-    }
-
-    pub(crate) async fn dispatch_with_auth_transport_options(
-        &self,
-        call: ToolCall,
-        auth: Option<&AuthContext>,
-        transport: sessions::SessionTransport,
-    ) -> ToolResult {
-        self.dispatch_with_auth_transport_options_and_metadata(
-            call,
-            auth,
-            transport,
-            sessions::ToolCallRecorderMetadata::default(),
-        )
-        .await
-    }
-
-    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata(
-        &self,
-        call: ToolCall,
-        auth: Option<&AuthContext>,
-        transport: sessions::SessionTransport,
-        recorder_metadata: sessions::ToolCallRecorderMetadata,
-    ) -> ToolResult {
-        self.dispatch_with_auth_transport_options_and_metadata_with_window(
-            call,
-            auth,
-            transport,
-            recorder_metadata,
-            None,
-        )
-        .await
-    }
-
-    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_window(
-        &self,
-        call: ToolCall,
-        auth: Option<&AuthContext>,
-        transport: sessions::SessionTransport,
-        recorder_metadata: sessions::ToolCallRecorderMetadata,
-        window: Option<&crate::client_window::ClientWindow>,
-    ) -> ToolResult {
-        self.dispatch_with_auth_transport_options_and_metadata_with_recording_mode(
-            call,
-            auth,
-            transport,
-            recorder_metadata,
-            window,
-            true,
-        )
-        .await
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_recording_mode(
-        &self,
-        call: ToolCall,
-        auth: Option<&AuthContext>,
-        transport: sessions::SessionTransport,
-        recorder_metadata: sessions::ToolCallRecorderMetadata,
-        window: Option<&crate::client_window::ClientWindow>,
-        inner_model_facing_recording: bool,
-    ) -> ToolResult {
-        self.dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
-            call,
-            auth,
-            transport,
-            recorder_metadata,
-            window,
-            inner_model_facing_recording,
-            Vec::new(),
-            super::context_projection::ContextMaterialCapabilities::default(),
-        )
-        .await
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
-        &self,
-        call: ToolCall,
-        auth: Option<&AuthContext>,
-        transport: sessions::SessionTransport,
-        recorder_metadata: sessions::ToolCallRecorderMetadata,
-        window: Option<&crate::client_window::ClientWindow>,
-        inner_model_facing_recording: bool,
-        context_request: Vec<String>,
-        material_capabilities: super::context_projection::ContextMaterialCapabilities,
-    ) -> ToolResult {
-        let (mut result, projection, _) = self
-            .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
-            call,
-            auth,
-            transport,
-            recorder_metadata,
-            window,
-            inner_model_facing_recording,
-            context_request,
-            material_capabilities,
-            super::kernel::ToolProtocolCapabilities::default(),
-            super::return_timing::ToolReturnTimingPolicy::unconstrained(),
-        )
-        .await;
+        let (mut result, projection, _) = self.dispatch_canonical(call, context).await;
         projection.project(&mut result);
         result
     }
 
-    /// Kernel-only companion that returns the terminal model-facing projection
-    /// plan after the same authoritative Project resolution used for execution.
-    /// The returned ToolResult is still canonical with respect to domain-local
-    /// budgeting and sparse projection so an outer recorder can consume it first.
     fn context_guidance_profile(
         &self,
         call: &ToolCall,
@@ -198,48 +133,35 @@ impl ToolRuntime {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(super) async fn dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
+    /// Return canonical evidence and a one-shot model projection. The Kernel
+    /// records the evidence before consuming the projection.
+    pub(super) async fn dispatch_canonical(
         &self,
         call: ToolCall,
-        auth: Option<&AuthContext>,
-        transport: sessions::SessionTransport,
-        recorder_metadata: sessions::ToolCallRecorderMetadata,
-        window: Option<&crate::client_window::ClientWindow>,
-        inner_model_facing_recording: bool,
-        context_request: Vec<String>,
-        material_capabilities: super::context_projection::ContextMaterialCapabilities,
-        protocol_capabilities: super::kernel::ToolProtocolCapabilities,
-        return_timing: super::return_timing::ToolReturnTimingPolicy,
+        mut context: DispatchContext<'_>,
     ) -> (
         ToolResult,
         ModelFacingProjectionPlan,
         super::window_activity::ToolCallCorrelation,
     ) {
+        let ToolCallContext {
+            auth,
+            window,
+            transport,
+            ..
+        } = context.caller;
+        let transport = transport.into();
         let mut result_projection = ModelFacingProjectionPlan::capture(&call);
         let context_guidance_profile = self.context_guidance_profile(&call, transport);
         let immediate_tool_name = call.tool_name();
-        let immediate_expectation = recorder_metadata.expectation.clone();
+        let immediate_expectation = context.recorder.expectation.clone();
         let mut correlation = super::window_activity::ToolCallCorrelation::default();
         // Edit usage telemetry retains only fixed safe classifications. For
         // apply_patch it captures the requested matching enum before the call is
         // moved, never the patch/path/content arguments.
         let mut edit_usage = edit_tool_telemetry::start_edit_tool_usage_for_call(&call);
         let mut result = self
-            .dispatch_with_auth_transport_options_and_metadata_inner(
-                call,
-                auth,
-                transport,
-                recorder_metadata.clone(),
-                window,
-                inner_model_facing_recording,
-                context_request.clone(),
-                material_capabilities,
-                protocol_capabilities,
-                return_timing,
-                &mut correlation,
-                &mut result_projection,
-            )
+            .govern_dispatch(call, &mut context, &mut correlation, &mut result_projection)
             .await;
         super::mcp_timing::normalize_result_timing(&mut result, transport, self.mcp_host_policy);
         correlation.failure_expectation_result =
@@ -260,14 +182,15 @@ impl ToolRuntime {
         // resolved-project sidecar hook. Preserve the main ToolResult while still
         // answering the explicit sidecar request conservatively: static material
         // remains available, but project-scoped material must not guess a target.
-        if !context_request.is_empty() && result.output.get("context_projection").is_none() {
+        if !context.context_request.is_empty() && result.output.get("context_projection").is_none()
+        {
             self.add_requested_context_projection_with_guidance(
                 &mut result,
                 ContextProjectionRequest {
-                    requested: &context_request,
+                    requested: &context.context_request,
                     resolved_project: None,
                     auth,
-                    capabilities: material_capabilities,
+                    capabilities: context.material_capabilities(),
                     guidance_profile: context_guidance_profile,
                     window,
                     instructions: None,

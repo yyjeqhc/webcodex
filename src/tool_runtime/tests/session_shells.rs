@@ -4,6 +4,7 @@ use crate::runner_protocol::{
     PersistentShellResult, RunnerCapabilities, RunnerPersistentShellResultRequest,
     RunnerProjectSummary,
 };
+use crate::tool_runtime::dispatch::DispatchContext;
 
 const CLIENT: &str = "persistent-agent";
 const PROJECT_ID: &str = "demo";
@@ -165,11 +166,16 @@ fn dispatch_recorded(
             crate::tool_runtime::parse_tool_call_with_recorder_metadata(tool_name, arguments)
                 .unwrap();
         runtime
-            .dispatch_with_auth_transport_options_and_metadata(
+            .dispatch_with_context(
                 call,
-                Some(&auth),
-                crate::tool_runtime::sessions::SessionTransport::Mcp,
-                metadata,
+                DispatchContext {
+                    recorder: metadata,
+                    ..DispatchContext::internal(
+                        Some(&auth),
+                        crate::tool_runtime::sessions::SessionTransport::Mcp,
+                        None,
+                    )
+                },
             )
             .await
     })

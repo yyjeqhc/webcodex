@@ -2,10 +2,11 @@ use super::super::kernel::{
     HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
     ToolProtocolCapabilities, ToolTransport,
 };
-use super::super::sessions::{SessionTransport, ToolCallRecorderMetadata};
+use super::super::sessions::SessionTransport;
 use super::super::{ToolCall, ToolResult, ToolRuntime};
 use super::support::*;
 use crate::runner_protocol::{RunnerCapabilities, RunnerResultPayload};
+use crate::tool_runtime::dispatch::DispatchContext;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use webcodex_core::plugin::{
@@ -97,15 +98,16 @@ async fn dispatch_with_context_in_window_and_local_agent(
         let runtime = runtime.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+                .dispatch_with_context(
                     call,
-                    Some(&auth),
-                    SessionTransport::Mcp,
-                    ToolCallRecorderMetadata::default(),
-                    window.as_ref(),
-                    true,
-                    context_request,
-                    super::super::context_projection::ContextMaterialCapabilities::default(),
+                    DispatchContext {
+                        context_request: context_request,
+                        ..DispatchContext::internal(
+                            Some(&auth),
+                            SessionTransport::Mcp,
+                            window.as_ref(),
+                        )
+                    },
                 )
                 .await
         }
@@ -142,15 +144,9 @@ async fn context_projection_is_explicit_deduped_open_ended_and_nonfatal() {
     let runtime = ToolRuntime::new_for_tests();
     let call = ToolCall::from_tool_name("list_tools", json!({})).unwrap();
     let without = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+        .dispatch_with_context(
             call,
-            None,
-            SessionTransport::Mcp,
-            Default::default(),
-            None,
-            true,
-            Vec::new(),
-            super::super::context_projection::ContextMaterialCapabilities::default(),
+            DispatchContext::internal(None, SessionTransport::Mcp, None),
         )
         .await;
     assert!(without.success);
@@ -158,21 +154,18 @@ async fn context_projection_is_explicit_deduped_open_ended_and_nonfatal() {
 
     let call = ToolCall::from_tool_name("list_tools", json!({})).unwrap();
     let result = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+        .dispatch_with_context(
             call,
-            None,
-            SessionTransport::Mcp,
-            Default::default(),
-            None,
-            true,
-            vec![
-                "webcodex.workflow".to_string(),
-                "future.material".to_string(),
-                "workflow.resume".to_string(),
-                "webcodex.workflow".to_string(),
-                "project.instructions".to_string(),
-            ],
-            super::super::context_projection::ContextMaterialCapabilities::default(),
+            DispatchContext {
+                context_request: vec![
+                    "webcodex.workflow".to_string(),
+                    "future.material".to_string(),
+                    "workflow.resume".to_string(),
+                    "webcodex.workflow".to_string(),
+                    "project.instructions".to_string(),
+                ],
+                ..DispatchContext::internal(None, SessionTransport::Mcp, None)
+            },
         )
         .await;
     assert!(result.success, "{:?}", result.error);
@@ -226,11 +219,14 @@ async fn model_workflow_context_refresh_changes_guidance_only_and_chapters_are_e
                     keys.push(GOAL_WORKFLOW_CONTEXT_KEY.to_string());
                 }
                 let mut result = runtime
-                    .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+                    .dispatch_with_context(
                         ToolCall::from_tool_name("list_tools", json!({})).unwrap(),
-                        None, SessionTransport::Mcp, Default::default(), None, true, keys,
-                        super::super::context_projection::ContextMaterialCapabilities::default(),
-                    ).await;
+                        DispatchContext {
+                            context_request: keys,
+                            ..DispatchContext::internal(None, SessionTransport::Mcp, None)
+                        },
+                    )
+                    .await;
                 assert!(result.success, "{:?}", result.error);
                 let material = context_material(&result, "webcodex.workflow");
                 assert_eq!(material["status"], "available");
@@ -496,7 +492,7 @@ async fn project_instructions_context_projection_is_authorized_scoped_and_bounde
         .start_session(Some(alpha), Some("cross-project sidecar fence".to_string()));
     let auth = auth_context(None, true);
     let cross_project = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+        .dispatch_with_context(
             ToolCall::RunShell {
                 login: false,
                 project: bravo,
@@ -508,13 +504,10 @@ async fn project_instructions_context_projection_is_authorized_scoped_and_bounde
                 purpose: None,
                 shell: None,
             },
-            Some(&auth),
-            SessionTransport::Mcp,
-            Default::default(),
-            None,
-            true,
-            vec!["project.instructions".to_string()],
-            super::super::context_projection::ContextMaterialCapabilities::default(),
+            DispatchContext {
+                context_request: vec!["project.instructions".to_string()],
+                ..DispatchContext::internal(Some(&auth), SessionTransport::Mcp, None)
+            },
         )
         .await;
     assert!(!cross_project.success);
@@ -537,18 +530,15 @@ async fn project_instructions_context_projection_is_authorized_scoped_and_bounde
 
     let auth = auth_context(None, true);
     let wrong_project = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+        .dispatch_with_context(
             ToolCall::GitStatus {
                 project: "agent:context-bravo:missing".to_string(),
                 session_id: None,
             },
-            Some(&auth),
-            SessionTransport::Mcp,
-            Default::default(),
-            None,
-            true,
-            vec!["project.instructions".to_string()],
-            super::super::context_projection::ContextMaterialCapabilities::default(),
+            DispatchContext {
+                context_request: vec!["project.instructions".to_string()],
+                ..DispatchContext::internal(Some(&auth), SessionTransport::Mcp, None)
+            },
         )
         .await;
     assert!(!wrong_project.success);
@@ -583,18 +573,15 @@ async fn unavailable_project_instructions_provider_does_not_change_main_success(
         let runtime = runtime.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+                .dispatch_with_context(
                     ToolCall::GitStatus {
                         project,
                         session_id: None,
                     },
-                    Some(&auth),
-                    SessionTransport::Mcp,
-                    Default::default(),
-                    None,
-                    true,
-                    vec!["project.instructions".to_string()],
-                    super::super::context_projection::ContextMaterialCapabilities::default(),
+                    DispatchContext {
+                        context_request: vec!["project.instructions".to_string()],
+                        ..DispatchContext::internal(Some(&auth), SessionTransport::Mcp, None)
+                    },
                 )
                 .await
         }
@@ -681,7 +668,7 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
         let project = project.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+                .dispatch_with_context(
                     ToolCall::WriteProjectFile {
                         project,
                         path: "written.txt".to_string(),
@@ -690,13 +677,10 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
                         overwrite: None,
                         expected_read_revision: None,
                     },
-                    Some(&auth),
-                    SessionTransport::Mcp,
-                    Default::default(),
-                    None,
-                    true,
-                    vec!["project.instructions".to_string()],
-                    super::super::context_projection::ContextMaterialCapabilities::default(),
+                    DispatchContext {
+                        context_request: vec!["project.instructions".to_string()],
+                        ..DispatchContext::internal(Some(&auth), SessionTransport::Mcp, None)
+                    },
                 )
                 .await
         }
@@ -1090,26 +1074,23 @@ async fn configured_instruction_context_fixture_inner(
         let runtime = runtime.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
-                    if bootstrap {
+                .dispatch_with_context(
+if bootstrap {
                         ToolCall::from_tool_name("work_on_project", json!({
                             "project": project, "instruction": "inspect instructions", "include_extension_catalog": false
                         })).unwrap()
                     } else {
                         ToolCall::GitStatus { project, session_id: None }
                     },
-                    Some(&auth_context(None, true)),
-                    SessionTransport::Mcp,
-                    Default::default(),
-                    None,
-                    true,
-                    if rich {
+DispatchContext {
+context_request: if rich {
                         vec!["webcodex.workflow".into(), "project.instructions".into()]
                     } else {
                         vec!["project.instructions".into()]
                     },
-                    super::super::context_projection::ContextMaterialCapabilities::default(),
-                )
+..DispatchContext::internal(Some(&auth_context(None, true)), SessionTransport::Mcp, None)
+},
+)
                 .await
         }
     });

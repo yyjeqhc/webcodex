@@ -1,4 +1,5 @@
 use super::*;
+use crate::tool_runtime::dispatch::DispatchContext;
 use crate::tool_runtime::return_timing::ToolReturnTimingPolicy;
 use webcodex_core::project_validation::*;
 
@@ -140,17 +141,16 @@ async fn project_validation_governance_preserves_trusted_handoff_cap() {
         async move {
             let auth = auth_context(None, true);
             let (result, _, _) = runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
+                .dispatch_canonical(
                     call(ProjectValidationAction::Check, None),
-                    Some(&auth),
-                    crate::tool_runtime::sessions::SessionTransport::Api,
-                    Default::default(),
-                    None,
-                    true,
-                    Vec::new(),
-                    Default::default(),
-                    Default::default(),
-                    ToolReturnTimingPolicy::handoff_max_secs(4),
+                    DispatchContext {
+                        return_timing: ToolReturnTimingPolicy::handoff_max_secs(4),
+                        ..DispatchContext::internal(
+                            Some(&auth),
+                            crate::tool_runtime::sessions::SessionTransport::Api,
+                            None,
+                        )
+                    },
                 )
                 .await;
             result

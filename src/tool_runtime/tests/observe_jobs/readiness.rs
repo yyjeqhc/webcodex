@@ -1,5 +1,6 @@
 //! Deterministic transient readiness and local/runtime orchestration harness.
 use super::*;
+use crate::tool_runtime::dispatch::DispatchContext;
 use webcodex_tool_contracts::tool_call::JobReadinessMode::{All, Any};
 
 async fn ready(
@@ -11,12 +12,15 @@ async fn ready(
 ) -> ToolResult {
     let start = tokio::time::Instant::now();
     let (mut result, projection, _) = runtime
-        .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
-            ToolCall::WaitForJobReadiness { job_ids: ids, mode, wait_secs: secs },
-            Some(auth), sessions::SessionTransport::Api, Default::default(), None, true,
-            Vec::new(), Default::default(), Default::default(),
-            super::super::super::return_timing::ToolReturnTimingPolicy::unconstrained(),
-        ).await;
+        .dispatch_canonical(
+            ToolCall::WaitForJobReadiness {
+                job_ids: ids,
+                mode,
+                wait_secs: secs,
+            },
+            DispatchContext::internal(Some(auth), sessions::SessionTransport::Api, None),
+        )
+        .await;
     let schema = registry::output_schema_for_tool("wait_for_job_readiness");
     startup_brief::validate_schema_instance_for_test(
         &serde_json::to_value(&result).unwrap(),

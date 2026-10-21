@@ -483,20 +483,15 @@ impl ToolRuntime {
         // never re-evaluate (no second request id / inconsistent outcome).
         let execution_started = std::time::Instant::now();
         let (mut result, result_projection, mut correlation) = self
-            .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
+            .dispatch_canonical(
                 call,
-                context.auth,
-                context.transport.into(),
-                recording.metadata.clone(),
-                context.window,
-                context.session_id.is_none(),
-                context_request,
-                super::context_projection::ContextMaterialCapabilities {
-                    skill_runtime: capabilities.skill_runtime,
-                    memory_surface: capabilities.memory_surface,
+                super::dispatch::DispatchContext {
+                    recorder: recording.metadata.clone(),
+                    context_request,
+                    capabilities,
+                    return_timing,
+                    ..super::dispatch::DispatchContext::new(context)
                 },
-                capabilities,
-                return_timing,
             )
             .await;
         crate::tool_request_trace::record_phase_latency(

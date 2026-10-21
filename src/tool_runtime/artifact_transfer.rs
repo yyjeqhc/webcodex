@@ -16,6 +16,7 @@ use crate::db::{
     ArtifactHandoffImportRequest, ArtifactHandoffPrincipal, ArtifactHandoffSourceSnapshot,
     ArtifactHandoffStoreError,
 };
+use crate::tool_runtime::dispatch::DispatchContext;
 use crate::tool_runtime::project_resolution::ResolvedProject;
 use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
@@ -94,7 +95,8 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: SessionTransport,
     ) -> ToolResult {
-        Box::pin(self.dispatch_with_auth_transport_options(call, auth, transport)).await
+        Box::pin(self.dispatch_with_context(call, DispatchContext::internal(auth, transport, None)))
+            .await
     }
 
     async fn abort_transfer_upload(

@@ -1,4 +1,5 @@
 use super::support::*;
+use crate::tool_runtime::dispatch::DispatchContext;
 use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::validation_parser::{NO_STABLE_DIAGNOSTICS_REASON, PARSER_KIND};
 use crate::tool_runtime::{ExecutionPurpose, ExecutionShell, ToolCall};
@@ -120,11 +121,12 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
     )
     .unwrap();
     let execution = runtime
-        .dispatch_with_auth_transport_options_and_metadata(
+        .dispatch_with_context(
             call,
-            Some(&auth),
-            SessionTransport::Mcp,
-            recorder_metadata,
+            DispatchContext {
+                recorder: recorder_metadata,
+                ..DispatchContext::internal(Some(&auth), SessionTransport::Mcp, None)
+            },
         )
         .await;
     assert!(execution.success, "{:?}", execution.error);
@@ -231,11 +233,12 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
         let auth = auth.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata(
+                .dispatch_with_context(
                     call,
-                    Some(&auth),
-                    SessionTransport::Mcp,
-                    recorder_metadata,
+                    DispatchContext {
+                        recorder: recorder_metadata,
+                        ..DispatchContext::internal(Some(&auth), SessionTransport::Mcp, None)
+                    },
                 )
                 .await
         }

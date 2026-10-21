@@ -6,6 +6,7 @@ use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, RunnerPolicySummary, ShellCommandExecutionState,
     ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
 };
+use crate::tool_runtime::dispatch::DispatchContext;
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -314,11 +315,16 @@ async fn dispatch_typed_process_until_request(
         let runtime = runtime.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata(
+                .dispatch_with_context(
                     call,
-                    Some(&auth),
-                    crate::tool_runtime::sessions::SessionTransport::Mcp,
-                    metadata,
+                    DispatchContext {
+                        recorder: metadata,
+                        ..DispatchContext::internal(
+                            Some(&auth),
+                            crate::tool_runtime::sessions::SessionTransport::Mcp,
+                            None,
+                        )
+                    },
                 )
                 .await
         }
@@ -1412,11 +1418,12 @@ async fn run_process_terminal_success_is_sparse_after_full_session_effect_record
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
-            runtime.dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
-                call, Some(&auth), sessions::SessionTransport::Api,
-                Default::default(), None, true, Vec::new(), Default::default(),
-                Default::default(), super::super::return_timing::ToolReturnTimingPolicy::unconstrained(),
-            ).await
+            runtime
+                .dispatch_canonical(
+                    call,
+                    DispatchContext::internal(Some(&auth), sessions::SessionTransport::Api, None),
+                )
+                .await
         }
     });
     let request = wait_for_patch_agent_request(&runtime, "process-sparse-ledger").await;
@@ -2843,11 +2850,16 @@ async fn run_process_shell_command_mode_recovery_is_lossless_parser_ready_and_pr
             let auth_copy = auth.clone();
             let task = tokio::spawn(async move {
                 runtime_copy
-                    .dispatch_with_auth_transport_options_and_metadata(
+                    .dispatch_with_context(
                         call,
-                        Some(&auth_copy),
-                        sessions::SessionTransport::Mcp,
-                        metadata,
+                        DispatchContext {
+                            recorder: metadata,
+                            ..DispatchContext::internal(
+                                Some(&auth_copy),
+                                sessions::SessionTransport::Mcp,
+                                None,
+                            )
+                        },
                     )
                     .await
             });

@@ -16,6 +16,7 @@ use crate::artifact_policy::{
     normalize_host_import_presentation_mime, GENERIC_BINARY_MIME,
 };
 use crate::auth::AuthContext;
+use crate::tool_runtime::dispatch::DispatchContext;
 use base64::{engine::general_purpose, Engine as _};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -481,7 +482,8 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: SessionTransport,
     ) -> ToolResult {
-        Box::pin(self.dispatch_with_auth_transport_options(call, auth, transport)).await
+        Box::pin(self.dispatch_with_context(call, DispatchContext::internal(auth, transport, None)))
+            .await
     }
 
     async fn abort_import_upload(

@@ -3604,14 +3604,17 @@ async fn call_typed_tool_with_metadata(
     arguments: Value,
     auth: Option<&AuthContext>,
 ) -> ToolResult {
+    use crate::tool_runtime::dispatch::DispatchContext;
+
     let (call, metadata) =
         crate::tool_runtime::parse_tool_call_with_recorder_metadata(tool_name, arguments).unwrap();
     runtime
-        .dispatch_with_auth_transport_options_and_metadata(
+        .dispatch_with_context(
             call,
-            auth,
-            SessionTransport::Mcp,
-            metadata,
+            DispatchContext {
+                recorder: metadata,
+                ..DispatchContext::internal(auth, SessionTransport::Mcp, None)
+            },
         )
         .await
 }

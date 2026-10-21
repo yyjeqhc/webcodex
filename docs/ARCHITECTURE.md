@@ -186,6 +186,30 @@ Runtime Console -----------------------> canonical Server HTTP/kernel paths abov
   registry, file/patch/artifact handling, shell execution, and LSP
   navigation.
 
+### Tool invocation context and dispatch
+
+The Kernel retains adapter authentication, transport, window and recorder identity
+in `ToolCallContext`. `DispatchContext` carries that context together with recorder
+metadata, requested context, protocol capabilities and return timing through the
+ordinary dispatch path. Context-material capabilities derive from the same
+protocol capabilities used by the invocation.
+
+`govern_dispatch` keeps the ordered Session and Runner checks and the single
+ordinary-tool permission evaluation. After those checks and the existing
+canonical Project binding, it constructs a private `AuthorizedDispatch` for
+routing. Domain handlers keep their own path, capability and effect checks.
+Specialized gateways retain the separate lifecycle described below.
+
+The business Session stays on `ToolCall`; `ToolCallContext.session_id` identifies
+the outer Kernel recorder. Recorder presence selects the existing recording
+owner. Explicit coding resume still defers its business Session checks to the
+workflow, and reading another Session's handoff keeps the outer recorder separate
+from that target Session.
+
+Public dispatch and Kernel entrypoints keep boxed futures so callers do not
+embed the complete execution future in their stack frame. Canonical evidence
+continues to be recorded before the one-shot model result projection is consumed.
+
 ### Heterogeneous gateway governance
 
 The Kernel routes action-dependent gateways through

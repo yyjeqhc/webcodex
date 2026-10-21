@@ -3,6 +3,7 @@
 use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{RunnerCapabilities, RunnerPollRequest, RunnerResultRequest};
+use crate::tool_runtime::dispatch::DispatchContext;
 use serde_json::Value;
 
 fn scoped_text_edit(
@@ -2182,22 +2183,14 @@ async fn apply_text_edits_session_event_summary() {
     session_change.expected_read_revision = Some(revision);
     let task = tokio::spawn(async move {
         runtime_for_task
-            .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
+            .dispatch_canonical(
                 ToolCall::ApplyTextEdits {
                     project: project_for_task,
                     changes: vec![session_change],
                     dry_run: None,
                     session_id: Some(session_id),
                 },
-                Some(&bootstrap),
-                sessions::SessionTransport::Api,
-                Default::default(),
-                None,
-                true,
-                Vec::new(),
-                Default::default(),
-                Default::default(),
-                super::super::return_timing::ToolReturnTimingPolicy::unconstrained(),
+                DispatchContext::internal(Some(&bootstrap), sessions::SessionTransport::Api, None),
             )
             .await
     });

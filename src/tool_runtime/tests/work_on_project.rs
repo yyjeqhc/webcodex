@@ -12,6 +12,7 @@ use super::support::*;
 use crate::db::{NewGoal, NewGoalStep};
 use crate::lsp_bridge::{RunnerLspRequest, RunnerLspResultEnvelope, AGENT_LSP_REQUEST_KIND};
 use crate::runner_protocol::{RunnerCapabilities, RunnerResultPayload, RunnerResultRequest};
+use crate::tool_runtime::dispatch::DispatchContext;
 use crate::tool_runtime::kernel::{
     HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
     ToolProtocolCapabilities, ToolTransport,
@@ -561,12 +562,13 @@ async fn dispatch_recording_startup_requests(
         async move {
             let window = crate::client_window::ClientWindow::for_test(&window_id);
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_window(
+                .dispatch_with_context(
                     call,
-                    auth.as_ref(),
-                    crate::tool_runtime::sessions::SessionTransport::Mcp,
-                    Default::default(),
-                    Some(&window),
+                    DispatchContext::internal(
+                        auth.as_ref(),
+                        crate::tool_runtime::sessions::SessionTransport::Mcp,
+                        Some(&window),
+                    ),
                 )
                 .await
         }
@@ -609,12 +611,13 @@ async fn dispatch_recording_startup_requests_with_runner_instructions(
         async move {
             let window = crate::client_window::ClientWindow::for_test(&window_id);
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_window(
+                .dispatch_with_context(
                     call,
-                    auth.as_ref(),
-                    crate::tool_runtime::sessions::SessionTransport::Mcp,
-                    Default::default(),
-                    Some(&window),
+                    DispatchContext::internal(
+                        auth.as_ref(),
+                        crate::tool_runtime::sessions::SessionTransport::Mcp,
+                        Some(&window),
+                    ),
                 )
                 .await
         }
@@ -865,12 +868,13 @@ async fn dispatch_startup_without_window(
         let auth = auth.cloned();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_window(
+                .dispatch_with_context(
                     call,
-                    auth.as_ref(),
-                    crate::tool_runtime::sessions::SessionTransport::Mcp,
-                    Default::default(),
-                    None,
+                    DispatchContext::internal(
+                        auth.as_ref(),
+                        crate::tool_runtime::sessions::SessionTransport::Mcp,
+                        None,
+                    ),
                 )
                 .await
         }
@@ -904,15 +908,16 @@ async fn dispatch_with_path_runner(
         let auth = auth_context(None, true);
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+                .dispatch_with_context(
                     call,
-                    Some(&auth),
-                    crate::tool_runtime::sessions::SessionTransport::Mcp,
-                    Default::default(),
-                    None,
-                    true,
-                    vec!["project.instructions".into()],
-                    Default::default(),
+                    DispatchContext {
+                        context_request: vec!["project.instructions".into()],
+                        ..DispatchContext::internal(
+                            Some(&auth),
+                            crate::tool_runtime::sessions::SessionTransport::Mcp,
+                            None,
+                        )
+                    },
                 )
                 .await
         }

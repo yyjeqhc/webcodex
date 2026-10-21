@@ -2,23 +2,42 @@
 
 use super::*;
 
+#[path = "routing.rs"]
+mod routing;
+
+/// Only governance can construct an operation after its ordered guards and
+/// canonical target binding. Domain handlers retain their own safety checks;
+/// routing cannot accept independently assembled authority parameters.
+struct AuthorizedDispatch<'a, 'caller> {
+    call: ToolCall,
+    context: &'a DispatchContext<'caller>,
+    ssh_resource: Option<&'a str>,
+    project_resolution: Option<Result<ResolvedProject, ProjectResolverError>>,
+    structured_handoff_max_secs: Option<u64>,
+}
+
 impl ToolRuntime {
-    #[allow(clippy::too_many_arguments)]
-    pub(super) async fn dispatch_with_auth_transport_options_and_metadata_inner(
+    pub(super) async fn govern_dispatch(
         &self,
         mut call: ToolCall,
-        auth: Option<&AuthContext>,
-        transport: sessions::SessionTransport,
-        mut recorder_metadata: sessions::ToolCallRecorderMetadata,
-        window: Option<&crate::client_window::ClientWindow>,
-        inner_model_facing_recording: bool,
-        context_request: Vec<String>,
-        material_capabilities: crate::tool_runtime::context_projection::ContextMaterialCapabilities,
-        protocol_capabilities: crate::tool_runtime::kernel::ToolProtocolCapabilities,
-        return_timing: crate::tool_runtime::return_timing::ToolReturnTimingPolicy,
+        context: &mut DispatchContext<'_>,
         correlation: &mut crate::tool_runtime::window_activity::ToolCallCorrelation,
         result_projection: &mut ModelFacingProjectionPlan,
     ) -> ToolResult {
+        let ToolCallContext {
+            auth,
+            window,
+            transport,
+            ..
+        } = context.caller;
+        let transport = transport.into();
+        // caller.session_id names only the outer Kernel recorder. A business
+        // Session remains on ToolCall and still gets its inner ledger/guards.
+        let inner_model_facing_recording = context.caller.session_id.is_none();
+        let context_request = &context.context_request;
+        let material_capabilities = context.material_capabilities();
+        let return_timing = context.return_timing;
+        let recorder_metadata = &mut context.recorder;
         call = call
             .with_coding_agent_recording_session_id(recorder_metadata.recording_session_id.clone());
         let effective_return_timing = return_timing.intersect(
@@ -54,6 +73,7 @@ impl ToolRuntime {
         // authoritative business role; direct/internal dispatch without a kernel
         // identity remains uncorrelated legacy-style evidence.
         recorder_metadata.mark_business_execution();
+        let recorder_metadata = &context.recorder;
         let project_resolution = match call.project() {
             Some(project) => Some(self.resolve_project_input_for_auth(project, auth).await),
             None => None,
@@ -443,16 +463,10 @@ impl ToolRuntime {
         }
         let activity_context =
             Self::capture_workspace_activity_context(&call, activity_project.as_deref());
-        let validation_assertion_name = recorder_metadata.expectation.assertion_name.as_deref();
-        let logical_invocation_id = recorder_metadata.logical_invocation_id.as_deref();
         let tool_name = call.tool_name();
         let trusted_recording_session_id = recorder_metadata
             .recording_session_authorized
             .then_some(recorder_metadata.recording_session_id.as_deref())
-            .flatten();
-        let trusted_recording_session_project = recorder_metadata
-            .recording_session_authorized
-            .then_some(recorder_metadata.recording_session_project.as_deref())
             .flatten();
         let source_mutation =
             if crate::tool_runtime::validation_source::observes_potential_mutation(&call) {
@@ -489,22 +503,14 @@ impl ToolRuntime {
         let mut result = crate::tool_runtime::read_cache::READ_SCOPE
             .scope(
                 read_scope,
-                self.dispatch_authorized_inner(
+                AuthorizedDispatch {
                     call,
-                    auth,
-                    transport,
-                    window,
-                    ssh_resource.as_deref(),
-                    validation_assertion_name,
+                    context,
+                    ssh_resource: ssh_resource.as_deref(),
                     project_resolution,
-                    trusted_recording_session_id,
-                    trusted_recording_session_project,
-                    logical_invocation_id,
-                    effective_return_timing.max_handoff_secs(),
-                    protocol_capabilities,
-                    correlation,
-                    &mut bootstrap_context,
-                ),
+                    structured_handoff_max_secs: effective_return_timing.max_handoff_secs(),
+                }
+                .execute(self, correlation, &mut bootstrap_context),
             )
             .await;
         if let Some(requested_project) = requested_project_output {
@@ -559,7 +565,7 @@ impl ToolRuntime {
             &session_id,
             auth,
             transport,
-            &context_request,
+            context_request,
             material_capabilities,
             context_guidance_profile,
             window,

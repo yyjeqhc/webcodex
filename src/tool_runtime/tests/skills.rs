@@ -1,4 +1,3 @@
-use super::super::context_projection::ContextMaterialCapabilities;
 use super::super::kernel::{
     HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
     ToolProtocolCapabilities, ToolTransport,
@@ -8,6 +7,7 @@ use super::super::sessions::{SessionTransport, ToolCallRecorderMetadata};
 use super::super::{ToolCall, ToolResult, ToolRuntime};
 use super::support::*;
 use crate::runner_protocol::{RunnerCapabilities, RunnerResultRequest};
+use crate::tool_runtime::dispatch::DispatchContext;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
@@ -99,17 +99,17 @@ async fn dispatch_with_context_and_local_agent(
         let runtime = runtime.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+                .dispatch_with_context(
                     call,
-                    Some(&auth),
-                    SessionTransport::Mcp,
-                    recorder_metadata,
-                    None,
-                    true,
-                    context_request,
-                    ContextMaterialCapabilities {
-                        skill_runtime: true,
-                        memory_surface: false,
+                    DispatchContext {
+                        recorder: recorder_metadata,
+                        context_request: context_request,
+                        capabilities: crate::tool_runtime::kernel::ToolProtocolCapabilities {
+                            skill_runtime: true,
+                            memory_surface: false,
+                            ..Default::default()
+                        },
+                        ..DispatchContext::internal(Some(&auth), SessionTransport::Mcp, None)
                     },
                 )
                 .await

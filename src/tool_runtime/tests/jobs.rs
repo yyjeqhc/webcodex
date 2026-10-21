@@ -9,6 +9,7 @@ use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, RunnerRegisterRequest, RunnerResultPayload,
     RunnerResultRequest, ShellCommandExecutionState,
 };
+use crate::tool_runtime::dispatch::DispatchContext;
 use serde_json::json;
 
 #[test]
@@ -962,16 +963,22 @@ async fn long_run_shell_fast_terminal_returns_ordinary_result_without_visible_jo
         let session_id = session_id.clone();
         async move {
             let auth = auth_context(None, true);
-            runtime.dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
-                ToolCall::RunShell {
-                    project, command: "printf fast".to_string(), timeout_secs: Some(600),
-                    sync_wait_secs: None, cwd: None, purpose: None, shell: None,
-                    session_id: Some(session_id), login: false,
-                },
-                Some(&auth), sessions::SessionTransport::Api, Default::default(),
-                None, true, Vec::new(), Default::default(), Default::default(),
-                super::super::return_timing::ToolReturnTimingPolicy::unconstrained(),
-            ).await
+            runtime
+                .dispatch_canonical(
+                    ToolCall::RunShell {
+                        project,
+                        command: "printf fast".to_string(),
+                        timeout_secs: Some(600),
+                        sync_wait_secs: None,
+                        cwd: None,
+                        purpose: None,
+                        shell: None,
+                        session_id: Some(session_id),
+                        login: false,
+                    },
+                    DispatchContext::internal(Some(&auth), sessions::SessionTransport::Api, None),
+                )
+                .await
         }
     });
     let start = wait_for_patch_agent_request(&runtime, client_id).await;

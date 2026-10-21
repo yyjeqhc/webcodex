@@ -10,6 +10,7 @@ use crate::runner_protocol::{
     RunnerBuildInfo, RunnerCapabilities, RunnerHostContext, RunnerProtocolGenerationNumber,
     RunnerRegisterRequest, ShellJobOpRequest, RUNNER_PROTOCOL_GENERATION_V2,
 };
+use crate::tool_runtime::dispatch::DispatchContext;
 use crate::tool_runtime::observations::ToolCallObservation;
 use crate::tool_runtime::tool_inputs::{SessionMode, StartupDetail};
 use crate::tool_runtime::{ToolCall, ToolRuntime};
@@ -838,12 +839,9 @@ async fn dispatch_coding_call_in_window_with_transport(
         async move {
             let window = ClientWindow::for_test(&window_id);
             runtime
-                .dispatch_with_auth_transport_options_and_metadata_with_window(
+                .dispatch_with_context(
                     call,
-                    auth.as_ref(),
-                    transport,
-                    Default::default(),
-                    Some(&window),
+                    DispatchContext::internal(auth.as_ref(), transport, Some(&window)),
                 )
                 .await
         }

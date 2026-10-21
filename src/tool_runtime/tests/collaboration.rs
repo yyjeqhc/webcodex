@@ -885,6 +885,7 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
     let assignment_fence = runtime
         .sessions
         .get_assignment(&coordinator.session_id, &todo_id)
+        .await
         .unwrap()
         .assignment_fence;
     let forged_author_error = super::super::ToolCall::from_tool_name(
@@ -1079,6 +1080,7 @@ async fn collaboration_completion_without_recording_session_has_null_author_even
     let assignment_fence = runtime
         .sessions
         .get_assignment(&coordinator.session_id, &todo.message_id)
+        .await
         .unwrap()
         .assignment_fence;
     let window = ClientWindow::for_test("no-recorder-author-window");
@@ -1126,6 +1128,7 @@ async fn collaboration_explicit_recording_session_is_completion_author() {
     let assignment_fence = runtime
         .sessions
         .get_assignment(&coordinator.session_id, &todo.message_id)
+        .await
         .unwrap()
         .assignment_fence;
     let window = ClientWindow::for_test("recorder-vs-current-window");
@@ -1197,6 +1200,7 @@ async fn collaboration_cross_project_recorder_fails_closed_before_completion() {
     let assignment_fence = runtime
         .sessions
         .get_assignment(&coordinator.session_id, &todo.message_id)
+        .await
         .unwrap()
         .assignment_fence;
     let window = ClientWindow::for_test("cross-project-worker");
@@ -1473,6 +1477,7 @@ async fn collaboration_mixed_project_scope_fails_closed_in_both_directions() {
     let scoped_assignment_fence = runtime
         .sessions
         .get_assignment(&scoped_coordinator.session_id, &scoped_todo.message_id)
+        .await
         .unwrap()
         .assignment_fence;
     for (tool_name, arguments) in [
@@ -1556,6 +1561,7 @@ async fn collaboration_mixed_project_scope_fails_closed_in_both_directions() {
     let unscoped_assignment_fence = runtime
         .sessions
         .get_assignment(&unscoped_coordinator_id, &unscoped_todo.message_id)
+        .await
         .unwrap()
         .assignment_fence;
     for (tool_name, arguments) in [
@@ -1676,6 +1682,7 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
     let assignment_fence = runtime
         .sessions
         .get_assignment(&session_id, &todo_id)
+        .await
         .unwrap()
         .assignment_fence;
     runtime.sessions.flush_persistence();
@@ -1862,6 +1869,7 @@ async fn projectless_session_owner_authority_blocks_known_ids_from_foreign_princ
     let assignment_fence = runtime
         .sessions
         .get_assignment(&session_id, &todo_id)
+        .await
         .unwrap()
         .assignment_fence;
 
@@ -2096,6 +2104,7 @@ async fn collaboration_foreign_owner_cannot_read_or_complete_known_session_and_t
     let assignment_fence = runtime
         .sessions
         .get_assignment(&coordinator.session_id, &todo.message_id)
+        .await
         .unwrap()
         .assignment_fence;
 

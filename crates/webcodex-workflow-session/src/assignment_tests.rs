@@ -86,8 +86,8 @@ fn answer_count(store: &SessionStore, session_id: &str, todo_id: &str) -> usize 
         .len()
 }
 
-#[test]
-fn assignment_snapshot_is_atomic_and_unrelated_traffic_and_ack_do_not_stale() {
+#[tokio::test]
+async fn assignment_snapshot_is_atomic_and_unrelated_traffic_and_ack_do_not_stale() {
     let store = SessionStore::default();
     let session = store.start_session(None, None);
     let todo = todo(&store, &session.session_id, "one read assignment");
@@ -103,6 +103,7 @@ fn assignment_snapshot_is_atomic_and_unrelated_traffic_and_ack_do_not_stale() {
 
     let snapshot = store
         .get_assignment(&session.session_id, &todo.message_id)
+        .await
         .unwrap();
     assert_eq!(snapshot.todo.message_id, todo.message_id);
     assert_eq!(snapshot.direct_replies, vec![guidance.clone()]);
@@ -137,6 +138,7 @@ fn assignment_snapshot_is_atomic_and_unrelated_traffic_and_ack_do_not_stale() {
             &"a".repeat(64),
             snapshot.assignment_fence,
         ))
+        .await
         .unwrap();
     assert!(!completed.replayed);
     assert_eq!(
@@ -145,8 +147,8 @@ fn assignment_snapshot_is_atomic_and_unrelated_traffic_and_ack_do_not_stale() {
     );
 }
 
-#[test]
-fn unrelated_retention_eviction_does_not_invalidate_assignment() {
+#[tokio::test]
+async fn unrelated_retention_eviction_does_not_invalidate_assignment() {
     let store = SessionStore::default();
     let session = store.start_session(None, None);
     for index in 0..150 {
@@ -172,6 +174,7 @@ fn unrelated_retention_eviction_does_not_invalidate_assignment() {
     );
     let snapshot = store
         .get_assignment(&session.session_id, &todo.message_id)
+        .await
         .unwrap();
 
     // Cross the global message cap, but only evict messages older than this todo.
@@ -197,11 +200,12 @@ fn unrelated_retention_eviction_does_not_invalidate_assignment() {
             &"b".repeat(64),
             snapshot.assignment_fence,
         ))
+        .await
         .unwrap();
 }
 
-#[test]
-fn direct_reply_append_replace_withdraw_and_resolve_stale_without_completion() {
+#[tokio::test]
+async fn direct_reply_append_replace_withdraw_and_resolve_stale_without_completion() {
     enum Mutation {
         Append,
         Replace,
@@ -228,6 +232,7 @@ fn direct_reply_append_replace_withdraw_and_resolve_stale_without_completion() {
         );
         let snapshot = store
             .get_assignment(&session.session_id, &todo.message_id)
+            .await
             .unwrap();
         match mutation {
             Mutation::Append => {
@@ -248,11 +253,13 @@ fn direct_reply_append_replace_withdraw_and_resolve_stale_without_completion() {
                         message_id: direct.message_id.clone(),
                         message: "replacement direct reply".to_string(),
                     })
+                    .await
                     .unwrap();
             }
             Mutation::Withdraw => {
                 store
                     .withdraw_message(&session.session_id, &direct.message_id)
+                    .await
                     .unwrap();
             }
             Mutation::Resolve => {
@@ -282,6 +289,7 @@ fn direct_reply_append_replace_withdraw_and_resolve_stale_without_completion() {
                 &"c".repeat(64),
                 snapshot.assignment_fence,
             ))
+            .await
             .unwrap_err();
         let (current, fresh_assignment_fence) = match error {
             SessionMessageError::AssignmentStale {
@@ -309,8 +317,8 @@ fn direct_reply_append_replace_withdraw_and_resolve_stale_without_completion() {
     }
 }
 
-#[test]
-fn todo_replace_withdraw_and_resolve_reject_old_fence() {
+#[tokio::test]
+async fn todo_replace_withdraw_and_resolve_reject_old_fence() {
     enum Mutation {
         Replace,
         Withdraw,
@@ -322,6 +330,7 @@ fn todo_replace_withdraw_and_resolve_reject_old_fence() {
         let todo = todo(&store, &session.session_id, "mutate exact todo");
         let snapshot = store
             .get_assignment(&session.session_id, &todo.message_id)
+            .await
             .unwrap();
         match mutation {
             Mutation::Replace => {
@@ -331,10 +340,12 @@ fn todo_replace_withdraw_and_resolve_reject_old_fence() {
                         message_id: todo.message_id.clone(),
                         message: "replacement todo".to_string(),
                     })
+                    .await
                     .unwrap();
                 assert_ne!(replacement.replacement.message_id, todo.message_id);
                 let replacement_assignment = store
                     .get_assignment(&session.session_id, &replacement.replacement.message_id)
+                    .await
                     .unwrap();
                 assert_ne!(
                     replacement_assignment.assignment_fence,
@@ -344,6 +355,7 @@ fn todo_replace_withdraw_and_resolve_reject_old_fence() {
             Mutation::Withdraw => {
                 store
                     .withdraw_message(&session.session_id, &todo.message_id)
+                    .await
                     .unwrap();
             }
             Mutation::Resolve => {
@@ -353,12 +365,14 @@ fn todo_replace_withdraw_and_resolve_reject_old_fence() {
             }
         }
         assert!(matches!(
-            store.complete_message(fenced_completion(
-                &session.session_id,
-                &todo.message_id,
-                &"d".repeat(64),
-                snapshot.assignment_fence,
-            )),
+            store
+                .complete_message(fenced_completion(
+                    &session.session_id,
+                    &todo.message_id,
+                    &"d".repeat(64),
+                    snapshot.assignment_fence,
+                ))
+                .await,
             Err(SessionMessageError::AssignmentStale { .. })
         ));
         assert_eq!(
@@ -368,8 +382,8 @@ fn todo_replace_withdraw_and_resolve_reject_old_fence() {
     }
 }
 
-#[test]
-fn assignment_fence_is_bound_to_exact_session_and_todo() {
+#[tokio::test]
+async fn assignment_fence_is_bound_to_exact_session_and_todo() {
     let store = SessionStore::default();
     let first = store.start_session(None, None);
     let second = store.start_session(None, None);
@@ -378,6 +392,7 @@ fn assignment_fence_is_bound_to_exact_session_and_todo() {
     let other_todo = todo(&store, &second.session_id, "other session");
     let snapshot = store
         .get_assignment(&first.session_id, &first_todo.message_id)
+        .await
         .unwrap();
 
     for (session_id, todo_id) in [
@@ -385,33 +400,38 @@ fn assignment_fence_is_bound_to_exact_session_and_todo() {
         (&second.session_id, &other_todo.message_id),
     ] {
         assert!(matches!(
-            store.complete_message(fenced_completion(
-                session_id,
-                todo_id,
-                &"e".repeat(64),
-                snapshot.assignment_fence.clone(),
-            )),
+            store
+                .complete_message(fenced_completion(
+                    session_id,
+                    todo_id,
+                    &"e".repeat(64),
+                    snapshot.assignment_fence.clone(),
+                ))
+                .await,
             Err(SessionMessageError::AssignmentStale { .. })
         ));
     }
     assert!(matches!(
-        store.complete_message(fenced_completion(
-            &first.session_id,
-            &first_todo.message_id,
-            &"e".repeat(64),
-            format!("wsm2_{}", "A".repeat(43)),
-        )),
+        store
+            .complete_message(fenced_completion(
+                &first.session_id,
+                &first_todo.message_id,
+                &"e".repeat(64),
+                format!("wsm2_{}", "A".repeat(43)),
+            ))
+            .await,
         Err(SessionMessageError::InvalidAssignmentFence)
     ));
 }
 
-#[test]
-fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
+#[tokio::test]
+async fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
     let store = SessionStore::default();
     let session = store.start_session(None, None);
     let todo = todo(&store, &session.session_id, "replay fenced completion");
     let snapshot = store
         .get_assignment(&session.session_id, &todo.message_id)
+        .await
         .unwrap();
     post_message(
         &store,
@@ -424,6 +444,7 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
     );
     let same_semantics_new_fence = store
         .get_assignment(&session.session_id, &todo.message_id)
+        .await
         .unwrap();
     assert_eq!(
         same_semantics_new_fence.assignment_fence,
@@ -440,6 +461,7 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
     );
     let different_valid_fence = store
         .get_assignment(&session.session_id, &different_todo.message_id)
+        .await
         .unwrap()
         .assignment_fence;
     assert_ne!(different_valid_fence, snapshot.assignment_fence);
@@ -449,36 +471,36 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
         &"f".repeat(64),
         snapshot.assignment_fence.clone(),
     );
-    let first = store.complete_message(input.clone()).unwrap();
-    let replay = store.complete_message(input.clone()).unwrap();
+    let first = store.complete_message(input.clone()).await.unwrap();
+    let replay = store.complete_message(input.clone()).await.unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.answer.message_id, first.answer.message_id);
 
     let mut different_fence = input.clone();
     different_fence.expected_assignment_fence = different_valid_fence;
     assert!(matches!(
-        store.complete_message(different_fence),
+        store.complete_message(different_fence).await,
         Err(SessionMessageError::IdempotencyConflict)
     ));
 
     let mut different_author = input.clone();
     different_author.author_session_id = Some("wc_sess_aaaaaaaaaaaaaaaa".to_string());
     assert!(matches!(
-        store.complete_message(different_author),
+        store.complete_message(different_author).await,
         Err(SessionMessageError::IdempotencyConflict)
     ));
 
     let mut different_tags = input.clone();
     different_tags.tags.push("different-tag".to_string());
     assert!(matches!(
-        store.complete_message(different_tags),
+        store.complete_message(different_tags).await,
         Err(SessionMessageError::IdempotencyConflict)
     ));
 
     let mut different_priority = input.clone();
     different_priority.priority = SessionMessagePriority::High;
     assert!(matches!(
-        store.complete_message(different_priority),
+        store.complete_message(different_priority).await,
         Err(SessionMessageError::IdempotencyConflict)
     ));
 
@@ -493,7 +515,7 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
         SessionMessagePriority::Normal,
         false,
     );
-    let replay_after_thread_change = store.complete_message(input.clone()).unwrap();
+    let replay_after_thread_change = store.complete_message(input.clone()).await.unwrap();
     assert!(replay_after_thread_change.replayed);
     assert_eq!(
         replay_after_thread_change.answer.message_id,
@@ -503,7 +525,7 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
     let mut conflict = input;
     conflict.answer = "different body".to_string();
     assert!(matches!(
-        store.complete_message(conflict),
+        store.complete_message(conflict).await,
         Err(SessionMessageError::IdempotencyConflict)
     ));
     assert_eq!(
@@ -512,13 +534,14 @@ fn fenced_completion_replays_same_key_and_conflicts_on_same_key_body_change() {
     );
 }
 
-#[test]
-fn concurrent_workers_with_same_fence_create_at_most_one_answer() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_workers_with_same_fence_create_at_most_one_answer() {
     let store = Arc::new(SessionStore::default());
     let session = store.start_session(None, None);
     let todo = todo(&store, &session.session_id, "concurrent workers");
     let snapshot = store
         .get_assignment(&session.session_id, &todo.message_id)
+        .await
         .unwrap();
     let first = fenced_completion(
         &session.session_id,
@@ -534,9 +557,9 @@ fn concurrent_workers_with_same_fence_create_at_most_one_answer() {
     );
     let a = Arc::clone(&store);
     let b = Arc::clone(&store);
-    let left = std::thread::spawn(move || a.complete_message(first));
-    let right = std::thread::spawn(move || b.complete_message(second));
-    let results = [left.join().unwrap(), right.join().unwrap()];
+    let left = tokio::spawn(async move { a.complete_message(first).await });
+    let right = tokio::spawn(async move { b.complete_message(second).await });
+    let results = [left.await.unwrap(), right.await.unwrap()];
     assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
     assert!(results
         .iter()
@@ -554,8 +577,8 @@ fn concurrent_workers_with_same_fence_create_at_most_one_answer() {
     );
 }
 
-#[test]
-fn assignment_snapshot_and_fenced_replay_survive_restart() {
+#[tokio::test]
+async fn assignment_snapshot_and_fenced_replay_survive_restart() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = dir.path().join("sessions.json");
     let store = SessionStore::with_persistence(&ledger, 10, 50);
@@ -572,6 +595,7 @@ fn assignment_snapshot_and_fenced_replay_survive_restart() {
     );
     let snapshot = store
         .get_assignment(&session.session_id, &todo.message_id)
+        .await
         .unwrap();
     let input = fenced_completion(
         &session.session_id,
@@ -581,15 +605,15 @@ fn assignment_snapshot_and_fenced_replay_survive_restart() {
     );
 
     let restored = SessionStore::with_persistence(&ledger, 10, 50);
-    let first = restored.complete_message(input.clone()).unwrap();
+    let first = restored.complete_message(input.clone()).await.unwrap();
     let restarted_again = SessionStore::with_persistence(&ledger, 10, 50);
-    let replay = restarted_again.complete_message(input).unwrap();
+    let replay = restarted_again.complete_message(input).await.unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.answer.message_id, first.answer.message_id);
 }
 
-#[test]
-fn sanitized_relevant_history_and_corrupt_observation_metadata_fail_closed() {
+#[tokio::test]
+async fn sanitized_relevant_history_and_corrupt_observation_metadata_fail_closed() {
     for corrupt_observation in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let ledger = dir.path().join("sessions.json");
@@ -631,14 +655,16 @@ fn sanitized_relevant_history_and_corrupt_observation_metadata_fail_closed() {
 
         let restored = SessionStore::with_persistence(&ledger, 10, 50);
         assert!(matches!(
-            restored.get_assignment(&session.session_id, &todo.message_id),
+            restored
+                .get_assignment(&session.session_id, &todo.message_id)
+                .await,
             Err(SessionMessageError::AssignmentHistoryLost { .. })
         ));
     }
 }
 
-#[test]
-fn relevant_change_then_sanitization_cannot_look_safe_again() {
+#[tokio::test]
+async fn relevant_change_then_sanitization_cannot_look_safe_again() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = dir.path().join("sessions.json");
     let store = SessionStore::with_persistence(&ledger, 10, 50);
@@ -646,6 +672,7 @@ fn relevant_change_then_sanitization_cannot_look_safe_again() {
     let todo = todo(&store, &session.session_id, "old assignment");
     let snapshot = store
         .get_assignment(&session.session_id, &todo.message_id)
+        .await
         .unwrap();
     let direct = post_message(
         &store,
@@ -676,12 +703,14 @@ fn relevant_change_then_sanitization_cannot_look_safe_again() {
 
     let restored = SessionStore::with_persistence(&ledger, 10, 50);
     assert!(matches!(
-        restored.complete_message(fenced_completion(
-            &session.session_id,
-            &todo.message_id,
-            &"4".repeat(64),
-            snapshot.assignment_fence,
-        )),
+        restored
+            .complete_message(fenced_completion(
+                &session.session_id,
+                &todo.message_id,
+                &"4".repeat(64),
+                snapshot.assignment_fence,
+            ))
+            .await,
         Err(SessionMessageError::AssignmentHistoryLost { .. })
     ));
     assert_eq!(
@@ -690,8 +719,8 @@ fn relevant_change_then_sanitization_cannot_look_safe_again() {
     );
 }
 
-#[test]
-fn oversized_direct_reply_set_fails_closed_without_partial_fence() {
+#[tokio::test]
+async fn oversized_direct_reply_set_fails_closed_without_partial_fence() {
     let store = SessionStore::default();
     let session = store.start_session(None, None);
     let todo = todo(&store, &session.session_id, "bounded assignment");
@@ -706,7 +735,10 @@ fn oversized_direct_reply_set_fails_closed_without_partial_fence() {
             false,
         );
     }
-    match store.get_assignment(&session.session_id, &todo.message_id) {
+    match store
+        .get_assignment(&session.session_id, &todo.message_id)
+        .await
+    {
         Err(SessionMessageError::AssignmentTooLarge {
             reply_count,
             max_replies,
@@ -724,8 +756,8 @@ fn oversized_direct_reply_set_fails_closed_without_partial_fence() {
     }
 }
 
-#[test]
-fn fenced_completion_retains_direct_replies_for_idempotent_replay_at_message_cap() {
+#[tokio::test]
+async fn fenced_completion_retains_direct_replies_for_idempotent_replay_at_message_cap() {
     let store = SessionStore::default();
     let session = store.start_session(None, None);
     let todo = todo(&store, &session.session_id, "oldest fenced todo");
@@ -740,6 +772,7 @@ fn fenced_completion_retains_direct_replies_for_idempotent_replay_at_message_cap
     );
     let snapshot = store
         .get_assignment(&session.session_id, &todo.message_id)
+        .await
         .unwrap();
     for index in 0..(DEFAULT_MAX_MESSAGES_PER_SESSION - 2) {
         post_message(
@@ -759,13 +792,13 @@ fn fenced_completion_retains_direct_replies_for_idempotent_replay_at_message_cap
         &"6".repeat(64),
         snapshot.assignment_fence,
     );
-    let first = store.complete_message(input.clone()).unwrap();
+    let first = store.complete_message(input.clone()).await.unwrap();
     assert!(!first.replayed);
     assert_eq!(
         exact(&store, &session.session_id, &direct.message_id),
         direct
     );
-    let replay = store.complete_message(input).unwrap();
+    let replay = store.complete_message(input).await.unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.answer.message_id, first.answer.message_id);
 }

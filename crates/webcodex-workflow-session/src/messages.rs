@@ -32,39 +32,51 @@ impl SessionStore {
         input: PostSessionMessageInput,
         requires_ack: bool,
     ) -> Result<SessionMessage, SessionMessageError> {
-        Ok(self
-            .post_message_with_ack_and_delivery(input, requires_ack, None)?
-            .message)
+        let outcome = self.post_message_mutation(input, requires_ack, None)?;
+        if outcome.state_changed {
+            self.persist_after_mutation();
+        }
+        Ok(outcome.message)
     }
 
-    pub fn post_message_with_ack_and_delivery(
+    pub async fn post_message_with_ack_and_delivery(
         &self,
         input: PostSessionMessageInput,
         requires_ack: bool,
         delivery: Option<SessionMessageDelivery>,
     ) -> Result<SessionMessageDeliveryOutcome, SessionMessageError> {
-        let durable = delivery.is_some();
+        let durability = if delivery.is_some() {
+            Some(self.prepare_durable_mutation().await)
+        } else {
+            None
+        };
+        let outcome = self.post_message_mutation(input, requires_ack, delivery)?;
+        if let Some(durability) = durability {
+            // Exact retries also fence durability: a failed earlier write may
+            // have left the message and replay key only in memory.
+            durability
+                .persist()
+                .await
+                .map_err(|_| SessionMessageError::DeliveryPersistenceUncertain)?;
+        } else if outcome.state_changed {
+            self.persist_after_mutation();
+        }
+        Ok(outcome)
+    }
+
+    fn post_message_mutation(
+        &self,
+        input: PostSessionMessageInput,
+        requires_ack: bool,
+        delivery: Option<SessionMessageDelivery>,
+    ) -> Result<SessionMessageDeliveryOutcome, SessionMessageError> {
         let outcome = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
             inner.post_message(input, requires_ack, delivery)?
         };
-        if durable {
-            // A keyed delivery promises restart-safe replay on every successful
-            // return, including an exact retry after an earlier persistence
-            // failure. Re-run the durable barrier even when the in-memory
-            // mutation is already a replay; otherwise a recovered same-process
-            // retry could return success while the message/replay key is still
-            // absent from the ledger.
-            if self.persist_after_mutation_durable().is_err() {
-                if outcome.state_changed {
-                    self.notify_message_observation();
-                }
-                return Err(SessionMessageError::DeliveryPersistenceUncertain);
-            }
-        } else if outcome.state_changed {
-            self.persist_after_mutation();
-        }
         if outcome.state_changed {
+            // Observation tracks the accepted in-memory mutation. Notify before
+            // a cancellable durability wait; emitted cursors fence persistence.
             self.notify_message_observation();
         }
         Ok(outcome)
@@ -109,19 +121,21 @@ impl SessionStore {
     /// Session-store snapshot. The durable persistence barrier is completed
     /// before the semantic snapshot fence is returned so a post-restart retry
     /// can compare against the same durable assignment state.
-    pub fn get_assignment(
+    pub async fn get_assignment(
         &self,
         session_id: &str,
         todo_id: &str,
     ) -> Result<SessionAssignmentSnapshot, SessionMessageError> {
+        let durability = self.prepare_durable_mutation().await;
         let state = self
             .with_record_for_query(session_id, |record, _| {
                 open_assignment_state(record, todo_id)
             })
             .ok_or(SessionMessageError::UnknownSession)??;
-        if self.persist_after_mutation_durable().is_err() {
-            return Err(SessionMessageError::InvalidObservationState);
-        }
+        durability
+            .persist()
+            .await
+            .map_err(|_| SessionMessageError::InvalidObservationState)?;
         Ok(snapshot_from_state(session_id, todo_id, state))
     }
 
@@ -288,44 +302,42 @@ impl SessionStore {
         .unwrap_or_default()
     }
 
-    pub fn withdraw_message(
+    pub async fn withdraw_message(
         &self,
         session_id: &str,
         message_id: &str,
     ) -> Result<WithdrawSessionMessageOutcome, SessionMessageError> {
+        let durability = self.prepare_durable_mutation().await;
         let outcome = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
             inner.withdraw_message(session_id, message_id)?
         };
-        if self.persist_after_mutation_durable().is_err() {
-            if !outcome.replayed {
-                self.notify_message_observation();
-            }
-            return Err(SessionMessageError::PersistenceUncertain);
-        }
         if !outcome.replayed {
             self.notify_message_observation();
         }
+        durability
+            .persist()
+            .await
+            .map_err(|_| SessionMessageError::PersistenceUncertain)?;
         Ok(outcome)
     }
 
-    pub fn replace_message(
+    pub async fn replace_message(
         &self,
         input: ReplaceSessionMessageInput,
     ) -> Result<ReplaceSessionMessageOutcome, SessionMessageError> {
+        let durability = self.prepare_durable_mutation().await;
         let outcome = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
             inner.replace_message(input)?
         };
-        if self.persist_after_mutation_durable().is_err() {
-            if !outcome.replayed {
-                self.notify_message_observation();
-            }
-            return Err(SessionMessageError::PersistenceUncertain);
-        }
         if !outcome.replayed {
             self.notify_message_observation();
         }
+        durability
+            .persist()
+            .await
+            .map_err(|_| SessionMessageError::PersistenceUncertain)?;
         Ok(outcome)
     }
 
@@ -369,10 +381,11 @@ impl SessionStore {
         Ok(message)
     }
 
-    pub fn complete_message(
+    pub async fn complete_message(
         &self,
         input: CompleteSessionMessageInput,
     ) -> Result<CompleteSessionMessageOutcome, SessionMessageError> {
+        let durability = self.prepare_durable_mutation().await;
         let result = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
             inner.complete_message(input)
@@ -383,9 +396,7 @@ impl SessionStore {
                 current,
                 fresh_assignment_fence,
             }) => {
-                if fresh_assignment_fence.is_some()
-                    && self.persist_after_mutation_durable().is_err()
-                {
+                if fresh_assignment_fence.is_some() && durability.persist().await.is_err() {
                     return Err(SessionMessageError::AssignmentStale {
                         current,
                         fresh_assignment_fence: None,
@@ -398,15 +409,13 @@ impl SessionStore {
             }
             Err(error) => return Err(error),
         };
-        if self.persist_after_mutation_durable().is_err() {
-            if !outcome.replayed {
-                self.notify_message_observation();
-            }
-            return Err(SessionMessageError::PersistenceUncertain);
-        }
         if !outcome.replayed {
             self.notify_message_observation();
         }
+        durability
+            .persist()
+            .await
+            .map_err(|_| SessionMessageError::PersistenceUncertain)?;
         Ok(outcome)
     }
 
@@ -422,7 +431,7 @@ impl SessionStore {
             .clamp(1, MAX_MESSAGE_LIST_LIMIT);
         if after_observation_token.is_none() {
             let current_revision = self.message_observation_current_revision(session_id)?;
-            self.fence_message_observation_token()?;
+            self.fence_message_observation_token().await?;
             return Ok(SessionMessageObservationOutcome {
                 messages: Vec::new(),
                 observation_token: encode_observation_token(session_id, current_revision)?,
@@ -439,7 +448,7 @@ impl SessionStore {
         let mut receiver = self.message_observation_notify.subscribe();
         let initial = self.message_observation_snapshot(session_id, after_revision, limit)?;
         if initial.2 || wait_secs.is_none() {
-            self.fence_message_observation_token()?;
+            self.fence_message_observation_token().await?;
             return observation_outcome(session_id, initial, "immediate", 0);
         }
 
@@ -452,7 +461,7 @@ impl SessionStore {
                     let snapshot =
                         self.message_observation_snapshot(session_id, after_revision, limit)?;
                     if snapshot.2 {
-                        self.fence_message_observation_token()?;
+                        self.fence_message_observation_token().await?;
                         return observation_outcome(
                             session_id,
                             snapshot,
@@ -467,7 +476,7 @@ impl SessionStore {
                     let snapshot =
                         self.message_observation_snapshot(session_id, after_revision, limit)?;
                     if snapshot.2 {
-                        self.fence_message_observation_token()?;
+                        self.fence_message_observation_token().await?;
                         return observation_outcome(
                             session_id,
                             snapshot,
@@ -475,7 +484,7 @@ impl SessionStore {
                             elapsed_millis(started),
                         );
                     }
-                    self.fence_message_observation_token()?;
+                    self.fence_message_observation_token().await?;
                     return observation_outcome(
                         session_id,
                         snapshot,
@@ -545,8 +554,9 @@ impl SessionStore {
         .ok_or(SessionMessageObservationError::UnknownSession)?
     }
 
-    fn fence_message_observation_token(&self) -> Result<(), SessionMessageObservationError> {
+    async fn fence_message_observation_token(&self) -> Result<(), SessionMessageObservationError> {
         self.persist_after_mutation_durable()
+            .await
             .map_err(|_| SessionMessageObservationError::InvalidObservationState)
     }
 

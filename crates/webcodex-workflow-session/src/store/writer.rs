@@ -29,6 +29,7 @@ pub(super) struct LedgerWriterGuard {
 struct LedgerWriterShared {
     state: Mutex<LedgerWriterState>,
     cvar: Condvar,
+    completed: tokio::sync::Notify,
 }
 
 #[derive(Default)]
@@ -123,6 +124,7 @@ impl LedgerWriterGuard {
                 ..Default::default()
             }),
             cvar: Condvar::new(),
+            completed: tokio::sync::Notify::new(),
         });
         let shared_thread = Arc::clone(&shared);
         let join = std::thread::Builder::new()
@@ -144,15 +146,38 @@ impl LedgerWriterGuard {
             .lock()
             .expect("session ledger writer state poisoned")
             .mark_dirty(Instant::now());
-        // The same condition variable has writer and flush waiters. notify_one
-        // can wake a flusher instead of the only thread able to perform I/O.
+        // Wake the writer and synchronous test flush waiters.
         self.shared.cvar.notify_all();
         generation
     }
 
     /// Wait for the exact requested generation, not later concurrent mutations.
     /// Errors also release the barrier; the caller checks last_persist_error.
-    pub(super) fn flush_through(&self, generation: u64) {
+    pub(super) async fn flush_through(&self, generation: u64) {
+        loop {
+            let completed = self.shared.completed.notified();
+            tokio::pin!(completed);
+            // Register before checking the generation so completion cannot fall
+            // between the state check and installing this waiter's wakeup.
+            completed.as_mut().enable();
+            {
+                let mut state = self
+                    .shared
+                    .state
+                    .lock()
+                    .expect("session ledger writer state poisoned");
+                state.flush_generation = state.flush_generation.max(generation);
+                if state.writes_completed >= generation {
+                    return;
+                }
+            }
+            self.shared.cvar.notify_all();
+            completed.await;
+        }
+    }
+
+    #[cfg(any(test, feature = "root-test-support"))]
+    fn flush_through_blocking(&self, generation: u64) {
         let mut state = self
             .shared
             .state
@@ -177,7 +202,7 @@ impl LedgerWriterGuard {
             .lock()
             .expect("session ledger writer state poisoned")
             .dirty_generation;
-        self.flush_through(generation);
+        self.flush_through_blocking(generation);
     }
 
     #[cfg(test)]
@@ -313,6 +338,7 @@ fn ledger_writer_loop(
                 state.write_cycles += 1;
             }
             shared.cvar.notify_all();
+            shared.completed.notify_waiters();
             if state.shutdown && state.dirty_since.is_none() {
                 break;
             }
@@ -407,6 +433,8 @@ impl super::SessionStore {
     }
 }
 
+#[cfg(test)]
+mod async_tests;
 #[cfg(test)]
 mod tests;
 

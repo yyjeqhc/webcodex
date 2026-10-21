@@ -2217,6 +2217,7 @@ async fn session_withdraw_message_for_auth(
     let outcome = runtime
         .sessions
         .withdraw_message(&input.session_id, &input.message_id)
+        .await
         .map_err(session_message_mutation_error)?;
     let value =
         serde_json::to_value(&outcome.message).map_err(|_| RuntimeConsoleError::Internal)?;
@@ -2251,6 +2252,7 @@ async fn session_replace_message_for_auth(
             message_id: input.message_id,
             message: input.message,
         })
+        .await
         .map_err(session_message_mutation_error)?;
     let original_value =
         serde_json::to_value(&outcome.original).map_err(|_| RuntimeConsoleError::Internal)?;

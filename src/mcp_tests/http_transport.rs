@@ -1669,6 +1669,7 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
     let assignment_fence = runtime
         .sessions
         .get_assignment(&coordinator_id, &todo_id)
+        .await
         .unwrap()
         .assignment_fence;
 
@@ -1822,6 +1823,7 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
     let missing_assignment_fence = runtime
         .sessions
         .get_assignment(&coordinator_id, &missing_todo_id)
+        .await
         .unwrap()
         .assignment_fence;
     let (status, missing_body) = stateless_2026_tool_call(
@@ -1866,6 +1868,7 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
     let unknown_assignment_fence = runtime
         .sessions
         .get_assignment(&coordinator_id, &unknown_todo_id)
+        .await
         .unwrap()
         .assignment_fence;
     let before_unknown = runtime

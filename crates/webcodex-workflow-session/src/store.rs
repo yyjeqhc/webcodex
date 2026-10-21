@@ -97,15 +97,46 @@ pub struct SessionStore {
     /// transition helpers without touching the maps directly.
     pub(super) inner: Arc<Mutex<SessionStoreInner>>,
     persistence_write_mutex: Arc<Mutex<()>>,
-    /// Background ledger writer for persistent stores. `None` for in-memory
-    /// stores or when the writer thread could not be spawned (mutations then
-    /// fall back to the synchronous write path).
+    /// At most one blocking durability write when the dedicated writer is unavailable.
+    persistence_fallback: Arc<tokio::sync::Semaphore>,
+    /// Background writer; absent for memory-only stores or a failed thread spawn.
+    /// Ordinary mutations retain synchronous fallback; durable requests admit
+    /// one blocking write before asynchronously waiting for its confirmation.
     writer: Option<Arc<LedgerWriterGuard>>,
     /// Process-local wake signal only; durable observation truth remains in the
     /// persisted per-Session revision bookkeeping.
     pub(super) message_observation_notify: tokio::sync::watch::Sender<u64>,
     #[cfg(any(test, feature = "root-test-support"))]
     fail_next_coding_continuity_precommit: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Owns admission to a durability barrier, not the business mutation itself.
+pub(super) struct SessionDurability<'a> {
+    store: &'a SessionStore,
+    fallback_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+impl SessionDurability<'_> {
+    pub(super) async fn persist(self) -> Result<(), ()> {
+        if let Some(writer) = &self.store.writer {
+            let generation = writer.mark_dirty();
+            writer.flush_through(generation).await;
+            self.store.persistence_result()
+        } else if let Some(permit) = self.fallback_permit {
+            let store = self.store.clone();
+            // The task owns the permit and write after it is scheduled. Dropping
+            // the requesting future cannot cancel or replay that write.
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                store.persist_after_mutation_with(write_ledger_atomic);
+                store.persistence_result()
+            })
+            .await
+            .map_err(|_| ())?
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -172,6 +203,7 @@ impl SessionStore {
                 persistence: None,
             })),
             persistence_write_mutex: Arc::new(Mutex::new(())),
+            persistence_fallback: Arc::new(tokio::sync::Semaphore::new(1)),
             writer: None,
             message_observation_notify,
             #[cfg(any(test, feature = "root-test-support"))]
@@ -229,15 +261,16 @@ impl SessionStore {
         }
         let inner = Arc::new(Mutex::new(state));
         let persistence_write_mutex = Arc::new(Mutex::new(()));
-        // Prefer the background writer so mutation paths never park a Tokio
-        // worker on full-ledger serialize + disk I/O. If the OS thread cannot
-        // be spawned, fall back to the synchronous write path.
+        // Prefer the background writer for full-ledger serialization and I/O.
+        // A failed thread spawn uses synchronous fallback for ordinary mutations
+        // and the admitted blocking lane for durable requests.
         let writer =
             LedgerWriterGuard::spawn(Arc::clone(&inner), Arc::clone(&persistence_write_mutex));
         let (message_observation_notify, _) = tokio::sync::watch::channel(0_u64);
         Self {
             inner,
             persistence_write_mutex,
+            persistence_fallback: Arc::new(tokio::sync::Semaphore::new(1)),
             writer,
             message_observation_notify,
             #[cfg(any(test, feature = "root-test-support"))]
@@ -2107,16 +2140,40 @@ impl SessionStore {
         self.persist_after_mutation_with(write_ledger_atomic);
     }
 
-    /// Persist this exact mutation generation before returning success. Used
-    /// only by low-frequency operations whose success response promises
-    /// restart-safe idempotency; ordinary Session events remain asynchronous.
-    pub(super) fn persist_after_mutation_durable(&self) -> Result<(), ()> {
-        if let Some(writer) = &self.writer {
-            let generation = writer.mark_dirty();
-            writer.flush_through(generation);
+    /// Reserve the fallback I/O lane before changing state. Cancellation while
+    /// waiting for this lane therefore cannot leave an unqueued mutation behind.
+    /// The normal background writer needs no permit and no blocking task.
+    pub(super) async fn prepare_durable_mutation(&self) -> SessionDurability<'_> {
+        let fallback = self.writer.is_none()
+            && self
+                .inner
+                .lock()
+                .expect("session store mutex poisoned")
+                .persistence
+                .is_some();
+        let fallback_permit = if fallback {
+            Some(
+                Arc::clone(&self.persistence_fallback)
+                    .acquire_owned()
+                    .await
+                    .expect("session persistence semaphore closed"),
+            )
         } else {
-            self.persist_after_mutation_with(write_ledger_atomic);
+            None
+        };
+        SessionDurability {
+            store: self,
+            fallback_permit,
         }
+    }
+
+    /// Fence an observation without mutating state. Mutation callers reserve
+    /// their durability lane before the mutation and persist that reservation.
+    pub(super) async fn persist_after_mutation_durable(&self) -> Result<(), ()> {
+        self.prepare_durable_mutation().await.persist().await
+    }
+
+    fn persistence_result(&self) -> Result<(), ()> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         if inner
             .persistence

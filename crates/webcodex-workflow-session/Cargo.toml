@@ -15,7 +15,7 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["sync", "time", "rt"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 

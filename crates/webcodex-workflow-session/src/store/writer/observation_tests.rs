@@ -63,8 +63,8 @@ fn persistence_observation_never_flushes_marks_dirty_or_exposes_paths() {
     );
 }
 
-#[test]
-fn persistence_observation_distinguishes_failed_attempt_from_committed_bytes() {
+#[tokio::test]
+async fn persistence_observation_distinguishes_failed_attempt_from_committed_bytes() {
     let (tmp, store) = fixture();
     let blocker = tmp.path().join("blocked");
     std::fs::write(&blocker, "file").unwrap();
@@ -92,7 +92,7 @@ fn persistence_observation_distinguishes_failed_attempt_from_committed_bytes() {
     assert!(attempt.written_bytes.is_none());
     assert!(store.contains_session(&id));
     std::fs::remove_file(&blocker).unwrap();
-    assert!(store.persist_after_mutation_durable().is_ok());
+    assert!(store.persist_after_mutation_durable().await.is_ok());
     let recovered = store.persistence_observation().writer.unwrap();
     assert_eq!(recovered.failed_attempts, 1);
     assert!(recovered.last_attempt.unwrap().success);

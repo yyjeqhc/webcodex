@@ -2,7 +2,7 @@ use super::super::{SessionLifecycle, SessionPersistence, SessionStore};
 use super::*;
 use std::sync::mpsc;
 
-fn persistent_fixture(window: Duration) -> (tempfile::TempDir, SessionStore) {
+pub(super) fn persistent_fixture(window: Duration) -> (tempfile::TempDir, SessionStore) {
     let temporary = tempfile::tempdir().unwrap();
     let mut store = SessionStore::new_in_memory_with_limits(16, 16, 20);
     store.inner.lock().unwrap().persistence = Some(SessionPersistence {
@@ -158,8 +158,8 @@ fn final_owner_drop_drains_pending_data_without_coalescing_delay() {
     assert!(restored.contains_session(&id));
 }
 
-#[test]
-fn failed_durable_write_is_reported_and_later_mutation_can_recover() {
+#[tokio::test]
+async fn failed_durable_write_is_reported_and_later_mutation_can_recover() {
     let (temporary, store) = persistent_fixture(Duration::from_secs(60));
     let blocker = temporary.path().join("parent-is-file");
     std::fs::write(&blocker, b"block directory creation").unwrap();
@@ -172,10 +172,10 @@ fn failed_durable_write_is_reported_and_later_mutation_can_recover() {
         .unwrap()
         .path = blocker.join("sessions.json");
     let id = store.start_session(None, None).session_id;
-    assert!(store.persist_after_mutation_durable().is_err());
+    assert!(store.persist_after_mutation_durable().await.is_err());
     assert!(store.status().last_persist_error.is_some());
     std::fs::remove_file(&blocker).unwrap();
-    assert!(store.persist_after_mutation_durable().is_ok());
+    assert!(store.persist_after_mutation_durable().await.is_ok());
     assert!(store.status().last_persist_error.is_none());
     let restored = SessionStore::with_persistence(blocker.join("sessions.json"), 1, 20);
     assert!(restored.contains_session(&id));
@@ -195,29 +195,26 @@ fn exact_queries_do_not_schedule_persistence_or_change_event_history() {
     assert_eq!(store.writer.as_ref().unwrap().write_cycles(), cycles);
 }
 
-#[test]
-fn multiple_flush_waiters_and_new_dirty_generations_all_complete() {
+#[tokio::test]
+async fn multiple_flush_waiters_and_new_dirty_generations_all_complete() {
     let (temporary, store) = persistent_fixture(Duration::from_secs(60));
     let mut joins = Vec::new();
-    let (done, completed) = mpsc::channel();
     for _ in 0..8 {
         let worker = store.clone();
-        let done = done.clone();
-        joins.push(std::thread::spawn(move || {
+        joins.push(tokio::spawn(async move {
             let id = worker.start_session(None, None).session_id;
-            worker.persist_after_mutation_durable().unwrap();
-            done.send(id).unwrap();
+            worker.persist_after_mutation_durable().await.unwrap();
+            id
         }));
     }
-    let ids: Vec<_> = (0..8)
-        .map(|_| {
-            completed
-                .recv_timeout(Duration::from_secs(10))
-                .expect("all flush waiters must wake")
-        })
-        .collect();
+    let mut ids = Vec::new();
     for join in joins {
-        join.join().unwrap();
+        ids.push(
+            tokio::time::timeout(Duration::from_secs(10), join)
+                .await
+                .expect("all flush waiters must wake")
+                .unwrap(),
+        );
     }
     drop(store);
     let restored = SessionStore::with_persistence(temporary.path().join("sessions.json"), 1, 20);

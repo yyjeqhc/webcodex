@@ -78,8 +78,8 @@ fn persisted_message_ids_accept_only_compact_or_legacy_canonical_forms() {
     assert!(sanitized.resolved_by_message_id.is_none());
 }
 
-#[test]
-fn legacy_ledger_restores_all_links_and_resumes_with_compact_messages() {
+#[tokio::test]
+async fn legacy_ledger_restores_all_links_and_resumes_with_compact_messages() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("sessions.json");
     let store = SessionStore::with_persistence(&path, 10, 100);
@@ -91,11 +91,13 @@ fn legacy_ledger_restores_all_links_and_resumes_with_compact_messages() {
             message_id: note.message_id.clone(),
             message: "replacement".into(),
         })
+        .await
         .unwrap()
         .replacement;
     let todo = post(&store, &session.session_id, SessionMessageKind::Todo);
     let fence = store
         .get_assignment(&session.session_id, &todo.message_id)
+        .await
         .unwrap()
         .assignment_fence;
     let answer = store
@@ -109,6 +111,7 @@ fn legacy_ledger_restores_all_links_and_resumes_with_compact_messages() {
             author_session_id: Some(session.session_id.clone()),
             expected_assignment_fence: fence,
         })
+        .await
         .unwrap()
         .answer;
     drop(store);

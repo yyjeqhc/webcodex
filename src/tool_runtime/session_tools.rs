@@ -684,18 +684,22 @@ impl ToolRuntime {
             }
             None => None,
         };
-        match self.sessions.post_message_with_ack_and_delivery(
-            sessions::PostSessionMessageInput {
-                session_id: session_id.clone(),
-                kind,
-                message,
-                tags,
-                reply_to,
-                priority,
-            },
-            requires_ack,
-            delivery,
-        ) {
+        match self
+            .sessions
+            .post_message_with_ack_and_delivery(
+                sessions::PostSessionMessageInput {
+                    session_id: session_id.clone(),
+                    kind,
+                    message,
+                    tags,
+                    reply_to,
+                    priority,
+                },
+                requires_ack,
+                delivery,
+            )
+            .await
+        {
             Ok(outcome) => ToolResult::ok(json!({
                 "success": true,
                 "session_id": session_id,
@@ -755,7 +759,7 @@ impl ToolRuntime {
         {
             return result;
         }
-        match self.sessions.get_assignment(&session_id, &message_id) {
+        match self.sessions.get_assignment(&session_id, &message_id).await {
             Ok(snapshot) => ToolResult::ok(json!({
                 "success": true,
                 "session_id": session_id,
@@ -911,7 +915,9 @@ impl ToolRuntime {
                 completion_id: completion_id.clone(),
                 author_session_id,
                 expected_assignment_fence,
-            }) {
+            })
+            .await
+        {
             Ok(outcome) => ToolResult::ok(json!({
                 "success": true,
                 "session_id": session_id,

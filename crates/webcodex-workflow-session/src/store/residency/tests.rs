@@ -204,8 +204,8 @@ fn active_residency_is_lossless_not_a_second_disk_sanitization() {
     assert_eq!(store.guard_state(&id).unwrap().0, SessionMode::ReadOnly);
 }
 
-#[test]
-fn active_residency_restart_restores_cold_and_keyed_replay_ack_survive() {
+#[tokio::test]
+async fn active_residency_restart_restores_cold_and_keyed_replay_ack_survive() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("sessions.json");
     let store = SessionStore::with_persistence(&path, 1, 20);
@@ -216,6 +216,7 @@ fn active_residency_restart_restores_cold_and_keyed_replay_ack_survive() {
     };
     let first = store
         .post_message_with_ack_and_delivery(message(&id), true, Some(delivery.clone()))
+        .await
         .unwrap();
     churn(&store);
     let ack = store.observe_message_acks(&id, &[first.message.message_id.clone()]);
@@ -224,6 +225,7 @@ fn active_residency_restart_restores_cold_and_keyed_replay_ack_survive() {
     assert!(
         store
             .post_message_with_ack_and_delivery(message(&id), true, Some(delivery.clone()))
+            .await
             .unwrap()
             .replayed
     );
@@ -243,6 +245,7 @@ fn active_residency_restart_restores_cold_and_keyed_replay_ack_survive() {
     );
     let replay = reopened
         .post_message_with_ack_and_delivery(message(&id), true, Some(delivery))
+        .await
         .unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.message.message_id, first.message.message_id);
@@ -318,18 +321,19 @@ fn active_residency_zero_target_and_failed_persistence_never_discard_dirty_state
     assert!(store.post_message(message(&id)).is_ok());
 }
 
-#[test]
-fn active_residency_assignment_fences_and_exact_completion_replay_survive_churn() {
+#[tokio::test]
+async fn active_residency_assignment_fences_and_exact_completion_replay_survive_churn() {
     let store = SessionStore::new(1, 20);
     let id = store.start_session(None, None).session_id;
     let mut input = message(&id);
     input.kind = SessionMessageKind::Todo;
     let todo = store.post_message(input).unwrap();
-    let assignment = store.get_assignment(&id, &todo.message_id).unwrap();
+    let assignment = store.get_assignment(&id, &todo.message_id).await.unwrap();
     churn(&store);
     assert_eq!(
         store
             .get_assignment(&id, &todo.message_id)
+            .await
             .unwrap()
             .assignment_fence,
         assignment.assignment_fence
@@ -344,10 +348,10 @@ fn active_residency_assignment_fences_and_exact_completion_replay_survive_churn(
         author_session_id: None,
         expected_assignment_fence: assignment.assignment_fence,
     };
-    let first = store.complete_message(completion.clone()).unwrap();
+    let first = store.complete_message(completion.clone()).await.unwrap();
     assert!(!first.replayed);
     churn(&store);
-    let replay = store.complete_message(completion).unwrap();
+    let replay = store.complete_message(completion).await.unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.answer.message_id, first.answer.message_id);
     assert_eq!(

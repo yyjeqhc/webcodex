@@ -74,6 +74,7 @@ async fn collaboration_message_projection_reuses_authority_fence_and_hides_compl
     let assignment_fence = runtime
         .sessions
         .get_assignment(&session.session_id, &todo.message_id)
+        .await
         .unwrap()
         .assignment_fence;
     runtime
@@ -88,6 +89,7 @@ async fn collaboration_message_projection_reuses_authority_fence_and_hides_compl
             author_session_id: Some("wc_sess_worker0000000000".to_string()),
             expected_assignment_fence: assignment_fence,
         })
+        .await
         .unwrap();
 
     let board = session_messages_for_auth(
@@ -500,6 +502,7 @@ async fn browser_message_mutations_fail_closed_on_authority_and_state_conflicts(
     let assignment_fence = runtime
         .sessions
         .get_assignment(&session.session_id, &todo.message_id)
+        .await
         .unwrap()
         .assignment_fence;
     runtime
@@ -514,6 +517,7 @@ async fn browser_message_mutations_fail_closed_on_authority_and_state_conflicts(
             author_session_id: None,
             expected_assignment_fence: assignment_fence,
         })
+        .await
         .unwrap();
     assert_eq!(
         session_replace_message_for_auth(

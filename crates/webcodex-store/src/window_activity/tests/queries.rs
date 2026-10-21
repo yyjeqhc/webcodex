@@ -1,6 +1,121 @@
 use super::*;
 
 #[test]
+fn window_queries_preserve_projection_and_principal_scope() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::open(&tmp.path().join("projections.db")).unwrap();
+    seed_session(&db);
+    let principal = ("oauth2", "alice");
+    let composition = serde_json::json!({"calls": [{"operation": "read_files"}]});
+    let mut item = event("details", "w", "alice", "p", 10);
+    item.principal_kind = Some("oauth2".into());
+    item.principal_correlation_kind = Some("oauth2".into());
+    item.principal_user_id = Some("user-a".into());
+    item.oauth_client_id = Some("client-a".into());
+    item.request_observed_at_ms = Some(9);
+    item.response_handed_at_ms = Some(12);
+    item.window_transition_kind = Some("continued".into());
+    item.response_streaming = Some(true);
+    item.window_continuity_eligible = Some(false);
+    item.recorder_gap_session_id = Some("gap-session".into());
+    item.ids_json = serde_json::json!({
+        "async_job_id": "wc_job_background_123",
+        "business_session_id": "wc_sess_6666666666666666"
+    })
+    .to_string();
+    item.summary_json = serde_json::json!({
+        "failure_expectation_result": "matched_expected_result",
+        "code_mode_composition": composition
+    })
+    .to_string();
+    append(&db, item, &[("s1", "recording"), ("s2", "work_on_project")]);
+    // The same correlation id under another principal kind is a different scope.
+    let mut foreign = event("foreign", "w", "alice", "q", 20);
+    foreign.action_name = "resourcesRead".into();
+    foreign.window_meaningful = false;
+    append(&db, foreign, &[]);
+    let detail = db
+        .latest_successful_window_action("w", principal, "read_files")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        detail.managed_oauth_identity,
+        Some(("user-a".into(), "client-a".into()))
+    );
+    assert_eq!(
+        detail.failure_expectation_result.as_deref(),
+        Some("matched_expected_result")
+    );
+    assert!(detail.code_mode_composition.is_none());
+
+    for scope in [None, Some(principal)] {
+        let rows = db.list_window_activity_events("w", scope, 20).unwrap();
+        let expected_ids: &[&str] = if scope.is_some() {
+            &["details"]
+        } else {
+            &["foreign", "details"]
+        };
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.event_id.as_str())
+                .collect::<Vec<_>>(),
+            expected_ids
+        );
+        let mut composed = db
+            .list_window_activity_events_with_code_mode_composition("w", scope, 20)
+            .unwrap();
+        for row in &mut composed {
+            assert_eq!(
+                row.code_mode_composition.take(),
+                (row.event_id == "details").then(|| composition.clone())
+            );
+        }
+        assert_eq!(composed, rows);
+        assert_eq!(
+            db.list_goal_window_activity_events("w", scope, 20).unwrap(),
+            rows
+        );
+        for row in rows {
+            assert_eq!(
+                db.get_window_activity_event_by_trace(
+                    "w",
+                    scope,
+                    row.server_trace_id.as_deref().unwrap()
+                )
+                .unwrap()
+                .unwrap(),
+                row
+            );
+            if row.event_id == "details" {
+                assert_eq!(row, detail);
+            }
+        }
+        let summary = WindowActivitySummaryRecord {
+            client_window_key: "w".into(),
+            client_window_source: "openai-session".into(),
+            first_seen_at_ms: 11,
+            last_seen_at_ms: if scope.is_some() { 11 } else { 21 },
+            last_tool_call_at_ms: Some(11),
+            last_meaningful_activity_at_ms: Some(11),
+            linked_session_count: 2,
+            recorder_gap_count: 1,
+        };
+        assert_eq!(
+            db.get_window_activity_summary("w", scope).unwrap(),
+            Some(summary.clone())
+        );
+        assert_eq!(
+            db.list_window_activity_summaries(scope, 20).unwrap(),
+            [summary]
+        );
+    }
+    assert!(db
+        .get_window_activity_event_by_trace("w", Some(("username", "alice")), "trace-details")
+        .unwrap()
+        .is_none());
+}
+
+#[test]
 fn latest_successful_window_action_filters_before_the_activity_limit() {
     let tmp = tempfile::tempdir().unwrap();
     let db = Database::open(&tmp.path().join("presentation.db")).unwrap();

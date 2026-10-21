@@ -12,6 +12,39 @@ use webcodex_core::workflow_session_contract::is_safe_job_id;
 pub const MAX_WINDOW_ACTIVITY_LIMIT: usize = 2_000;
 pub const MAX_WINDOW_LINK_LIMIT: usize = 2_000;
 
+// Keep this order aligned with collect_window_event_rows; full Code Mode
+// composition remains an explicit opt-in column after this bounded projection.
+const WINDOW_EVENT_SELECT: &str = "SELECT e.event_id, e.client_window_key, e.client_window_source,
+                    e.server_trace_id, e.window_started_at_ms, e.window_ended_at_ms,
+                    e.duration_ms, e.action_name, e.operation, e.project, e.status,
+                    e.window_meaningful, e.recorder_gap_session_id,
+                    e.principal_correlation_kind, e.principal_correlation_id,
+                    e.request_observed_at_ms, e.response_handed_at_ms,
+                    e.window_transition_kind, e.response_streaming,
+                    e.window_continuity_eligible, e.http_status, e.ids_json,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.principal_user_id END AS oauth_user,
+                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
+                        THEN e.oauth_client_id END AS oauth_client,
+                    CASE WHEN json_valid(e.summary_json) THEN
+                      CASE json_extract(e.summary_json, '$.failure_expectation_result')
+                        WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
+                        WHEN 'matched_expected_result' THEN 'matched_expected_result'
+                        WHEN 'unexpected_failure' THEN 'unexpected_failure'
+                        WHEN 'expectation_mismatch' THEN 'expectation_mismatch'
+                        WHEN 'unexpected_success' THEN 'unexpected_success'
+                      END
+                    END";
+
+const WINDOW_SUMMARY_SELECT: &str = "SELECT e.client_window_key,
+                    MAX(e.client_window_source),
+                    MIN(e.window_ended_at_ms),
+                    MAX(e.window_ended_at_ms),
+                    MAX(CASE WHEN e.action_name = 'toolsCall' THEN e.window_ended_at_ms END),
+                    MAX(CASE WHEN e.window_meaningful = 1 THEN e.window_ended_at_ms END),
+                    COUNT(DISTINCT l.workflow_session_id),
+                    COUNT(DISTINCT CASE WHEN e.recorder_gap_session_id IS NOT NULL THEN e.event_id END)";
+
 fn bounded_limit(limit: usize, max: usize) -> i64 {
     limit.clamp(1, max) as i64
 }
@@ -41,14 +74,7 @@ impl Database {
         let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity)?;
         let (principal_sql, kind, id) = principal_predicate(principal);
         let sql = format!(
-            "SELECT e.client_window_key,
-                    MAX(e.client_window_source),
-                    MIN(e.window_ended_at_ms),
-                    MAX(e.window_ended_at_ms),
-                    MAX(CASE WHEN e.action_name = 'toolsCall' THEN e.window_ended_at_ms END),
-                    MAX(CASE WHEN e.window_meaningful = 1 THEN e.window_ended_at_ms END),
-                    COUNT(DISTINCT l.workflow_session_id),
-                    COUNT(DISTINCT CASE WHEN e.recorder_gap_session_id IS NOT NULL THEN e.event_id END)
+            "{WINDOW_SUMMARY_SELECT}
              FROM action_events e
              LEFT JOIN action_event_workflow_links l ON l.event_id = e.event_id
              WHERE e.client_window_key IS NOT NULL
@@ -66,16 +92,7 @@ impl Database {
         };
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
-            out.push(WindowActivitySummaryRecord {
-                client_window_key: row.get(0)?,
-                client_window_source: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                first_seen_at_ms: row.get(2)?,
-                last_seen_at_ms: row.get(3)?,
-                last_tool_call_at_ms: row.get(4)?,
-                last_meaningful_activity_at_ms: row.get(5)?,
-                linked_session_count: usize::try_from(row.get::<_, i64>(6)?).unwrap_or(usize::MAX),
-                recorder_gap_count: usize::try_from(row.get::<_, i64>(7)?).unwrap_or(usize::MAX),
-            });
+            out.push(window_summary_from_row(row)?);
         }
         Ok(out)
     }
@@ -114,47 +131,24 @@ impl Database {
         principal: Option<(&str, &str)>,
     ) -> anyhow::Result<Option<WindowActivitySummaryRecord>> {
         let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity)?;
-        let row = match principal {
-            Some((kind, id)) => conn
-                .query_row(
-                    "SELECT e.client_window_key, MAX(e.client_window_source),
-                            MIN(e.window_ended_at_ms),
-                            MAX(e.window_ended_at_ms),
-                            MAX(CASE WHEN e.action_name = 'toolsCall' THEN e.window_ended_at_ms END),
-                            MAX(CASE WHEN e.window_meaningful = 1 THEN e.window_ended_at_ms END),
-                            COUNT(DISTINCT l.workflow_session_id),
-                            COUNT(DISTINCT CASE WHEN e.recorder_gap_session_id IS NOT NULL THEN e.event_id END)
-                     FROM action_events e
-                     LEFT JOIN action_event_workflow_links l ON l.event_id = e.event_id
-                     WHERE e.client_window_key = ?1
-                       AND e.window_ended_at_ms IS NOT NULL
-                       AND e.principal_correlation_kind = ?2
-                       AND e.principal_correlation_id = ?3
-                     GROUP BY e.client_window_key",
-                    params![window_key, kind, id],
-                    window_summary_from_row,
-                )
-                .optional()?,
-            None => conn
-                .query_row(
-                    "SELECT e.client_window_key, MAX(e.client_window_source),
-                            MIN(e.window_ended_at_ms),
-                            MAX(e.window_ended_at_ms),
-                            MAX(CASE WHEN e.action_name = 'toolsCall' THEN e.window_ended_at_ms END),
-                            MAX(CASE WHEN e.window_meaningful = 1 THEN e.window_ended_at_ms END),
-                            COUNT(DISTINCT l.workflow_session_id),
-                            COUNT(DISTINCT CASE WHEN e.recorder_gap_session_id IS NOT NULL THEN e.event_id END)
-                     FROM action_events e
-                     LEFT JOIN action_event_workflow_links l ON l.event_id = e.event_id
-                     WHERE e.client_window_key = ?1
-                       AND e.window_ended_at_ms IS NOT NULL
-                     GROUP BY e.client_window_key",
-                    params![window_key],
-                    window_summary_from_row,
-                )
-                .optional()?,
-        };
-        Ok(row)
+        let (principal_sql, kind, id) = principal_predicate(principal);
+        let sql = format!(
+            "{WINDOW_SUMMARY_SELECT}
+             FROM action_events e
+             LEFT JOIN action_event_workflow_links l ON l.event_id = e.event_id
+             WHERE e.client_window_key = ?1
+               AND e.window_ended_at_ms IS NOT NULL
+               {principal_sql}
+             GROUP BY e.client_window_key"
+        );
+        match (kind, id) {
+            (Some(kind), Some(id)) => {
+                conn.query_row(&sql, params![window_key, kind, id], window_summary_from_row)
+            }
+            _ => conn.query_row(&sql, params![window_key], window_summary_from_row),
+        }
+        .optional()
+        .map_err(Into::into)
     }
 
     pub fn list_window_activity_events(
@@ -163,56 +157,49 @@ impl Database {
         principal: Option<(&str, &str)>,
         limit: usize,
     ) -> anyhow::Result<Vec<WindowActivityEventRecord>> {
+        self.read_window_activity_events(window_key, principal, limit, false)
+    }
+
+    fn read_window_activity_events(
+        &self,
+        window_key: &str,
+        principal: Option<(&str, &str)>,
+        limit: usize,
+        include_code_mode_composition: bool,
+    ) -> anyhow::Result<Vec<WindowActivityEventRecord>> {
         #[cfg(any(test, feature = "root-test-support"))]
         self.window_history_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut reader = self.lock_history_connection(crate::StoreDomain::WindowActivity)?;
         let conn = reader.transaction()?;
         let (principal_sql, kind, id) = principal_predicate(principal);
+        let summary_sql = if include_code_mode_composition {
+            ", e.summary_json"
+        } else {
+            ""
+        };
+        let summary_column = include_code_mode_composition.then_some(25);
+        let limit_parameter = if principal.is_some() { 4 } else { 2 };
         let sql = format!(
-            "SELECT e.event_id, e.client_window_key, e.client_window_source,
-                    e.server_trace_id, e.window_started_at_ms, e.window_ended_at_ms,
-                    e.duration_ms, e.action_name, e.operation, e.project, e.status,
-                    e.window_meaningful, e.recorder_gap_session_id,
-                    e.principal_correlation_kind, e.principal_correlation_id,
-                    e.request_observed_at_ms, e.response_handed_at_ms,
-                    e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible, e.http_status, e.ids_json,
-                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
-                        THEN e.principal_user_id END AS oauth_user,
-                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
-                        THEN e.oauth_client_id END AS oauth_client,
-                    CASE WHEN json_valid(e.summary_json) THEN
-                      CASE json_extract(e.summary_json, '$.failure_expectation_result')
-                        WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
-                        WHEN 'matched_expected_result' THEN 'matched_expected_result'
-                        WHEN 'unexpected_failure' THEN 'unexpected_failure'
-                        WHEN 'expectation_mismatch' THEN 'expectation_mismatch'
-                        WHEN 'unexpected_success' THEN 'unexpected_success'
-                      END
-                    END
+            "{WINDOW_EVENT_SELECT}{summary_sql}
              FROM action_events e
              WHERE e.client_window_key = ?1
                AND e.window_started_at_ms IS NOT NULL
                AND e.window_ended_at_ms IS NOT NULL
                {principal_sql}
              ORDER BY COALESCE(e.request_observed_at_ms, e.window_started_at_ms) DESC, e.event_id DESC
-             LIMIT ?4"
+             LIMIT ?{limit_parameter}"
         );
         let limit = bounded_limit(limit, MAX_WINDOW_ACTIVITY_LIMIT);
-        let mut stmt = conn.prepare(&sql)?;
-        let mut rows = match (kind, id) {
-            (Some(kind), Some(id)) => stmt.query(params![window_key, kind, id, limit])?,
-            _ => {
-                let sql = sql.replace("LIMIT ?4", "LIMIT ?2");
-                drop(stmt);
-                let mut stmt = conn.prepare(&sql)?;
-                let records =
-                    collect_window_events(&conn, &mut stmt, params![window_key, limit], None)?;
-                return Ok(records);
-            }
-        };
-        collect_window_event_rows(&conn, &mut rows, None)
+        match (kind, id) {
+            (Some(kind), Some(id)) => collect_window_events(
+                &conn,
+                &sql,
+                params![window_key, kind, id, limit],
+                summary_column,
+            ),
+            _ => collect_window_events(&conn, &sql, params![window_key, limit], summary_column),
+        }
     }
 
     /// Latest successful action in the exact principal's Window. Filter before
@@ -225,28 +212,8 @@ impl Database {
         operation: &str,
     ) -> anyhow::Result<Option<WindowActivityEventRecord>> {
         let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
-        let mut stmt = conn.prepare(
-            "SELECT e.event_id, e.client_window_key, e.client_window_source,
-                    e.server_trace_id, e.window_started_at_ms, e.window_ended_at_ms,
-                    e.duration_ms, e.action_name, e.operation, e.project, e.status,
-                    e.window_meaningful, e.recorder_gap_session_id,
-                    e.principal_correlation_kind, e.principal_correlation_id,
-                    e.request_observed_at_ms, e.response_handed_at_ms,
-                    e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible, e.http_status, e.ids_json,
-                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
-                        THEN e.principal_user_id END AS oauth_user,
-                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
-                        THEN e.oauth_client_id END AS oauth_client,
-                    CASE WHEN json_valid(e.summary_json) THEN
-                      CASE json_extract(e.summary_json, '$.failure_expectation_result')
-                        WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
-                        WHEN 'matched_expected_result' THEN 'matched_expected_result'
-                        WHEN 'unexpected_failure' THEN 'unexpected_failure'
-                        WHEN 'expectation_mismatch' THEN 'expectation_mismatch'
-                        WHEN 'unexpected_success' THEN 'unexpected_success'
-                      END
-                    END
+        let sql = format!(
+            "{WINDOW_EVENT_SELECT}
              FROM action_events e
              WHERE e.client_window_key = ?1
                AND e.principal_correlation_kind = ?2
@@ -256,11 +223,11 @@ impl Database {
                AND e.window_started_at_ms IS NOT NULL
                AND e.window_ended_at_ms IS NOT NULL
              ORDER BY COALESCE(e.request_observed_at_ms, e.window_started_at_ms) DESC, e.event_id DESC
-             LIMIT 1",
-        )?;
+             LIMIT 1"
+        );
         Ok(collect_window_events(
             &conn,
-            &mut stmt,
+            &sql,
             params![window_key, principal.0, principal.1, operation],
             None,
         )?
@@ -276,62 +243,30 @@ impl Database {
         server_trace_id: &str,
     ) -> anyhow::Result<Option<WindowActivityEventRecord>> {
         let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
-        let select = "SELECT e.event_id, e.client_window_key, e.client_window_source,
-                    e.server_trace_id, e.window_started_at_ms, e.window_ended_at_ms,
-                    e.duration_ms, e.action_name, e.operation, e.project, e.status,
-                    e.window_meaningful, e.recorder_gap_session_id,
-                    e.principal_correlation_kind, e.principal_correlation_id,
-                    e.request_observed_at_ms, e.response_handed_at_ms,
-                    e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible, e.http_status, e.ids_json,
-                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
-                        THEN e.principal_user_id END AS oauth_user,
-                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
-                        THEN e.oauth_client_id END AS oauth_client,
-                    CASE WHEN json_valid(e.summary_json) THEN
-                      CASE json_extract(e.summary_json, '$.failure_expectation_result')
-                        WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
-                        WHEN 'matched_expected_result' THEN 'matched_expected_result'
-                        WHEN 'unexpected_failure' THEN 'unexpected_failure'
-                        WHEN 'expectation_mismatch' THEN 'expectation_mismatch'
-                        WHEN 'unexpected_success' THEN 'unexpected_success'
-                      END
-                    END
-             FROM action_events e";
+        let principal_sql = if principal.is_some() {
+            "AND e.principal_correlation_kind = ?3 AND e.principal_correlation_id = ?4"
+        } else {
+            ""
+        };
+        let sql = format!(
+            "{WINDOW_EVENT_SELECT}
+             FROM action_events e
+             WHERE e.client_window_key = ?1
+               AND e.server_trace_id = ?2
+               AND e.window_started_at_ms IS NOT NULL
+               AND e.window_ended_at_ms IS NOT NULL
+               {principal_sql}
+             ORDER BY e.event_id DESC
+             LIMIT 1"
+        );
         let mut records = match principal {
-            Some((kind, id)) => {
-                let sql = format!(
-                    "{select}
-                     WHERE e.client_window_key = ?1
-                       AND e.server_trace_id = ?2
-                       AND e.window_started_at_ms IS NOT NULL
-                       AND e.window_ended_at_ms IS NOT NULL
-                       AND e.principal_correlation_kind = ?3
-                       AND e.principal_correlation_id = ?4
-                     ORDER BY e.event_id DESC
-                     LIMIT 1"
-                );
-                let mut stmt = conn.prepare(&sql)?;
-                collect_window_events(
-                    &conn,
-                    &mut stmt,
-                    params![window_key, server_trace_id, kind, id],
-                    None,
-                )?
-            }
-            None => {
-                let sql = format!(
-                    "{select}
-                     WHERE e.client_window_key = ?1
-                       AND e.server_trace_id = ?2
-                       AND e.window_started_at_ms IS NOT NULL
-                       AND e.window_ended_at_ms IS NOT NULL
-                     ORDER BY e.event_id DESC
-                     LIMIT 1"
-                );
-                let mut stmt = conn.prepare(&sql)?;
-                collect_window_events(&conn, &mut stmt, params![window_key, server_trace_id], None)?
-            }
+            Some((kind, id)) => collect_window_events(
+                &conn,
+                &sql,
+                params![window_key, server_trace_id, kind, id],
+                None,
+            )?,
+            None => collect_window_events(&conn, &sql, params![window_key, server_trace_id], None)?,
         };
         Ok(records.pop())
     }
@@ -352,7 +287,7 @@ impl Database {
         let (kind, id) = principal
             .map(|(kind, id)| (Some(kind), Some(id)))
             .unwrap_or((None, None));
-        let mut statement = conn.prepare(
+        let sql = format!(
             "WITH selected AS (
                 SELECT event_id FROM (
                     SELECT event_id FROM action_events
@@ -370,33 +305,13 @@ impl Database {
                     ORDER BY window_ended_at_ms DESC, event_id DESC LIMIT 1
                 )
              )
-             SELECT e.event_id, e.client_window_key, e.client_window_source,
-                    e.server_trace_id, e.window_started_at_ms, e.window_ended_at_ms,
-                    e.duration_ms, e.action_name, e.operation, e.project, e.status,
-                    e.window_meaningful, e.recorder_gap_session_id,
-                    e.principal_correlation_kind, e.principal_correlation_id,
-                    e.request_observed_at_ms, e.response_handed_at_ms,
-                    e.window_transition_kind, e.response_streaming, e.window_continuity_eligible, e.http_status,
-                    e.ids_json,
-                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
-                        THEN e.principal_user_id END AS oauth_user,
-                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
-                        THEN e.oauth_client_id END AS oauth_client,
-                    CASE WHEN json_valid(e.summary_json) THEN
-                      CASE json_extract(e.summary_json, '$.failure_expectation_result')
-                        WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
-                        WHEN 'matched_expected_result' THEN 'matched_expected_result'
-                        WHEN 'unexpected_failure' THEN 'unexpected_failure'
-                        WHEN 'expectation_mismatch' THEN 'expectation_mismatch'
-                        WHEN 'unexpected_success' THEN 'unexpected_success'
-                      END
-                    END
+             {WINDOW_EVENT_SELECT}
              FROM action_events e JOIN selected s ON s.event_id = e.event_id
-             ORDER BY e.window_ended_at_ms DESC, e.event_id DESC",
-        )?;
+             ORDER BY e.window_ended_at_ms DESC, e.event_id DESC"
+        );
         collect_window_events(
             &conn,
-            &mut statement,
+            &sql,
             params![
                 window_key,
                 kind,
@@ -415,56 +330,7 @@ impl Database {
         principal: Option<(&str, &str)>,
         limit: usize,
     ) -> anyhow::Result<Vec<WindowActivityEventRecord>> {
-        #[cfg(any(test, feature = "root-test-support"))]
-        self.window_history_reads
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut reader = self.lock_history_connection(crate::StoreDomain::WindowActivity)?;
-        let conn = reader.transaction()?;
-        let (principal_sql, kind, id) = principal_predicate(principal);
-        let sql = format!(
-            "SELECT e.event_id, e.client_window_key, e.client_window_source,
-                    e.server_trace_id, e.window_started_at_ms, e.window_ended_at_ms,
-                    e.duration_ms, e.action_name, e.operation, e.project, e.status,
-                    e.window_meaningful, e.recorder_gap_session_id,
-                    e.principal_correlation_kind, e.principal_correlation_id,
-                    e.request_observed_at_ms, e.response_handed_at_ms,
-                    e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible, e.http_status, e.ids_json,
-                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
-                        THEN e.principal_user_id END AS oauth_user,
-                    CASE WHEN e.principal_kind='oauth2' AND e.principal_correlation_kind='oauth2'
-                        THEN e.oauth_client_id END AS oauth_client,
-                    CASE WHEN json_valid(e.summary_json) THEN
-                      CASE json_extract(e.summary_json, '$.failure_expectation_result')
-                        WHEN 'matched_expected_failure' THEN 'matched_expected_failure'
-                        WHEN 'matched_expected_result' THEN 'matched_expected_result'
-                        WHEN 'unexpected_failure' THEN 'unexpected_failure'
-                        WHEN 'expectation_mismatch' THEN 'expectation_mismatch'
-                        WHEN 'unexpected_success' THEN 'unexpected_success'
-                      END
-                    END, e.summary_json
-             FROM action_events e
-             WHERE e.client_window_key = ?1
-               AND e.window_started_at_ms IS NOT NULL
-               AND e.window_ended_at_ms IS NOT NULL
-               {principal_sql}
-             ORDER BY COALESCE(e.request_observed_at_ms, e.window_started_at_ms) DESC, e.event_id DESC
-             LIMIT ?4"
-        );
-        let limit = bounded_limit(limit, MAX_WINDOW_ACTIVITY_LIMIT);
-        let mut stmt = conn.prepare(&sql)?;
-        let mut rows = match (kind, id) {
-            (Some(kind), Some(id)) => stmt.query(params![window_key, kind, id, limit])?,
-            _ => {
-                let sql = sql.replace("LIMIT ?4", "LIMIT ?2");
-                drop(stmt);
-                let mut stmt = conn.prepare(&sql)?;
-                let records =
-                    collect_window_events(&conn, &mut stmt, params![window_key, limit], Some(25))?;
-                return Ok(records);
-            }
-        };
-        collect_window_event_rows(&conn, &mut rows, Some(25))
+        self.read_window_activity_events(window_key, principal, limit, true)
     }
 
     /// Latest authoritative Window/Session relation for diagnostic continuity.
@@ -649,10 +515,11 @@ fn window_summary_from_row(
 
 fn collect_window_events<P: rusqlite::Params>(
     conn: &Connection,
-    stmt: &mut rusqlite::Statement<'_>,
+    sql: &str,
     params: P,
     code_mode_summary_column: Option<usize>,
 ) -> anyhow::Result<Vec<WindowActivityEventRecord>> {
+    let mut stmt = conn.prepare(sql)?;
     let mut rows = stmt.query(params)?;
     collect_window_event_rows(conn, &mut rows, code_mode_summary_column)
 }

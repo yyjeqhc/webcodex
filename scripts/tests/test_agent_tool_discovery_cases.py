@@ -33,23 +33,37 @@ def canonical_definitions():
     particular, additional scopes, capability checks, admission, and Host
     visibility remain the evaluator/runtime's responsibility.
     """
+    constructor_source = (CONTRACTS / "tool_definition.rs").read_text(encoding="utf-8")
+    read_constructor = re.search(
+        r'^const fn runner_project_read_def\b.*?^}', constructor_source, re.MULTILINE | re.DOTALL,
+    )
+    if read_constructor is None:
+        raise ValueError("runner_project_read_def constructor is missing")
     definitions = {}
     for path in sorted((CONTRACTS / "tool_definition").glob("*.rs")):
         source = path.read_text(encoding="utf-8")
-        matches = list(re.finditer(r'\b(?:def|control_def)\(\s*"([a-z_]+)"', source))
+        matches = list(re.finditer(
+            r'\b(?P<constructor>def|control_def|runner_project_read_def)\(\s*"(?P<name>[a-z_]+)"',
+            source,
+        ))
         for index, match in enumerate(matches):
             end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
             body = source[match.end():end]
             category = re.search(r'\bTOOL_CATEGORY_([A-Z_]+)\b', body)
+            policy_body = (
+                read_constructor.group(0)
+                if match.group("constructor") == "runner_project_read_def"
+                else body
+            )
             scope = re.search(
                 r'ToolIdempotency::\w+\s*,?\s*},\s*Some\((?:crate::metadata::)?([A-Z_]+)\)',
-                body,
+                policy_body,
             )
             if category and scope:
-                definitions[match.group(1)] = {
+                definitions[match.group("name")] = {
                     "category": category.group(1).lower(),
                     "scope_constant": scope.group(1),
-                    "model_visible": bool(re.search(r'\bModelVisible\s*,', body)),
+                    "model_visible": bool(re.search(r'\bModelVisible\s*,', policy_body)),
                 }
     authority = (ROOT / "crates/webcodex-core/src/authority.rs").read_text(encoding="utf-8")
     scopes = dict(re.findall(r'pub const SCOPE_([A-Z_]+): &str = "([a-z_:]+)";', authority))
@@ -67,13 +81,17 @@ class ToolDiscoveryCorpusTests(unittest.TestCase):
         cls.cases = cls.corpus["cases"]
         cls.definitions, cls.scopes = canonical_definitions()
 
-    def test_control_definitions_preserve_category_scope_and_visibility(self):
+    def test_constructors_preserve_category_scope_and_visibility(self):
         for name, category, scope, visible in [
             ("create_goal", "goal", "COMMUNICATION_MANAGE", True),
             ("list_agent_identities", "communication", "COMMUNICATION_READ", True),
             ("create_agent_task", "agent_task", "COMMUNICATION_MANAGE", True),
             ("wait_for_agent_events", "agent_wait", "COMMUNICATION_MANAGE", True),
             ("get_agent_wait_state", "agent_wait", "COMMUNICATION_READ", False),
+            ("read_files", "file", "PROJECT_READ", True),
+            ("get_git_status", "git", "PROJECT_READ", True),
+            ("list_document_symbols", "lsp", "PROJECT_READ", True),
+            ("read_project_overview", "project", "PROJECT_READ", True),
         ]:
             with self.subTest(tool=name):
                 self.assertEqual(self.definitions.get(name), {

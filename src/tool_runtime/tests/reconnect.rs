@@ -49,33 +49,24 @@ fn register_request(
     process_started_at: Option<i64>,
     build: Option<RunnerBuildInfo>,
 ) -> RunnerRegisterRequest {
-    crate::test_support::current_runner_registration(RunnerRegisterRequest {
-        computer_session_availability: None,
-        client_id: client_id.to_string(),
-        runner_instance_id: instance.to_string(),
-        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-        display_name: None,
-        owner: None,
-        hostname: None,
-        host_context: None,
-        capabilities: RunnerCapabilities {
-            shell: true,
-            git: true,
-            file_read: true,
-            file_write: true,
-            jobs: true,
-            async_jobs: true,
-            async_shell_jobs: true,
-            ..Default::default()
-        },
-        policy: None,
+    RunnerRegisterRequest {
         process_started_at,
         build,
-        job_concurrency_limit: None,
-        job_inventory: None,
-        coding_agent_providers: None,
-        coding_agent_inventory: None,
-    })
+        ..crate::test_support::runner_registration(
+            client_id,
+            instance,
+            RunnerCapabilities {
+                shell: true,
+                git: true,
+                file_read: true,
+                file_write: true,
+                jobs: true,
+                async_jobs: true,
+                async_shell_jobs: true,
+                ..Default::default()
+            },
+        )
+    }
 }
 
 async fn register_with_project(

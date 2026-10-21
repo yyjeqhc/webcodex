@@ -3,8 +3,7 @@
 use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{
-    RunnerCapabilities, RunnerJobUpdateRequest, RunnerPollRequest, RunnerRegisterRequest,
-    RunnerResultRequest,
+    RunnerCapabilities, RunnerJobUpdateRequest, RunnerPollRequest, RunnerResultRequest,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -58,16 +57,15 @@ async fn read_files_snapshot_service_does_not_retain_unrelated_runtime_state() {
     assert!(unrelated_state.upgrade().is_none());
     registry
         .complete(RunnerResultRequest {
-            client_id: client.to_string(),
-            runner_instance_id: runner.runner_instance_id.clone(),
-            request_id: request.request_id,
             exit_code: Some(0),
             stdout: Some(canonical_agent_file_read_range("one\ntwo\nthree\n", 1, 2)),
             stderr: Some(String::new()),
-            stdout_truncated: false,
-            stderr_truncated: false,
             duration_ms: Some(1),
-            error: None,
+            ..runner_result_request(
+                client.to_string(),
+                runner.runner_instance_id.clone(),
+                request.request_id,
+            )
         })
         .await
         .unwrap();
@@ -422,16 +420,11 @@ async fn read_files_singleflight_last_waiter_drop_cancels_runner_registry_reques
     let late = runtime
         .runner_registry
         .complete(RunnerResultRequest {
-            client_id: client.into(),
-            runner_instance_id: "inst".into(),
-            request_id: request.request_id,
             exit_code: Some(0),
             stdout: Some(canonical_agent_file_read_output("one\ntwo\n", 1)),
             stderr: Some(String::new()),
-            stdout_truncated: false,
-            stderr_truncated: false,
             duration_ms: Some(1),
-            error: None,
+            ..runner_result_request(client.into(), "inst".into(), request.request_id)
         })
         .await;
     assert!(
@@ -556,31 +549,16 @@ async fn replace_runner_project_at_path(
 ) {
     runtime
         .runner_registry
-        .register(crate::test_support::current_runner_registration(
-            RunnerRegisterRequest {
-                computer_session_availability: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                runner_instance_id: runner_instance_id.to_string(),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-                display_name: None,
-                owner: None,
-                hostname: None,
-                host_context: None,
-                capabilities: RunnerCapabilities {
-                    shell: true,
-                    git: true,
-                    file_read: true,
-                    file_write: true,
-                    internal_posix_script: true,
-                    ..Default::default()
-                },
-                policy: None,
+        .register(crate::test_support::runner_registration(
+            client_id,
+            runner_instance_id,
+            RunnerCapabilities {
+                shell: true,
+                git: true,
+                file_read: true,
+                file_write: true,
+                internal_posix_script: true,
+                ..Default::default()
             },
         ))
         .await
@@ -2088,16 +2066,15 @@ async fn read_files_deadline_preserves_completed_results_and_cancels_unfinished_
         let late = runtime
             .runner_registry
             .complete(RunnerResultRequest {
-                client_id: client_id.to_string(),
-                runner_instance_id: "inst".to_string(),
-                request_id: request.request_id.clone(),
                 exit_code: Some(0),
                 stdout: Some(canonical_agent_file_read_output("late\n", 1)),
                 stderr: Some(String::new()),
-                stdout_truncated: false,
-                stderr_truncated: false,
                 duration_ms: Some(100),
-                error: None,
+                ..runner_result_request(
+                    client_id.to_string(),
+                    "inst".to_string(),
+                    request.request_id.clone(),
+                )
             })
             .await;
         assert!(late.is_err(), "timed-out Runner request was not cancelled");
@@ -2284,25 +2261,18 @@ async fn ordinary_read_delivers_terminal_attention_without_host_continuation_sup
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: client_id.into(),
-            runner_instance_id: "inst".into(),
-            job_id: job_id.clone(),
             request_id: job.request_id,
             update_seq: Some(2),
-            status: "completed".into(),
             stdout_chunk: Some("PRIVATE_JOB_OUTPUT".into()),
-            stderr_chunk: None,
-            log_snapshot: None,
             exit_code: Some(0),
             duration_ms: Some(50),
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: true,
+            ..runner_job_update(
+                client_id.into(),
+                "inst".into(),
+                job_id.clone(),
+                "completed".into(),
+                true,
+            )
         })
         .await
         .unwrap();

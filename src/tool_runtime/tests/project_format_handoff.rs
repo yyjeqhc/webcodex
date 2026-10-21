@@ -155,18 +155,13 @@ async fn reply_plan(runtime: &ToolRuntime) -> (crate::runner_protocol::RunnerReq
         .runner_registry
         .complete(RunnerResultPayload {
             result: RunnerResultRequest {
-                client_id: CLIENT.into(),
-                runner_instance_id: "inst".into(),
-                request_id: request.request_id,
                 exit_code: Some(0),
                 stdout: Some(
                     serde_json::to_string(&ProjectFormatPlanningResult::Ready { plan }).unwrap(),
                 ),
                 stderr: Some(String::new()),
-                stdout_truncated: false,
-                stderr_truncated: false,
                 duration_ms: Some(5),
-                error: None,
+                ..runner_result_request(CLIENT.into(), "inst".into(), request.request_id)
             },
             command_execution_state: Some(ShellCommandExecutionState::Completed),
             mcp_gateway: None,
@@ -195,25 +190,19 @@ async fn finish_format_job(
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: CLIENT.into(),
-            runner_instance_id: "inst".into(),
-            update_seq: None,
-            job_id: job_id.into(),
             request_id: Some(request.request_id.clone()),
-            status: status.into(),
-            stdout_chunk: None,
-            stderr_chunk: None,
-            log_snapshot: None,
             exit_code,
             duration_ms: Some(25),
             error: error.map(str::to_string),
             command_execution_state: Some(state),
-            validation_progress: None,
-            test_count_evidence: None,
             format_mutation: mutation,
-            build_artifacts: None,
-            activity: None,
-            finished: true,
+            ..runner_job_update(
+                CLIENT.into(),
+                "inst".into(),
+                job_id.into(),
+                status.into(),
+                true,
+            )
         })
         .await
         .unwrap();
@@ -381,25 +370,14 @@ async fn project_format_active_running_and_stop_requested_observation_does_not_r
         runtime
             .runner_registry
             .update_job(RunnerJobUpdateRequest {
-                client_id: CLIENT.into(),
-                runner_instance_id: "inst".into(),
-                update_seq: None,
-                job_id: job_id.clone(),
                 request_id: Some(request.request_id.clone()),
-                status: status.into(),
-                stdout_chunk: None,
-                stderr_chunk: None,
-                log_snapshot: None,
-                exit_code: None,
-                duration_ms: None,
-                error: None,
-                command_execution_state: None,
-                validation_progress: None,
-                test_count_evidence: None,
-                format_mutation: None,
-                build_artifacts: None,
-                activity: None,
-                finished: false,
+                ..runner_job_update(
+                    CLIENT.into(),
+                    "inst".into(),
+                    job_id.clone(),
+                    status.into(),
+                    false,
+                )
             })
             .await
             .unwrap();
@@ -637,18 +615,13 @@ async fn project_format_runner_replaced_rejects_without_executing() {
         .runner_registry
         .complete(RunnerResultPayload {
             result: RunnerResultRequest {
-                client_id: CLIENT.into(),
-                runner_instance_id: "inst".into(),
-                request_id: request.request_id,
                 exit_code: Some(0),
                 stdout: Some(
                     serde_json::to_string(&ProjectFormatPlanningResult::Ready { plan }).unwrap(),
                 ),
                 stderr: Some(String::new()),
-                stdout_truncated: false,
-                stderr_truncated: false,
                 duration_ms: Some(5),
-                error: None,
+                ..runner_result_request(CLIENT.into(), "inst".into(), request.request_id)
             },
             command_execution_state: Some(ShellCommandExecutionState::Completed),
             mcp_gateway: None,

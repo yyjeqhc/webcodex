@@ -632,16 +632,16 @@ async fn cargo_test_agent_timeout_is_not_validation_failed() {
     runtime
         .runner_registry
         .complete(RunnerResultRequest {
-            client_id: "cargo-timeout".to_string(),
-            runner_instance_id: "inst".to_string(),
-            request_id: req.request_id,
             exit_code: Some(-1),
             stdout: Some("partial cargo output\n".to_string()),
             stderr: Some("Command timed out after 55 seconds".to_string()),
-            stdout_truncated: false,
-            stderr_truncated: false,
             duration_ms: Some(55_000),
             error: Some("command timed out".to_string()),
+            ..runner_result_request(
+                "cargo-timeout".to_string(),
+                "inst".to_string(),
+                req.request_id,
+            )
         })
         .await
         .unwrap();

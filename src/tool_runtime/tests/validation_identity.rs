@@ -128,25 +128,15 @@ async fn promoted_run_shell_preserves_assertion_identity_in_terminal_validation_
     runtime
         .runner_registry
         .update_job(crate::runner_protocol::RunnerJobUpdateRequest {
-            client_id: "validation-shell-job".to_string(),
-            runner_instance_id: "inst-validation-shell-job".to_string(),
-            update_seq: None,
-            job_id: job_id.clone(),
             request_id: Some(request.request_id.clone()),
-            status: "running".to_string(),
             stdout_chunk: Some("validation-shell\n".to_string()),
-            stderr_chunk: None,
-            log_snapshot: None,
-            exit_code: None,
-            duration_ms: None,
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: false,
+            ..runner_job_update(
+                "validation-shell-job".to_string(),
+                "inst-validation-shell-job".to_string(),
+                job_id.clone(),
+                "running".to_string(),
+                false,
+            )
         })
         .await
         .unwrap();
@@ -157,27 +147,20 @@ async fn promoted_run_shell_preserves_assertion_identity_in_terminal_validation_
     runtime
         .runner_registry
         .update_job(crate::runner_protocol::RunnerJobUpdateRequest {
-            client_id: "validation-shell-job".to_string(),
-            runner_instance_id: "inst-validation-shell-job".to_string(),
-            update_seq: None,
-            job_id,
             request_id: Some(request.request_id),
-            status: "completed".to_string(),
             stdout_chunk: Some("validation-shell passed\n".to_string()),
-            stderr_chunk: None,
-            log_snapshot: None,
             exit_code: Some(0),
             duration_ms: Some(12),
-            error: None,
             command_execution_state: Some(
                 crate::runner_protocol::ShellCommandExecutionState::Completed,
             ),
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: true,
+            ..runner_job_update(
+                "validation-shell-job".to_string(),
+                "inst-validation-shell-job".to_string(),
+                job_id,
+                "completed".to_string(),
+                true,
+            )
         })
         .await
         .unwrap();

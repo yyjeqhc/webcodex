@@ -108,25 +108,18 @@ async fn complete_job(
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: client_id.to_string(),
-            runner_instance_id: format!("inst-{client_id}"),
             update_seq,
-            job_id: request.job_id.clone().expect("Job request id"),
             request_id: Some(request.request_id.clone()),
-            status: "completed".to_string(),
             stdout_chunk: Some("done\n".to_string()),
-            stderr_chunk: None,
-            log_snapshot: None,
             exit_code: Some(0),
             duration_ms: Some(25),
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: true,
+            ..runner_job_update(
+                client_id.to_string(),
+                format!("inst-{client_id}"),
+                request.job_id.clone().expect("Job request id"),
+                "completed".to_string(),
+                true,
+            )
         })
         .await
         .unwrap();

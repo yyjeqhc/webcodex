@@ -379,16 +379,15 @@ async fn dispatched_shared_capture_wait_timeout_reports_outcome_unknown_without_
     let late = runtime
         .runner_registry
         .complete(RunnerResultRequest {
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            request_id: request.request_id,
             exit_code: Some(0),
             stdout: Some("late result".to_string()),
             stderr: Some(String::new()),
-            stdout_truncated: false,
-            stderr_truncated: false,
             duration_ms: Some(3_000),
-            error: None,
+            ..runner_result_request(
+                client_id.to_string(),
+                "inst".to_string(),
+                request.request_id,
+            )
         })
         .await
         .unwrap_err();

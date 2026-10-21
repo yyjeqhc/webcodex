@@ -5,7 +5,9 @@ use super::jobs::{
     mark_next_agent_job_running, register_job_agent_for_auth,
     register_job_agent_for_auth_with_reconciliation, start_agent_runtime_job_in_session,
 };
-use super::support::{probe_agent_request_for_instance, shared_key_auth_context};
+use super::support::{
+    probe_agent_request_for_instance, runner_job_update, shared_key_auth_context,
+};
 use crate::client_window::ClientWindow;
 use crate::runner_protocol::RunnerJobUpdateRequest;
 use crate::tool_runtime::{ToolResult, ToolRuntime};
@@ -220,25 +222,18 @@ async fn passive_attention_requires_exact_business_relation_and_deduplicates_sta
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: client.into(),
-            runner_instance_id: "inst".into(),
-            job_id: job_id.clone(),
             request_id: job.request_id,
             update_seq: Some(2),
-            status: "completed".into(),
             stdout_chunk: Some("secret output".into()),
-            stderr_chunk: None,
-            log_snapshot: None,
             exit_code: Some(0),
             duration_ms: Some(25),
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: true,
+            ..runner_job_update(
+                client.into(),
+                "inst".into(),
+                job_id.clone(),
+                "completed".into(),
+                true,
+            )
         })
         .await
         .unwrap();
@@ -346,25 +341,18 @@ async fn initiating_handoff_is_cursor_baseline_then_terminal_is_delivered_once()
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: client.into(),
-            runner_instance_id: "inst".into(),
-            job_id: job_id.clone(),
             request_id: job.request_id,
             update_seq: Some(2),
-            status: "completed".into(),
             stdout_chunk: Some("PRIVATE_TERMINAL_LOG".into()),
-            stderr_chunk: None,
-            log_snapshot: None,
             exit_code: Some(0),
             duration_ms: Some(42),
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: true,
+            ..runner_job_update(
+                client.into(),
+                "inst".into(),
+                job_id.clone(),
+                "completed".into(),
+                true,
+            )
         })
         .await
         .unwrap();
@@ -427,25 +415,18 @@ async fn passive_attention_projects_process_failure_stop_and_timeout_without_log
         runtime
             .runner_registry
             .update_job(RunnerJobUpdateRequest {
-                client_id: client.clone(),
-                runner_instance_id: "inst".into(),
-                job_id: job_id.clone(),
                 request_id: job.request_id,
                 update_seq: Some(2),
-                status: status.into(),
                 stdout_chunk: Some(format!("PRIVATE_{suffix}_LOG")),
-                stderr_chunk: None,
-                log_snapshot: None,
                 exit_code,
                 duration_ms: Some(25),
-                error: None,
-                command_execution_state: None,
-                validation_progress: None,
-                test_count_evidence: None,
-                format_mutation: None,
-                build_artifacts: None,
-                activity: None,
-                finished: true,
+                ..runner_job_update(
+                    client.clone(),
+                    "inst".into(),
+                    job_id.clone(),
+                    status.into(),
+                    true,
+                )
             })
             .await
             .unwrap();

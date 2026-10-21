@@ -1947,16 +1947,11 @@ async fn show_changes_accepts_unique_short_id() {
     runtime
         .runner_registry
         .complete(RunnerResultRequest {
-            client_id: "workstation".to_string(),
-            runner_instance_id: "inst-workstation".to_string(),
-            request_id: req.request_id,
             exit_code: Some(0),
             stdout: Some(stdout),
             stderr: Some(String::new()),
-            stdout_truncated: false,
-            stderr_truncated: false,
             duration_ms: Some(1),
-            error: None,
+            ..runner_result_request("workstation".to_string(), "inst-workstation".to_string(), req.request_id)
         })
         .await
         .unwrap();

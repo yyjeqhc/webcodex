@@ -245,25 +245,21 @@ async fn update_process_job(
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            job_id: request.job_id.clone().expect("structured Job id"),
             request_id: Some(request.request_id.clone()),
-            update_seq: None,
-            status: status.to_string(),
             stdout_chunk: stdout.map(str::to_string),
             stderr_chunk: stderr.map(str::to_string),
-            log_snapshot: None,
             exit_code,
             duration_ms: state.map(|_| 25),
             error: error.map(str::to_string),
             command_execution_state: state,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
             activity,
-            finished: state.is_some(),
+            ..runner_job_update(
+                client_id.to_string(),
+                "inst".to_string(),
+                request.job_id.clone().expect("structured Job id"),
+                status.to_string(),
+                state.is_some(),
+            )
         })
         .await
         .unwrap();
@@ -1054,10 +1050,6 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
     restarted
         .runner_registry
         .register(crate::runner_protocol::RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
             job_inventory: Some(crate::runner_protocol::ShellJobInventory {
                 active_complete: true,
                 jobs: vec![crate::runner_protocol::ShellJobSnapshot {
@@ -1086,17 +1078,11 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
                     }),
                 }],
             }),
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "detached-restart-recovery".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(capabilities),
-            policy: None,
+            ..crate::test_support::runner_registration(
+                "detached-restart-recovery",
+                "inst",
+                capabilities,
+            )
         })
         .await
         .unwrap();
@@ -2957,21 +2943,10 @@ async fn shell_recovery_requires_raw_shell_policy_and_explicit_selection_capabil
         runtime
             .runner_registry
             .register(crate::runner_protocol::RunnerRegisterRequest {
-                computer_session_availability: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client.to_string(),
-                runner_instance_id: "inst".to_string(),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-                display_name: None,
-                owner: None,
-                hostname: None,
-                host_context: None,
-                capabilities: crate::test_support::current_runner_capabilities(
+                policy: Some(policy(allow_raw_shell)),
+                ..crate::test_support::runner_registration(
+                    &client,
+                    "inst",
                     RunnerCapabilities {
                         shell: true,
                         structured_process_argv: true,
@@ -2979,8 +2954,7 @@ async fn shell_recovery_requires_raw_shell_policy_and_explicit_selection_capabil
                         bash_login_shell: true,
                         ..Default::default()
                     },
-                ),
-                policy: Some(policy(allow_raw_shell)),
+                )
             })
             .await
             .unwrap();

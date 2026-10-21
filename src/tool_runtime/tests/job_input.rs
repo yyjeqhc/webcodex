@@ -174,16 +174,10 @@ async fn malformed_input_receipt_remains_unknown_not_a_successful_write() {
         runtime
             .runner_registry
             .complete(RunnerResultRequest {
-                client_id: "interactive".into(),
-                runner_instance_id: "inst".into(),
-                request_id: request.request_id,
                 exit_code: Some(0),
                 stdout: Some(receipt.to_string()),
-                stderr: None,
-                stdout_truncated: false,
-                stderr_truncated: false,
                 duration_ms: Some(1),
-                error: None,
+                ..runner_result_request("interactive".into(), "inst".into(), request.request_id)
             })
             .await
             .unwrap();

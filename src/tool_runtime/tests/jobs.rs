@@ -659,16 +659,13 @@ async fn run_shell_via_agent_lifecycle_error(
         .runner_registry
         .complete(RunnerResultPayload {
             result: RunnerResultRequest {
-                client_id: client_id.to_string(),
-                runner_instance_id: "inst".to_string(),
-                request_id: request.request_id,
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                stdout_truncated: false,
-                stderr_truncated: false,
                 duration_ms: Some(1),
                 error: Some(error.to_string()),
+                ..runner_result_request(
+                    client_id.to_string(),
+                    "inst".to_string(),
+                    request.request_id,
+                )
             },
             command_execution_state: Some(execution_state),
             mcp_gateway: None,
@@ -696,25 +693,20 @@ async fn update_agent_shell_job(
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            job_id: job_id.to_string(),
             request_id: Some(request_id.to_string()),
-            update_seq: None,
-            status: status.to_string(),
             stdout_chunk: stdout_chunk.map(str::to_string),
             stderr_chunk: stderr_chunk.map(str::to_string),
-            log_snapshot: None,
             exit_code,
             duration_ms: finished.then_some(25),
             error: error.map(str::to_string),
             command_execution_state,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished,
+            ..runner_job_update(
+                client_id.to_string(),
+                "inst".to_string(),
+                job_id.to_string(),
+                status.to_string(),
+                finished,
+            )
         })
         .await
         .unwrap();
@@ -1218,28 +1210,16 @@ async fn long_run_shell_async_job_capability_does_not_bypass_shell_authority() {
         .runner_registry
         .register_with_auth(
             RunnerRegisterRequest {
-                computer_session_availability: None,
-                process_started_at: None,
-                build: None,
                 job_concurrency_limit: Some(4),
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                runner_instance_id: "inst".to_string(),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-                display_name: None,
-                owner: None,
-                hostname: None,
-                host_context: None,
-                capabilities: crate::test_support::current_runner_capabilities(
+                ..crate::test_support::runner_registration(
+                    client_id,
+                    "inst",
                     RunnerCapabilities {
                         shell: false,
                         async_shell_jobs: true,
                         ..Default::default()
                     },
-                ),
-                policy: None,
+                )
             },
             Some(&crate::test_support::runner_access(&auth)),
         )
@@ -1661,16 +1641,16 @@ async fn run_shell_runner_timeout_preserves_known_timeout_state() {
         .runner_registry
         .complete(RunnerResultPayload {
             result: RunnerResultRequest {
-                client_id: client_id.to_string(),
-                runner_instance_id: "inst".to_string(),
-                request_id: request.request_id,
                 exit_code: Some(-1),
                 stdout: Some("partial output".to_string()),
                 stderr: Some("runner stopped the process at its deadline".to_string()),
-                stdout_truncated: false,
-                stderr_truncated: false,
                 duration_ms: Some(1_000),
                 error: Some("runner timeout".to_string()),
+                ..runner_result_request(
+                    client_id.to_string(),
+                    "inst".to_string(),
+                    request.request_id,
+                )
             },
             command_execution_state: Some(ShellCommandExecutionState::TimedOut),
             mcp_gateway: None,
@@ -2137,25 +2117,12 @@ pub(super) async fn register_job_agent_for_auth_with_reconciliation(
         .runner_registry
         .register_with_auth(
             RunnerRegisterRequest {
-                computer_session_availability: None,
-                process_started_at: None,
-                build: None,
                 job_concurrency_limit: Some(4),
                 job_inventory: reconciliation.then(|| crate::runner_protocol::ShellJobInventory {
                     active_complete: true,
                     jobs: Vec::new(),
                 }),
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                runner_instance_id: "inst".to_string(),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-                display_name: None,
-                owner: None,
-                hostname: None,
-                host_context: None,
-                capabilities: caps,
-                policy: None,
+                ..crate::test_support::runner_registration(client_id, "inst", caps)
             },
             Some(&crate::test_support::runner_access(auth)),
         )
@@ -2192,25 +2159,16 @@ async fn register_managed_job_agent(
     runtime
         .runner_registry
         .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
             job_concurrency_limit: Some(4),
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some(owner.to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(RunnerCapabilities {
-                async_shell_jobs: true,
-                ..Default::default()
-            }),
-            policy: None,
+            ..crate::test_support::runner_registration(
+                client_id,
+                "inst",
+                RunnerCapabilities {
+                    async_shell_jobs: true,
+                    ..Default::default()
+                },
+            )
         })
         .await
         .unwrap();
@@ -2266,25 +2224,15 @@ pub(super) async fn mark_next_agent_job_running(runtime: &ToolRuntime, client_id
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            job_id: job_id.clone(),
             request_id: Some(request.request_id),
             update_seq: Some(1),
-            status: "running".to_string(),
-            stdout_chunk: None,
-            stderr_chunk: None,
-            log_snapshot: None,
-            exit_code: None,
-            duration_ms: None,
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: false,
+            ..runner_job_update(
+                client_id.to_string(),
+                "inst".to_string(),
+                job_id.clone(),
+                "running".to_string(),
+                false,
+            )
         })
         .await
         .unwrap();

@@ -206,24 +206,11 @@ fn list_runners_call() -> ToolCall {
 }
 
 fn metadata_agent_registration(client_id: &str) -> RunnerRegisterRequest {
-    crate::test_support::current_runner_registration(RunnerRegisterRequest {
-        computer_session_availability: None,
-        process_started_at: None,
-        build: None,
-        job_concurrency_limit: None,
-        job_inventory: None,
-        coding_agent_providers: None,
-        coding_agent_inventory: None,
-        client_id: client_id.to_string(),
-        runner_instance_id: format!("inst-{client_id}"),
-        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-        display_name: None,
-        owner: None,
-        hostname: None,
-        host_context: None,
-        capabilities: RunnerCapabilities::default(),
-        policy: None,
-    })
+    crate::test_support::runner_registration(
+        client_id,
+        &format!("inst-{client_id}"),
+        RunnerCapabilities::default(),
+    )
 }
 
 async fn register_computer_target_for_auth(
@@ -1686,16 +1673,11 @@ async fn unique_short_agent_project_id_is_resolved_by_runtime_surface() {
     runtime
         .runner_registry
         .complete(RunnerResultRequest {
-            client_id: "oe".to_string(),
-            runner_instance_id: "inst".to_string(),
-            request_id: req.request_id,
             exit_code: Some(0),
             stdout: Some("hi\n".to_string()),
             stderr: Some(String::new()),
-            stdout_truncated: false,
-            stderr_truncated: false,
             duration_ms: Some(1),
-            error: None,
+            ..runner_result_request("oe".to_string(), "inst".to_string(), req.request_id)
         })
         .await
         .unwrap();

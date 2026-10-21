@@ -575,16 +575,10 @@ async fn delete_project_files_replacement_after_poll_reports_outcome_unknown() {
     let err = runtime
         .runner_registry
         .complete(RunnerResultRequest {
-            client_id: "cleanup-delete-replace-late".to_string(),
-            runner_instance_id: "inst-b".to_string(),
-            request_id: req.request_id,
             exit_code: Some(0),
             stdout: Some(r#"{"deleted_paths":["tmp.txt"]}"#.to_string()),
-            stderr: None,
-            stdout_truncated: false,
-            stderr_truncated: false,
             duration_ms: Some(1),
-            error: None,
+            ..runner_result_request("cleanup-delete-replace-late".to_string(), "inst-b".to_string(), req.request_id)
         })
         .await
         .unwrap_err();

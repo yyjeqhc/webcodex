@@ -27,27 +27,17 @@ async fn register(
         .runner_registry
         .register_with_auth(
             RunnerRegisterRequest {
-                computer_session_availability: None,
-                client_id: client_id.into(),
-                runner_instance_id: format!("inst-{client_id}"),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-                display_name: None,
                 owner: auth.and_then(|auth| auth.username.clone()),
-                hostname: None,
-                host_context: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
                 coding_agent_inventory: has_providers.then(Default::default),
                 coding_agent_providers: providers,
-                capabilities: crate::test_support::current_runner_capabilities(
+                ..crate::test_support::runner_registration(
+                    client_id,
+                    &format!("inst-{client_id}"),
                     RunnerCapabilities {
                         coding_agent_runs: has_providers,
                         ..Default::default()
                     },
-                ),
-                policy: None,
+                )
             },
             auth.map(crate::test_support::runner_access).as_ref(),
         )

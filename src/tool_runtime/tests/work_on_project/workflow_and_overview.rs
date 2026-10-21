@@ -216,16 +216,10 @@ async fn coding_workflow_standard_repository_overview_timeout_is_nonblocking() {
         let expired = runtime
             .runner_registry
             .complete(crate::runner_protocol::RunnerResultRequest {
-                client_id: "wop-timeout".to_string(),
-                runner_instance_id: "inst".to_string(),
-                request_id,
                 exit_code: Some(0),
                 stdout: Some("{}".to_string()),
-                stderr: None,
-                stdout_truncated: false,
-                stderr_truncated: false,
                 duration_ms: Some(1),
-                error: None,
+                ..runner_result_request("wop-timeout".to_string(), "inst".to_string(), request_id)
             })
             .await
             .expect_err("timed-out overview probe must remove pending waiter");

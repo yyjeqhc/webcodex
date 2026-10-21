@@ -815,16 +815,16 @@ async fn session_ssh_transport_failure_marks_remote_delivery_uncertain() {
         .runner_registry
         .complete(RunnerResultPayload {
             result: RunnerResultRequest {
-                client_id: "context-ssh-transport".to_string(),
-                runner_instance_id: "inst-context-ssh-transport".to_string(),
-                request_id: request.request_id,
                 exit_code: Some(255),
                 stdout: Some(String::new()),
                 stderr: Some("connection reset".to_string()),
-                stdout_truncated: false,
-                stderr_truncated: false,
                 duration_ms: Some(1),
                 error: Some("ssh transport failed after dispatch".to_string()),
+                ..runner_result_request(
+                    "context-ssh-transport".to_string(),
+                    "inst-context-ssh-transport".to_string(),
+                    request.request_id,
+                )
             },
             command_execution_state: Some(ShellCommandExecutionState::OutcomeUnknown),
             mcp_gateway: None,
@@ -967,16 +967,13 @@ async fn nonexistent_inherited_cwd_is_not_retried_at_project_root() {
     runtime
         .runner_registry
         .complete(RunnerResultRequest {
-            client_id: "context-missing".to_string(),
-            runner_instance_id: "inst".to_string(),
-            request_id: request.request_id,
-            exit_code: None,
-            stdout: None,
-            stderr: None,
-            stdout_truncated: false,
-            stderr_truncated: false,
             duration_ms: Some(1),
             error: Some("cwd does not exist".to_string()),
+            ..runner_result_request(
+                "context-missing".to_string(),
+                "inst".to_string(),
+                request.request_id,
+            )
         })
         .await
         .unwrap();

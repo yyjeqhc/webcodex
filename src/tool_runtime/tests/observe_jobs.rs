@@ -86,25 +86,11 @@ async fn register_and_start_sequenced_agent_job(
     runtime
         .runner_registry
         .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
             job_inventory: Some(ShellJobInventory {
                 active_complete: true,
                 jobs: Vec::new(),
             }),
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(caps),
-            policy: None,
+            ..crate::test_support::runner_registration(client_id, "inst", caps)
         })
         .await
         .unwrap();
@@ -157,25 +143,18 @@ async fn update_observed_job(
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            update_seq: None,
-            job_id: request.job_id.clone().expect("Job request id"),
             request_id: Some(request.request_id.clone()),
-            status: status.to_string(),
             stdout_chunk: stdout_chunk.map(str::to_string),
-            stderr_chunk: None,
-            log_snapshot: None,
             exit_code: finished.then_some(0),
             duration_ms: finished.then_some(25),
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
             activity,
-            finished,
+            ..runner_job_update(
+                client_id.to_string(),
+                "inst".to_string(),
+                request.job_id.clone().expect("Job request id"),
+                status.to_string(),
+                finished,
+            )
         })
         .await
         .unwrap();
@@ -191,25 +170,16 @@ async fn update_sequenced_observed_job(
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
             update_seq: Some(sequence),
-            job_id: request.job_id.clone().expect("Job request id"),
             request_id: Some(request.request_id.clone()),
-            status: "running".to_string(),
             stdout_chunk: stdout_chunk.map(str::to_string),
-            stderr_chunk: None,
-            log_snapshot: None,
-            exit_code: None,
-            duration_ms: None,
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: false,
+            ..runner_job_update(
+                client_id.to_string(),
+                "inst".to_string(),
+                request.job_id.clone().expect("Job request id"),
+                "running".to_string(),
+                false,
+            )
         })
         .await
         .unwrap();
@@ -1816,25 +1786,18 @@ async fn ordinary_receipts_production_sqlite_dual_restart_observe_and_list_filte
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: client.into(),
-            runner_instance_id: "inst".into(),
-            update_seq: None,
-            job_id: job_id.clone(),
             request_id: Some(request.request_id),
-            status: "completed".into(),
             stdout_chunk: Some("bounded stdout\n".into()),
             stderr_chunk: Some("bounded stderr\n".into()),
-            log_snapshot: None,
             exit_code: Some(0),
             duration_ms: Some(42),
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: true,
+            ..runner_job_update(
+                client.into(),
+                "inst".into(),
+                job_id.clone(),
+                "completed".into(),
+                true,
+            )
         })
         .await
         .unwrap();
@@ -1985,25 +1948,16 @@ async fn observe_jobs_terminal_policy_coalesces_noisy_jobs_with_one_deadline_and
         runtime
             .runner_registry
             .update_job(RunnerJobUpdateRequest {
-                client_id: "coalesce-b".into(),
-                runner_instance_id: "inst".into(),
-                update_seq: None,
-                job_id: job_b.clone(),
                 request_id: Some(request_b.request_id.clone()),
-                status: "running".into(),
-                stdout_chunk: None,
                 stderr_chunk: Some("stderr during wait\n".into()),
-                log_snapshot: None,
-                exit_code: None,
-                duration_ms: None,
-                error: None,
-                command_execution_state: None,
-                validation_progress: None,
-                test_count_evidence: None,
-                format_mutation: None,
-                build_artifacts: None,
                 activity: Some(process_activity()),
-                finished: false,
+                ..runner_job_update(
+                    "coalesce-b".into(),
+                    "inst".into(),
+                    job_b.clone(),
+                    "running".into(),
+                    false,
+                )
             })
             .await
             .unwrap();
@@ -2346,27 +2300,20 @@ async fn observe_jobs_generic_failed_test_identity_survives_small_model_tail() {
         runtime
             .runner_registry
             .update_job(RunnerJobUpdateRequest {
-                client_id: client.into(),
-                runner_instance_id: "inst".into(),
-                update_seq: None,
-                job_id: job.into(),
                 request_id: Some(request.request_id),
-                status: "failed".into(),
                 stdout_chunk: Some(stdout),
-                stderr_chunk: None,
-                log_snapshot: None,
                 exit_code: Some(101),
                 duration_ms: Some(100),
-                error: None,
                 command_execution_state: Some(
                     crate::runner_protocol::ShellCommandExecutionState::Completed,
                 ),
-                validation_progress: None,
-                test_count_evidence: None,
-                format_mutation: None,
-                build_artifacts: None,
-                activity: None,
-                finished: true,
+                ..runner_job_update(
+                    client.into(),
+                    "inst".into(),
+                    job.into(),
+                    "failed".into(),
+                    true,
+                )
             })
             .await
             .unwrap();

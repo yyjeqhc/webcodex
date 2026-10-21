@@ -9,7 +9,7 @@ use super::super::{ToolResult, ToolRuntime};
 use super::support::*;
 use crate::db::{memory_catalog_revision, MemoryPriority, MAX_MEMORY_BOOTSTRAP_BYTES};
 use crate::projects::ProjectConfig;
-use crate::runner_protocol::{RunnerCapabilities, RunnerRegisterRequest};
+use crate::runner_protocol::RunnerCapabilities;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -1513,25 +1513,10 @@ async fn memory_scope_missing_or_incomplete_inventory_is_unknown_until_complete(
 
     runtime
         .runner_registry
-        .register(crate::test_support::current_runner_registration(
-            RunnerRegisterRequest {
-                computer_session_availability: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                runner_instance_id: format!("inst-{client_id}"),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-                display_name: None,
-                owner: None,
-                hostname: None,
-                host_context: None,
-                capabilities: RunnerCapabilities::default(),
-                policy: None,
-            },
+        .register(crate::test_support::runner_registration(
+            client_id,
+            &format!("inst-{client_id}"),
+            RunnerCapabilities::default(),
         ))
         .await
         .unwrap();

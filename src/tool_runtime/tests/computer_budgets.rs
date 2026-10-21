@@ -58,16 +58,14 @@ async fn computer_subtree_dispatch_rejects_old_runner_scope_and_filters_fresh_ma
             runtime
                 .runner_registry
                 .complete(RunnerResultRequest {
-                    client_id: client_id.into(),
-                    runner_instance_id: format!("inst-{client_id}"),
-                    request_id: request.request_id,
                     exit_code: Some(0),
                     stdout: Some(output.to_string()),
-                    stderr: None,
-                    stdout_truncated: false,
-                    stderr_truncated: false,
                     duration_ms: Some(1),
-                    error: None,
+                    ..runner_result_request(
+                        client_id.into(),
+                        format!("inst-{client_id}"),
+                        request.request_id,
+                    )
                 })
                 .await
                 .unwrap();
@@ -192,16 +190,16 @@ async fn computer_fixture_response(
     runtime
         .runner_registry
         .complete(RunnerResultRequest {
-            client_id: client_id.to_string(),
-            runner_instance_id: format!("inst-{client_id}"),
-            request_id: request.request_id,
             exit_code: Some(0),
             stdout: stdout.map(str::to_string),
             stderr: Some("PRIVATE_STDERR".to_string()),
             stdout_truncated: truncated,
-            stderr_truncated: false,
             duration_ms: Some(1),
-            error: None,
+            ..runner_result_request(
+                client_id.to_string(),
+                format!("inst-{client_id}"),
+                request.request_id,
+            )
         })
         .await
         .unwrap();
@@ -283,16 +281,14 @@ async fn computer_window_snapshots_preserve_large_responses_through_runtime_vali
         runtime
             .runner_registry
             .complete(RunnerResultRequest {
-                client_id: client_id.to_string(),
-                runner_instance_id: format!("inst-{client_id}"),
-                request_id: request.request_id,
                 exit_code: Some(0),
                 stdout: Some(stdout),
-                stderr: None,
-                stdout_truncated: false,
-                stderr_truncated: false,
                 duration_ms: Some(1),
-                error: None,
+                ..runner_result_request(
+                    client_id.to_string(),
+                    format!("inst-{client_id}"),
+                    request.request_id,
+                )
             })
             .await
             .unwrap();
@@ -355,9 +351,6 @@ async fn computer_display_snapshot_clamps_budget_before_runner_and_validates_eff
     runtime
         .runner_registry
         .complete(RunnerResultRequest {
-            client_id: client_id.to_string(),
-            runner_instance_id: format!("inst-{client_id}"),
-            request_id: request.request_id,
             exit_code: Some(0),
             stdout: Some(
                 json!({
@@ -376,10 +369,12 @@ async fn computer_display_snapshot_clamps_budget_before_runner_and_validates_eff
                 .to_string(),
             ),
             stderr: Some(String::new()),
-            stdout_truncated: false,
-            stderr_truncated: false,
             duration_ms: Some(1),
-            error: None,
+            ..runner_result_request(
+                client_id.to_string(),
+                format!("inst-{client_id}"),
+                request.request_id,
+            )
         })
         .await
         .unwrap();

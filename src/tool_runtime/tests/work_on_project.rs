@@ -300,18 +300,11 @@ async fn complete_startup_plugin_catalog_request(
     runtime
         .runner_registry
         .complete(RunnerResultPayload {
-            result: RunnerResultRequest {
-                client_id: request.client_id,
-                runner_instance_id: "inst".to_string(),
-                request_id: request.request_id,
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                stdout_truncated: false,
-                stderr_truncated: false,
-                duration_ms: None,
-                error: None,
-            },
+            result: runner_result_request(
+                request.client_id,
+                "inst".to_string(),
+                request.request_id,
+            ),
             command_execution_state: None,
             mcp_gateway: None,
             plugin_gateway: Some(PluginGatewayResponse::success(
@@ -819,9 +812,6 @@ async fn dispatch_startup_with_configured_skill_catalog(
             runtime
                 .runner_registry
                 .complete(RunnerResultRequest {
-                    client_id: client_id.to_string(),
-                    runner_instance_id: "inst".to_string(),
-                    request_id: request.request_id,
                     exit_code: Some(0),
                     stdout: Some(
                         serde_json::to_string(&RunnerSkillListResponse {
@@ -834,10 +824,12 @@ async fn dispatch_startup_with_configured_skill_catalog(
                         .unwrap(),
                     ),
                     stderr: Some(String::new()),
-                    stdout_truncated: false,
-                    stderr_truncated: false,
                     duration_ms: Some(1),
-                    error: None,
+                    ..runner_result_request(
+                        client_id.to_string(),
+                        "inst".to_string(),
+                        request.request_id,
+                    )
                 })
                 .await
                 .unwrap();

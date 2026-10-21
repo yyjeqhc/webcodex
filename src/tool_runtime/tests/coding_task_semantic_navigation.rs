@@ -403,16 +403,14 @@ async fn coding_task_semantic_navigation_does_not_wait_after_mandatory_startup()
     let expired = runtime
         .runner_registry
         .complete(RunnerResultRequest {
-            client_id: "timeout-agent".to_string(),
-            runner_instance_id: "inst".to_string(),
-            request_id: request.request_id,
             exit_code: Some(0),
             stdout: Some("{}".to_string()),
-            stderr: None,
-            stdout_truncated: false,
-            stderr_truncated: false,
             duration_ms: Some(1),
-            error: None,
+            ..runner_result_request(
+                "timeout-agent".to_string(),
+                "inst".to_string(),
+                request.request_id,
+            )
         })
         .await
         .expect_err("timed-out startup probe must remove pending waiter");

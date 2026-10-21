@@ -236,25 +236,20 @@ pub(super) fn cargo_test_update(
             source: ShellJobActivitySource::ValidationPlan,
         });
     RunnerJobUpdateRequest {
-        client_id: client_id.to_string(),
-        runner_instance_id: "inst".to_string(),
-        update_seq: None,
-        job_id: job_id.to_string(),
         request_id: Some(request_id.to_string()),
-        status: status.to_string(),
         stdout_chunk: (!stdout_chunk.is_empty()).then(|| stdout_chunk.to_string()),
         stderr_chunk: (!stderr_chunk.is_empty()).then(|| stderr_chunk.to_string()),
-        log_snapshot: None,
         exit_code,
         duration_ms: Some(25),
-        error: None,
-        command_execution_state: None,
         validation_progress: Some(progress),
-        test_count_evidence: None,
-        format_mutation: None,
-        build_artifacts: None,
         activity,
-        finished,
+        ..runner_job_update(
+            client_id.to_string(),
+            "inst".to_string(),
+            job_id.to_string(),
+            status.to_string(),
+            finished,
+        )
     }
 }
 
@@ -3200,16 +3195,15 @@ async fn cargo_fmt_ensure_formatted_ignores_sync_wait_and_skips_mutation_when_al
     runtime
         .runner_registry
         .complete(crate::runner_protocol::RunnerResultRequest {
-            client_id: client_id.to_string(),
-            runner_instance_id: "inst".to_string(),
-            request_id: request.request_id,
             exit_code: Some(0),
             stdout: Some("".to_string()),
             stderr: Some(String::new()),
-            stdout_truncated: false,
-            stderr_truncated: false,
             duration_ms: Some(5),
-            error: None,
+            ..runner_result_request(
+                client_id.to_string(),
+                "inst".to_string(),
+                request.request_id,
+            )
         })
         .await
         .unwrap();

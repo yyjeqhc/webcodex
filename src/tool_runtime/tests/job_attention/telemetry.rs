@@ -431,25 +431,18 @@ async fn job_convergence_terminal_delivery_uses_existing_server_timestamp() {
     let terminal = runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: client.into(),
-            runner_instance_id: "inst".into(),
-            job_id: id.clone(),
             request_id: job.request_id,
             update_seq: Some(2),
-            status: "failed".into(),
             stdout_chunk: Some("SECRET".into()),
-            stderr_chunk: None,
-            log_snapshot: None,
             exit_code: Some(1),
             duration_ms: Some(17),
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: true,
+            ..runner_job_update(
+                client.into(),
+                "inst".into(),
+                id.clone(),
+                "failed".into(),
+                true,
+            )
         })
         .await
         .unwrap();

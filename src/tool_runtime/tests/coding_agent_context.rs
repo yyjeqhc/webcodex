@@ -1,6 +1,6 @@
 use super::support::*;
 use crate::auth::AuthContext;
-use crate::runner_protocol::{RunnerResultPayload, RunnerResultRequest};
+use crate::runner_protocol::RunnerResultPayload;
 use crate::tool_runtime::session_context::workflow_session_authority_fingerprint;
 use crate::tool_runtime::sessions::{
     PostSessionMessageInput, SessionCreateOptions, SessionMessageKind, SessionMessagePriority,
@@ -247,18 +247,7 @@ async fn coding_agent_context_is_frozen_in_dispatched_intent_and_changed_retry_c
     runtime
         .runner_registry
         .complete(RunnerResultPayload {
-            result: RunnerResultRequest {
-                client_id: "context".into(),
-                runner_instance_id: "inst".into(),
-                request_id: request.request_id,
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                stdout_truncated: false,
-                stderr_truncated: false,
-                duration_ms: None,
-                error: None,
-            },
+            result: runner_result_request("context".into(), "inst".into(), request.request_id),
             command_execution_state: None,
             mcp_gateway: None,
             plugin_gateway: None,

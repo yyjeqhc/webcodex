@@ -1127,25 +1127,14 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: "startup-jobs".to_string(),
-            runner_instance_id: "inst".to_string(),
-            job_id: job.job_id.clone(),
             request_id: Some(start_request.request_id.clone()),
-            update_seq: None,
-            status: "running".to_string(),
-            stdout_chunk: None,
-            stderr_chunk: None,
-            log_snapshot: None,
-            exit_code: None,
-            duration_ms: None,
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: false,
+            ..runner_job_update(
+                "startup-jobs".to_string(),
+                "inst".to_string(),
+                job.job_id.clone(),
+                "running".to_string(),
+                false,
+            )
         })
         .await
         .unwrap();
@@ -1267,25 +1256,15 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
     runtime
         .runner_registry
         .update_job(RunnerJobUpdateRequest {
-            client_id: "startup-jobs".to_string(),
-            runner_instance_id: "inst".to_string(),
-            job_id: job.job_id.clone(),
             request_id: Some(start_request.request_id),
-            update_seq: None,
-            status: "stopped".to_string(),
-            stdout_chunk: None,
-            stderr_chunk: None,
-            log_snapshot: None,
-            exit_code: None,
             duration_ms: Some(1),
-            error: None,
-            command_execution_state: None,
-            validation_progress: None,
-            test_count_evidence: None,
-            format_mutation: None,
-            build_artifacts: None,
-            activity: None,
-            finished: true,
+            ..runner_job_update(
+                "startup-jobs".to_string(),
+                "inst".to_string(),
+                job.job_id.clone(),
+                "stopped".to_string(),
+                true,
+            )
         })
         .await
         .unwrap();

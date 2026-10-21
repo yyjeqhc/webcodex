@@ -73,24 +73,15 @@ async fn register_goal_activity_project(
     runtime
         .runner_registry
         .register(crate::runner_protocol::RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
             job_concurrency_limit: Some(4),
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: instance_id.clone(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
             display_name: Some(format!("{owner} Goal activity runner")),
             owner: Some(owner.to_string()),
             hostname: Some(format!("{owner}-goal-activity-host")),
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(
+            ..crate::test_support::runner_registration(
+                client_id,
+                &instance_id,
                 crate::runner_protocol::RunnerCapabilities::default(),
-            ),
-            policy: None,
+            )
         })
         .await
         .unwrap();

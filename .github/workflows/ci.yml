@@ -783,7 +783,13 @@ jobs:
         # production startup/request deadlines.
         env:
           RUST_TEST_THREADS: "2"
-        run: cargo test --locked -p webcodex-runner -p webcodex-lsp -p webcodex-computer --features runner-real-process-tests
+        run: cargo test --locked -p webcodex-runner -p webcodex-lsp -p webcodex-computer --features runner-real-process-tests -- --skip webcodex_runner::persistent_shell::windows_tests::runner_windows_local_persistent_shell_preserves_state_and_existing_protocol
+      - name: Run Windows persistent-shell protocol regression
+        # The bootstrap compiles a C# controller. Run this case without concurrent
+        # Plugin child-process fixtures consuming its production startup budget.
+        env:
+          RUST_TEST_THREADS: "1"
+        run: cargo test --locked -p webcodex-runner --features runner-real-process-tests --bin webcodex-runner webcodex_runner::persistent_shell::windows_tests::runner_windows_local_persistent_shell_preserves_state_and_existing_protocol -- --exact
 
   test-windows-package:
     needs: changes

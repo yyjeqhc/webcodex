@@ -1,6 +1,7 @@
 """Keep one root-suite owner while optional tool contracts get complete coverage."""
 from pathlib import Path
 import re
+import shlex
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,6 +45,20 @@ class ContractOwnershipTests(unittest.TestCase):
             self.assertTrue(job(ci, required))
         self.assertIn("webcodex-environment --lib upgrade::", job(ci, "test-windows-core"))
         self.assertIn("runner-real-process-tests", job(ci, "test-windows-runner"))
+
+    def test_isolated_windows_persistent_shell_case_remains_covered(self) -> None:
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        lane = job(ci, "test-windows-runner")
+        commands = [shlex.split(command) for command in re.findall(r"(?m)^        run: (cargo test[^\n]+)$", lane)]
+        broad = next(command for command in commands if "--skip" in command)
+        isolated = next(command for command in commands if "--exact" in command)
+        skipped = broad[broad.index("--skip") + 1]
+        selected = isolated[isolated.index("--") - 1]
+        self.assertEqual(skipped, selected)
+        self.assertIn("runner-real-process-tests", isolated)
+        self.assertNotIn("--ignored", isolated)
+        source = ROOT / "crates/webcodex-runner/src/webcodex_runner/persistent_shell/tests/windows.rs"
+        self.assertRegex(source.read_text(encoding="utf-8"), r"#\[test\]\s+fn " + re.escape(selected.rsplit("::", 1)[1]) + r"\(")
 
 
 if __name__ == "__main__":

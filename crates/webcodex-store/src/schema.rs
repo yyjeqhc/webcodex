@@ -6,6 +6,8 @@ use std::path::PathBuf;
 impl Database {
     pub fn open(db_path: &PathBuf) -> anyhow::Result<Self> {
         let conn = Connection::open(db_path)?;
+        // Reject unsupported persisted Wake formats before WAL or schema writes.
+        Self::validate_agent_wake_schema(&conn)?;
         // Single-operator deployment: prefer durability + predictable locking
         // over multi-writer shared-cache gymnastics. WAL lets readers (CLI
         // inspect, sqlite3) coexist with the server without default BUSY.
@@ -477,8 +479,7 @@ impl Database {
         // Agent Wake is the shared durable continuation/outbox domain. Initialize it
         // after AgentTask and AgentWait so every source foreign key is enforceable.
         Self::ensure_agent_wake_schema(&mut conn)?;
-        // Historical Wake migrations rebuild Endpoint execution rows. Add the
-        // immutable opt-in execution target only after those migrations finish.
+        // Preserve the additive execution-target upgrade for supported databases.
         Self::ensure_agent_task_endpoint_pin_schema(&mut conn)?;
 
         // Goal is independent high-level durable intent/control state. It may

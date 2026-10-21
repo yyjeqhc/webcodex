@@ -767,176 +767,150 @@ fn wake_storage_keeps_stable_refs_and_hashes_without_communication_payload() {
 }
 
 #[test]
-fn a4b_wake_schema_migration_preserves_inbox_wake_and_rebuilds_indexes() {
+fn released_v046_wake_schema_preserves_records_and_proofs_on_reopen() {
     let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("wake-a4b-migration.db");
+    let path = temp.path().join("wake-v046.db");
     let db = Database::open(&path).unwrap();
     let fixture = create_fixture(&db, 'e');
-    post_to_receiver(
-        &db,
-        &fixture,
-        "persist across migration",
-        "migration-message",
-    );
-    let wake_id = wake_id_for(&db, &fixture.receiver_agent_id);
-
-    {
-        let conn = db.conn_for_tests();
-        conn.execute_batch(
-            "
-            PRAGMA foreign_keys = OFF;
-            DROP TABLE wc_agent_task_endpoint_executions;
-            DROP INDEX IF EXISTS idx_wc_agent_wakes_target_state;
-            DROP INDEX IF EXISTS idx_wc_agent_wakes_one_queueable_inbox;
-            DROP INDEX IF EXISTS idx_wc_agent_wakes_task_attempt;
-            DROP INDEX IF EXISTS idx_wc_agent_wakes_one_dispatched;
-            DROP INDEX IF EXISTS idx_wc_agent_wake_attempts_wake;
-            DROP INDEX IF EXISTS idx_wc_agent_wake_attempts_endpoint;
-            ALTER TABLE wc_agent_wake_attempts RENAME TO wc_agent_wake_attempts_current;
-            ALTER TABLE wc_agent_wakes RENAME TO wc_agent_wakes_current;
-
-            CREATE TABLE wc_agent_wakes (
-                wake_id TEXT PRIMARY KEY,
-                target_agent_id TEXT NOT NULL,
-                trigger_kind TEXT NOT NULL,
-                first_triggering_delivery_id TEXT NOT NULL,
-                latest_triggering_delivery_id TEXT NOT NULL,
-                latest_conversation_id TEXT NOT NULL,
-                latest_message_id TEXT NOT NULL,
-                inbox_high_watermark INTEGER NOT NULL,
-                queued_delivery_count_snapshot INTEGER NOT NULL,
-                state TEXT NOT NULL,
-                revision INTEGER NOT NULL,
-                created_at_unix_ms INTEGER NOT NULL,
-                updated_at_unix_ms INTEGER NOT NULL,
-                claimed_attempt_id TEXT,
-                claimed_endpoint_id TEXT,
-                claimed_controller_generation INTEGER,
-                claim_lease_expires_at_unix_ms INTEGER,
-                consumed_at_unix_ms INTEGER,
-                consumed_by_endpoint_id TEXT,
-                consumed_controller_generation INTEGER
-            );
-            INSERT INTO wc_agent_wakes (
-                wake_id, target_agent_id, trigger_kind,
-                first_triggering_delivery_id, latest_triggering_delivery_id,
-                latest_conversation_id, latest_message_id,
-                inbox_high_watermark, queued_delivery_count_snapshot,
-                state, revision, created_at_unix_ms, updated_at_unix_ms,
-                claimed_attempt_id, claimed_endpoint_id,
-                claimed_controller_generation, claim_lease_expires_at_unix_ms,
-                consumed_at_unix_ms, consumed_by_endpoint_id,
-                consumed_controller_generation
-            )
-            SELECT wake_id, target_agent_id, trigger_kind,
-                   first_triggering_delivery_id, latest_triggering_delivery_id,
-                   latest_conversation_id, latest_message_id,
-                   inbox_high_watermark, queued_delivery_count_snapshot,
-                   state, revision, created_at_unix_ms, updated_at_unix_ms,
-                   claimed_attempt_id, claimed_endpoint_id,
-                   claimed_controller_generation, claim_lease_expires_at_unix_ms,
-                   consumed_at_unix_ms, consumed_by_endpoint_id,
-                   consumed_controller_generation
-            FROM wc_agent_wakes_current;
-
-            CREATE TABLE wc_agent_wake_attempts (
-                attempt_id TEXT PRIMARY KEY,
-                wake_id TEXT NOT NULL,
-                endpoint_id TEXT NOT NULL,
-                controller_generation INTEGER NOT NULL,
-                adapter_kind TEXT NOT NULL,
-                state TEXT NOT NULL,
-                claim_fence_hash TEXT NOT NULL,
-                consume_token_hash TEXT NOT NULL,
-                claimed_at_unix_ms INTEGER NOT NULL,
-                claim_lease_expires_at_unix_ms INTEGER NOT NULL,
-                prepared_at_unix_ms INTEGER,
-                delivered_at_unix_ms INTEGER,
-                delivery_unknown_at_unix_ms INTEGER,
-                revoked_at_unix_ms INTEGER,
-                consumed_at_unix_ms INTEGER
-            );
-            INSERT INTO wc_agent_wake_attempts
-                SELECT * FROM wc_agent_wake_attempts_current;
-            DROP TABLE wc_agent_wake_attempts_current;
-            DROP TABLE wc_agent_wakes_current;
-
-            CREATE INDEX idx_wc_agent_wakes_target_state
-                ON wc_agent_wakes(target_agent_id, state, created_at_unix_ms, wake_id);
-            CREATE UNIQUE INDEX idx_wc_agent_wakes_one_queueable
-                ON wc_agent_wakes(target_agent_id)
-                WHERE state IN ('pending', 'claimed');
-            CREATE UNIQUE INDEX idx_wc_agent_wakes_one_dispatched
-                ON wc_agent_wakes(target_agent_id)
-                WHERE state IN ('prepared', 'delivered', 'delivery_unknown');
-            CREATE INDEX idx_wc_agent_wake_attempts_wake
-                ON wc_agent_wake_attempts(wake_id, claimed_at_unix_ms, attempt_id);
-            CREATE INDEX idx_wc_agent_wake_attempts_endpoint
-                ON wc_agent_wake_attempts(endpoint_id, controller_generation, state);
-            PRAGMA foreign_keys = ON;
-            ",
+    let endpoint = attach_wake_endpoint(&db, &fixture, "ChatGPT", "v046-endpoint");
+    post_to_receiver(&db, &fixture, "retained work", "v046-message");
+    let claim = db
+        .claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "deterministic_fake",
         )
+        .unwrap()
         .unwrap();
-    }
-    drop(db);
-
-    let reopened = Database::open(&path).unwrap();
-    let wake = reopened.agent_wake(&wake_id).unwrap().unwrap();
-    assert_eq!(wake.trigger_kind, "inbox_changed");
-    assert_eq!(wake.state, AgentWakeState::Pending);
-    assert_eq!(wake.source_task_id, None);
-    assert_eq!(wake.source_task_attempt_id, None);
-    assert_eq!(
-        wake.latest_conversation_id.as_deref(),
-        Some(fixture.conversation_id.as_str())
-    );
-
-    let indexes: Vec<String> = {
-        let conn = reopened.conn_for_tests();
-        let mut statement = conn
-            .prepare(
-                "SELECT name FROM sqlite_master
-                 WHERE type = 'index'
-                   AND tbl_name IN ('wc_agent_wakes', 'wc_agent_wake_attempts')
-                 ORDER BY name",
+    let wake = db.agent_wake(&claim.wake.wake_id).unwrap().unwrap();
+    let attempts = db.agent_wake_attempts(&wake.wake_id).unwrap();
+    let stored_proofs = |db: &Database| -> (String, String) {
+        db.conn_for_tests()
+            .query_row(
+                "SELECT claim_fence_hash, consume_token_hash
+                 FROM wc_agent_wake_attempts WHERE attempt_id = ?1",
+                [&claim.attempt.attempt_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .unwrap();
-        statement
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
             .unwrap()
     };
-    for expected in [
-        "idx_wc_agent_wakes_target_state",
-        "idx_wc_agent_wakes_one_queueable_inbox",
-        "idx_wc_agent_wakes_task_attempt",
-        "idx_wc_agent_wakes_one_dispatched",
-        "idx_wc_agent_wake_attempts_wake",
-        "idx_wc_agent_wake_attempts_endpoint",
-    ] {
-        assert!(
-            indexes.iter().any(|name| name == expected),
-            "migration must rebuild {expected}: {indexes:?}"
-        );
-    }
-    assert!(
-        !indexes
-            .iter()
-            .any(|name| name == "idx_wc_agent_wakes_one_queueable"),
-        "legacy queueable index must be replaced by the inbox-only index"
-    );
+    let proofs = stored_proofs(&db);
+    drop(db);
 
-    post_to_receiver(
-        &reopened,
-        &fixture,
-        "coalesce after migration",
-        "migration-message-2",
-    );
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "PRAGMA foreign_keys = OFF;
+         CREATE TEMP TABLE saved_wakes AS SELECT * FROM wc_agent_wakes;
+         CREATE TEMP TABLE saved_attempts AS SELECT * FROM wc_agent_wake_attempts;
+         DROP TABLE wc_agent_wake_attempts;
+         DROP TABLE wc_agent_wakes;",
+    )
+    .unwrap();
+    conn.execute_batch(include_str!("test_fixtures/agent_wake_v0_4_6.sql"))
+        .unwrap();
+    conn.execute_batch(
+        "INSERT INTO wc_agent_wakes SELECT * FROM saved_wakes;
+         INSERT INTO wc_agent_wake_attempts SELECT * FROM saved_attempts;",
+    )
+    .unwrap();
+    let schema = |conn: &rusqlite::Connection| -> Vec<(String, i64, Option<String>)> {
+        conn.prepare(
+            "SELECT name, rootpage, sql FROM sqlite_master
+             WHERE tbl_name IN ('wc_agent_wakes', 'wc_agent_wake_attempts') ORDER BY name",
+        )
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+    };
+    let original_schema = schema(&conn);
+    drop(conn);
+
+    for _ in 0..2 {
+        let reopened = Database::open(&path).unwrap();
+        assert_eq!(reopened.agent_wake(&wake.wake_id).unwrap().unwrap(), wake);
+        assert_eq!(
+            reopened.agent_wake_attempts(&wake.wake_id).unwrap(),
+            attempts
+        );
+        assert_eq!(stored_proofs(&reopened), proofs);
+        assert_eq!(schema(&reopened.conn_for_tests()), original_schema);
+        let violations: i64 = reopened
+            .conn_for_tests()
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(violations, 0);
+    }
+    let reopened = Database::open(&path).unwrap();
+    post_to_receiver(&reopened, &fixture, "more work", "v046-message-2");
     assert_eq!(
         wake_id_for(&reopened, &fixture.receiver_agent_id),
-        wake_id,
-        "existing inbox Wake must remain the coalescing target after migration"
+        wake.wake_id
+    );
+}
+
+#[test]
+fn unsupported_wake_schemas_are_rejected_before_any_database_write() {
+    let assert_rejected = |schema: &str, expected: &str| {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("unsupported-wake.db");
+        let mut conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE retained_state (value TEXT NOT NULL);
+             INSERT INTO retained_state VALUES ('must remain untouched');",
+        )
+        .unwrap();
+        conn.execute_batch(schema).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let error = Database::ensure_agent_wake_schema(&mut conn).unwrap_err();
+        assert!(error.to_string().contains(expected), "{error:#}");
+        drop(conn);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let error = match Database::open(&path) {
+            Ok(_) => panic!("unsupported Wake schema was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains(expected), "{error:#}");
+        // Byte equality also catches journal-mode changes and unrelated schema
+        // writes before the rejection, not just loss of the retained Wake rows.
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    };
+    for mask in 0..7 {
+        let columns: String = [
+            "source_task_attempt_id",
+            "source_event_id",
+            "source_wait_id",
+        ]
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| mask & (1 << index) != 0)
+        .map(|(_, name)| format!(", {name} TEXT"))
+        .collect();
+        assert_rejected(
+            &format!(
+                "CREATE TABLE wc_agent_wakes (wake_id TEXT PRIMARY KEY{columns});
+                 INSERT INTO wc_agent_wakes (wake_id) VALUES ('retained-wake');
+                 CREATE TABLE wc_agent_wake_attempts (attempt_id TEXT PRIMARY KEY);
+                 INSERT INTO wc_agent_wake_attempts VALUES ('retained-attempt');"
+            ),
+            "unsupported pre-v0.4.6 Agent Wake schema",
+        );
+    }
+    for table in ["wc_agent_wakes", "wc_agent_wake_attempts"] {
+        assert_rejected(
+            &format!("CREATE TABLE {table} (id TEXT); INSERT INTO {table} VALUES ('retained');"),
+            "unsupported partial Agent Wake schema",
+        );
+    }
+    assert_rejected(
+        "CREATE TABLE wc_agent_deliveries (id TEXT);
+         INSERT INTO wc_agent_deliveries VALUES ('retained-delivery');",
+        "existing deliveries are not backfilled",
     );
 }
 

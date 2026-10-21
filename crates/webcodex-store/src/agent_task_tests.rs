@@ -91,6 +91,28 @@ fn start(
         .unwrap()
 }
 
+fn attach_wake_endpoint(
+    db: &Database,
+    owner: &CommunicationPrincipal,
+    agent_id: &str,
+    host: &str,
+    client_attachment_id: Option<&str>,
+    key: &str,
+) -> super::communication::AgentEndpointRecord {
+    db.attach_agent_endpoint(
+        owner,
+        NewAgentEndpoint {
+            agent_id: agent_id.to_string(),
+            host: host.to_string(),
+            client_attachment_id: client_attachment_id.map(str::to_string),
+            wake_capable: true,
+            idempotency_key: key.to_string(),
+        },
+    )
+    .unwrap()
+    .endpoint
+}
+
 struct EndpointTakeoverFixture {
     assignee: String,
     task_id: String,
@@ -149,19 +171,14 @@ fn prepared_endpoint_takeover_fixture(
             started_at + 1,
         )
         .unwrap();
-    let endpoint = db
-        .attach_agent_endpoint(
-            owner,
-            NewAgentEndpoint {
-                agent_id: assignee.clone(),
-                host: "ChatGPT".to_string(),
-                client_attachment_id: Some(format!("{label}-view")),
-                wake_capable: true,
-                idempotency_key: format!("{label}-endpoint"),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let endpoint = attach_wake_endpoint(
+        db,
+        owner,
+        &assignee,
+        "ChatGPT",
+        Some(&format!("{label}-view")),
+        &format!("{label}-endpoint"),
+    );
     let claim = db
         .claim_next_agent_wake(
             owner,
@@ -363,6 +380,28 @@ fn prepare_coding_binding(
     .unwrap()
 }
 
+fn prepare_coding_dispatch(
+    db: &Database,
+    owner: &CommunicationPrincipal,
+    task_id: &str,
+    assignee: &str,
+    started: &AgentTaskAttemptStartMutation,
+    intent: &AgentTaskCodingRunBindingIntent,
+    now: i64,
+) {
+    prepare_coding_binding(db, owner, task_id, assignee, started, intent, now);
+    db.claim_agent_task_coding_run_dispatch(
+        owner,
+        task_id,
+        &started.attempt.attempt_id,
+        assignee,
+        &started.attempt_fence,
+        1,
+        &intent.binding_intent_fingerprint,
+    )
+    .unwrap();
+}
+
 #[test]
 fn coding_run_binding_is_unique_replayable_and_fenced_before_dispatch() {
     let temp = tempfile::tempdir().unwrap();
@@ -510,17 +549,7 @@ fn definitive_not_started_releases_backend_fence_after_lease_expiry() {
         now,
     );
     let intent = coding_binding_intent("not-started-one");
-    prepare_coding_binding(&db, &owner, &task_id, &agent_a, &started, &intent, now + 1);
-    db.claim_agent_task_coding_run_dispatch(
-        &owner,
-        &task_id,
-        &started.attempt.attempt_id,
-        &agent_a,
-        &started.attempt_fence,
-        1,
-        &intent.binding_intent_fingerprint,
-    )
-    .unwrap();
+    prepare_coding_dispatch(&db, &owner, &task_id, &agent_a, &started, &intent, now + 1);
     let not_started = db
         .record_agent_task_coding_run_not_started(
             &owner,
@@ -555,7 +584,7 @@ fn definitive_not_started_releases_backend_fence_after_lease_expiry() {
         now + 10,
     );
     let reassign_intent = coding_binding_intent("not-started-reassign");
-    prepare_coding_binding(
+    prepare_coding_dispatch(
         &db,
         &owner,
         &reassign_task,
@@ -564,16 +593,6 @@ fn definitive_not_started_releases_backend_fence_after_lease_expiry() {
         &reassign_intent,
         now + 11,
     );
-    db.claim_agent_task_coding_run_dispatch(
-        &owner,
-        &reassign_task,
-        &reassign_started.attempt.attempt_id,
-        &agent_a,
-        &reassign_started.attempt_fence,
-        1,
-        &reassign_intent.binding_intent_fingerprint,
-    )
-    .unwrap();
     db.record_agent_task_coding_run_not_started(
         &owner,
         &reassign_task,
@@ -636,7 +655,7 @@ fn unresolved_coding_execution_blocks_replacement_and_reassignment_after_lease_e
             now + index * 20,
         );
         let intent = coding_binding_intent(&format!("blocking-{index}"));
-        prepare_coding_binding(
+        prepare_coding_dispatch(
             &db,
             &owner,
             &task_id,
@@ -645,16 +664,6 @@ fn unresolved_coding_execution_blocks_replacement_and_reassignment_after_lease_e
             &intent,
             now + index * 20 + 1,
         );
-        db.claim_agent_task_coding_run_dispatch(
-            &owner,
-            &task_id,
-            &started.attempt.attempt_id,
-            &agent_a,
-            &started.attempt_fence,
-            1,
-            &intent.binding_intent_fingerprint,
-        )
-        .unwrap();
         if let (Some(run_state), Some(execution_state)) = (run_state, execution_state) {
             db.record_agent_task_coding_run_observation(
                 &owner,
@@ -703,19 +712,14 @@ fn backend_terminal_truth_reconciles_exact_attempt_after_ordinary_lease_expiry()
     let assignee = agent(&db, &owner, "coding-terminal-agent");
     let goal_controller = agent(&db, &owner, "coding-terminal-controller");
     let waiter = agent(&db, &owner, "coding-terminal-waiter");
-    let wait_endpoint = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: waiter.clone(),
-                host: "ChatGPT".to_string(),
-                client_attachment_id: Some("coding-terminal-wait-view".to_string()),
-                wake_capable: true,
-                idempotency_key: "coding-terminal-wait-endpoint".to_string(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let wait_endpoint = attach_wake_endpoint(
+        &db,
+        &owner,
+        &waiter,
+        "ChatGPT",
+        Some("coding-terminal-wait-view"),
+        "coding-terminal-wait-endpoint",
+    );
     let now = wall_now_ms();
     let task_id = create_assigned_task(&db, &owner, &assignee, "coding-terminal-task");
     let agent_wait = db
@@ -773,17 +777,7 @@ fn backend_terminal_truth_reconciles_exact_attempt_after_ordinary_lease_expiry()
         now,
     );
     let intent = coding_binding_intent("terminal-completed");
-    prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
-    db.claim_agent_task_coding_run_dispatch(
-        &owner,
-        &task_id,
-        &started.attempt.attempt_id,
-        &assignee,
-        &started.attempt_fence,
-        1,
-        &intent.binding_intent_fingerprint,
-    )
-    .unwrap();
+    prepare_coding_dispatch(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
     let completed = coding_observation(&intent, "completed", "completed", 7);
     db.record_agent_task_coding_run_observation(
         &owner,
@@ -916,19 +910,14 @@ fn backend_terminal_truth_routes_goal_scoped_wait_without_duplicate_attention() 
     let owner = principal('5');
     let worker = agent(&db, &owner, "coding-goal-scoped-worker");
     let controller = agent(&db, &owner, "coding-goal-scoped-controller");
-    let endpoint = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: controller.clone(),
-                host: "ChatGPT".to_string(),
-                client_attachment_id: Some("coding-goal-scoped-controller-view".to_string()),
-                wake_capable: true,
-                idempotency_key: "coding-goal-scoped-endpoint".to_string(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let endpoint = attach_wake_endpoint(
+        &db,
+        &owner,
+        &controller,
+        "ChatGPT",
+        Some("coding-goal-scoped-controller-view"),
+        "coding-goal-scoped-endpoint",
+    );
     let now = wall_now_ms();
     let task_id = create_assigned_task(&db, &owner, &worker, "coding-goal-scoped-task");
     let goal_id = db
@@ -988,17 +977,7 @@ fn backend_terminal_truth_routes_goal_scoped_wait_without_duplicate_attention() 
         now + 2,
     );
     let intent = coding_binding_intent("goal-scoped-terminal-completed");
-    prepare_coding_binding(&db, &owner, &task_id, &worker, &started, &intent, now + 3);
-    db.claim_agent_task_coding_run_dispatch(
-        &owner,
-        &task_id,
-        &started.attempt.attempt_id,
-        &worker,
-        &started.attempt_fence,
-        1,
-        &intent.binding_intent_fingerprint,
-    )
-    .unwrap();
+    prepare_coding_dispatch(&db, &owner, &task_id, &worker, &started, &intent, now + 3);
     let completed = coding_observation(&intent, "completed", "completed", 9);
     db.record_agent_task_coding_run_observation(
         &owner,
@@ -1069,17 +1048,7 @@ fn coding_run_observation_merge_preserves_newer_terminal_truth() {
         now,
     );
     let intent = coding_binding_intent("monotonic-run");
-    prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
-    db.claim_agent_task_coding_run_dispatch(
-        &owner,
-        &task_id,
-        &started.attempt.attempt_id,
-        &assignee,
-        &started.attempt_fence,
-        1,
-        &intent.binding_intent_fingerprint,
-    )
-    .unwrap();
+    prepare_coding_dispatch(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
 
     let running_rev1 = coding_observation(&intent, "running", "started", 1);
     db.record_agent_task_coding_run_observation(
@@ -1205,17 +1174,7 @@ fn coding_run_observation_equal_revision_conflict_keeps_stored_truth() {
         now,
     );
     let intent = coding_binding_intent("revision-conflict-run");
-    prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
-    db.claim_agent_task_coding_run_dispatch(
-        &owner,
-        &task_id,
-        &started.attempt.attempt_id,
-        &assignee,
-        &started.attempt_fence,
-        1,
-        &intent.binding_intent_fingerprint,
-    )
-    .unwrap();
+    prepare_coding_dispatch(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
 
     let running_rev2 = coding_observation(&intent, "running", "started", 2);
     let stored = db
@@ -1271,17 +1230,7 @@ fn coding_run_terminal_observation_stays_monotonic_after_restart() {
             now,
         );
         let intent = coding_binding_intent("monotonic-restart-run");
-        prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
-        db.claim_agent_task_coding_run_dispatch(
-            &owner,
-            &task_id,
-            &started.attempt.attempt_id,
-            &assignee,
-            &started.attempt_fence,
-            1,
-            &intent.binding_intent_fingerprint,
-        )
-        .unwrap();
+        prepare_coding_dispatch(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
         let running_rev1 = coding_observation(&intent, "running", "started", 1);
         db.record_agent_task_coding_run_observation(
             &owner,
@@ -1370,7 +1319,7 @@ fn failed_cancelled_and_lost_have_bounded_exact_terminal_semantics() {
             now + index * 20,
         );
         let intent = coding_binding_intent(&format!("terminal-state-{index}"));
-        prepare_coding_binding(
+        prepare_coding_dispatch(
             &db,
             &owner,
             &task_id,
@@ -1379,16 +1328,6 @@ fn failed_cancelled_and_lost_have_bounded_exact_terminal_semantics() {
             &intent,
             now + index * 20 + 1,
         );
-        db.claim_agent_task_coding_run_dispatch(
-            &owner,
-            &task_id,
-            &started.attempt.attempt_id,
-            &assignee,
-            &started.attempt_fence,
-            1,
-            &intent.binding_intent_fingerprint,
-        )
-        .unwrap();
         let observation = coding_observation(&intent, run_state, "completed", 3);
         db.record_agent_task_coding_run_observation(
             &owner,
@@ -1422,7 +1361,7 @@ fn failed_cancelled_and_lost_have_bounded_exact_terminal_semantics() {
         now + 50,
     );
     let lost_intent = coding_binding_intent("lost-terminal-state");
-    prepare_coding_binding(
+    prepare_coding_dispatch(
         &db,
         &owner,
         &lost_task,
@@ -1431,16 +1370,6 @@ fn failed_cancelled_and_lost_have_bounded_exact_terminal_semantics() {
         &lost_intent,
         now + 51,
     );
-    db.claim_agent_task_coding_run_dispatch(
-        &owner,
-        &lost_task,
-        &lost_started.attempt.attempt_id,
-        &assignee,
-        &lost_started.attempt_fence,
-        1,
-        &lost_intent.binding_intent_fingerprint,
-    )
-    .unwrap();
     let lost = coding_observation(&lost_intent, "lost", "outcome_unknown", 4);
     let binding = db
         .record_agent_task_coding_run_observation(
@@ -1506,17 +1435,7 @@ fn old_coding_run_cannot_terminalize_task_after_later_attempt_exists() {
     let task_id = create_assigned_task(&db, &owner, &assignee, "coding-later-task");
     let first = start(&db, &owner, &task_id, &assignee, "coding-later-first", now);
     let intent = coding_binding_intent("later-attempt-old-run");
-    prepare_coding_binding(&db, &owner, &task_id, &assignee, &first, &intent, now + 1);
-    db.claim_agent_task_coding_run_dispatch(
-        &owner,
-        &task_id,
-        &first.attempt.attempt_id,
-        &assignee,
-        &first.attempt_fence,
-        1,
-        &intent.binding_intent_fingerprint,
-    )
-    .unwrap();
+    prepare_coding_dispatch(&db, &owner, &task_id, &assignee, &first, &intent, now + 1);
     db.record_agent_task_coding_run_not_started(
         &owner,
         &task_id,
@@ -1582,17 +1501,7 @@ fn coding_run_binding_survives_restart_without_endpoint_or_window_state() {
             now,
         );
         let intent = coding_binding_intent("restart-run");
-        prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
-        db.claim_agent_task_coding_run_dispatch(
-            &owner,
-            &task_id,
-            &started.attempt.attempt_id,
-            &assignee,
-            &started.attempt_fence,
-            1,
-            &intent.binding_intent_fingerprint,
-        )
-        .unwrap();
+        prepare_coding_dispatch(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
         db.record_agent_task_coding_run_observation(
             &owner,
             &task_id,
@@ -1653,17 +1562,7 @@ fn corrupt_coding_run_observation_states_fail_closed_on_binding_load() {
         now,
     );
     let intent = coding_binding_intent("corrupt-observation-run");
-    prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
-    db.claim_agent_task_coding_run_dispatch(
-        &owner,
-        &task_id,
-        &started.attempt.attempt_id,
-        &assignee,
-        &started.attempt_fence,
-        1,
-        &intent.binding_intent_fingerprint,
-    )
-    .unwrap();
+    prepare_coding_dispatch(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
     db.record_agent_task_coding_run_observation(
         &owner,
         &task_id,
@@ -3007,19 +2906,14 @@ fn pinned_endpoint_continuation_survives_restart_and_never_retargets_after_carri
     let owner = principal('a');
     let db = Database::open(&path).unwrap();
     let assignee = agent(&db, &owner, "pinned-endpoint-agent");
-    let endpoint = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: assignee.clone(),
-                host: "selected-chat".into(),
-                client_attachment_id: Some("selected-window".into()),
-                wake_capable: true,
-                idempotency_key: "pinned-endpoint".into(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let endpoint = attach_wake_endpoint(
+        &db,
+        &owner,
+        &assignee,
+        "selected-chat",
+        Some("selected-window"),
+        "pinned-endpoint",
+    );
     let task_id = create_assigned_task(&db, &owner, &assignee, "pinned-task");
     let started = start(
         &db,
@@ -3103,19 +2997,14 @@ fn pinned_endpoint_continuation_survives_restart_and_never_retargets_after_carri
         false,
     )
     .unwrap();
-    let replacement = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: assignee.clone(),
-                host: "another-chat".into(),
-                client_attachment_id: Some("another-window".into()),
-                wake_capable: true,
-                idempotency_key: "replacement-endpoint".into(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let replacement = attach_wake_endpoint(
+        &db,
+        &owner,
+        &assignee,
+        "another-chat",
+        Some("another-window"),
+        "replacement-endpoint",
+    );
     drop(db);
 
     let db = Database::open(&path).unwrap();
@@ -3163,19 +3052,14 @@ fn pinned_endpoint_pending_takeover_retires_and_stale_start_creates_no_wake() {
     let db = Database::open(&temp.path().join("pinned-pending.db")).unwrap();
     let owner = principal('b');
     let assignee = agent(&db, &owner, "pinned-pending-agent");
-    let endpoint = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: assignee.clone(),
-                host: "selected-chat".into(),
-                client_attachment_id: None,
-                wake_capable: true,
-                idempotency_key: "selected-route".into(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let endpoint = attach_wake_endpoint(
+        &db,
+        &owner,
+        &assignee,
+        "selected-chat",
+        None,
+        "selected-route",
+    );
     let task_id = create_assigned_task(&db, &owner, &assignee, "pinned-pending-task");
     let started = start(
         &db,
@@ -3197,19 +3081,14 @@ fn pinned_endpoint_pending_takeover_retires_and_stale_start_creates_no_wake() {
             endpoint.controller_generation,
         )
         .unwrap();
-    let replacement = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: assignee.clone(),
-                host: "replacement-chat".into(),
-                client_attachment_id: None,
-                wake_capable: true,
-                idempotency_key: "replaced-route".into(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let replacement = attach_wake_endpoint(
+        &db,
+        &owner,
+        &assignee,
+        "replacement-chat",
+        None,
+        "replaced-route",
+    );
     assert!(db
         .claim_next_agent_wake(
             &owner,
@@ -3352,19 +3231,14 @@ fn endpoint_continuation_start_is_endpoint_independent_replay_safe_and_payload_f
     assert!(!replay.state_changed);
     assert_eq!(replay.execution.wake_id, first.execution.wake_id);
 
-    let endpoint = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: assignee.clone(),
-                host: "task-host".to_string(),
-                client_attachment_id: Some("task-host-view".to_string()),
-                wake_capable: true,
-                idempotency_key: "task-host-endpoint".to_string(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let endpoint = attach_wake_endpoint(
+        &db,
+        &owner,
+        &assignee,
+        "task-host",
+        Some("task-host-view"),
+        "task-host-endpoint",
+    );
     let claim = db
         .claim_next_agent_wake(
             &owner,
@@ -4850,19 +4724,14 @@ fn endpoint_continuation_pre_dispatch_carrier_replacement_advances_attempt_gener
             now + 1,
         )
         .unwrap();
-    let endpoint_one = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: assignee.clone(),
-                host: "task-host-one".to_string(),
-                client_attachment_id: None,
-                wake_capable: true,
-                idempotency_key: "task-endpoint-one".to_string(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let endpoint_one = attach_wake_endpoint(
+        &db,
+        &owner,
+        &assignee,
+        "task-host-one",
+        None,
+        "task-endpoint-one",
+    );
     let first_claim = db
         .claim_next_agent_wake(
             &owner,
@@ -4909,19 +4778,14 @@ fn endpoint_continuation_pre_dispatch_carrier_replacement_advances_attempt_gener
         .unwrap();
     assert_eq!(replay_after_loss.execution.endpoint_id, None);
 
-    let endpoint_two = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: assignee.clone(),
-                host: "task-host-two".to_string(),
-                client_attachment_id: None,
-                wake_capable: true,
-                idempotency_key: "task-endpoint-two".to_string(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let endpoint_two = attach_wake_endpoint(
+        &db,
+        &owner,
+        &assignee,
+        "task-host-two",
+        None,
+        "task-endpoint-two",
+    );
     let second_claim = db
         .claim_next_agent_wake(
             &owner,
@@ -4972,19 +4836,14 @@ fn endpoint_continuation_post_fence_endpoint_loss_fences_old_attempt_controller(
             now + 1,
         )
         .unwrap();
-    let endpoint = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: assignee.clone(),
-                host: "post-fence-host".to_string(),
-                client_attachment_id: None,
-                wake_capable: true,
-                idempotency_key: "post-fence-endpoint".to_string(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let endpoint = attach_wake_endpoint(
+        &db,
+        &owner,
+        &assignee,
+        "post-fence-host",
+        None,
+        "post-fence-endpoint",
+    );
     let claim = db
         .claim_next_agent_wake(
             &owner,
@@ -5069,19 +4928,14 @@ fn endpoint_continuation_retires_when_attempt_expires_before_host_dispatch() {
             T0 + 11,
         )
         .unwrap();
-    let endpoint = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: assignee.clone(),
-                host: "late-task-host".to_string(),
-                client_attachment_id: None,
-                wake_capable: true,
-                idempotency_key: "late-task-endpoint".to_string(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let endpoint = attach_wake_endpoint(
+        &db,
+        &owner,
+        &assignee,
+        "late-task-host",
+        None,
+        "late-task-endpoint",
+    );
     assert!(
         db.claim_next_agent_wake(
             &owner,
@@ -5309,19 +5163,14 @@ fn endpoint_continuation_consumed_wake_stays_consumed_after_task_completion_but_
             now + 1,
         )
         .unwrap();
-    let endpoint = db
-        .attach_agent_endpoint(
-            &owner,
-            NewAgentEndpoint {
-                agent_id: assignee.clone(),
-                host: "consumed-task-host".to_string(),
-                client_attachment_id: None,
-                wake_capable: true,
-                idempotency_key: "consumed-task-endpoint".to_string(),
-            },
-        )
-        .unwrap()
-        .endpoint;
+    let endpoint = attach_wake_endpoint(
+        &db,
+        &owner,
+        &assignee,
+        "consumed-task-host",
+        None,
+        "consumed-task-endpoint",
+    );
     let claim = db
         .claim_next_agent_wake(
             &owner,

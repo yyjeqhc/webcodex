@@ -163,18 +163,41 @@ pub(crate) fn runner_access(
 /// Tests that exercise registration rejection should construct their wire
 /// capabilities directly instead of using this helper.
 pub(crate) fn current_runner_capabilities(
-    capabilities: crate::runner_protocol::RunnerCapabilities,
+    mut capabilities: crate::runner_protocol::RunnerCapabilities,
 ) -> crate::runner_protocol::RunnerCapabilities {
-    let mut value = serde_json::to_value(capabilities).expect("serialize Runner test capabilities");
-    let object = value
-        .as_object_mut()
-        .expect("Runner test capabilities must serialize as an object");
-    for capability in
-        crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
-    {
-        object.insert((*capability).to_string(), serde_json::Value::Bool(true));
+    for &capability in crate::runner_protocol::RunnerCapabilityId::all() {
+        if capability.is_v2_baseline() {
+            capabilities.set(capability, true);
+        }
     }
-    serde_json::from_value(value).expect("deserialize canonical Runner test capabilities")
+    capabilities
+}
+
+/// Ordinary registration with explicit identities and caller-selected optional
+/// capabilities. Rejection tests should keep constructing their wire request.
+pub(crate) fn runner_registration(
+    client_id: &str,
+    runner_instance_id: &str,
+    capabilities: crate::runner_protocol::RunnerCapabilities,
+) -> crate::runner_protocol::RunnerRegisterRequest {
+    crate::runner_protocol::RunnerRegisterRequest {
+        computer_session_availability: None,
+        process_started_at: None,
+        build: None,
+        job_concurrency_limit: None,
+        job_inventory: None,
+        coding_agent_providers: None,
+        coding_agent_inventory: None,
+        client_id: client_id.to_string(),
+        runner_instance_id: runner_instance_id.to_string(),
+        runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+        display_name: None,
+        owner: None,
+        hostname: None,
+        host_context: None,
+        capabilities: current_runner_capabilities(capabilities),
+        policy: None,
+    }
 }
 
 /// Canonicalize an ordinary unit-test Runner registration to the current

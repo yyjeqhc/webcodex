@@ -239,29 +239,18 @@ async fn register_computer_target_for_auth(
         .runner_registry
         .register_with_auth(
             RunnerRegisterRequest {
-                computer_session_availability: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                runner_instance_id: format!("inst-{client_id}"),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: Some(display_name.to_string()),
-                owner: None,
                 hostname: Some(format!("host-{client_id}")),
-                host_context: None,
-                capabilities: crate::test_support::current_runner_capabilities(
+                ..crate::test_support::runner_registration(
+                    client_id,
+                    &format!("inst-{client_id}"),
                     RunnerCapabilities {
                         computer_observe,
                         computer_snapshot_region,
                         computer_accessibility_observe,
                         ..Default::default()
                     },
-                ),
-                policy: None,
+                )
             },
             Some(&crate::test_support::runner_access(auth)),
         )
@@ -281,28 +270,17 @@ async fn register_application_target_for_auth(
         .runner_registry
         .register_with_auth(
             RunnerRegisterRequest {
-                computer_session_availability: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                runner_instance_id: format!("inst-{client_id}"),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: Some(display_name.to_string()),
-                owner: None,
                 hostname: Some(format!("host-{client_id}")),
-                host_context: None,
-                capabilities: crate::test_support::current_runner_capabilities(
+                ..crate::test_support::runner_registration(
+                    client_id,
+                    &format!("inst-{client_id}"),
                     RunnerCapabilities {
                         computer_application_discovery,
                         computer_application_launch,
                         ..Default::default()
                     },
-                ),
-                policy: None,
+                )
             },
             Some(&crate::test_support::runner_access(auth)),
         )
@@ -320,27 +298,16 @@ async fn register_display_target_for_auth(
         .runner_registry
         .register_with_auth(
             RunnerRegisterRequest {
-                computer_session_availability: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                runner_instance_id: format!("inst-{client_id}"),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: Some(display_name.to_string()),
-                owner: None,
                 hostname: Some(format!("host-{client_id}")),
-                host_context: None,
-                capabilities: crate::test_support::current_runner_capabilities(
+                ..crate::test_support::runner_registration(
+                    client_id,
+                    &format!("inst-{client_id}"),
                     RunnerCapabilities {
                         computer_display_observe: true,
                         ..Default::default()
                     },
-                ),
-                policy: None,
+                )
             },
             Some(&crate::test_support::runner_access(auth)),
         )
@@ -358,27 +325,16 @@ async fn register_pointer_target_for_auth(
         .runner_registry
         .register_with_auth(
             RunnerRegisterRequest {
-                computer_session_availability: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                runner_instance_id: format!("inst-{client_id}"),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: Some(display_name.to_string()),
-                owner: None,
                 hostname: Some(format!("host-{client_id}")),
-                host_context: None,
-                capabilities: crate::test_support::current_runner_capabilities(
+                ..crate::test_support::runner_registration(
+                    client_id,
+                    &format!("inst-{client_id}"),
                     RunnerCapabilities {
                         computer_pointer_control: true,
                         ..Default::default()
                     },
-                ),
-                policy: None,
+                )
             },
             Some(&crate::test_support::runner_access(auth)),
         )
@@ -423,28 +379,17 @@ async fn register_clipboard_target_for_auth(
         .runner_registry
         .register_with_auth(
             RunnerRegisterRequest {
-                computer_session_availability: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                runner_instance_id: format!("inst-{client_id}"),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
                 display_name: Some(display_name.to_string()),
-                owner: None,
                 hostname: Some(format!("host-{client_id}")),
-                host_context: None,
-                capabilities: crate::test_support::current_runner_capabilities(
+                ..crate::test_support::runner_registration(
+                    client_id,
+                    &format!("inst-{client_id}"),
                     RunnerCapabilities {
                         computer_clipboard_read: read,
                         computer_clipboard_write: write,
                         ..Default::default()
                     },
-                ),
-                policy: None,
+                )
             },
             Some(&crate::test_support::runner_access(auth)),
         )
@@ -461,127 +406,17 @@ async fn register_agent_projects_for_auth(
     runtime
         .runner_registry
         .register_with_auth(
-            RunnerRegisterRequest {
-                computer_session_availability: None,
-                process_started_at: None,
-                build: None,
-                job_concurrency_limit: None,
-                job_inventory: None,
-                coding_agent_providers: None,
-                coding_agent_inventory: None,
-                client_id: client_id.to_string(),
-                runner_instance_id: format!("inst-{}", client_id),
-                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-                display_name: None,
-                owner: None,
-                hostname: None,
-                host_context: None,
-                capabilities: crate::test_support::current_runner_capabilities(
-                    RunnerCapabilities {
-                        shell: true,
-                        browser_managed_profile: false,
-                        browser_surface_handoff: false,
-                        browser_user_handoff: false,
-                        browser_extension_bridge: false,
-                        explicit_shell_selection: false,
-                        bash_login_shell: false,
-                        file_read: true,
-                        file_write: true,
-                        file_list_page: false,
-                        artifact_export_chunk_read: false,
-                        artifact_export_streaming_metadata: false,
-                        structured_file_delete: false,
-                        apply_text_edit_occurrence: false,
-                        apply_text_edit_line_scope: false,
-                        apply_text_edit_range: false,
-                        apply_text_edit_expected_match_count: false,
-                        apply_text_edit_local_guard_without_sha: false,
-                        apply_patch: false,
-                        apply_patch_match_metadata: false,
-                        apply_patch_matching_mode: false,
-                        git: true,
-                        jobs: true,
-                        async_jobs: true,
-                        async_shell_jobs: true,
-                        ssh_shell: false,
-                        persistent_shell: false,
-                        ssh_persistent_shell: false,
-                        structured_validation_argv: true,
-                        structured_cargo_test_count_assertion: true,
-                        structured_cargo_test_execution_policy: true,
-                        structured_cargo_test_lib: true,
-                        structured_cargo_check_packages: true,
-                        structured_go_test_json: true,
-                        project_validation_v1: false,
-                        project_build_v1: false,
-                        project_build_node_v1: false,
-                        project_validation_node_json_v1: false,
-                        project_build_python_v1: false,
-                        project_format_v1: false,
-                        project_format_go_v1: false,
-                        project_dependency_policy_v1: false,
-                        project_dependency_resolution_offline_v1: false,
-                        project_go_single_module_v1: false,
-                        project_validation_package_scope_v1: false,
-                        project_all_packages_v1: false,
-                        project_validation_test_options_v1: false,
-                        project_validation_python_pytest_v1: false,
-                        project_validation_python_ruff_v1: false,
-                        project_validation_node_script_check_v1: false,
-                        project_validation_node_tap_v1: false,
-                        project_validation_rust_clippy_v1: false,
-                        structured_go_test_tool: true,
-                        structured_go_test_packages: true,
-                        structured_process_argv: true,
-                        structured_script_payload: false,
-                        structured_script_javascript: false,
-                        structured_script_typescript: false,
-                        structured_script_python: false,
-                        internal_posix_script: false,
-                        structured_execution_jobs: false,
-                        job_process_input: false,
-                        detached_process_jobs: false,
-                        lsp_read_only_navigation: false,
-                        lsp_call_hierarchy: false,
-                        project_lifecycle: false,
-                        project_path_registration: false,
-                        managed_worktree: false,
-                        skill_runtime: false,
-                        skill_resource_execution: false,
-                        skill_management: false,
-                        browser_observe: false,
-                        browser_control: false,
-                        browser_element_action_admission: false,
-                        browser_batch: false,
-                        browser_semantic_query: false,
-                        browser_complex_controls: false,
-                        browser_launch: false,
-                        computer_observe: false,
-                        computer_application_discovery: false,
-                        computer_application_launch: false,
-                        computer_display_observe: false,
-                        computer_pointer_control: false,
-                        computer_clipboard_read: false,
-                        computer_clipboard_write: false,
-                        computer_snapshot_region: false,
-                        computer_accessibility_observe: false,
-                        computer_element_state: false,
-                        computer_control: false,
-                        computer_scroll_to_element: false,
-                        computer_key_input: false,
-                        computer_window_activate: false,
-                        computer_text_input: false,
-                        job_state_reconciliation: false,
-                        coding_agent_runs: false,
-                        native_tool_plugins: false,
-                        mcp_gateway_resource_links: false,
-                        managed_ssh_resources: false,
-                        runner_config_control: false,
-                        instruction_runtime: false,
-                    },
-                ),
-                policy: None,
-            },
+            crate::test_support::runner_registration(
+                client_id,
+                &format!("inst-{}", client_id),
+                RunnerCapabilities {
+                    git: true,
+                    structured_cargo_test_execution_policy: true,
+                    structured_cargo_test_lib: true,
+                    structured_cargo_check_packages: true,
+                    ..Default::default()
+                },
+            ),
             Some(&crate::test_support::runner_access(auth)),
         )
         .await
@@ -1337,24 +1172,11 @@ async fn repository_knowledge_association_revalidates_identity_availability_and_
     let replacement_instance = "repo-association-replacement";
     let replacement = runtime
         .runner_registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: replacement_instance.to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(caps),
-            policy: None,
-        })
+        .register(crate::test_support::runner_registration(
+            client_id,
+            replacement_instance,
+            caps,
+        ))
         .await
         .unwrap();
     assert_eq!(
@@ -1416,24 +1238,11 @@ async fn replacement_runner_pending_inventory_has_zero_project_routing_authority
         .await;
     let replacement = runtime
         .runner_registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: new_instance.to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(capabilities),
-            policy: None,
-        })
+        .register(crate::test_support::runner_registration(
+            client_id,
+            new_instance,
+            capabilities,
+        ))
         .await
         .unwrap();
     assert!(replacement.connected);
@@ -1595,24 +1404,11 @@ async fn replacement_runner_removed_project_never_inherits_old_authority() {
         .await;
     runtime
         .runner_registry
-        .register(RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: client_id.to_string(),
-            runner_instance_id: new_instance.to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(capabilities),
-            policy: None,
-        })
+        .register(crate::test_support::runner_registration(
+            client_id,
+            new_instance,
+            capabilities,
+        ))
         .await
         .unwrap();
 
@@ -1811,23 +1607,7 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
     let _ = (secret_env_value, secret_script);
     registry
         .register(crate::runner_protocol::RunnerRegisterRequest {
-            computer_session_availability: None,
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            coding_agent_providers: None,
-            coding_agent_inventory: None,
-            client_id: "profile-agent".to_string(),
-            runner_instance_id: "inst".to_string(),
-            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
-            display_name: None,
             owner: Some("alice".to_string()),
-            hostname: None,
-            host_context: None,
-            capabilities: crate::test_support::current_runner_capabilities(
-                RunnerCapabilities::default(),
-            ),
             policy: Some(RunnerPolicySummary {
                 allow_raw_shell: true,
                 allow_cwd_anywhere: false,
@@ -1838,6 +1618,11 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
                 tool_providers: None,
                 mcp_gateway_providers: None,
             }),
+            ..crate::test_support::runner_registration(
+                "profile-agent",
+                "inst",
+                RunnerCapabilities::default(),
+            )
         })
         .await
         .unwrap();

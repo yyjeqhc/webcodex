@@ -2400,15 +2400,7 @@ async fn session_handoff_diagnostic_warns_with_review_evidence_when_validation_n
 
 #[tokio::test]
 async fn session_handoff_summary_with_workspace_clean_project() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "hello\n", "initial");
-    let runtime = test_runtime();
-    let project = register_runner_project_at_path(&runtime, "hw", "demo", tmp.path()).await;
-    let session = runtime
-        .sessions
-        .start_session(Some(project.clone()), Some("workspace handoff".to_string()));
-    let sid = session.session_id.clone();
+    let (_tmp, runtime, project, sid) = clean_handoff_fixture("hw", "workspace handoff").await;
 
     let result = dispatch_handoff_with_agent(&runtime, "hw", sid, Some(project), true, false).await;
 
@@ -2428,24 +2420,12 @@ async fn session_handoff_summary_with_workspace_clean_project() {
 
 #[tokio::test]
 async fn context_recovery_handoff_derives_session_project_for_complete_workspace_baseline() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "hello\n", "initial");
-    let runtime = test_runtime();
-    let project =
-        register_runner_project_at_path(&runtime, "handoff-context-recovery", "demo", tmp.path())
-            .await;
-    let session = runtime.sessions.start_session(
-        Some(project.clone()),
-        Some("context recovery handoff".to_string()),
-    );
+    let (_tmp, runtime, project, sid) =
+        clean_handoff_fixture("handoff-context-recovery", "context recovery handoff").await;
 
-    let result = dispatch_context_recovery_handoff_with_agent(
-        &runtime,
-        "handoff-context-recovery",
-        session.session_id,
-    )
-    .await;
+    let result =
+        dispatch_context_recovery_handoff_with_agent(&runtime, "handoff-context-recovery", sid)
+            .await;
 
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["project"], project);
@@ -2458,17 +2438,8 @@ async fn context_recovery_handoff_derives_session_project_for_complete_workspace
 
 #[tokio::test]
 async fn session_handoff_diagnostic_verdict_allows_clean_workspace_without_failures() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "hello\n", "initial");
-    let runtime = test_runtime();
-    let project =
-        register_runner_project_at_path(&runtime, "handoff-clean-verdict", "demo", tmp.path())
-            .await;
-    let session = runtime
-        .sessions
-        .start_session(Some(project.clone()), Some("clean handoff".to_string()));
-    let sid = session.session_id.clone();
+    let (_tmp, runtime, project, sid) =
+        clean_handoff_fixture("handoff-clean-verdict", "clean handoff").await;
 
     let result = dispatch_handoff_diagnostic_with_agent(
         &runtime,
@@ -2492,22 +2463,8 @@ async fn session_handoff_diagnostic_verdict_allows_clean_workspace_without_failu
 
 #[tokio::test]
 async fn session_handoff_does_not_resolve_a_different_validation_identity() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "hello\n", "initial");
-    let runtime = test_runtime();
-    let project = register_runner_project_at_path(
-        &runtime,
-        "handoff-resolved-validation",
-        "demo",
-        tmp.path(),
-    )
-    .await;
-    let session = runtime.sessions.start_session(
-        Some(project.clone()),
-        Some("resolved validation handoff".to_string()),
-    );
-    let sid = session.session_id.clone();
+    let (_tmp, runtime, project, sid) =
+        clean_handoff_fixture("handoff-resolved-validation", "resolved validation handoff").await;
 
     record_handoff_tool_event(
         &runtime,
@@ -2588,22 +2545,11 @@ async fn session_handoff_does_not_resolve_a_different_validation_identity() {
 
 #[tokio::test]
 async fn session_handoff_historical_mixed_current_pass_does_not_block_closeout() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "hello\n", "initial");
-    let runtime = test_runtime();
-    let project = register_runner_project_at_path(
-        &runtime,
+    let (_tmp, runtime, project, sid) = clean_handoff_fixture(
         "handoff-current-evidence-pass",
-        "demo",
-        tmp.path(),
+        "current validation evidence pass",
     )
     .await;
-    let session = runtime.sessions.start_session(
-        Some(project.clone()),
-        Some("current validation evidence pass".to_string()),
-    );
-    let sid = session.session_id.clone();
 
     record_handoff_tool_event(
         &runtime,
@@ -2685,22 +2631,8 @@ async fn session_handoff_historical_mixed_current_pass_does_not_block_closeout()
 
 #[tokio::test]
 async fn session_handoff_stale_validation_after_content_change_warns_without_blocking() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "hello\n", "initial");
-    let runtime = test_runtime();
-    let project = register_runner_project_at_path(
-        &runtime,
-        "handoff-current-evidence-stale",
-        "demo",
-        tmp.path(),
-    )
-    .await;
-    let session = runtime.sessions.start_session(
-        Some(project.clone()),
-        Some("stale validation handoff".to_string()),
-    );
-    let sid = session.session_id.clone();
+    let (_tmp, runtime, project, sid) =
+        clean_handoff_fixture("handoff-current-evidence-stale", "stale validation handoff").await;
 
     record_handoff_tool_event(
         &runtime,
@@ -2766,22 +2698,11 @@ async fn session_handoff_stale_validation_after_content_change_warns_without_blo
 
 #[tokio::test]
 async fn session_handoff_command_derived_unresolved_does_not_claim_original_assertion_name() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "hello\n", "initial");
-    let runtime = test_runtime();
-    let project = register_runner_project_at_path(
-        &runtime,
+    let (_tmp, runtime, project, sid) = clean_handoff_fixture(
         "handoff-command-derived-unresolved",
-        "demo",
-        tmp.path(),
+        "command-derived unresolved handoff",
     )
     .await;
-    let session = runtime.sessions.start_session(
-        Some(project.clone()),
-        Some("command-derived unresolved handoff".to_string()),
-    );
-    let sid = session.session_id.clone();
 
     // No assertion_name anywhere: the validation identity is command-derived
     // (purpose + normalized command), so no original assertion_name exists to
@@ -2845,22 +2766,11 @@ async fn session_handoff_command_derived_unresolved_does_not_claim_original_asse
 
 #[tokio::test]
 async fn session_handoff_keeps_real_proof_after_later_zero_test_event() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "hello\n", "initial");
-    let runtime = test_runtime();
-    let project = register_runner_project_at_path(
-        &runtime,
+    let (_tmp, runtime, project, sid) = clean_handoff_fixture(
         "handoff-resolved-unexpected-test",
-        "demo",
-        tmp.path(),
+        "resolved unexpected cargo test handoff",
     )
     .await;
-    let session = runtime.sessions.start_session(
-        Some(project.clone()),
-        Some("resolved unexpected cargo test handoff".to_string()),
-    );
-    let sid = session.session_id.clone();
 
     record_handoff_tool_event(
         &runtime,
@@ -3043,22 +2953,11 @@ async fn session_handoff_keeps_real_proof_after_later_zero_test_event() {
 
 #[tokio::test]
 async fn session_handoff_diagnostic_keeps_cargo_test_failure_blocking_after_zero_tests_success() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "hello\n", "initial");
-    let runtime = test_runtime();
-    let project = register_runner_project_at_path(
-        &runtime,
+    let (_tmp, runtime, project, sid) = clean_handoff_fixture(
         "handoff-zero-tests-does-not-resolve",
-        "demo",
-        tmp.path(),
+        "zero-tests validation handoff",
     )
     .await;
-    let session = runtime.sessions.start_session(
-        Some(project.clone()),
-        Some("zero-tests validation handoff".to_string()),
-    );
-    let sid = session.session_id.clone();
 
     record_handoff_tool_event(
         &runtime,
@@ -3592,6 +3491,21 @@ fn session_handoff_summary_metadata_and_mcp_consistency() {
 // =========================================================================
 // Helpers
 // =========================================================================
+
+async fn clean_handoff_fixture(
+    client_id: &str,
+    title: &str,
+) -> (tempfile::TempDir, ToolRuntime, String, String) {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    let runtime = test_runtime();
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some(title.to_string()));
+    (tmp, runtime, project, session.session_id)
+}
 
 fn post_session_message(runtime: &ToolRuntime, session_id: &str, kind: &str, message: &str) {
     use crate::tool_runtime::sessions::{

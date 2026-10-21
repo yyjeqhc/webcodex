@@ -86,9 +86,11 @@ class ToolDiscoveryScoringTests(unittest.TestCase):
     def test_canonical_helper_declarations_are_accepted_as_false_positives(self):
         resources = ["open_webcodex_workbench", "search_webcodex_resources", "read_webcodex_resource"]
         documents = ["present_docx", "present_pdf", "read_app_artifact_chunk"]
+        controls = ["list_tools", "create_goal", "list_agent_identities", "create_agent_task", "wait_for_agent_events"]
         scored = discovery.evaluate_results(self.corpus, self.capture([
             {"case_id": "discovery-001", "returned_tools": resources},
             {"case_id": "discovery-002", "returned_tools": documents},
+            {"case_id": "discovery-003", "returned_tools": controls},
         ]))
         self.assertEqual(scored["splits"]["development"]["observed_counts"]["positive_hits_at_5"], 0)
         self.assertEqual(scored["status"], "incomplete")

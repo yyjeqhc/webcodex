@@ -36,7 +36,7 @@ def canonical_definitions():
     definitions = {}
     for path in sorted((CONTRACTS / "tool_definition").glob("*.rs")):
         source = path.read_text(encoding="utf-8")
-        matches = list(re.finditer(r'\bdef\(\s*"([a-z_]+)"', source))
+        matches = list(re.finditer(r'\b(?:def|control_def)\(\s*"([a-z_]+)"', source))
         for index, match in enumerate(matches):
             end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
             body = source[match.end():end]
@@ -66,6 +66,19 @@ class ToolDiscoveryCorpusTests(unittest.TestCase):
         )
         cls.cases = cls.corpus["cases"]
         cls.definitions, cls.scopes = canonical_definitions()
+
+    def test_control_definitions_preserve_category_scope_and_visibility(self):
+        for name, category, scope, visible in [
+            ("create_goal", "goal", "COMMUNICATION_MANAGE", True),
+            ("list_agent_identities", "communication", "COMMUNICATION_READ", True),
+            ("create_agent_task", "agent_task", "COMMUNICATION_MANAGE", True),
+            ("wait_for_agent_events", "agent_wait", "COMMUNICATION_MANAGE", True),
+            ("get_agent_wait_state", "agent_wait", "COMMUNICATION_READ", False),
+        ]:
+            with self.subTest(tool=name):
+                self.assertEqual(self.definitions.get(name), {
+                    "category": category, "scope_constant": scope, "model_visible": visible,
+                })
 
     def test_versioned_structure_and_evidence_limits(self):
         self.assertEqual(set(self.corpus), {

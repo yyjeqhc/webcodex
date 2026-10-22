@@ -197,6 +197,21 @@ impl RunnerJobOperation {
         }
     }
 
+    pub fn context_mut(&mut self) -> Option<&mut ShellJobContext> {
+        match self {
+            Self::StartShell(operation) => Some(&mut operation.context),
+            Self::StartValidation(operation) => Some(&mut operation.context),
+            Self::StartBuild(operation) => Some(&mut operation.context),
+            Self::StartFormat(operation) => Some(&mut operation.context),
+            Self::StartProcess(operation)
+            | Self::StartInteractiveProcess(operation)
+            | Self::StartDetachedProcess(operation) => Some(&mut operation.context),
+            Self::StartScript(operation) => Some(&mut operation.context),
+            Self::StartSkillResource(operation) => Some(&mut operation.context),
+            Self::Stop { .. } => None,
+        }
+    }
+
     pub fn cwd(&self) -> Option<&str> {
         match self {
             Self::StartShell(operation) => operation.cwd.as_deref(),

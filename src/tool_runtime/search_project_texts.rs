@@ -1,6 +1,6 @@
 //! Bounded independent text searches built from the canonical single-search core.
 
-use super::files::{SearchOptions, SearchRequest};
+use super::files::{SearchOptions, SearchOutcome, SearchRequest};
 use super::project_resolution::ResolvedProject;
 use super::{SearchProjectTextsQuery, SuggestedToolCall, ToolResult, ToolRuntime};
 use crate::json_measurement::serialized_json_len;
@@ -68,28 +68,63 @@ fn include_glob_diagnostic_query(
     Some(diagnostic)
 }
 
-fn successful_search_is_complete_and_empty(result: &ToolResult) -> bool {
-    if !result.success || result.output["truncated"].as_bool() != Some(false) {
-        return false;
-    }
-    match result.output["result_mode"].as_str() {
-        Some("matches") => result.output["matches"]
-            .as_array()
-            .is_some_and(Vec::is_empty),
-        Some("files_with_matches") => result.output["files"].as_array().is_some_and(Vec::is_empty),
-        Some("count") => {
-            result.output["count_complete"].as_bool() == Some(true)
-                && result.output["total_matches"].as_u64() == Some(0)
+/// Canonical query order and trusted results are available to compound tools
+/// before any model-facing output or budget projection is constructed.
+#[derive(Debug)]
+pub(crate) struct CompletedSearchQuery {
+    pub(crate) index: usize,
+    pub(crate) result: SearchOutcome,
+}
+
+impl CompletedSearchQuery {
+    fn into_output(self) -> Value {
+        match self.result {
+            Ok(success) => json!({
+                "index": self.index,
+                "success": true,
+                "output": success.into_output(None),
+                "error": null,
+            }),
+            Err(failure) => failure.into_batch_item(self.index),
         }
-        _ => false,
     }
 }
 
-fn successful_diagnostic_has_match(result: &ToolResult) -> bool {
-    result.success
-        && result.output["matches"]
-            .as_array()
-            .is_some_and(|matches| !matches.is_empty())
+#[derive(Debug)]
+pub(crate) struct SearchBatch {
+    pub(crate) project: String,
+    pub(crate) items: Vec<CompletedSearchQuery>,
+}
+
+impl SearchBatch {
+    pub(crate) fn into_tool_result(self) -> ToolResult {
+        ToolResult::ok(batch_output(
+            &self.project,
+            self.items.len(),
+            self.items
+                .into_iter()
+                .map(CompletedSearchQuery::into_output)
+                .collect(),
+            false,
+            None,
+            None,
+        ))
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum SearchBatchError {
+    InvalidQueryCount,
+}
+
+impl SearchBatchError {
+    pub(crate) fn into_tool_result(self) -> ToolResult {
+        match self {
+            Self::InvalidQueryCount => {
+                ToolResult::err("search_project_texts requires 1 to 8 queries")
+            }
+        }
+    }
 }
 
 pub(crate) fn normalized_result_budget(max_result_bytes: Option<usize>) -> usize {
@@ -195,11 +230,6 @@ fn projected_batch_len(base_len: usize, item_bytes: usize, item_count: usize) ->
         .saturating_add(item_count.saturating_sub(1))
 }
 
-fn retryable_runner_request_failure(result: &ToolResult) -> bool {
-    !result.success
-        && result.output.get("code").and_then(Value::as_str) == Some("search_request_dropped")
-}
-
 fn apply_output_budget(
     project: &str,
     requested_count: usize,
@@ -303,165 +333,6 @@ fn apply_output_budget(
         }
     }
     output
-}
-
-fn failure_reason_code(result: &ToolResult) -> &'static str {
-    match result.output.get("code").and_then(Value::as_str) {
-        Some("invalid_search_request") => {
-            match result.output.get("field").and_then(Value::as_str) {
-                Some("pattern") => "invalid_pattern",
-                Some("path") => "invalid_path",
-                Some("include_globs" | "exclude_globs") => "invalid_glob",
-                _ => "invalid_search_request",
-            }
-        }
-        Some("search_timeout") => "timeout",
-        Some("search_backend_feature_unavailable") => "search_backend_feature_unavailable",
-        Some("search_path_not_found") => "not_found",
-        Some("search_execution_failed") => "search_execution_failed",
-        Some("search_request_dropped") => "search_request_dropped",
-        _ if result.output.get("format").and_then(Value::as_str)
-            == Some("webcodex.external_provider_error.v1") =>
-        {
-            "external_provider_error"
-        }
-        _ => "agent_unavailable",
-    }
-}
-
-fn batch_failure_stage(result: &ToolResult, broad_reason: &str) -> &'static str {
-    match result.output.get("failure_stage").and_then(Value::as_str) {
-        Some("request_validation") => "request_validation",
-        Some("backend_selection") => "backend_selection",
-        Some("backend_protocol") => "backend_protocol",
-        Some("path_resolution") => "path_resolution",
-        Some("backend_execution") => "backend_execution",
-        Some("agent_request") => "agent_request",
-        Some("agent_execution") => "agent_execution",
-        Some("agent_transport") => "agent_transport",
-        Some("provider") => "provider",
-        Some("local_execution") => "local_execution",
-        Some("batch_deadline") => "batch_deadline",
-        _ => match broad_reason {
-            "invalid_pattern" | "invalid_path" | "invalid_glob" | "invalid_search_request" => {
-                "request_validation"
-            }
-            "not_found" => "path_resolution",
-            "search_backend_feature_unavailable" => "backend_selection",
-            "search_request_dropped" => "agent_transport",
-            "external_provider_error" => "provider",
-            "agent_unavailable" => "agent_request",
-            "timeout" => "agent_transport",
-            _ => "backend_execution",
-        },
-    }
-}
-
-fn batch_failure_detail_code(result: &ToolResult, broad_reason: &'static str) -> &'static str {
-    match result.output.get("reason_code").and_then(Value::as_str) {
-        Some("invalid_pattern") => "invalid_pattern",
-        Some("invalid_path") => "invalid_path",
-        Some("invalid_glob") => "invalid_glob",
-        Some("invalid_search_request") => "invalid_search_request",
-        Some("not_found") => "not_found",
-        Some("backend_feature_unavailable") => "backend_feature_unavailable",
-        Some("backend_identity_missing") => "backend_identity_missing",
-        Some("backend_identity_invalid") => "backend_identity_invalid",
-        Some("backend_status_unavailable") => "backend_status_unavailable",
-        Some("backend_output_inconsistent") => "backend_output_inconsistent",
-        Some("backend_process_failed") => "backend_process_failed",
-        Some("agent_request_failed") => "agent_request_failed",
-        Some("agent_execution_failed") => "agent_execution_failed",
-        Some("search_request_dropped") => "search_request_dropped",
-        Some("timeout") => "timeout",
-        Some("provider_execution_failed") => "provider_execution_failed",
-        Some("provider_protocol_invalid") => "provider_protocol_invalid",
-        Some("local_execution_failed") => "local_execution_failed",
-        _ => broad_reason,
-    }
-}
-
-fn copy_safe_batch_failure_metadata(source: &Value, target: &mut Value) {
-    if let Some(backend @ ("rg" | "grep" | "native" | "claude_code")) =
-        source.get("backend").and_then(Value::as_str)
-    {
-        target["backend"] = json!(backend);
-    }
-    if let Some(exit_code) = source.get("exit_code").and_then(Value::as_i64) {
-        target["exit_code"] = json!(exit_code);
-    }
-    if let Some(result_mode @ ("matches" | "files_with_matches" | "count")) =
-        source.get("result_mode").and_then(Value::as_str)
-    {
-        target["result_mode"] = json!(result_mode);
-    }
-    if let Some(timeout) = source
-        .get("effective_timeout_secs")
-        .and_then(Value::as_u64)
-        .filter(|timeout| (1..=120).contains(timeout))
-    {
-        target["effective_timeout_secs"] = json!(timeout);
-    }
-    if let Some(provider_code) =
-        source
-            .get("provider_code")
-            .and_then(Value::as_str)
-            .filter(|code| {
-                !code.is_empty()
-                    && code.len() <= 64
-                    && code.bytes().all(|byte| {
-                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
-                    })
-            })
-    {
-        target["provider_code"] = json!(provider_code);
-    }
-}
-
-fn batch_item(index: usize, mut result: ToolResult) -> Value {
-    if result.success {
-        if let Some(output) = result.output.as_object_mut() {
-            // Project identity and Session/permission metadata are outer-batch
-            // concerns. The input index identifies the original pattern.
-            for key in [
-                "project",
-                "pattern",
-                "session_recorded",
-                "session_id",
-                "session_event_id",
-                "session_hint",
-                "permission",
-            ] {
-                output.remove(key);
-            }
-        }
-        return json!({
-            "index": index,
-            "success": true,
-            "output": result.output,
-            "error": null,
-        });
-    }
-
-    let reason_code = failure_reason_code(&result);
-    let failure_stage = batch_failure_stage(&result, reason_code);
-    let detail_code = batch_failure_detail_code(&result, reason_code);
-    let mut output = json!({
-        "error_kind": "search_project_text_failed",
-        // Preserve the established broad batch reason while adding the
-        // single-search provenance that explains where and why it failed.
-        "reason_code": reason_code,
-        "failure_stage": failure_stage,
-        "detail_code": detail_code,
-        "state_changed": false,
-    });
-    copy_safe_batch_failure_metadata(&result.output, &mut output);
-    json!({
-        "index": index,
-        "success": false,
-        "output": output,
-        "error": format!("search_project_text failed: {reason_code}"),
-    })
 }
 
 fn omitted_query_summary(item: &Value) -> Option<Value> {
@@ -999,12 +870,25 @@ impl ToolRuntime {
         resolved: &ResolvedProject,
         queries: Vec<SearchProjectTextsQuery>,
     ) -> ToolResult {
+        match self
+            .search_project_texts_resolved_typed(resolved, queries)
+            .await
+        {
+            Ok(batch) => batch.into_tool_result(),
+            Err(error) => error.into_tool_result(),
+        }
+    }
+
+    pub(crate) async fn search_project_texts_resolved_typed(
+        &self,
+        resolved: &ResolvedProject,
+        queries: Vec<SearchProjectTextsQuery>,
+    ) -> Result<SearchBatch, SearchBatchError> {
         if !(1..=MAX_SEARCH_PROJECT_TEXTS_QUERIES).contains(&queries.len()) {
-            return ToolResult::err("search_project_texts requires 1 to 8 queries");
+            return Err(SearchBatchError::InvalidQueryCount);
         }
 
         let runtime_project_id = resolved.resolved_id.clone();
-        let requested_count = queries.len();
         let deadline = Instant::now() + self.search_project_texts_deadline;
         // One absolute Server-owned latency deadline covers the whole batch.
         // Queueing, retries, and include-glob diagnostics all consume this same
@@ -1013,10 +897,9 @@ impl ToolRuntime {
         // Validation, Runner enqueue, and response waiting all happen inside
         // the concurrency slot. A third query cannot enter the Runner queue
         // while two earlier queries still hold their slots.
-        let mut completed: Vec<Value> =
+        let mut completed: Vec<CompletedSearchQuery> =
             stream::iter(queries.into_iter().enumerate().map(|(index, query)| {
                 let project = &resolved.config;
-                let output_project = runtime_project_id.as_str();
                 async move {
                     let diagnostic_query = include_glob_diagnostic_query(&query);
                     let (request, pattern_mode) = search_request_and_pattern_mode(query);
@@ -1024,19 +907,19 @@ impl ToolRuntime {
                         match SearchOptions::normalize_with_pattern_mode(request, pattern_mode) {
                             Ok(options) => {
                                 let first = self
-                                    .search_one_resolved_project_text(
+                                    .search_one_resolved_project_text_outcome(
                                         project,
-                                        output_project,
                                         options.clone(),
                                         Some(deadline),
                                     )
                                     .await;
-                                if retryable_runner_request_failure(&first)
+                                if first
+                                    .as_ref()
+                                    .is_err_and(|failure| failure.retryable_request_drop())
                                     && Instant::now() < deadline
                                 {
-                                    self.search_one_resolved_project_text(
+                                    self.search_one_resolved_project_text_outcome(
                                         project,
-                                        output_project,
                                         options,
                                         Some(deadline),
                                     )
@@ -1045,46 +928,44 @@ impl ToolRuntime {
                                     first
                                 }
                             }
-                            Err(error) => error.into_tool_result(),
+                            Err(error) => Err(error.into()),
                         };
-                    if successful_search_is_complete_and_empty(&result) {
-                        if let Some(diagnostic_query) = diagnostic_query {
-                            let (request, pattern_mode) =
-                                search_request_and_pattern_mode(diagnostic_query);
-                            if let Ok(options) =
-                                SearchOptions::normalize_with_pattern_mode(request, pattern_mode)
-                            {
-                                let diagnostic = self
-                                    .search_one_resolved_project_text(
-                                        project,
-                                        output_project,
-                                        options,
-                                        Some(deadline),
-                                    )
-                                    .await;
-                                if successful_diagnostic_has_match(&diagnostic) {
-                                    result.output["zero_match_hint"] =
-                                        json!("include_globs_excluded_matches");
+                    if let Ok(success) = &mut result {
+                        if success.is_complete_and_empty() {
+                            if let Some(diagnostic_query) = diagnostic_query {
+                                let (request, pattern_mode) =
+                                    search_request_and_pattern_mode(diagnostic_query);
+                                if let Ok(options) = SearchOptions::normalize_with_pattern_mode(
+                                    request,
+                                    pattern_mode,
+                                ) {
+                                    let diagnostic = self
+                                        .search_one_resolved_project_text_outcome(
+                                            project,
+                                            options,
+                                            Some(deadline),
+                                        )
+                                        .await;
+                                    if diagnostic.as_ref().is_ok_and(|result| {
+                                        result.matches().is_some_and(|matches| !matches.is_empty())
+                                    }) {
+                                        success.mark_include_globs_excluded_matches();
+                                    }
                                 }
                             }
                         }
                     }
-                    batch_item(index, result)
+                    CompletedSearchQuery { index, result }
                 }
             }))
             .buffer_unordered(MAX_SEARCH_PROJECT_TEXTS_CONCURRENCY)
             .collect()
             .await;
-        completed.sort_by_key(|item| item["index"].as_u64().unwrap_or(u64::MAX));
-
-        ToolResult::ok(batch_output(
-            &runtime_project_id,
-            requested_count,
-            completed,
-            false,
-            None,
-            None,
-        ))
+        completed.sort_by_key(|item| item.index);
+        Ok(SearchBatch {
+            project: runtime_project_id,
+            items: completed,
+        })
     }
 }
 
@@ -1217,16 +1098,21 @@ mod tests {
         .unwrap();
         let marker = "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n";
         let stdout = format!("{marker}/private/absolute/secret.rs\u{0}2\n");
-        let single = crate::tool_runtime::files::search_project_text_output(
-            "agent:special:demo",
+        let single = crate::tool_runtime::files::search_project_text_outcome(
             &options,
             &stdout,
             Some(0),
             "",
+            None,
         );
-        assert!(single.success, "{:?}", single.error);
+        assert!(single.is_ok(), "{single:?}");
+        assert!(!single.as_ref().unwrap().is_complete_and_empty());
 
-        let item = batch_item(0, single);
+        let item = CompletedSearchQuery {
+            index: 0,
+            result: single,
+        }
+        .into_output();
         let mut batch = ToolResult::ok(batch_output(
             "agent:special:demo",
             1,
@@ -1798,20 +1684,29 @@ mod tests {
 
     #[test]
     fn omitted_query_failure_summary_uses_only_stable_classification() {
-        let mut failed = ToolResult::err("RAW_BACKEND_BODY_NEVER_RETURN");
-        failed.output = json!({
-            "code": "search_timeout",
-            "reason_code": "timeout",
-            "failure_stage": "agent_transport",
-            "stderr": "RAW_BACKEND_BODY_NEVER_RETURN",
-            "path": "/private/never-return.rs"
-        });
-        let item = batch_item(5, failed);
+        let options = SearchOptions::normalize(SearchRequest {
+            pattern: "needle".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        let failed = crate::tool_runtime::files::search_project_text_outcome(
+            &options,
+            "{\"webcodex_search\":{\"backend\":\"rg\"}}\n",
+            Some(-1),
+            "command timed out after 30 seconds: RAW_BACKEND_BODY_NEVER_RETURN /private/never-return.rs",
+            None,
+        );
+        assert!(failed.is_err());
+        let item = CompletedSearchQuery {
+            index: 5,
+            result: failed,
+        }
+        .into_output();
         let summary = omitted_query_summary(&item).unwrap();
         assert_eq!(summary["index"], 5);
         assert_eq!(summary["success"], false);
         assert_eq!(summary["reason_code"], "timeout");
-        assert_eq!(summary["failure_stage"], "agent_transport");
+        assert_eq!(summary["failure_stage"], "backend_execution");
         assert_eq!(summary["detail_code"], "timeout");
         let rendered = serde_json::to_string(&summary).unwrap();
         assert!(!rendered.contains("RAW_BACKEND_BODY_NEVER_RETURN"));

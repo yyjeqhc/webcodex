@@ -71,11 +71,11 @@ pub(crate) use search::search_project_text_command_with_head_fallbacks;
 #[cfg(test)]
 pub(crate) use search::{
     resolve_search_head_command, search_agent_timeout_budget, search_project_text_command,
-    search_project_text_output, MAX_SEARCH_CONTEXT_LINES, MAX_SEARCH_GLOBS, MAX_SEARCH_GLOB_BYTES,
-    SEARCH_OUTPUT_BYTE_BUDGET,
+    search_project_text_outcome, search_project_text_output, MAX_SEARCH_CONTEXT_LINES,
+    MAX_SEARCH_GLOBS, MAX_SEARCH_GLOB_BYTES, SEARCH_OUTPUT_BYTE_BUDGET,
 };
 pub(crate) use search::{
-    SearchOptions, SearchRequest, DEFAULT_SEARCH_HEAD_ABSOLUTE_CANDIDATES,
+    SearchOptions, SearchOutcome, SearchRequest, DEFAULT_SEARCH_HEAD_ABSOLUTE_CANDIDATES,
     DEFAULT_SEARCH_TIMEOUT_SECS,
 };
 

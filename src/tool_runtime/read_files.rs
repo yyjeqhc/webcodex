@@ -53,6 +53,92 @@ struct CompletedReadMember {
     result: Result<ObservedRead, FileReadFailure>,
 }
 
+/// Source ranges whose text actually survives the model-output budget. Entries
+/// stay aligned with output items, including failures and empty file reads.
+/// Sparse presentation never supplies or widens these facts.
+#[derive(Debug, Default)]
+pub(crate) struct RetainedReadRanges(Vec<Option<RetainedReadRange>>);
+
+#[derive(Debug)]
+struct RetainedReadRange {
+    path: String,
+    start_line: usize,
+    end_line: usize,
+}
+
+impl RetainedReadRanges {
+    pub(crate) fn apply_retention(&mut self, retention: ReadOutputRetention) {
+        let Some(retention) = retention.0 else {
+            return;
+        };
+        self.0.truncate(retention.item_count);
+        if let Some(keep_lines) = retention.last_item_lines {
+            if let Some(Some(range)) = self.0.last_mut() {
+                range.end_line = range.end_line.min(
+                    range
+                        .start_line
+                        .saturating_add(keep_lines)
+                        .saturating_sub(1),
+                );
+            }
+        }
+    }
+
+    pub(crate) fn contains(&self, path: &str, line: u64) -> bool {
+        self.0.iter().flatten().any(|range| {
+            range.path == path && (range.start_line as u64..=range.end_line as u64).contains(&line)
+        })
+    }
+}
+
+pub(crate) struct ReadFilesOutput {
+    pub result: ToolResult,
+    pub items: Vec<ReadFilesItem>,
+    pub retained: RetainedReadRanges,
+}
+
+impl ReadFilesOutput {
+    fn failure(result: ToolResult) -> Self {
+        Self {
+            result,
+            items: Vec::new(),
+            retained: RetainedReadRanges::default(),
+        }
+    }
+}
+
+/// Budget algorithms retain an ordered item prefix, possibly shortening its
+/// final item. Record that decision where it is made, before sparse projection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReadRetainedPrefix {
+    item_count: usize,
+    last_item_lines: Option<usize>,
+}
+
+impl ReadRetainedPrefix {
+    fn complete(item_count: usize) -> Self {
+        Self {
+            item_count,
+            last_item_lines: None,
+        }
+    }
+}
+
+/// Optional change from a projection pass. Ordinary read projection callers
+/// may discard it; compound inspection applies it to its typed evidence.
+#[derive(Debug, Default)]
+pub(crate) struct ReadOutputRetention(Option<ReadRetainedPrefix>);
+
+struct BudgetedReadBatch {
+    output: Value,
+    retention: ReadRetainedPrefix,
+}
+
+struct TruncatedReadItem {
+    output: Value,
+    retained_lines: usize,
+}
+
 impl CompletedReadMember {
     fn new(
         member: PlannedReadMember,
@@ -77,25 +163,34 @@ impl CompletedReadMember {
         }
     }
 
-    fn into_output(self, with_line_numbers: bool) -> Value {
+    fn into_output(self, with_line_numbers: bool) -> (Value, Option<RetainedReadRange>) {
+        let mut retained = None;
         let result = match self.result {
             Ok(observed) => {
                 let mut result =
                     build_read_file_success(&observed.range, with_line_numbers, Some(&self.path));
                 if result.success {
                     result.output["read_revision"] = json!(observed.revision);
+                    retained = observed.range.end_line.map(|end_line| RetainedReadRange {
+                        path: self.path.clone(),
+                        start_line: observed.range.start_line,
+                        end_line,
+                    });
                 }
                 result
             }
             Err(failure) => failure.into_tool_result(Some(&self.path)),
         };
-        json!({
-            "index": self.index,
-            "path": self.path,
-            "success": result.success,
-            "output": result.output,
-            "error": result.error,
-        })
+        (
+            json!({
+                "index": self.index,
+                "path": self.path,
+                "success": result.success,
+                "output": result.output,
+                "error": result.error,
+            }),
+            retained,
+        )
     }
 }
 
@@ -635,7 +730,7 @@ fn read_prefix_lengths(text: &str, returned_lines: usize) -> Option<Vec<usize>> 
     (prefixes.len() == returned_lines).then_some(prefixes)
 }
 
-fn truncate_read_item_to_fit(item: &Value, max_item_bytes: usize) -> Option<Value> {
+fn truncate_read_item_to_fit(item: &Value, max_item_bytes: usize) -> Option<TruncatedReadItem> {
     if item["success"].as_bool() != Some(true) {
         return None;
     }
@@ -681,7 +776,12 @@ fn truncate_read_item_to_fit(item: &Value, max_item_bytes: usize) -> Option<Valu
 
     // Construct the one selected output through the same canonical function
     // used by final hard-cap trimming, preserving every range/continuation key.
-    best_keep.and_then(|keep| truncate_read_item(item, keep))
+    best_keep.and_then(|keep| {
+        truncate_read_item(item, keep).map(|output| TruncatedReadItem {
+            output,
+            retained_lines: keep,
+        })
+    })
 }
 
 // The second-stage follow-up can change in size when a partial read range is
@@ -707,7 +807,8 @@ fn fit_truncated_batch_to_budget(
     mut output: Value,
     payload_budget: usize,
     projection: &ReadModelProjection,
-) -> Value {
+    mut retention: ReadRetainedPrefix,
+) -> BudgetedReadBatch {
     while projected_batch_serialized_len(&output, projection) > payload_budget {
         let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) else {
             break;
@@ -715,6 +816,8 @@ fn fit_truncated_batch_to_budget(
         let Some(removed) = items.pop() else {
             break;
         };
+        retention.item_count -= 1;
+        retention.last_item_lines = None;
         let next_index = removed["index"].as_u64().map(|index| index as usize);
         let mut low = 1usize;
         let mut high = removed["output"]["returned_lines"]
@@ -742,23 +845,25 @@ fn fit_truncated_batch_to_budget(
                 .pop()
                 .expect("candidate was just appended");
             if fits {
-                best = Some(candidate);
+                best = Some((candidate, keep));
                 low = keep + 1;
             } else {
                 high = keep.saturating_sub(1);
             }
         }
-        if let Some(partial) = best {
+        if let Some((partial, keep)) = best {
             output["items"]
                 .as_array_mut()
                 .expect("validated canonical batch")
                 .push(partial);
             sync_truncated_batch_counts(&mut output, next_index);
-            return output;
+            retention.item_count += 1;
+            retention.last_item_lines = Some(keep);
+            return BudgetedReadBatch { output, retention };
         }
         sync_truncated_batch_counts(&mut output, next_index);
     }
-    output
+    BudgetedReadBatch { output, retention }
 }
 
 fn apply_output_budget(
@@ -767,7 +872,8 @@ fn apply_output_budget(
     completed: Vec<Value>,
     max_result_bytes: Option<usize>,
     projection: &ReadModelProjection,
-) -> Value {
+) -> BudgetedReadBatch {
+    let mut retention = ReadRetainedPrefix::complete(completed.len());
     let result_budget = normalized_result_budget(max_result_bytes);
     let payload_budget = result_budget.saturating_sub(MODEL_RESULT_ENVELOPE_RESERVE_BYTES);
     // Own the canonical batch while measuring the final model projection.
@@ -778,7 +884,10 @@ fn apply_output_budget(
     // sparse projection. The canonical representation remains available for
     // Session recording and for any partial-item cursor construction below.
     if projected_batch_serialized_len(&complete, projection) <= payload_budget {
-        return complete;
+        return BudgetedReadBatch {
+            output: complete,
+            retention,
+        };
     }
     let completed = complete["items"]
         .as_array_mut()
@@ -804,6 +913,7 @@ fn apply_output_budget(
         projection,
     );
     let mut returned = Vec::with_capacity(completed.len());
+    retention.item_count = 0;
     let mut returned_item_bytes = 0usize;
     let mut next_index = None;
 
@@ -819,6 +929,7 @@ fn apply_output_budget(
         {
             returned_item_bytes = returned_item_bytes.saturating_add(item_len);
             returned.push(item);
+            retention.item_count += 1;
             continue;
         }
 
@@ -828,7 +939,9 @@ fn apply_output_budget(
             .saturating_sub(returned_item_bytes)
             .saturating_sub(separator_bytes);
         if let Some(partial) = truncate_read_item_to_fit(&item, max_item_bytes) {
-            returned.push(partial);
+            returned.push(partial.output);
+            retention.item_count += 1;
+            retention.last_item_lines = Some(partial.retained_lines);
         }
         // A partial current item resumes from its next_start_line, while an
         // omitted item resumes from its original range. In both cases the
@@ -847,33 +960,33 @@ fn apply_output_budget(
     );
     // Recheck the exact final projection using in-place binary-search probes,
     // retaining the accepted prefix and all canonical continuation semantics.
-    fit_truncated_batch_to_budget(output, payload_budget, projection)
+    fit_truncated_batch_to_budget(output, payload_budget, projection, retention)
 }
 
 pub(crate) fn apply_model_facing_output_budget(
     result: &mut ToolResult,
     max_result_bytes: Option<usize>,
     projection: &ReadModelProjection,
-) {
+) -> ReadOutputRetention {
     if !result.success {
-        return;
+        return ReadOutputRetention::default();
     }
     let Some(output) = result.output.as_object() else {
-        return;
+        return ReadOutputRetention::default();
     };
     let Some(project) = output
         .get("project")
         .and_then(Value::as_str)
         .map(str::to_string)
     else {
-        return;
+        return ReadOutputRetention::default();
     };
     let Some(requested_count) = output
         .get("requested_count")
         .and_then(Value::as_u64)
         .map(|count| count as usize)
     else {
-        return;
+        return ReadOutputRetention::default();
     };
     // All metadata has been validated; the original read bodies are no longer
     // needed separately after budgeting. Keep the surrounding result metadata
@@ -884,7 +997,7 @@ pub(crate) fn apply_model_facing_output_budget(
         .and_then(Value::as_array_mut)
         .map(std::mem::take)
     else {
-        return;
+        return ReadOutputRetention::default();
     };
 
     let budgeted = apply_output_budget(
@@ -895,7 +1008,7 @@ pub(crate) fn apply_model_facing_output_budget(
         projection,
     );
     let Some(root) = result.output.as_object_mut() else {
-        return;
+        return ReadOutputRetention::default();
     };
     for key in [
         "project",
@@ -912,11 +1025,12 @@ pub(crate) fn apply_model_facing_output_budget(
     }
     // Merge the owned budget result back into the original envelope to retain
     // any independent Session/context overlays, with no second item copy.
-    if let Value::Object(budgeted) = budgeted {
+    if let Value::Object(budgeted) = budgeted.output {
         for (key, value) in budgeted {
             root.insert(key, value);
         }
     }
+    ReadOutputRetention(Some(budgeted.retention))
 }
 
 fn final_model_result_len(output: &Value, projection: &ReadModelProjection) -> usize {
@@ -968,14 +1082,14 @@ fn mark_final_hard_cap_truncation(output: &mut Value, next_index: usize) {
 pub(crate) fn enforce_final_model_facing_hard_cap(
     result: &mut ToolResult,
     projection: &ReadModelProjection,
-) {
+) -> ReadOutputRetention {
     if !result.success
         || final_model_result_len(&result.output, projection) <= MAX_SERIALIZED_OUTPUT_BYTES
     {
-        return;
+        return ReadOutputRetention::default();
     }
     let Some(root) = result.output.as_object() else {
-        return;
+        return ReadOutputRetention::default();
     };
     if root.get("project").and_then(Value::as_str).is_none()
         || root
@@ -984,19 +1098,27 @@ pub(crate) fn enforce_final_model_facing_hard_cap(
             .is_none()
         || root.get("items").and_then(Value::as_array).is_none()
     {
-        return;
+        return ReadOutputRetention::default();
     }
+    let mut retention = ReadRetainedPrefix::complete(
+        root["items"]
+            .as_array()
+            .expect("validated read batch")
+            .len(),
+    );
 
     loop {
         let Some(items) = result.output.get_mut("items").and_then(Value::as_array_mut) else {
-            return;
+            return ReadOutputRetention(Some(retention));
         };
         // Move the last source item out while probing candidate line counts.
         // Previously every probe cloned the whole response (including all
         // accepted file bodies and Session/Job metadata) before trimming it.
         let Some(last) = items.pop() else {
-            return;
+            return ReadOutputRetention(Some(retention));
         };
+        retention.item_count -= 1;
+        retention.last_item_lines = None;
         let index = last["index"].as_u64().unwrap_or(0) as usize;
 
         // Preserve as many whole source lines as possible from the last success
@@ -1032,19 +1154,21 @@ pub(crate) fn enforce_final_model_facing_hard_cap(
                         .pop()
                         .expect("just appended candidate");
                     if fits {
-                        best = Some(candidate);
+                        best = Some((candidate, keep));
                         low = keep.saturating_add(1);
                     } else {
                         high = keep.saturating_sub(1);
                     }
                 }
-                if let Some(best) = best {
+                if let Some((best, keep)) = best {
                     result.output["items"]
                         .as_array_mut()
                         .expect("validated read batch")
                         .push(best);
                     mark_final_hard_cap_truncation(&mut result.output, index);
-                    return;
+                    retention.item_count += 1;
+                    retention.last_item_lines = Some(keep);
+                    return ReadOutputRetention(Some(retention));
                 }
             }
         }
@@ -1053,7 +1177,7 @@ pub(crate) fn enforce_final_model_facing_hard_cap(
         // removed; keep its exact original index as the continuation boundary.
         mark_final_hard_cap_truncation(&mut result.output, index);
         if final_model_result_len(&result.output, projection) <= MAX_SERIALIZED_OUTPUT_BYTES {
-            return;
+            return ReadOutputRetention(Some(retention));
         }
     }
 }
@@ -1147,7 +1271,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         self.read_files_planned_resolved(resolved, items, with_line_numbers, false)
             .await
-            .0
+            .result
     }
 
     /// Return successful union ranges once, while retaining the original member
@@ -1158,7 +1282,7 @@ impl ToolRuntime {
         resolved: &ResolvedProject,
         items: Vec<ReadFilesItem>,
         with_line_numbers: Option<bool>,
-    ) -> (ToolResult, Vec<ReadFilesItem>) {
+    ) -> ReadFilesOutput {
         self.read_files_planned_resolved(resolved, items, with_line_numbers, true)
             .await
     }
@@ -1169,26 +1293,22 @@ impl ToolRuntime {
         items: Vec<ReadFilesItem>,
         with_line_numbers: Option<bool>,
         coalesced_output: bool,
-    ) -> (ToolResult, Vec<ReadFilesItem>) {
+    ) -> ReadFilesOutput {
         if !(1..=MAX_READ_FILES_ITEMS).contains(&items.len())
             || items.iter().any(|item| item.path.trim().is_empty())
         {
-            return (
-                ToolResult::err("read_files requires 1 to 8 items with non-empty paths"),
-                Vec::new(),
-            );
+            return ReadFilesOutput::failure(ToolResult::err(
+                "read_files requires 1 to 8 items with non-empty paths",
+            ));
         }
 
         let runtime_project_id = resolved.resolved_id.clone();
         let Some(runner_project_id) =
             crate::tool_runtime::runner_local_project_id(&resolved.resolved_id).map(str::to_string)
         else {
-            return (
-                ToolResult::err(
-                    "read_files could not bind the resolved Project to a Runner-local project id",
-                ),
-                Vec::new(),
-            );
+            return ReadFilesOutput::failure(ToolResult::err(
+                "read_files could not bind the resolved Project to a Runner-local project id",
+            ));
         };
         let planned_reads = plan_read_files(items.clone());
         let with_line_numbers = with_line_numbers.unwrap_or(false);
@@ -1206,7 +1326,7 @@ impl ToolRuntime {
         {
             Some(view) => view.runner_instance_id,
             None => {
-                return (
+                return ReadFilesOutput::failure(
                     ToolResult::err_with_output(
                         "read_files could not bind the read snapshot to an active Runner process; retry after the Runner is available",
                         json!({
@@ -1216,7 +1336,6 @@ impl ToolRuntime {
                             "retry_guidance": "retry read_files after the owning Runner is available"
                         }),
                     ),
-                    Vec::new(),
                 )
             }
         };
@@ -1365,26 +1484,161 @@ impl ToolRuntime {
         } else {
             items
         };
-        (
-            ToolResult::ok(batch_output(
+        let (outputs, retained): (Vec<_>, Vec<_>) = completed
+            .into_iter()
+            .map(|member| member.into_output(with_line_numbers))
+            .unzip();
+        ReadFilesOutput {
+            result: ToolResult::ok(batch_output(
                 &runtime_project_id,
                 output_items.len(),
-                completed
-                    .into_iter()
-                    .map(|member| member.into_output(with_line_numbers))
-                    .collect(),
+                outputs,
                 false,
                 None,
                 None,
             )),
-            output_items,
-        )
+            items: output_items,
+            retained: RetainedReadRanges(retained),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn typed_member(index: usize, content: &str) -> CompletedReadMember {
+        let range = webcodex_workspace::file_read_range::read_range_from(
+            content.as_bytes(),
+            webcodex_workspace::file_read_range::EffectiveRange::new(None, None),
+        )
+        .unwrap();
+        CompletedReadMember::new(
+            PlannedReadMember {
+                index,
+                start_line: None,
+                limit: None,
+            },
+            &format!("src/{index}.rs"),
+            Ok((&range, 71 + index as u64)),
+            false,
+        )
+    }
+
+    fn typed_batch(members: Vec<CompletedReadMember>) -> (ToolResult, RetainedReadRanges) {
+        let count = members.len();
+        let (items, ranges) = members
+            .into_iter()
+            .map(|member| member.into_output(false))
+            .unzip();
+        (
+            ToolResult::ok(batch_output(
+                "agent:oe:demo",
+                count,
+                items,
+                false,
+                None,
+                None,
+            )),
+            RetainedReadRanges(ranges),
+        )
+    }
+
+    #[test]
+    fn retained_read_ranges_follow_primary_budget_and_complete_file_sparsity() {
+        let large = vec!["x".repeat(900); 200].join("\n");
+        let (mut result, mut retained) = typed_batch(vec![
+            typed_member(0, "one\ntwo\nthree"),
+            typed_member(1, &large),
+            typed_member(2, "later"),
+        ]);
+        let projection = batch_projection(3, None);
+        retained.apply_retention(apply_model_facing_output_budget(
+            &mut result,
+            None,
+            &projection,
+        ));
+        let items = result.output["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2, "the later item must be omitted");
+        let kept = items[1]["output"]["returned_lines"].as_u64().unwrap();
+        assert!((1..200).contains(&kept));
+        assert!(retained.contains("src/1.rs", kept));
+        assert!(!retained.contains("src/1.rs", kept + 1));
+        assert!(!retained.contains("src/2.rs", 1));
+        add_actionable_read_continuations(&projection, &mut result);
+        super::super::result_projection::sparsify_complete_read_success("read_files", &mut result);
+        assert!(result.output["items"][0]["output"]
+            .get("start_line")
+            .is_none());
+        assert!(retained.contains("src/0.rs", 3));
+        assert!(
+            !retained.contains("src/0.rs", 4),
+            "omitted range fields never imply whole-file wildcard coverage"
+        );
+    }
+
+    #[test]
+    fn retained_read_ranges_follow_final_hard_cap_after_primary_budget() {
+        let large = vec!["x".repeat(900); 200].join("\n");
+        let (mut result, mut retained) = typed_batch(vec![
+            typed_member(0, "one\ntwo"),
+            typed_member(1, &large),
+            typed_member(2, "later"),
+        ]);
+        let projection = batch_projection(3, Some(MAX_SERIALIZED_OUTPUT_BYTES));
+        retained.apply_retention(apply_model_facing_output_budget(
+            &mut result,
+            Some(MAX_SERIALIZED_OUTPUT_BYTES),
+            &projection,
+        ));
+        assert!(retained.contains("src/1.rs", 200));
+        assert!(retained.contains("src/2.rs", 1));
+        result.output["context"] = json!("m".repeat(400_000));
+        retained.apply_retention(enforce_final_model_facing_hard_cap(
+            &mut result,
+            &projection,
+        ));
+        let items = result.output["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        let kept = items[1]["output"]["returned_lines"].as_u64().unwrap();
+        assert!((1..200).contains(&kept));
+        assert!(retained.contains("src/1.rs", kept));
+        assert!(!retained.contains("src/1.rs", kept + 1));
+        assert!(!retained.contains("src/2.rs", 1));
+        assert!(final_model_result_len(&result.output, &projection) <= MAX_SERIALIZED_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn failed_empty_and_omitted_reads_never_claim_materialized_text() {
+        let failed = CompletedReadMember::new(
+            PlannedReadMember {
+                index: 0,
+                start_line: Some(1),
+                limit: Some(10),
+            },
+            "src/0.rs",
+            Err(ReadFileReason::NotFound.into()),
+            false,
+        );
+        let (mut result, mut retained) = typed_batch(vec![
+            failed,
+            typed_member(1, ""),
+            typed_member(2, &"x".repeat(100_000)),
+        ]);
+        let projection = batch_projection(3, None);
+        retained.apply_retention(apply_model_facing_output_budget(
+            &mut result,
+            None,
+            &projection,
+        ));
+        assert_eq!(result.output["items"].as_array().unwrap().len(), 2);
+        for path in ["src/0.rs", "src/1.rs", "src/2.rs"] {
+            assert!(
+                !retained.contains(path, 1),
+                "no returned source line for {path}"
+            );
+        }
+    }
 
     fn batch_projection(count: usize, max_result_bytes: Option<usize>) -> ReadModelProjection {
         ReadModelProjection::Batch {
@@ -1588,7 +1842,13 @@ mod tests {
                     }
                     let expected =
                         reference_truncated_batch_fit(input.clone(), budget, &projection);
-                    let actual = fit_truncated_batch_to_budget(input, budget, &projection);
+                    let actual = fit_truncated_batch_to_budget(
+                        input,
+                        budget,
+                        &projection,
+                        ReadRetainedPrefix::complete(count),
+                    )
+                    .output;
                     assert_eq!(
                         actual, expected,
                         "budget={budget} reason={reason} items={count}: optimized backoff must be exact"
@@ -1668,13 +1928,10 @@ mod tests {
         ] {
             let count = items.len();
             let projection = batch_projection(count, budget);
-            let mut expected = ToolResult::ok(apply_output_budget(
-                "agent:oe:demo",
-                count,
-                items.clone(),
-                budget,
-                &projection,
-            ));
+            let mut expected = ToolResult::ok(
+                apply_output_budget("agent:oe:demo", count, items.clone(), budget, &projection)
+                    .output,
+            );
             let mut actual = ToolResult::ok(batch_output(
                 "agent:oe:demo",
                 count,
@@ -1875,7 +2132,7 @@ mod tests {
             let unchanged = item.clone();
             for &max in &budgets {
                 let expected = legacy_truncate_read_item_to_fit(item, max);
-                let actual = truncate_read_item_to_fit(item, max);
+                let actual = truncate_read_item_to_fit(item, max).map(|partial| partial.output);
                 assert_eq!(
                     actual, expected,
                     "fixture={index} max_item_bytes={max}: candidate content/range/continuation changed"
@@ -2003,7 +2260,8 @@ mod tests {
             completed.clone(),
             Some(legacy_budget),
             &projection,
-        );
+        )
+        .output;
         assert_eq!(output["returned_count"], 1);
         assert_eq!(output["output_truncated"], true);
         assert_eq!(output["next_index"], 1);
@@ -2027,7 +2285,8 @@ mod tests {
             completed,
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
             &expanded_projection,
-        );
+        )
+        .output;
         assert_eq!(expanded["returned_count"], 2);
         assert_eq!(expanded["output_truncated"], false);
     }
@@ -2056,7 +2315,8 @@ mod tests {
             ],
             Some(legacy_budget),
             &projection,
-        );
+        )
+        .output;
         assert_eq!(output["output_truncated"], true);
         assert_eq!(output["next_index"], 1);
         assert_eq!(output["items"].as_array().unwrap().len(), 1);
@@ -2121,7 +2381,8 @@ mod tests {
                     }
                 })
                 .collect();
-            let output = apply_output_budget("agent:oe:demo", count, completed, None, &projection);
+            let output =
+                apply_output_budget("agent:oe:demo", count, completed, None, &projection).output;
             let partial = &output["items"][partial_index]["output"];
             assert_eq!(partial["budget_truncated"], true);
             let next_start = partial["next_start_line"].clone();
@@ -2172,7 +2433,8 @@ mod tests {
             vec![ranged_item(0, 1, &huge_line)],
             None,
             &projection,
-        );
+        )
+        .output;
         assert_eq!(output["output_truncated"], true);
         assert_eq!(output["next_index"], 0);
         assert!(output["items"].as_array().unwrap().is_empty());
@@ -2208,7 +2470,8 @@ mod tests {
             vec![ranged_item(0, 1, &oversized_single_line)],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
             &projection,
-        );
+        )
+        .output;
         assert_eq!(output["output_truncated"], true);
         assert_eq!(output["truncation_reason"], "hard_result_cap");
         assert_eq!(output["next_index"], 0);
@@ -2256,7 +2519,8 @@ mod tests {
             ],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
             &batch_projection(3, Some(MAX_SERIALIZED_OUTPUT_BYTES)),
-        );
+        )
+        .output;
         assert_eq!(output["returned_count"], 2);
         assert_eq!(output["next_index"], 2);
 
@@ -2288,14 +2552,16 @@ mod tests {
             completed.clone(),
             None,
             &batch_projection(1, None),
-        );
+        )
+        .output;
         let large = apply_output_budget(
             "agent:oe:demo",
             1,
             completed,
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
             &batch_projection(1, Some(MAX_SERIALIZED_OUTPUT_BYTES)),
-        );
+        )
+        .output;
         let partial = &default["items"][0]["output"];
         let kept = partial["returned_lines"].as_u64().unwrap() as usize;
         assert!(kept > 0 && kept < lines.len());
@@ -2325,7 +2591,8 @@ mod tests {
             vec![ranged_item(0, 11, &lines)],
             None,
             &batch_projection(1, None),
-        );
+        )
+        .output;
         let first_output = &first["items"][0]["output"];
         let kept = first_output["returned_lines"].as_u64().unwrap() as usize;
         let next_start = first_output["next_start_line"].as_u64().unwrap() as usize;
@@ -2339,7 +2606,8 @@ mod tests {
             vec![ranged_item(0, next_start, &lines[kept..])],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
             &batch_projection(1, Some(MAX_SERIALIZED_OUTPUT_BYTES)),
-        );
+        )
+        .output;
         let joined = format!(
             "{}\n{}",
             first_output["text"].as_str().unwrap(),
@@ -2441,7 +2709,8 @@ mod tests {
             full_budget_batch["items"].as_array().unwrap().clone(),
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
             &large_projection,
-        );
+        )
+        .output;
         let budget_batch_model = model_bytes("read_files", &budgeted, &large_projection);
 
         let partial_lines = (0..900)
@@ -2467,7 +2736,8 @@ mod tests {
             partial_plus_later_full["items"].as_array().unwrap().clone(),
             None,
             &partial_plus_later_projection,
-        );
+        )
+        .output;
         let partial_plus_later_model = model_bytes(
             "read_files",
             &partial_plus_later_budgeted,

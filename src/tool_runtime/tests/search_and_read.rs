@@ -439,3 +439,139 @@ async fn search_and_read_no_matches_does_not_dispatch_a_read() {
     assert_eq!(result.output["read_request_count"], 0);
     validate_compound_schema(&result);
 }
+
+#[tokio::test]
+async fn search_and_read_failed_fallback_member_keeps_its_preview() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "compound-fallback-preview";
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let task = start_inspection(&runtime, &project, &session.session_id, 100, 100);
+    complete_search(&runtime, client_id, &[100, 250]).await;
+
+    let merged = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(merged.start_line, Some(1));
+    assert_eq!(merged.end_line, Some(350));
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &merged.request_id,
+        1,
+        "",
+        "read_file failed: range_too_large",
+    )
+    .await;
+
+    let first = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(first.start_line, Some(1));
+    assert_eq!(first.end_line, Some(200));
+    let content = (1..=400)
+        .map(|line| format!("source {line}\n"))
+        .collect::<String>();
+    complete_agent_ranged_file_read_request(&runtime, client_id, &first, &content).await;
+    let second = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(second.start_line, Some(150));
+    assert_eq!(second.end_line, Some(350));
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &second.request_id,
+        1,
+        "",
+        "read_file failed: not_found",
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["coalesced_read_count"], 2);
+    let reads = &result.output["reads"];
+    assert_eq!(reads["succeeded_count"], 1);
+    assert_eq!(reads["failed_count"], 1);
+    assert_eq!(reads["items"][0]["output"]["end_line"], 200);
+    assert_eq!(reads["items"][1]["success"], false);
+    assert_eq!(reads["items"][1]["output"]["reason_code"], "not_found");
+    let matches = result.output["search"]["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0]["line"], 100);
+    assert!(matches[0].get("preview").is_none());
+    assert_eq!(matches[1]["line"], 250);
+    assert_eq!(matches[1]["preview"], "needle");
+    assert!(matches
+        .iter()
+        .all(|matched| matched.get("read_hint").is_none()));
+    validate_compound_schema(&result);
+}
+
+#[tokio::test]
+async fn search_and_read_budget_keeps_previews_for_trimmed_and_omitted_text() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "compound-budget-preview";
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let task = start_inspection(&runtime, &project, &session.session_id, 0, 20);
+    complete_search(&runtime, client_id, &[10, 300, 340, 600]).await;
+
+    // The middle union fits one physical read but exceeds the model budget.
+    // Its first match survives; its later match and the last group do not.
+    let content = (1..=640)
+        .map(|line| {
+            if (300..=360).contains(&line) {
+                format!("source {line} {}\n", "x".repeat(2048))
+            } else {
+                format!("source {line}\n")
+            }
+        })
+        .collect::<String>();
+    let mut requested_ranges = Vec::new();
+    for _ in 0..3 {
+        let request = wait_for_patch_agent_request(&runtime, client_id).await;
+        requested_ranges.push((request.start_line.unwrap(), request.end_line.unwrap()));
+        complete_agent_ranged_file_read_request(&runtime, client_id, &request, &content).await;
+    }
+    requested_ranges.sort_unstable();
+    assert_eq!(requested_ranges, vec![(10, 30), (300, 360), (600, 620)]);
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["read_request_count"], 4);
+    assert_eq!(result.output["coalesced_read_count"], 3);
+    let reads = &result.output["reads"];
+    assert_eq!(reads["output_truncated"], true);
+    let returned = reads["items"].as_array().unwrap();
+    assert_eq!(returned.len(), 2, "the final physical read must be omitted");
+    assert_eq!(returned[0]["output"]["start_line"], 10);
+    assert_eq!(returned[0]["output"]["end_line"], 30);
+    let partial = &returned[1]["output"];
+    assert_eq!(partial["start_line"], 300);
+    assert_eq!(partial["budget_truncated"], true);
+    let retained_end = partial["end_line"].as_u64().unwrap();
+    assert!(
+        (300..340).contains(&retained_end),
+        "fixture must trim the later match"
+    );
+    // Sparse output keeps continuation positions only in the batch suggested call.
+    assert!(partial.get("next_start_line").is_none());
+
+    let matches = result.output["search"]["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 4);
+    for (matched, line) in matches.iter().zip([10, 300, 340, 600]) {
+        assert_eq!(matched["line"], line);
+        if line == 10 || line == 300 {
+            assert!(matched.get("preview").is_none());
+        } else {
+            assert_eq!(matched["preview"], "needle");
+        }
+        assert!(matched.get("read_hint").is_none());
+    }
+    let continuation = &reads["suggested_call"]["arguments"]["items"];
+    // A returned range in the middle of a file keeps its ordinary next-page
+    // continuation alongside the budget-trimmed and entirely omitted ranges.
+    assert_eq!(continuation.as_array().unwrap().len(), 3);
+    assert_eq!(continuation[0]["start_line"], 31);
+    assert_eq!(continuation[1]["start_line"], retained_end + 1);
+    assert_eq!(continuation[2]["start_line"], 600);
+    validate_compound_schema(&result);
+}

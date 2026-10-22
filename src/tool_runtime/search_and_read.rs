@@ -1,3 +1,5 @@
+use super::read_files::{ReadFilesOutput, RetainedReadRanges};
+use super::search_project_texts::SearchBatch;
 use super::{
     ReadFilesItem, ResolvedProject, SearchProjectTextsQuery, SearchResultMode, ToolResult,
     ToolRuntime,
@@ -9,20 +11,16 @@ const MAX_READ_CONTEXT: usize = 100;
 const DEFAULT_MAX_READS: usize = 8;
 const MAX_READS: usize = 8;
 
-fn match_read_items(
-    search_output: &Value,
+fn match_read_items<'a>(
+    matches: impl IntoIterator<Item = (&'a str, u64)>,
     read_before: usize,
     read_after: usize,
     max_reads: usize,
 ) -> Vec<ReadFilesItem> {
-    search_output
-        .get("matches")
-        .and_then(Value::as_array)
+    matches
         .into_iter()
-        .flatten()
-        .filter_map(|matched| {
-            let path = matched.get("path")?.as_str()?;
-            let line = usize::try_from(matched.get("line")?.as_u64()?).ok()?;
+        .filter_map(|(path, line)| {
+            let line = usize::try_from(line).ok()?;
             let start_line = line.saturating_sub(read_before).max(1);
             let end_line = line.saturating_add(read_after);
             Some(ReadFilesItem {
@@ -36,28 +34,35 @@ fn match_read_items(
         .collect()
 }
 
-fn sanitize_batch_search_and_collect_successes(batch: &mut Value) -> Vec<Value> {
-    let mut successful = Vec::new();
+/// The mask comes from typed search identities and the final retained read
+/// ranges. This function only shapes the public output; it never derives facts
+/// from a sparse or budget-truncated JSON representation.
+fn project_compound_matches(batch: &mut Value, materialized: &[Option<Vec<bool>>]) {
     let Some(items) = batch.get_mut("items").and_then(Value::as_array_mut) else {
-        return successful;
+        return;
     };
-    for item in items {
-        if item.get("success").and_then(Value::as_bool) != Some(true) {
-            continue;
-        }
-        let Some(output) = item.get_mut("output") else {
+    for (item, materialized) in items.iter_mut().zip(materialized) {
+        let Some(materialized) = materialized else {
             continue;
         };
-        if let Some(matches) = output.get_mut("matches").and_then(Value::as_array_mut) {
-            for matched in matches {
-                if let Some(object) = matched.as_object_mut() {
-                    object.remove("read_hint");
+        let Some(matches) = item
+            .get_mut("output")
+            .and_then(|output| output.get_mut("matches"))
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+        for (matched, covered) in matches.iter_mut().zip(materialized) {
+            if let Some(object) = matched.as_object_mut() {
+                object.remove("read_hint");
+                if *covered {
+                    for key in ["preview", "context_before", "context_after"] {
+                        object.remove(key);
+                    }
                 }
             }
         }
-        successful.push(output.clone());
     }
-    successful
 }
 
 /// Reuse the ordinary search projection only after match-derived read planning has consumed
@@ -71,114 +76,40 @@ pub(crate) fn compact_compound_search(batch: Value, default_timeouts: &[bool]) -
     result.output
 }
 
-#[derive(Debug)]
-struct MaterializedReadRange<'a> {
-    path: &'a str,
-    start_line: Option<u64>,
-    end_line: Option<u64>,
-    complete_file: bool,
-}
-
-fn materialized_read_ranges(reads: &Value) -> Vec<MaterializedReadRange<'_>> {
-    reads
-        .get("items")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|item| {
-            if item.get("success").and_then(Value::as_bool) != Some(true) {
-                return None;
-            }
-            let path = item.get("path")?.as_str()?;
-            let output = item.get("output")?.as_object()?;
-            if output.get("text").and_then(Value::as_str).is_none() {
-                return None;
-            }
-            let start_line = output.get("start_line").and_then(Value::as_u64);
-            let end_line = output.get("end_line").and_then(Value::as_u64);
-            let complete_file = start_line.is_none()
-                && end_line.is_none()
-                && output
-                    .get("read_revision")
-                    .and_then(Value::as_u64)
-                    .is_some()
-                && output.get("total_lines").and_then(Value::as_u64).is_some();
-            Some(MaterializedReadRange {
-                path,
-                start_line,
-                end_line,
-                complete_file,
+fn project_compound_search(
+    batch: SearchBatch,
+    default_timeouts: &[bool],
+    retained: &RetainedReadRanges,
+) -> Value {
+    let query_count = batch.items.len();
+    let materialized = batch
+        .items
+        .iter()
+        .map(|item| {
+            item.result.as_ref().ok().map(|success| {
+                success
+                    .matches()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|matched| retained.contains(&matched.path, matched.line))
+                    .collect()
             })
         })
-        .collect()
-}
-
-fn match_is_materialized(matched: &Value, materialized: &[MaterializedReadRange<'_>]) -> bool {
-    let Some(path) = matched.get("path").and_then(Value::as_str) else {
-        return false;
-    };
-    let Some(line) = matched.get("line").and_then(Value::as_u64) else {
-        return false;
-    };
-    materialized.iter().any(|read| {
-        read.path == path
-            && (read.complete_file
-                || read
-                    .start_line
-                    .zip(read.end_line)
-                    .is_some_and(|(start, end)| (start..=end).contains(&line)))
-    })
-}
-
-fn compact_materialized_matches(output: &mut Value, materialized: &[MaterializedReadRange<'_>]) {
-    let Some(matches) = output.get_mut("matches").and_then(Value::as_array_mut) else {
-        return;
-    };
-    for matched in matches {
-        if !match_is_materialized(matched, materialized) {
-            continue;
-        }
-        if let Some(object) = matched.as_object_mut() {
-            for key in ["preview", "context_before", "context_after", "read_hint"] {
-                object.remove(key);
-            }
-        }
-    }
-}
-
-/// Once source text for a match is present in the returned read evidence, keep
-/// only its navigation identity in the search phase. Unmaterialized matches and
-/// per-query failures retain their ordinary search projection so the compound
-/// call never trades away evidence merely to save model-facing bytes.
-fn compact_materialized_search_evidence(search: &mut Value, reads: &Value) {
-    let materialized = materialized_read_ranges(reads);
-    if materialized.is_empty() {
-        return;
-    }
-    if let Some(items) = search.get_mut("items").and_then(Value::as_array_mut) {
-        for item in items {
-            if item.get("success").and_then(Value::as_bool) != Some(true) {
-                continue;
-            }
-            if let Some(output) = item.get_mut("output") {
-                compact_materialized_matches(output, &materialized);
-            }
-        }
+        .collect::<Vec<_>>();
+    let mut output = batch.into_tool_result().output;
+    project_compound_matches(&mut output, &materialized);
+    let mut output = compact_compound_search(output, default_timeouts);
+    if query_count == 1 {
+        output["items"][0]["output"].take()
     } else {
-        compact_materialized_matches(search, &materialized);
+        output
     }
 }
 
 fn fair_match_read_items(
-    searches: &[Value],
-    read_before: usize,
-    read_after: usize,
+    per_query: Vec<Vec<ReadFilesItem>>,
     max_reads: usize,
 ) -> Vec<ReadFilesItem> {
-    let per_query: Vec<Vec<ReadFilesItem>> = searches
-        .iter()
-        .map(|search| match_read_items(search, read_before, read_after, max_reads))
-        .collect();
     let mut result = Vec::with_capacity(max_reads);
     let mut offset = 0;
     while result.len() < max_reads {
@@ -255,7 +186,6 @@ impl ToolRuntime {
             query.limit = Some(query.limit.unwrap_or(max_reads).min(max_reads));
         }
 
-        let query_count = queries.len();
         let default_timeouts: Vec<bool> = queries
             .iter()
             .map(|query| {
@@ -265,27 +195,38 @@ impl ToolRuntime {
                     == super::files::DEFAULT_SEARCH_TIMEOUT_SECS as i64
             })
             .collect();
-        let search = self.search_project_texts_resolved(resolved, queries).await;
-        if !search.success {
-            return search;
-        }
-        let mut batch_search_output = search.output;
-        let search_outputs = sanitize_batch_search_and_collect_successes(&mut batch_search_output);
-        if search_outputs.is_empty() {
+        let search = match self
+            .search_project_texts_resolved_typed(resolved, queries)
+            .await
+        {
+            Ok(search) => search,
+            Err(error) => return error.into_tool_result(),
+        };
+        if !search.items.iter().any(|item| item.result.is_ok()) {
             return ToolResult::err_with_output(
                 "search_file_context could not obtain a successful search result",
-                json!({"project": resolved.resolved_id, "search": batch_search_output, "state_changed": false}),
+                json!({"project": resolved.resolved_id, "search": search.into_tool_result().output, "state_changed": false}),
             );
         }
-        let items = fair_match_read_items(&search_outputs, read_before, read_after, max_reads);
-        let projected_search = compact_compound_search(batch_search_output, &default_timeouts);
-        let mut search_output = if query_count == 1 {
-            projected_search["items"][0]["output"].clone()
-        } else {
-            // Keep query correspondence and failures; only redundant presentation metadata is removed.
-            projected_search
-        };
+        let per_query = search
+            .items
+            .iter()
+            .filter_map(|item| {
+                let matches = item.result.as_ref().ok()?.matches()?;
+                Some(match_read_items(
+                    matches
+                        .iter()
+                        .map(|matched| (matched.path.as_str(), matched.line)),
+                    read_before,
+                    read_after,
+                    max_reads,
+                ))
+            })
+            .collect();
+        let items = fair_match_read_items(per_query, max_reads);
         if items.is_empty() {
+            let search_output =
+                project_compound_search(search, &default_timeouts, &RetainedReadRanges::default());
             return ToolResult::ok(json!({
                 "project": resolved.resolved_id,
                 "search": search_output,
@@ -298,7 +239,11 @@ impl ToolRuntime {
         // Keep original members for canonical byte-ceiling fallback, but return
         // each successful physical union only once. Continuations must follow
         // the actual output ranges, not the optimistic pre-execution plan.
-        let (mut reads, output_items) = self
+        let ReadFilesOutput {
+            result: mut reads,
+            items: output_items,
+            mut retained,
+        } = self
             .read_files_coalesced_resolved(resolved, items, with_line_numbers)
             .await;
         let coalesced_reads = output_items.len();
@@ -309,12 +254,15 @@ impl ToolRuntime {
             with_line_numbers,
             max_result_bytes: Some(super::read_files::DEFAULT_READ_FILES_RESULT_BYTES),
         };
-        super::read_files::apply_model_facing_output_budget(
+        retained.apply_retention(super::read_files::apply_model_facing_output_budget(
             &mut reads,
             Some(super::read_files::DEFAULT_READ_FILES_RESULT_BYTES),
             &projection,
-        );
-        super::read_files::enforce_final_model_facing_hard_cap(&mut reads, &projection);
+        ));
+        retained.apply_retention(super::read_files::enforce_final_model_facing_hard_cap(
+            &mut reads,
+            &projection,
+        ));
         super::read_files::add_actionable_read_continuations(&projection, &mut reads);
         super::result_projection::sparsify_complete_read_success("read_files", &mut reads);
         // The outer Project already identifies both phases; never remove a distinct identity.
@@ -325,7 +273,7 @@ impl ToolRuntime {
                 output.remove("project");
             }
         }
-        compact_materialized_search_evidence(&mut search_output, &reads.output);
+        let search_output = project_compound_search(search, &default_timeouts, &retained);
         ToolResult::ok(json!({
             "project": resolved.resolved_id,
             "search": search_output,
@@ -380,13 +328,8 @@ mod tests {
 
     #[test]
     fn match_ranges_are_bounded_and_start_at_one() {
-        let search = json!({
-            "matches": [
-                {"path": "src/a.rs", "line": 5},
-                {"path": "src/a.rs", "line": 100}
-            ]
-        });
-        let items = match_read_items(&search, 40, 40, 8);
+        let search = [("src/a.rs", 5), ("src/a.rs", 100)];
+        let items = match_read_items(search, 40, 40, 8);
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].start_line, Some(1));
         assert_eq!(items[0].limit, Some(45));
@@ -396,15 +339,13 @@ mod tests {
 
     #[test]
     fn overlapping_match_ranges_are_coalesced_before_compound_read() {
-        let search = json!({
-            "matches": [
-                {"path": "index.vue", "line": 26},
-                {"path": "index.vue", "line": 43},
-                {"path": "index.vue", "line": 60},
-                {"path": "index.vue", "line": 77}
-            ]
-        });
-        let items = match_read_items(&search, 20, 59, 8);
+        let search = [
+            ("index.vue", 26),
+            ("index.vue", 43),
+            ("index.vue", 60),
+            ("index.vue", 77),
+        ];
+        let items = match_read_items(search, 20, 59, 8);
         assert_eq!(items.len(), 4);
         let merged = super::super::read_files::coalesce_read_files_items(items);
         assert_eq!(merged.len(), 1);
@@ -427,8 +368,7 @@ mod tests {
             ],
             "output_truncated": false
         });
-        let successes = sanitize_batch_search_and_collect_successes(&mut batch);
-        assert_eq!(successes.len(), 2);
+        project_compound_matches(&mut batch, &[Some(vec![false]), None, Some(vec![false])]);
         assert_eq!(batch["items"].as_array().unwrap().len(), 3);
         assert_eq!(batch["items"][0]["index"], 0);
         assert_eq!(batch["items"][1]["index"], 1);
@@ -444,53 +384,25 @@ mod tests {
     }
 
     #[test]
-    fn compound_projection_compacts_only_matches_covered_by_successful_reads() {
-        let mut search = json!({
+    fn compound_projection_compacts_only_matches_with_retained_text() {
+        let mut search = json!({"items": [{"index": 0, "success": true, "output": {
             "matches": [
-                {
-                    "path": "src/a.rs",
-                    "line": 10,
-                    "preview": "needle a",
-                    "context_before": [],
-                    "context_after": [],
-                    "read_hint": {"start_line": 1, "limit": 80}
-                },
-                {
-                    "path": "src/b.rs",
-                    "line": 20,
-                    "preview": "needle b",
-                    "context_before": [],
-                    "context_after": [],
-                    "read_hint": {"start_line": 1, "limit": 80}
-                }
+                {"path": "src/a.rs", "line": 10, "preview": "needle a", "context_before": [],
+                 "context_after": [], "read_hint": {"start_line": 1, "limit": 80}},
+                {"path": "src/b.rs", "line": 20, "preview": "needle b", "context_before": [],
+                 "context_after": [], "read_hint": {"start_line": 1, "limit": 80}}
             ]
-        });
-        let reads = json!({
-            "items": [
-                {
-                    "path": "src/a.rs",
-                    "success": true,
-                    "output": {"text": "materialized", "start_line": 1, "end_line": 30},
-                    "error": null
-                },
-                {
-                    "path": "src/b.rs",
-                    "success": false,
-                    "output": {"reason_code": "not_found"},
-                    "error": "read failed"
-                }
-            ]
-        });
+        }}]});
         let before = serde_json::to_vec(&search).unwrap().len();
-        compact_materialized_search_evidence(&mut search, &reads);
+        project_compound_matches(&mut search, &[Some(vec![true, false])]);
         let after = serde_json::to_vec(&search).unwrap().len();
-
-        assert_eq!(search["matches"][0]["path"], "src/a.rs");
-        assert_eq!(search["matches"][0]["line"], 10);
-        assert!(search["matches"][0].get("preview").is_none());
-        assert!(search["matches"][0].get("read_hint").is_none());
-        assert_eq!(search["matches"][1]["preview"], "needle b");
-        assert!(search["matches"][1].get("read_hint").is_some());
+        let matches = &search["items"][0]["output"]["matches"];
+        assert_eq!(matches[0]["path"], "src/a.rs");
+        assert_eq!(matches[0]["line"], 10);
+        assert!(matches[0].get("preview").is_none());
+        assert!(matches[0].get("read_hint").is_none());
+        assert_eq!(matches[1]["preview"], "needle b");
+        assert!(matches[1].get("read_hint").is_none());
         assert!(
             after < before,
             "materialized duplicate evidence should shrink"
@@ -508,10 +420,10 @@ mod tests {
             matches!(parsed, crate::tool_runtime::ToolCall::SearchAndRead { query: None, queries: Some(queries), .. } if queries.len() == 2)
         );
         let searches = vec![
-            json!({"matches":[{"path":"a.rs","line":10},{"path":"a.rs","line":20},{"path":"a.rs","line":30}]}),
-            json!({"matches":[{"path":"b.rs","line":10},{"path":"b.rs","line":20},{"path":"b.rs","line":30}]}),
+            match_read_items([("a.rs", 10), ("a.rs", 20), ("a.rs", 30)], 1, 1, 4),
+            match_read_items([("b.rs", 10), ("b.rs", 20), ("b.rs", 30)], 1, 1, 4),
         ];
-        let items = fair_match_read_items(&searches, 1, 1, 4);
+        let items = fair_match_read_items(searches, 4);
         assert_eq!(
             items
                 .iter()

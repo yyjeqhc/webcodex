@@ -985,7 +985,9 @@ async fn read_files_coalesced_numbering_overflow_keeps_members_without_rereading
     let request = next_read_request(&runtime, client).await;
     assert_eq!(request.end_line, Some(360));
     complete_read(&runtime, client, &request, &content).await;
-    let (result, items) = read.await;
+    let output = read.await;
+    let result = output.result;
+    let items = output.items;
     assert_eq!(result.output["succeeded_count"], 2);
     assert_eq!(items.len(), 2);
     assert_eq!(items[0].limit, Some(180));

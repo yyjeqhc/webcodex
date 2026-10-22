@@ -70,9 +70,43 @@ async fn read_files_snapshot_service_does_not_retain_unrelated_runtime_state() {
         })
         .await
         .unwrap();
-    let result = read.await;
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["text"], "one\ntwo");
+    let result = read.await.unwrap();
+    assert_eq!(result.content, "one\ntwo");
+}
+
+#[tokio::test]
+async fn read_files_snapshot_service_fences_sha_without_read_scope() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "read-service-unscoped-sha";
+    register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let resolved = runtime.resolve_project_input("demo").await.unwrap();
+    let runner = runtime
+        .runner_registry
+        .get_runner_view(client)
+        .await
+        .unwrap();
+    let runner_project_id =
+        crate::tool_runtime::runner_local_project_id(&resolved.resolved_id).unwrap();
+    let expected_sha = "a".repeat(64);
+    let read = runtime.read_project_snapshot(
+        &resolved,
+        runner_project_id,
+        &runner.runner_instance_id,
+        "a.rs".into(),
+        Some(1),
+        Some(2),
+        Some(&expected_sha),
+        tokio::time::Instant::now() + Duration::from_secs(30),
+    );
+    tokio::pin!(read);
+    assert!(futures_util::poll!(&mut read).is_pending());
+    let request = next_read_request(&runtime, client).await;
+    complete_read(&runtime, client, &request, "one\ntwo\n").await;
+    assert_eq!(
+        read.await.unwrap_err(),
+        super::super::files::FileReadFailure::StaleRevision
+    );
 }
 
 #[tokio::test]
@@ -384,8 +418,8 @@ async fn read_files_singleflight_late_waiter_keeps_its_own_deadline_budget() {
 
     complete_read(&runtime, client, &first_request, "one\ntwo\n").await;
     complete_read(&runtime, client, &second_request, "one\ntwo\n").await;
-    assert!(first.await.success);
-    assert!(second.await.success);
+    assert!(first.await.is_ok());
+    assert!(second.await.is_ok());
 }
 
 #[tokio::test]
@@ -917,19 +951,21 @@ async fn assert_merged_byte_fallback(content: String) {
 
 #[tokio::test]
 async fn read_files_coalesced_numbering_overflow_keeps_members_without_rereading() {
-    use webcodex_workspace::file_read_normalize::success_output;
     use webcodex_workspace::file_read_range::{read_range_from, EffectiveRange};
     let content = format!("{}\n", "\"".repeat(356)).repeat(360);
     let range =
         read_range_from(content.as_bytes(), EffectiveRange::new(Some(1), Some(360))).unwrap();
-    let parent = success_output(&range, false);
     let plain =
-        super::super::files::slice_read_file_result(&parent, Some(1), Some(360), false, "a.rs");
-    assert!(plain.success);
+        super::super::files::slice_read_file_range(&range, Some(1), Some(360), false, "a.rs");
+    assert!(plain.is_ok());
     let numbered =
-        super::super::files::slice_read_file_result(&parent, Some(1), Some(360), true, "a.rs");
-    assert!(!numbered.success);
-    assert_eq!(numbered.output["reason_code"], "range_too_large");
+        super::super::files::slice_read_file_range(&range, Some(1), Some(360), true, "a.rs");
+    assert_eq!(
+        numbered.unwrap_err(),
+        super::super::files::FileReadFailure::Read(
+            webcodex_workspace::file_read_range::ReadFileReason::RangeTooLarge,
+        )
+    );
 
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();

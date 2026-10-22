@@ -4,10 +4,10 @@
 //! reuse still probes the owning Runner for fresh full-file SHA evidence; writes
 //! do not proactively invalidate either store. Authorization stays at callers.
 
-use super::files::ProjectFileReader;
+use super::files::{FileReadOutcome, ProjectFileReader};
 use super::read_cache::ReadCache;
 use super::read_revisions::{ReadRevisionLookupError, ReadRevisionRegistry, ReadRevisionTarget};
-use super::{ResolvedProject, ToolResult};
+use super::ResolvedProject;
 use std::sync::Arc;
 use tokio::time::Instant;
 
@@ -55,7 +55,7 @@ impl WorkspaceReadRuntime {
         limit: Option<usize>,
         expected_sha256: Option<&str>,
         deadline: Instant,
-    ) -> ToolResult {
+    ) -> FileReadOutcome {
         self.cache
             .read_project_snapshot(
                 reader,

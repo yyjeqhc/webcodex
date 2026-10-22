@@ -56,8 +56,8 @@ pub(crate) use artifacts::{MAX_PROJECT_ARTIFACT_BYTES, MAX_READ_PROJECT_ARTIFACT
 #[cfg(all(test, windows))]
 pub(crate) use inspection::LIST_TRACKED_STDERR_MAX_CHARS;
 pub(crate) use inspection::{
-    effective_read_file_range, slice_read_file_result, slice_read_file_success_output,
-    ProjectFileReader,
+    build_read_file_success, effective_read_file_range, slice_read_file_range, FileReadFailure,
+    FileReadOutcome, ProjectFileReader,
 };
 #[cfg(test)]
 pub(crate) use inspection::{

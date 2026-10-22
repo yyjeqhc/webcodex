@@ -22,19 +22,18 @@ fn key() -> ReadKey {
     }
 }
 
-fn output(content: &str) -> Value {
-    let range = webcodex_workspace::file_read_range::read_range_from(
+fn range(content: &str) -> FileReadRange {
+    webcodex_workspace::file_read_range::read_range_from(
         content.as_bytes(),
         EffectiveRange::new(Some(1), Some(3)),
     )
-    .unwrap();
-    webcodex_workspace::file_read_normalize::success_output(&range, false)
+    .unwrap()
 }
 
 fn cached_flight(
     cache: &ReadCache,
     key: ReadKey,
-    work: BoxFuture<'static, ToolResult>,
+    work: BoxFuture<'static, FileReadOutcome>,
 ) -> ReadFlight {
     let caller_deadline = Instant::now() + Duration::from_secs(30);
     cache.flight(
@@ -49,16 +48,16 @@ fn cached_flight(
 fn snapshot_contains_only_covered_ranges_and_invalidates_changed_sha() {
     let cache = ReadCache::default();
     let mut key = key();
-    cache.remember(key.snapshot.clone(), output("a\nb\nc\nd\n"));
+    cache.remember(key.snapshot.clone(), range("a\nb\nc\nd\n"));
     key.start = 2;
     key.limit = 2;
-    assert_eq!(cache.snapshot(&key).unwrap()["text"], "b\nc");
+    assert_eq!(cache.snapshot(&key).unwrap().content, "b\nc");
     key.limit = 3;
     assert!(cache.snapshot(&key).is_none());
     key.start = 1;
     key.limit = 3;
-    cache.remember(key.snapshot.clone(), output("x\ny\nz\n"));
-    assert_eq!(cache.snapshot(&key).unwrap()["text"], "x\ny\nz");
+    cache.remember(key.snapshot.clone(), range("x\ny\nz\n"));
+    assert_eq!(cache.snapshot(&key).unwrap().content, "x\ny\nz");
     assert_eq!(cache.state.lock().unwrap().snapshots.len(), 1);
     cache.invalidate(&key.snapshot);
     assert!(cache.snapshot(&key).is_none());
@@ -68,7 +67,7 @@ fn snapshot_contains_only_covered_ranges_and_invalidates_changed_sha() {
 fn snapshot_partitions_session_authority_project_and_runner_target() {
     let cache = ReadCache::default();
     let original = key();
-    cache.remember(original.snapshot.clone(), output("a\nb\nc"));
+    cache.remember(original.snapshot.clone(), range("a\nb\nc"));
     for field in 0..9 {
         let mut other = original.clone();
         match field {
@@ -86,7 +85,7 @@ fn snapshot_partitions_session_authority_project_and_runner_target() {
     }
     let mut stateless = original.snapshot.clone();
     stateless.scope.session = None;
-    cache.remember(stateless, output("a\nb\nc"));
+    cache.remember(stateless, range("a\nb\nc"));
     assert_eq!(cache.state.lock().unwrap().snapshots.len(), 1);
 }
 
@@ -109,13 +108,18 @@ fn snapshot_retention_has_entry_and_byte_bounds() {
     for index in 0..MAX_SNAPSHOTS + 1 {
         let mut key = original.snapshot.clone();
         key.target.path = format!("{index}.rs");
-        cache.remember(key, output("small"));
+        let mut small = range("small");
+        // The scanner reserves the full range budget. Real cache insertion
+        // clones its typed result into a compact allocation; isolate the entry
+        // limit here from that scanner-only spare capacity.
+        small.content.shrink_to_fit();
+        cache.remember(key, small);
     }
     assert_eq!(cache.state.lock().unwrap().snapshots.len(), MAX_SNAPSHOTS);
     for index in 0..MAX_SNAPSHOTS {
         let mut key = original.snapshot.clone();
         key.target.path = format!("large-{index}.rs");
-        cache.remember(key, output(&"x".repeat(180 * 1024)));
+        cache.remember(key, range(&"x".repeat(180 * 1024)));
     }
     let state = cache.state.lock().unwrap();
     assert!(state.bytes <= MAX_SNAPSHOT_BYTES);
@@ -134,7 +138,7 @@ async fn singleflight_shares_only_pending_work_and_never_retains_errors() {
         async move {
             calls.fetch_add(1, Ordering::SeqCst);
             rx.await.unwrap();
-            ToolResult::err("test failure")
+            Err(ReadFileReason::IoError.into())
         }
         .boxed(),
     );
@@ -146,15 +150,11 @@ async fn singleflight_shares_only_pending_work_and_never_retains_errors() {
     );
     let retained_completed_handle = second.clone();
     tx.send(()).unwrap();
-    assert!(!first.await.success);
-    assert!(!second.await.success);
+    assert!(first.await.is_err());
+    assert!(second.await.is_err());
     assert_eq!(count.load(Ordering::SeqCst), 1);
-    let next = cached_flight(
-        &cache,
-        key(),
-        async { ToolResult::ok(json!({"fresh": true})) }.boxed(),
-    );
-    assert_eq!(next.await.output["fresh"], true);
+    let next = cached_flight(&cache, key(), async { Ok(range("fresh")) }.boxed());
+    assert_eq!(next.await.as_ref().as_ref().unwrap().content, "fresh");
     assert!(retained_completed_handle.peek().is_some());
 }
 
@@ -182,8 +182,7 @@ async fn singleflight_partitions_exact_authority_session_target_and_range() {
             9 => other.limit += 1,
             _ => other.expected_sha256 = Some("different-snapshot".into()),
         }
-        let mut independent =
-            cached_flight(&cache, other, async { ToolResult::ok(json!({})) }.boxed());
+        let mut independent = cached_flight(&cache, other, async { Ok(range("")) }.boxed());
         assert!(
             futures_util::poll!(&mut independent).is_ready(),
             "field {field} shared work"
@@ -207,7 +206,7 @@ async fn singleflight_drops_work_only_when_last_waiter_leaves_and_bounds_slots()
         key(),
         async move {
             let _guard = guard;
-            futures_util::future::pending::<ToolResult>().await
+            futures_util::future::pending::<FileReadOutcome>().await
         }
         .boxed(),
     );
@@ -228,4 +227,23 @@ async fn singleflight_drops_work_only_when_last_waiter_leaves_and_bounds_slots()
         ));
     }
     assert_eq!(cache.state.lock().unwrap().flights.len(), MAX_FLIGHTS);
+}
+
+#[test]
+fn snapshot_budget_counts_retained_capacity_and_escaped_content() {
+    let cache = ReadCache::default();
+    let original = key();
+    let mut overallocated = range("small");
+    overallocated.content.reserve(MAX_SNAPSHOT_BYTES);
+    cache.remember(original.snapshot.clone(), overallocated);
+    assert!(cache.snapshot(&original).is_none());
+
+    for index in 0..MAX_SNAPSHOTS {
+        let mut key = original.snapshot.clone();
+        key.target.path = format!("escaped-{index}.rs");
+        cache.remember(key, range(&"\0".repeat(180 * 1024)));
+    }
+    let state = cache.state.lock().unwrap();
+    assert!(state.bytes <= MAX_SNAPSHOT_BYTES);
+    assert!(state.snapshots.len() < 8);
 }

@@ -5,19 +5,18 @@
 //! that an external writer has not changed the file. This saves range transfer,
 //! not the Runner's full-file scan. No Session means no retained content cache.
 
-use super::files::ProjectFileReader;
+use super::files::{slice_read_file_range, FileReadFailure, FileReadOutcome, ProjectFileReader};
 use super::project_resolution::ResolvedProject;
 use super::read_revisions::ReadRevisionTarget;
-use super::ToolResult;
 use crate::auth::AuthContext;
 use futures_util::future::{BoxFuture, Shared, WeakShared};
 use futures_util::FutureExt;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::Instant;
-use webcodex_workspace::file_read_range::EffectiveRange;
+use webcodex_workspace::file_read_range::{EffectiveRange, FileReadRange, ReadFileReason};
 
 const MAX_SNAPSHOTS: usize = 64;
 const MAX_SNAPSHOT_BYTES: usize = 8 * 1024 * 1024;
@@ -78,16 +77,16 @@ struct ReadKey {
     expected_sha256: Option<String>,
 }
 
-type ReadFlight = Shared<BoxFuture<'static, Arc<ToolResult>>>;
+type ReadFlight = Shared<BoxFuture<'static, Arc<FileReadOutcome>>>;
 
 struct ReadFlightEntry {
     physical_deadline: Instant,
-    flight: WeakShared<BoxFuture<'static, Arc<ToolResult>>>,
+    flight: WeakShared<BoxFuture<'static, Arc<FileReadOutcome>>>,
 }
 
 struct Snapshot {
     key: SnapshotKey,
-    output: Value,
+    range: FileReadRange,
     bytes: usize,
 }
 
@@ -103,8 +102,43 @@ pub(crate) struct ReadCache {
     state: Mutex<State>,
 }
 
+/// Charge the retained typed allocation, plus conservative JSON-escaping cost
+/// and fixed projection metadata. This preserves the old serialized-payload
+/// bound without constructing or retaining a model-facing output object.
+fn snapshot_bytes(key: &SnapshotKey, range: &FileReadRange) -> usize {
+    let escaped_content_bytes =
+        crate::json_measurement::serialized_json_len(&range.content).unwrap_or(usize::MAX);
+    std::mem::size_of::<Snapshot>()
+        .saturating_add(512) // Canonical field names, numeric metadata and JSON delimiters.
+        .saturating_add(range.content.capacity().max(escaped_content_bytes))
+        .saturating_add(range.sha256.capacity())
+        .saturating_add(key.scope.authority.capacity())
+        .saturating_add(key.scope.session.as_ref().map_or(0, String::capacity))
+        .saturating_add(key.target.project_id.capacity())
+        .saturating_add(key.target.path.capacity().saturating_mul(7))
+        .saturating_add(key.target.client_id.capacity())
+        .saturating_add(key.target.runner_instance_id.capacity())
+        .saturating_add(key.target.project_root.capacity())
+        .saturating_add(
+            key.target
+                .root_fingerprint
+                .as_ref()
+                .map_or(0, String::capacity),
+        )
+}
+
+fn enforce_expected_sha(result: FileReadOutcome, expected_sha256: Option<&str>) -> FileReadOutcome {
+    result.and_then(|range| {
+        if expected_sha256.is_some_and(|expected| range.sha256 != expected) {
+            Err(FileReadFailure::StaleRevision)
+        } else {
+            Ok(range)
+        }
+    })
+}
+
 impl ReadCache {
-    fn snapshot(&self, key: &ReadKey) -> Option<Value> {
+    fn snapshot(&self, key: &ReadKey) -> Option<FileReadRange> {
         if key.snapshot.scope.session.is_none() {
             return None;
         }
@@ -112,13 +146,14 @@ impl ReadCache {
         state.snapshots.iter().rev().find_map(|entry| {
             (entry.key == key.snapshot)
                 .then(|| {
-                    super::files::slice_read_file_success_output(
-                        &entry.output,
+                    slice_read_file_range(
+                        &entry.range,
                         Some(key.start),
                         Some(key.limit),
                         false,
                         &key.snapshot.target.path,
                     )
+                    .ok()
                 })
                 .flatten()
         })
@@ -130,23 +165,11 @@ impl ReadCache {
         state.bytes = state.snapshots.iter().map(|entry| entry.bytes).sum();
     }
 
-    fn remember(&self, key: SnapshotKey, output: Value) {
+    fn remember(&self, key: SnapshotKey, range: FileReadRange) {
         if key.scope.session.is_none() {
             return;
         }
-        let Some(sha) = output.get("sha256").and_then(Value::as_str) else {
-            return;
-        };
-        let bytes = crate::json_measurement::serialized_json_len(&output)
-            .unwrap_or(usize::MAX)
-            .saturating_add(key.scope.authority.len())
-            .saturating_add(key.scope.session.as_ref().map_or(0, String::len))
-            .saturating_add(key.target.project_id.len())
-            .saturating_add(key.target.path.len())
-            .saturating_add(key.target.client_id.len())
-            .saturating_add(key.target.runner_instance_id.len())
-            .saturating_add(key.target.project_root.len())
-            .saturating_add(key.target.root_fingerprint.as_ref().map_or(0, String::len));
+        let bytes = snapshot_bytes(&key, &range);
         if bytes > MAX_SNAPSHOT_BYTES {
             return;
         }
@@ -154,9 +177,9 @@ impl ReadCache {
         // Keep other ranges only for the same observed full-file snapshot.
         state.snapshots.retain(|entry| {
             entry.key != key
-                || (entry.output["sha256"].as_str() == Some(sha)
-                    && (entry.output["start_line"] != output["start_line"]
-                        || entry.output["limit"] != output["limit"]))
+                || (entry.range.sha256 == range.sha256
+                    && (entry.range.start_line != range.start_line
+                        || entry.range.limit != range.limit))
         });
         state.bytes = state.snapshots.iter().map(|entry| entry.bytes).sum();
         while state.snapshots.len() >= MAX_SNAPSHOTS || state.bytes + bytes > MAX_SNAPSHOT_BYTES {
@@ -167,7 +190,7 @@ impl ReadCache {
             }
         }
         state.bytes += bytes;
-        state.snapshots.push_back(Snapshot { key, output, bytes });
+        state.snapshots.push_back(Snapshot { key, range, bytes });
     }
 
     fn flight(
@@ -175,7 +198,7 @@ impl ReadCache {
         key: ReadKey,
         caller_deadline: Instant,
         physical_deadline: Instant,
-        work: BoxFuture<'static, ToolResult>,
+        work: BoxFuture<'static, FileReadOutcome>,
     ) -> ReadFlight {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         // Weak ownership: the last departing waiter drops the physical future.
@@ -226,9 +249,9 @@ impl ReadCache {
         limit: Option<usize>,
         expected_sha256: Option<&str>,
         deadline: Instant,
-    ) -> ToolResult {
+    ) -> FileReadOutcome {
         let Ok(scope) = READ_SCOPE.try_with(Clone::clone) else {
-            return reader
+            let result = reader
                 .read_one_resolved_project_file(
                     &resolved.config,
                     runner_project_id,
@@ -236,13 +259,13 @@ impl ReadCache {
                     path,
                     start_line,
                     limit,
-                    false,
                     deadline,
                 )
                 .await;
+            return enforce_expected_sha(result, expected_sha256);
         };
         if Instant::now() >= deadline {
-            return timeout(&path);
+            return Err(ReadFileReason::Timeout.into());
         }
         let range = EffectiveRange::new(start_line, limit);
         let key = ReadKey {
@@ -273,7 +296,6 @@ impl ReadCache {
                     target.path.clone(),
                     Some(start),
                     Some(limit),
-                    false,
                     physical_deadline,
                 )
             };
@@ -281,52 +303,33 @@ impl ReadCache {
                 // Pick a line inside the requested range, so the probe cannot
                 // fail just because an unrelated first line is oversized.
                 let probe = read(key.start, 1).await;
-                if probe.success
-                    && key
-                        .expected_sha256
-                        .as_deref()
-                        .is_some_and(|expected| probe.output["sha256"].as_str() != Some(expected))
-                {
-                    cache.invalidate(&key.snapshot);
-                    return super::read_files::stale_read_revision_failure(&target.path);
-                }
-                if probe.success && probe.output["sha256"] == cached["sha256"] {
-                    return ToolResult::ok(cached);
+                match enforce_expected_sha(probe, key.expected_sha256.as_deref()) {
+                    Ok(probe) if probe.sha256 == cached.sha256 => return Ok(cached),
+                    Ok(_) | Err(FileReadFailure::Read(ReadFileReason::RangeTooLarge)) => {}
+                    Err(failure) => {
+                        cache.invalidate(&key.snapshot);
+                        return Err(failure);
+                    }
                 }
                 cache.invalidate(&key.snapshot);
-                if !probe.success && probe.output["reason_code"] != "range_too_large" {
-                    return probe;
-                }
             }
-            let result = read(key.start, key.limit).await;
-            if result.success {
-                cache.remember(key.snapshot, result.output.clone());
-            } else {
-                cache.invalidate(&key.snapshot);
+            let result = enforce_expected_sha(
+                read(key.start, key.limit).await,
+                key.expected_sha256.as_deref(),
+            );
+            match &result {
+                Ok(range) => cache.remember(key.snapshot, range.clone()),
+                Err(_) => cache.invalidate(&key.snapshot),
             }
             result
         }
         .boxed();
         let flight = self.flight(key, deadline, physical_deadline, work);
         match tokio::time::timeout_at(deadline, flight).await {
-            Ok(result) => ToolResult {
-                success: result.success,
-                output: result.output.clone(),
-                error: result.error.clone(),
-            },
-            Err(_) => timeout(&path),
+            Ok(result) => (*result).clone(),
+            Err(_) => Err(ReadFileReason::Timeout.into()),
         }
     }
-}
-
-fn timeout(path: &str) -> ToolResult {
-    ToolResult::err_with_output(
-        "read_file failed: timeout",
-        json!({
-            "error_kind": "read_file_failed", "reason_code": "timeout",
-            "path": path, "state_changed": false,
-        }),
-    )
 }
 
 #[cfg(test)]

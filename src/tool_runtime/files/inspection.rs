@@ -1,5 +1,39 @@
 use super::*;
 
+/// Internal read facts stay typed until the model-output boundary. Stale
+/// revisions belong to the Server's snapshot identity, not the Runner wire.
+pub(crate) type FileReadOutcome = Result<FileReadRange, FileReadFailure>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FileReadFailure {
+    Read(ReadFileReason),
+    StaleRevision,
+}
+
+impl From<ReadFileReason> for FileReadFailure {
+    fn from(reason: ReadFileReason) -> Self {
+        Self::Read(reason)
+    }
+}
+
+impl FileReadFailure {
+    pub(crate) fn into_tool_result(self, path: Option<&str>) -> ToolResult {
+        let reason = match self {
+            Self::Read(reason) => reason.as_str(),
+            Self::StaleRevision => "stale_read_revision",
+        };
+        ToolResult::err_with_output(
+            format!("read_file failed: {reason}"),
+            json!({
+                "error_kind": "read_file_failed",
+                "reason_code": reason,
+                "path": path.unwrap_or(""),
+                "state_changed": false,
+            }),
+        )
+    }
+}
+
 /// Physical file-read capability. It owns only the Runner transport needed for
 /// target-fenced reads, response validation and cancellation, not runtime state.
 #[derive(Clone)]
@@ -70,6 +104,7 @@ pub(crate) fn read_file_runner_stdout_result(
     read_file_runner_stdout_result_with_options(stdout, start_line, limit, false)
 }
 
+#[cfg(test)]
 pub(crate) fn read_file_runner_stdout_result_with_options(
     stdout: String,
     start_line: Option<usize>,
@@ -98,52 +133,28 @@ pub(crate) fn effective_read_file_range(
 /// read. `read_files` uses this after coalescing overlapping/nearby requests so
 /// the Runner performs fewer reads while the public result still preserves the
 /// original item order, range metadata, SHA, and optional line numbering.
-pub(crate) fn slice_read_file_success_output(
-    parent: &Value,
+pub(crate) fn slice_read_file_range(
+    parent: &FileReadRange,
     start_line: Option<usize>,
     limit: Option<usize>,
     with_line_numbers: bool,
     path: &str,
-) -> Option<Value> {
-    let result = slice_read_file_result(parent, start_line, limit, with_line_numbers, path);
-    result.success.then_some(result.output)
+) -> FileReadOutcome {
+    let range = slice_covered_read_range(parent, start_line, limit)
+        .ok_or(ReadFileReason::MalformedRunnerResponse)?;
+    validate_read_file_output_budget(&range, with_line_numbers, Some(path))?;
+    Ok(range)
 }
 
-pub(crate) fn slice_read_file_result(
-    parent: &Value,
-    start_line: Option<usize>,
-    limit: Option<usize>,
-    with_line_numbers: bool,
-    path: &str,
-) -> ToolResult {
-    match slice_read_file_range(parent, start_line, limit) {
-        Some(range) => build_read_file_success(&range, with_line_numbers, Some(path)),
-        None => read_file_failure(ReadFileReason::MalformedRunnerResponse, Some(path)),
-    }
-}
-
-fn slice_read_file_range(
-    parent: &Value,
+fn slice_covered_read_range(
+    parent: &FileReadRange,
     start_line: Option<usize>,
     limit: Option<usize>,
 ) -> Option<FileReadRange> {
-    if parent.get("format").and_then(Value::as_str) != Some("plain") {
-        return None;
-    }
-    let parent_text = parent.get("text")?.as_str()?;
-    let parent_sha256 = parent.get("sha256")?.as_str()?.to_string();
-    let total_lines = usize::try_from(parent.get("total_lines")?.as_u64()?).ok()?;
-    let parent_start = usize::try_from(parent.get("start_line")?.as_u64()?).ok()?;
-    let parent_returned = usize::try_from(parent.get("returned_lines")?.as_u64()?).ok()?;
-    let parent_end = if parent_returned == 0 {
-        None
-    } else {
-        Some(
-            parent_start
-                .saturating_add(parent_returned)
-                .saturating_sub(1),
-        )
-    };
+    let total_lines = parent.total_lines;
+    let parent_start = parent.start_line;
+    let parent_returned = parent.returned_lines;
+    let parent_end = parent.end_line;
 
     let range = EffectiveRange::new(start_line, limit);
     let returned_lines = if range.start_line > total_lines || total_lines == 0 {
@@ -178,7 +189,8 @@ fn slice_read_file_range(
         String::new()
     } else {
         let offset = range.start_line.saturating_sub(parent_start);
-        let segments = parent_text
+        let segments = parent
+            .content
             .split('\n')
             .take(parent_returned)
             .skip(offset)
@@ -197,7 +209,7 @@ fn slice_read_file_range(
     };
     Some(FileReadRange {
         content,
-        sha256: parent_sha256,
+        sha256: parent.sha256.clone(),
         total_lines,
         start_line: range.start_line,
         limit: range.limit,
@@ -214,11 +226,22 @@ fn slice_read_file_range(
 /// from the canonical fields only; no Runner envelope extras survive.
 ///
 /// `path` is the project-relative input path to attach for model navigation.
-fn build_read_file_success(
+pub(crate) fn build_read_file_success(
     result: &FileReadRange,
     with_line_numbers: bool,
     path: Option<&str>,
 ) -> ToolResult {
+    match project_read_file_success(result, with_line_numbers, path) {
+        Ok(output) => ToolResult::ok(output),
+        Err(failure) => failure.into_tool_result(path),
+    }
+}
+
+fn project_read_file_success(
+    result: &FileReadRange,
+    with_line_numbers: bool,
+    path: Option<&str>,
+) -> Result<Value, FileReadFailure> {
     let mut output =
         webcodex_workspace::file_read_normalize::success_output(result, with_line_numbers);
     if let Some(path) = path {
@@ -228,32 +251,37 @@ fn build_read_file_success(
     // The content budget already bounds the raw range, but a heavily escaped or
     // numbered payload could still grow; fail closed rather than truncate.
     if !webcodex_workspace::file_read_normalize::serialized_fits(&output) {
-        return read_file_failure(ReadFileReason::RangeTooLarge, path);
+        return Err(ReadFileReason::RangeTooLarge.into());
     }
-    ToolResult::ok(output)
+    Ok(output)
 }
 
 /// Stable, schema-backed failure output for `read_file`. Carries only the
 /// project-relative input path and a stable reason code — never absolute paths,
 /// raw OS error text, or runner stdout/stderr.
+#[cfg(test)]
 fn read_file_failure(reason: ReadFileReason, path: Option<&str>) -> ToolResult {
-    let output = json!({
-        "error_kind": "read_file_failed",
-        "reason_code": reason.as_str(),
-        "path": path.unwrap_or(""),
-        "state_changed": false,
-    });
-    ToolResult::err_with_output(format!("read_file failed: {}", reason.as_str()), output)
+    FileReadFailure::Read(reason).into_tool_result(path)
 }
 
-fn validate_read_file_path(path: &str) -> Option<ToolResult> {
+/// Preserve the established physical plain-output and final numbered/path
+/// budgets without making the projected JSON an internal read interface.
+fn validate_read_file_output_budget(
+    range: &FileReadRange,
+    with_line_numbers: bool,
+    path: Option<&str>,
+) -> Result<(), FileReadFailure> {
+    project_read_file_success(range, with_line_numbers, path).map(|_| ())
+}
+
+fn validate_read_file_path(path: &str) -> Result<(), FileReadFailure> {
     if validate_project_relative_path(path).is_err() {
-        return Some(read_file_failure(ReadFileReason::InvalidPath, Some(path)));
+        return Err(ReadFileReason::InvalidPath.into());
     }
     if crate::sensitive_paths::is_secret_path(path) {
-        return Some(read_file_failure(ReadFileReason::SensitivePath, Some(path)));
+        return Err(ReadFileReason::SensitivePath.into());
     }
-    None
+    Ok(())
 }
 
 #[cfg(test)]
@@ -703,8 +731,8 @@ impl ToolRuntime {
         with_line_numbers: Option<bool>,
     ) -> ToolResult {
         let with_line_numbers = with_line_numbers.unwrap_or(false);
-        if let Some(failure) = validate_read_file_path(&path) {
-            return failure;
+        if let Err(failure) = validate_read_file_path(&path) {
+            return failure.into_tool_result(Some(&path));
         }
         let resolved = match self.resolve_project_input(&project).await {
             Ok(resolved) => resolved,
@@ -722,18 +750,28 @@ impl ToolRuntime {
         else {
             return read_file_failure(ReadFileReason::RunnerUnavailable, Some(&path));
         };
-        ProjectFileReader::new(self.runner_registry.clone())
+        let result = ProjectFileReader::new(self.runner_registry.clone())
             .read_one_validated_project_file(
                 &resolved.config,
                 runner_project_id,
                 &runner.runner_instance_id,
-                path,
+                &path,
                 start_line,
                 limit,
                 with_line_numbers,
                 None,
             )
-            .await
+            .await;
+        match result {
+            Ok(range) => {
+                // The historical single-read test entry attaches its path
+                // after the physical output cap, like the Runner-backed path.
+                let mut result = build_read_file_success(&range, with_line_numbers, None);
+                result.output["path"] = json!(path);
+                result
+            }
+            Err(failure) => failure.into_tool_result(Some(&path)),
+        }
     }
 }
 
@@ -746,23 +784,20 @@ impl ProjectFileReader {
         path: String,
         start_line: Option<usize>,
         limit: Option<usize>,
-        with_line_numbers: bool,
         deadline: Instant,
-    ) -> ToolResult {
+    ) -> FileReadOutcome {
         if Instant::now() >= deadline {
-            return read_file_failure(ReadFileReason::Timeout, Some(&path));
+            return Err(ReadFileReason::Timeout.into());
         }
-        if let Some(failure) = validate_read_file_path(&path) {
-            return failure;
-        }
+        validate_read_file_path(&path)?;
         self.read_one_validated_project_file(
             project,
             runner_project_id,
             expected_runner_instance_id,
-            path,
+            &path,
             start_line,
             limit,
-            with_line_numbers,
+            false,
             Some(deadline),
         )
         .await
@@ -773,12 +808,12 @@ impl ProjectFileReader {
         proj: &ProjectConfig,
         runner_project_id: &str,
         expected_runner_instance_id: &str,
-        path: String,
+        path: &str,
         start_line: Option<usize>,
         limit: Option<usize>,
         with_line_numbers: bool,
         deadline: Option<Instant>,
-    ) -> ToolResult {
+    ) -> FileReadOutcome {
         let client_id = proj.client_id.clone();
         let wait_timeout = 30;
         let (eff_start, _eff_limit, eff_end) = effective_read_file_range(start_line, limit);
@@ -788,7 +823,7 @@ impl ProjectFileReader {
                 ShellFileOpRequest {
                     op: "read".to_string(),
                     client_id,
-                    path: path.clone(),
+                    path: path.to_string(),
                     cwd: Some(proj.path.clone()),
                     content: None,
                     // The shared scanner bounds raw content. The Runner
@@ -814,7 +849,7 @@ impl ProjectFileReader {
             .await
         {
             Ok(r) => r,
-            Err(_) => return read_file_failure(ReadFileReason::RunnerUnavailable, Some(&path)),
+            Err(_) => return Err(ReadFileReason::RunnerUnavailable.into()),
         };
         let mut pending = PendingReadGuard {
             registry: self.runner_registry.clone(),
@@ -827,36 +862,28 @@ impl ProjectFileReader {
         pending.request_id = None;
         match response {
             Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
-                let mut result = read_file_runner_stdout_result_with_options(
-                    resp.stdout.unwrap_or_default(),
+                let range = parse_runner_file_read_range(
+                    &resp.stdout.unwrap_or_default(),
                     start_line,
                     limit,
-                    with_line_numbers,
-                );
-                if result.success {
-                    result.output["path"] = json!(path);
-                    result
-                } else {
-                    // The Runner response failed validation; surface a stable
-                    // structured error using the project-relative path.
-                    result.output["path"] = json!(path);
-                    result
-                }
+                )?;
+                validate_read_file_output_budget(&range, with_line_numbers, None)?;
+                Ok(range)
             }
             // Map Runner execution failures to stable reason codes. The
             // raw `resp.error`/`resp.stderr` (which may carry the runner's
             // absolute path) is never forwarded to the model.
             Ok(Ok(resp)) => {
                 let reason = map_runner_read_error(&resp);
-                read_file_failure(reason, Some(&path))
+                Err(reason.into())
             }
             Ok(Err(_)) => {
                 self.runner_registry.cancel_request(&request_id).await;
-                read_file_failure(ReadFileReason::RunnerUnavailable, Some(&path))
+                Err(ReadFileReason::RunnerUnavailable.into())
             }
             Err(_) => {
                 self.runner_registry.cancel_request(&request_id).await;
-                read_file_failure(ReadFileReason::Timeout, Some(&path))
+                Err(ReadFileReason::Timeout.into())
             }
         }
     }
@@ -1622,23 +1649,24 @@ mod tests {
 
     #[test]
     fn coalesced_read_slice_restores_original_range_and_numbering() {
-        let parent =
-            read_file_content_result("one\ntwo\nthree\nfour\nfive".to_string(), Some(1), Some(5));
-        assert!(parent.success);
+        let parent = file_read_range::read_range_from(
+            "one\ntwo\nthree\nfour\nfive".as_bytes(),
+            EffectiveRange::new(Some(1), Some(5)),
+        )
+        .unwrap();
+        let sliced = slice_read_file_range(&parent, Some(2), Some(2), true, "src/lib.rs")
+            .expect("contained range should be sliceable");
+        let output = build_read_file_success(&sliced, true, Some("src/lib.rs")).output;
 
-        let sliced =
-            slice_read_file_success_output(&parent.output, Some(2), Some(2), true, "src/lib.rs")
-                .expect("contained range should be sliceable");
-
-        assert_eq!(sliced["path"], "src/lib.rs");
-        assert_eq!(sliced["text"], "2 | two\n3 | three");
-        assert_eq!(sliced["format"], "numbered");
-        assert_eq!(sliced["start_line"], 2);
-        assert_eq!(sliced["limit"], 2);
-        assert_eq!(sliced["returned_lines"], 2);
-        assert_eq!(sliced["end_line"], 3);
-        assert_eq!(sliced["next_start_line"], 4);
-        assert_eq!(sliced["sha256"], parent.output["sha256"]);
+        assert_eq!(output["path"], "src/lib.rs");
+        assert_eq!(output["text"], "2 | two\n3 | three");
+        assert_eq!(output["format"], "numbered");
+        assert_eq!(sliced.start_line, 2);
+        assert_eq!(sliced.limit, 2);
+        assert_eq!(sliced.returned_lines, 2);
+        assert_eq!(sliced.end_line, Some(3));
+        assert_eq!(sliced.next_start_line, Some(4));
+        assert_eq!(sliced.sha256, parent.sha256);
     }
 
     #[test]

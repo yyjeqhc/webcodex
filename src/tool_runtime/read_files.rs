@@ -1,5 +1,8 @@
 //! Bounded multi-file reads built from the canonical single-file read core.
 
+use super::files::{
+    build_read_file_success, slice_read_file_range, FileReadFailure, FileReadOutcome,
+};
 use super::project_resolution::ResolvedProject;
 use super::workspace_reads::WorkspaceReadRuntime;
 use super::{ReadFilesItem, SuggestedToolCall, ToolCall, ToolResult, ToolRuntime};
@@ -10,6 +13,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 use webcodex_core::runtime_contract::MODEL_INSPECTION_MAX_RESULT_BYTES as MAX_SERIALIZED_OUTPUT_BYTES;
 use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES;
+use webcodex_workspace::file_read_range::{FileReadRange, ReadFileReason};
 
 pub(crate) const MAX_READ_FILES_ITEMS: usize = 8;
 // A max-size read batch may issue all eight independent read-only requests in
@@ -34,6 +38,65 @@ struct PlannedReadMember {
 struct PlannedRead {
     item: ReadFilesItem,
     members: Vec<PlannedReadMember>,
+}
+
+struct ObservedRead {
+    range: FileReadRange,
+    revision: u64,
+}
+
+/// Keep request order, continuation ranges and revision facts independent of
+/// the public JSON representation, including coalesced byte-budget fallback.
+struct CompletedReadMember {
+    index: usize,
+    path: String,
+    result: Result<ObservedRead, FileReadFailure>,
+}
+
+impl CompletedReadMember {
+    fn new(
+        member: PlannedReadMember,
+        path: &str,
+        observed: Result<(&FileReadRange, u64), FileReadFailure>,
+        with_line_numbers: bool,
+    ) -> Self {
+        let result = observed.and_then(|(range, revision)| {
+            slice_read_file_range(
+                range,
+                member.start_line,
+                member.limit,
+                with_line_numbers,
+                path,
+            )
+            .map(|range| ObservedRead { range, revision })
+        });
+        Self {
+            index: member.index,
+            path: path.to_owned(),
+            result,
+        }
+    }
+
+    fn into_output(self, with_line_numbers: bool) -> Value {
+        let result = match self.result {
+            Ok(observed) => {
+                let mut result =
+                    build_read_file_success(&observed.range, with_line_numbers, Some(&self.path));
+                if result.success {
+                    result.output["read_revision"] = json!(observed.revision);
+                }
+                result
+            }
+            Err(failure) => failure.into_tool_result(Some(&self.path)),
+        };
+        json!({
+            "index": self.index,
+            "path": self.path,
+            "success": result.success,
+            "output": result.output,
+            "error": result.error,
+        })
+    }
 }
 
 fn plan_read_files(items: Vec<ReadFilesItem>) -> Vec<PlannedRead> {
@@ -161,18 +224,6 @@ impl ReadModelProjection {
             Self::None => {}
         }
     }
-}
-
-pub(super) fn stale_read_revision_failure(path: &str) -> ToolResult {
-    ToolResult::err_with_output(
-        "read_file failed: stale_read_revision",
-        json!({
-            "error_kind": "read_file_failed",
-            "reason_code": "stale_read_revision",
-            "path": path,
-            "state_changed": false,
-        }),
-    )
 }
 
 fn read_range_next_item(item: &Value) -> Option<ReadFilesItem> {
@@ -1020,7 +1071,7 @@ impl ToolRuntime {
         limit: Option<usize>,
         expected_sha256: Option<&str>,
         deadline: Instant,
-    ) -> ToolResult {
+    ) -> FileReadOutcome {
         let reader = super::files::ProjectFileReader::new(self.runner_registry.clone());
         self.reads
             .read_project_snapshot(
@@ -1061,8 +1112,8 @@ impl ToolRuntime {
         expected_sha256: Option<&str>,
         with_line_numbers: bool,
         deadline: Instant,
-    ) -> Value {
-        let mut result = self
+    ) -> CompletedReadMember {
+        let result = self
             .read_project_snapshot(
                 resolved,
                 runner_project_id,
@@ -1074,61 +1125,18 @@ impl ToolRuntime {
                 deadline,
             )
             .await;
-        if result.success {
-            if let Some(expected_sha256) = expected_sha256 {
-                let actual_sha256 = result.output.get("sha256").and_then(Value::as_str);
-                if actual_sha256 != Some(expected_sha256) {
-                    result = stale_read_revision_failure(path);
-                }
+        let observed = match &result {
+            Ok(range) => {
+                let target =
+                    WorkspaceReadRuntime::revision_target(resolved, path, runner_instance_id);
+                Ok((
+                    range,
+                    self.reads.observe_revision(target, range.sha256.clone()),
+                ))
             }
-        }
-        let success = result.success;
-        let error = result.error.clone();
-        let output = result.output;
-        if !success {
-            return json!({
-                "index": member.index,
-                "path": path,
-                "success": false,
-                "output": output,
-                "error": error,
-            });
-        }
-
-        let target = WorkspaceReadRuntime::revision_target(resolved, path, runner_instance_id);
-        let read_revision = output
-            .get("sha256")
-            .and_then(Value::as_str)
-            .map(|sha256| self.reads.observe_revision(target, sha256.to_string()));
-        let member_result = super::files::slice_read_file_result(
-            &output,
-            member.start_line,
-            member.limit,
-            with_line_numbers,
-            path,
-        );
-        if !member_result.success {
-            return json!({
-                "index": member.index,
-                "path": path,
-                "success": false,
-                "output": member_result.output,
-                "error": member_result.error,
-            });
-        }
-        let mut member_output = member_result.output;
-        if let Some(read_revision) = read_revision {
-            if let Some(object) = member_output.as_object_mut() {
-                object.insert("read_revision".to_string(), json!(read_revision));
-            }
-        }
-        json!({
-            "index": member.index,
-            "path": path,
-            "success": true,
-            "output": member_output,
-            "error": Value::Null,
-        })
+            Err(failure) => Err(*failure),
+        };
+        CompletedReadMember::new(member, path, observed, with_line_numbers)
     }
 
     pub(crate) async fn read_files_resolved(
@@ -1217,7 +1225,7 @@ impl ToolRuntime {
         // No request can reach the Runner until its future is polled by
         // `buffer_unordered`, so at most MAX_READ_FILES_CONCURRENCY file reads
         // are actually in flight.
-        let completed_groups: Vec<Vec<Value>> =
+        let completed_groups: Vec<Vec<CompletedReadMember>> =
             stream::iter(planned_reads.into_iter().map(|planned| {
                 let runner_project_id = runner_project_id.clone();
                 let runner_instance_id = runner_instance_id.clone();
@@ -1230,24 +1238,22 @@ impl ToolRuntime {
                         Some(revision) => match self.reads.resolve_revision(revision, &target) {
                             Ok(sha256) => Some(sha256),
                             Err(_) => {
-                                let result = stale_read_revision_failure(&path);
                                 return members
                                     .into_iter()
                                     .map(|member| {
-                                        json!({
-                                            "index": member.index,
-                                            "path": path,
-                                            "success": false,
-                                            "output": result.output,
-                                            "error": result.error,
-                                        })
+                                        CompletedReadMember::new(
+                                            member,
+                                            &path,
+                                            Err(FileReadFailure::StaleRevision),
+                                            with_line_numbers,
+                                        )
                                     })
-                                    .collect::<Vec<_>>();
+                                    .collect();
                             }
                         },
                         None => None,
                     };
-                    let mut result = self
+                    let result = self
                         .read_project_snapshot(
                             resolved,
                             &runner_project_id,
@@ -1259,24 +1265,16 @@ impl ToolRuntime {
                             deadline,
                         )
                         .await;
-                    if result.success {
-                        if let Some(expected_sha256) = expected_sha256.as_deref() {
-                            let actual_sha256 = result.output.get("sha256").and_then(Value::as_str);
-                            if actual_sha256 != Some(expected_sha256) {
-                                result = stale_read_revision_failure(&path);
-                            }
-                        }
-                    }
-
                     // Coalescing is an optimization, never a semantic reason for
                     // otherwise-valid member reads to fail. A merged UTF-8 range
                     // can cross the canonical raw-byte ceiling even when each
                     // caller range fits independently; only that bounded failure
                     // falls back to the original member reads.
                     if members.len() > 1
-                        && !result.success
-                        && result.output.get("reason_code").and_then(Value::as_str)
-                            == Some("range_too_large")
+                        && matches!(
+                            &result,
+                            Err(FileReadFailure::Read(ReadFileReason::RangeTooLarge))
+                        )
                     {
                         let mut fallback = Vec::with_capacity(members.len());
                         for member in members {
@@ -1303,15 +1301,16 @@ impl ToolRuntime {
                     // does not. In that case slice the original members from
                     // the successful snapshot; no additional Runner read.
                     let union_fits = coalesced_output
-                        && result.success
-                        && super::files::slice_read_file_result(
-                            &result.output,
-                            item.start_line,
-                            item.limit,
-                            with_line_numbers,
-                            &path,
-                        )
-                        .success;
+                        && result.as_ref().is_ok_and(|range| {
+                            slice_read_file_range(
+                                range,
+                                item.start_line,
+                                item.limit,
+                                with_line_numbers,
+                                &path,
+                            )
+                            .is_ok()
+                        });
                     let members = if union_fits {
                         vec![PlannedReadMember {
                             index: members
@@ -1325,93 +1324,41 @@ impl ToolRuntime {
                     } else {
                         members
                     };
-                    let success = result.success;
-                    let error = result.error.clone();
-                    let output = result.output;
-                    let read_revision = if success {
-                        output
-                            .get("sha256")
-                            .and_then(Value::as_str)
-                            .map(|sha256| self.reads.observe_revision(target, sha256.to_string()))
-                    } else {
-                        None
+                    let observed = match &result {
+                        Ok(range) => Ok((
+                            range,
+                            self.reads.observe_revision(target, range.sha256.clone()),
+                        )),
+                        Err(failure) => Err(*failure),
                     };
                     members
                         .into_iter()
                         .map(|member| {
-                            if success {
-                                let member_result = super::files::slice_read_file_result(
-                                    &output,
-                                    member.start_line,
-                                    member.limit,
-                                    with_line_numbers,
-                                    &path,
-                                );
-                                if !member_result.success {
-                                    return json!({
-                                        "index": member.index,
-                                        "path": path,
-                                        "success": false,
-                                        "output": member_result.output,
-                                        "error": member_result.error,
-                                    });
-                                }
-                                let mut member_output = member_result.output;
-                                if let Some(read_revision) = read_revision {
-                                    if let Some(object) = member_output.as_object_mut() {
-                                        object.insert(
-                                            "read_revision".to_string(),
-                                            json!(read_revision),
-                                        );
-                                    }
-                                }
-                                json!({
-                                    "index": member.index,
-                                    "path": path,
-                                    "success": true,
-                                    "output": member_output,
-                                    "error": Value::Null,
-                                })
-                            } else {
-                                json!({
-                                    "index": member.index,
-                                    "path": path,
-                                    "success": false,
-                                    "output": output,
-                                    "error": error,
-                                })
-                            }
+                            CompletedReadMember::new(member, &path, observed, with_line_numbers)
                         })
-                        .collect::<Vec<_>>()
+                        .collect()
                 }
             }))
             .buffer_unordered(MAX_READ_FILES_CONCURRENCY)
             .collect()
             .await;
-        let mut completed: Vec<Value> = completed_groups.into_iter().flatten().collect();
-        completed.sort_by_key(|item| item["index"].as_u64().unwrap_or(u64::MAX));
+        let mut completed: Vec<CompletedReadMember> =
+            completed_groups.into_iter().flatten().collect();
+        completed.sort_by_key(|item| item.index);
 
         let output_items = if coalesced_output {
             completed
                 .iter_mut()
                 .enumerate()
                 .map(|(index, entry)| {
-                    let original_index = entry["index"]
-                        .as_u64()
-                        .expect("planned result retains its member index")
-                        as usize;
-                    let mut item = items[original_index].clone();
-                    if entry["success"].as_bool() == Some(true) {
-                        let output = &entry["output"];
-                        item.start_line =
-                            Some(output["start_line"].as_u64().expect("canonical read start")
-                                as usize);
-                        item.limit =
-                            Some(output["limit"].as_u64().expect("canonical read limit") as usize);
+                    let mut item = items[entry.index].clone();
+                    if let Ok(observed) = &entry.result {
+                        item.start_line = Some(observed.range.start_line);
+                        item.limit = Some(observed.range.limit);
                     }
-                    // Budget continuation indexes must refer to this actual plan,
-                    // including original ranges returned by byte-ceiling fallback.
-                    entry["index"] = json!(index);
+                    // Budget continuation indexes refer to this actual plan,
+                    // including original ranges after byte-ceiling fallback.
+                    entry.index = index;
                     item
                 })
                 .collect::<Vec<_>>()
@@ -1422,7 +1369,10 @@ impl ToolRuntime {
             ToolResult::ok(batch_output(
                 &runtime_project_id,
                 output_items.len(),
-                completed,
+                completed
+                    .into_iter()
+                    .map(|member| member.into_output(with_line_numbers))
+                    .collect(),
                 false,
                 None,
                 None,

@@ -128,27 +128,19 @@ async fn work_result_automatic_workspace_reuse_keeps_validation_and_jobs_live() 
     // test admits a no-filesystem-effect Job directly into the canonical registry.
     let job = runtime
         .runner_registry
-        .start_job_with_metadata(
-            crate::runner_protocol::ShellJobOpRequest {
-                login: false,
-                op: "start".into(),
-                client_id: Some(CLIENT.into()),
-                cwd: None,
-                command: Some("echo observation-only".into()),
-                timeout_secs: Some(60),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+        .start_job(
+            webcodex_runner_registry::JobStartRequest {
+                timeout_secs: 60,
+                context: webcodex_runner_registry::JobStartContext {
+                    project_id: Some(project.clone()),
+                    session_id: Some(session.clone()),
+                    ..Default::default()
+                },
+                ..webcodex_runner_registry::JobStartRequest::shell(CLIENT, "echo observation-only")
             },
             "alice".into(),
-            webcodex_runner_registry::ShellJobStartMetadata {
-                project_id: Some(project.clone()),
-                session_id: Some(session.clone()),
-                ..Default::default()
-            },
+            None,
+            None,
         )
         .await
         .unwrap();

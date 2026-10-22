@@ -5,28 +5,10 @@ use std::collections::HashSet;
 async fn fixture() -> (RunnerRegistry, String) {
     let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "index-instance").await;
+    let mut request = shell_job_start_request("oe", "echo index-fixture", Some(60));
+    request.context.project_id = Some("agent:oe:target".into());
     let job = registry
-        .start_job_with_metadata(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".into(),
-                client_id: Some("oe".into()),
-                cwd: None,
-                command: Some("echo index-fixture".into()),
-                timeout_secs: Some(60),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
-            },
-            "alice".into(),
-            ShellJobStartMetadata {
-                project_id: Some("agent:oe:target".into()),
-                ..Default::default()
-            },
-        )
+        .start_job(request, "alice".into(), None, None)
         .await
         .unwrap();
     (registry, job.job_id)

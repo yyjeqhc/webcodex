@@ -200,26 +200,18 @@ async fn list_projects_batch_job_counts_join_exact_projects_and_skip_empty_selec
     for id in ["a", "a", "b"] {
         runtime
             .runner_registry
-            .start_job_with_metadata(
-                crate::runner_protocol::ShellJobOpRequest {
-                    login: false,
-                    op: "start".into(),
-                    client_id: Some("batch".into()),
-                    cwd: None,
-                    command: Some("echo fixture".into()),
-                    timeout_secs: Some(60),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
+            .start_job(
+                webcodex_runner_registry::JobStartRequest {
+                    timeout_secs: 60,
+                    context: webcodex_runner_registry::JobStartContext {
+                        project_id: Some(format!("agent:batch:{id}")),
+                        ..Default::default()
+                    },
+                    ..webcodex_runner_registry::JobStartRequest::shell("batch", "echo fixture")
                 },
                 "fixture".into(),
-                webcodex_runner_registry::ShellJobStartMetadata {
-                    project_id: Some(format!("agent:batch:{id}")),
-                    ..Default::default()
-                },
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -762,26 +754,21 @@ async fn runtime_status_focused_job_counts_do_not_leak_other_runners() {
         for _ in 0..count {
             runtime
                 .runner_registry
-                .start_job_with_metadata(
-                    crate::runner_protocol::ShellJobOpRequest {
-                        login: false,
-                        op: "start".into(),
-                        client_id: Some(client_id.into()),
-                        cwd: None,
-                        command: Some("echo fixture".into()),
-                        timeout_secs: Some(60),
-                        job_id: None,
-                        since_stdout_line: None,
-                        since_stderr_line: None,
-                        tail_lines: None,
-                        limit: None,
-                        codex: None,
+                .start_job(
+                    webcodex_runner_registry::JobStartRequest {
+                        timeout_secs: 60,
+                        context: webcodex_runner_registry::JobStartContext {
+                            project_id: Some(format!("agent:{client_id}:root")),
+                            ..Default::default()
+                        },
+                        ..webcodex_runner_registry::JobStartRequest::shell(
+                            client_id,
+                            "echo fixture",
+                        )
                     },
                     "fixture".into(),
-                    webcodex_runner_registry::ShellJobStartMetadata {
-                        project_id: Some(format!("agent:{client_id}:root")),
-                        ..Default::default()
-                    },
+                    None,
+                    None,
                 )
                 .await
                 .unwrap();

@@ -10,28 +10,10 @@ async fn project_active_job_batch_preserves_visibility_lifecycle_and_bounds() {
     let empty = "agent:oe:empty";
     let mut ids = Vec::new();
     for index in 0..112 {
+        let mut request = shell_job_start_request("oe", "echo fixture-only", Some(60));
+        request.context.project_id = Some(target.into());
         let job = registry
-            .start_job_with_metadata(
-                ShellJobOpRequest {
-                    login: false,
-                    op: "start".into(),
-                    client_id: Some("oe".into()),
-                    cwd: None,
-                    command: Some("echo fixture-only".into()),
-                    timeout_secs: Some(60),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
-                },
-                "alice".into(),
-                ShellJobStartMetadata {
-                    project_id: Some(target.into()),
-                    ..Default::default()
-                },
-            )
+            .start_job(request, "alice".into(), None, None)
             .await
             .unwrap();
         ids.push(job.job_id);
@@ -109,35 +91,16 @@ async fn project_active_job_batch_preserves_visibility_lifecycle_and_bounds() {
 async fn filtered_job_inventory_refreshes_only_authorized_static_candidates() {
     let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "filtered-inst").await;
-    let request = |command: &str| ShellJobOpRequest {
-        login: false,
-        op: "start".to_string(),
-        client_id: Some("oe".to_string()),
-        cwd: None,
-        command: Some(command.to_string()),
-        timeout_secs: Some(60),
-        job_id: None,
-        since_stdout_line: None,
-        since_stderr_line: None,
-        tail_lines: None,
-        limit: None,
-        codex: None,
-    };
     for (project, session) in [
         ("agent:oe:target", "session-a"),
         ("agent:oe:target", "session-b"),
         ("agent:oe:other", "session-a"),
     ] {
+        let mut request = shell_job_start_request("oe", "sleep 60", Some(60));
+        request.context.project_id = Some(project.to_string());
+        request.context.session_id = Some(session.to_string());
         registry
-            .start_job_with_metadata(
-                request("sleep 60"),
-                "alice".to_string(),
-                ShellJobStartMetadata {
-                    project_id: Some(project.to_string()),
-                    session_id: Some(session.to_string()),
-                    ..Default::default()
-                },
-            )
+            .start_job(request, "alice".to_string(), None, None)
             .await
             .unwrap();
     }
@@ -178,29 +141,18 @@ async fn filtered_job_inventory_refreshes_only_authorized_static_candidates() {
 async fn project_active_job_query_is_not_truncated_and_unregister_fences_starts() {
     let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-jobs").await;
-    let request = |command: &str| ShellJobOpRequest {
-        login: false,
-        op: "start".to_string(),
-        client_id: Some("oe".to_string()),
-        cwd: None,
-        command: Some(command.to_string()),
-        timeout_secs: Some(60),
-        job_id: None,
-        since_stdout_line: None,
-        since_stderr_line: None,
-        tail_lines: None,
-        limit: None,
-        codex: None,
+    let request = |command: &str, project: &str| {
+        let mut request = shell_job_start_request("oe", command, Some(60));
+        request.context.project_id = Some(project.to_string());
+        request
     };
     let target = "agent:oe:target";
     let target_job = registry
-        .start_job_with_metadata(
-            request("sleep 60"),
+        .start_job(
+            request("sleep 60", target),
             "tester".to_string(),
-            ShellJobStartMetadata {
-                project_id: Some(target.to_string()),
-                ..Default::default()
-            },
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -214,13 +166,11 @@ async fn project_active_job_query_is_not_truncated_and_unregister_fences_starts(
     }
     for index in 0..101 {
         registry
-            .start_job_with_metadata(
-                request(&format!("echo {index}")),
+            .start_job(
+                request(&format!("echo {index}"), &format!("agent:oe:other-{index}")),
                 "tester".to_string(),
-                ShellJobStartMetadata {
-                    project_id: Some(format!("agent:oe:other-{index}")),
-                    ..Default::default()
-                },
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -260,26 +210,22 @@ async fn project_active_job_query_is_not_truncated_and_unregister_fences_starts(
     );
     registry.end_project_unregister(target).await;
     let blocked = registry
-        .start_job_with_metadata(
-            request("echo blocked"),
+        .start_job(
+            request("echo blocked", target),
             "tester".to_string(),
-            ShellJobStartMetadata {
-                project_id: Some(target.to_string()),
-                ..Default::default()
-            },
+            None,
+            None,
         )
         .await
         .unwrap_err();
-    assert_eq!(blocked, "project_unregister_in_progress");
+    assert_eq!(blocked.to_string(), "project_unregister_in_progress");
     registry.end_project_unregister(target).await;
     registry
-        .start_job_with_metadata(
-            request("echo allowed"),
+        .start_job(
+            request("echo allowed", target),
             "tester".to_string(),
-            ShellJobStartMetadata {
-                project_id: Some(target.to_string()),
-                ..Default::default()
-            },
+            None,
+            None,
         )
         .await
         .unwrap();

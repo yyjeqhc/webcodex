@@ -5,8 +5,8 @@ use super::structured_execution::{
 };
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::runner_http::{ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution};
-use crate::runner_protocol::{ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest};
+use crate::runner_http::{JobStartContext, JobStartExecution, JobStartRequest, ShellJobVisibility};
+use crate::runner_protocol::{ShellCommandExecutionState, ShellJobInfo};
 use serde_json::json;
 use std::time::Duration;
 use webcodex_core::project_format::*;
@@ -192,37 +192,26 @@ impl ToolRuntime {
         let project_cwd = project_relative_runner_cwd(&resolved.config, &effective_cwd).ok();
         let job = match self
             .runner_registry
-            .start_job_with_metadata_for_access(
-                ShellJobOpRequest {
-                    login: false,
-                    op: "start".into(),
-                    client_id: Some(resolved.config.client_id.clone()),
+            .start_job(
+                JobStartRequest {
+                    client_id: resolved.config.client_id.clone(),
                     cwd: Some(effective_cwd),
-                    command: Some(String::new()),
-                    timeout_secs: Some(timeout),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
-                },
-                "tool_runtime".into(),
-                ShellJobStartMetadata {
-                    project_id: Some(resolved.resolved_id),
-                    session_id,
-                    project_cwd,
-                    purpose: Some("format".into()),
-                    shell: Some("direct_argv".into()),
-                    // Mutation evidence must survive a dropped synchronous response and
-                    // terminal success; hidden-terminal cleanup must never delete it.
-                    visibility: ShellJobVisibility::Public,
-                    structured_execution: Some(StructuredJobExecution::ProjectFormat {
+                    timeout_secs: timeout,
+                    execution: JobStartExecution::Format {
                         plan,
                         runner_instance_id,
-                    }),
-                    ..Default::default()
+                    },
+                    context: JobStartContext {
+                        project_id: Some(resolved.resolved_id),
+                        session_id: session_id,
+                        project_cwd: project_cwd,
+                        purpose: Some("format".into()),
+                        shell: Some("direct_argv".into()),
+                        visibility: ShellJobVisibility::Public,
+                    },
+                    codex: None,
                 },
+                "tool_runtime".to_string(),
                 access.as_ref(),
                 None,
             )
@@ -230,13 +219,15 @@ impl ToolRuntime {
         {
             Ok(job) => job,
             Err(error) => {
-                let code = if valid_failure_code(&error) {
-                    &error
-                } else if error.starts_with("capability_unavailable:") {
-                    "capability_unavailable"
-                } else {
-                    "format_admission_unavailable"
-                };
+                let code = error.reason_code().unwrap_or_else(|| {
+                    if error.failure_kind() == "capability_unavailable"
+                        && !error.is_async_jobs_unavailable()
+                    {
+                        "capability_unavailable"
+                    } else {
+                        "format_admission_unavailable"
+                    }
+                });
                 return rejected(code);
             }
         };

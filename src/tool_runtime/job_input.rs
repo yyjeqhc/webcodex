@@ -4,8 +4,10 @@ use crate::auth::AuthContext;
 use serde_json::json;
 use std::time::Duration;
 use webcodex_core::job_input::{validate_input, InputWriteState, JobInputReceipt};
-use webcodex_core::runner_protocol::{ShellJobOpRequest, ShellProcessArgv};
-use webcodex_runner_registry::{ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution};
+use webcodex_core::runner_protocol::ShellProcessArgv;
+use webcodex_runner_registry::{
+    JobStartContext, JobStartExecution, JobStartRequest, ShellJobVisibility,
+};
 
 fn valid_receipt(receipt: &JobInputReceipt, id: &str, bytes: usize, close: bool) -> bool {
     if receipt.input_id != id || receipt.bytes_written > bytes {
@@ -77,41 +79,30 @@ impl ToolRuntime {
         };
         let job = self
             .runner_registry
-            .start_job_with_metadata_for_access(
-                ShellJobOpRequest {
-                    op: "start".into(),
-                    client_id: Some(target.client_id),
+            .start_job(
+                JobStartRequest {
+                    client_id: target.client_id,
                     cwd: Some(effective_cwd),
-                    command: Some(String::new()),
-                    timeout_secs: Some(budget.effective_timeout_secs),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
+                    timeout_secs: budget.effective_timeout_secs,
+                    execution: JobStartExecution::InteractiveProcess(process),
+                    context: JobStartContext {
+                        project_id: Some(resolved.resolved_id),
+                        session_id: session_id,
+                        project_cwd: cwd,
+                        purpose: purpose.map(|p| p.as_str().into()),
+                        shell: Some("direct_argv".into()),
+                        visibility: ShellJobVisibility::Public,
+                    },
                     codex: None,
-                    login: false,
                 },
-                "tool_runtime".into(),
-                ShellJobStartMetadata {
-                    project_id: Some(resolved.resolved_id),
-                    session_id,
-                    project_cwd: cwd,
-                    purpose: purpose.map(|p| p.as_str().into()),
-                    shell: Some("direct_argv".into()),
-                    visibility: ShellJobVisibility::Public,
-                    structured_execution: Some(StructuredJobExecution::InteractiveProcess(process)),
-                    // Later interactive input is not a pre-known validation recipe or a
-                    // command hash covering the full interaction. Never mint test evidence.
-                    ..Default::default()
-                },
+                "tool_runtime".to_string(),
                 crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 None,
             )
             .await;
         match job {
             Err(error) => ToolResult::err_with_output(
-                error,
+                error.to_string(),
                 json!({"error_kind":"interactive_process_not_admitted","execution_state":"not_started","state_changed":false,"command_started":false,"command_completed":false}),
             ),
             Ok(job) => ToolResult::ok(

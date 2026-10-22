@@ -1,7 +1,8 @@
 use super::reconnect::dispatch_coding_call_in_window;
 use super::support::*;
-use crate::runner_http::ShellJobStartMetadata;
-use crate::runner_protocol::{RunnerCapabilities, RunnerJobUpdateRequest, ShellJobOpRequest};
+use webcodex_runner_registry::{JobStartContext, JobStartRequest};
+
+use crate::runner_protocol::{RunnerCapabilities, RunnerJobUpdateRequest};
 use crate::tool_runtime::startup_brief::{
     startup_brief_size, validate_schema_instance_for_test, STANDARD_STARTUP_HARD_MAX_BYTES,
 };
@@ -1104,27 +1105,19 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
     let project_b = crate::tool_runtime::runner_project_runtime_id("startup-jobs", "b");
     let job = runtime
         .runner_registry
-        .start_job_with_metadata(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("startup-jobs".to_string()),
+        .start_job(
+            JobStartRequest {
                 cwd: Some(root_a.path().to_string_lossy().to_string()),
-                command: Some("sleep 60".to_string()),
-                timeout_secs: Some(120),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+                context: JobStartContext {
+                    project_id: Some(project_a.clone()),
+                    project_cwd: Some(root_a.path().to_string_lossy().to_string()),
+                    ..Default::default()
+                },
+                ..JobStartRequest::shell("startup-jobs".to_string(), "sleep 60".to_string())
             },
             "startup-test".to_string(),
-            ShellJobStartMetadata {
-                project_id: Some(project_a.clone()),
-                project_cwd: Some(root_a.path().to_string_lossy().to_string()),
-                ..Default::default()
-            },
+            None,
+            None,
         )
         .await
         .unwrap();

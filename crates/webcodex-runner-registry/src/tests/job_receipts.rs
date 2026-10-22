@@ -491,10 +491,9 @@ async fn receipts_owner_is_fixed_before_runner_reregistration_and_groups_are_iso
         .await
         .unwrap();
         let job = a
-            .start_job_with_metadata_for_access(
+            .start_job(
                 start_request("echo safe"),
                 "tester".into(),
-                ShellJobStartMetadata::default(),
                 Some(&caller),
                 None,
             )
@@ -553,15 +552,10 @@ async fn receipts_active_hidden_cleanup_and_detached_are_never_saved() {
         ShellJobVisibility::HiddenUntilHandoff,
         ShellJobVisibility::CleanupPending,
     ] {
+        let mut request = start_request("echo hidden");
+        request.context.visibility = visibility;
         let job = a
-            .start_job_with_metadata(
-                start_request("echo hidden"),
-                "tester".into(),
-                ShellJobStartMetadata {
-                    visibility,
-                    ..Default::default()
-                },
-            )
+            .start_job(request, "tester".into(), None, None)
             .await
             .unwrap();
         a.update_job(update(
@@ -785,9 +779,7 @@ async fn receipts_protocol_violation_and_recovery_sweep_capture_final_evidence()
 async fn receipts_validation_provenance_is_restored_only_by_same_instance_inventory() {
     for adapter in ["cargo_test", "node:vitest:test", "node:jest:test"] {
         let validation = || {
-            let mut metadata = cargo_validation_start_metadata(None, None, None)
-                .validation
-                .unwrap();
+            let mut metadata = cargo_validation_metadata(None, None, None);
             if adapter != "cargo_test" {
                 use webcodex_core::project_validation::*;
                 metadata.tool = "project_validate".into();
@@ -913,7 +905,7 @@ async fn receipts_unowned_admission_preserves_only_existing_global_visibility() 
     registration.owner = None;
     a.register(registration).await.unwrap();
     let job = a
-        .start_job(start_request("echo safe"), "bootstrap".into())
+        .start_job(start_request("echo safe"), "bootstrap".into(), None, None)
         .await
         .unwrap();
     a.stop_job(&job.job_id, "bootstrap".into()).await.unwrap();

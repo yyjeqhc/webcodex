@@ -195,8 +195,8 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
 
 #[tokio::test]
 async fn list_jobs_direct_and_gateway_preserve_caller_visibility_and_validation() {
-    use crate::runner_protocol::ShellJobOpRequest;
-    use webcodex_runner_registry::ShellJobStartMetadata;
+    use webcodex_runner_registry::JobStartRequest;
+
     let runtime = test_runtime();
     let auth = crate::auth::shared_key_context("job-inventory-owner");
     let foreign = crate::auth::shared_key_context("job-inventory-foreign");
@@ -219,13 +219,12 @@ async fn list_jobs_direct_and_gateway_preserve_caller_visibility_and_validation(
             .unwrap();
         let job = runtime
             .runner_registry
-            .start_job_with_metadata_for_access(
-                serde_json::from_value::<ShellJobOpRequest>(json!({
-                    "op":"start", "client_id":client, "command":"fixture", "timeout_secs":60
-                }))
-                .unwrap(),
+            .start_job(
+                JobStartRequest {
+                    timeout_secs: 60,
+                    ..JobStartRequest::shell(client, "fixture")
+                },
                 "fixture".into(),
-                ShellJobStartMetadata::default(),
                 Some(&access),
                 None,
             )

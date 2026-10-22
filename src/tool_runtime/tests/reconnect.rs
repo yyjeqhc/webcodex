@@ -8,7 +8,7 @@ use crate::client_window::ClientWindow;
 use crate::runner_http::RunnerTransport;
 use crate::runner_protocol::{
     RunnerBuildInfo, RunnerCapabilities, RunnerHostContext, RunnerProtocolGenerationNumber,
-    RunnerRegisterRequest, ShellJobOpRequest, RUNNER_PROTOCOL_GENERATION_V2,
+    RunnerRegisterRequest, RUNNER_PROTOCOL_GENERATION_V2,
 };
 use crate::tool_runtime::dispatch::DispatchContext;
 use crate::tool_runtime::observations::ToolCallObservation;
@@ -17,6 +17,7 @@ use crate::tool_runtime::{ToolCall, ToolRuntime};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Notify;
+use webcodex_runner_registry::JobStartRequest;
 
 fn persisted_session_authority_fingerprint(
     ledger: &std::path::Path,
@@ -505,21 +506,10 @@ async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
     let job = runtime
         .runner_registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("job-agent".to_string()),
-                cwd: None,
-                command: Some("sleep 60".to_string()),
-                timeout_secs: Some(120),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
-            },
+            JobStartRequest::shell("job-agent".to_string(), "sleep 60".to_string()),
             "reconnect-test".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap();

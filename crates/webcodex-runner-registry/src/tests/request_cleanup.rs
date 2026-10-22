@@ -98,21 +98,10 @@ async fn job_request_retirement_preserves_job_truth_and_separate_waiter_ownershi
         register_with_instance(&registry, "b", "inst-b").await;
         let job = registry
             .start_job(
-                ShellJobOpRequest {
-                    login: false,
-                    op: "start".into(),
-                    client_id: Some("a".into()),
-                    cwd: None,
-                    command: Some("echo retained-job".into()),
-                    timeout_secs: Some(60),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
-                },
+                shell_job_start_request("a", "echo retained-job", Some(60)),
                 "alice".into(),
+                None,
+                None,
             )
             .await
             .unwrap();

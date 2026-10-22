@@ -201,21 +201,10 @@ async fn stale_connection_poll_cannot_steal_new_request() {
     // Start an async job (queued -> agent_queued only on dispatch).
     let job = registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("oe".to_string()),
-                cwd: None,
-                command: Some("sleep 1".to_string()),
-                timeout_secs: Some(1),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
-            },
+            shell_job_start_request("oe", "sleep 1", Some(1)),
             "tester".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -531,21 +520,10 @@ async fn stale_connection_disconnect_cleanup_is_noop_for_current_lease() {
     register_with_connection(&registry, "oe", "inst-x", "conn-a").await;
     let job = registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("oe".to_string()),
-                cwd: None,
-                command: Some("sleep 10".to_string()),
-                timeout_secs: Some(10),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
-            },
+            shell_job_start_request("oe", "sleep 10", Some(10)),
             "tester".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -727,21 +705,10 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
     register_with_connection(&registry, "oe", "inst-x", "conn-a").await;
     let job = registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("oe".to_string()),
-                cwd: None,
-                command: Some("sleep 10".to_string()),
-                timeout_secs: Some(10),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
-            },
+            shell_job_start_request("oe", "sleep 10", Some(10)),
             "tester".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap();

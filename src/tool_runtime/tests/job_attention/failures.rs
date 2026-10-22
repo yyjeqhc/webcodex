@@ -227,8 +227,11 @@ fn passive_go_fmt_and_declared_process_validation_keep_canonical_evidence() {
 
 #[tokio::test]
 async fn passive_failure_reads_retained_server_evidence_without_runner_poll() {
-    use crate::runner_http::{ShellJobStartMetadata, ShellJobVisibility};
-    use crate::runner_protocol::ShellJobOpRequest;
+    use crate::runner_http::ShellJobVisibility;
+    use webcodex_runner_registry::{
+        JobStartContext, JobStartExecution, JobStartRequest, JobValidationPlan,
+    };
+
     use crate::tool_runtime::tests::support::wait_for_runner_request_for_instance;
     use crate::tool_runtime::tests::validation_handoff::{cargo_test_update, running_progress};
     let runtime = ToolRuntime::new_for_tests();
@@ -246,31 +249,28 @@ async fn passive_failure_reads_retained_server_evidence_without_runner_poll() {
         .unwrap();
     let job = runtime
         .runner_registry
-        .start_job_with_metadata(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".into(),
-                client_id: Some(client.into()),
+        .start_job(
+            JobStartRequest {
+                timeout_secs: 600,
                 cwd: Some("/tmp/agent-proj".into()),
-                command: Some("cargo check".into()),
-                timeout_secs: Some(600),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+                context: JobStartContext {
+                    project_id: Some(project.clone()),
+                    session_id: Some(session.clone()),
+                    purpose: Some("validation".into()),
+                    visibility: ShellJobVisibility::Public,
+                    ..Default::default()
+                },
+                ..JobStartRequest::new(
+                    client,
+                    JobStartExecution::Validation {
+                        plan: JobValidationPlan::Metadata(metadata),
+                        ssh_resource: None,
+                    },
+                )
             },
             "passive-test".into(),
-            ShellJobStartMetadata {
-                project_id: Some(project.clone()),
-                session_id: Some(session.clone()),
-                purpose: Some("validation".into()),
-                validation_steps: metadata.steps.clone(),
-                validation: Some(metadata),
-                visibility: ShellJobVisibility::Public,
-                ..Default::default()
-            },
+            None,
+            None,
         )
         .await
         .unwrap();

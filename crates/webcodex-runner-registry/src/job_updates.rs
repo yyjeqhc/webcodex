@@ -28,13 +28,17 @@ use webcodex_core::runner_operation::{
 use webcodex_core::runner_protocol::{
     validation_infrastructure_failure_code, RunnerJobUpdateRequest, RunnerRequest,
     ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource,
-    ShellJobInfo, ShellJobOpRequest, ShellJobValidationMetadata, ShellJobValidationStep,
-    ShellProcessArgv, ShellScriptPayload, DETACHED_IDEMPOTENCY_KEY_MAX_BYTES,
+    ShellJobInfo, ShellJobValidationMetadata, ShellJobValidationStep, ShellProcessArgv,
+    ShellScriptPayload, DETACHED_IDEMPOTENCY_KEY_MAX_BYTES,
 };
 use webcodex_core::runner_skill::RunnerSkillExecutionRequest;
 use webcodex_core::workflow_session_contract::ExecutionShell;
 
 mod start;
+pub use start::{
+    JobShellTarget, JobStartContext, JobStartExecution, JobStartRequest, JobValidationCorrelation,
+    JobValidationPlan,
+};
 
 #[derive(Clone, Copy)]
 struct ValidationProtocolError(&'static str);
@@ -631,46 +635,6 @@ fn validate_command_execution_state(
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct ShellJobStartMetadata {
-    pub project_id: Option<String>,
-    pub session_id: Option<String>,
-    pub ssh_resource: Option<String>,
-    pub project_cwd: Option<String>,
-    pub purpose: Option<String>,
-    /// Descriptive effective-shell metadata for observability/recovery.
-    pub shell: Option<String>,
-    /// Authoritative semantic local-shell selector for raw shell execution.
-    /// Distinct from `shell`: descriptive metadata must never grant execution
-    /// semantics.
-    pub explicit_shell: Option<ExecutionShell>,
-    pub validation_steps: Vec<ShellJobValidationStep>,
-    pub validation: Option<ShellJobValidationMetadata>,
-    pub visibility: ShellJobVisibility,
-    pub validation_identity: Option<String>,
-    pub validation_tool: Option<String>,
-    pub assertion_name: Option<String>,
-    pub structured_execution: Option<StructuredJobExecution>,
-    pub stdin: Option<String>,
-    /// Detached-only caller replay key. Consumed to derive the logical Job
-    /// identity; never copied into Runner protocol, durable state, or audit.
-    pub detached_idempotency_key: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub enum StructuredJobExecution {
-    ProjectBuild(webcodex_core::project_build::ProjectBuildPlan),
-    ProjectFormat {
-        plan: webcodex_core::project_format::ProjectFormatPlan,
-        runner_instance_id: String,
-    },
-    Process(ShellProcessArgv),
-    InteractiveProcess(ShellProcessArgv),
-    DetachedProcess(ShellProcessArgv),
-    Script(ShellScriptPayload),
-    SkillResource(RunnerSkillExecutionRequest),
-}
-
 fn validate_detached_idempotency_key(key: &str) -> Result<(), String> {
     if key.is_empty()
         || key.len() > DETACHED_IDEMPOTENCY_KEY_MAX_BYTES
@@ -715,64 +679,17 @@ pub(crate) fn allocate_job_id<T>(
 }
 
 impl RunnerRegistry {
+    /// Validate the execution shape, then admit and atomically submit it against
+    /// the current Registry state. No HTTP DTO or String error crosses this API.
     pub async fn start_job(
         &self,
-        body: ShellJobOpRequest,
+        request: JobStartRequest,
         requested_by: String,
-    ) -> Result<ShellJobInfo, String> {
-        self.start_job_with_metadata(body, requested_by, ShellJobStartMetadata::default())
-            .await
-    }
-
-    pub async fn start_job_with_metadata(
-        &self,
-        body: ShellJobOpRequest,
-        requested_by: String,
-        metadata: ShellJobStartMetadata,
-    ) -> Result<ShellJobInfo, String> {
-        let detached_initiator = metadata
-            .detached_idempotency_key
-            .as_ref()
-            .map(|_| DetachedInitiatorIdentity::internal());
-        self.start_job_with_metadata_for_access(
-            body,
-            requested_by,
-            metadata,
-            None,
-            detached_initiator.as_ref(),
-        )
-        .await
-    }
-
-    pub async fn start_job_with_metadata_for_access(
-        &self,
-        body: ShellJobOpRequest,
-        requested_by: String,
-        metadata: ShellJobStartMetadata,
-        access: Option<&crate::RunnerAccess>,
-        detached_initiator: Option<&DetachedInitiatorIdentity>,
-    ) -> Result<ShellJobInfo, String> {
-        self.start_job_with_metadata_for_access_typed(
-            body,
-            requested_by,
-            metadata,
-            access,
-            detached_initiator,
-        )
-        .await
-        .map_err(|error| error.to_string())
-    }
-
-    pub async fn start_job_with_metadata_for_access_typed(
-        &self,
-        body: ShellJobOpRequest,
-        requested_by: String,
-        metadata: ShellJobStartMetadata,
         access: Option<&crate::RunnerAccess>,
         detached_initiator: Option<&DetachedInitiatorIdentity>,
     ) -> Result<ShellJobInfo, ExecutionAdmissionError> {
-        let codex = body.codex.clone();
-        let plan = start::JobStartPlan::new(body, metadata)?;
+        let codex = request.codex.clone();
+        let plan = start::JobStartPlan::new(request)?;
         let requirements = plan.admission_requirements();
         let detached_intent = plan.detached_intent();
         let mut inner = self.inner.lock().await;

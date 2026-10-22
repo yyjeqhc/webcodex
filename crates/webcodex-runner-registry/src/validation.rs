@@ -541,6 +541,25 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
     Ok(())
 }
 
+/// Cwd and deadline limits shared by raw shell and argv validation Jobs.
+pub(super) fn validate_job_scope(cwd: Option<&str>, timeout_secs: u64) -> Result<(), String> {
+    if let Some(cwd) = cwd {
+        if cwd.len() > MAX_CWD_LEN {
+            return Err(format!("cwd is too long; maximum is {} bytes", MAX_CWD_LEN));
+        }
+        if cwd.contains('\0') {
+            return Err("cwd cannot contain NUL bytes".to_string());
+        }
+    }
+    if timeout_secs == 0 || timeout_secs > MAX_COMMAND_TIMEOUT_SECS {
+        return Err(format!(
+            "timeout_secs must be between 1 and {}",
+            MAX_COMMAND_TIMEOUT_SECS
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn validate_run_request(body: &ShellRunRequest) -> Result<(), String> {
     validate_id(&body.client_id, "client_id")?;
     validate_raw_shell_wire_command(&body.command)?;
@@ -555,20 +574,7 @@ pub(super) fn validate_run_request(body: &ShellRunRequest) -> Result<(), String>
             return Err("stdin cannot contain NUL bytes".to_string());
         }
     }
-    if let Some(cwd) = &body.cwd {
-        if cwd.len() > MAX_CWD_LEN {
-            return Err(format!("cwd is too long; maximum is {} bytes", MAX_CWD_LEN));
-        }
-        if cwd.contains('\0') {
-            return Err("cwd cannot contain NUL bytes".to_string());
-        }
-    }
-    if body.timeout_secs == 0 || body.timeout_secs > MAX_COMMAND_TIMEOUT_SECS {
-        return Err(format!(
-            "timeout_secs must be between 1 and {}",
-            MAX_COMMAND_TIMEOUT_SECS
-        ));
-    }
+    validate_job_scope(body.cwd.as_deref(), body.timeout_secs)?;
     if body.wait_timeout_secs > MAX_SYNC_WAIT_SECS {
         return Err(format!(
             "wait_timeout_secs must be <= {} for synchronous runShell",

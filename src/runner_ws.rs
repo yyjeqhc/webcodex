@@ -319,7 +319,7 @@ mod tests {
     use crate::runner_protocol::{
         ClaudeCodeProviderStatus, ProviderCallSummary, RunnerCapabilities, RunnerPolicySummary,
         RunnerProtocolGenerationNumber, RunnerRegisterRequest, RunnerResultRequest,
-        ShellJobOpRequest, ShellRunRequest, ToolProvidersStatus,
+        ShellRunRequest, ToolProvidersStatus,
     };
     use salvo::conn::{Acceptor, Listener};
     use std::net::SocketAddr;
@@ -327,6 +327,7 @@ mod tests {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tokio_tungstenite::tungstenite::http::HeaderValue;
     use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+    use webcodex_runner_registry::JobStartRequest;
 
     async fn wait_for_ws_client_connected(
         registry: &RunnerRegistry,
@@ -1196,21 +1197,13 @@ mod tests {
         // Start an async job via the registry (same path the API uses).
         let job = registry
             .start_job(
-                ShellJobOpRequest {
-                    login: false,
-                    op: "start".to_string(),
-                    client_id: Some("ws-lost".to_string()),
-                    cwd: None,
-                    command: Some("sleep 30".to_string()),
-                    timeout_secs: Some(30),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
+                JobStartRequest {
+                    timeout_secs: 30,
+                    ..JobStartRequest::shell("ws-lost".to_string(), "sleep 30".to_string())
                 },
                 "tester".to_string(),
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -1428,21 +1421,13 @@ mod tests {
         // Start a job under B.
         let job = registry
             .start_job(
-                ShellJobOpRequest {
-                    login: false,
-                    op: "start".to_string(),
-                    client_id: Some("ws-stale-disc".to_string()),
-                    cwd: None,
-                    command: Some("sleep 30".to_string()),
-                    timeout_secs: Some(30),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
+                JobStartRequest {
+                    timeout_secs: 30,
+                    ..JobStartRequest::shell("ws-stale-disc".to_string(), "sleep 30".to_string())
                 },
                 "tester".to_string(),
+                None,
+                None,
             )
             .await
             .unwrap();

@@ -16,6 +16,9 @@ enum AdmissionRejection {
     PermissionDenied(String),
     TargetChanged(String),
     Unavailable(String),
+    AsyncJobsUnavailable(String),
+    FormatExecutionUnavailable,
+    FormatRunnerReplaced,
     IdempotencyConflict(String),
     IdempotencyRecoveryRequired { job_id: String },
 }
@@ -48,6 +51,34 @@ impl ExecutionAdmissionError {
         Self(AdmissionRejection::Unavailable(message.into()))
     }
 
+    pub(crate) fn async_jobs_unavailable(client_id: &str) -> Self {
+        Self(AdmissionRejection::AsyncJobsUnavailable(format!(
+            "runner {client_id} does not support async shell jobs"
+        )))
+    }
+
+    pub fn is_async_jobs_unavailable(&self) -> bool {
+        matches!(self.0, AdmissionRejection::AsyncJobsUnavailable(_))
+    }
+
+    pub(crate) fn format_execution_unavailable() -> Self {
+        Self(AdmissionRejection::FormatExecutionUnavailable)
+    }
+
+    pub(crate) fn format_runner_replaced() -> Self {
+        Self(AdmissionRejection::FormatRunnerReplaced)
+    }
+
+    /// Specific stable rejection facts for callers with a narrower output
+    /// contract. This never derives classification from diagnostic prose.
+    pub fn reason_code(&self) -> Option<&'static str> {
+        match self.0 {
+            AdmissionRejection::FormatExecutionUnavailable => Some("format_execution_unavailable"),
+            AdmissionRejection::FormatRunnerReplaced => Some("format_runner_replaced"),
+            _ => None,
+        }
+    }
+
     pub(crate) fn idempotency_conflict(message: impl Into<String>) -> Self {
         Self(AdmissionRejection::IdempotencyConflict(message.into()))
     }
@@ -68,7 +99,8 @@ impl ExecutionAdmissionError {
                 ..
             })
             | AdmissionRejection::InvalidRequest(_) => "invalid_arguments",
-            AdmissionRejection::CapabilityUnavailable(_) => "capability_unavailable",
+            AdmissionRejection::CapabilityUnavailable(_)
+            | AdmissionRejection::AsyncJobsUnavailable(_) => "capability_unavailable",
             AdmissionRejection::PermissionDenied(_) => "permission_denied",
             AdmissionRejection::IdempotencyConflict(_) => "idempotency_conflict",
             AdmissionRejection::IdempotencyRecoveryRequired { .. } => {
@@ -77,7 +109,9 @@ impl ExecutionAdmissionError {
             AdmissionRejection::Pending(PendingRequestEnqueueError::QueueFull { .. })
             | AdmissionRejection::Pending(PendingRequestEnqueueError::Maintenance)
             | AdmissionRejection::TargetChanged(_)
-            | AdmissionRejection::Unavailable(_) => "runtime_error",
+            | AdmissionRejection::Unavailable(_)
+            | AdmissionRejection::FormatExecutionUnavailable
+            | AdmissionRejection::FormatRunnerReplaced => "runtime_error",
         }
     }
 
@@ -105,9 +139,16 @@ impl fmt::Display for ExecutionAdmissionError {
             AdmissionRejection::Pending(error) => fmt::Display::fmt(error, formatter),
             AdmissionRejection::InvalidRequest(message)
             | AdmissionRejection::CapabilityUnavailable(message)
+            | AdmissionRejection::AsyncJobsUnavailable(message)
             | AdmissionRejection::PermissionDenied(message)
             | AdmissionRejection::TargetChanged(message)
             | AdmissionRejection::Unavailable(message) => formatter.write_str(message),
+            AdmissionRejection::FormatExecutionUnavailable => {
+                formatter.write_str("format_execution_unavailable")
+            }
+            AdmissionRejection::FormatRunnerReplaced => {
+                formatter.write_str("format_runner_replaced")
+            }
             AdmissionRejection::IdempotencyConflict(message) => {
                 write!(formatter, "{DETACHED_IDEMPOTENCY_CONFLICT}: {message}")
             }

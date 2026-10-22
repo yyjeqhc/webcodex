@@ -88,10 +88,10 @@ async fn mcp_observation_summary_default_is_published_by_direct_and_gateway_mani
 #[tokio::test]
 async fn mcp_observation_summary_default_compacts_same_job_on_both_routes() {
     use crate::runner_protocol::{
-        RunnerJobUpdateRequest, ShellJobOpRequest, ShellJobValidationMetadata,
-        ShellJobValidationStep,
+        RunnerJobUpdateRequest, ShellJobValidationMetadata, ShellJobValidationStep,
     };
-    use webcodex_runner_registry::ShellJobStartMetadata;
+    use webcodex_runner_registry::{JobStartExecution, JobStartRequest, JobValidationPlan};
+
     let runtime = test_runtime();
     let registration: RunnerRegisterRequest = serde_json::from_value(json!({
         "client_id":"summary-runner", "agent_instance_id":"inst",
@@ -116,11 +116,25 @@ async fn mcp_observation_summary_default_compacts_same_job_on_both_routes() {
         "steps":[step], "effective_timeout_secs":60, "sync_wait_secs":1
     }))
     .unwrap();
-    let job = runtime.runner_registry.start_job_with_metadata(
-        serde_json::from_value::<ShellJobOpRequest>(json!({"op":"start","client_id":"summary-runner","command":"cargo check","timeout_secs":60})).unwrap(),
-        "fixture".into(),
-        ShellJobStartMetadata {validation_steps:vec![step], validation:Some(metadata), ..Default::default()},
-    ).await.unwrap();
+    let job = runtime
+        .runner_registry
+        .start_job(
+            JobStartRequest {
+                timeout_secs: 60,
+                ..JobStartRequest::new(
+                    "summary-runner",
+                    JobStartExecution::Validation {
+                        plan: JobValidationPlan::Metadata(metadata),
+                        ssh_resource: None,
+                    },
+                )
+            },
+            "fixture".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
     let request = runtime
         .runner_registry
         .poll(RunnerPollRequest {

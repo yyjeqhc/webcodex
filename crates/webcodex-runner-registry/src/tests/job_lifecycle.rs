@@ -28,7 +28,7 @@ async fn terminal_observed_poll_complete_and_log() {
         .unwrap();
     let job = registry
         .start_job(
-            ShellJobOpRequest {
+            crate::JobStartRequest {
                 cwd: Some("/tmp".to_string()),
                 codex: Some(ShellJobCodexMetadata {
                     project: Some("demo".to_string()),
@@ -44,6 +44,8 @@ async fn terminal_observed_poll_complete_and_log() {
                 ..shell_job_start_request("oe", "printf hello", Some(10))
             },
             "test".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -128,11 +130,11 @@ async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() 
 
     let start = |command: &str| shell_job_start_request("oe", command, Some(10));
     let job_a = registry
-        .start_job(start("job-a"), "test".to_string())
+        .start_job(start("job-a"), "test".to_string(), None, None)
         .await
         .unwrap();
     let job_b = registry
-        .start_job(start("job-b"), "test".to_string())
+        .start_job(start("job-b"), "test".to_string(), None, None)
         .await
         .unwrap();
     let request_a = job_a.request_id.clone().expect("job A request id");
@@ -192,6 +194,8 @@ async fn dispatched_raw_shell_accepts_prestart_not_started_terminal_update() {
         .start_job(
             shell_job_start_request("oe", "printf ok", Some(30)),
             "test".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -253,6 +257,8 @@ async fn terminal_observed_queued_stop_records_server_time() {
         .start_job(
             shell_job_start_request("oe", "sleep 10", Some(10)),
             "test".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -288,6 +294,8 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
         .start_job(
             shell_job_start_request("oe", "sleep 10", Some(10)),
             "test".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -353,6 +361,8 @@ async fn registry_marks_running_job_lost_when_client_stale() {
         .start_job(
             shell_job_start_request("oe", "sleep 10", Some(10)),
             "test".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap();

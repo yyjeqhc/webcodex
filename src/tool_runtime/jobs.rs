@@ -14,11 +14,14 @@ use super::{
     execution_outcome::ExecutionOutcomeFacts, ExecutionPurpose, ExecutionShell, ToolRuntime,
 };
 use crate::auth::AuthContext;
-use crate::runner_http::{command_preview, ShellJobStartMetadata, COMMAND_PREVIEW_MAX_CHARS};
+use crate::runner_http::{
+    command_preview, JobShellTarget, JobStartContext, JobStartExecution, JobStartRequest,
+    JobValidationPlan, COMMAND_PREVIEW_MAX_CHARS,
+};
 use crate::runner_protocol::{
     ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
-    ShellJobInfo, ShellJobOpRequest, ShellJobStructuredExecutionMetadata,
-    ShellJobTestCountEvidence, ShellJobValidationStep,
+    ShellJobInfo, ShellJobStructuredExecutionMetadata, ShellJobTestCountEvidence,
+    ShellJobValidationStep,
 };
 
 pub(crate) fn is_blocking_active_job_status(status: &str) -> bool {
@@ -1559,47 +1562,39 @@ impl ToolRuntime {
         };
         match self
                 .runner_registry
-                .start_job_with_metadata_for_access(
-                    ShellJobOpRequest {
-                        login: false,
-                        op: "start".to_string(),
-                        client_id: Some(client_id),
-                        cwd: effective_cwd,
-                        command: Some(dispatched_command),
-                        timeout_secs: Some(max_runtime as u64),
-                        job_id: None,
-                        since_stdout_line: None,
-                        since_stderr_line: None,
-                        tail_lines: None,
-                        limit: None,
-                        codex: None,
+                .start_job(
+                JobStartRequest {
+                    client_id: client_id,
+                    cwd: effective_cwd,
+                    timeout_secs: max_runtime as u64,
+                    execution: if validation_steps.is_empty() {
+                        JobStartExecution::Shell {
+                            command: dispatched_command,
+                            target: match ssh_resource {
+                                Some(resource) => JobShellTarget::Ssh { resource: resource.to_string() },
+                                None => JobShellTarget::Local { shell, login: false },
+                            },
+                        }
+                    } else {
+                        JobStartExecution::Validation {
+                            plan: JobValidationPlan::Steps(validation_steps),
+                            ssh_resource: ssh_resource.map(str::to_string),
+                        }
                     },
-                    "tool_runtime".to_string(),
-                    ShellJobStartMetadata {
+                    context: JobStartContext {
                         project_id: Some(project_id.clone()),
                         session_id: session_id.clone(),
-                        ssh_resource: ssh_resource.map(str::to_string),
                         project_cwd: Some(resolved_cwd.clone()),
                         purpose: Some(declared_purpose.as_str().to_string()),
                         shell: Some(actual_shell.to_string()),
-                        explicit_shell: if !remote && validation_steps.is_empty() {
-                            shell
-                        } else {
-                            None
-                        },
-                        validation_steps,
-                        validation: None,
                         visibility: crate::runner_http::ShellJobVisibility::Public,
-                        validation_identity: None,
-                        validation_tool: None,
-                        assertion_name: None,
-                        structured_execution: None,
-                        stdin: None,
-                        detached_idempotency_key: None,
                     },
-                    crate::runner_http::runner_access_from_auth(auth).as_ref(),
-                    None,
-                )
+                    codex: None,
+                },
+                "tool_runtime".to_string(),
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
+                None,
+            )
                 .await
             {
                 Ok(job) => {
@@ -1634,7 +1629,7 @@ impl ToolRuntime {
                 }))
                 }
                 Err(e) => ToolResult::err(command_rejected_message(
-                    e,
+                    e.to_string(),
                     "confirm the agent is connected and async jobs are allowed, then retry or use run_shell for short commands.",
                 )),
             }

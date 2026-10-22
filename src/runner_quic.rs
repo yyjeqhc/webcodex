@@ -480,10 +480,11 @@ mod tests {
     use super::*;
     use crate::runner_protocol::{
         RunnerCapabilities, RunnerJobUpdateRequest, RunnerProtocolGenerationNumber,
-        RunnerRegisterRequest, RunnerResultRequest, ShellJobOpRequest, ShellRunRequest,
-        RUNNER_PROTOCOL_GENERATION_V2, RUNNER_QUIC_ALPN_V1,
+        RunnerRegisterRequest, RunnerResultRequest, ShellRunRequest, RUNNER_PROTOCOL_GENERATION_V2,
+        RUNNER_QUIC_ALPN_V1,
     };
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    use webcodex_runner_registry::JobStartRequest;
 
     /// ALPN used by the QUIC integration tests.
     const TEST_ALPN: &str = RUNNER_QUIC_ALPN_V1;
@@ -1047,21 +1048,13 @@ mod tests {
 
         let job = registry
             .start_job(
-                ShellJobOpRequest {
-                    login: false,
-                    op: "start".to_string(),
-                    client_id: Some("quic-job".to_string()),
-                    cwd: None,
-                    command: Some("printf hi".to_string()),
-                    timeout_secs: Some(5),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
+                JobStartRequest {
+                    timeout_secs: 5,
+                    ..JobStartRequest::shell("quic-job".to_string(), "printf hi".to_string())
                 },
                 "tester".to_string(),
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -1153,21 +1146,13 @@ mod tests {
 
         let job = registry
             .start_job(
-                ShellJobOpRequest {
-                    login: false,
-                    op: "start".to_string(),
-                    client_id: Some("quic-disc".to_string()),
-                    cwd: None,
-                    command: Some("sleep 10".to_string()),
-                    timeout_secs: Some(10),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
+                JobStartRequest {
+                    timeout_secs: 10,
+                    ..JobStartRequest::shell("quic-disc".to_string(), "sleep 10".to_string())
                 },
                 "tester".to_string(),
+                None,
+                None,
             )
             .await
             .unwrap();

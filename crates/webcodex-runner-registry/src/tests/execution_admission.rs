@@ -19,30 +19,18 @@ fn script_payload() -> ShellScriptPayload {
 async fn rejected_job_start(
     registry: &RunnerRegistry,
     client_id: &str,
-    execution: Option<StructuredJobExecution>,
+    execution: Option<JobStartExecution>,
     access: Option<&RunnerAccess>,
 ) -> ExecutionAdmissionError {
+    let execution =
+        execution.unwrap_or_else(|| JobStartRequest::shell(client_id, "echo test").execution);
     registry
-        .start_job_with_metadata_for_access_typed(
-            ShellJobOpRequest {
-                op: "start".into(),
-                client_id: Some(client_id.into()),
-                cwd: None,
-                command: Some(if execution.is_some() { "" } else { "echo test" }.into()),
-                login: false,
-                timeout_secs: Some(30),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+        .start_job(
+            JobStartRequest {
+                timeout_secs: 30,
+                ..JobStartRequest::new(client_id, execution)
             },
             "test".into(),
-            ShellJobStartMetadata {
-                structured_execution: execution,
-                ..Default::default()
-            },
             access,
             None,
         )
@@ -109,8 +97,16 @@ async fn unknown_runner_execution_admission_is_identifier_independent() {
         ];
         for execution in [
             None,
-            Some(StructuredJobExecution::Process(process_payload())),
-            Some(StructuredJobExecution::Script(script_payload())),
+            Some(JobStartExecution::Process {
+                process: process_payload(),
+                stdin: None,
+                correlation: JobValidationCorrelation::default(),
+            }),
+            Some(JobStartExecution::Script {
+                script: script_payload(),
+                stdin: None,
+                correlation: JobValidationCorrelation::default(),
+            }),
         ] {
             errors.push(rejected_job_start(&registry, client_id, execution, None).await);
         }
@@ -241,45 +237,41 @@ async fn job_start_plan_preserves_validation_error_precedence() {
     };
     let mut invalid_step = valid_step.clone();
     invalid_step.program = "arbitrary-program".into();
-    for (step, validation, expected) in [
-        (invalid_step, None, "invalid structured validation plan"),
-        (
-            valid_step.clone(),
-            Some(ShellJobValidationMetadata {
-                tool: "invalid".into(),
-                kind: "check".into(),
-                steps: vec![valid_step.clone()],
-                effective_timeout_secs: 30,
-                sync_wait_secs: 0,
-                adapter: "invalid".into(),
-                validation_target_id: None,
-                minimum_tests: None,
-                require_tests: None,
-                no_run: None,
-                project_validation: None,
-                source_fence: None,
-            }),
-            "invalid structured validation metadata",
-        ),
-        (
-            valid_step,
-            None,
-            "typed structured Job starts require command=\"\" and no validation plan",
-        ),
+    // Invalid step content still precedes invalid adapter metadata, and both
+    // precede scope validation. Conflicting execution shapes are unrepresentable.
+    for (steps, expected) in [
+        (vec![invalid_step], "invalid structured validation plan"),
+        (vec![valid_step], "invalid structured validation metadata"),
+        (Vec::new(), "invalid structured validation metadata"),
     ] {
+        let metadata = ShellJobValidationMetadata {
+            tool: "invalid".into(),
+            kind: "check".into(),
+            steps,
+            effective_timeout_secs: 30,
+            sync_wait_secs: 0,
+            adapter: "invalid".into(),
+            validation_target_id: None,
+            minimum_tests: None,
+            require_tests: None,
+            no_run: None,
+            project_validation: None,
+            source_fence: None,
+        };
         let error = registry
-            .start_job_with_metadata_for_access_typed(
-                shell_job_start_request("missing", "also conflicts with a process start", Some(30)),
-                "test".into(),
-                ShellJobStartMetadata {
-                    validation_steps: vec![step],
-                    validation,
-                    structured_execution: Some(StructuredJobExecution::Process(ShellProcessArgv {
-                        executable: String::new(),
-                        args: Vec::new(),
-                    })),
-                    ..Default::default()
+            .start_job(
+                JobStartRequest {
+                    cwd: Some("invalid\0cwd".into()),
+                    timeout_secs: 0,
+                    ..JobStartRequest::new(
+                        "missing",
+                        JobStartExecution::Validation {
+                            plan: JobValidationPlan::Metadata(metadata),
+                            ssh_resource: None,
+                        },
+                    )
                 },
+                "test".into(),
                 None,
                 None,
             )
@@ -307,22 +299,29 @@ async fn job_start_plan_keeps_ssh_validation_and_step_capability_admission() {
     registration.capabilities.project_validation_python_ruff_v1 = false;
     registry.register(registration.clone()).await.unwrap();
     let step = ShellJobValidationStep::python_ruff("check").unwrap();
-    let metadata = ShellJobStartMetadata {
-        session_id: Some("wc_sess_plan_test".into()),
-        ssh_resource: Some("build-host".into()),
-        validation_steps: vec![step.clone()],
-        ..Default::default()
+    let request = JobStartRequest {
+        timeout_secs: 30,
+        context: JobStartContext {
+            session_id: Some("wc_sess_plan_test".into()),
+            ..Default::default()
+        },
+        ..JobStartRequest::new(
+            "plan-ssh",
+            JobStartExecution::Validation {
+                plan: JobValidationPlan::Steps(vec![step.clone()]),
+                ssh_resource: Some("build-host".into()),
+            },
+        )
     };
     let error = registry
-        .start_job_with_metadata(
-            shell_job_start_request("plan-ssh", "validation", Some(30)),
-            "test".into(),
-            metadata.clone(),
-        )
+        .start_job(request.clone(), "test".into(), None, None)
         .await
         .unwrap_err();
+    assert_eq!(error.failure_kind(), "capability_unavailable");
     assert!(
-        error.contains("project_validation_python_ruff_v1"),
+        error
+            .to_string()
+            .contains("project_validation_python_ruff_v1"),
         "{error}"
     );
     assert!(registry.inner.read().await.jobs_by_id.is_empty());
@@ -330,11 +329,7 @@ async fn job_start_plan_keeps_ssh_validation_and_step_capability_admission() {
     registration.capabilities.project_validation_python_ruff_v1 = true;
     registry.register(registration).await.unwrap();
     let job = registry
-        .start_job_with_metadata(
-            shell_job_start_request("plan-ssh", "validation", Some(30)),
-            "test".into(),
-            metadata,
-        )
+        .start_job(request, "test".into(), None, None)
         .await
         .unwrap();
     let request = registry
@@ -358,47 +353,84 @@ async fn job_start_plan_keeps_ssh_validation_and_step_capability_admission() {
 
 #[tokio::test]
 async fn job_start_plan_preserves_shape_specific_stdin_and_correlation() {
-    let registry = RunnerRegistry::default();
     let mut registration = runner_registration("plan-fields", "instance", Vec::new());
     for feature in [
         RunnerFeature::AsyncJobs,
         RunnerFeature::StructuredExecutionJobs,
         RunnerFeature::DetachedProcessJobs,
+        RunnerFeature::JobProcessInput,
     ] {
         registration.capabilities.set(feature, true);
     }
-    registry.register(registration).await.unwrap();
-    for (execution, key, expected_source, expected_assertion, expected_stdin) in [
-        (None, None, None, None, false),
+    let initiator = DetachedInitiatorIdentity::internal();
+    for (execution, expected_source, expected_assertion, expected_stdin, correlated) in [
         (
-            Some(StructuredJobExecution::Process(process_payload())),
+            JobStartRequest::shell("plan-fields", "echo test").execution,
             None,
-            Some("run_process"),
-            Some("assertion"),
-            true,
+            None,
+            false,
+            false,
         ),
         (
-            Some(StructuredJobExecution::DetachedProcess(process_payload())),
-            Some("plan-detached-key"),
-            Some("run_detached_process"),
-            None,
-            true,
-        ),
-    ] {
-        let command = if execution.is_some() { "" } else { "echo test" };
-        let job = registry
-            .start_job_with_metadata(
-                shell_job_start_request("plan-fields", command, Some(30)),
-                "test".into(),
-                ShellJobStartMetadata {
-                    structured_execution: execution,
-                    stdin: Some("input".into()),
+            JobStartExecution::Process {
+                process: process_payload(),
+                stdin: Some("input".into()),
+                correlation: JobValidationCorrelation {
                     validation_identity: Some("validation-id".into()),
                     validation_tool: Some("tool".into()),
                     assertion_name: Some("assertion".into()),
-                    detached_idempotency_key: key.map(str::to_string),
-                    ..Default::default()
                 },
+            },
+            Some("run_process"),
+            Some("assertion"),
+            true,
+            true,
+        ),
+        (
+            JobStartExecution::DetachedProcess {
+                process: process_payload(),
+                stdin: Some("input".into()),
+                idempotency_key: "plan-detached-key".into(),
+                validation_identity: Some("validation-id".into()),
+                validation_tool: Some("tool".into()),
+            },
+            Some("run_detached_process"),
+            None,
+            true,
+            true,
+        ),
+        (
+            JobStartExecution::InteractiveProcess(process_payload()),
+            Some("run_process_interactive"),
+            None,
+            false,
+            false,
+        ),
+    ] {
+        // Each shape owns its fixture lifecycle; active Jobs from a previous
+        // case must not consume this case's default Runner concurrency slots.
+        let registry = RunnerRegistry::default();
+        registry.register(registration.clone()).await.unwrap();
+        crate::test_support::apply_project_inventory_snapshot(
+            &registry,
+            "plan-fields",
+            "instance",
+            vec![project_summary("demo", "/tmp/demo")],
+        )
+        .await;
+        let job = registry
+            .start_job(
+                JobStartRequest {
+                    timeout_secs: 30,
+                    context: JobStartContext {
+                        project_id: Some("agent:plan-fields:demo".into()),
+                        ..Default::default()
+                    },
+                    ..JobStartRequest::new("plan-fields", execution)
+                },
+                "test".into(),
+                None,
+                Some(&initiator),
             )
             .await
             .unwrap();
@@ -409,7 +441,12 @@ async fn job_start_plan_preserves_shape_specific_stdin_and_correlation() {
             })
             .await
             .unwrap()
-            .expect("one queued start");
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected queued start for {expected_source:?}, kind={}",
+                    job.kind
+                )
+            });
         assert_eq!(request.job_id.as_deref(), Some(job.job_id.as_str()));
         assert_eq!(request.stdin.is_some(), expected_stdin);
         let context = request.job_context.unwrap();
@@ -421,43 +458,18 @@ async fn job_start_plan_preserves_shape_specific_stdin_and_correlation() {
                 assert_eq!(metadata.arg_count, 1);
                 assert_eq!(
                     metadata.validation_identity.as_deref(),
-                    Some("validation-id")
+                    correlated.then_some("validation-id")
                 );
-                assert_eq!(metadata.validation_tool.as_deref(), Some("tool"));
+                assert_eq!(
+                    metadata.validation_tool.as_deref(),
+                    correlated.then_some("tool")
+                );
                 assert_eq!(metadata.assertion_name.as_deref(), expected_assertion);
             }
             other => panic!("incorrect execution metadata: {other:?}"),
         }
+        assert_eq!(registry.inner.read().await.jobs_by_id.len(), 1);
     }
-    for (stdin, identity, tool, assertion) in [
-        (Some("input"), None, None, None),
-        (None, Some("identity"), None, None),
-        (None, None, Some("tool"), None),
-        (None, None, None, Some("assertion")),
-    ] {
-        let error = registry
-            .start_job_with_metadata(
-                shell_job_start_request("plan-fields", "", Some(30)),
-                "test".into(),
-                ShellJobStartMetadata {
-                    structured_execution: Some(StructuredJobExecution::InteractiveProcess(
-                        process_payload(),
-                    )),
-                    stdin: stdin.map(str::to_string),
-                    validation_identity: identity.map(str::to_string),
-                    validation_tool: tool.map(str::to_string),
-                    assertion_name: assertion.map(str::to_string),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(
-            error,
-            "interactive process requires subsequent keyed input and is not validation evidence"
-        );
-    }
-    assert_eq!(registry.inner.read().await.jobs_by_id.len(), 3);
 }
 
 #[tokio::test]
@@ -472,17 +484,22 @@ async fn job_start_plan_checks_current_capabilities_before_detached_replay() {
         registration.capabilities.set(feature, true);
     }
     registry.register(registration.clone()).await.unwrap();
-    let metadata = ShellJobStartMetadata {
-        structured_execution: Some(StructuredJobExecution::DetachedProcess(process_payload())),
-        detached_idempotency_key: Some("same-intent".into()),
-        ..Default::default()
-    };
-    registry
-        .start_job_with_metadata(
-            shell_job_start_request("plan-replay", "", Some(30)),
-            "test".into(),
-            metadata.clone(),
+    let request = JobStartRequest {
+        timeout_secs: 30,
+        ..JobStartRequest::new(
+            "plan-replay",
+            JobStartExecution::DetachedProcess {
+                process: process_payload(),
+                stdin: None,
+                idempotency_key: "same-intent".into(),
+                validation_identity: None,
+                validation_tool: None,
+            },
         )
+    };
+    let initiator = DetachedInitiatorIdentity::internal();
+    registry
+        .start_job(request.clone(), "test".into(), None, Some(&initiator))
         .await
         .unwrap();
     registration
@@ -490,13 +507,34 @@ async fn job_start_plan_checks_current_capabilities_before_detached_replay() {
         .set(RunnerFeature::DetachedProcessJobs, false);
     registry.register(registration).await.unwrap();
     let error = registry
-        .start_job_with_metadata(
-            shell_job_start_request("plan-replay", "", Some(30)),
-            "test".into(),
-            metadata,
-        )
+        .start_job(request, "test".into(), None, Some(&initiator))
         .await
         .unwrap_err();
-    assert!(error.contains("detached_process_jobs"), "{error}");
+    assert_eq!(error.failure_kind(), "capability_unavailable");
+    assert!(
+        error.to_string().contains("detached_process_jobs"),
+        "{error}"
+    );
     assert_eq!(registry.inner.read().await.jobs_by_id.len(), 1);
+}
+
+#[test]
+fn format_admission_details_are_independent_of_display_text() {
+    let unavailable = ExecutionAdmissionError::format_execution_unavailable();
+    assert_eq!(
+        unavailable.reason_code(),
+        Some("format_execution_unavailable")
+    );
+    assert_eq!(unavailable.failure_kind(), "runtime_error");
+    let replaced = ExecutionAdmissionError::format_runner_replaced();
+    assert_eq!(replaced.reason_code(), Some("format_runner_replaced"));
+    let lookalike = ExecutionAdmissionError::unavailable("format_runner_replaced");
+    assert_eq!(lookalike.reason_code(), None);
+    let missing_async = ExecutionAdmissionError::async_jobs_unavailable("format-runner");
+    assert!(missing_async.is_async_jobs_unavailable());
+    assert_eq!(missing_async.failure_kind(), "capability_unavailable");
+    assert!(
+        !ExecutionAdmissionError::capability_unavailable(missing_async.to_string())
+            .is_async_jobs_unavailable()
+    );
 }

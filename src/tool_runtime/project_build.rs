@@ -3,16 +3,17 @@ use std::time::Duration;
 
 use super::helpers::{command_rejected_message, project_relative_runner_cwd, resolve_runner_cwd};
 use super::process::{
-    add_structured_continuation_facts, classify_process_failure, process_tool_failure_result,
+    add_structured_continuation_facts, classify_process_failure,
+    execution_admission_failure_result, process_tool_failure_result,
     terminal_structured_job_result,
 };
 use super::structured_execution::{await_structured_job_result, StructuredExecutionBudget};
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_http::{
-    process_preview, ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution,
+    process_preview, JobStartContext, JobStartExecution, JobStartRequest, ShellJobVisibility,
 };
-use crate::runner_protocol::{ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest};
+use crate::runner_protocol::{ShellCommandExecutionState, ShellJobInfo};
 use webcodex_core::project_build::{
     ProjectBuildAdapter, ProjectBuildPlanningResult, ProjectBuildRequest, ProjectBuildScope,
 };
@@ -235,32 +236,23 @@ impl ToolRuntime {
 
         let job = self
             .runner_registry
-            .start_job_with_metadata_for_access(
-                ShellJobOpRequest {
-                    login: false,
-                    op: "start".to_string(),
-                    client_id: Some(resolved.config.client_id.clone()),
+            .start_job(
+                JobStartRequest {
+                    client_id: resolved.config.client_id.clone(),
                     cwd: Some(effective_cwd),
-                    command: Some(String::new()),
-                    timeout_secs: Some(budget.effective_timeout_secs),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
+                    timeout_secs: budget.effective_timeout_secs,
+                    execution: JobStartExecution::Build(plan),
+                    context: JobStartContext {
+                        project_id: Some(resolved.resolved_id.clone()),
+                        session_id: session_id,
+                        project_cwd: Some(resolved_cwd.clone()),
+                        purpose: Some(ExecutionPurpose::Build.as_str().to_string()),
+                        shell: Some("direct_argv".to_string()),
+                        visibility: ShellJobVisibility::HiddenUntilHandoff,
+                    },
                     codex: None,
                 },
                 "tool_runtime".to_string(),
-                ShellJobStartMetadata {
-                    project_id: Some(resolved.resolved_id.clone()),
-                    session_id,
-                    project_cwd: Some(resolved_cwd.clone()),
-                    purpose: Some(ExecutionPurpose::Build.as_str().to_string()),
-                    shell: Some("direct_argv".to_string()),
-                    visibility: ShellJobVisibility::HiddenUntilHandoff,
-                    structured_execution: Some(StructuredJobExecution::ProjectBuild(plan)),
-                    ..Default::default()
-                },
                 access.as_ref(),
                 None,
             )
@@ -268,13 +260,9 @@ impl ToolRuntime {
         let job = match job {
             Ok(job) => job,
             Err(error) => {
-                let mut result = process_tool_failure_result(
-                    command_rejected_message(
-                        &error,
-                        "confirm Runner project_build_v1 and structured Job support, then retry only if no build started.",
-                    ),
-                    classify_process_failure(&error),
-                    ShellCommandExecutionState::NotStarted,
+                let mut result = execution_admission_failure_result(
+                    error,
+                    "confirm Runner project_build_v1 and structured Job support, then retry only if no build started.",
                 );
                 decorate(&mut result.output, &backend, &summary, &resolved_cwd);
                 add_structured_continuation_facts(

@@ -35,9 +35,10 @@ pub(crate) use telemetry::{
 };
 pub(crate) use webcodex_runner_registry::{
     command_preview, process_preview, recovery_timeout_sweep, script_preview, EnqueueLspError,
-    EnqueueRunnerSkillError, RunnerFeature, RunnerFeatureSet, RunnerRegistry, RunnerSemanticView,
-    RunnerTransport, ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution,
-    COMMAND_PREVIEW_MAX_CHARS, RECOVERY_SWEEP_INTERVAL_SECS, RUNNER_ONLINE_WINDOW_SECS,
+    EnqueueRunnerSkillError, JobShellTarget, JobStartContext, JobStartExecution, JobStartRequest,
+    JobValidationCorrelation, JobValidationPlan, RunnerFeature, RunnerFeatureSet, RunnerRegistry,
+    RunnerSemanticView, RunnerTransport, ShellJobVisibility, COMMAND_PREVIEW_MAX_CHARS,
+    RECOVERY_SWEEP_INTERVAL_SECS, RUNNER_ONLINE_WINDOW_SECS,
 };
 #[cfg(test)]
 pub(crate) use webcodex_runner_registry::{TRANSPORT_POLLING, TRANSPORT_WEBSOCKET};
@@ -752,8 +753,37 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 render_shell_job(res, &audit, status, shell_job_error_response(op, e));
                 return;
             }
+            let Some(command) = body.command else {
+                render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::BAD_REQUEST,
+                    shell_job_error_response(op, "command is required for op=start".to_string()),
+                );
+                return;
+            };
+            // ShellJobOpRequest is a wire DTO. Its start fields are adapted only
+            // here; registry callers carry one typed execution shape.
+            let request = JobStartRequest {
+                client_id: client_id.to_string(),
+                cwd: body.cwd,
+                timeout_secs: body.timeout_secs.unwrap_or(120),
+                execution: JobStartExecution::Shell {
+                    command,
+                    target: JobShellTarget::Local {
+                        shell: None,
+                        login: body.login,
+                    },
+                },
+                context: JobStartContext::default(),
+                codex: body.codex,
+            };
             let requested_by = requested_by_from_auth(auth.as_ref());
-            match registry.start_job(body, requested_by).await {
+            let access = runner_access_from_auth(auth.as_ref());
+            match registry
+                .start_job(request, requested_by, access.as_ref(), None)
+                .await
+            {
                 Ok(job) => render_shell_job(
                     res,
                     &audit,
@@ -774,7 +804,7 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     res,
                     &audit,
                     StatusCode::BAD_REQUEST,
-                    shell_job_error_response(op, e),
+                    shell_job_error_response(op, e.to_string()),
                 ),
             }
         }

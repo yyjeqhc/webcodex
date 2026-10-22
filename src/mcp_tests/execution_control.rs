@@ -98,7 +98,8 @@ async fn execution_control_schema_exposes_opt_in_and_validates_both_result_views
 
 #[tokio::test]
 async fn execution_control_observe_direct_gateway_preserves_job_and_diagnostics() {
-    use crate::runner_protocol::{RunnerJobUpdateRequest, ShellJobOpRequest};
+    use crate::runner_protocol::RunnerJobUpdateRequest;
+    use webcodex_runner_registry::JobStartRequest;
     let runtime = test_runtime();
     let registration: RunnerRegisterRequest = serde_json::from_value(json!({
         "client_id":"control-runner","agent_instance_id":"inst",
@@ -116,11 +117,13 @@ async fn execution_control_observe_direct_gateway_preserves_job_and_diagnostics(
     let job = runtime
         .runner_registry
         .start_job(
-            serde_json::from_value::<ShellJobOpRequest>(json!({
-                "op":"start","client_id":"control-runner","command":"fixture","timeout_secs":60
-            }))
-            .unwrap(),
+            JobStartRequest {
+                timeout_secs: 60,
+                ..JobStartRequest::shell("control-runner", "fixture")
+            },
             "fixture".into(),
+            None,
+            None,
         )
         .await
         .unwrap();

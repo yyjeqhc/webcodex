@@ -6,29 +6,11 @@ async fn job_handoff_promotion_is_authorized_atomic_and_never_replaces_execution
     for state in ["nonterminal", "terminal", "cleanup"] {
         let registry = RunnerRegistry::default();
         register_with_instance(&registry, "handoff-fixture", "fixture-instance").await;
+        let mut request = shell_job_start_request("handoff-fixture", "echo fixture-only", Some(60));
+        request.context.project_id = Some("agent:handoff-fixture:repo".into());
+        request.context.visibility = ShellJobVisibility::HiddenUntilHandoff;
         let job = registry
-            .start_job_with_metadata(
-                ShellJobOpRequest {
-                    login: false,
-                    op: "start".into(),
-                    client_id: Some("handoff-fixture".into()),
-                    cwd: None,
-                    command: Some("echo fixture-only".into()),
-                    timeout_secs: Some(60),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
-                    codex: None,
-                },
-                "alice".into(),
-                ShellJobStartMetadata {
-                    project_id: Some("agent:handoff-fixture:repo".into()),
-                    visibility: ShellJobVisibility::HiddenUntilHandoff,
-                    ..Default::default()
-                },
-            )
+            .start_job(request, "alice".into(), None, None)
             .await
             .unwrap();
         {

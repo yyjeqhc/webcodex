@@ -23,11 +23,14 @@ use super::validation_profile::{
 use super::validation_profile::{validation_adapter_for_tool, ValidationCommandOptions};
 use super::ToolRuntime;
 use crate::auth::AuthContext;
-use crate::runner_http::{RunnerFeature, ShellJobStartMetadata};
+use crate::runner_http::{
+    JobStartContext, JobStartExecution, JobStartRequest, JobValidationPlan, RunnerFeature,
+    ShellJobVisibility,
+};
 use crate::runner_protocol::{
-    validation_infrastructure_failure_code, ShellCommandExecutionState, ShellJobOpRequest,
-    ShellJobValidationMetadata, ShellJobValidationStep, VALIDATION_STEP_SPAWN_FAILED_CODE,
-    VALIDATION_STEP_WAIT_FAILED_CODE, VALIDATION_TOOL_UNAVAILABLE_CODE,
+    validation_infrastructure_failure_code, ShellCommandExecutionState, ShellJobValidationMetadata,
+    ShellJobValidationStep, VALIDATION_STEP_SPAWN_FAILED_CODE, VALIDATION_STEP_WAIT_FAILED_CODE,
+    VALIDATION_TOOL_UNAVAILABLE_CODE,
 };
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 use webcodex_core::runtime_contract::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;
@@ -814,65 +817,39 @@ impl ToolRuntime {
         // specialist callers build it through their adapter; project_validate
         // receives it from the Runner-resolved recipe. Carry that exact step into
         // the Job so sync and promoted paths cannot drift.
-        let dispatched_command = match serde_json::to_string(std::slice::from_ref(&step)) {
-            Ok(command) => command,
-            Err(_) => {
-                return ToolResult::err(command_rejected_message(
-                    "could not serialize structured validation step",
-                    "fix the structured validation argument format, then retry.",
-                ))
-            }
-        };
         let access = crate::runner_http::runner_access_from_auth(auth);
         let job = match self
             .runner_registry
-            .start_job_with_metadata_for_access(
-                ShellJobOpRequest {
-                    login: false,
-                    op: "start".to_string(),
-                    client_id: Some(client_id),
+            .start_job(
+                JobStartRequest {
+                    client_id: client_id,
                     cwd: Some(effective_cwd),
-                    command: Some(dispatched_command),
-                    timeout_secs: Some(timeout_secs),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
+                    timeout_secs: timeout_secs,
+                    execution: JobStartExecution::Validation {
+                        plan: JobValidationPlan::Metadata(ShellJobValidationMetadata {
+                            project_validation,
+                            tool: tool_name.to_string(),
+                            kind: adapter.validation_kind().to_string(),
+                            steps: vec![step],
+                            effective_timeout_secs: timeout_secs,
+                            sync_wait_secs,
+                            adapter: adapter.tool_identity().to_string(),
+                            validation_target_id: validation_target_id.clone(),
+                            source_fence, minimum_tests, require_tests, no_run,
+                        }),
+                        ssh_resource: ssh_resource.map(str::to_string),
+                    },
+                    context: JobStartContext {
+                        project_id: Some(project.to_string()),
+                        session_id: session_id.clone(),
+                        project_cwd: Some(resolved_cwd.clone()),
+                        purpose: Some(purpose.as_str().to_string()),
+                        shell: Some(actual_shell.to_string()),
+                        visibility: ShellJobVisibility::HiddenUntilHandoff,
+                    },
                     codex: None,
                 },
                 "tool_runtime".to_string(),
-                ShellJobStartMetadata {
-                    project_id: Some(project.to_string()),
-                    session_id: session_id.clone(),
-                    ssh_resource: ssh_resource.map(str::to_string),
-                    project_cwd: Some(resolved_cwd.clone()),
-                    purpose: Some(purpose.as_str().to_string()),
-                    shell: Some(actual_shell.to_string()),
-                    explicit_shell: None,
-                    validation_steps: vec![step.clone()],
-                    validation: Some(ShellJobValidationMetadata {
-                        project_validation,
-                        tool: tool_name.to_string(),
-                        kind: adapter.validation_kind().to_string(),
-                        steps: vec![step],
-                        effective_timeout_secs: timeout_secs,
-                        sync_wait_secs,
-                        adapter: adapter.tool_identity().to_string(),
-                        validation_target_id: validation_target_id.clone(),
-                        source_fence,
-                        minimum_tests,
-                        require_tests,
-                        no_run,
-                    }),
-                    visibility: crate::runner_http::ShellJobVisibility::HiddenUntilHandoff,
-                    validation_identity: None,
-                    validation_tool: None,
-                    assertion_name: None,
-                    structured_execution: None,
-                    stdin: None,
-                    detached_idempotency_key: None,
-                },
                 access.as_ref(),
                 None,
             )
@@ -881,7 +858,7 @@ impl ToolRuntime {
             Ok(job) => job,
             Err(e) => {
                 return ToolResult::err(command_rejected_message(
-                    e,
+                    e.to_string(),
                     "confirm the agent is connected and structured validation jobs are allowed, then retry.",
                 ))
             }

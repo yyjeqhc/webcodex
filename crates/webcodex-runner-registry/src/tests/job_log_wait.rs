@@ -83,21 +83,13 @@ async fn start_wait_job(registry: &RunnerRegistry) -> crate::runner_protocol::Sh
     register_sequenced(registry, "inst-wait").await;
     registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("oe".to_string()),
+            JobStartRequest {
                 cwd: Some("/tmp".to_string()),
-                command: Some("printf 'line one\\n'".to_string()),
-                timeout_secs: Some(30),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+                ..shell_job_start_request("oe", "printf 'line one\\n'", Some(30))
             },
             "tester".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -280,21 +272,13 @@ async fn job_log_wait_resets_cross_job_and_rejects_malformed_tokens() {
     let first = start_wait_job(&registry).await;
     let second = registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".into(),
-                client_id: Some("oe".into()),
+            JobStartRequest {
                 cwd: Some("/tmp".into()),
-                command: Some("true".into()),
-                timeout_secs: Some(30),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+                ..shell_job_start_request("oe", "true", Some(30))
             },
             "tester".into(),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -664,21 +648,13 @@ async fn job_log_wait_unsequenced_update_between_calls_and_noop_update() {
         .unwrap();
     let job = registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some("legacy".to_string()),
+            JobStartRequest {
                 cwd: Some("/tmp".to_string()),
-                command: Some("printf legacy".to_string()),
-                timeout_secs: Some(30),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+                ..shell_job_start_request("legacy", "printf legacy", Some(30))
             },
             "tester".to_string(),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -766,21 +742,13 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
         .unwrap();
     let job = registry
         .start_job(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".into(),
-                client_id: Some("activity-legacy".into()),
+            JobStartRequest {
                 cwd: Some("/tmp".into()),
-                command: Some("sleep 10".into()),
-                timeout_secs: Some(30),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+                ..shell_job_start_request("activity-legacy", "sleep 10", Some(30))
             },
             "tester".into(),
+            None,
+            None,
         )
         .await
         .unwrap();

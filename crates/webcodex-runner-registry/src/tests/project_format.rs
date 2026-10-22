@@ -106,9 +106,15 @@ async fn project_format_go_planning_requires_additive_capability_before_dispatch
                     RunnerOperation::PlanProjectFormat(actual) if actual == request));
             } else {
                 let error = result.unwrap_err();
-                assert!(error.contains("project_format_go_v1"), "{error}");
-                assert!(error.contains("Runner `format-runner`"), "{error}");
-                assert!(error.contains("upgrade that Runner"), "{error}");
+                assert!(
+                    error.to_string().contains("project_format_go_v1"),
+                    "{error}"
+                );
+                assert!(
+                    error.to_string().contains("Runner `format-runner`"),
+                    "{error}"
+                );
+                assert!(error.to_string().contains("upgrade that Runner"), "{error}");
                 assert!(poll(&registry, "inst").await.is_none());
             }
         }
@@ -127,7 +133,7 @@ async fn project_format_go_still_requires_base_capability() {
         )
         .await
         .unwrap_err();
-    assert!(error.contains("project_format_v1"), "{error}");
+    assert!(error.to_string().contains("project_format_v1"), "{error}");
     assert!(poll(&registry, "inst").await.is_none());
 }
 
@@ -155,26 +161,29 @@ async fn start_format(
     registry: &RunnerRegistry,
     plan: ProjectFormatPlan,
     instance: &str,
-) -> Result<ShellJobInfo, String> {
+) -> Result<ShellJobInfo, ExecutionAdmissionError> {
     registry
-        .start_job_with_metadata_for_access(
-            ShellJobOpRequest {
+        .start_job(
+            JobStartRequest {
                 cwd: Some("/tmp/demo".into()),
-                ..shell_job_start_request("format-runner", "", Some(60))
+                timeout_secs: 60,
+                context: JobStartContext {
+                    project_id: Some("agent:format-runner:demo".into()),
+                    project_cwd: Some(".".into()),
+                    purpose: Some("format".into()),
+                    shell: Some("direct_argv".into()),
+                    visibility: ShellJobVisibility::Public,
+                    ..Default::default()
+                },
+                ..JobStartRequest::new(
+                    "format-runner",
+                    JobStartExecution::Format {
+                        plan,
+                        runner_instance_id: instance.into(),
+                    },
+                )
             },
             "test".into(),
-            ShellJobStartMetadata {
-                project_id: Some("agent:format-runner:demo".into()),
-                project_cwd: Some(".".into()),
-                purpose: Some("format".into()),
-                shell: Some("direct_argv".into()),
-                visibility: ShellJobVisibility::Public,
-                structured_execution: Some(StructuredJobExecution::ProjectFormat {
-                    plan,
-                    runner_instance_id: instance.into(),
-                }),
-                ..Default::default()
-            },
             None,
             None,
         )
@@ -203,7 +212,10 @@ async fn project_format_go_typed_admission_gates_auto_profile_and_preserves_plan
             assert_eq!(actual.plan, plan);
         } else {
             let error = result.unwrap_err();
-            assert!(error.contains("project_format_go_v1"), "{error}");
+            assert!(
+                error.to_string().contains("project_format_go_v1"),
+                "{error}"
+            );
             assert!(registry.list_jobs(Some(10)).await.is_empty());
             assert!(poll(&registry, "inst").await.is_none());
         }
@@ -234,7 +246,8 @@ async fn project_format_go_typed_admission_keeps_exact_instance_fence() {
     let error = start_format(&registry, plan, &planned_instance)
         .await
         .unwrap_err();
-    assert_eq!(error, "format_runner_replaced");
+    assert_eq!(error.reason_code(), Some("format_runner_replaced"));
+    assert_eq!(error.to_string(), "format_runner_replaced");
     assert!(registry.list_jobs(Some(10)).await.is_empty());
     assert!(poll(&registry, "replacement").await.is_none());
 }
@@ -248,7 +261,7 @@ async fn project_format_go_typed_admission_still_requires_base_capability() {
         ProjectFormatProfile::Go {},
     );
     let error = start_format(&registry, plan, "inst").await.unwrap_err();
-    assert!(error.contains("project_format_v1"), "{error}");
+    assert!(error.to_string().contains("project_format_v1"), "{error}");
     assert!(registry.list_jobs(Some(10)).await.is_empty());
     assert!(poll(&registry, "inst").await.is_none());
 }

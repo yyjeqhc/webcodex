@@ -842,8 +842,9 @@ fn map_agent_error(error: &str) -> ServiceResponse {
 mod tests {
     use super::*;
     use crate::auth::AuthKind;
-    use crate::runner_http::ShellJobStartMetadata;
-    use crate::runner_protocol::{RunnerCapabilities, RunnerRegisterRequest, ShellJobOpRequest};
+    use webcodex_runner_registry::{JobStartContext, JobStartRequest};
+
+    use crate::runner_protocol::{RunnerCapabilities, RunnerRegisterRequest};
 
     #[test]
     fn idempotency_json_digest_matches_buffered_hash() {
@@ -875,20 +876,10 @@ mod tests {
         }
     }
 
-    fn active_job_request(client_id: &str, command: &str) -> ShellJobOpRequest {
-        ShellJobOpRequest {
-            login: false,
-            op: "start".to_string(),
-            client_id: Some(client_id.to_string()),
-            cwd: None,
-            command: Some(command.to_string()),
-            timeout_secs: Some(60),
-            job_id: None,
-            since_stdout_line: None,
-            since_stderr_line: None,
-            tail_lines: None,
-            limit: None,
-            codex: None,
+    fn active_job_request(client_id: &str, command: &str) -> JobStartRequest {
+        JobStartRequest {
+            timeout_secs: 60,
+            ..JobStartRequest::shell(client_id, command)
         }
     }
 
@@ -933,13 +924,15 @@ mod tests {
         let alice_access = crate::test_support::runner_access(&alice);
         let bob_access = crate::test_support::runner_access(&bob);
         registry
-            .start_job_with_metadata_for_access(
-                active_job_request("owned-runner", "sleep 60"),
-                "alice".to_string(),
-                ShellJobStartMetadata {
-                    project_id: Some(target.to_string()),
-                    ..Default::default()
+            .start_job(
+                JobStartRequest {
+                    context: JobStartContext {
+                        project_id: Some(target.to_string()),
+                        ..Default::default()
+                    },
+                    ..active_job_request("owned-runner", "sleep 60")
                 },
+                "alice".to_string(),
                 Some(&alice_access),
                 None,
             )
@@ -972,13 +965,15 @@ mod tests {
         assert_eq!(response.body["error"]["code"], "agent_unavailable");
 
         registry
-            .start_job_with_metadata_for_access(
-                active_job_request("owned-runner", "echo still-allowed"),
-                "alice".to_string(),
-                ShellJobStartMetadata {
-                    project_id: Some(target.to_string()),
-                    ..Default::default()
+            .start_job(
+                JobStartRequest {
+                    context: JobStartContext {
+                        project_id: Some(target.to_string()),
+                        ..Default::default()
+                    },
+                    ..active_job_request("owned-runner", "echo still-allowed")
                 },
+                "alice".to_string(),
                 Some(&alice_access),
                 None,
             )

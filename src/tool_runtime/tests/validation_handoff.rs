@@ -10,10 +10,10 @@ mod cargo_test_assertions;
 mod project_validation;
 
 use super::support::*;
-use crate::runner_http::{ShellJobStartMetadata, ShellJobVisibility};
+use crate::runner_http::ShellJobVisibility;
 use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, ShellCommandExecutionState, ShellJobActivity,
-    ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState, ShellJobOpRequest,
+    ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
     ShellJobValidationMetadata, ShellJobValidationProgress, ShellJobValidationStep,
     JOB_INVENTORY_MAX_TERMINAL_JOBS, VALIDATION_STEP_SPAWN_FAILED_CODE,
     VALIDATION_STEP_WAIT_FAILED_CODE, VALIDATION_TOOL_UNAVAILABLE_CODE,
@@ -25,6 +25,9 @@ use serde_json::json;
 use webcodex_core::project_validation::{
     ProjectValidationAction, ProjectValidationPlan, ProjectValidationPlanningResult,
     ProjectValidationProvenance, ProjectValidationRequest, ProjectValidationScope,
+};
+use webcodex_runner_registry::{
+    JobStartContext, JobStartExecution, JobStartRequest, JobValidationPlan,
 };
 
 /// Fetch the `start_validation_job` request that the agent should have polled
@@ -342,46 +345,43 @@ async fn seed_retained_terminal_validation_job(
     };
     let job = runtime
         .runner_registry
-        .start_job_with_metadata(
-            ShellJobOpRequest {
-                login: false,
-                op: "start".to_string(),
-                client_id: Some(client_id.to_string()),
+        .start_job(
+            JobStartRequest {
+                timeout_secs: 600,
                 cwd: Some("/tmp/agent-proj".to_string()),
-                command: Some("cargo check --all-targets".to_string()),
-                timeout_secs: Some(600),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-                codex: None,
+                context: JobStartContext {
+                    project_id: Some(project.to_string()),
+                    session_id: Some(session_id.to_string()),
+                    project_cwd: Some("/tmp/agent-proj".to_string()),
+                    purpose: Some("validation".to_string()),
+                    shell: Some("bash".to_string()),
+                    visibility: ShellJobVisibility::Public,
+                    ..Default::default()
+                },
+                ..JobStartRequest::new(
+                    client_id.to_string(),
+                    JobStartExecution::Validation {
+                        plan: JobValidationPlan::Metadata(ShellJobValidationMetadata {
+                            project_validation: None,
+                            source_fence: None,
+                            tool: "cargo_check".to_string(),
+                            kind: "check".to_string(),
+                            steps: vec![step],
+                            effective_timeout_secs: 600,
+                            sync_wait_secs: 10,
+                            adapter: "cargo_check".to_string(),
+                            validation_target_id: Some(validation_target_id.clone()),
+                            minimum_tests: None,
+                            require_tests: None,
+                            no_run: None,
+                        }),
+                        ssh_resource: None,
+                    },
+                )
             },
             "validation-stale-snapshot-test".to_string(),
-            ShellJobStartMetadata {
-                project_id: Some(project.to_string()),
-                session_id: Some(session_id.to_string()),
-                project_cwd: Some("/tmp/agent-proj".to_string()),
-                purpose: Some("validation".to_string()),
-                shell: Some("bash".to_string()),
-                validation_steps: vec![step.clone()],
-                validation: Some(ShellJobValidationMetadata {
-                    project_validation: None,
-                    source_fence: None,
-                    tool: "cargo_check".to_string(),
-                    kind: "check".to_string(),
-                    steps: vec![step],
-                    effective_timeout_secs: 600,
-                    sync_wait_secs: 10,
-                    adapter: "cargo_check".to_string(),
-                    validation_target_id: Some(validation_target_id.clone()),
-                    minimum_tests: None,
-                    require_tests: None,
-                    no_run: None,
-                }),
-                visibility: ShellJobVisibility::Public,
-                ..Default::default()
-            },
+            None,
+            None,
         )
         .await
         .unwrap();

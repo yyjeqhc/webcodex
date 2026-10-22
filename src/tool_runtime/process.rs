@@ -14,12 +14,12 @@ use super::tool_audit::{assertion_validation_identity, run_process_validation_id
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_http::{
-    process_preview, RunnerFeature, ShellJobStartMetadata, ShellJobVisibility,
-    StructuredJobExecution,
+    process_preview, JobStartContext, JobStartExecution, JobStartRequest, JobValidationCorrelation,
+    RunnerFeature, ShellJobVisibility,
 };
 use crate::runner_protocol::{
-    validate_process_argv, ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest,
-    ShellProcessArgv, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
+    validate_process_argv, ShellCommandExecutionState, ShellJobInfo, ShellProcessArgv,
+    PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
     STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS, STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS,
 };
 use webcodex_core::runner_skill::RunnerSkillExecutionRequest;
@@ -665,34 +665,29 @@ impl ToolRuntime {
         };
         match self
             .runner_registry
-            .start_job_with_metadata_for_access_typed(
-                ShellJobOpRequest {
-                    login: false,
-                    op: "start".to_string(),
-                    client_id: Some(client_id),
+            .start_job(
+                JobStartRequest {
+                    client_id: client_id,
                     cwd: Some(effective_cwd),
-                    command: Some(String::new()),
-                    timeout_secs: Some(timeout),
-                    job_id: None,
-                    since_stdout_line: None,
-                    since_stderr_line: None,
-                    tail_lines: None,
-                    limit: None,
+                    timeout_secs: timeout,
+                    execution: JobStartExecution::DetachedProcess {
+                        process,
+                        stdin,
+                        idempotency_key,
+                        validation_identity: None,
+                        validation_tool: None,
+                    },
+                    context: JobStartContext {
+                        project_id: Some(project.clone()),
+                        session_id: session_id,
+                        project_cwd: Some(resolved_cwd.clone()),
+                        purpose: Some(declared_purpose.as_str().to_string()),
+                        shell: Some("direct_argv".to_string()),
+                        visibility: ShellJobVisibility::Public,
+                    },
                     codex: None,
                 },
                 "tool_runtime".to_string(),
-                ShellJobStartMetadata {
-                    project_id: Some(project.clone()),
-                    session_id,
-                    project_cwd: Some(resolved_cwd.clone()),
-                    purpose: Some(declared_purpose.as_str().to_string()),
-                    shell: Some("direct_argv".to_string()),
-                    visibility: ShellJobVisibility::Public,
-                    structured_execution: Some(StructuredJobExecution::DetachedProcess(process)),
-                    stdin,
-                    detached_idempotency_key: Some(idempotency_key),
-                    ..Default::default()
-                },
                 access.as_ref(),
                 Some(&detached_initiator),
             )
@@ -981,50 +976,47 @@ impl ToolRuntime {
         if async_handoff_available && timeout > budget.sync_wait_secs {
             let job = self
                 .runner_registry
-                .start_job_with_metadata_for_access_typed(
-                    ShellJobOpRequest {
-                        login: false,
-                        op: "start".to_string(),
-                        client_id: Some(client_id),
+                .start_job(
+                    JobStartRequest {
+                        client_id: client_id,
                         cwd: Some(effective_cwd),
-                        command: Some(String::new()),
-                        timeout_secs: Some(timeout),
-                        job_id: None,
-                        since_stdout_line: None,
-                        since_stderr_line: None,
-                        tail_lines: None,
-                        limit: None,
+                        timeout_secs: timeout,
+                        execution: {
+                            let correlation = JobValidationCorrelation {
+                                validation_identity: validation_identity
+                                    .as_ref()
+                                    .map(|identity| identity.identity.clone()),
+                                validation_tool: validation_identity.as_ref().and_then(
+                                    |identity| identity.validation_tool.map(str::to_string),
+                                ),
+                                assertion_name: validation_identity
+                                    .as_ref()
+                                    .filter(|identity| identity.identity.starts_with("assertion:"))
+                                    .and_then(|_| validation_assertion_name.map(str::to_string)),
+                            };
+                            match skill_execution {
+                                Some(request) => JobStartExecution::SkillResource {
+                                    request: request.clone(),
+                                    correlation,
+                                },
+                                None => JobStartExecution::Process {
+                                    process: process.clone(),
+                                    stdin: stdin.clone(),
+                                    correlation,
+                                },
+                            }
+                        },
+                        context: JobStartContext {
+                            project_id: Some(project.clone()),
+                            session_id: session_id,
+                            project_cwd: Some(resolved_cwd.clone()),
+                            purpose: Some(declared_purpose.as_str().to_string()),
+                            shell: Some("direct_argv".to_string()),
+                            visibility: ShellJobVisibility::HiddenUntilHandoff,
+                        },
                         codex: None,
                     },
                     "tool_runtime".to_string(),
-                    ShellJobStartMetadata {
-                        project_id: Some(project.clone()),
-                        session_id,
-                        project_cwd: Some(resolved_cwd.clone()),
-                        purpose: Some(declared_purpose.as_str().to_string()),
-                        shell: Some("direct_argv".to_string()),
-                        visibility: ShellJobVisibility::HiddenUntilHandoff,
-                        structured_execution: Some(match skill_execution {
-                            Some(request) => StructuredJobExecution::SkillResource(request.clone()),
-                            None => StructuredJobExecution::Process(process.clone()),
-                        }),
-                        validation_identity: validation_identity
-                            .as_ref()
-                            .map(|identity| identity.identity.clone()),
-                        validation_tool: validation_identity
-                            .as_ref()
-                            .and_then(|identity| identity.validation_tool.map(str::to_string)),
-                        assertion_name: validation_identity
-                            .as_ref()
-                            .filter(|identity| identity.identity.starts_with("assertion:"))
-                            .and_then(|_| validation_assertion_name.map(str::to_string)),
-                        stdin: if skill_execution.is_some() {
-                            None
-                        } else {
-                            stdin.clone()
-                        },
-                        ..Default::default()
-                    },
                     crate::runner_http::runner_access_from_auth(auth).as_ref(),
                     None,
                 )

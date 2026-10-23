@@ -110,6 +110,24 @@ fn cli_reads_keep_raw_source_revision_partial_failures_and_fenced_continuation()
 }
 
 #[test]
+fn cli_complete_file_read_header_omits_absent_range() {
+    // Canonical complete-file reads drop start_line/end_line
+    // (sparsify_complete_file_read_output); the header must not invent a range.
+    let body = project(
+        "read_files",
+        true,
+        json!({"items":[{"index":0,"path":"a.rs","success":true,"error":null,
+            "output":{"text":"fn main() {}\n","read_revision":7,"total_lines":1}}]}),
+    );
+    let rendered = text(&body);
+    assert!(
+        rendered.starts_with("==> a.rs (read_revision 7)\nfn main() {}\ntotal_lines: 1\n"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("null"), "{rendered}");
+}
+
+#[test]
 fn cli_search_keeps_context_counts_failure_and_truncation_without_read_hints() {
     let body = project(
         "search_project_texts",
@@ -336,7 +354,7 @@ async fn cli_rejects_apps_hidden_tools_and_sidecars_through_both_routes() {
 fn cli_default_project_is_explicit_bounded_and_preserves_other_selectors() {
     use crate::mcp::request_policy::{resolve_default_project, PROJECT_HEADER};
     let mut headers = HeaderMap::new();
-    for value in ["agent:mini:webcodex", "p17"] {
+    for value in ["agent:mini:webcodex", "~p17"] {
         headers.insert(PROJECT_HEADER, HeaderValue::from_str(value).unwrap());
         assert_eq!(
             resolve_default_project(&headers, McpSurface::Cli)
@@ -352,8 +370,13 @@ fn cli_default_project_is_explicit_bounded_and_preserves_other_selectors() {
         "agent::p",
         "agent:r:",
         "agent:r:p:q",
-        "p-1",
-        "p17,other",
+        // A bare `p17` is a short name to the resolver, not a server-issued ref.
+        "p17",
+        "~p",
+        "~p0",
+        "~p01",
+        "~p-1",
+        "~p17,other",
         "private secret",
     ] {
         headers.insert(PROJECT_HEADER, HeaderValue::from_str(value).unwrap());
@@ -366,11 +389,11 @@ fn cli_default_project_is_explicit_bounded_and_preserves_other_selectors() {
     );
     assert!(resolve_default_project(&headers, McpSurface::Cli).is_err());
     let mut args = json!({"items":[{"path":"a.rs"}]});
-    crate::mcp::cli::apply_default_project("read_files", &mut args, Some("p17"));
-    assert_eq!(args["project"], "p17");
-    for mut args in [json!({"project":"p99"}), json!({"project":null})] {
+    crate::mcp::cli::apply_default_project("read_files", &mut args, Some("~p17"));
+    assert_eq!(args["project"], "~p17");
+    for mut args in [json!({"project":"~p99"}), json!({"project":null})] {
         let before = args.clone();
-        crate::mcp::cli::apply_default_project("read_files", &mut args, Some("p17"));
+        crate::mcp::cli::apply_default_project("read_files", &mut args, Some("~p17"));
         assert_eq!(args, before);
     }
     for mut args in [
@@ -379,12 +402,12 @@ fn cli_default_project_is_explicit_bounded_and_preserves_other_selectors() {
         json!({"path":"/invalid"}),
     ] {
         let before = args.clone();
-        crate::mcp::cli::apply_default_project("work_on_project", &mut args, Some("p17"));
+        crate::mcp::cli::apply_default_project("work_on_project", &mut args, Some("~p17"));
         assert_eq!(args, before);
     }
     for name in ["list_projects", "list_jobs", "unknown_tool"] {
         let mut args = json!({});
-        crate::mcp::cli::apply_default_project(name, &mut args, Some("p17"));
+        crate::mcp::cli::apply_default_project(name, &mut args, Some("~p17"));
         assert_eq!(args, json!({}), "{name}");
     }
 }

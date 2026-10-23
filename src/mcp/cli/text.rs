@@ -97,13 +97,21 @@ fn render_reads(text: &mut String, mut output: Value) {
         let path = item["path"].as_str().unwrap_or("?").to_string();
         let read = &mut item["output"];
         if let Some(source) = read.get("text").and_then(Value::as_str).map(str::to_string) {
+            // Canonical complete-file reads omit their range; never print "null".
+            let range = match (read["start_line"].as_u64(), read["end_line"].as_u64()) {
+                (Some(start), Some(end)) => format!(":{start}-{end}"),
+                (Some(start), None) => format!(":{start}"),
+                (None, _) => String::new(),
+            };
             let _ = writeln!(
                 text,
-                "==> {path}:{}-{} (read_revision {})",
-                read["start_line"], read["end_line"], read["read_revision"]
+                "==> {path}{range} (read_revision {})",
+                read["read_revision"]
             );
             text.push_str(&source);
-            text.push('\n');
+            if !source.ends_with('\n') {
+                text.push('\n');
+            }
             if let Some(fields) = read.as_object_mut() {
                 for key in [
                     "text",

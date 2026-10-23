@@ -41,9 +41,13 @@ pub(super) fn resolve_default_project(
     // A saved server-issued reference is principal/root-bound. A configured
     // runtime ID has exactly the same resolver semantics as an explicit tool
     // argument. Never accept short names or infer a target from discovery.
-    let reference = value
-        .strip_prefix('p')
-        .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()));
+    let reference = matches!(
+        webcodex_core::model_reference::parse_model_reference(
+            value,
+            webcodex_core::model_reference::ModelReferenceKind::Project,
+        ),
+        Some(Ok(_))
+    );
     let runtime_id = value
         .strip_prefix("agent:")
         .and_then(|rest| rest.split_once(':'))
@@ -54,7 +58,7 @@ pub(super) fn resolve_default_project(
         || value.chars().any(|c| c.is_whitespace() || c.is_control())
         || !(reference || runtime_id)
     {
-        return Err("X-WebCodex-MCP-Project must be a bounded project_ref or full agent:<runner>:<project> id");
+        return Err("X-WebCodex-MCP-Project must be a bounded ~p<n> project_ref or full agent:<runner>:<project> id");
     }
     Ok(Some(value.to_string()))
 }

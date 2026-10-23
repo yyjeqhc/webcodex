@@ -321,7 +321,7 @@ The CLI surface provides:
   must be observed before creating another Session.
 
 Optionally set `X-WebCodex-MCP-Project` to a server-issued `project_ref` (for
-example `p17`) or full `agent:<runner>:<project>` ID. A reference retains its
+example `~p17`) or full `agent:<runner>:<project>` ID. A reference retains its
 principal/root binding and fails closed if stale; a full ID has the same resolver
 semantics as that explicit tool argument. Short names are rejected. This supplies
 an omitted required `project`, including inside the gateway. Explicit project
@@ -351,7 +351,7 @@ Claude Code `.mcp.json` example (replace the URL with the reported endpoint):
 ```
 
 Keep credentials in the environment, not the configuration file. Claude Code's
-[HTTP headers and variable expansion](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcpjson)
+[HTTP headers and variable expansion](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcp-json)
 provide this connection shape. For OAuth, omit the Authorization entry and use
 the client's normal OAuth flow.
 

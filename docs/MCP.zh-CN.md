@@ -125,7 +125,7 @@ CLI 投影提供：
   CLI 默认不附扩展目录，需要时设置 `include_extension_catalog=true`。启动仍会创建/恢复
   Workflow Session；结果不确定时先观察已有 Session，不要直接再创建。
 
-可选 `X-WebCodex-MCP-Project` 接受 Server 签发的 `project_ref`（例如 `p17`）或完整
+可选 `X-WebCodex-MCP-Project` 接受 Server 签发的 `project_ref`（例如 `~p17`）或完整
 `agent:<runner>:<project>` ID。reference 保留 principal/root 绑定，过期时拒绝；完整 ID
 与显式工具参数使用相同解析语义，不接受简称。它为要求 Project 的工具（含 gateway）补充
 省略的 `project`，也适用于新建 work_on_project。显式 project 优先；精确 Session 恢复和
@@ -153,7 +153,7 @@ Claude Code `.mcp.json` 示例（环境变量 URL 应使用实际报告的 endpo
 ```
 
 凭据存放在环境变量中，不写入配置文件。配置格式依据 Claude Code 的
-[HTTP header / 环境变量说明](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcpjson)。
+[HTTP header / 环境变量说明](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcp-json)。
 使用 OAuth 时省略 Authorization 项，通过客户端常规 OAuth 流程登录。
 
 Codex `config.toml` 示例（替换示例 URL）：

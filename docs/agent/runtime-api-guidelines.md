@@ -23,6 +23,17 @@ Hidden/App-only tools remain independently capability-admitted. A gateway cannot
 turn presentation metadata into authority or call an unadmitted hidden tool.
 Host schema refresh and workflow guidance refresh remain distinct operations.
 
+`X-WebCodex-MCP-Surface: cli` selects an MCP-adapter-owned coding descriptor
+subset and text projection. Its direct entries come from canonical model-visible
+ToolDefinitions; long-tail calls still enter the same gateway and kernel. App
+admission is disabled for the request, including gateway calls. `_wc` is absent
+and rejected; CLI startup requests instruction context using internal typed
+metadata, with unchanged scope checks and context bounds. The optional default
+Project header supplies only omitted required selectors and never overrides an
+explicit Project, exact Session resume, or path registration. Render text only
+after canonical audit/Job correlation so presentation cannot change execution
+success or retry evidence. Third-party passthrough retains provider semantics.
+
 ## Maintained operational routes
 
 `/healthz` is a public deployment/readiness probe. `/api/runtime/status` is an

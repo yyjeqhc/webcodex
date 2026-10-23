@@ -98,7 +98,7 @@ async fn computer_letter_shortcuts_recheck_access_and_capabilities_at_dequeue() 
         assert_eq!(response.request_dispatched, Some(false));
         assert!(response.error.unwrap().starts_with(match change {
             "owner" => "client_access_denied:",
-            "instance" => "runner_replaced:",
+            "instance" => "runner instance was replaced before the request completed; the request was not handed to the replacement instance",
             _ => "capability_unavailable:",
         }));
     }

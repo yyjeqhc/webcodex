@@ -70,7 +70,25 @@ impl JobManager {
                 );
             };
             let build_started = Instant::now();
+            let mut build_artifacts = None;
             let mut result = match &operation {
+                RunnerJobOperation::StartBuild(request)
+                    if request.provenance.backend == "rust"
+                        && request.provenance.request.has_rust_options() =>
+                {
+                    let (result, artifacts) = crate::webcodex_runner::project_build::run_rust_build(
+                        generation,
+                        &policy,
+                        &shell,
+                        &project_registry_dir,
+                        &manager.prepared_profiles,
+                        &operation,
+                        &stop_requested,
+                        &on_started,
+                    );
+                    build_artifacts = artifacts;
+                    result
+                }
                 RunnerJobOperation::StartBuild(request)
                     if request.provenance.backend == "python" =>
                 {
@@ -180,7 +198,6 @@ impl JobManager {
                 }
                 _ => unreachable!("structured Job starter received non structured operation"),
             };
-            let mut build_artifacts = None;
             if let RunnerJobOperation::StartBuild(request) = &operation {
                 if request.provenance.backend == "python"
                     && result.execution_state == ShellCommandExecutionState::Completed

@@ -316,6 +316,19 @@ fn project_build_schema_is_closed_bounded_and_has_no_raw_execution_fields() {
         "timeout_secs": 1800
     });
     assert!(test_support::validate_schema_instance(&valid, &schema).is_ok());
+    assert!(test_support::validate_schema_instance(&serde_json::json!({"project":"demo","profile":"dogfood","targets":{"library":true,"binaries":["server"]},"artifact_policy":"observe"}), &schema).is_ok());
+    for targets in [
+        serde_json::json!({}),
+        serde_json::json!({"library":false,"binaries":[]}),
+        serde_json::json!({"args":["--all-targets"]}),
+        serde_json::json!({"binaries":vec!["x";9]}),
+    ] {
+        assert!(test_support::validate_schema_instance(
+            &serde_json::json!({"project":"demo","targets":targets}),
+            &schema
+        )
+        .is_err());
+    }
     assert!(test_support::validate_schema_instance(
         &serde_json::json!({"project":"demo","scope":{"all_packages":true}}),
         &schema,

@@ -6,6 +6,9 @@ use crate::runner_protocol::{RunnerRequest, ShellJobContext, ShellJobStructuredE
 
 fn request() -> ProjectBuildRequest {
     ProjectBuildRequest {
+        profile: None,
+        targets: None,
+        artifact_policy: None,
         dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: Some("src".into()),
@@ -17,6 +20,72 @@ fn request() -> ProjectBuildRequest {
 
 fn digest(fill: char) -> String {
     std::iter::repeat_n(fill, 64).collect()
+}
+
+#[test]
+fn project_build_rust_options_are_typed_bounded_and_bound_to_canonical_plan() {
+    let mut selected = request();
+    selected.adapter = ProjectBuildAdapter::Rust;
+    let default = canonical_project_build_process("rust", &selected).unwrap();
+    assert_eq!(default.args, ["build"]);
+    let wire = serde_json::to_value(&selected).unwrap();
+    for key in ["profile", "targets", "artifact_policy"] {
+        assert!(wire.get(key).is_none());
+    }
+    selected.profile = Some("dogfood".into());
+    selected.targets = Some(ProjectBuildTargets {
+        library: true,
+        binaries: vec!["z".into(), "a".into(), "a".into()],
+    });
+    selected.artifact_policy = Some(ProjectBuildArtifactPolicy::Observe);
+    let process = canonical_project_build_process("rust", &selected).unwrap();
+    assert_eq!(
+        process.args,
+        [
+            "build",
+            "--profile",
+            "dogfood",
+            "--lib",
+            "--bin",
+            "a",
+            "--bin",
+            "z",
+            "--message-format=json-render-diagnostics"
+        ]
+    );
+    assert_ne!(
+        project_build_invocation_digest(&process),
+        project_build_invocation_digest(&default)
+    );
+    for backend in ["node", "python", "go"] {
+        assert_eq!(
+            canonical_project_build_process(backend, &selected).unwrap_err(),
+            "build_options_unsupported"
+        );
+    }
+    for name in ["", "--release", "../prod", "a b", "x\n", "a/b"] {
+        let mut bad = selected.clone();
+        bad.profile = Some(name.into());
+        assert!(bad.validate().is_err());
+    }
+    for targets in [
+        ProjectBuildTargets::default(),
+        ProjectBuildTargets {
+            library: false,
+            binaries: vec!["x".repeat(257)],
+        },
+        ProjectBuildTargets {
+            library: false,
+            binaries: vec!["x".into(); 9],
+        },
+    ] {
+        let mut bad = selected.clone();
+        bad.targets = Some(targets);
+        assert!(bad.validate().is_err());
+    }
+    let mut bad = serde_json::to_value(&selected).unwrap();
+    bad["targets"]["args"] = serde_json::json!(["--all-targets"]);
+    assert!(serde_json::from_value::<ProjectBuildRequest>(bad).is_err());
 }
 
 #[test]
@@ -149,6 +218,9 @@ fn project_build_workspace_exclusions_are_canonical_and_rust_only() {
 #[test]
 fn start_build_wire_roundtrip_preserves_typed_process_and_provenance() {
     let request = ProjectBuildRequest {
+        profile: None,
+        targets: None,
+        artifact_policy: None,
         dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,
@@ -316,6 +388,9 @@ fn project_build_locked_dependency_policy_maps_to_native_readonly_flags() {
         ("go", vec!["build", "-mod=readonly", "./..."]),
     ] {
         let request = ProjectBuildRequest {
+            profile: None,
+            targets: None,
+            artifact_policy: None,
             dependency_resolution_policy: None,
             project_id: "demo".into(),
             cwd: None,
@@ -331,6 +406,9 @@ fn project_build_locked_dependency_policy_maps_to_native_readonly_flags() {
 #[test]
 fn project_build_default_dependency_policy_preserves_historical_argv() {
     let request = ProjectBuildRequest {
+        profile: None,
+        targets: None,
+        artifact_policy: None,
         dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,
@@ -403,6 +481,10 @@ fn build_artifact_observations_are_bounded_private_and_never_validation_evidence
         mime_type: Some("application/zip".into()),
     };
     assert!(validate_build_artifacts(&[artifact.clone()]));
+    let mut generated = artifact.clone();
+    generated.path = "target/dogfood/demo".into();
+    assert!(!validate_build_artifacts(&[generated.clone()]));
+    assert!(validate_cargo_build_artifacts(&[generated]));
     assert!(!validate_build_artifacts(&vec![
         artifact.clone();
         PROJECT_BUILD_ARTIFACTS_MAX
@@ -414,10 +496,15 @@ fn build_artifact_observations_are_bounded_private_and_never_validation_evidence
         "dist/../../secret",
         "secrets/id_rsa",
         "dist/.env",
+        "target/secrets/demo",
+        "target/.env",
+        "target/keys/server.pem",
+        "node_modules/pkg/output",
     ] {
         let mut invalid = artifact.clone();
         invalid.path = path.into();
-        assert!(!validate_build_artifacts(&[invalid]), "{path}");
+        assert!(!validate_build_artifacts(&[invalid.clone()]), "{path}");
+        assert!(!validate_cargo_build_artifacts(&[invalid]), "{path}");
     }
     use crate::runner_protocol::ShellCommandExecutionState::Completed;
     assert!(validate_build_artifact_report(
@@ -449,6 +536,9 @@ fn build_artifact_observations_are_bounded_private_and_never_validation_evidence
 #[test]
 fn node_build_canonical_manager_process_rejects_extra_authority() {
     let request = ProjectBuildRequest {
+        profile: None,
+        targets: None,
+        artifact_policy: None,
         dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,
@@ -479,6 +569,9 @@ fn node_build_canonical_manager_process_rejects_extra_authority() {
 fn node_build_provenance_rejects_explicit_backend_mismatch() {
     let mut provenance = ProjectBuildProvenance {
         request: ProjectBuildRequest {
+            profile: None,
+            targets: None,
+            artifact_policy: None,
             dependency_resolution_policy: None,
             project_id: "demo".into(),
             cwd: None,

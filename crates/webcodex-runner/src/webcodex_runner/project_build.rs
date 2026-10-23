@@ -16,6 +16,10 @@ use webcodex_workspace::project_recipe::{
     ProjectRecipeId, ProjectRecipeResolutionError,
 };
 
+#[path = "project_build/rust.rs"]
+mod rust;
+pub(crate) use rust::run_rust_build;
+
 fn unavailable(code: &str, backend: Option<&str>) -> ProjectBuildPlanningResult {
     ProjectBuildPlanningResult::Unavailable {
         code: code.into(),
@@ -82,6 +86,12 @@ pub(crate) fn plan(
     let resolved = resolve_project_recipe_root(&root, request.cwd.as_deref(), hint)
         .map_err(|error| unavailable(map_recipe_error(error), None))?;
     let backend = resolved.recipe;
+    if request.has_rust_options() && backend != ProjectRecipeId::Rust {
+        return Err(unavailable(
+            "build_options_unsupported",
+            Some(backend.as_str()),
+        ));
+    }
     if request.dependency_resolution_policy.is_some() && backend != ProjectRecipeId::Rust {
         return Err(unavailable(
             "dependency_resolution_policy_unsupported",

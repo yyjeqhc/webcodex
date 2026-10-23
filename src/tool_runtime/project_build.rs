@@ -59,6 +59,9 @@ impl ToolRuntime {
         dependency_resolution_policy: Option<
             webcodex_core::project_build::ProjectDependencyResolutionPolicy,
         >,
+        profile: Option<String>,
+        targets: Option<webcodex_core::project_build::ProjectBuildTargets>,
+        artifact_policy: Option<webcodex_core::project_build::ProjectBuildArtifactPolicy>,
         timeout_secs: Option<u64>,
         handoff_max_secs: Option<u64>,
         ssh_resource: Option<&str>,
@@ -119,6 +122,9 @@ impl ToolRuntime {
             );
         };
         let request = ProjectBuildRequest {
+            profile,
+            targets,
+            artifact_policy,
             project_id: project_id.to_string(),
             cwd,
             adapter: adapter.unwrap_or_default(),

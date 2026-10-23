@@ -7,6 +7,9 @@ use webcodex_core::runner_operation::{RunnerJobOperation, RunnerOperation};
 
 fn build_request() -> ProjectBuildRequest {
     ProjectBuildRequest {
+        profile: None,
+        targets: None,
+        artifact_policy: None,
         project_id: "demo".into(),
         cwd: None,
         adapter: ProjectBuildAdapter::Rust,
@@ -34,6 +37,9 @@ fn build_plan() -> ProjectBuildPlan {
 
 fn go_build_request() -> ProjectBuildRequest {
     ProjectBuildRequest {
+        profile: None,
+        targets: None,
+        artifact_policy: None,
         project_id: "demo".into(),
         cwd: None,
         adapter: ProjectBuildAdapter::Go,
@@ -82,6 +88,52 @@ fn registration(project_build: bool) -> RunnerRegisterRequest {
         capabilities,
         ..runner_registration("build-runner", "inst", Vec::new())
     })
+}
+
+#[tokio::test]
+async fn project_build_rust_options_require_capability_before_planning_and_admission() {
+    let registry = RunnerRegistry::default();
+    let access = auth_context(None, true);
+    registry.register(registration(true)).await.unwrap();
+    let mut selected = build_plan();
+    selected.provenance.request.profile = Some("dogfood".into());
+    selected.process =
+        canonical_project_build_process("rust", &selected.provenance.request).unwrap();
+    selected.provenance.invocation_digest = project_build_invocation_digest(&selected.process);
+    let error = registry
+        .enqueue_project_build_plan(
+            "build-runner".into(),
+            selected.provenance.request.clone(),
+            Some(&access),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("project_build_rust_options_v1"), "{error}");
+    let error = registry
+        .start_job(
+            build_job_request(selected.clone()),
+            "tool_runtime".into(),
+            Some(&access),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("project_build_rust_options_v1"),
+        "{error}"
+    );
+    assert!(registry.list_jobs(Some(10)).await.is_empty());
+    let mut newer = registration(true);
+    newer.capabilities.project_build_rust_options_v1 = true;
+    registry.register(newer).await.unwrap();
+    assert!(registry
+        .enqueue_project_build_plan(
+            "build-runner".into(),
+            selected.provenance.request.clone(),
+            Some(&access)
+        )
+        .await
+        .is_ok());
 }
 #[tokio::test]
 async fn missing_build_capabilities_preserve_stage_order_without_admission() {

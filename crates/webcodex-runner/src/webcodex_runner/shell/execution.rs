@@ -35,6 +35,7 @@ pub(super) fn execute_configured_command(
         on_started,
         None,
         false,
+        None,
     )
 }
 
@@ -64,6 +65,7 @@ pub(super) fn execute_configured_command_with_prefix(
         on_started,
         prefix,
         false,
+        None,
     )
 }
 
@@ -79,6 +81,7 @@ pub(super) fn execute_configured_command_with_output(
     spawn_error_prefix: &str,
     on_started: Option<&dyn Fn()>,
     exact_utf8: bool,
+    deadline: Option<Instant>,
 ) -> ShellCommandResult {
     execute_configured_command_impl(
         policy,
@@ -92,6 +95,7 @@ pub(super) fn execute_configured_command_with_output(
         on_started,
         None,
         exact_utf8,
+        deadline,
     )
 }
 
@@ -108,7 +112,21 @@ fn execute_configured_command_impl(
     on_started: Option<&dyn Fn()>,
     prefix: Option<super::drains::StdoutPrefixLimit>,
     exact_utf8: bool,
+    deadline: Option<Instant>,
 ) -> ShellCommandResult {
+    // Preserve fractional phase budgets and count preparation against both the
+    // local policy limit and the original multi-phase operation deadline.
+    let policy_deadline = start + Duration::from_secs(timeout_secs);
+    let deadline = deadline.map_or(policy_deadline, |deadline| deadline.min(policy_deadline));
+    if Instant::now() >= deadline {
+        return ShellCommandResult::timed_out(CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some("execution deadline expired during preparation".into()),
+        });
+    }
     cmd.current_dir(cwd_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -249,7 +267,7 @@ fn execute_configured_command_impl(
         match child.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) => {
-                if start.elapsed() >= Duration::from_secs(timeout_secs) {
+                if Instant::now() >= deadline {
                     let duration_ms = start.elapsed().as_millis() as u64;
                     return match terminate_and_collect_pipes(child, drains) {
                         Ok((_status, stdout, stderr)) => {
@@ -259,7 +277,10 @@ fn execute_configured_command_impl(
                                 stderr.normalize_with_truncation(policy.max_output_bytes);
                             stderr_truncated |= append_bounded_text(
                                 &mut stderr,
-                                &format!("command timed out after {} seconds", timeout_secs),
+                                &format!(
+                                    "command timed out after {} seconds",
+                                    deadline.saturating_duration_since(start).as_secs_f64()
+                                ),
                                 policy.max_output_bytes,
                             );
                             ShellCommandResult::timed_out(CommandResult {

@@ -638,6 +638,7 @@ impl JobStartPlan {
         for (needed, feature) in [
             (build.is_some_and(|plan| plan.provenance.backend == "node"), RunnerFeature::ProjectBuildNode),
             (build.is_some(), RunnerFeature::ProjectBuild),
+            (build.is_some_and(|plan| plan.provenance.request.has_rust_options()), RunnerFeature::ProjectBuildRustOptions),
             (build.is_some_and(|plan| plan.provenance.backend == "python"), RunnerFeature::ProjectBuildPython),
             (build.is_some_and(|plan| plan.provenance.request.scope.as_ref().is_some_and(webcodex_core::project_build::ProjectBuildScope::selects_all_packages))
                 || validation_provenance.and_then(|provenance| provenance.request.scope.as_ref()).is_some_and(webcodex_core::project_validation::ProjectValidationScope::selects_all_packages), RunnerFeature::ProjectAllPackages),

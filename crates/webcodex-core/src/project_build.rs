@@ -27,6 +27,51 @@ pub enum ProjectBuildAdapter {
     Python,
 }
 
+/// Closed target intent, translated by the Rust adapter rather than caller argv.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectBuildTargets {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub library: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub binaries: Vec<String>,
+}
+
+impl schemars::JsonSchema for ProjectBuildTargets {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ProjectBuildTargets".into()
+    }
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type":"object", "additionalProperties":false,
+            "properties": {
+                "library":{"type":"boolean"},
+                "binaries":{"type":"array","maxItems":8,"items":{"type":"string","minLength":1,"maxLength":256,"pattern":"^[A-Za-z0-9_][A-Za-z0-9_-]*$"}}
+            },
+            "anyOf":[
+                {"required":["library"],"properties":{"library":{"const":true}}},
+                {"required":["binaries"],"properties":{"binaries":{"minItems":1}}}
+            ]
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectBuildArtifactPolicy {
+    /// Observe selected outputs; this is not proof of correctness or creation.
+    Observe,
+}
+
+fn build_name_valid(value: &str, max: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        && !value.starts_with('-')
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectBuildRequest {
@@ -40,9 +85,19 @@ pub struct ProjectBuildRequest {
     pub dependency_policy: Option<ProjectDependencyPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dependency_resolution_policy: Option<ProjectDependencyResolutionPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<ProjectBuildTargets>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_policy: Option<ProjectBuildArtifactPolicy>,
 }
 
 impl ProjectBuildRequest {
+    pub fn has_rust_options(&self) -> bool {
+        self.profile.is_some() || self.targets.is_some() || self.artifact_policy.is_some()
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.project_id.is_empty()
             || self.project_id.len() > 200
@@ -51,6 +106,34 @@ impl ProjectBuildRequest {
             return Err("invalid project build project id".into());
         }
         validate_relative(self.cwd.as_deref().unwrap_or("."))?;
+        if self.has_rust_options()
+            && !matches!(
+                self.adapter,
+                ProjectBuildAdapter::Auto | ProjectBuildAdapter::Rust
+            )
+        {
+            return Err(
+                "build_options_unsupported: profile, targets and artifact_policy require Rust"
+                    .into(),
+            );
+        }
+        if self
+            .profile
+            .as_ref()
+            .is_some_and(|name| !build_name_valid(name, 64))
+        {
+            return Err("invalid build profile".into());
+        }
+        if self.targets.as_ref().is_some_and(|targets| {
+            (!targets.library && targets.binaries.is_empty())
+                || targets.binaries.len() > 8
+                || targets
+                    .binaries
+                    .iter()
+                    .any(|name| !build_name_valid(name, 256))
+        }) {
+            return Err("build targets require a library or at most eight named binaries".into());
+        }
         if let Some(scope) = &self.scope {
             scope.validate().map_err(|error| match error {
                 ProjectOperationScopeError::Selection => {
@@ -125,6 +208,7 @@ impl ProjectBuildProvenance {
                     | (ProjectBuildAdapter::Node, "node")
             )
             && (self.request.dependency_resolution_policy.is_none() || self.backend == "rust")
+            && (!self.request.has_rust_options() || self.backend == "rust")
             && [
                 &self.root_digest,
                 &self.manifest_digest,
@@ -171,6 +255,9 @@ pub fn canonical_project_build_process(
     backend: &str,
     request: &ProjectBuildRequest,
 ) -> Result<ShellProcessArgv, &'static str> {
+    if request.has_rust_options() && backend != "rust" {
+        return Err("build_options_unsupported");
+    }
     canonical_project_build_process_with_manager(backend, request, "npm")
 }
 
@@ -181,6 +268,12 @@ pub fn canonical_project_build_process_with_manager(
     request: &ProjectBuildRequest,
     manager: &str,
 ) -> Result<ShellProcessArgv, &'static str> {
+    if request.validate().is_err() {
+        return Err("invalid_arguments");
+    }
+    if request.has_rust_options() && backend != "rust" {
+        return Err("build_options_unsupported");
+    }
     if request.dependency_resolution_policy.is_some() && backend != "rust" {
         return Err("dependency_resolution_policy_unsupported");
     }
@@ -205,6 +298,23 @@ pub fn canonical_project_build_process_with_manager(
         "rust" => {
             let packages = normalize_cargo_packages(None, packages)?;
             let mut args = vec!["build".to_string()];
+            if let Some(profile) = &request.profile {
+                args.extend(["--profile".into(), profile.clone()]);
+            }
+            if let Some(targets) = &request.targets {
+                if targets.library {
+                    args.push("--lib".into());
+                }
+                let mut binaries = targets.binaries.clone();
+                binaries.sort_unstable();
+                binaries.dedup();
+                for binary in binaries {
+                    args.extend(["--bin".into(), binary]);
+                }
+            }
+            if request.artifact_policy.is_some() {
+                args.push("--message-format=json-render-diagnostics".into());
+            }
             if request
                 .dependency_policy
                 .is_some_and(|policy| policy.mode == ProjectDependencyMode::Locked)
@@ -294,15 +404,40 @@ pub struct ProjectBuildArtifact {
 }
 
 pub const PROJECT_BUILD_ARTIFACTS_MAX: usize = 16;
+
+/// Finite native-build observations can name Cargo's generated `target/` tree.
+/// This does not grant generic artifact read/export authority or bulk traversal.
+pub fn build_artifact_path_valid(path: &str) -> bool {
+    validate_relative(path).is_ok()
+        && !crate::sensitive_paths::is_secret_path(path)
+        && !path
+            .split('/')
+            .any(|component| component.eq_ignore_ascii_case("node_modules"))
+}
+
+/// Generic adapters retain the bulk-exclusion policy.
 pub fn validate_build_artifacts(artifacts: &[ProjectBuildArtifact]) -> bool {
+    validate_artifacts_with_path_policy(artifacts, |path| {
+        validate_relative(path).is_ok() && !crate::sensitive_paths::is_bulk_skipped_path(path)
+    })
+}
+
+/// Only exact Cargo output observations may include generated target/ paths.
+pub fn validate_cargo_build_artifacts(artifacts: &[ProjectBuildArtifact]) -> bool {
+    validate_artifacts_with_path_policy(artifacts, build_artifact_path_valid)
+}
+
+fn validate_artifacts_with_path_policy(
+    artifacts: &[ProjectBuildArtifact],
+    path_valid: impl Fn(&str) -> bool,
+) -> bool {
     artifacts.len() <= PROJECT_BUILD_ARTIFACTS_MAX
         && artifacts
             .iter()
             .try_fold(0u64, |sum, artifact| sum.checked_add(artifact.bytes))
             .is_some_and(|total| total <= 256 * 1024 * 1024)
         && artifacts.iter().enumerate().all(|(index, artifact)| {
-            validate_relative(&artifact.path).is_ok()
-                && !crate::sensitive_paths::is_bulk_skipped_path(&artifact.path)
+            path_valid(&artifact.path)
                 && artifact.bytes <= 256 * 1024 * 1024
                 && artifact.sha256.len() == 64
                 && artifact
@@ -319,7 +454,9 @@ pub fn validate_build_artifacts(artifacts: &[ProjectBuildArtifact]) -> bool {
 }
 
 /// Artifact metadata is terminal historical observation, never active execution
-/// authority. Reject injected metadata on unrelated or incomplete Jobs.
+/// authority. Receipts retain no backend/request, so validate the union of
+/// supported observations here; readers enforce their adapter-specific policy.
+/// Reject injected metadata on unrelated or incomplete Jobs.
 pub fn validate_build_artifact_report(
     source: &str,
     status: &str,
@@ -332,7 +469,7 @@ pub fn validate_build_artifact_report(
             || status != "completed"
             || exit_code != Some(0)
             || state != Some(crate::runner_protocol::ShellCommandExecutionState::Completed)
-            || !validate_build_artifacts(artifacts)
+            || !validate_cargo_build_artifacts(artifacts)
         {
             return Err("build_artifacts_invalid");
         }

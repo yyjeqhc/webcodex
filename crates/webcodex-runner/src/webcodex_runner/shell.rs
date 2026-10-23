@@ -117,6 +117,7 @@ mod output;
 mod preparation;
 mod process;
 pub(crate) use process::run_python_build_with_start_hook;
+pub(crate) use process::run_rust_build_phase;
 mod process_tree;
 mod profiles;
 mod run;

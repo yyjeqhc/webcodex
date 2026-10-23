@@ -373,5 +373,43 @@ fn run_process_with_output(
         "failed to spawn structured process",
         on_started,
         exact_utf8,
+        deadline,
+    )
+}
+
+/// Private multi-phase build path; ordinary process requests keep their policy.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_rust_build_phase(
+    generation: u64,
+    policy: &RunnerPolicy,
+    shell: &ShellConfig,
+    registry: &Path,
+    cache: &PreparedShellProfileCache,
+    cwd: &str,
+    args: &[String],
+    deadline: Instant,
+    stop: &AtomicBool,
+    on_started: Option<&dyn Fn()>,
+    fence: &dyn Fn() -> Result<(), String>,
+) -> ShellCommandResult {
+    run_process_with_output(
+        generation,
+        policy,
+        shell,
+        registry,
+        cache,
+        Some(cwd),
+        "cargo",
+        args,
+        None,
+        policy.max_timeout_secs,
+        Some(stop),
+        &[("RUSTUP_AUTO_INSTALL", "0")],
+        &[],
+        on_started,
+        Some(fence),
+        false,
+        Some(deadline),
+        false,
     )
 }

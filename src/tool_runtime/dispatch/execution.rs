@@ -86,6 +86,9 @@ impl ToolRuntime {
                 .await
             }
             ToolCall::ProjectBuild {
+                profile,
+                targets,
+                artifact_policy,
                 project,
                 session_id,
                 cwd,
@@ -103,6 +106,9 @@ impl ToolRuntime {
                     scope,
                     dependency_policy,
                     dependency_resolution_policy,
+                    profile,
+                    targets,
+                    artifact_policy,
                     timeout_secs,
                     structured_handoff_max_secs,
                     ssh_resource.as_deref(),

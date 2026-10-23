@@ -25,6 +25,7 @@ async fn setup_with_workspace_exclusions(grace_ms: u64, workspace_exclusions: bo
         None,
         RunnerCapabilities {
             project_build_v1: true,
+            project_build_rust_options_v1: true,
             project_build_python_v1: true,
             project_all_packages_v1: true,
             project_workspace_exclusions_v1: workspace_exclusions,
@@ -35,8 +36,40 @@ async fn setup_with_workspace_exclusions(grace_ms: u64, workspace_exclusions: bo
     runtime
 }
 
+#[tokio::test]
+async fn rust_project_build_options_require_capability_before_plan() {
+    let runtime = runtime_with_agent_project(CLIENT);
+    register_agent(
+        &runtime,
+        CLIENT,
+        None,
+        RunnerCapabilities {
+            project_build_v1: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let mut input = call();
+    if let ToolCall::ProjectBuild { profile, .. } = &mut input {
+        *profile = Some("dogfood".into());
+    }
+    let result = runtime
+        .dispatch_with_auth(input, Some(&auth_context(None, true)))
+        .await;
+    assert!(!result.success);
+    assert!(result
+        .error
+        .unwrap()
+        .contains("project_build_rust_options_v1"));
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
+    assert!(probe_patch_agent_request(&runtime, CLIENT).await.is_none());
+}
+
 fn call() -> ToolCall {
     ToolCall::ProjectBuild {
+        profile: None,
+        targets: None,
+        artifact_policy: None,
         project: agent_test_project_id(CLIENT),
         session_id: None,
         cwd: None,
@@ -177,40 +210,65 @@ async fn project_build_fast_success_uses_typed_start_build_and_sparse_late_proje
 
 #[tokio::test]
 async fn project_build_pending_projection_returns_the_same_durable_job() {
-    let runtime = setup(1).await;
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(call(), Some(&auth_context(None, true)))
-                .await
+    for with_options in [false, true] {
+        let runtime = setup(1).await;
+        let mut input = call();
+        if with_options {
+            if let ToolCall::ProjectBuild {
+                profile, targets, ..
+            } = &mut input
+            {
+                *profile = Some("dogfood".into());
+                *targets = Some(webcodex_core::project_build::ProjectBuildTargets {
+                    library: true,
+                    binaries: vec!["server".into()],
+                });
+            }
         }
-    });
-    let (request, job_id) = reply_plan(&runtime).await;
-    let result = task.await.unwrap();
-    assert!(result.success, "{result:?}");
-    assert_eq!(result.output["execution_state"], "pending");
-    assert!(
-        result.output.get("backend").is_none(),
-        "late pending projection must keep only recovery authority, not build details"
-    );
-    assert_eq!(
-        result.output["continuation"]["arguments"]["items"][0]["job_id"],
-        job_id
-    );
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(input, Some(&auth_context(None, true)))
+                    .await
+            }
+        });
+        let (request, job_id) = reply_plan(&runtime).await;
+        let result = task.await.unwrap();
+        assert!(result.success, "{result:?}");
+        assert_eq!(result.output["execution_state"], "pending");
+        assert!(
+            result.output.get("backend").is_none(),
+            "late pending projection must keep only recovery authority, not build details"
+        );
+        assert_eq!(
+            result.output["continuation"]["arguments"]["items"][0]["job_id"],
+            job_id
+        );
 
-    finish_build_job(
-        &runtime,
-        &request,
-        &job_id,
-        "completed",
-        ShellCommandExecutionState::Completed,
-        Some(0),
-        None,
-    )
-    .await;
-    let job = runtime.runner_registry.get_job(&job_id).await.unwrap();
-    assert_eq!(job.kind, "project_build");
+        finish_build_job(
+            &runtime,
+            &request,
+            &job_id,
+            "completed",
+            ShellCommandExecutionState::Completed,
+            Some(0),
+            None,
+        )
+        .await;
+        let job = runtime.runner_registry.get_job(&job_id).await.unwrap();
+        assert_eq!(job.kind, "project_build");
+        assert_eq!(
+            request
+                .process
+                .as_ref()
+                .unwrap()
+                .args
+                .iter()
+                .any(|arg| arg == "dogfood"),
+            with_options
+        );
+    }
 }
 
 #[tokio::test]

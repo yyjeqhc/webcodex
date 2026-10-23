@@ -1537,6 +1537,16 @@ pub enum ToolCall {
     /// Run one portable project build. The Runner resolves the nearest supported
     /// Rust/Go/Python recipe, plans canonical argv, and admits one typed build Job.
     ProjectBuild {
+        /// Rust-only Cargo profile (dev, release or a project-defined name), not arbitrary flags.
+        #[serde(default)]
+        #[schemars(length(min = 1, max = 64))]
+        profile: Option<String>,
+        /// Rust-only library and/or at most eight named binaries. Omission keeps native defaults.
+        #[serde(default)]
+        targets: Option<webcodex_core::project_build::ProjectBuildTargets>,
+        /// Rust-only opt-in bounded output observation, not correctness or source-freshness proof.
+        #[serde(default)]
+        artifact_policy: Option<webcodex_core::project_build::ProjectBuildArtifactPolicy>,
         /// Exact registered Runner Project.
         project: String,
         #[serde(default)]

@@ -2797,6 +2797,7 @@ impl RunnerRegistry {
         payload.validate()?;
         let requires_node =
             payload.adapter == webcodex_core::project_build::ProjectBuildAdapter::Node;
+        let requires_rust_options = payload.has_rust_options();
         let requires_all_packages = payload
             .scope
             .as_ref()
@@ -2826,6 +2827,7 @@ impl RunnerRegistry {
             &runner.runner_features,
             [
                 Some(RunnerFeature::ProjectBuild),
+                requires_rust_options.then_some(RunnerFeature::ProjectBuildRustOptions),
                 requires_node.then_some(RunnerFeature::ProjectBuildNode),
                 requires_python.then_some(RunnerFeature::ProjectBuildPython),
                 requires_all_packages.then_some(RunnerFeature::ProjectAllPackages),

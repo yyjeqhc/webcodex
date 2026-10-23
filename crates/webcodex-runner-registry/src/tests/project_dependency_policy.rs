@@ -44,6 +44,9 @@ fn registration(supported: bool) -> RunnerRegisterRequest {
 
 fn locked_build_request() -> ProjectBuildRequest {
     ProjectBuildRequest {
+        profile: None,
+        targets: None,
+        artifact_policy: None,
         dependency_resolution_policy: None,
         project_id: "demo".into(),
         cwd: None,

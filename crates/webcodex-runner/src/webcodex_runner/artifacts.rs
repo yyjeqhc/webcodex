@@ -556,6 +556,85 @@ pub(crate) fn observe_build_artifact(
     })
 }
 
+/// Only the selected, bounded Cargo message consumer calls this precise reader.
+/// Generic artifact tools retain their bulk-exclusion policy. Secrets, root
+/// escapes and redirected handles remain forbidden, including inside target/.
+pub(crate) fn observe_cargo_build_artifact(
+    root: &Path,
+    path: &str,
+    deadline: Instant,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Result<webcodex_core::project_build::ProjectBuildArtifact, String> {
+    use super::file_access::{file_identity, open_regular_file};
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    use std::sync::atomic::Ordering;
+    let invalid = || "build_artifact_path_invalid".to_string();
+    if !webcodex_core::project_build::build_artifact_path_valid(path) {
+        return Err(invalid());
+    }
+    let target = root.join(path);
+    let canonical = target
+        .canonicalize()
+        .map_err(|_| "build_artifacts_missing".to_string())?;
+    let relative = canonical.strip_prefix(root).map_err(|_| invalid())?;
+    let relative = relative.to_str().ok_or_else(invalid)?;
+    #[cfg(windows)]
+    let relative = relative.replace('\\', "/");
+    if !webcodex_core::project_build::build_artifact_path_valid(&relative) {
+        return Err(invalid());
+    }
+    let mut file = open_regular_file(&target).map_err(|_| invalid())?;
+    let identity = file_identity(&file).map_err(|_| invalid())?;
+    let initial = file.metadata().map_err(|_| invalid())?;
+    if initial.len() > MAX_ARTIFACT_EXPORT_BYTES as u64 {
+        return Err("build_artifacts_limit_exceeded".into());
+    }
+    let mut digest = Sha256::new();
+    let mut bytes = 0u64;
+    let mut prefix = Vec::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return Err("build_stopped".into());
+        }
+        if Instant::now() >= deadline {
+            return Err("build_timeout".into());
+        }
+        let read = file
+            .read(&mut buffer)
+            .map_err(|_| "build_artifact_read_failed".to_string())?;
+        if read == 0 {
+            break;
+        }
+        bytes = bytes
+            .checked_add(read as u64)
+            .ok_or("build_artifacts_limit_exceeded")?;
+        if bytes > MAX_ARTIFACT_EXPORT_BYTES as u64 {
+            return Err("build_artifacts_limit_exceeded".into());
+        }
+        if prefix.len() < 32 {
+            prefix.extend_from_slice(&buffer[..read.min(32 - prefix.len())]);
+        }
+        digest.update(&buffer[..read]);
+    }
+    let final_metadata = file.metadata().map_err(|_| invalid())?;
+    let current = open_regular_file(&target).map_err(|_| invalid())?;
+    if bytes != initial.len()
+        || bytes != final_metadata.len()
+        || initial.modified().ok() != final_metadata.modified().ok()
+        || file_identity(&current).map_err(|_| invalid())? != identity
+    {
+        return Err("build_artifact_changed".into());
+    }
+    Ok(webcodex_core::project_build::ProjectBuildArtifact {
+        path: path.into(),
+        bytes,
+        sha256: format!("{:x}", digest.finalize()),
+        mime_type: artifact_mime(path, &prefix, false),
+    })
+}
+
 fn handle_read_project_artifact_metadata(
     request: &RunnerFilePayload,
     resolved: &Path,

@@ -598,6 +598,63 @@ fn runner_real_process_native_search_directory_globs_and_bounds() {
 }
 
 #[test]
+fn structured_process_expired_deadline_never_spawns() {
+    let cwd = tempfile::tempdir().unwrap();
+    let started = AtomicBool::new(false);
+    let now = Instant::now();
+    let result = super::execution::execute_configured_command_with_output(
+        &unrestricted_policy(),
+        Command::new(cwd.path().join("must-not-be-spawned")),
+        cwd.path(),
+        None,
+        60,
+        None,
+        now,
+        "spawn attempted",
+        Some(&|| started.store(true, Ordering::SeqCst)),
+        false,
+        Some(now - Duration::from_millis(1)),
+    );
+    assert_eq!(result.execution_state, ShellCommandExecutionState::TimedOut);
+    assert_eq!(result.result.exit_code, None);
+    assert!(!started.load(Ordering::SeqCst));
+}
+
+#[cfg(feature = "runner-real-process-tests")]
+#[test]
+#[ignore = "real process deadline and cleanup; run explicitly with runner-real-process-tests"]
+fn runner_real_process_structured_process_preserves_fractional_shared_deadline() {
+    let cwd = tempfile::tempdir().unwrap();
+    let mut command = Command::new(process_argv_helper());
+    command.args(["sleep", "2000"]);
+    let started = AtomicBool::new(false);
+    let now = Instant::now();
+    let result = super::execution::execute_configured_command_with_output(
+        &unrestricted_policy(),
+        command,
+        cwd.path(),
+        None,
+        60,
+        None,
+        now,
+        "failed to spawn deadline fixture",
+        Some(&|| started.store(true, Ordering::SeqCst)),
+        false,
+        Some(now + Duration::from_millis(100)),
+    );
+    assert!(
+        started.load(Ordering::SeqCst),
+        "a positive subsecond budget must allow execution"
+    );
+    assert_eq!(result.execution_state, ShellCommandExecutionState::TimedOut);
+    assert_eq!(result.result.exit_code, Some(-1));
+    assert!(
+        now.elapsed() < Duration::from_secs(1),
+        "the shared deadline must not round up or reset"
+    );
+}
+
+#[test]
 fn exact_utf8_nonzero_child_exit_after_closed_stdin_is_known_failure() {
     let cwd = tempfile::tempdir().unwrap();
     let mut command = Command::new(process_argv_helper());
@@ -615,6 +672,7 @@ fn exact_utf8_nonzero_child_exit_after_closed_stdin_is_known_failure() {
         "failed to spawn format fixture",
         None,
         true,
+        None,
     );
     assert_eq!(
         result.execution_state,
@@ -642,6 +700,7 @@ fn exact_utf8_early_zero_exit_without_complete_stdin_fails_closed() {
         "failed to spawn format fixture",
         None,
         true,
+        None,
     );
     assert_eq!(
         result.execution_state,

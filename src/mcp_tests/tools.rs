@@ -2323,18 +2323,16 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
             vec![
                 "Build Rust/Go/Python/Node",
                 "no installs",
-                "Rust/Go: packages/all_packages, locked",
+                "profile/targets/artifact_policy=observe",
+                "no creation/correctness/freshness proof",
                 "scope.exclude_packages",
                 "all_packages=true",
                 "project_workspace_exclusions_v1",
-                "Rust dependency_resolution_policy=offline adds Cargo --offline",
+                "dependency_resolution_policy=offline",
                 "not OS sandbox",
-                "others reject",
-                "Python: -m build",
-                "Node script; hooks write/network",
-                "Artifacts don't prove correctness",
-                "Pending same durable Job",
-                "observe_jobs, never retry",
+                "Other scope/policy: read_tool_manifest",
+                "Scripts may write/network",
+                "Pending same Job: observe_jobs, never retry/redispatch",
             ],
         ),
         (
@@ -2416,7 +2414,7 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
         };
         let description = descriptor["description"].as_str().unwrap();
         if name == "project_build" {
-            assert_eq!(description, "Build Rust/Go/Python/Node; no installs. Rust/Go: packages/all_packages, locked. Rust scope.exclude_packages needs all_packages=true and 1–8 members; project_workspace_exclusions_v1. Rust dependency_resolution_policy=offline adds Cargo --offline (not OS sandbox); others reject. Python: -m build. Node script; hooks write/network. Artifacts don't prove correctness. Pending same durable Job; observe_jobs, never retry.");
+            assert_eq!(description, "Build Rust/Go/Python/Node; no installs. Rust profile/targets/artifact_policy=observe: no creation/correctness/freshness proof. Rust scope.exclude_packages needs all_packages=true + project_workspace_exclusions_v1. Rust dependency_resolution_policy=offline: Cargo only, not OS sandbox. Other scope/policy: read_tool_manifest. Scripts may write/network. Pending same Job: observe_jobs, never retry/redispatch.");
             assert!(!description.contains("artifact contract"));
         }
         for phrase in phrases {
@@ -2681,7 +2679,7 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
             tool["description"]
                 .as_str()
                 .is_some_and(|description| description
-                    .contains("Rust dependency_resolution_policy=offline adds Cargo --offline")),
+                    .contains("Rust dependency_resolution_policy=offline: Cargo only")),
             "compact project_build discovery must advertise offline dependency resolution"
         );
         let Some(policy) = tool.pointer("/inputSchema/properties/dependency_resolution_policy")
@@ -2696,6 +2694,43 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
             "project_build offline field cost {marginal_cost} bytes exceeds 256 byte allowance ceiling"
         );
         marginal_cost
+    }
+
+    // Charge only the three new Rust build inputs and this tool's added
+    // guidance. Keep every pre-existing surface ceiling unchanged; the explicit
+    // per-tool caps prevent this from becoming an unbounded general allowance.
+    fn project_build_rust_options_marginal_allowance(model_tools: &[Value]) -> usize {
+        let Some(tool) = model_tools
+            .iter()
+            .find(|tool| tool["name"] == "project_build")
+        else {
+            return 0;
+        };
+        let properties = tool["inputSchema"]["properties"].as_object().unwrap();
+        let mut schema_cost = 0;
+        for field in ["profile", "targets", "artifact_policy"] {
+            let value = properties
+                .get(field)
+                .expect("Rust build input must remain discoverable");
+            schema_cost += serde_json::to_vec(field).unwrap().len()
+                + 1
+                + serde_json::to_vec(value).unwrap().len()
+                + 1;
+        }
+        assert!(
+            schema_cost <= 1280,
+            "Rust build options schema cost {schema_cost} exceeds 1280 bytes"
+        );
+        let description = tool["description"].as_str().unwrap();
+        for field in ["profile", "targets", "artifact_policy=observe"] {
+            assert!(description.contains(field));
+        }
+        let guidance_cost = description.len().saturating_sub(415);
+        assert!(
+            guidance_cost <= 256,
+            "Rust build options guidance cost {guidance_cost} exceeds 256 bytes"
+        );
+        schema_cost + guidance_cost
     }
 
     // Exclusion support adds one bounded scope field and its all-packages schema
@@ -2824,6 +2859,11 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                     + if app_enabled { 4_000 } else { 0 }
                     + experimental_code_mode_byte_budget
                     + project_format_marginal_byte_budget
+                    + if compact {
+                        project_build_rust_options_marginal_allowance(model_tools)
+                    } else {
+                        0
+                    }
                     + project_build_offline_marginal_byte_budget
                     + project_exclusions_schema_marginal_byte_budget;
                 // Raw transport includes private App bridge descriptors and Host

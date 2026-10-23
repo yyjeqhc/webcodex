@@ -225,33 +225,11 @@ pub(crate) fn handle_computer_operation_with_runtime(
                 })
                 .and_then(|text| runtime.write_clipboard(text))
         }
-        RunnerComputerOperationKind::KeyInput => {
-            ensure_exact_payload_fields(&payload, &["surface_id", "key", "modifiers"]).and_then(
-                |()| {
-                    let surface_id = payload
-                        .get("surface_id")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| "invalid_request: surface_id is required".to_string())?;
-                    let key = payload
-                        .get("key")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| "invalid_request: key is required".to_string())?;
-                    let modifier_values = payload
-                        .get("modifiers")
-                        .and_then(Value::as_array)
-                        .ok_or_else(|| "invalid_request: modifiers must be an array".to_string())?;
-                    let modifiers = modifier_values
-                        .iter()
-                        .map(|value| {
-                            value.as_str().map(str::to_string).ok_or_else(|| {
-                                "invalid_request: each modifier must be a string".to_string()
-                            })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    runtime.key_input(surface_id, key, &modifiers)
-                },
-            )
-        }
+        RunnerComputerOperationKind::KeyInput => serde_json::from_value::<
+            webcodex_core::computer_input_contract::ComputerKeyInputPayload,
+        >(payload)
+        .map_err(|_| "invalid_request: invalid computer key input payload".to_string())
+        .and_then(|input| runtime.key_input(&input.surface_id, &input.key, &input.modifiers)),
         RunnerComputerOperationKind::PointerMove | RunnerComputerOperationKind::PointerClick => {
             ensure_exact_payload_fields(&payload, &["display_id", "snapshot_generation", "x", "y"])
                 .and_then(|()| {

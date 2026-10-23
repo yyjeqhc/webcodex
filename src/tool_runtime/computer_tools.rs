@@ -21,9 +21,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
-use webcodex_core::computer_input_contract::{
-    COMPUTER_KEY_INPUT_KEYS, COMPUTER_KEY_INPUT_MODIFIERS,
-};
+#[cfg(test)]
+use webcodex_core::computer_input_contract::COMPUTER_KEY_INPUT_KEYS;
+use webcodex_core::computer_input_contract::COMPUTER_KEY_INPUT_MODIFIERS;
 
 const MAX_WINDOWS: usize = 64;
 const MAX_APPLICATIONS: usize = 64;

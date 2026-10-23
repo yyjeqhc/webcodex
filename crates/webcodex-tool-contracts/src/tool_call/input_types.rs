@@ -1400,13 +1400,14 @@ pub enum ComputerControlToolCall {
         #[schemars(length(min = 1, max = 128))]
         element_id: String,
     },
+    #[schemars(extend("allOf" = webcodex_core::computer_input_contract::computer_key_chord_constraints()))]
     Key {
         #[schemars(length(min = 1, max = 128))]
         client_id: String,
         #[schemars(length(min = 1, max = 128))]
         surface_id: String,
-        /// Exact lowercase navigation key from the closed vocabulary; letters and shortcut strings
-        /// such as Ctrl+P are unsupported. The exact surface must already be foreground/focused.
+        /// Exact lowercase navigation key, or Windows-only j/p with exactly modifiers=[control].
+        /// Shortcut strings such as Ctrl+P are unsupported. The exact surface must already be foreground/focused.
         #[schemars(schema_with = "webcodex_core::computer_input_contract::computer_key_schema")]
         key: String,
         /// Unique canonical modifiers; omission/null means none. Windows maps option to Alt, rejects

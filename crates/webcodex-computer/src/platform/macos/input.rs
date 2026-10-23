@@ -1350,6 +1350,11 @@ pub(crate) fn key_input(
     modifiers: &[String],
 ) -> Result<Value, String> {
     validate_key_input(key, modifiers)?;
+    if webcodex_core::computer_input_contract::is_computer_letter_shortcut(key) {
+        return Err(
+            "invalid_request: computer letter shortcuts are supported only on Windows".into(),
+        );
+    }
     if !unsafe { AXIsProcessTrusted() } {
         return Err("permission_denied: macOS Accessibility permission is not granted".to_string());
     }

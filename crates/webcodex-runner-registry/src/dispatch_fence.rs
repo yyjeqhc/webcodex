@@ -91,7 +91,7 @@ impl PendingDispatchFence {
             ) => {
                 use webcodex_core::runner_operation::RunnerComputerOperationKind::*;
                 !runner_instance_id.is_empty()
-                    && matches!(op.kind, Control | InputText | AccessibilityTree)
+                    && matches!(op.kind, Control | InputText | AccessibilityTree | KeyInput)
             }
             _ => false,
         };
@@ -146,6 +146,25 @@ impl PendingDispatchFence {
                     );
                 }
                 use webcodex_core::runner_operation::RunnerComputerOperationKind;
+                if let RunnerOperation::Computer(op) = operation {
+                    if op.kind == RunnerComputerOperationKind::KeyInput {
+                        let Ok(input) = serde_json::from_str::<
+                            webcodex_core::computer_input_contract::ComputerKeyInputPayload,
+                        >(&op.payload) else {
+                            return Some(
+                                "invalid_request: invalid computer key input payload".into(),
+                            );
+                        };
+                        if input.validate().is_err() {
+                            return Some(
+                                "invalid_request: invalid computer key input chord".into(),
+                            );
+                        }
+                        return webcodex_core::computer_input_contract::computer_key_input_capabilities(&input.key)
+                            .iter().any(|feature| !runner.supports(*feature))
+                            .then(|| "capability_unavailable: Computer key input capability changed before dispatch".into());
+                    }
+                }
                 let feature = match operation {
                     RunnerOperation::Computer(op) => match op.kind {
                         RunnerComputerOperationKind::Control => RunnerFeature::ComputerControl,

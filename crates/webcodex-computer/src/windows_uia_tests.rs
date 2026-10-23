@@ -771,6 +771,43 @@ fn computer_windows_key_input_native_plan_is_closed_and_releases_modifiers_in_re
 }
 
 #[test]
+fn computer_windows_key_input_letter_chords_have_complete_bounded_sequences() {
+    for (key, vk) in [("j", 0x4A), ("p", 0x50)] {
+        let modifiers = vec!["control".to_string()];
+        assert_eq!(
+            platform::test_windows_key_input_plan(key, &modifiers).unwrap(),
+            vec![
+                (17, false, false),
+                (vk, false, false),
+                (vk, true, false),
+                (17, true, false),
+            ]
+        );
+        for modifiers in [
+            vec![],
+            vec!["shift".into()],
+            vec!["option".into()],
+            vec!["command".into()],
+            vec!["control".into(), "shift".into()],
+            vec!["control".into(), "option".into()],
+        ] {
+            assert!(platform::test_windows_key_input_plan(key, &modifiers).is_err());
+        }
+        for held in [vk, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C] {
+            assert!(platform::test_windows_keyboard_state_guard(key, Some(held)).is_err());
+        }
+        for inserted in 1..4 {
+            assert!(platform::test_windows_send_input_count(inserted, 4)
+                .unwrap_err()
+                .starts_with("outcome_unknown:"));
+        }
+        assert!(platform::test_windows_send_input_count(0, 4)
+            .unwrap_err()
+            .starts_with("key_input_failed:"));
+    }
+}
+
+#[test]
 fn computer_windows_key_input_zero_is_deterministic_and_partial_injection_is_unknown() {
     assert!(platform::test_windows_send_input_count(2, 2).is_ok());
     let blocked = platform::test_windows_send_input_count(0, 2)

@@ -69,6 +69,11 @@ impl ToolRuntime {
         accessibility_bounds: Option<(usize, usize)>,
         expected_instance: Option<&str>,
     ) -> ToolResult {
+        let is_letter_shortcut = kind == "computer_key_input"
+            && payload
+                .get("key")
+                .and_then(Value::as_str)
+                .is_some_and(webcodex_core::computer_input_contract::is_computer_letter_shortcut);
         let expected_root_element_id = payload
             .get("root_element_id")
             .and_then(Value::as_str)
@@ -153,7 +158,14 @@ impl ToolRuntime {
             "computer_element_state" => &[RunnerFeature::ComputerElementState],
             "computer_control" => &[RunnerFeature::ComputerControl],
             "computer_scroll_to_element" => &[RunnerFeature::ComputerScrollToElement],
-            "computer_key_input" => &[RunnerFeature::ComputerKeyInput],
+            "computer_key_input" => {
+                webcodex_core::computer_input_contract::computer_key_input_capabilities(
+                    payload
+                        .get("key")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                )
+            }
             "computer_activate_window" => &[RunnerFeature::ComputerWindowActivate],
             "computer_input_text" => &[RunnerFeature::ComputerTextInput],
             _ => return computer_error("invalid_request", "unsupported computer request kind"),
@@ -191,11 +203,18 @@ impl ToolRuntime {
                         .expect("clipboard write context"),
                 );
             }
-            Err(error) if expected_instance.is_some() && computer_request_is_effect(kind) => {
+            Err(error)
+                if (expected_instance.is_some() || is_letter_shortcut)
+                    && computer_request_is_effect(kind) =>
+            {
                 return computer_effect_not_started(&error);
             }
             Err(error) => return computer_error("client_access_denied", &error),
         };
+        // Pin new letter chords to the registration whose capability was observed.
+        // The same fence is checked under the queue lock and again at dequeue.
+        let expected_instance = expected_instance
+            .or_else(|| is_letter_shortcut.then_some(client.view.runner_instance_id.as_str()));
         for required_feature in required_features {
             if client.supports(*required_feature) {
                 continue;

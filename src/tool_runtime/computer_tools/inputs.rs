@@ -23,20 +23,8 @@ pub(super) fn normalize_computer_key_input(
     key: &str,
     modifiers: Option<Vec<String>>,
 ) -> Result<Vec<String>, &'static str> {
-    if !COMPUTER_KEY_INPUT_KEYS.contains(&key) {
-        return Err("computer key input key is outside the closed vocabulary");
-    }
     let mut modifiers = modifiers.unwrap_or_default();
-    if modifiers.len() > COMPUTER_KEY_INPUT_MODIFIERS.len() {
-        return Err("computer key input has too many modifiers");
-    }
-    for (index, modifier) in modifiers.iter().enumerate() {
-        if !COMPUTER_KEY_INPUT_MODIFIERS.contains(&modifier.as_str())
-            || modifiers[..index].contains(modifier)
-        {
-            return Err("computer key input modifiers are invalid or duplicated");
-        }
-    }
+    webcodex_core::computer_input_contract::validate_computer_key_input(key, &modifiers)?;
     modifiers.sort_by_key(|modifier| {
         COMPUTER_KEY_INPUT_MODIFIERS
             .iter()

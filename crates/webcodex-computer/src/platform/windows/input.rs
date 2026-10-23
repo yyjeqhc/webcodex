@@ -333,6 +333,8 @@ fn windows_key_mapping(key: &str) -> Result<(VIRTUAL_KEY, bool), String> {
         "page_down" => Ok((VK_NEXT, true)),
         "home" => Ok((VK_HOME, true)),
         "end" => Ok((VK_END, true)),
+        "j" => Ok((VIRTUAL_KEY(0x4A), false)),
+        "p" => Ok((VIRTUAL_KEY(0x50), false)),
         _ => Err("invalid_request: computer key is outside the closed vocabulary".to_string()),
     }
 }

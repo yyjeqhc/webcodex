@@ -1,6 +1,166 @@
 use super::*;
 
 #[tokio::test]
+async fn computer_letter_shortcuts_require_both_capabilities_before_enqueue() {
+    for (base, letters) in [(false, false), (true, false), (false, true), (true, true)] {
+        let registry = RunnerRegistry::default();
+        let mut registration = runner_registration("letters", "instance", Vec::new());
+        registration.owner = Some("alice".into());
+        registration.capabilities.computer_key_input = base;
+        registration.capabilities.computer_letter_shortcuts = letters;
+        registry
+            .register(current_runner_registration(registration))
+            .await
+            .unwrap();
+        let access = auth_context(Some("alice"), false);
+        let payload = r#"{"surface_id":"surface_test","key":"p","modifiers":["control"]}"#;
+        let result = registry
+            .enqueue_computer(
+                "letters".into(),
+                "computer_key_input",
+                payload.into(),
+                "alice".into(),
+                Some(&access),
+                5,
+            )
+            .await;
+        assert_eq!(result.is_ok(), base && letters);
+        let request = registry
+            .poll(RunnerPollRequest {
+                client_id: "letters".into(),
+                runner_instance_id: "instance".into(),
+            })
+            .await
+            .unwrap();
+        if base && letters {
+            let request = request.expect("accepted letter chord");
+            assert_eq!(request.kind, "computer_key_input");
+            assert_eq!(request.stdin.as_deref(), Some(payload));
+        } else {
+            assert!(request.is_none());
+            assert!(result.unwrap_err().contains(if base {
+                "computer_letter_shortcuts"
+            } else {
+                "computer_key_input"
+            }));
+        }
+    }
+}
+
+#[tokio::test]
+async fn computer_letter_shortcuts_recheck_access_and_capabilities_at_dequeue() {
+    for change in ["owner", "key_input", "letters", "instance"] {
+        let registry = RunnerRegistry::default();
+        let mut registration = runner_registration("letters", "instance", Vec::new());
+        registration.owner = Some("alice".into());
+        registration.capabilities.computer_key_input = true;
+        registration.capabilities.computer_letter_shortcuts = true;
+        registry
+            .register(current_runner_registration(registration.clone()))
+            .await
+            .unwrap();
+        let access = auth_context(Some("alice"), false);
+        let (_, rx) = registry
+            .enqueue_computer(
+                "letters".into(),
+                "computer_key_input",
+                r#"{"surface_id":"surface_test","key":"j","modifiers":["control"]}"#.into(),
+                "alice".into(),
+                Some(&access),
+                5,
+            )
+            .await
+            .unwrap();
+        match change {
+            "owner" => registration.owner = Some("bob".into()),
+            "key_input" => registration.capabilities.computer_key_input = false,
+            "instance" => registration.runner_instance_id = "replacement".into(),
+            _ => registration.capabilities.computer_letter_shortcuts = false,
+        }
+        registry
+            .register(current_runner_registration(registration))
+            .await
+            .unwrap();
+        assert!(registry
+            .poll(RunnerPollRequest {
+                client_id: "letters".into(),
+                runner_instance_id: if change == "instance" {
+                    "replacement"
+                } else {
+                    "instance"
+                }
+                .into()
+            })
+            .await
+            .unwrap()
+            .is_none());
+        let response = rx.await.unwrap();
+        assert_eq!(response.request_dispatched, Some(false));
+        assert!(response.error.unwrap().starts_with(match change {
+            "owner" => "client_access_denied:",
+            "instance" => "runner_replaced:",
+            _ => "capability_unavailable:",
+        }));
+    }
+}
+
+#[tokio::test]
+async fn computer_letter_shortcuts_reject_stale_instances_and_invalid_chords() {
+    let registry = RunnerRegistry::default();
+    let mut registration = runner_registration("letters", "new-instance", Vec::new());
+    registration.owner = Some("alice".into());
+    registration.capabilities.computer_key_input = true;
+    registration.capabilities.computer_letter_shortcuts = true;
+    registry
+        .register(current_runner_registration(registration))
+        .await
+        .unwrap();
+    let access = auth_context(Some("alice"), false);
+    let error = registry
+        .enqueue_computer_for_instance(
+            "letters".into(),
+            "computer_key_input",
+            r#"{"surface_id":"surface_test","key":"p","modifiers":["control"]}"#.into(),
+            "alice".into(),
+            Some(&access),
+            5,
+            "old-instance",
+        )
+        .await
+        .unwrap_err();
+    assert!(error.starts_with("runner_replaced:"));
+    for modifiers in [
+        serde_json::json!([]),
+        serde_json::json!(["option"]),
+        serde_json::json!(["control", "shift"]),
+        serde_json::Value::Null,
+    ] {
+        let payload =
+            serde_json::json!({"surface_id":"surface_test", "key":"p", "modifiers":modifiers})
+                .to_string();
+        assert!(registry
+            .enqueue_computer(
+                "letters".into(),
+                "computer_key_input",
+                payload,
+                "alice".into(),
+                Some(&access),
+                5
+            )
+            .await
+            .is_err());
+    }
+    assert!(registry
+        .poll(RunnerPollRequest {
+            client_id: "letters".into(),
+            runner_instance_id: "new-instance".into()
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn computer_control_enqueue_requires_independent_capability() {
     // CU-AX2 control remains independently fenced from CU-AX3 text input.
     let registry = RunnerRegistry::default();

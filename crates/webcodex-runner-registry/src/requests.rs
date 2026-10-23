@@ -2524,6 +2524,20 @@ impl RunnerRegistry {
         expected_runner_instance_id: Option<&str>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_id(&client_id, "client_id")?;
+        if payload.len() > shell_computer_request_payload_max_bytes(kind) || payload.contains('\0')
+        {
+            return Err("computer request payload is invalid or too large".to_string());
+        }
+        let key_input = if kind == "computer_key_input" {
+            let input = serde_json::from_str::<
+                webcodex_core::computer_input_contract::ComputerKeyInputPayload,
+            >(&payload)
+            .map_err(|_| "invalid computer key input payload".to_string())?;
+            input.validate().map_err(str::to_string)?;
+            Some(input)
+        } else {
+            None
+        };
         let required_features: &[RunnerFeature] = match kind {
             "computer_list_applications" => &[RunnerFeature::ComputerApplicationDiscovery],
             "computer_launch_application" => &[RunnerFeature::ComputerApplicationLaunch],
@@ -2543,7 +2557,11 @@ impl RunnerRegistry {
             "computer_element_state" => &[RunnerFeature::ComputerElementState],
             "computer_control" => &[RunnerFeature::ComputerControl],
             "computer_scroll_to_element" => &[RunnerFeature::ComputerScrollToElement],
-            "computer_key_input" => &[RunnerFeature::ComputerKeyInput],
+            "computer_key_input" => {
+                webcodex_core::computer_input_contract::computer_key_input_capabilities(
+                    &key_input.as_ref().expect("key payload validated").key,
+                )
+            }
             "computer_pointer_move" | "computer_pointer_click" => {
                 &[RunnerFeature::ComputerPointerControl]
             }
@@ -2551,10 +2569,6 @@ impl RunnerRegistry {
             "computer_input_text" => &[RunnerFeature::ComputerTextInput],
             _ => return Err("invalid computer request kind".to_string()),
         };
-        if payload.len() > shell_computer_request_payload_max_bytes(kind) || payload.contains('\0')
-        {
-            return Err("computer request payload is invalid or too large".to_string());
-        }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let operation_kind = RunnerComputerOperationKind::from_wire(kind)
@@ -2576,13 +2590,23 @@ impl RunnerRegistry {
             .get(&client_id)
             .ok_or_else(|| format!("unknown shell client: {client_id}"))?;
         assert_runner_access(auth, current)?;
+        let letter_instance = key_input
+            .as_ref()
+            .filter(|input| {
+                webcodex_core::computer_input_contract::is_computer_letter_shortcut(&input.key)
+            })
+            .map(|_| current.runner_instance_id.clone());
+        let expected_runner_instance_id =
+            expected_runner_instance_id.or(letter_instance.as_deref());
         if let Some(expected) = expected_runner_instance_id {
             if expected.is_empty() || current.runner_instance_id != expected {
                 return Err(
                     "runner_replaced: Computer target Runner changed before admission".into(),
                 );
             }
-            if !current.supports(RunnerFeature::ComputerAccessibilityObserve) {
+            if kind != "computer_key_input"
+                && !current.supports(RunnerFeature::ComputerAccessibilityObserve)
+            {
                 return Err("capability_unavailable: post-observation requires computer_accessibility_observe".into());
             }
         }

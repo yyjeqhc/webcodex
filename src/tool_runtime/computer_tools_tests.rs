@@ -1494,6 +1494,28 @@ fn computer_key_input_normalizes_closed_vocabulary_and_modifiers() {
 }
 
 #[test]
+fn computer_key_input_letter_chords_are_not_text_or_arbitrary_shortcuts() {
+    for key in ["j", "p"] {
+        assert_eq!(
+            normalize_computer_key_input(key, Some(vec!["control".into()])).unwrap(),
+            vec!["control"]
+        );
+        for modifiers in [
+            None,
+            Some(vec![]),
+            Some(vec!["shift".into()]),
+            Some(vec!["control".into(), "option".into()]),
+            Some(vec!["control".into(), "shift".into()]),
+        ] {
+            assert!(normalize_computer_key_input(key, modifiers).is_err());
+        }
+    }
+    for key in ["a", "P", "Ctrl+P", "0x50", "j p"] {
+        assert!(normalize_computer_key_input(key, Some(vec!["control".into()])).is_err());
+    }
+}
+
+#[test]
 fn computer_key_input_validator_is_exact_and_post_dispatch_mismatch_is_unknown() {
     let expected_modifiers = json!(["shift", "command"]);
     let valid = validate_computer_key_input(

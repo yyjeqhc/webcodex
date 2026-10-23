@@ -1072,6 +1072,13 @@ runner_capabilities! {
         #[serde(default, skip_serializing_if = "is_false")]
         pub computer_key_input: bool = false;
     }
+    /// Windows-only Ctrl+J/Ctrl+P through the existing key-input operation.
+    /// The original key-input capability never implies this additive chord set.
+    ComputerLetterShortcuts => RUNNER_CAPABILITY_COMPUTER_LETTER_SHORTCUTS("computer_letter_shortcuts"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_letter_shortcuts: bool = false;
+    }
     /// Native exact-window activation/raise. Missing on older Runners is false and
     /// is never inferred from accessibility control, observation, or platform.
     ComputerWindowActivate => RUNNER_CAPABILITY_COMPUTER_WINDOW_ACTIVATE("computer_window_activate"),
@@ -2983,6 +2990,7 @@ mod envelope_tests {
                 computer_control: false,
                 computer_scroll_to_element: false,
                 computer_key_input: false,
+                computer_letter_shortcuts: false,
                 computer_window_activate: false,
                 computer_text_input: false,
                 job_state_reconciliation: false,
@@ -3326,8 +3334,22 @@ mod envelope_tests {
         let capabilities: RunnerCapabilities =
             serde_json::from_str(r#"{"computer_key_input":true}"#).unwrap();
         assert!(capabilities.computer_key_input);
+        assert!(!capabilities.computer_letter_shortcuts);
         assert!(!capabilities.computer_control);
         assert!(!capabilities.computer_observe);
+    }
+
+    #[test]
+    fn computer_letter_shortcuts_capability_is_additive() {
+        let caps: RunnerCapabilities =
+            serde_json::from_str(r#"{"computer_letter_shortcuts":true}"#).unwrap();
+        assert!(caps.supports(RunnerCapabilityId::ComputerLetterShortcuts));
+        assert!(!caps.computer_key_input);
+        assert!(!RunnerCapabilities::default().computer_letter_shortcuts);
+        assert_eq!(
+            RunnerCapabilityId::from_wire_name("computer_letter_shortcuts"),
+            Some(RunnerCapabilityId::ComputerLetterShortcuts)
+        );
     }
 
     #[test]

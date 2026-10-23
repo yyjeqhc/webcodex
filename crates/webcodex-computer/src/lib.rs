@@ -7,6 +7,7 @@ use std::sync::{Mutex, MutexGuard};
 #[cfg(any(test, target_os = "macos"))]
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(test)]
 use webcodex_core::computer_input_contract::{
     COMPUTER_KEY_INPUT_KEYS, COMPUTER_KEY_INPUT_MODIFIERS,
 };
@@ -56,28 +57,15 @@ fn valid_display_id(display_id: &str) -> bool {
         && webcodex_core::compact::decode::<12>(suffix).is_some()
 }
 
+#[cfg(target_os = "macos")]
 fn validate_key_modifiers(modifiers: &[String]) -> Result<(), String> {
-    if modifiers.len() > COMPUTER_KEY_INPUT_MODIFIERS.len() {
-        return Err("invalid_request: computer key input has too many modifiers".to_string());
-    }
-    for (index, modifier) in modifiers.iter().enumerate() {
-        if !COMPUTER_KEY_INPUT_MODIFIERS.contains(&modifier.as_str())
-            || modifiers[..index].contains(modifier)
-        {
-            return Err(
-                "invalid_request: computer key input modifiers are invalid or duplicated"
-                    .to_string(),
-            );
-        }
-    }
-    Ok(())
+    webcodex_core::computer_input_contract::validate_computer_key_modifiers(modifiers)
+        .map_err(|message| format!("invalid_request: {message}"))
 }
 
 fn validate_key_input(key: &str, modifiers: &[String]) -> Result<(), String> {
-    if !COMPUTER_KEY_INPUT_KEYS.contains(&key) {
-        return Err("invalid_request: computer key is outside the closed vocabulary".to_string());
-    }
-    validate_key_modifiers(modifiers)
+    webcodex_core::computer_input_contract::validate_computer_key_input(key, modifiers)
+        .map_err(|message| format!("invalid_request: {message}"))
 }
 const MAX_ACCESSIBILITY_DEPTH: usize = 8;
 const MAX_ACCESSIBILITY_NODES: usize = 256;

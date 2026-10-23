@@ -389,6 +389,7 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // Closed key input is independently advertised only by a running native
             // implementation and is never inferred from computer_control.
             computer_key_input: false,
+            computer_letter_shortcuts: false,
             // Exact window activation is independently advertised only by the
             // running binary after the native handler is installed.
             computer_window_activate: false,

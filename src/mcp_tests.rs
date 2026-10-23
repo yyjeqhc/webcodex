@@ -296,6 +296,8 @@ fn mcp_export_api_auth(api_key_id: &str, username: &str) -> crate::auth::AuthCon
 mod agent_continuation_app;
 #[path = "mcp_tests/artifact_export.rs"]
 mod artifact_export;
+#[path = "mcp_tests/cli.rs"]
+mod cli;
 #[path = "mcp_tests/computer_app.rs"]
 mod computer_app;
 #[path = "mcp_tests/computer_contracts.rs"]

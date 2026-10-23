@@ -62,8 +62,54 @@ fn instruction_projection_does_not_mutate_or_reobserve_the_input_snapshot() {
     let projection = instructions_projection(&current, Some(&previous), false, true, false);
     assert_eq!(projection["status"], "reused");
     assert_eq!(projection["content_included"], false);
-    let full = project_instructions_context_projection(&current, 20 * 1024);
+    let full = project_instructions_context_projection(&current, 20 * 1024, false);
     assert_eq!(full["status"], "loaded");
     assert_eq!(full["sources"][0]["content"], "# Rules\nretain exact input");
     assert_eq!(serde_json::to_value(&current).unwrap(), before);
+}
+
+#[test]
+fn complete_instruction_preference_keeps_existing_budget_and_default_projection() {
+    use super::super::project_instructions::{InstructionSourceScope, LoadedInstructionCandidate};
+    let body = vec!["# rule"; 380].join("\n");
+    let long = "Read the complete repository instructions before editing. ".repeat(200);
+    let current = ProjectInstructionsSnapshot::from_candidates(
+        vec![
+            LoadedInstructionCandidate {
+                source_scope: InstructionSourceScope::Project,
+                path: "AGENTS.md".into(),
+                content: long.clone(),
+                total_lines: 1,
+                full_sha256: None,
+            },
+            LoadedInstructionCandidate {
+                source_scope: InstructionSourceScope::Project,
+                path: "CLAUDE.md".into(),
+                content: body.clone(),
+                total_lines: 380,
+                full_sha256: None,
+            },
+        ],
+        true,
+    );
+    let default = project_instructions_context_projection(&current, 20 * 1024, false);
+    assert_eq!(default["truncated"], true);
+    let full = project_instructions_context_projection(&current, 20 * 1024, true);
+    assert_eq!(full["sources"][0]["content"], long);
+    assert_eq!(full["sources"][1]["content"], body);
+    assert_eq!(full["truncated"], false);
+    for budget in [2048, 4096, 8192] {
+        let bounded = project_instructions_context_projection(&current, budget, true);
+        assert!(serialized_len(&bounded) <= budget);
+        assert_eq!(bounded["truncated"], true);
+        assert!(bounded["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|source| source["read_more"].is_object()));
+    }
+    assert_eq!(
+        project_instructions_context_projection(&current, 20 * 1024, false),
+        default
+    );
 }

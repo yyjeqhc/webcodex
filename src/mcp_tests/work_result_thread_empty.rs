@@ -26,6 +26,8 @@ async fn open_panel(
         None,
         None,
         None,
+        crate::mcp::request_policy::McpSurface::Adaptive,
+        None,
     )
     .await
 }

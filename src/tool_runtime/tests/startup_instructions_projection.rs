@@ -114,7 +114,7 @@ fn instruction_sidecar_budget_preserves_sources_and_local_guidance() {
     );
     let combined = ProjectInstructionsSnapshot::with_runner_files(globals.files, locals, true);
     for budget in [19 * 1024, 12 * 1024] {
-        let projection = project_instructions_context_projection(&combined, budget);
+        let projection = project_instructions_context_projection(&combined, budget, false);
         assert!(serialized_len(&projection) <= budget);
         let sources = projection["sources"].as_array().unwrap();
         assert_eq!(sources.len(), 21);

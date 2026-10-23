@@ -228,7 +228,7 @@ advanced identity flow.
 
 ### Adaptive Runtime routing
 
-There is one model-facing MCP runtime contract: **Adaptive Runtime**. Canonical `ToolDefinition` rank decides the direct tools; ordinary model-visible long-tail tools are invoked through `call_runtime_tool`; server-owned protocol capabilities and MCP App admission may add hidden extensions for the relevant protocol request. There is no startup model-surface selector. `read_tool_manifest(tool_name=...)` is discovery only: it never dynamically registers a new Host tool. Its exact `route.primary` describes the preferred callable, and a normal direct tool also exposes `route.fallback` through `call_runtime_tool` for the case where that direct callable is not present; explicit MCP App presentation tools mark that fallback as blocked while Apps are enabled. Direct versus gateway routing changes presentation only and never bypasses the target tool's authentication, Project authority, permission, Runner capability, Session, or safety checks.
+One canonical ToolRuntime serves both MCP projections. **Adaptive Runtime** remains the default, including ChatGPT: canonical `ToolDefinition` rank decides the direct tools; ordinary model-visible long-tail tools are invoked through `call_runtime_tool`; server-owned protocol capabilities and MCP App admission may add hidden extensions for the relevant protocol request. An explicit request-local CLI surface changes discovery and presentation only, as described below. `read_tool_manifest(tool_name=...)` is discovery only: it never dynamically registers a new Host tool. Its exact `route.primary` describes the preferred callable, and a normal direct tool also exposes `route.fallback` through `call_runtime_tool` for the case where that direct callable is not present; explicit MCP App presentation tools mark that fallback as blocked while Apps are enabled. Direct versus gateway routing changes presentation only and never bypasses the target tool's authentication, Project authority, permission, Runner capability, Session, or safety checks.
 
 ### Request-local client policy
 
@@ -285,9 +285,104 @@ assume a new model turn will start. `wait_for_job_terminal` is optional durable
 attention for an explicitly established continuation workflow, not a blocking
 wait or a prerequisite for ordinary MCP.
 
+### Direct connections from Claude Code and Codex
+
+For a CLI client connecting directly to a local or hosted Server, add
+`X-WebCodex-MCP-Surface: cli` to **every request**, including discovery. Omission
+(or `adaptive`) keeps the existing ChatGPT surface. This is independent of the
+`direct` / `host_code_mode` waiting strategy and does not enable permissions,
+change authentication, or remember a Project/Session between calls. Reconnect or
+refresh tools after changing connection headers. Empty, unknown or repeated
+preference headers fail before dispatch without echoing their values.
+
+The CLI surface provides:
+
+- A small coding tool list, with directory listing, tracked-file glob discovery,
+  and `find_definition` / `find_references` directly callable. Build, validation,
+  specialized edits and other admitted tools remain available through
+  `read_tool_manifest` and `call_runtime_tool`; the manifest describes the current
+  route. MCP App tools are unavailable through either route, and `_wc` sidecars
+  are not accepted.
+- Text-only WebCodex results, with unescaped source, file/line headers and read
+  revisions. Search previews omit per-match `read_hint`; passive `peer_awareness`
+  is omitted. Partial failures, unknown effects, Job identities, coverage limits,
+  and revision-fenced recovery/continuation arguments remain visible. Native
+  image/resource blocks and third-party provider passthrough retain their own
+  contracts. CLI framing overrides text-JSON and OpenAI structured-failure
+  compatibility for WebCodex results: no `structuredContent`, standard `isError`.
+- Short `initialize.instructions` (also returned by stateless `server/discover`).
+  `work_on_project` includes repository instructions automatically, reusing its
+  authorized observation. Complete observed bodies are preferred within the
+  existing 20 KiB context envelope; oversized/incomplete sources retain explicit
+  truncation and `read_more`. Workspace status, Session identity, permissions,
+  warnings and blockers remain; ChatGPT workflow prose is omitted. Extension
+  catalogs default off on CLI; request `include_extension_catalog=true` when
+  needed. Startup still creates/resumes a Workflow Session, so uncertain startup
+  must be observed before creating another Session.
+
+Optionally set `X-WebCodex-MCP-Project` to a server-issued `project_ref` (for
+example `~p17`) or full `agent:<runner>:<project>` ID. A reference retains its
+principal/root binding and fails closed if stale; a full ID has the same resolver
+semantics as that explicit tool argument. Short names are rejected. This supplies
+an omitted required `project`, including inside the gateway. Explicit project
+values win; exact Session resume and `client_id`/`path` registration keep their
+own source rules. Optional filters such as `list_jobs.project` are not filled.
+The header requires the CLI surface, is bounded to 512 bytes, and is never
+persisted as connection authority. Select the target deliberately; the default
+is not an authorization grant.
+
+Claude Code `.mcp.json` example (replace the URL with the reported endpoint):
+
+```json
+{
+  "mcpServers": {
+    "webcodex-cli": {
+      "type": "http",
+      "url": "${WEBCODEX_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${WEBCODEX_MCP_TOKEN}",
+        "X-WebCodex-MCP-Surface": "cli",
+        "X-WebCodex-MCP-Profile": "direct",
+        "X-WebCodex-MCP-Budget-Secs": "55"
+      }
+    }
+  }
+}
+```
+
+Keep credentials in the environment, not the configuration file. Claude Code's
+[HTTP headers and variable expansion](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcp-json)
+provide this connection shape. For OAuth, omit the Authorization entry and use
+the client's normal OAuth flow.
+
+Codex `config.toml` example (replace the example URL):
+
+```toml
+[mcp_servers.webcodex_cli]
+url = "http://127.0.0.1:8080/mcp"
+bearer_token_env_var = "WEBCODEX_MCP_TOKEN"
+tool_timeout_sec = 60
+http_headers = { "X-WebCodex-MCP-Surface" = "cli", "X-WebCodex-MCP-Profile" = "direct", "X-WebCodex-MCP-Budget-Secs" = "55" }
+```
+
+The [Codex MCP configuration reference](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
+documents `http_headers`, `bearer_token_env_var` and `tool_timeout_sec`. The 55-second
+Host budget leaves margin below this client's 60-second timeout, but is not a
+universal RPC deadline. A timeout is not permission to retry a write or redispatch
+a Job. These examples do not depend on either client's structured-content priority
+or tool-loading strategy.
+
+For a repository on another machine, a local `CLAUDE.md` / `AGENTS.md` note can say:
+
+```text
+This task targets WebCodex Project agent:dev:repo on Runner dev.
+Use the webcodex-cli MCP tools for that repository's files, Git and commands.
+The local shell/filesystem belongs to the client machine, not necessarily that Project.
+```
+
 ### Tool result framing
 
-Machine-readable MCP tool results are returned in `structuredContent`; `content` is a concise human-readable/protocol-native fallback. Clients that need fields should consume `structuredContent` rather than parse text.
+On the default Adaptive surface, machine-readable MCP tool results are returned in `structuredContent`; `content` is a concise human-readable/protocol-native fallback. Clients that need fields should consume `structuredContent` rather than parse text.
 
 For standard-client command failures (`isError=true`, `tool_failure=false`, and `failure_kind=command_exit_nonzero` or `timeout`), `content[0].text` also includes available stdout/stderr tails so hosts that hide structured errors can still diagnose the command. Each stream reuses the command tail limit of 12,000 Unicode characters (at most 48,000 UTF-8 bytes), plus a small label; `[truncated]` marks either upstream or presentation truncation. Empty, untruncated streams are omitted. This text-only projection preserves the compact structured error, execution state, retry guidance and successful receipts. OpenAI structured-failure compatibility keeps its existing presentation, and text JSON compatibility emits its JSON copy without additional log sections.
 

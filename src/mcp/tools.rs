@@ -44,7 +44,7 @@ pub(super) const WORK_RESULT_INPUT_META_KEY: &str = "webcodex/workResultInput";
 pub(super) const WORK_RESULT_THREAD_CONTEXT_META_KEY: &str = "webcodex/workResultThread";
 const WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME: &str = "work_result_thread_panel";
 
-fn filter_descriptors_for_oauth(
+pub(super) fn filter_descriptors_for_oauth(
     mut specs: Vec<ToolDescriptor>,
     auth: Option<&AuthContext>,
 ) -> Vec<ToolDescriptor> {
@@ -112,7 +112,7 @@ fn stateless_advertised_operator_extension_descriptors_for_auth(
         .collect()
 }
 
-fn adaptive_runtime_gateway_tool_json(compact: bool) -> Value {
+pub(super) fn adaptive_runtime_gateway_tool_json(compact: bool) -> Value {
     mcp_tool_parts_json(
         ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string(),
         "Call one runtime tool admitted by Adaptive Runtime through the generic gateway. A tool with availability=direct should still be invoked through its direct callable when available; ordinary direct tools may fall back here when that callable is unavailable or not loaded. Explicit MCP App presentation tools are the exception: when MCP Apps are enabled they must use their direct callable because only that tool descriptor carries the Host App resource metadata. Directness otherwise changes preferred model exposure only: canonical runtime argument validation, OAuth scope, Project authority, permission gates, Runner capability, Session/context policy, host-file-import trust, protocol capability admission, and tool effects remain unchanged.".to_string(),
@@ -202,7 +202,10 @@ pub(crate) fn adaptive_runtime_gateway_target_admitted_for_test(
     )
 }
 
-fn mcp_suggested_tool_call_route(target: &str, stateless_2026: bool) -> SuggestedToolCallRoute {
+pub(super) fn mcp_suggested_tool_call_route(
+    target: &str,
+    stateless_2026: bool,
+) -> SuggestedToolCallRoute {
     if target == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME {
         return SuggestedToolCallRoute::Unavailable;
     }
@@ -1411,7 +1414,7 @@ pub(super) fn project_mcp_model_argument_defaults(tool_name: &str, arguments: &m
     }
 }
 
-fn mcp_tool_descriptor_json(
+pub(super) fn mcp_tool_descriptor_json(
     descriptor: ToolDescriptor,
     compact: bool,
     app_enabled: bool,

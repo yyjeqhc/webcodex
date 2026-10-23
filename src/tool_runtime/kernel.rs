@@ -67,6 +67,9 @@ pub(crate) struct ToolInvocationMetadata {
     pub(crate) session_message_resolution: Option<ToolCallSessionMessageResolution>,
     pub(crate) window_reply: Option<super::window_collaboration::ToolCallWindowReply>,
     pub(crate) context_request: Vec<String>,
+    /// Prefer complete observed instruction bodies within the existing context
+    /// envelope budget. Presentation only; does not widen reads or authority.
+    pub(crate) prefer_full_instruction_content: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -488,6 +491,8 @@ impl ToolRuntime {
                 super::dispatch::DispatchContext {
                     recorder: recording.metadata.clone(),
                     context_request,
+                    prefer_full_instruction_content: invocation_metadata
+                        .prefer_full_instruction_content,
                     capabilities,
                     return_timing,
                     ..super::dispatch::DispatchContext::new(context)

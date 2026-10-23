@@ -1,4 +1,5 @@
 mod app_registry;
+mod cli;
 mod discovery;
 mod execution_control;
 mod http_metadata;
@@ -686,21 +687,32 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             return;
         }
     };
-    let policy_selection = match request_policy::resolve(req.headers(), runtime.mcp_host_policy) {
-        Ok(policy) => policy,
-        Err(message) => {
-            // Reject ambiguous transport preferences before any tool/Job effect.
-            // Do not echo potentially sensitive header values into diagnostics.
-            guard.parsed("request_policy_error");
-            let body = rpc_error(request.id.clone(), -32600, message);
-            let estimated = estimate_json_bytes(&body);
-            guard.response_serialized(400, estimated, Some(false), None, "request_policy_error");
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(body));
-            guard.handler_returned(400, estimated, Some(false), None, "request_policy_error");
-            return;
-        }
-    };
+    let (policy_selection, surface, default_project) =
+        match request_policy::resolve(req.headers(), runtime.mcp_host_policy).and_then(|policy| {
+            let surface = request_policy::resolve_surface(req.headers())?;
+            let project = request_policy::resolve_default_project(req.headers(), surface)?;
+            Ok((policy, surface, project))
+        }) {
+            Ok(selection) => selection,
+            Err(message) => {
+                // Reject ambiguous transport preferences before any tool/Job effect.
+                // Do not echo potentially sensitive header values into diagnostics.
+                guard.parsed("request_policy_error");
+                let body = rpc_error(request.id.clone(), -32600, message);
+                let estimated = estimate_json_bytes(&body);
+                guard.response_serialized(
+                    400,
+                    estimated,
+                    Some(false),
+                    None,
+                    "request_policy_error",
+                );
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(body));
+                guard.handler_returned(400, estimated, Some(false), None, "request_policy_error");
+                return;
+            }
+        };
     let policy = policy_selection.effective;
     // Clone only the lightweight runtime view when a preference actually differs.
     // Stores, execution ownership and fences stay shared; policy never mutates
@@ -884,7 +896,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             crate::public_ingress_auth::entry(depot).map(|entry| entry.origin.clone()),
             scope_active_trace(
                 active_trace_id,
-                Box::pin(handle_mcp_request_with_lifecycle(
+                Box::pin(handle_mcp_request_for_surface(
                     &runtime,
                     request,
                     auth.as_ref(),
@@ -896,6 +908,8 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                     compact_schemas,
                     server_mcp_apps_enabled,
                     Some(&mut tool_correlation),
+                    surface,
+                    default_project.as_deref(),
                 )),
             ),
         ),
@@ -1045,7 +1059,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     }
 
     match outcome {
-        McpOutcome::Ok(body) => {
+        McpOutcome::Ok(mut body) => {
             // Protocol success: valid JSON-RPC result envelope.
             // Tool success: only meaningful for tools/call (isError / structuredContent.success).
             let tool_success = body
@@ -1068,6 +1082,9 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 &tool_correlation,
                 Some(&job_correlation),
             );
+            if surface == request_policy::McpSurface::Cli {
+                cli::project_response(tool_name.as_deref(), &mut body);
+            }
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
             guard.response_serialized(200, estimated, Some(true), tool_success, "ok");
@@ -1260,6 +1277,7 @@ async fn handle_mcp_request(
     }
 }
 
+#[cfg(test)]
 async fn handle_mcp_request_with_lifecycle(
     runtime: &ToolRuntime,
     request: JsonRpcRequest,
@@ -1273,6 +1291,41 @@ async fn handle_mcp_request_with_lifecycle(
     server_mcp_apps_enabled: bool,
     correlation_out: Option<&mut crate::tool_runtime::ToolCallCorrelation>,
 ) -> McpOutcome {
+    handle_mcp_request_for_surface(
+        runtime,
+        request,
+        auth,
+        protocol_era,
+        host_file_import_trust,
+        window,
+        lifecycle,
+        model_ergonomics_out,
+        compact_schemas,
+        server_mcp_apps_enabled,
+        correlation_out,
+        request_policy::McpSurface::Adaptive,
+        None,
+    )
+    .await
+}
+
+async fn handle_mcp_request_for_surface(
+    runtime: &ToolRuntime,
+    request: JsonRpcRequest,
+    auth: Option<&AuthContext>,
+    protocol_era: McpProtocolEra,
+    host_file_import_trust: HostFileImportTrust,
+    window: Option<&crate::client_window::ClientWindow>,
+    lifecycle: Option<&mut ToolRequestLifecycle>,
+    model_ergonomics_out: Option<&mut Option<ModelErgonomicsRecord>>,
+    compact_schemas: bool,
+    server_mcp_apps_enabled: bool,
+    correlation_out: Option<&mut crate::tool_runtime::ToolCallCorrelation>,
+    surface: request_policy::McpSurface,
+    default_project: Option<&str>,
+) -> McpOutcome {
+    let server_mcp_apps_enabled =
+        server_mcp_apps_enabled && surface != request_policy::McpSurface::Cli;
     let stateless_2026 = protocol_era == McpProtocolEra::Stateless2026;
     let resource_read_bypasses_runtime_read = request.method == "resources/read"
         && resources::resource_read_bypasses_runtime_read(&request.params);
@@ -1340,17 +1393,35 @@ async fn handle_mcp_request_with_lifecycle(
         // requests. WebCodex supports the stateless tools path required by
         // modern clients while retaining the initialized 2025 tool-only
         // session lifecycle used by 2025-06-18 and ChatGPT 2025-11-25 clients.
-        "server/discover" if stateless_2026 => rpc_result(
-            id,
-            protocol::server_discover_payload(resources::server_capabilities(
+        "server/discover" if stateless_2026 => {
+            let mut payload = protocol::server_discover_payload(resources::server_capabilities(
                 server_mcp_apps_enabled,
-            )),
-        ),
+            ));
+            if surface == request_policy::McpSurface::Cli {
+                payload["instructions"] = cli::initialize_instructions(default_project);
+            }
+            rpc_result(id, payload)
+        }
         "initialize" if !stateless_2026 => {
-            rpc_result(id, protocol::legacy_initialize_payload(&request.params))
+            let mut payload = protocol::legacy_initialize_payload(&request.params);
+            if surface == request_policy::McpSurface::Cli {
+                payload["instructions"] = cli::initialize_instructions(default_project);
+            }
+            rpc_result(id, payload)
         }
         "ping" if !stateless_2026 => rpc_result(id, json!({})),
         "tools/list" => {
+            if surface == request_policy::McpSurface::Cli {
+                let result = cli::tools_list(auth, default_project.is_some());
+                return McpOutcome::Ok(rpc_result(
+                    id,
+                    if stateless_2026 {
+                        response::mcp_stateless_result(result, true)
+                    } else {
+                        result
+                    },
+                ));
+            }
             return tools::handle_list_with_runtime(
                 runtime,
                 id,
@@ -1388,6 +1459,8 @@ async fn handle_mcp_request_with_lifecycle(
                 lifecycle,
                 model_ergonomics_out,
                 correlation_out,
+                surface,
+                default_project,
             )
             .await;
         }
@@ -1436,3 +1509,40 @@ fn scope_forbidden(
 #[cfg(test)]
 #[path = "mcp_tests.rs"]
 mod tests;
+
+/// Exercise the CLI adapter from the shared local Runner test harness.
+#[cfg(test)]
+pub(crate) async fn cli_call_for_test(
+    runtime: &ToolRuntime,
+    tool: &str,
+    arguments: Value,
+    auth: &AuthContext,
+) -> Value {
+    let request = JsonRpcRequest {
+        jsonrpc: Some("2.0".into()),
+        method: "tools/call".into(),
+        id: Some(json!(1)),
+        params: json!({"name":tool,"arguments":arguments}),
+    };
+    let outcome = handle_mcp_request_for_surface(
+        runtime,
+        request,
+        Some(auth),
+        McpProtocolEra::Legacy,
+        HostFileImportTrust::Untrusted,
+        None,
+        None,
+        None,
+        true,
+        true,
+        None,
+        request_policy::McpSurface::Cli,
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(mut body) = outcome else {
+        panic!("{outcome:?}")
+    };
+    cli::project_response(Some(tool), &mut body);
+    body
+}

@@ -17,6 +17,55 @@ use webcodex_core::plugin::{
 mod bootstrap_budget;
 mod jobs_attention;
 
+#[tokio::test]
+async fn cli_bootstrap_reuses_observed_instructions_and_returns_full_bounded_body() {
+    let root = tempfile::tempdir().unwrap();
+    init_git_repo(root.path());
+    let instructions = "Repository instruction that must be retained in its entirety. ".repeat(200);
+    std::fs::write(root.path().join("AGENTS.md"), &instructions).unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "cli-bootstrap";
+    let project = register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            crate::mcp::cli_call_for_test(
+                &runtime,
+                "work_on_project",
+                json!({"project":project,"instruction":"Inspect repository"}),
+                &auth_context(None, true),
+            )
+            .await
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut instruction_reads = 0;
+    while !task.is_finished() {
+        assert!(Instant::now() < deadline, "CLI bootstrap fixture timed out");
+        if let Some(request) = probe_patch_agent_request(&runtime, client).await {
+            if request.kind == "file_read" {
+                instruction_reads += 1;
+            }
+            complete_agent_request_by_running_locally(&runtime, client, request).await;
+        } else {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+    let result = task.await.unwrap();
+    assert_eq!(result["result"]["isError"], false, "{result}");
+    assert!(result["result"].get("structuredContent").is_none());
+    let text = result["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains(&instructions));
+    assert!(text.contains("workspace:"));
+    assert!(text.contains("session_id:"));
+    assert!(!text.contains("webcodex.workflow"));
+    assert!(!text.contains("present_work_result"));
+    assert!(
+        instruction_reads <= webcodex_core::project_instructions::INSTRUCTION_CANDIDATE_PATHS.len(),
+        "context projection must reuse startup's instruction observation"
+    );
+}
+
 fn context_material<'a>(result: &'a ToolResult, key: &str) -> &'a Value {
     result.output["context_projection"]["materials"]
         .as_array()
@@ -1246,6 +1295,7 @@ async fn bootstrap_instruction_snapshot_does_not_bypass_material_scope() {
         .add_requested_context_projection_with_guidance(
             &mut result,
             crate::tool_runtime::context_projection::ContextProjectionRequest {
+                prefer_full_instruction_content: false,
                 requested: &["project.instructions".into()],
                 resolved_project: Some(&resolved),
                 auth: Some(&auth),

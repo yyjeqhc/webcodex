@@ -99,6 +99,86 @@ wait_for_job_readiness，必要时 observe_jobs 获取结果。deadline 后重�
 pending Job 的精确身份。wait_for_job_terminal 仅用于显式建立的可选 continuation
 workflow，不是阻塞等待，也不是普通 MCP 的前置要求。
 
+## Claude Code / Codex 直接连接
+
+CLI 客户端直连本地或 hosted Server 时，在**每次请求**（包括 discovery）发送
+`X-WebCodex-MCP-Surface: cli`。省略或设为 `adaptive` 会保持原有 ChatGPT 投影。
+此设置独立于 `direct` / `host_code_mode` 等待策略，不改变认证和权限，也不在请求间
+记忆 Project/Session。修改连接 header 后重新连接或刷新工具。空值、未知值和重复的
+偏好 header 在 dispatch 前拒绝，不回显原文。
+
+CLI 投影提供：
+
+- 小型常用编码工具列表，直接暴露目录枚举、tracked-file glob、`find_definition` 和
+  `find_references`。构建、验证、专项编辑等已准入工具仍通过 `read_tool_manifest` 与
+  `call_runtime_tool` 调用，manifest 会反映当前路由。MCP App 工具不能经 direct 或
+  gateway 调用；不接受 `_wc` 附带参数。
+- WebCodex 结果使用文本：源码不转义，保留文件/行号、read revision。搜索匹配省略
+  `read_hint`，被动 `peer_awareness` 也省略；部分失败、未知效果、Job 身份、覆盖范围
+  限制和带版本保护的恢复/续读参数仍保留。原生 image/resource block 与第三方 provider
+  passthrough 保持各自协议。CLI 下 WebCodex 结果覆盖 text-JSON 和 OpenAI structured
+  failure 兼容投影：不返回 `structuredContent`，使用标准 `isError`。
+- 简短的 `initialize.instructions`（stateless `server/discover` 也返回）。
+  `work_on_project` 自动返回项目指令，复用同一次授权观察的快照。在原有 20 KiB context
+  envelope 内优先保留完整已观察正文；过大或观察不完整时明确保留截断标记和 `read_more`。
+  workspace 状态、Session 身份、权限、警告及阻塞原因继续返回，省略 ChatGPT 工作流文案。
+  CLI 默认不附扩展目录，需要时设置 `include_extension_catalog=true`。启动仍会创建/恢复
+  Workflow Session；结果不确定时先观察已有 Session，不要直接再创建。
+
+可选 `X-WebCodex-MCP-Project` 接受 Server 签发的 `project_ref`（例如 `~p17`）或完整
+`agent:<runner>:<project>` ID。reference 保留 principal/root 绑定，过期时拒绝；完整 ID
+与显式工具参数使用相同解析语义，不接受简称。它为要求 Project 的工具（含 gateway）补充
+省略的 `project`，也适用于新建 work_on_project。显式 project 优先；精确 Session 恢复和
+`client_id`/`path` 注册保持自己的来源规则。不会填充 `list_jobs.project` 之类可选过滤器。
+此 header 只允许 CLI surface，最多 512 字节，不持久化为连接权限。默认目标需由用户明确
+选择，不代表授权。
+
+Claude Code `.mcp.json` 示例（环境变量 URL 应使用实际报告的 endpoint）：
+
+```json
+{
+  "mcpServers": {
+    "webcodex-cli": {
+      "type": "http",
+      "url": "${WEBCODEX_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${WEBCODEX_MCP_TOKEN}",
+        "X-WebCodex-MCP-Surface": "cli",
+        "X-WebCodex-MCP-Profile": "direct",
+        "X-WebCodex-MCP-Budget-Secs": "55"
+      }
+    }
+  }
+}
+```
+
+凭据存放在环境变量中，不写入配置文件。配置格式依据 Claude Code 的
+[HTTP header / 环境变量说明](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcp-json)。
+使用 OAuth 时省略 Authorization 项，通过客户端常规 OAuth 流程登录。
+
+Codex `config.toml` 示例（替换示例 URL）：
+
+```toml
+[mcp_servers.webcodex_cli]
+url = "http://127.0.0.1:8080/mcp"
+bearer_token_env_var = "WEBCODEX_MCP_TOKEN"
+tool_timeout_sec = 60
+http_headers = { "X-WebCodex-MCP-Surface" = "cli", "X-WebCodex-MCP-Profile" = "direct", "X-WebCodex-MCP-Budget-Secs" = "55" }
+```
+
+[Codex MCP 配置说明](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)定义了 `http_headers`、
+`bearer_token_env_var` 和 `tool_timeout_sec`。55 秒 Host budget 为客户端 60 秒 timeout
+留出余量，但不是所有 RPC 的统一 deadline。timeout 不授权重试写入或重新派发 Job。
+这些示例不依赖客户端优先读取哪种 content，也不假设它如何加载工具列表。
+
+远程仓库可在本地 `CLAUDE.md` / `AGENTS.md` 中增加说明，例如：
+
+```text
+当前任务的仓库是 Runner dev 上的 WebCodex Project agent:dev:repo。
+请用 webcodex-cli MCP 工具处理该仓库的文件、Git 和命令。
+本地 shell/文件系统属于客户端机器，不一定是该 Project 所在的机器。
+```
+
 ## Claude 与其他 MCP client
 
 使用同一份输出的 `/mcp` URL 与认证值。Claude 中添加 custom connector 并粘贴 MCP URL；
@@ -190,11 +270,11 @@ OAuth 仍是独立的高级身份路径。
 
 ### Adaptive Runtime routing
 
-WebCodex 只有一个 model-facing MCP runtime contract：**Adaptive Runtime**。Canonical `ToolDefinition` rank 决定 direct tools；普通 model-visible long-tail tools 通过 `call_runtime_tool` 调用；server-owned protocol capability 与 MCP App admission 可以为对应请求加入 hidden extension。启动时不再选择 model surface。`read_tool_manifest(tool_name=...)` 只负责 discovery，不会动态向 Host 注册一个新 tool。exact manifest 的 `route.primary` 给出首选 callable；普通 direct tool 还会给出经 `call_runtime_tool` 的 `route.fallback`，用于 Host 当前没有该 direct callable 的情况；显式 MCP App presentation tool 会标明 Apps enabled 时该 fallback 被禁止。direct/gateway 只改变 presentation，不会绕过目标工具的 authentication、Project authority、permission、Runner capability、Session 或 safety checks。
+同一个 canonical ToolRuntime 服务两种 MCP 投影。**Adaptive Runtime** 仍是包括 ChatGPT 在内的默认路径：canonical `ToolDefinition` rank 决定 direct tools；普通 model-visible long-tail tools 通过 `call_runtime_tool` 调用；server-owned protocol capability 与 MCP App admission 可以为对应请求加入 hidden extension。显式的请求级 CLI surface 只改变 discovery 与 presentation，配置见下文。`read_tool_manifest(tool_name=...)` 只负责 discovery，不会动态向 Host 注册一个新 tool。exact manifest 的 `route.primary` 给出首选 callable；普通 direct tool 还会给出经 `call_runtime_tool` 的 `route.fallback`，用于 Host 当前没有该 direct callable 的情况；显式 MCP App presentation tool 会标明 Apps enabled 时该 fallback 被禁止。direct/gateway 只改变 presentation，不会绕过目标工具的 authentication、Project authority、permission、Runner capability、Session 或 safety checks。
 
 ### Tool result framing
 
-MCP tool 的 machine-readable 结果位于 `structuredContent`；`content` 只保留简短的人类可读或 protocol-native fallback。需要结构化字段的 client 应读取 `structuredContent`，不要解析文本。
+默认 Adaptive surface 的 MCP tool machine-readable 结果位于 `structuredContent`；`content` 只保留简短的人类可读或 protocol-native fallback。需要结构化字段的 client 应读取 `structuredContent`，不要解析文本。
 
 对于标准客户端的命令失败（`isError=true`、`tool_failure=false`，且 `failure_kind=command_exit_nonzero` 或 `timeout`），`content[0].text` 还会包含可用的 stdout/stderr 尾部日志，让隐藏结构化错误的 host 仍能诊断命令。每路复用现有命令日志上限：12,000 个 Unicode 字符（最多 48,000 个 UTF-8 字节），另加简短标签；上游或呈现阶段发生截断时均标记 `[truncated]`。空且未截断的日志不附加。这项纯文本投影保留结构化错误的精简形式、执行状态、重试指引及成功回执。OpenAI 失败兼容模式沿用原有呈现；文本 JSON 兼容模式只输出 JSON 副本，不再额外附加日志段。
 

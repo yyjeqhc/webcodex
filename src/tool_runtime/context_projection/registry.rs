@@ -78,6 +78,7 @@ pub(super) struct ContextMaterialContext<'a> {
     pub auth: Option<&'a AuthContext>,
     pub window: Option<&'a ClientWindow>,
     pub instructions: Option<&'a ProjectInstructionsSnapshot>,
+    pub prefer_full_instruction_content: bool,
     pub budget: ContextProjectionBudget<'a>,
 }
 

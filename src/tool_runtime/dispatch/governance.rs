@@ -566,6 +566,7 @@ impl ToolRuntime {
             auth,
             transport,
             context_request,
+            context.prefer_full_instruction_content,
             material_capabilities,
             context_guidance_profile,
             window,

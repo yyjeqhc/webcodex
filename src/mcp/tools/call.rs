@@ -10,6 +10,8 @@ use surface::RuntimeSurface;
 
 struct CallContext<'a> {
     runtime: &'a ToolRuntime,
+    surface: crate::mcp::request_policy::McpSurface,
+    default_project: Option<&'a str>,
     id: Option<Value>,
     auth: Option<&'a AuthContext>,
     stateless_2026: bool,
@@ -47,6 +49,8 @@ pub(in crate::mcp) async fn handle_call(
     lifecycle: Option<&mut ToolRequestLifecycle>,
     model_ergonomics_out: Option<&mut Option<ModelErgonomicsRecord>>,
     correlation_out: Option<&mut crate::tool_runtime::ToolCallCorrelation>,
+    surface: crate::mcp::request_policy::McpSurface,
+    default_project: Option<&str>,
 ) -> McpOutcome {
     if let Some(name) = request_params.get("name").and_then(Value::as_str) {
         if super::super::workbench::is_adapter_tool(name) {
@@ -84,6 +88,8 @@ pub(in crate::mcp) async fn handle_call(
     }
     let context = CallContext {
         runtime,
+        surface,
+        default_project,
         id,
         auth,
         stateless_2026,
@@ -133,7 +139,12 @@ impl ParsedCall {
         let app_enabled = context.app_enabled;
         let id = context.id.clone();
         let lifecycle = &mut diagnostics.lifecycle;
-        let result_presentation = McpToolResultPresentation::from_request_params(&request_params);
+        let cli = context.surface == crate::mcp::request_policy::McpSurface::Cli;
+        let result_presentation = if cli {
+            McpToolResultPresentation::Standard
+        } else {
+            McpToolResultPresentation::from_request_params(&request_params)
+        };
         if let (Some(lc), Some(name), Some(arguments)) = (
             lifecycle.as_deref(),
             request_params.get("name").and_then(Value::as_str),
@@ -181,7 +192,7 @@ impl ParsedCall {
         let invocation = match parse_mcp_invocation_envelope(
             &params.name,
             &mut params.arguments,
-            stateless_2026,
+            stateless_2026 && !cli,
         ) {
             Ok(invocation) => invocation,
             Err(message) => {
@@ -260,6 +271,20 @@ impl ParsedCall {
                 }
             }
         }
+        if cli && crate::mcp::cli::is_app_tool(&params.name) {
+            return Err(McpOutcome::BadRequest(rpc_error(
+                id,
+                -32602,
+                "MCP App tools are unavailable on the CLI surface",
+            )));
+        }
+        if cli {
+            crate::mcp::cli::apply_default_project(
+                &params.name,
+                &mut params.arguments,
+                context.default_project,
+            );
+        }
         if let Some(lc) = lifecycle.as_deref_mut() {
             lc.set_tool_name(Some(params.name.clone()));
         }
@@ -322,8 +347,19 @@ impl PreparedRuntimeCall {
         )?;
         let McpInvocationEnvelope {
             recording_session_selector,
-            metadata,
+            mut metadata,
         } = invocation;
+        if context.surface == crate::mcp::request_policy::McpSurface::Cli
+            && params.name == "work_on_project"
+        {
+            metadata.context_request = vec!["project.instructions".into()];
+            metadata.prefer_full_instruction_content = true;
+            if let Some(arguments) = params.arguments.as_object_mut() {
+                arguments
+                    .entry("include_extension_catalog")
+                    .or_insert(json!(false));
+            }
+        }
         let runtime = context.runtime;
         let auth = context.auth;
         let stateless_2026 = context.stateless_2026;

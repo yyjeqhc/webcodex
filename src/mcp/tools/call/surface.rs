@@ -146,7 +146,11 @@ impl RuntimeSurface {
             && !app_only_job_terminal_continuation
             && !protocol_extension_admitted
             && !via_adaptive_runtime_gateway
-            && !is_adaptive_runtime_direct_tool(&params.name);
+            && !(if context.surface == crate::mcp::request_policy::McpSurface::Cli {
+                crate::mcp::cli::is_direct(&params.name)
+            } else {
+                is_adaptive_runtime_direct_tool(&params.name)
+            });
         if direct_denied {
             if let Some(lc) = lifecycle.as_deref() {
                 lc.dispatch_failed("direct_route_denied");
@@ -181,7 +185,8 @@ impl RuntimeSurface {
         Ok(Self {
             capabilities: ToolProtocolCapabilities {
                 control_sidecars: stateless_2026,
-                context_sidecar: stateless_2026,
+                context_sidecar: stateless_2026
+                    || context.surface == crate::mcp::request_policy::McpSurface::Cli,
                 skill_runtime: stateless_2026,
                 skill_management: stateless_2026,
                 memory_surface: stateless_2026,

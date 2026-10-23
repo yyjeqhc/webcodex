@@ -170,6 +170,7 @@ pub(in crate::mcp) fn parse_mcp_invocation_envelope(
             session_message_resolution: parse_resolution(envelope.remove("resolve"))?,
             window_reply: parse_reply(envelope.remove("reply"))?,
             context_request: parse_context(envelope.remove("context"))?,
+            prefer_full_instruction_content: false,
         },
     };
     debug_assert!(envelope.is_empty());

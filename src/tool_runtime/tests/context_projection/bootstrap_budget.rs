@@ -50,6 +50,7 @@ async fn bootstrap_budget_keeps_requested_workflow_and_honest_instruction_contin
                     &mut result,
                     ContextProjectionRequest {
                         requested: &keys.iter().map(|key| key.to_string()).collect::<Vec<_>>(),
+                        prefer_full_instruction_content: false,
                         resolved_project: Some(&project),
                         auth: Some(&auth),
                         capabilities: ContextMaterialCapabilities::default(),
@@ -105,6 +106,7 @@ async fn bootstrap_budget_keeps_requested_workflow_and_honest_instruction_contin
             &mut result,
             ContextProjectionRequest {
                 requested: &["project.instructions".into(), "webcodex.workflow".into()],
+                prefer_full_instruction_content: false,
                 resolved_project: Some(&project),
                 auth: Some(&denied),
                 capabilities: ContextMaterialCapabilities::default(),

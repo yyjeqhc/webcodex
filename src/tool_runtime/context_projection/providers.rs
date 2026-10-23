@@ -42,7 +42,9 @@ fn project_instructions(context: ContextMaterialContext<'_>) -> BoxFuture<'_, Va
         let budget = context.budget.for_instruction_projection(&material);
         material["projection"] =
             super::super::instruction_projection::project_instructions_context_projection(
-                snapshot, budget,
+                snapshot,
+                budget,
+                context.prefer_full_instruction_content,
             );
         material
     })

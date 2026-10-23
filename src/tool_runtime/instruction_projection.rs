@@ -15,10 +15,26 @@ const MAX_RULE_HEADING_JSON_BYTES: usize = 160;
 pub(super) fn project_instructions_context_projection(
     current: &ProjectInstructionsSnapshot,
     max_bytes: usize,
+    prefer_full_content: bool,
 ) -> Value {
     // Sidecar requests observe current sources without Session retention. Its
     // shared envelope is smaller than startup, especially with 16 global files.
-    let mut projection = instructions_projection(current, None, true, true, false);
+    // Complete bodies are already bounded by the instruction loader. Reserve
+    // enough for each observed source before the existing aggregate-envelope
+    // trim below; this does not request or read additional source bytes.
+    let content_budget = if prefer_full_content {
+        current
+            .files
+            .iter()
+            .map(|file| json_string_payload_len(&file.content))
+            .max()
+            .unwrap_or(0)
+            .saturating_mul(current.files.len())
+    } else {
+        INSTRUCTION_CONTENT_JSON_BUDGET
+    };
+    let mut projection =
+        instructions_projection_with_budget(current, None, true, true, false, content_budget);
     if serialized_len(&projection) <= max_bytes {
         return projection;
     }
@@ -60,6 +76,24 @@ pub(super) fn instructions_projection(
     allow_content: bool,
     minimal: bool,
 ) -> Value {
+    instructions_projection_with_budget(
+        current,
+        previous,
+        force_load,
+        allow_content,
+        minimal,
+        INSTRUCTION_CONTENT_JSON_BUDGET,
+    )
+}
+
+fn instructions_projection_with_budget(
+    current: &ProjectInstructionsSnapshot,
+    previous: Option<&ProjectInstructionsSummarySnapshot>,
+    force_load: bool,
+    allow_content: bool,
+    minimal: bool,
+    content_budget: usize,
+) -> Value {
     let status = instruction_status(current, previous, force_load);
     let include_content = allow_content
         && (matches!(status, "loaded" | "changed")
@@ -69,7 +103,7 @@ pub(super) fn instructions_projection(
     } else {
         Vec::new()
     };
-    let mut remaining_content_budget = INSTRUCTION_CONTENT_JSON_BUDGET;
+    let mut remaining_content_budget = content_budget;
     let mut projection_truncated = false;
     let source_count = current.files.len();
     let sources: Vec<Value> = current

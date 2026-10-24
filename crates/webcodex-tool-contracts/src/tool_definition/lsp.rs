@@ -13,7 +13,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolSessionEvidencePolicy::NONE,
         )
         .with_activity_kind(super::ToolActivityKind::Navigate),
-        "Read-only probe of configured Runner-side language-server availability for a Project. Does not start a language server, run checks, or execute Project code. Returns detected languages and availability/running status without absolute executable paths.",
+        "Read-only probe of configured Runner-side language-server availability for a Project. Does not start a language server, run checks, or execute Project code. Returns detected languages and availability/running status and independent index_readiness (unknown/indexing/ready/unhealthy/unsupported) without absolute executable paths.",
     ),
     model_spec(
         runner_project_read_def(
@@ -46,7 +46,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             SinglePath,
             super::ToolSessionEvidencePolicy::NONE.exploration(super::ToolExplorationEvidence::Navigation(super::ToolNavigationEvidenceKind::Hover)),
         ),
-        "Read a symbol's type and documentation at a 1-based Unicode scalar position through the Project's language server; no source edit. MarkupContent and MarkedString forms are normalized to bounded markdown/plaintext; invalid optional ranges are omitted.",
+        "Read a symbol's type and documentation at a 1-based Unicode scalar position through the Project's language server; no source edit. MarkupContent and MarkedString forms are normalized to bounded markdown/plaintext; invalid optional ranges are omitted. Rust index readiness is required within the shared request deadline; an unready index returns an error, not an empty result. Retry this read-only observation later.",
     ).with_discovery_keywords(&["symbol", "documentation", "type", "signature", "hover", "符号", "文档", "类型", "签名", "悬浮"]),
     model_spec(
         runner_project_read_def(
@@ -59,7 +59,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             NoPath,
             super::ToolSessionEvidencePolicy::NONE.exploration(super::ToolExplorationEvidence::Navigation(super::ToolNavigationEvidenceKind::WorkspaceSymbols)),
         ),
-        "Read-only bounded workspace/symbol query via configured Runner-side language servers. Requires a non-empty 1..200 character query; results are workspace-filtered, sorted, deduplicated, and use Project-relative paths only.",
+        "Read-only bounded workspace/symbol query via configured Runner-side language servers. Requires a non-empty 1..200 character query; results are workspace-filtered, sorted, deduplicated, and use Project-relative paths only. Rust index readiness is required within the shared request deadline; an unready index returns an error, not an empty result. Retry this read-only observation later.",
     ),
     model_spec(
         runner_project_read_def(
@@ -70,7 +70,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             SinglePath,
             super::ToolSessionEvidencePolicy::NONE.exploration(super::ToolExplorationEvidence::Navigation(super::ToolNavigationEvidenceKind::Locations)),
         ),
-        "Read-only goto-definition for a Project-relative supported source file at a 1-based Unicode scalar position via its configured Runner-side language server. Supports Location, Location[], and LocationLink[]; external dependency results are omitted.",
+        "Read-only goto-definition for a Project-relative supported source file at a 1-based Unicode scalar position via its configured Runner-side language server. Supports Location, Location[], and LocationLink[]; external dependency results are omitted. Rust index readiness is required within the shared request deadline; an unready index returns an error, not an empty result. Retry this read-only observation later.",
     ),
     model_spec(
         runner_project_read_def(
@@ -81,7 +81,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             SinglePath,
             super::ToolSessionEvidencePolicy::NONE.exploration(super::ToolExplorationEvidence::Navigation(super::ToolNavigationEvidenceKind::Locations)),
         ),
-        "Read-only find-references for a Project-relative supported source file at a 1-based Unicode scalar position via its configured Runner-side language server. Results are deduplicated and truncated on the Runner; external/invalid locations are counted separately.",
+        "Read-only find-references for a Project-relative supported source file at a 1-based Unicode scalar position via its configured Runner-side language server. Results are deduplicated and truncated on the Runner; external/invalid locations are counted separately. Rust index readiness is required within the shared request deadline; an unready index returns an error, not an empty result. Retry this read-only observation later.",
     ),
     model_spec(
         runner_project_read_def(

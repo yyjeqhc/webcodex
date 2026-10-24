@@ -1188,7 +1188,7 @@ fn workspace_symbol_restart_reapplies_readiness_fence_before_retry() {
     assert_eq!(result["error"]["code"], "lsp_server_failed", "{result}");
     assert_eq!(
         result["error"]["message"],
-        "language server workspace is not ready (health=warning)"
+        "language server workspace index is not ready or changed during the request; no navigation result is available; retry this read-only request after readiness is restored"
     );
     let marker = fs::read_to_string(&fixture.marker).unwrap();
     assert_eq!(
@@ -1212,7 +1212,7 @@ fn quiescent_warning_fails_closed_without_workspace_dispatch_or_private_message(
     assert_eq!(result["error"]["code"], "lsp_server_failed", "{result}");
     assert_eq!(
         result["error"]["message"],
-        "language server workspace is not ready (health=warning)"
+        "language server workspace index is not ready or changed during the request; no navigation result is available; retry this read-only request after readiness is restored"
     );
     let serialized = result.to_string();
     assert!(!serialized.contains("file://"), "{serialized}");

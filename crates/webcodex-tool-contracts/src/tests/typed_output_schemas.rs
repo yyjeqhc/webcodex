@@ -212,6 +212,7 @@ fn lsp_registered_output_schemas_accept_canonical_typed_results() {
             available: true,
             running: true,
             status: LspAvailabilityStatus::Running,
+            index_readiness: Default::default(),
             source: Some(LspCommandSource::Path),
             position_encoding: Some("utf-16".to_string()),
         }],

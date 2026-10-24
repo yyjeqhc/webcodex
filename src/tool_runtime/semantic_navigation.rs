@@ -15,6 +15,7 @@ use crate::runner_http::{EnqueueLspError, RunnerFeature};
 use serde::Serialize;
 use std::time::Duration;
 use tokio::time::Instant;
+use webcodex_core::lsp_bridge::LspIndexReadiness;
 
 pub(crate) const DEFAULT_SEMANTIC_NAVIGATION_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -98,6 +99,7 @@ pub(crate) struct SemanticNavigationStartupSummary {
     available: Option<bool>,
     recommended: bool,
     status: SemanticNavigationStartupStatus,
+    index_readiness: LspIndexReadiness,
     language: Option<&'static str>,
     server: Option<&'static str>,
     position_encoding: Option<String>,
@@ -117,6 +119,7 @@ impl SemanticNavigationStartupSummary {
             available: Some(false),
             recommended: false,
             status,
+            index_readiness: LspIndexReadiness::Unknown,
             language: None,
             server: None,
             position_encoding: None,
@@ -142,6 +145,7 @@ impl SemanticNavigationStartupSummary {
             },
             recommended: false,
             status,
+            index_readiness: LspIndexReadiness::Unknown,
             language: None,
             // The status probe did not yield a usable language selection. Keep
             // the legacy Rust provider projection unchanged for compatibility.
@@ -160,6 +164,7 @@ impl SemanticNavigationStartupSummary {
             available: None,
             recommended: false,
             status: SemanticNavigationStartupStatus::ProbeTimeout,
+            index_readiness: LspIndexReadiness::Unknown,
             language: None,
             server: None,
             position_encoding: None,
@@ -181,6 +186,7 @@ impl SemanticNavigationStartupSummary {
             available: Some(false),
             recommended: false,
             status: SemanticNavigationStartupStatus::NotApplicable,
+            index_readiness: LspIndexReadiness::Unknown,
             language: None,
             server: Some(RUST_ANALYZER_SERVER),
             position_encoding: None,
@@ -307,6 +313,7 @@ impl SemanticNavigationStartupSummary {
             available: Some(available),
             recommended,
             status,
+            index_readiness: server.index_readiness,
             language: Some(language),
             server: Some(server_name),
             position_encoding,
@@ -472,6 +479,7 @@ mod tests {
                 available: executable_available,
                 running: false,
                 status: LspAvailabilityStatus::Crashed,
+                index_readiness: Default::default(),
                 source: None,
                 position_encoding: None,
             }],
@@ -512,6 +520,7 @@ mod tests {
                 available: true,
                 running: false,
                 status: LspAvailabilityStatus::Available,
+                index_readiness: Default::default(),
                 source: None,
                 position_encoding: None,
             }],
@@ -538,6 +547,7 @@ mod tests {
                     available: true,
                     running: false,
                     status: LspAvailabilityStatus::Available,
+                    index_readiness: Default::default(),
                     source: None,
                     position_encoding: None,
                 },
@@ -547,6 +557,7 @@ mod tests {
                     available: true,
                     running: false,
                     status: LspAvailabilityStatus::Available,
+                    index_readiness: Default::default(),
                     source: None,
                     position_encoding: None,
                 },
@@ -614,5 +625,31 @@ mod tests {
             assert_eq!(summary.status, expected_status, "{displayed}");
             assert_eq!(summary.reason_code, Some(expected_reason), "{displayed}");
         }
+    }
+    #[test]
+    fn startup_preserves_availability_without_claiming_index_readiness() {
+        for readiness in [
+            LspIndexReadiness::Unknown,
+            LspIndexReadiness::Indexing,
+            LspIndexReadiness::Ready,
+            LspIndexReadiness::Unhealthy,
+        ] {
+            let mut result = crashed_status(true);
+            result.servers[0].status = LspAvailabilityStatus::Running;
+            result.servers[0].running = true;
+            result.servers[0].index_readiness = readiness;
+            let summary =
+                SemanticNavigationStartupSummary::from_lsp_status(result, "demo").unwrap();
+            assert_eq!(summary.available, Some(true));
+            assert_eq!(summary.status, SemanticNavigationStartupStatus::Running);
+            assert_eq!(summary.index_readiness, readiness);
+        }
+        let mut old = serde_json::to_value(crashed_status(true)).unwrap();
+        old["servers"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("index_readiness");
+        let old: LspStatusResult = serde_json::from_value(old).unwrap();
+        assert_eq!(old.servers[0].index_readiness, LspIndexReadiness::Unknown);
     }
 }

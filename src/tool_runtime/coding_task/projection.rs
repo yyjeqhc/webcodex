@@ -45,6 +45,8 @@ struct WorkOnProjectSemanticNavigationProjection {
     #[serde(default)]
     supported: bool,
     available: WorkOnProjectRequiredNullable<bool>,
+    #[serde(default)]
+    index_readiness: webcodex_core::lsp_bridge::LspIndexReadiness,
     status: String,
     capability: WorkOnProjectRequiredNullable<String>,
     reason_code: WorkOnProjectRequiredNullable<String>,
@@ -460,6 +462,7 @@ pub(super) fn project_work_on_project_output_inner(
     let semantic_navigation = json!({
         "supported": projection.semantic_navigation.supported,
         "available": projection.semantic_navigation.available,
+        "index_readiness": projection.semantic_navigation.index_readiness,
         "status": projection.semantic_navigation.status,
         "capability": projection.semantic_navigation.capability,
         "reason_code": projection.semantic_navigation.reason_code,

@@ -986,6 +986,7 @@ fn startup_semantic_navigation_schema() -> Value {
         "properties": {
             "supported": {"type": "boolean", "description": "Whether LSP read-only navigation is advertised for this project."},
             "status": semantic_navigation_status_schema(),
+            "index_readiness": serde_json::to_value(schemars::schema_for!(webcodex_core::lsp_bridge::LspIndexReadiness)).expect("readiness schema"),
             "available": nullable_schema("boolean", "Observed semantic-navigation availability. Null means startup finished without waiting for availability, or the bounded status probe timed out or failed; this is advisory, not unavailability."),
             "provider": nullable_schema("string", "Semantic provider when applicable."),
             "capability": nullable_schema("string", "Bounded advertised capability summary."),
@@ -1118,6 +1119,7 @@ fn semantic_navigation_schema() -> Value {
             "available": nullable_schema("boolean", "Observed semantic-navigation availability. True means supported Rust/Go navigation has an available executable or an existing running/initializing server slot; false is a positive unavailable observation; null means a bounded startup status probe timed out or failed before availability could be observed; this is advisory, not unavailability."),
             "recommended": schema_type("boolean", "True only for available or running status."),
             "status": semantic_navigation_status_schema(),
+            "index_readiness": serde_json::to_value(schemars::schema_for!(webcodex_core::lsp_bridge::LspIndexReadiness)).expect("readiness schema"),
             "language": {
                 "anyOf": [
                     { "type": "string", "enum": ["rust", "go"] },
@@ -1282,6 +1284,7 @@ fn work_on_project_output_schema() -> Value {
             "supported": {"type": "boolean"},
             "available": nullable_schema("boolean", "Observed semantic-navigation availability. Null means startup finished without waiting for availability, or the bounded status probe timed out or failed; this does not lower coding readiness."),
             "status": semantic_navigation_status_schema(),
+            "index_readiness": serde_json::to_value(schemars::schema_for!(webcodex_core::lsp_bridge::LspIndexReadiness)).expect("readiness schema"),
             "capability": nullable_schema("string", "Bounded advertised capability summary."),
             "reason_code": nullable_schema("string", "Stable semantic-navigation reason.")
         },

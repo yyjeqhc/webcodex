@@ -320,8 +320,13 @@ fn uia_runtime_id(
         .and_then(|length| usize::try_from(length).ok())
         .filter(|length| (1..=MAX_UIA_RUNTIME_ID_ELEMENTS).contains(length))
         .ok_or_else(|| {
-            "stale_element: UI Automation runtime id length is invalid or exceeds the bound"
-                .to_string()
+            format!(
+                "stale_element: UI Automation runtime id length is invalid or exceeds the bound; uia_runtime_id_diag lower={} upper={} calculated_length_i64={} max_elements={}",
+                lower,
+                upper,
+                i64::from(upper) - i64::from(lower) + 1,
+                MAX_UIA_RUNTIME_ID_ELEMENTS,
+            )
         })?;
     let mut runtime_id = Vec::with_capacity(length);
     for offset in 0..length {
@@ -359,7 +364,13 @@ fn uia_fingerprint(
         .map_err(|error| uia_error("IUIAutomationElement::CurrentIsPassword", &error))?
         .as_bool();
     let protected = inherited_protected || is_password;
-    let native_runtime_id = uia_runtime_id(context, element)?;
+    let native_runtime_id = uia_runtime_id(context, element).map_err(|error| {
+        if error.starts_with("stale_element: UI Automation runtime id length is invalid or exceeds the bound; uia_runtime_id_diag ") {
+            format!("{error}; control_type={}", control_type.0)
+        } else {
+            error
+        }
+    })?;
     context.deadline.ensure_remaining()?;
     let identifier = uia_string(
         unsafe { element.CurrentAutomationId() },
@@ -768,7 +779,13 @@ fn accessibility_tree_impl(
         let element_id = crate::allocate_selector("element_", |id| {
             elements.iter().any(|(existing, _)| existing == id)
         })?;
-        let fingerprint = uia_fingerprint(&context, &current, inherited_protected)?;
+        let fingerprint = uia_fingerprint(&context, &current, inherited_protected).map_err(|error| {
+            if error.starts_with("stale_element: UI Automation runtime id length is invalid or exceeds the bound; uia_runtime_id_diag ") {
+                format!("{error}; node_depth={depth}")
+            } else {
+                error
+            }
+        })?;
         let role = fingerprint.role.clone();
         let subrole = fingerprint.subrole.clone();
         let title = fingerprint.title.clone();

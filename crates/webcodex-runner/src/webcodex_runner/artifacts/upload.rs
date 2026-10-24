@@ -623,7 +623,7 @@ impl ArtifactUploadRuntimeState {
 }
 
 #[cfg(test)]
-#[path = "../../main_tests/artifact_upload_state.rs"]
+#[path = "upload_tests.rs"]
 mod runtime_state_tests;
 
 pub(super) fn enforce_artifact_upload_begin_admission(

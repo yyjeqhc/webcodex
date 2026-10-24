@@ -731,10 +731,14 @@ and generic telemetry capture bounded facts, then the model receipt is compacted
 Existing process/script/Skill and validation success shapes are unchanged.
 `run_shell` removes lifecycle/Job/timing bookkeeping only for proven synchronous
 exit-zero completion without Job/recovery identity or observation ambiguity. It
-retains runtime-selected `command_summary`, `cwd`, `shell`, any `manage_ssh_resource`,
-nonempty output, truncation/loss, expectations, normalization and sidecars. Failure,
-timeout, uncertainty and exceptional handoff remain rich; normal pending receipts
-still contain `execution_state=pending` and the exact continuation.
+omits command/purpose echoes and local cwd/shell, while retaining remote target
+context, nonempty output, truncation/loss, expectations, normalization and sidecars.
+Ordinary nonzero exits omit generic retry prose and redundant timing; timeout,
+uncertainty and exceptional handoff retain their recovery evidence. Normal pending
+receipts contain `execution_state=pending` and the exact continuation, plus a single
+`timeout` explanation only when the accepted lifetime was capped. Synchronous
+process/script/shell output displays at most 200 lines per stream, retaining loss
+flags and guidance to capture full future output in a Project file.
 
 ### Runtime status projections
 

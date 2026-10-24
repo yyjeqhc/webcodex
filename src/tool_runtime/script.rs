@@ -6,8 +6,8 @@ use super::process::{
     process_tool_failure_result, terminal_structured_job_result,
 };
 use super::structured_execution::{
-    await_structured_job_result, await_structured_request_result, StructuredExecutionBudget,
-    StructuredRequestKind,
+    add_timeout_cap_notice, apply_runner_timeout_cap, await_structured_job_result,
+    await_structured_request_result, StructuredExecutionBudget, StructuredRequestKind,
 };
 use super::tool_audit::{assertion_validation_identity, run_script_validation_identity};
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
@@ -126,6 +126,15 @@ impl ToolRuntime {
             }
         };
         let client_id = proj.client_id.clone();
+        let (budget, timeout_notice) = apply_runner_timeout_cap(
+            &self.runner_registry,
+            &client_id,
+            auth,
+            timeout_secs,
+            budget,
+        )
+        .await;
+        let timeout = budget.effective_timeout_secs;
         let effective_cwd = match resolve_runner_cwd(&proj, cwd.as_deref()) {
                 Ok(cwd) => cwd,
                 Err(error) => {
@@ -222,6 +231,7 @@ impl ToolRuntime {
                 Ok(result) => result,
                 Err(failure) => return failure.into_tool_result(&project, budget),
             };
+            add_timeout_cap_notice(&mut result, timeout_notice);
             decorate(
                 &mut result.output,
                 declared_purpose,

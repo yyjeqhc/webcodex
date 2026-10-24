@@ -425,7 +425,7 @@ impl LspSupervisor {
                 text,
             }),
             false,
-            method != "textDocument/documentSymbol",
+            true,
         )
     }
 
@@ -2171,6 +2171,9 @@ impl ServerInstance {
                 "positionEncodings": ["utf-8", "utf-16", "utf-32"]
             },
             "textDocument": {
+                "documentSymbol": {
+                    "hierarchicalDocumentSymbolSupport": true
+                },
                 "callHierarchy": {
                     "dynamicRegistration": false
                 }

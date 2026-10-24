@@ -43,8 +43,13 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
         "list_project_files" | "list_project_tracked_files" if success => {
             compact::files(&mut text, output)
         }
+        "list_jobs" if success => compact::inventory(&mut text, output, "jobs"),
+        "list_projects" if success => compact::inventory(&mut text, output, "projects"),
+        "list_document_symbols" if success => compact::symbols(&mut text, output),
         "observe_jobs" | "wait_for_job_readiness" => compact::jobs(&mut text, output),
-        "run_shell" | "run_process" => compact::execution(&mut text, output),
+        "run_shell" | "run_process" | "run_script" | "run_detached_process" => {
+            compact::execution(&mut text, output)
+        }
         "read_workspace_changes" if success => compact::changes(&mut text, output),
         "edit_project_files" if success => compact::edits(&mut text, output),
         "read_files" => render_reads(&mut text, output),
@@ -170,20 +175,59 @@ fn render_manifest(text: &mut String, mut output: Value) {
     }
 }
 
+fn ordinary_read_failure(item: &Value) -> bool {
+    let read = &item["output"];
+    item["success"] == false
+        && item["path"].is_string()
+        && read["path"] == item["path"]
+        && read["error_kind"] == "read_file_failed"
+        && read["state_changed"] == false
+        && read["reason_code"]
+            .as_str()
+            .is_some_and(|reason| item["error"] == format!("read_file failed: {reason}"))
+        && read.as_object().is_some_and(|fields| fields.len() == 4)
+        && item.as_object().is_some_and(|fields| {
+            fields.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "index" | "path" | "success" | "output" | "error"
+                )
+            })
+        })
+}
+
 fn render_reads(text: &mut String, mut output: Value) {
+    let has_followup = output.get("suggested_call").is_some();
     let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) else {
         render_fields(text, &output);
         return;
     };
     let count = items.len();
-    let all_succeeded = !items.is_empty()
+    let succeeded = items
+        .iter()
+        .filter(|item| {
+            item.get("success").is_none_or(|v| v == true) && item["output"]["text"].is_string()
+        })
+        .count();
+    let all_presented = !items.is_empty()
         && items.iter().all(|item| {
-            item.get("success")
+            (item
+                .get("success")
                 .is_none_or(|v| v.as_bool() == Some(true))
                 && item["error"].is_null()
-                && item["output"]["text"].is_string()
+                && item["output"]["text"].is_string())
+                || ordinary_read_failure(item)
         });
     for (index, mut item) in std::mem::take(items).into_iter().enumerate() {
+        if ordinary_read_failure(&item) {
+            let _ = writeln!(
+                text,
+                "{}: {}",
+                compact::one_line(&item["path"]),
+                compact::one_line(&item["error"])
+            );
+            continue;
+        }
         let path = item["path"].as_str().unwrap_or("?").to_string();
         let read = &mut item["output"];
         if let Some(source) = read.get("text").and_then(Value::as_str).map(str::to_string) {
@@ -213,6 +257,14 @@ fn render_reads(text: &mut String, mut output: Value) {
                 ] {
                     fields.remove(key);
                 }
+                if fields.get("truncated").is_none_or(|v| v == false) && !has_followup {
+                    for key in ["limit", "returned_lines", "has_more", "next_start_line"] {
+                        fields.remove(key);
+                    }
+                }
+                if fields.get("truncated") == Some(&json!(false)) {
+                    fields.remove("truncated");
+                }
             }
             render_fields(text, read);
             if let Some(fields) = item.as_object_mut() {
@@ -232,22 +284,44 @@ fn render_reads(text: &mut String, mut output: Value) {
             render_fields(text, &item);
         } else {
             let _ = writeln!(text, "==> {path}");
+            if let Some(fields) = item.as_object_mut() {
+                fields.remove("path");
+                if fields.get("index") == Some(&json!(index)) {
+                    fields.remove("index");
+                }
+            }
+            if item["success"] == false {
+                let error = item["error"].clone();
+                if let Some(fields) = item.get_mut("output").and_then(Value::as_object_mut) {
+                    if fields.get("error") == Some(&error) {
+                        fields.remove("error");
+                    }
+                    if fields.get("path") == Some(&json!(path)) {
+                        fields.remove("path");
+                    }
+                    if fields.is_empty() {
+                        item.as_object_mut().unwrap().remove("output");
+                    }
+                }
+                item.as_object_mut().unwrap().remove("success");
+            }
             render_fields(text, &item);
         }
     }
     output.as_object_mut().unwrap().remove("items");
-    if all_succeeded
+    if all_presented
         && output
             .get("output_truncated")
             .is_none_or(|v| v.as_bool() == Some(false))
     {
-        for key in ["requested_count", "returned_count", "succeeded_count"] {
+        for key in ["requested_count", "returned_count"] {
             if output[key].as_u64() == Some(count as u64) {
                 output.as_object_mut().unwrap().remove(key);
             }
         }
         for (key, value) in [
-            ("failed_count", json!(0)),
+            ("succeeded_count", json!(succeeded)),
+            ("failed_count", json!(count - succeeded)),
             ("output_truncated", json!(false)),
             ("next_index", Value::Null),
         ] {
@@ -263,7 +337,7 @@ fn render_reads(text: &mut String, mut output: Value) {
 /// Replace only the MCP adapter's exact native execution log pointer. The
 /// following renderer prints those tails directly; provider errors never enter.
 fn execution_error_text(tool: &str, error: &str, output: &Value) -> String {
-    if !matches!(tool, "run_shell" | "run_process") {
+    if !matches!(tool, "run_shell" | "run_process" | "run_script") {
         return error.to_owned();
     }
     let logs = output.get("details").unwrap_or(output);
@@ -309,6 +383,26 @@ fn render_search_batch(text: &mut String, mut output: Value) {
 }
 
 fn render_search(text: &mut String, mut output: Value) {
+    if output["files"].as_array().is_some_and(|files| {
+        files
+            .iter()
+            .all(|file| file.is_string() || file["path"].is_string())
+    }) {
+        let files = output.as_object_mut().unwrap().remove("files").unwrap();
+        for file in files.as_array().unwrap() {
+            if file.is_string() {
+                let _ = writeln!(text, "{}", compact::one_line(file));
+            } else {
+                let mut fields = file.as_object().unwrap().clone();
+                let path = fields.remove("path").unwrap();
+                let _ = write!(text, "{}", compact::one_line(&path));
+                for (key, value) in fields {
+                    let _ = write!(text, " {key}: {}", scalar(&value));
+                }
+                text.push('\n');
+            }
+        }
+    }
     if let Some(matches) = output.get_mut("matches").and_then(Value::as_array_mut) {
         for mut matched in std::mem::take(matches) {
             let _ = writeln!(

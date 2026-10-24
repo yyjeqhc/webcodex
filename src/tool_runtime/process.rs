@@ -7,8 +7,8 @@ use super::helpers::{
 };
 use super::shell::command_execution_state_name;
 use super::structured_execution::{
-    await_structured_job_result, await_structured_request_result, StructuredExecutionBudget,
-    StructuredRequestKind,
+    add_timeout_cap_notice, apply_runner_timeout_cap, await_structured_job_result,
+    await_structured_request_result, StructuredExecutionBudget, StructuredRequestKind,
 };
 use super::tool_audit::{assertion_validation_identity, run_process_validation_identity};
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
@@ -635,20 +635,14 @@ impl ToolRuntime {
             );
         }
         let access = crate::runner_http::runner_access_from_auth(auth);
-        // Runner policy is the final execution authority and may clamp a process
-        // timeout below the protocol/tool maximum. Surface the most recently
-        // registered policy at admission so callers do not mistake the requested
-        // lifetime for the effective one. The Runner still re-applies its live
-        // policy when it prepares the detached launch.
-        let runner_policy_max_timeout_secs = self
-            .runner_registry
-            .get_runner_view_for_auth(&client_id, access.as_ref())
-            .await
-            .and_then(|view| view.policy.map(|policy| policy.max_timeout_secs));
-        let admission_effective_timeout_secs = runner_policy_max_timeout_secs
-            .map(|max_timeout_secs| timeout.min(max_timeout_secs.max(1)))
-            .unwrap_or(timeout);
-        let timeout_clamped = admission_effective_timeout_secs != requested_timeout_secs;
+        let (_, timeout_notice) = apply_runner_timeout_cap(
+            &self.runner_registry,
+            &client_id,
+            auth,
+            Some(requested_timeout_secs),
+            budget,
+        )
+        .await;
         let detached_initiator = match crate::runner_http::detached_initiator_identity_from_auth(auth)
         {
             Ok(identity) => identity,
@@ -713,7 +707,7 @@ impl ToolRuntime {
                 } else {
                     ("pending", false, false)
                 };
-                ToolResult::ok(json!({
+                let mut result = ToolResult::ok(json!({
                     "job_id": job.job_id,
                     "kind": job.kind,
                     "status": job.status,
@@ -728,16 +722,14 @@ impl ToolRuntime {
                     "command_started": started,
                     "command_completed": completed,
                     "terminal": terminal,
-                    "requested_timeout_secs": requested_timeout_secs,
-                    "effective_timeout_secs": admission_effective_timeout_secs,
-                    "runner_policy_max_timeout_secs": runner_policy_max_timeout_secs,
-                    "timeout_clamped": timeout_clamped,
                     "created_at": job.created_at,
                     "observation_token": job.observation_token,
                     "continuation_semantics": crate::tool_runtime::jobs::job_observation_continuation_semantics(),
                     "last_update_seq": job.last_update_seq,
                     "continuation": continuation,
-                }))
+                }));
+                add_timeout_cap_notice(&mut result, timeout_notice);
+                result
             }
             Err(error) => {
                 if let Some(job_id) = error.recovery_job_id() {
@@ -833,7 +825,6 @@ impl ToolRuntime {
                 )
             }
         };
-        let timeout = budget.effective_timeout_secs;
         let process = ShellProcessArgv { executable, args };
         let skill_execution = skill_resource.as_ref();
         let validation_error = match skill_execution {
@@ -930,6 +921,15 @@ impl ToolRuntime {
             }
         };
         let client_id = proj.client_id.clone();
+        let (budget, timeout_notice) = apply_runner_timeout_cap(
+            &self.runner_registry,
+            &client_id,
+            auth,
+            timeout_secs,
+            budget,
+        )
+        .await;
+        let timeout = budget.effective_timeout_secs;
         let effective_cwd = match resolve_runner_cwd(&proj, cwd.as_deref()) {
                 Ok(cwd) => cwd,
                 Err(error) => {
@@ -1059,6 +1059,7 @@ impl ToolRuntime {
                 Ok(result) => result,
                 Err(failure) => return failure.into_tool_result(&project, budget),
             };
+            add_timeout_cap_notice(&mut result, timeout_notice);
             decorate(
                 &mut result.output,
                 declared_purpose,

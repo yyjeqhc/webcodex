@@ -637,6 +637,29 @@ The removed ProjectConnector capability names (`task_start`, `files_read`, `edit
 
 ### Long work continues as Jobs
 
+Routine Job observations keep one restart-safe observation token rather than also
+emitting a process-local, evictable observation ref. A cursorless handoff token is
+an initial baseline, not a log reset; actual generation changes and lost history
+still report reset/retention evidence. Generic running activity and ordinary
+command outcome summaries are omitted when lifecycle/exit code already express
+them. Validation evidence and useful phase changes remain.
+
+Process, script and shell admission applies the last registered Runner timeout
+policy as well as the tool ceiling. Only capped active handoffs include
+`timeout: 3600s (requested 99999; capped by runner policy)`; fast terminal commands
+do not add this notice. The Runner still enforces its live policy. Detached
+execution keeps native argv and keyed replay semantics; invoke a virtualenv's
+Python executable directly instead of `sh -c`.
+
+CLI text renders document symbols as identifier positions with nested children,
+Job/Project inventories and search file/count results as rows, and combines single
+Job wait/update information. Rust document symbols now wait for index readiness;
+the LSP client advertises hierarchical symbol support. Explicit file ranges do
+not suggest reading beyond their requested end; genuinely truncated reads retain
+snapshot-fenced continuation calls. Synchronous process/script/shell output displays
+at most 200 lines per stream, with truncation flags and guidance to capture full
+future output in a Project file.
+
 Stateless MCP 2026 execution tools can opt in to `_wc.compact_execution=true`.
 This separates stable `output.execution` control facts from `output.details`
 (per item for `observe_jobs`) while retaining logs, recovery and collaboration

@@ -1012,6 +1012,12 @@ fn lsp_initialize_uses_constrained_rust_analyzer_profile() {
         "rootUri must be the canonical project root"
     );
 
+    assert_eq!(
+        params
+            .pointer("/capabilities/textDocument/documentSymbol/hierarchicalDocumentSymbolSupport"),
+        Some(&json!(true))
+    );
+
     let encodings = params
         .pointer("/capabilities/general/positionEncodings")
         .and_then(Value::as_array)
@@ -2093,6 +2099,7 @@ fn semantic_document_requests_reapply_readiness_after_restart() {
         "textDocument/definition",
         "textDocument/references",
         "textDocument/hover",
+        "textDocument/documentSymbol",
     ] {
         let fixture = Fixture::new("workspace_readiness_restart");
         let error = fixture
@@ -2214,4 +2221,60 @@ fn semantic_navigation_expired_deadline_never_starts_a_new_budget() {
         .unwrap_err();
     assert!(matches!(error, LspError::RequestTimeout { .. }));
     assert_eq!(fixture.starts(), 0);
+}
+
+#[test]
+fn document_symbols_wait_for_readiness_and_preserve_nested_identifier_ranges() {
+    use webcodex_core::lsp_bridge::{RunnerLspPayload, RunnerLspRequest};
+    let _serial = super::super::serialize_fake_lsp_test();
+    for scenario in ["normal", "symbols_empty"] {
+        let fixture = Fixture::new(scenario);
+        fs::create_dir(fixture.root.join("src")).unwrap();
+        fs::write(fixture.root.join("src/main.rs"), "outer {\n\ninner\n}\n").unwrap();
+        let server = fixture
+            .supervisor
+            .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
+            .unwrap();
+        server
+            .request("fake/echo", json!({}), Duration::from_secs(2))
+            .unwrap();
+        let payload = RunnerLspPayload {
+            project_id: "test".into(),
+            request: RunnerLspRequest::DocumentSymbols {
+                path: "src/main.rs".into(),
+                limit: 10,
+            },
+        };
+        let execute = |deadline| {
+            super::super::navigation::execute_lsp_operation(
+                fs::canonicalize(&fixture.root).unwrap(),
+                &fixture.supervisor,
+                &payload,
+                deadline,
+            )
+        };
+        server
+            .server_status
+            .record(Some(&json!({"health":"ok","quiescent":false})));
+        let pending = execute(Instant::now() + Duration::from_millis(20));
+        assert!(!pending.success);
+        assert_eq!(pending.error.unwrap().code, "lsp_request_timeout");
+        assert!(!fs::read_to_string(&fixture.marker)
+            .unwrap()
+            .contains("request:textDocument/documentSymbol"));
+        server
+            .server_status
+            .record(Some(&json!({"health":"ok","quiescent":true})));
+        let ready = execute(Instant::now() + Duration::from_secs(2));
+        assert!(ready.success, "{ready:?}");
+        let result = ready.result.unwrap();
+        if scenario == "symbols_empty" {
+            assert_eq!(result["symbols"], json!([]));
+        } else {
+            assert_eq!(result["returned_count"], 2);
+            let outer = &result["symbols"][0];
+            assert_eq!(outer["children"][0]["name"], "inner");
+            assert_ne!(outer["range"], outer["selection_range"]);
+        }
+    }
 }

@@ -78,3 +78,5 @@ mod typed_output_schemas;
 mod schema_samples;
 
 mod docx_schemas;
+
+mod argument_paths;

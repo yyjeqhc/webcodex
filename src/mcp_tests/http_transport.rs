@@ -1697,7 +1697,8 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
     assert_eq!(forged_body["error"]["code"], -32602);
     assert!(forged_body["error"]["message"]
         .as_str()
-        .is_some_and(|message| message.contains("unknown field `author_session_id`")));
+        .is_some_and(|message| message.contains("unknown field")
+            && !message.contains("wc_sess_forged_should_not_win")));
 
     let completion_arguments = with_mcp_recording_session(
         json!({

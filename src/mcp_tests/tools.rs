@@ -3278,7 +3278,7 @@ async fn mcp_tools_call_rejects_legacy_reserved_session_id_before_dispatch() {
         other => panic!("expected invalid-params BadRequest, got {other:?}"),
     };
     let message = value["error"]["message"].as_str().unwrap();
-    assert!(message.contains("_session_id"));
+    assert!(!message.contains(&session.session_id));
     assert!(message.contains("unknown field"));
     assert_eq!(
         runtime
@@ -3543,7 +3543,7 @@ async fn mcp_tools_call_rejects_legacy_session_alias_even_with_canonical_recorde
     assert!(value["error"]["message"]
         .as_str()
         .is_some_and(
-            |message| message.contains("_session_id") && message.contains("unknown field")
+            |message| message.contains("unknown field") && !message.contains(&canonical.session_id)
         ));
     // Explicit recorder provenance still records the rejected canonical tool
     // attempt; the retired business alias is rejected before any main effect.

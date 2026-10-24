@@ -17,6 +17,7 @@ serde = { version = "1", features = ["derive"] }
 # The default fast float parser can misread 9007199254740991.0 by one.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 schemars = "=1.2.2"
+serde_path_to_error = "0.1.20"
 
 [dev-dependencies]
 regex = "1"

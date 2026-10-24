@@ -19,7 +19,8 @@ fn start_inspection(
         json!({
             "project": project,
             "session_id": session_id,
-            "query": {"pattern": "needle", "pattern_mode": "literal", "path": "src/lib.rs"},
+            "query": {"pattern": "needle", "pattern_mode": "literal", "path": "src/lib.rs",
+                "result_mode": "count", "context_before": 9, "context_after": 9},
             "read_before": read_before,
             "read_after": read_after,
             "with_line_numbers": true

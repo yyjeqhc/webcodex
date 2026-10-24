@@ -79,20 +79,14 @@ impl ToolRuntime {
                 max_reads,
                 with_line_numbers,
             } => {
-                let queries = match (query, queries) {
-                    (Some(query), None) => vec![query],
-                    (None, Some(queries)) if !queries.is_empty() && queries.len() <= 8 => queries,
-                    (Some(_), Some(_)) => {
-                        return ToolResult::err(
-                            "search_file_context accepts query or queries, not both",
-                        )
-                    }
-                    _ => {
-                        return ToolResult::err(
-                            "search_file_context requires query or 1..8 queries",
-                        )
-                    }
-                };
+                if let Err(error) = webcodex_tool_contracts::validate_search_context_query_selection(
+                    query.is_some(),
+                    queries.as_ref().map(Vec::len),
+                ) {
+                    return ToolResult::err(error);
+                }
+                let queries =
+                    queries.unwrap_or_else(|| vec![query.expect("validated query selection")]);
                 match project_resolution {
                     Some(Ok(resolved)) => {
                         self.search_and_read_resolved(

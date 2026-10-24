@@ -127,8 +127,8 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let search_and_read_desc = desc("search_file_context");
     for phrase in [
-        "one bounded project-text query or 1..8 predetermined independent queries",
-        "query xor queries",
+        "1..8 predetermined independent project-text queries",
+        "provide queries",
         "max_reads is one global read budget",
         "shared fairly across the batch",
         "preserving per-query batch failures",

@@ -850,9 +850,11 @@ async fn oauth_mcp_file_import_startup_env_stateless_2026_crosses_provenance_gat
     )
     .expect_err("caller-controlled host provenance must fail closed at the canonical parser");
     assert!(
-        forged_provenance_error.contains("unknown field `host_file_import_provenance`"),
+        forged_provenance_error.contains("unknown field"),
         "{forged_provenance_error}"
     );
+    assert!(!forged_provenance_error.contains(temporary_url));
+    assert!(!forged_provenance_error.contains("TrustedMcpHostFile"));
     let (status, body, _) = oauth_mcp_request(
         &service,
         &token,

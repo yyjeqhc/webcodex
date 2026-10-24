@@ -151,3 +151,39 @@ fn result_projection_registry_consumes_and_releases_only_request_local_state() {
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
     }
 }
+
+#[test]
+fn native_result_echo_cleanup_keeps_fences_and_failure_evidence() {
+    for name in ["find_definition", "find_references"] {
+        let canonical = ToolResult::ok(
+            json!({"project":"p","path":"src/a.rs","query_position":{"line":1,"column":1},"locations":[],"truncated":true,"invalid_results_omitted":1}),
+        );
+        let mut model = ToolResult::ok(canonical.output.clone());
+        super::super::sparsify_success_model_result_metadata(name, &mut model);
+        assert!(model.output.get("project").is_none());
+        assert!(model.output.get("query_position").is_none());
+        assert_eq!(model.output["truncated"], true);
+        assert_eq!(model.output["invalid_results_omitted"], 1);
+        assert_eq!(canonical.output["project"], "p");
+    }
+    let mut failed = ToolResult::err_with_output(
+        "uncertain",
+        json!({"executor":"agent","duration_ms":3,"purpose":"operation","execution_source":"run_shell","execution_state":"outcome_unknown","state_changed":null,"job_id":"exact","observation_token":"token","cwd":"subdir","shell":"bash","continuation":{"tool":"observe_jobs","arguments":{"items":[{"job_id":"exact"}]}}}),
+    );
+    let before = failed.output.clone();
+    super::super::sparsify_failure_model_result_metadata("run_shell", &mut failed);
+    for key in [
+        "execution_state",
+        "state_changed",
+        "job_id",
+        "observation_token",
+        "cwd",
+        "shell",
+        "continuation",
+    ] {
+        assert_eq!(failed.output[key], before[key]);
+    }
+    for key in ["executor", "duration_ms", "purpose", "execution_source"] {
+        assert!(failed.output.get(key).is_none());
+    }
+}

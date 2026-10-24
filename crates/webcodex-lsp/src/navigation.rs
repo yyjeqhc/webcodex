@@ -23,11 +23,11 @@ use webcodex_core::lsp_bridge::{
     bound_error_message, error_codes, redact_absolute_paths, validate_call_hierarchy_bounds,
     CallHierarchyDirection, CallHierarchyEdgeDirection, CallHierarchyResult,
     DocumentDiagnosticsResult, DocumentDiagnosticsStatus, DocumentSymbolsResult, HoverResult,
-    LocationsResult, LspAvailabilityStatus, LspServerStatusEntry, LspStatusResult,
-    PublicCallHierarchyEdge, PublicCallHierarchySymbol, PublicDiagnostic, PublicDiagnosticSeverity,
-    PublicDiagnosticTag, PublicHover, PublicHoverKind, PublicLocation, PublicPosition, PublicRange,
-    PublicSymbol, PublicWorkspaceSymbol, RunnerLspPayload, RunnerLspRequest,
-    RunnerLspResultEnvelope, WorkspaceSymbolsResult,
+    LocationsResult, LspAvailabilityStatus, LspIndexReadiness, LspServerStatusEntry,
+    LspStatusResult, PublicCallHierarchyEdge, PublicCallHierarchySymbol, PublicDiagnostic,
+    PublicDiagnosticSeverity, PublicDiagnosticTag, PublicHover, PublicHoverKind, PublicLocation,
+    PublicPosition, PublicRange, PublicSymbol, PublicWorkspaceSymbol, RunnerLspPayload,
+    RunnerLspRequest, RunnerLspResultEnvelope, WorkspaceSymbolsResult,
     MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC, MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE,
     MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED,
     MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY, MAX_CALL_HIERARCHY_ROOTS,
@@ -62,13 +62,25 @@ fn execute_lsp(
             supervisor,
         ))),
         RunnerLspRequest::DocumentSymbols { path, limit } => {
-            let result =
-                document_symbols(&payload.project_id, &project_root, supervisor, path, *limit)?;
+            let result = document_symbols(
+                &payload.project_id,
+                &project_root,
+                supervisor,
+                path,
+                *limit,
+                operation_deadline,
+            )?;
             Ok(RunnerLspResultEnvelope::ok(result))
         }
         RunnerLspRequest::DocumentDiagnostics { path, limit } => {
-            let result =
-                document_diagnostics(&payload.project_id, &project_root, supervisor, path, *limit)?;
+            let result = document_diagnostics(
+                &payload.project_id,
+                &project_root,
+                supervisor,
+                path,
+                *limit,
+                operation_deadline,
+            )?;
             Ok(RunnerLspResultEnvelope::ok(result))
         }
         RunnerLspRequest::Hover { path, line, column } => {
@@ -79,6 +91,7 @@ fn execute_lsp(
                 path,
                 *line,
                 *column,
+                operation_deadline,
             )?;
             Ok(RunnerLspResultEnvelope::ok(result))
         }
@@ -107,6 +120,7 @@ fn execute_lsp(
                 *line,
                 *column,
                 *limit,
+                operation_deadline,
             )?;
             Ok(RunnerLspResultEnvelope::ok(result))
         }
@@ -126,6 +140,7 @@ fn execute_lsp(
                 *column,
                 *include_declaration,
                 *limit,
+                operation_deadline,
             )?;
             Ok(RunnerLspResultEnvelope::ok(result))
         }
@@ -183,22 +198,35 @@ fn lsp_server_status_entry(
     let info = supervisor.resolve_command_info(profile.kind);
     let available = info.as_ref().map(|entry| entry.available).unwrap_or(false);
     let slot = supervisor.project_server_status(project_root, profile.kind);
-    let (running, status, position_encoding) = match slot {
-        Some(LspServerStatus::Running) => {
-            let encoding = supervisor
-                .project_position_encoding(project_root, profile.kind)
-                .map(|encoding| encoding.as_public_label().to_string());
-            (true, LspAvailabilityStatus::Running, encoding)
-        }
-        Some(LspServerStatus::Initializing) => (false, LspAvailabilityStatus::Initializing, None),
-        Some(LspServerStatus::Crashed) => (false, LspAvailabilityStatus::Crashed, None),
-        None => {
+    let (running, status, position_encoding, index_readiness) = match slot {
+        Some((LspServerStatus::Running, encoding, readiness)) => (
+            true,
+            LspAvailabilityStatus::Running,
+            encoding.map(|encoding| encoding.as_public_label().to_string()),
+            readiness,
+        ),
+        Some((LspServerStatus::Initializing, _, _)) => (
+            false,
+            LspAvailabilityStatus::Initializing,
+            None,
+            LspIndexReadiness::Unknown,
+        ),
+        Some((LspServerStatus::Crashed, _, _)) => (
+            false,
+            LspAvailabilityStatus::Crashed,
+            None,
+            LspIndexReadiness::Unknown,
+        ),
+        None => (
+            false,
             if available {
-                (false, LspAvailabilityStatus::Available, None)
+                LspAvailabilityStatus::Available
             } else {
-                (false, LspAvailabilityStatus::Unavailable, None)
-            }
-        }
+                LspAvailabilityStatus::Unavailable
+            },
+            None,
+            LspIndexReadiness::Unknown,
+        ),
     };
     let source = info.as_ref().map(|entry| entry.source);
     LspServerStatusEntry {
@@ -209,6 +237,7 @@ fn lsp_server_status_entry(
         status,
         source,
         position_encoding,
+        index_readiness,
     }
 }
 
@@ -239,6 +268,7 @@ fn document_symbols(
     supervisor: &LspSupervisor,
     relative_path: &str,
     limit: usize,
+    operation_deadline: Instant,
 ) -> Result<DocumentSymbolsResult, RunnerLspResultEnvelope> {
     let limit = limit.clamp(1, 500);
     let ResolvedSourceFile {
@@ -248,14 +278,8 @@ fn document_symbols(
     } = resolve_source_file(project_root, relative_path)?;
     let uri = file_uri(&file)?;
     let text = read_document_text(&file)?;
-    // Take the encoding from prepare_document like goto/references do: the
-    // post-request slot lookup could race a slot transition and silently fall
-    // back to UTF-16 while the server negotiated another encoding.
-    let encoding = supervisor
-        .prepare_document(project_root, profile.kind, &uri, language_id, &text)
-        .map_err(map_lsp_error)?;
-    let value = supervisor
-        .request_with_document(
+    let (value, encoding) = supervisor
+        .request_with_document_until(
             project_root,
             profile.kind,
             &uri,
@@ -263,6 +287,7 @@ fn document_symbols(
             &text,
             "textDocument/documentSymbol",
             json!({ "textDocument": { "uri": uri } }),
+            operation_deadline,
         )
         .map_err(map_lsp_error)?;
     let mut cache = LineCache::new();
@@ -301,6 +326,7 @@ fn document_diagnostics(
     supervisor: &LspSupervisor,
     relative_path: &str,
     limit: usize,
+    operation_deadline: Instant,
 ) -> Result<DocumentDiagnosticsResult, RunnerLspResultEnvelope> {
     let limit = limit.clamp(1, 200);
     let ResolvedSourceFile {
@@ -310,7 +336,7 @@ fn document_diagnostics(
     } = resolve_source_file(project_root, relative_path)?;
     let uri = file_uri(&file)?;
     let text = read_document_text(&file)?;
-    let deadline = Instant::now() + DIAGNOSTICS_WAIT_TIMEOUT;
+    let deadline = operation_deadline.min(Instant::now() + DIAGNOSTICS_WAIT_TIMEOUT);
     let snapshot = supervisor
         .document_diagnostics(
             project_root,
@@ -420,6 +446,7 @@ fn hover(
     relative_path: &str,
     line: usize,
     column: usize,
+    operation_deadline: Instant,
 ) -> Result<HoverResult, RunnerLspResultEnvelope> {
     let ResolvedSourceFile {
         path: file,
@@ -429,12 +456,19 @@ fn hover(
     let uri = file_uri(&file)?;
     let text = read_document_text(&file)?;
     let encoding = supervisor
-        .prepare_document(project_root, profile.kind, &uri, language_id, &text)
+        .prepare_document_until(
+            project_root,
+            profile.kind,
+            &uri,
+            language_id,
+            &text,
+            operation_deadline,
+        )
         .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
         .map_err(|message| RunnerLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, message))?;
-    let value = supervisor
-        .request_with_document(
+    let (value, encoding) = supervisor
+        .request_with_document_until(
             project_root,
             profile.kind,
             &uri,
@@ -445,6 +479,7 @@ fn hover(
                 "textDocument": {"uri": uri},
                 "position": {"line": lsp_line, "character": lsp_character}
             }),
+            operation_deadline,
         )
         .map_err(map_lsp_error)?;
     let (hover, truncated, range_omitted) = normalize_hover(&value, &text, encoding)?;
@@ -520,6 +555,7 @@ fn goto_definition(
     line: usize,
     column: usize,
     limit: usize,
+    operation_deadline: Instant,
 ) -> Result<LocationsResult, RunnerLspResultEnvelope> {
     let limit = limit.clamp(1, 100);
     let ResolvedSourceFile {
@@ -530,12 +566,19 @@ fn goto_definition(
     let uri = file_uri(&file)?;
     let text = read_document_text(&file)?;
     let encoding = supervisor
-        .prepare_document(project_root, profile.kind, &uri, language_id, &text)
+        .prepare_document_until(
+            project_root,
+            profile.kind,
+            &uri,
+            language_id,
+            &text,
+            operation_deadline,
+        )
         .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
         .map_err(|msg| RunnerLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, msg))?;
-    let value = supervisor
-        .request_with_document(
+    let (value, encoding) = supervisor
+        .request_with_document_until(
             project_root,
             profile.kind,
             &uri,
@@ -546,6 +589,7 @@ fn goto_definition(
                 "textDocument": { "uri": uri },
                 "position": { "line": lsp_line, "character": lsp_character }
             }),
+            operation_deadline,
         )
         .map_err(map_lsp_error)?;
     let mut cache = LineCache::new();
@@ -574,6 +618,7 @@ fn find_references(
     column: usize,
     include_declaration: bool,
     limit: usize,
+    operation_deadline: Instant,
 ) -> Result<LocationsResult, RunnerLspResultEnvelope> {
     let limit = limit.clamp(1, 200);
     let ResolvedSourceFile {
@@ -584,12 +629,19 @@ fn find_references(
     let uri = file_uri(&file)?;
     let text = read_document_text(&file)?;
     let encoding = supervisor
-        .prepare_document(project_root, profile.kind, &uri, language_id, &text)
+        .prepare_document_until(
+            project_root,
+            profile.kind,
+            &uri,
+            language_id,
+            &text,
+            operation_deadline,
+        )
         .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
         .map_err(|msg| RunnerLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, msg))?;
-    let value = supervisor
-        .request_with_document(
+    let (value, encoding) = supervisor
+        .request_with_document_until(
             project_root,
             profile.kind,
             &uri,
@@ -601,6 +653,7 @@ fn find_references(
                 "position": { "line": lsp_line, "character": lsp_character },
                 "context": { "includeDeclaration": include_declaration }
             }),
+            operation_deadline,
         )
         .map_err(map_lsp_error)?;
     let mut cache = LineCache::new();
@@ -2014,6 +2067,14 @@ fn map_lsp_error(error: LspError) -> RunnerLspResultEnvelope {
         LspError::ServerUnavailable => (
             error_codes::LSP_SERVER_UNAVAILABLE,
             "language server is unavailable".to_string(),
+        ),
+        LspError::RequestTimeout { method, .. } if method == "workspace/readiness" => (
+            error_codes::LSP_REQUEST_TIMEOUT,
+            "language server workspace index readiness was not confirmed within the request deadline; no navigation result is available; retry this read-only request later".to_string(),
+        ),
+        LspError::WorkspaceNotReady(_) => (
+            error_codes::LSP_SERVER_FAILED,
+            "language server workspace index is not ready or changed during the request; no navigation result is available; retry this read-only request after readiness is restored".to_string(),
         ),
         LspError::RequestTimeout { .. } => (
             error_codes::LSP_REQUEST_TIMEOUT,

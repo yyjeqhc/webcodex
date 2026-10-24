@@ -1,0 +1,7 @@
+No locations.
+continuation:
+  {"arguments":{"column":1,"line":1,"path":"x.rs","project":"p"},"tool":"find_references"}
+external_results_omitted: 2
+invalid_results_omitted: 1
+total_results: 3
+truncated: true

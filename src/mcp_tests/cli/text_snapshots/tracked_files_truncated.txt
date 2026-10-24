@@ -1,0 +1,5 @@
+src/ (5 files)
+depth: 1
+list_truncated: true
+source: git_index
+total_files: 5

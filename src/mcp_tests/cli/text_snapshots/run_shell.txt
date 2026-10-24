@@ -1,0 +1,14 @@
+ERROR: failed
+execution_state: completed; exit_code: 1
+stderr_tail:
+permission denied
+cwd: .
+duration_ms: 17
+execution_source: run_shell
+executor: agent
+failure_kind: command_exit_nonzero
+project: agent:mini:webcodex
+purpose: diagnostic
+shell: sh
+state_changed: true
+stderr_lines: 1

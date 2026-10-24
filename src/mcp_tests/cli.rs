@@ -99,8 +99,8 @@ fn cli_reads_keep_raw_source_revision_partial_failures_and_fenced_continuation()
         "File missing",
         "not_found",
         "output_truncated: true",
-        "expected_read_revision: 7",
-        "start_line: 3",
+        "\"expected_read_revision\":7",
+        "\"start_line\":3",
         "unreturned.rs",
     ] {
         assert!(rendered.contains(expected), "{rendered}");
@@ -166,9 +166,11 @@ fn cli_preserves_unknown_effects_and_native_blocks_and_provider_results() {
     ] {
         assert!(text(&body).contains(expected));
     }
-    let mut native = json!({"result":{"structuredContent":{"success":true,"output":{"content_delivery":"mcp_image"}},"content":[{"type":"image","data":"fixture","mimeType":"image/png"}]}});
+    let mut native = json!({"result":{"structuredContent":{"success":true,"output":{"content_delivery":"mcp_image"}},"content":[{"type":"image","data":"fixture","mimeType":"image/png"},{"type":"resource","resource":{"uri":"fixture://text","text":"native resource"}},{"type":"resource_link","uri":"fixture://download","name":"download"}]}});
     crate::mcp::cli::project_response(Some("observe_computer"), &mut native);
     assert_eq!(native["result"]["content"][1]["type"], "image");
+    assert_eq!(native["result"]["content"][2]["type"], "resource");
+    assert_eq!(native["result"]["content"][3]["type"], "resource_link");
     for name in ["mcp_tool", "plugin_tool", "ssh_resource"] {
         let mut provider = json!({"result":{"structuredContent":{"success":true,"output":output},"content":[{"type":"text","text":"provider-owned"}]}});
         let original = provider.clone();
@@ -601,3 +603,5 @@ async fn cli_manifest_omitted_and_null_options_keep_the_catalog_bound() {
         assert!(text(&body).contains("truncated: true"));
     }
 }
+#[path = "cli/text_projection.rs"]
+mod text_projection;

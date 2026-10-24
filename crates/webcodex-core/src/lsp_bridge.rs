@@ -260,6 +260,19 @@ pub enum LspCommandSource {
     Path,
 }
 
+/// Independent of executable availability and process lifecycle. Older Runners
+/// omit this observation, which must never be interpreted as ready.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LspIndexReadiness {
+    #[default]
+    Unknown,
+    Indexing,
+    Ready,
+    Unhealthy,
+    Unsupported,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct LspServerStatusEntry {
     pub language: String,
@@ -267,6 +280,8 @@ pub struct LspServerStatusEntry {
     pub available: bool,
     pub running: bool,
     pub status: LspAvailabilityStatus,
+    #[serde(default)]
+    pub index_readiness: LspIndexReadiness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<LspCommandSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1,0 +1,7 @@
+Dry run; no files written.
+edit src/main.rs; read_revision 7; would change
+  replace_exact lines 1-1 -> 1 lines
+would_change: true
+change_summary:
+  logical_edits: 1
+  resolved_matches: 1

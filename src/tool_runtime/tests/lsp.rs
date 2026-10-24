@@ -1024,6 +1024,7 @@ async fn lsp_status_unavailable_still_succeeds() {
                 available: false,
                 running: false,
                 status: LspAvailabilityStatus::Unavailable,
+                index_readiness: Default::default(),
                 source: None,
                 position_encoding: None,
             }],

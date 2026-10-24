@@ -239,6 +239,9 @@ fn run() -> io::Result<()> {
                 }
             }
             Some(method) => {
+                if let Some(marker) = &marker {
+                    append_marker(marker, &format!("request:{method}\n"))?;
+                }
                 if method == "workspace/symbol" {
                     if let Some(marker) = &marker {
                         append_marker(
@@ -316,7 +319,7 @@ fn run() -> io::Result<()> {
                     write_result(&mut writer, id, method, &body)?;
                 }
                 "workspace_operation_deadline" if method == "workspace/symbol" => {}
-                "workspace_readiness_restart" if method == "workspace/symbol" => {
+                "workspace_readiness_restart" => {
                     if start_count(marker.as_deref()) <= 1 {
                         return Ok(());
                     }
@@ -541,7 +544,7 @@ fn write_result(
             ),
         },
         "textDocument/definition" => match behavior {
-            "definition_null" => "null".to_string(),
+            "definition_null" | "workspace_readiness_timeout" => "null".to_string(),
             "definition_array" => format!(
                 r#"[{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}},{{"uri":"{other_uri}","range":{{"start":{{"line":1,"character":0}},"end":{{"line":1,"character":3}}}}}}]"#
             ),

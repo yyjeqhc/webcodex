@@ -1,0 +1,6 @@
+stdout_tail:
+wrote file
+
+command_summary: python heredoc
+cwd: .
+shell: sh

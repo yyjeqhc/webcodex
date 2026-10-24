@@ -1,0 +1,9 @@
+updates: meaningful
+job_id: wc_job_exact; status: completed; command_execution_state: completed; exit_code: 0
+stdout_tail:
+Tests passed.
+log_delta_status: delta
+observation_token: obs_exact
+project: agent:mini:webcodex
+wait:
+  outcome: terminal

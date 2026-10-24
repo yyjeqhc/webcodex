@@ -1,6 +1,8 @@
 //! Render already-bounded canonical observations without escaping source text.
 //! Only known presentation redundancy is removed. Unknown fields, failures,
 //! revision fences, incomplete coverage and exact recovery calls survive.
+mod compact;
+
 use serde_json::{json, Value};
 use std::fmt::Write;
 
@@ -25,13 +27,25 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
         let _ = writeln!(
             text,
             "ERROR: {}",
-            structured["error"].as_str().unwrap_or("Tool failed")
+            execution_error_text(
+                tool,
+                structured["error"].as_str().unwrap_or("Tool failed"),
+                &output
+            )
         );
     }
     if let Some(fields) = output.as_object_mut() {
         fields.remove("peer_awareness");
     }
     match tool {
+        "find_definition" | "find_references" if success => compact::locations(&mut text, output),
+        "list_project_files" | "list_project_tracked_files" if success => {
+            compact::files(&mut text, output)
+        }
+        "observe_jobs" | "wait_for_job_readiness" => compact::jobs(&mut text, output),
+        "run_shell" | "run_process" => compact::execution(&mut text, output),
+        "read_workspace_changes" if success => compact::changes(&mut text, output),
+        "edit_project_files" if success => compact::edits(&mut text, output),
         "read_files" => render_reads(&mut text, output),
         "search_project_texts" => render_search_batch(&mut text, output),
         "search_file_context" => {
@@ -93,7 +107,15 @@ fn render_reads(text: &mut String, mut output: Value) {
         render_fields(text, &output);
         return;
     };
-    for mut item in std::mem::take(items) {
+    let count = items.len();
+    let all_succeeded = !items.is_empty()
+        && items.iter().all(|item| {
+            item.get("success")
+                .is_none_or(|v| v.as_bool() == Some(true))
+                && item["error"].is_null()
+                && item["output"]["text"].is_string()
+        });
+    for (index, mut item) in std::mem::take(items).into_iter().enumerate() {
         let path = item["path"].as_str().unwrap_or("?").to_string();
         let read = &mut item["output"];
         if let Some(source) = read.get("text").and_then(Value::as_str).map(str::to_string) {
@@ -136,6 +158,9 @@ fn render_reads(text: &mut String, mut output: Value) {
                     fields.remove("error");
                 }
             }
+            if item["index"].as_u64() == Some(index as u64) {
+                item.as_object_mut().unwrap().remove("index");
+            }
             render_fields(text, &item);
         } else {
             let _ = writeln!(text, "==> {path}");
@@ -143,51 +168,51 @@ fn render_reads(text: &mut String, mut output: Value) {
         }
     }
     output.as_object_mut().unwrap().remove("items");
-    render_read_continuation(text, &mut output);
+    if all_succeeded
+        && output
+            .get("output_truncated")
+            .is_none_or(|v| v.as_bool() == Some(false))
+    {
+        for key in ["requested_count", "returned_count", "succeeded_count"] {
+            if output[key].as_u64() == Some(count as u64) {
+                output.as_object_mut().unwrap().remove(key);
+            }
+        }
+        for (key, value) in [
+            ("failed_count", json!(0)),
+            ("output_truncated", json!(false)),
+            ("next_index", Value::Null),
+        ] {
+            if output.get(key) == Some(&value) {
+                output.as_object_mut().unwrap().remove(key);
+            }
+        }
+        output.as_object_mut().unwrap().remove("project");
+    }
     render_fields(text, &output);
 }
 
-fn render_read_continuation(text: &mut String, output: &mut Value) {
-    let Some(call) = output.get("suggested_call") else {
-        return;
+/// Replace only the MCP adapter's exact native execution log pointer. The
+/// following renderer prints those tails directly; provider errors never enter.
+fn execution_error_text(tool: &str, error: &str, output: &Value) -> String {
+    if !matches!(tool, "run_shell" | "run_process") {
+        return error.to_owned();
+    }
+    let logs = output.get("details").unwrap_or(output);
+    let replacement = if logs["stdout_tail"] == "" && logs["stderr_tail"] == "" {
+        "Logs: stdout and stderr were empty."
+    } else {
+        "Logs: available stdout_tail and stderr_tail are included below."
     };
-    if call["tool"] != "read_files" || !call["arguments"]["items"].is_array() {
-        return;
-    }
-    let mut call = output
-        .as_object_mut()
-        .unwrap()
-        .remove("suggested_call")
-        .unwrap();
-    let _ = writeln!(text, "Next read_files:");
-    let arguments = &mut call["arguments"];
-    let items = arguments.as_object_mut().unwrap().remove("items").unwrap();
-    for mut item in items.as_array().unwrap().iter().cloned() {
-        let path = item
-            .as_object_mut()
-            .and_then(|fields| fields.remove("path"));
-        let _ = write!(
-            text,
-            "  {}",
-            path.as_ref().map(scalar).unwrap_or_else(|| "?".into())
-        );
-        if let Some(fields) = item.as_object() {
-            for (key, value) in fields {
-                let _ = write!(text, "; {key}: {}", scalar(value));
-            }
-        } else {
-            let _ = write!(text, "; {item}");
-        }
-        text.push('\n');
-    }
-    // Keep the exact bound Project, explicit Session, byte budget and follow-up
-    // posture once, including zero-progress recovery. None may be inferred.
-    render_fields(text, arguments);
-    if let Some(fields) = call.as_object_mut() {
-        fields.remove("tool");
-        fields.remove("arguments");
-    }
-    render_fields(text, &call);
+    error
+        .replace(
+            "Logs: see output.stdout_tail and output.stderr_tail.",
+            replacement,
+        )
+        .replace(
+            "Logs: see output.details.stdout_tail and output.details.stderr_tail.",
+            replacement,
+        )
 }
 
 fn render_search_batch(text: &mut String, mut output: Value) {
@@ -245,6 +270,12 @@ fn render_value(text: &mut String, value: &Value, depth: usize) {
     let indent = "  ".repeat(depth.min(4));
     match value {
         Value::Object(fields) => {
+            if fields.get("tool").is_some_and(Value::is_string)
+                && fields.get("arguments").is_some_and(Value::is_object)
+            {
+                let _ = writeln!(text, "{indent}{value}");
+                return;
+            }
             for (key, value) in fields {
                 // Do not recursively filter arbitrary keys: provider data,
                 // source text and error/recovery payloads retain their meaning.

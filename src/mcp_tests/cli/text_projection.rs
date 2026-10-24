@@ -1,0 +1,299 @@
+use super::*;
+
+fn samples() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "find_definition",
+            json!({"project":"agent:mini:webcodex","path":"src/mcp.rs","query_position":{"line":694,"column":45},"locations":[{"path":"src/mcp/request_policy.rs","range":{"start":{"line":31,"column":15},"end":{"line":31,"column":28}}}],"total_results":1,"returned_count":1,"truncated":false,"external_results_omitted":0,"invalid_results_omitted":0}),
+        ),
+        (
+            "list_project_files",
+            json!({"project":"agent:mini:webcodex","path":"src","entries":(0..17).map(|i|json!({"path":format!("src/module_{i:02}.rs"),"kind":"file"})).collect::<Vec<_>>(),"returned":17,"total_entries":17,"offset":0,"next_offset":null,"truncated":false}),
+        ),
+        (
+            "observe_jobs",
+            json!({"items":[{"job_id":"wc_job_exact","status":"completed","terminal":true,"changed":true,"meaningful_changed":true,"heartbeat_changed":false,"log_delta_status":"delta","observation_token":"obs_exact","project":"agent:mini:webcodex","exit_code":0,"command_execution_state":"completed","stdout_tail":"Tests passed.","stderr_tail":""}],"wait":{"outcome":"terminal"}}),
+        ),
+        (
+            "run_shell",
+            json!({"project":"agent:mini:webcodex","execution_state":"completed","exit_code":1,"tool_failure":false,"failure_kind":"command_exit_nonzero","command_started":true,"command_completed":true,"terminal":true,"promoted_to_job":false,"job_id":null,"job_status":null,"observation_token":null,"state_changed":true,"stdout_tail":"","stderr_tail":"permission denied","stdout_truncated":false,"stderr_truncated":false,"stdout_lines":0,"stderr_lines":1,"executor":"agent","execution_source":"run_shell","duration_ms":17,"purpose":"diagnostic","cwd":".","shell":"sh"}),
+        ),
+        (
+            "read_workspace_changes",
+            json!({"project":"agent:mini:webcodex","branch":"main","clean":true,"upstream_status":"observed","upstream_reason_code":null,"upstream":"origin/main","ahead":0,"behind":0,"head":{"commit":"abc123","summary":"example"},"counts":{"modified":0,"added":0,"deleted":0,"renamed":0,"copied":0,"untracked":0,"conflicted":0,"staged":0,"unstaged":0},"files":[],"diff_stat":"","suggested_next_actions":[],"session":null}),
+        ),
+        (
+            "edit_project_files",
+            json!({"project":"agent:mini:webcodex","dry_run":true,"execution_state":"completed","state_changed":false,"changed":false,"would_change":true,"applied_count":0,"planned_count":1,"files":[{"index":0,"kind":"edit","path":"src/main.rs","to_path":null,"changed":false,"would_change":true,"read_revision":7,"edits":[{"index":0,"kind":"replace_exact","old_start_line":1,"old_end_line":1,"new_line_count":1,"would_change":true}]}],"changed_paths":[],"change_summary":{"requested_changes":1,"changed_files":0,"logical_edits":1,"resolved_matches":1,"warnings":0}}),
+        ),
+        (
+            "read_files",
+            json!({"project":"agent:mini:webcodex","requested_count":1,"returned_count":1,"succeeded_count":1,"failed_count":0,"output_truncated":false,"items":[{"index":0,"path":"src/main.rs","success":true,"error":null,"output":{"text":"fn main() {}\n","start_line":1,"end_line":1,"returned_lines":1,"total_lines":20,"has_more":true,"read_revision":7}}],"next_index":null,"suggested_call":{"tool":"read_files","arguments":{"project":"agent:mini:webcodex","items":[{"path":"src/main.rs","start_line":2,"expected_read_revision":7}]},"follow_up_kind":"mechanically_followable"}}),
+        ),
+    ]
+}
+
+#[test]
+fn cli_text_size_samples() {
+    for (tool, output) in samples() {
+        let response = project(tool, tool != "run_shell", output);
+        let rendered = text(&response);
+        assert_snapshot(tool, &response);
+        let ceiling = match tool {
+            "find_definition" => 60,
+            "list_project_files" => 330,
+            "observe_jobs" => 300,
+            "run_shell" => 350,
+            "read_workspace_changes" => 150,
+            "edit_project_files" => 250,
+            "read_files" => 350,
+            _ => unreachable!(),
+        };
+        assert!(
+            rendered.len() <= ceiling,
+            "{tool}: {} > {ceiling}",
+            rendered.len()
+        );
+        eprintln!(
+            "{tool}: {} bytes, {} chars\n{rendered}",
+            rendered.len(),
+            rendered.chars().count()
+        );
+    }
+}
+
+#[test]
+fn cli_navigation_empty_and_omitted_results_are_distinct() {
+    for tool in ["find_definition", "find_references"] {
+        let empty = project(
+            tool,
+            true,
+            json!({"locations":[],"total_results":0,"returned_count":0,"truncated":false,"external_results_omitted":0,"invalid_results_omitted":0}),
+        );
+        assert_snapshot(&format!("{tool}_empty"), &empty);
+        assert_eq!(text(&empty), "No locations.\n");
+        let incomplete = project(
+            tool,
+            true,
+            json!({"locations":[],"total_results":3,"returned_count":0,"truncated":true,"external_results_omitted":2,"invalid_results_omitted":1,"continuation":{"tool":"find_references","arguments":{"project":"p","path":"x.rs","line":1,"column":1}}}),
+        );
+        assert_snapshot(&format!("{tool}_truncated"), &incomplete);
+        for evidence in [
+            "total_results: 3",
+            "truncated: true",
+            "external_results_omitted: 2",
+            "invalid_results_omitted: 1",
+        ] {
+            assert!(text(&incomplete).contains(evidence));
+        }
+        assert_eq!(
+            project(tool, false, json!({"error_kind":"lsp_request_timeout"}))["result"]["isError"],
+            true
+        );
+    }
+}
+
+#[test]
+fn cli_job_lifecycles_and_exact_recovery_calls_survive() {
+    let call = json!({"tool":"observe_jobs","arguments":{"items":[{"job_id":"wc_job_exact","after_observation_token":"opaque:token/+="}],"tail_lines":17},"follow_up_kind":"mechanically_followable"});
+    for status in ["pending", "completed", "failed", "outcome_unknown"] {
+        let body = project(
+            "observe_jobs",
+            true,
+            json!({"items":[{"job_id":"wc_job_exact","status":status,"observation_token":"opaque:token/+=","stdout_truncated":true,"stderr_delta_reset":true,"earlier_stdout_unavailable":true,"log_delta_status":"reset","stdout_tail":"证据\nnext","state_changed":null,"continuation":call}],"output_truncated":true,"suggested_call":call}),
+        );
+        assert_snapshot(&format!("job_{status}"), &body);
+        let rendered = text(&body);
+        for evidence in [
+            status,
+            "opaque:token/+=",
+            "stdout_truncated: true",
+            "stderr_delta_reset: true",
+            "earlier_stdout_unavailable: true",
+            "log_delta_status: reset",
+            "state_changed: null",
+            "证据\nnext",
+            "output_truncated: true",
+        ] {
+            assert!(rendered.contains(evidence), "{rendered}");
+        }
+        let calls: Vec<Value> = rendered
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+            .collect();
+        assert_eq!(calls, vec![call.clone(), call.clone()]);
+        assert_eq!(body["result"]["isError"], false); // observation succeeded; Job may have failed
+    }
+}
+
+#[test]
+fn cli_readiness_partial_and_tracked_listing_keep_exact_evidence() {
+    let ready = project(
+        "wait_for_job_readiness",
+        true,
+        json!({"wait_state":"deadline","ready":[{"job_id":"job-a","status":"failed","outcome":"command_exit_nonzero"}],"pending_job_ids":["job-b"]}),
+    );
+    assert_snapshot("readiness_deadline", &ready);
+    for evidence in [
+        "wait_state: deadline",
+        "job-a",
+        "job-b",
+        "failed",
+        "command_exit_nonzero",
+    ] {
+        assert!(text(&ready).contains(evidence));
+    }
+    let listing = project(
+        "list_project_tracked_files",
+        true,
+        json!({"entries":[{"path":"src","kind":"dir","file_count":5}],"returned":1,"total_entries":1,"total_files":5,"depth":1,"list_truncated":true,"source":"git_index","next_offset":null,"truncated":false}),
+    );
+    assert_snapshot("tracked_files_truncated", &listing);
+    assert!(text(&listing).starts_with("src/ (5 files)\n"));
+    for evidence in [
+        "list_truncated: true",
+        "total_files: 5",
+        "depth: 1",
+        "source: git_index",
+    ] {
+        assert!(text(&listing).contains(evidence));
+    }
+    let partial = project(
+        "observe_jobs",
+        true,
+        json!({"items":[{"index":0,"job_id":"missing","success":false,"output":null,"error_kind":"unknown_job","error":"Job unavailable","recovery_kind":"reobserve"}],"failed_count":1}),
+    );
+    assert_snapshot("jobs_partial_failure", &partial);
+    for evidence in [
+        "missing",
+        "success: false",
+        "Job unavailable",
+        "recovery_kind: reobserve",
+        "failed_count: 1",
+    ] {
+        assert!(text(&partial).contains(evidence), "{}", text(&partial));
+    }
+}
+
+#[test]
+fn cli_edits_preserve_revision_conflicts_and_bulk_warnings() {
+    let call = json!({"tool":"read_files","arguments":{"project":"p","items":[{"path":"a.rs"}]},"follow_up_kind":"fallback_recovery"});
+    let stale = project(
+        "edit_project_files",
+        false,
+        json!({"execution_state":"not_started","state_changed":false,"error_kind":"stale_read_revision","expected_read_revision":7,"recovery":{"suggested_call":call}}),
+    );
+    assert_snapshot("edit_stale_revision", &stale);
+    for evidence in [
+        "ERROR: failed",
+        "stale_read_revision",
+        "expected_read_revision: 7",
+        "state_changed: false",
+        "not_started",
+        &call.to_string(),
+    ] {
+        assert!(text(&stale).contains(evidence));
+    }
+    assert_eq!(stale["result"]["isError"], true);
+    let edited = project(
+        "edit_project_files",
+        true,
+        json!({"files":[{"index":0,"kind":"edit","path":"a.rs","changed":true,"read_revision":8,"edits":[{"kind":"replace_exact","index":0,"old_start_line":1,"old_end_line":1,"new_line_count":1,"match_count":2,"match_ranges_truncated":true,"warning":"review repeated anchors"}]}]}),
+    );
+    assert_snapshot("edit_bulk_warning", &edited);
+    for evidence in [
+        "read_revision 8",
+        "changed",
+        "match_count: 2",
+        "match_ranges_truncated: true",
+        "review repeated anchors",
+    ] {
+        assert!(text(&edited).contains(evidence));
+    }
+}
+
+#[test]
+fn cli_execution_log_pointer_targets_visible_text() {
+    for tool in ["run_shell", "run_process"] {
+        let mut body = json!({"result":{"structuredContent":{"success":false,"error":"Command failed. Logs: see output.stdout_tail and output.stderr_tail.","output":{"execution_state":"completed","exit_code":1,"failure_kind":"command_exit_nonzero","stdout_tail":"","stderr_tail":"拒绝访问"}},"content":[]}});
+        crate::mcp::cli::project_response(Some(tool), &mut body);
+        assert_snapshot(&format!("{tool}_failure_logs"), &body);
+        assert!(!text(&body).contains("output.stdout_tail"));
+        assert!(text(&body).contains("stderr_tail:\n拒绝访问"));
+        assert_eq!(body["result"]["isError"], true);
+    }
+}
+
+#[test]
+fn cli_specialized_renderers_keep_unknown_fields_and_malformed_shapes() {
+    for tool in [
+        "find_definition",
+        "find_references",
+        "list_project_files",
+        "list_project_tracked_files",
+        "run_shell",
+        "run_process",
+        "observe_jobs",
+        "wait_for_job_readiness",
+        "read_workspace_changes",
+        "edit_project_files",
+    ] {
+        let output = json!({"new_evidence":{"false_is_meaningful":false,"null_is_meaningful":null,"zero_is_meaningful":0},"locations":"invalid","entries":"invalid","files":"invalid"});
+        let body = project(tool, true, output);
+        for evidence in [
+            "false_is_meaningful: false",
+            "null_is_meaningful: null",
+            "zero_is_meaningful: 0",
+            "invalid",
+        ] {
+            assert!(text(&body).contains(evidence), "{tool}: {}", text(&body));
+        }
+    }
+}
+
+fn assert_snapshot(name: &str, body: &Value) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/mcp_tests/cli/text_snapshots")
+        .join(format!("{name}.txt"));
+    if std::env::var_os("WEBCODEX_UPDATE_CLI_SNAPSHOTS").as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+    {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text(body)).unwrap();
+    }
+    let expected = std::fs::read_to_string(path).expect("checked-in CLI text snapshot");
+    assert_eq!(text(body), expected, "{name}");
+}
+
+#[test]
+fn cli_ordinary_success_and_empty_snapshots() {
+    for (name, tool, output) in [
+        (
+            "run_process_success",
+            "run_process",
+            json!({"stdout_tail":"done\n","stderr_tail":"","stdout_truncated":false,"stderr_truncated":false}),
+        ),
+        (
+            "shell_compact_success",
+            "run_shell",
+            json!({"command_summary":"python heredoc","cwd":".","shell":"sh","stdout_tail":"wrote file\n"}),
+        ),
+        (
+            "files_empty",
+            "list_project_files",
+            json!({"entries":[],"returned":0,"total_entries":0,"offset":0,"next_offset":null,"truncated":false}),
+        ),
+        (
+            "reads_complete",
+            "read_files",
+            json!({"items":[{"index":0,"path":"a.rs","output":{"text":"fn main() {}\n","read_revision":9,"total_lines":1}}]}),
+        ),
+        (
+            "workspace_incomplete",
+            "read_workspace_changes",
+            json!({"clean":null,"status_observation":{"status":"unavailable"},"output_truncated":true,"warnings":["status unavailable"],"files":[]}),
+        ),
+    ] {
+        assert_snapshot(name, &project(tool, true, output));
+    }
+}

@@ -1,0 +1,8 @@
+ERROR: failed
+error_kind: stale_read_revision
+execution_state: not_started
+expected_read_revision: 7
+recovery:
+  suggested_call:
+    {"arguments":{"items":[{"path":"a.rs"}],"project":"p"},"follow_up_kind":"fallback_recovery","tool":"read_files"}
+state_changed: false

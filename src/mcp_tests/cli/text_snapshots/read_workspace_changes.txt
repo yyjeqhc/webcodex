@@ -1,0 +1,6 @@
+Workspace clean.
+upstream: origin/main; ahead 0; behind 0
+branch: main
+head:
+  commit: abc123
+  summary: example

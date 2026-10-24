@@ -458,7 +458,7 @@ async fn cli_default_project_discovery_and_direct_gateway_calls_agree() {
                 .unwrap()
                 .contains(&json!("project")));
         } else if params["name"] == "read_tool_manifest" {
-            assert!(text(&body).contains("mode: direct"));
+            assert!(text(&body).contains(r#""mode":"direct""#));
         } else {
             assert_eq!(body["result"]["isError"], true);
             assert!(!text(&body).contains("missing field"), "{}", text(&body));
@@ -532,5 +532,72 @@ fn cli_manifest_routes_match_the_advertised_surface() {
             true,
         );
         assert_eq!(result.output["route"]["mode"], mode);
+    }
+}
+
+#[tokio::test]
+async fn cli_manifest_text_is_bounded_and_exact_schema_remains_complete() {
+    let (_tmp, db) = test_db();
+    let service = Service::new(build_test_router(
+        test_config(Some("secret")),
+        db,
+        Arc::new(test_runtime()),
+    ));
+    let (_, catalog) = post_cli(
+        &service,
+        "tools/call",
+        json!({"name":"read_tool_manifest","arguments":{}}),
+        true,
+    )
+    .await;
+    let rendered = text(&catalog);
+    assert!(
+        rendered.contains("[gateway via call_runtime_tool]"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("truncated: true"), "{rendered}");
+    assert!(!rendered.contains("present_work_result"));
+    assert!(!rendered.lines().any(|line| line.trim() == "[0]"));
+    assert!(rendered.len() < 12000, "{}", rendered.len());
+    let (_, exact) = post_cli(
+        &service,
+        "tools/call",
+        json!({"name":"read_tool_manifest","arguments":{"tool_name":"search_file_context"}}),
+        true,
+    )
+    .await;
+    let rendered = text(&exact);
+    let line = rendered
+        .lines()
+        .find_map(|line| line.strip_prefix("input_schema: "))
+        .unwrap();
+    let schema: Value = serde_json::from_str(line).unwrap();
+    assert!(schema["properties"].get("query").is_none());
+    assert!(schema["properties"]["queries"]["items"]["properties"]["pattern"].is_object());
+    assert!(rendered.contains("authority:"));
+    assert!(rendered.contains("route:"));
+    assert!(rendered.contains("preserving per-query batch failures"));
+}
+
+#[tokio::test]
+async fn cli_manifest_omitted_and_null_options_keep_the_catalog_bound() {
+    let (_tmp, db) = test_db();
+    let service = Service::new(build_test_router(
+        test_config(Some("secret")),
+        db,
+        Arc::new(test_runtime()),
+    ));
+    for params in [
+        json!({"name":"read_tool_manifest"}),
+        json!({"name":"read_tool_manifest","arguments":{"tool_name":null,"limit":null}}),
+    ] {
+        let (_, body) = post_cli(&service, "tools/call", params, true).await;
+        assert_eq!(body["result"]["isError"], false, "{body}");
+        assert!(
+            text(&body).contains("returned_count: 20"),
+            "{}",
+            text(&body)
+        );
+        assert!(text(&body).contains("truncated: true"));
     }
 }

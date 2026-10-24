@@ -93,6 +93,8 @@ pub(super) fn tools_list_with_exposure(
             }
             tool["description"] = json!("Start work in a Project (Git optional), returning workspace status and repository instructions. Omit session_id for a fresh Workflow Session; supply the exact id to resume. Read missing/truncated instructions before dependent work. Session creation is stateful: after uncertainty, observe Sessions before starting another.");
         }
+        let name = tool["name"].as_str().unwrap().to_owned();
+        project_manifest_limit_schema(&name, &mut tool["inputSchema"]);
         if tool["name"] == "call_runtime_tool" {
             tool["description"] = json!("Call one admitted runtime tool using its exact read_tool_manifest contract. Prefer a direct callable when listed. Normal authorization, permissions, capability and effect checks apply. MCP App tools and _wc sidecars are unavailable. Never replay uncertain effects.");
         }
@@ -114,6 +116,15 @@ pub(super) fn tools_list_with_exposure(
         }
     }
     json!({"tools": tools})
+}
+
+pub(super) const MANIFEST_DEFAULT_LIMIT: usize = 20;
+
+fn project_manifest_limit_schema(name: &str, schema: &mut Value) {
+    if name == "read_tool_manifest" {
+        schema["properties"]["limit"]["default"] = json!(MANIFEST_DEFAULT_LIMIT);
+        schema["properties"]["limit"]["description"] = json!("Maximum catalog entries, clamped to 1..100; CLI defaults to 20. Narrow by query/category/intent, or use tool_name for one full input contract.");
+    }
 }
 
 pub(super) fn project_can_default(tool: &str) -> bool {
@@ -167,6 +178,12 @@ pub(super) fn project_manifest(
     default_project: bool,
 ) {
     if !result.success {
+        if result.output["code"] == "tool_unavailable_on_surface" {
+            result.error = Some(format!(
+                "tool '{}' is unavailable on the CLI surface",
+                result.output["tool_name"].as_str().unwrap_or("?")
+            ));
+        }
         return;
     }
     fn entry(value: &mut Value, default_project: bool) {
@@ -178,6 +195,9 @@ pub(super) fn project_manifest(
                 project_default_schema(&name, schema);
             }
         }
+        if let Some(schema) = value.get_mut("input_schema") {
+            project_manifest_limit_schema(&name, schema);
+        }
         if name == "work_on_project" {
             value["description"] = json!("Start/resume work in a Project. Fresh Session: omit session_id; exact resume: supply session_id, with an optional matching project. An explicit client_id+path resolves/registers an authorized directory; mode=worktree requires an explicit source Project and exact base. CLI automatically returns bounded project instructions and workspace status; follow read_more before dependent work. include_extension_catalog defaults false on CLI; set true for extension discovery. Startup creates/resumes Session state, never implies permission to replay effects. After uncertainty, observe Sessions before creating another. Project authority, worktree fences and permissions still apply; _wc is unavailable.");
             if let Some(field) =
@@ -188,6 +208,13 @@ pub(super) fn project_manifest(
         }
     }
     entry(&mut result.output, default_project);
+    if let Some(contract) = result
+        .output
+        .get_mut("contract")
+        .filter(|value| value.is_object())
+    {
+        entry(contract, default_project);
+    }
     if let Some(tools) = result.output.get_mut("tools").and_then(Value::as_array_mut) {
         for tool in tools {
             entry(tool, default_project);

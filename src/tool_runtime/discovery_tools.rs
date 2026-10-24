@@ -12,6 +12,7 @@ impl ToolRuntime {
         call: ToolCall,
         auth: Option<&AuthContext>,
         protocol_capabilities: ToolProtocolCapabilities,
+        discovery_tools: Option<&std::collections::BTreeSet<String>>,
     ) -> ToolResult {
         match call {
             ToolCall::ListTools {
@@ -69,6 +70,7 @@ impl ToolRuntime {
                 include_risk_summary,
             } => {
                 self.tool_manifest(
+                    discovery_tools,
                     auth,
                     tool_name,
                     category,

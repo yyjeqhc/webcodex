@@ -44,6 +44,7 @@ pub(crate) struct DispatchContext<'a> {
     pub(crate) context_request: Vec<String>,
     pub(crate) prefer_full_instruction_content: bool,
     pub(crate) capabilities: ToolProtocolCapabilities,
+    pub(crate) discovery_tools: Option<std::collections::BTreeSet<String>>,
     pub(crate) return_timing: ToolReturnTimingPolicy,
 }
 
@@ -55,6 +56,7 @@ impl<'a> DispatchContext<'a> {
             context_request: Vec::new(),
             prefer_full_instruction_content: false,
             capabilities: Default::default(),
+            discovery_tools: None,
             return_timing: ToolReturnTimingPolicy::unconstrained(),
         }
     }

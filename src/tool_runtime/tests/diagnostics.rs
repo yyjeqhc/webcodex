@@ -179,6 +179,7 @@ async fn trace_manifest_and_call_require_authority_as_well_as_protocol_capabilit
                 let exact = arguments.get("tool_name").is_some();
                 let result = runtime
                     .tool_manifest(
+                        None,
                         auth,
                         arguments
                             .get("tool_name")

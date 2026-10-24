@@ -70,7 +70,12 @@ impl AuthorizedDispatch<'_, '_> {
             | ToolCall::ReadToolTrace { .. }
             | ToolCall::ToolManifest { .. }) => {
                 runtime
-                    .dispatch_discovery_tool(call, auth, protocol_capabilities)
+                    .dispatch_discovery_tool(
+                        call,
+                        auth,
+                        protocol_capabilities,
+                        context.discovery_tools.as_ref(),
+                    )
                     .await
             }
 

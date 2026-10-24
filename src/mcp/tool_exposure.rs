@@ -229,12 +229,25 @@ impl ToolExposure {
             return;
         }
         let entry = |value: &mut Value| {
-            let Some(name) = value["name"].as_str() else {
+            let Some(name) = value["name"]
+                .as_str()
+                .or_else(|| value["tool_name"].as_str())
+                .map(str::to_owned)
+            else {
                 return;
             };
-            let route = self.route(surface, name, stateless);
+            let route = self.route(surface, &name, stateless);
+            if value.get("availability").is_some() {
+                let (availability, gateway) = match route {
+                    SuggestedToolCallRoute::Direct => ("direct", None),
+                    SuggestedToolCallRoute::Gateway(via) => ("gateway", Some(via)),
+                    SuggestedToolCallRoute::Unavailable => ("unavailable", None),
+                };
+                value["availability"] = json!(availability);
+                value["gateway_tool"] = json!(gateway);
+            }
             value["route"] = if value["route"].get("primary").is_some() {
-                crate::model_surface::manifest_invocation_route(name, route)
+                crate::model_surface::manifest_invocation_route(&name, route)
             } else {
                 match route {
                     SuggestedToolCallRoute::Direct => json!({"mode":"direct"}),
@@ -244,26 +257,17 @@ impl ToolExposure {
             };
         };
         entry(&mut result.output);
+        if let Some(contract) = result
+            .output
+            .get_mut("contract")
+            .filter(|value| value.is_object())
+        {
+            entry(contract);
+        }
         if let Some(tools) = result.output.get_mut("tools").and_then(Value::as_array_mut) {
             for tool in tools {
                 entry(tool);
             }
-        }
-        if let Some(flows) = result
-            .output
-            .get_mut("recommended_flows")
-            .and_then(Value::as_array_mut)
-        {
-            flows.retain(|flow| {
-                flow["tools"].as_array().is_none_or(|tools| {
-                    tools.iter().all(|tool| {
-                        tool.as_str().is_none_or(|name| {
-                            self.route(surface, name, stateless)
-                                != SuggestedToolCallRoute::Unavailable
-                        })
-                    })
-                })
-            });
         }
     }
 }

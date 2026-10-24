@@ -198,6 +198,7 @@ pub(in crate::mcp) fn parse_mcp_invocation_envelope(
         recording_session_selector: parse_record(envelope.remove("record"))?,
         metadata: ToolInvocationMetadata {
             compact_execution,
+            discovery_tools: None,
             control,
             ack_session_message_ids: parse_ack(envelope.remove("ack"))?,
             ack_ref: parse_ack_ref(envelope.remove("ack_ref"))?,

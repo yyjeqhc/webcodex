@@ -316,7 +316,7 @@ async fn disabled_workflows_reject_direct_gateway_and_stale_app_calls() {
             .await,
         );
         assert_eq!(
-            manifest["structuredContent"]["output"]["route"]["primary"]["mode"], "unavailable",
+            manifest["structuredContent"]["output"]["code"], "tool_unavailable_on_surface",
             "{manifest}"
         );
         for uri in [
@@ -468,6 +468,179 @@ async fn default_discovery_cost_uses_the_canonical_admin_measurement() {
                     assert!(model_bytes <= 96 * 1024);
                 }
             }
+        }
+    }
+}
+
+#[tokio::test]
+async fn manifests_use_admitted_surface_routes_before_pagination() {
+    let runtime = test_runtime();
+    let auth = crate::auth::shared_key_context("manifest-test");
+    for surface in [McpSurface::Cli, McpSurface::Adaptive] {
+        for compact in [false, true] {
+            for (name, mode) in [
+                (
+                    "find_definition",
+                    if surface == McpSurface::Cli {
+                        "direct"
+                    } else {
+                        "gateway"
+                    },
+                ),
+                ("read_files", "direct"),
+                (
+                    "get_runtime_status",
+                    if surface == McpSurface::Cli {
+                        "gateway"
+                    } else {
+                        "direct"
+                    },
+                ),
+                ("observe_browser", "gateway"),
+            ] {
+                let response = result(
+                    request(
+                        &runtime,
+                        surface,
+                        Some(&auth),
+                        "tools/call",
+                        json!({"name":"read_tool_manifest","arguments":{"tool_name":name}}),
+                        compact,
+                        true,
+                    )
+                    .await,
+                );
+                let output = &response["structuredContent"]["output"];
+                assert_eq!(response["isError"], false, "{response}");
+                assert_eq!(output["route"]["primary"]["mode"], mode, "{output}");
+                let contract = output
+                    .get("contract")
+                    .filter(|value| value.is_object())
+                    .unwrap_or(output);
+                assert!(
+                    contract["input_schema"]["properties"].is_object(),
+                    "{output}"
+                );
+                if let Some(availability) = contract.get("availability") {
+                    assert_eq!(availability, mode);
+                }
+            }
+            let response = result(request(&runtime, surface, Some(&auth), "tools/call",
+                json!({"name":"read_tool_manifest","arguments":{"tool_name":"present_work_result"}}), compact, true).await);
+            if surface == McpSurface::Cli {
+                assert_eq!(response["isError"], true, "{response}");
+                assert_eq!(
+                    response["structuredContent"]["output"]["code"],
+                    "tool_unavailable_on_surface"
+                );
+                assert!(response["structuredContent"]["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("CLI"));
+            } else {
+                assert_eq!(response["isError"], false, "{response}");
+            }
+            let response = result(request(&runtime, surface, Some(&auth), "tools/call",
+                json!({"name":"read_tool_manifest","arguments":{"limit":100,"include_recommended_flows":true}}), compact, true).await);
+            let output = &response["structuredContent"]["output"];
+            let tools = output["tools"].as_array().unwrap();
+            assert!(
+                tools.iter().any(|t| t["name"] == "observe_browser"),
+                "gateway discovery lost: {output}"
+            );
+            let exposure = ToolExposure::default();
+            for tool in tools {
+                let name = tool["name"].as_str().unwrap();
+                assert_ne!(
+                    exposure.route(surface, name, true),
+                    crate::model_surface::SuggestedToolCallRoute::Unavailable,
+                    "{name}"
+                );
+            }
+            if let Some(flows) = output["recommended_flows"].as_array() {
+                for flow in flows {
+                    for key in ["tools", "omitted_tools"] {
+                        for tool in flow[key].as_array().into_iter().flatten() {
+                            assert_ne!(
+                                exposure.route(surface, tool.as_str().unwrap(), true),
+                                crate::model_surface::SuggestedToolCallRoute::Unavailable,
+                                "{flow}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn manifest_exclusion_does_not_admit_hidden_or_app_gateway_calls() {
+    let runtime = test_runtime();
+    let auth = crate::auth::shared_key_context("manifest-test");
+    for name in [
+        "present_work_result",
+        "open_webcodex_workbench",
+        "checkpoint_goal",
+    ] {
+        for gateway in [false, true] {
+            let params = if gateway {
+                adaptive_runtime_gateway_params(name, json!({"project":"demo"}))
+            } else {
+                json!({"name":name,"arguments":{"project":"demo"}})
+            };
+            let outcome = request(
+                &runtime,
+                McpSurface::Cli,
+                Some(&auth),
+                "tools/call",
+                params,
+                true,
+                true,
+            )
+            .await;
+            assert!(
+                matches!(outcome, McpOutcome::BadRequest(_)),
+                "{name}: {outcome:?}"
+            );
+        }
+    }
+    let response = result(request(&runtime, McpSurface::Cli, Some(&auth), "tools/call",
+        json!({"name":"read_tool_manifest","arguments":{"query":"present_work_result","limit":1}}), true, true).await);
+    let output = &response["structuredContent"]["output"];
+    assert!(
+        !output.to_string().contains("present_work_result"),
+        "{output}"
+    );
+    assert_eq!(response["isError"], false);
+}
+
+#[tokio::test]
+async fn manifest_scope_filtering_removes_uncallable_flow_prose() {
+    let runtime = test_runtime();
+    let mut auth = oauth("manifest-scope");
+    auth.scopes = vec![
+        crate::auth::SCOPE_RUNTIME_READ.into(),
+        crate::auth::SCOPE_PROJECT_READ.into(),
+    ];
+    for surface in [McpSurface::Cli, McpSurface::Adaptive] {
+        let response = result(request(&runtime, surface, Some(&auth), "tools/call",
+            json!({"name":"read_tool_manifest","arguments":{"limit":100,"include_recommended_flows":true}}), true, true).await);
+        assert_eq!(response["isError"], false, "{response}");
+        let output = &response["structuredContent"]["output"];
+        for name in ["edit_project_files", "run_shell"] {
+            assert!(
+                !output["tools"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|tool| tool["name"] == name),
+                "{surface:?}/{name}: {output}"
+            );
+            assert!(
+                !output["recommended_flows"].to_string().contains(name),
+                "{output}"
+            );
         }
     }
 }

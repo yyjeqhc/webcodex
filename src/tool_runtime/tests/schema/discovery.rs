@@ -9,6 +9,7 @@ async fn discovery_materializes_only_the_requested_contract_shape() {
     let exact = runtime
         .tool_manifest(
             None,
+            None,
             Some("run_process".into()),
             None,
             None,
@@ -33,6 +34,7 @@ async fn discovery_materializes_only_the_requested_contract_shape() {
         .tool_manifest(
             None,
             None,
+            None,
             Some("execution".into()),
             None,
             false,
@@ -54,6 +56,7 @@ async fn discovery_materializes_only_the_requested_contract_shape() {
     );
     let hidden = runtime
         .tool_manifest(
+            None,
             None,
             Some("read_memory".into()),
             None,
@@ -2593,6 +2596,7 @@ async fn tool_manifest_operator_extensions_require_explicit_family_capabilities(
     };
     let manifest = |tool_name: &'static str, capabilities: ToolProtocolCapabilities| {
         runtime.tool_manifest(
+            None,
             Some(&admin),
             Some(tool_name.to_string()),
             None,
@@ -2780,6 +2784,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
             None,
             None,
             None,
+            None,
             false,
             false,
             Some("batch unregister".into()),
@@ -2802,6 +2807,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
         let exact = runtime
             .tool_manifest(
                 None,
+                None,
                 Some(name.into()),
                 None,
                 None,
@@ -2817,6 +2823,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
     }
     let list = runtime
         .tool_manifest(
+            None,
             None,
             None,
             None,
@@ -2836,6 +2843,7 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
         .all(|tool| tool["name"] != "work_on_project"));
     let hidden = runtime
         .tool_manifest(
+            None,
             None,
             None,
             None,
@@ -2930,6 +2938,7 @@ async fn natural_language_discovery_preserves_filters_bounds_and_exact_contracts
             .tool_manifest(
                 None,
                 None,
+                None,
                 Some(category.into()),
                 None,
                 false,
@@ -3015,6 +3024,7 @@ async fn natural_language_discovery_preserves_filters_bounds_and_exact_contracts
                 None,
                 None,
                 None,
+                None,
                 false,
                 false,
                 Some(query),
@@ -3085,6 +3095,7 @@ async fn natural_language_discovery_exact_names_rank_first_across_admitted_catal
     let runtime = test_runtime();
     let catalog = runtime
         .tool_manifest(
+            None,
             None,
             None,
             None,

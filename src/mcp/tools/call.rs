@@ -401,6 +401,35 @@ impl PreparedRuntimeCall {
                     .or_insert(json!(false));
             }
         }
+        if params.name == "read_tool_manifest" {
+            if context.surface == crate::mcp::request_policy::McpSurface::Cli {
+                if params.arguments.is_null() {
+                    params.arguments = json!({});
+                }
+                if let Some(arguments) = params.arguments.as_object_mut() {
+                    if arguments.get("tool_name").is_none_or(Value::is_null)
+                        && arguments.get("limit").is_none_or(Value::is_null)
+                    {
+                        arguments.insert(
+                            "limit".into(),
+                            json!(crate::mcp::cli::MANIFEST_DEFAULT_LIMIT),
+                        );
+                    }
+                }
+            }
+            metadata.discovery_tools = Some(
+                webcodex_tool_contracts::tool_definitions()
+                    .filter(|definition| {
+                        context.exposure.route(
+                            context.surface,
+                            definition.name,
+                            context.stateless_2026,
+                        ) != crate::model_surface::SuggestedToolCallRoute::Unavailable
+                    })
+                    .map(|definition| definition.name.to_owned())
+                    .collect(),
+            );
+        }
         let runtime = context.runtime;
         let auth = context.auth;
         let stateless_2026 = context.stateless_2026;

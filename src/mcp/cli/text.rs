@@ -32,6 +32,7 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
         fields.remove("peer_awareness");
     }
     match tool {
+        "read_tool_manifest" if success => render_manifest(&mut text, output),
         "read_files" => render_reads(&mut text, output),
         "search_project_texts" => render_search_batch(&mut text, output),
         "search_file_context" => {
@@ -85,6 +86,73 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
         // Native image/resource blocks keep their host-native transport.
         blocks.retain(|block| block["type"] != "text");
         blocks.insert(0, json!({"type":"text", "text":text}));
+    }
+}
+
+fn render_manifest(text: &mut String, mut output: Value) {
+    let Some(fields) = output.as_object_mut() else {
+        render_fields(text, &output);
+        return;
+    };
+    let schema = fields.remove("input_schema");
+    if let Some(name) = fields.remove("name") {
+        let _ = writeln!(text, "{}", name.as_str().unwrap_or("?"));
+    }
+    if let Some(tools) = fields.remove("tools") {
+        if let Some(tools) = tools.as_array() {
+            for tool in tools {
+                let (Some(name), Some(route)) =
+                    (tool["name"].as_str(), tool["route"]["mode"].as_str())
+                else {
+                    render_fields(text, tool);
+                    continue;
+                };
+                let via = tool["route"]["via"]
+                    .as_str()
+                    .map(|via| format!(" via {via}"))
+                    .unwrap_or_default();
+                let description = tool["description"].as_str().unwrap_or("");
+                let _ = writeln!(text, "{name} [{route}{via}] {description}");
+                let mut remaining = tool.as_object().unwrap().clone();
+                for key in ["name", "description"] {
+                    remaining.remove(key);
+                }
+                if let Some(route) = remaining.get_mut("route").and_then(Value::as_object_mut) {
+                    route.remove("mode");
+                    route.remove("via");
+                    if route.is_empty() {
+                        remaining.remove("route");
+                    }
+                }
+                // Keep selection-relevant authority/effect and any future fields.
+                if !remaining.is_empty() {
+                    let _ = writeln!(text, "  {}", Value::Object(remaining));
+                }
+            }
+            if tools.is_empty() {
+                let _ = writeln!(text, "No matching tools.");
+            }
+        } else {
+            fields.insert("tools".into(), tools);
+        }
+    }
+    if let Some(route) = fields.remove("route") {
+        let _ = writeln!(text, "route: {route}");
+    }
+    if let Some(flows) = fields
+        .get_mut("recommended_flows")
+        .and_then(Value::as_array_mut)
+    {
+        for flow in std::mem::take(flows) {
+            // Canonical flow prose and partial/omitted membership stay together.
+            let _ = writeln!(text, "flow: {flow}");
+        }
+        fields.remove("recommended_flows");
+    }
+    render_fields(text, &output);
+    if let Some(schema) = schema {
+        // Exact lookup keeps the full necessary schema as one parser-ready JSON line.
+        let _ = writeln!(text, "input_schema: {schema}");
     }
 }
 

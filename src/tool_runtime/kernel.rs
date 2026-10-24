@@ -58,6 +58,9 @@ pub(crate) struct ToolCallRequest {
 pub(crate) struct ToolInvocationMetadata {
     /// Explicit presentation request; never dispatch or continuation authority.
     pub(crate) compact_execution: bool,
+    /// Adapter-selected discovery subset, bounded by the static registry. This
+    /// only narrows catalog visibility; dispatch never consults it for authority.
+    pub(crate) discovery_tools: Option<std::collections::BTreeSet<String>>,
     pub(crate) control: Option<super::control_sidecar::ControlSidecars>,
     // Historical wrapper name retained for protocol compatibility. Exact IDs may
     // acknowledge either legacy Session-board messages or Window collaboration
@@ -494,6 +497,7 @@ impl ToolRuntime {
                     prefer_full_instruction_content: invocation_metadata
                         .prefer_full_instruction_content,
                     capabilities,
+                    discovery_tools: invocation_metadata.discovery_tools.clone(),
                     return_timing,
                     ..super::dispatch::DispatchContext::new(context)
                 },

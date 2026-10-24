@@ -740,6 +740,21 @@ payloads through model text:
   are short-lived process-local presentation state, and the normal size, MIME,
   path, and authorization bounds remain in force.
 
+Artifact uploads reserve the known `expected_bytes` exactly, including zero;
+unknown sizes reserve their bounded limit (256 MiB by default). Each Project
+still permits at most 32 active uploads and 512 MiB of reserved bytes. When a new
+upload would exceed either quota, the Runner checks its bounded reservation
+index, removes upload pairs idle for at least 24 hours, and recalculates usage
+under the upload lock. It does not recursively scan the Project or start a
+background task. Recent chunk writes keep an upload live; unreadable or
+inconsistent recovery evidence fails closed. Successful finish/abort releases
+reservations after cleanup. An uncertain transport result never authorizes a
+replay. Existing reservations recover with their original limits and unchanged
+record format. For older Runners the Server sends a minimum one-byte limit for
+empty files; current Runners reserve zero bytes for `expected_bytes=0`.
+Finish or abort these zero-byte reservations before downgrading to a Runner that
+requires positive persisted limits.
+
 The lower-level `read_project_artifact_metadata` and `read_project_artifact_chunk`
 tools remain operator/gateway primitives. The legacy `export_project_artifact`
 compatibility tool has been removed; complete host delivery is exposed only as

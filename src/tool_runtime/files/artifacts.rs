@@ -894,7 +894,9 @@ impl ToolRuntime {
             "expected_sha256": expected_sha256,
             "mime_type": mime_type,
             "overwrite": overwrite.unwrap_or(false),
-            "max_bytes": MAX_PROJECT_ARTIFACT_UPLOAD_BYTES,
+            // Older Runners require a positive wire limit, including for empty files.
+            // Current Runners reserve expected_bytes exactly, including zero.
+            "max_bytes": expected_bytes.unwrap_or(MAX_PROJECT_ARTIFACT_UPLOAD_BYTES).max(1),
         });
         self.run_project_artifact_write_file_op(
             project,

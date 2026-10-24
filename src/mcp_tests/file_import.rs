@@ -348,10 +348,7 @@ async fn complete_mcp_import_save(
     assert!(begin.get("download_url").is_none());
     assert!(begin.get("download_link").is_none());
     assert!(begin.get("openaiFileIdRefs").is_none());
-    assert_eq!(
-        begin["max_bytes"],
-        crate::tool_runtime::files::MAX_PROJECT_ARTIFACT_UPLOAD_BYTES
-    );
+    assert_eq!(begin["max_bytes"], expected_bytes.len().max(1));
     assert_eq!(begin["expected_bytes"], expected_bytes.len());
     let path = begin["path"].as_str().unwrap().to_string();
     let mime_type = begin["mime_type"].as_str().unwrap().to_string();
@@ -370,7 +367,7 @@ async fn complete_mcp_import_save(
                     "next_offset": 0,
                     "expected_bytes": expected_bytes.len(),
                     "expected_sha256": null,
-                    "max_bytes": crate::tool_runtime::files::MAX_PROJECT_ARTIFACT_UPLOAD_BYTES,
+                    "max_bytes": expected_bytes.len(),
                     "mime_type": mime_type,
                     "committed": false
                 })
@@ -421,7 +418,7 @@ async fn complete_mcp_import_save(
                                 "next_offset": bytes.len(),
                                 "expected_bytes": expected_bytes.len(),
                                 "expected_sha256": null,
-                                "max_bytes": crate::tool_runtime::files::MAX_PROJECT_ARTIFACT_UPLOAD_BYTES,
+                                "max_bytes": expected_bytes.len(),
                                 "mime_type": mime_type,
                                 "committed": false
                             })

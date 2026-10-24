@@ -610,13 +610,13 @@ async fn artifact_upload_tools_route_to_agent_file_ops() {
     assert_eq!(payload["expected_sha256"], expected_sha256);
     assert_eq!(payload["mime_type"], "application/zip");
     assert_eq!(payload["overwrite"], false);
-    assert_eq!(payload["max_bytes"], MAX_PROJECT_ARTIFACT_UPLOAD_BYTES);
+    assert_eq!(payload["max_bytes"], 5);
     complete_patch_agent_request(
         &runtime,
         "artifact-upload",
         &req.request_id,
         0,
-        r#"{"path":"artifacts/imports/sample.zip","upload_id":"wc_upload_test_1","received_bytes":0,"next_offset":0,"expected_bytes":5,"expected_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","max_bytes":268435456,"mime_type":"application/zip","committed":false}"#,
+        r#"{"path":"artifacts/imports/sample.zip","upload_id":"wc_upload_test_1","received_bytes":0,"next_offset":0,"expected_bytes":5,"expected_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","max_bytes":5,"mime_type":"application/zip","committed":false}"#,
         "",
     )
     .await;
@@ -660,7 +660,7 @@ async fn artifact_upload_tools_route_to_agent_file_ops() {
         "artifact-upload",
         &req.request_id,
         0,
-        r#"{"path":"artifacts/imports/sample.zip","upload_id":"wc_upload_test_1","received_bytes":5,"next_offset":5,"expected_bytes":5,"expected_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","max_bytes":268435456,"mime_type":"application/zip","committed":false}"#,
+        r#"{"path":"artifacts/imports/sample.zip","upload_id":"wc_upload_test_1","received_bytes":5,"next_offset":5,"expected_bytes":5,"expected_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","max_bytes":5,"mime_type":"application/zip","committed":false}"#,
         "",
     )
     .await;
@@ -910,5 +910,57 @@ async fn project_artifact_mcp_only_delivery_modes_fail_closed_outside_mcp() {
         assert_eq!(result.output["error_kind"], "unsupported_transport");
         assert_eq!(result.output["required_transport"], "mcp");
         assert_eq!(result.output["action"], action.as_str());
+    }
+}
+
+#[tokio::test]
+async fn artifact_upload_begin_bounds_known_empty_and_unknown_wire_sizes() {
+    let runtime = runtime_with_agent_project("artifact-upload-sizes");
+    register_agent(
+        &runtime,
+        "artifact-upload-sizes",
+        None,
+        RunnerCapabilities {
+            file_write: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    for (expected, limit) in [
+        (Some(8192), 8192),
+        (Some(0), 1),
+        (None, MAX_PROJECT_ARTIFACT_UPLOAD_BYTES),
+    ] {
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                runtime
+                    .artifact_upload_begin(
+                        agent_test_project_id("artifact-upload-sizes"),
+                        "artifacts/size.bin".to_string(),
+                        expected,
+                        None,
+                        None,
+                        Some(false),
+                    )
+                    .await
+            }
+        });
+        let request = wait_for_patch_agent_request(&runtime, "artifact-upload-sizes").await;
+        let payload: serde_json::Value =
+            serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["expected_bytes"], json!(expected));
+        assert_eq!(payload["max_bytes"], limit);
+        complete_patch_agent_request(
+            &runtime,
+            "artifact-upload-sizes",
+            &request.request_id,
+            0,
+            &json!({"path":"artifacts/size.bin", "upload_id":"wc_upload_size", "committed":false})
+                .to_string(),
+            "",
+        )
+        .await;
+        assert!(task.await.unwrap().success);
     }
 }

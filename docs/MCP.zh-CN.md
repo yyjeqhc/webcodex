@@ -555,6 +555,17 @@ Rust/Go 构建使用当前 `project_build`；项目级验证不会执行修改�
   URI 本身不是独立 bearer authority；export handle 只是短期、process-local 的
   presentation state，现有大小、MIME、路径与 authorization 边界继续生效。
 
+Artifact 上传按已知 `expected_bytes` 精确预留，零字节也合法；大小未知时预留
+有界上限（默认 256 MiB）。每个 Project 仍最多允许 32 个活动上传和 512 MiB
+预留字节。新上传将超出任一配额时，Runner 在上传锁内检查有界 reservation
+索引，清理至少空闲 24 小时的上传记录和临时文件，再重新计算配额；不会递归扫描
+Project，也不新增后台任务。最近的 chunk 写入会保留上传的有效状态；恢复证据
+不可读或不一致时拒绝继续。Finish/Abort 成功清理后释放预留；传输结果不确定
+不构成重放授权。已有 reservation 沿用原始额度恢复，记录格式不变。为兼容旧
+Runner，Server 对空文件发送最小 1 字节上限；当前 Runner 对
+`expected_bytes=0` 精确预留 0 字节。
+降级到要求持久化额度为正数的旧 Runner 前，应先完成或终止这些零字节上传。
+
 底层 `read_project_artifact_metadata` 与 `read_project_artifact_chunk` 继续作为
 operator/gateway primitive 保留。旧的 `export_project_artifact` compatibility tool 已
 删除；完整 host 交付统一通过 `inspect_project_artifact(action=export)` 暴露。DOCX/PPTX/XLSX

@@ -1247,6 +1247,64 @@ mod tests {
     }
 
     #[test]
+    fn artifact_upload_concurrent_admission_and_completion_preserve_project_quota() {
+        for expected in [Some(8192), None] {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path().join("project");
+            let store = tmp.path().join("registry");
+            std::fs::create_dir(&root).unwrap();
+            let count = 16;
+            let barrier = std::sync::Barrier::new(count);
+            let uploads = std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..count).map(|index| {
+                    let (root, store, barrier) = (&root, &store, &barrier);
+                    scope.spawn(move || {
+                        let path = format!("set-{index}/file.bin");
+                        barrier.wait();
+                        let result = run_artifact_request_with_store(root, store,
+                            "file_artifact_upload_begin", &path,
+                            json!({"expected_bytes": expected, "max_bytes": MAX_ARTIFACT_UPLOAD_BYTES}));
+                        (path, result)
+                    })
+                }).collect();
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().unwrap())
+                    .collect::<Vec<_>>()
+            });
+            let accepted = uploads
+                .iter()
+                .filter(|(_, result)| result.get("error").is_none())
+                .count();
+            assert_eq!(accepted, if expected.is_some() { count } else { 2 });
+            assert_eq!(reservation_file_count(&store), accepted);
+            std::thread::scope(|scope| {
+                for (path, begin) in &uploads {
+                    let Some(id) = begin["upload_id"].as_str() else {
+                        assert!(begin["error"]
+                            .as_str()
+                            .unwrap()
+                            .contains("reserved byte quota exceeded"));
+                        continue;
+                    };
+                    let (root, store) = (&root, &store);
+                    scope.spawn(move || {
+                        let chunk = run_artifact_request_with_store(root, store,
+                            "file_artifact_upload_chunk", path,
+                            json!({"upload_id": id, "offset": 0,
+                                "content_base64": general_purpose::STANDARD.encode(vec![b'x'; 8192])}));
+                        assert_eq!(chunk["received_bytes"], 8192, "{chunk}");
+                        let finish = run_artifact_request_with_store(root, store,
+                            "file_artifact_upload_finish", path, json!({"upload_id": id}));
+                        assert_eq!(finish["committed"], true, "{finish}");
+                    });
+                }
+            });
+            assert_eq!(reservation_file_count(&store), 0);
+        }
+    }
+
+    #[test]
     fn artifact_upload_store_tracks_begin_and_cleans_abort() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("project");

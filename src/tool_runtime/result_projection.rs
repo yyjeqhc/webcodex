@@ -262,6 +262,16 @@ pub(super) fn sparsify_success_model_result_metadata(tool_name: &str, result: &m
     let Some(output) = result.output.as_object_mut() else {
         return;
     };
+    // The typed LSP boundary validated these locations before canonical audit
+    // and Session recording. The caller already owns its exact query; it is
+    // not recovery identity and need not be echoed in the model receipt.
+    if matches!(tool_name, "find_definition" | "find_references")
+        && output.get("locations").is_some_and(Value::is_array)
+    {
+        for key in ["project", "path", "query_position"] {
+            output.remove(key);
+        }
+    }
     output.remove("permission");
     output.remove("session_recorded");
     output.remove("session_event_id");
@@ -288,6 +298,13 @@ pub(super) fn sparsify_failure_model_result_metadata(tool_name: &str, result: &m
     }
     output.remove("session_recorded");
     output.remove("session_event_id");
+    if tool_name == "run_shell" {
+        // Internal classification/timing has already served audit and telemetry.
+        // Keep runtime-selected cwd/shell, lifecycle and all recovery evidence.
+        for key in ["executor", "duration_ms", "purpose", "execution_source"] {
+            output.remove(key);
+        }
+    }
     if matches!(
         tool_name,
         "project_build" | "run_process" | "run_script" | "run_skill_resource"

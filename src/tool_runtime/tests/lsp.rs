@@ -270,7 +270,12 @@ fn document_diagnostics_tool_call_parser_produces_only_typed_fields() {
         json!({"project": "agent:oe:demo", "path": "src/main.rs", "timeout": 30}),
     )
     .unwrap_err();
-    assert!(error.contains("unknown field `timeout`"), "{error}");
+    assert!(error.contains("[field]: unknown field"), "{error}");
+    assert!(
+        error.contains("accepted top-level fields include"),
+        "{error}"
+    );
+    assert!(!error.contains("`timeout`"), "{error}");
 }
 
 async fn register_lsp_agent(

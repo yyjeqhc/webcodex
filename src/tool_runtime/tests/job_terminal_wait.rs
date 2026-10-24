@@ -257,7 +257,19 @@ async fn unauthorized_registration_is_existence_hiding_and_session_window_are_no
     )
     .expect_err("obsolete observation cursors must fail closed instead of being ignored");
     assert!(
-        old_token_error.contains("unknown field `after_observation_token`"),
+        old_token_error.contains("[field]: unknown field"),
+        "{old_token_error}"
+    );
+    assert!(
+        old_token_error.contains("accepted top-level fields include"),
+        "{old_token_error}"
+    );
+    assert!(
+        !old_token_error.contains("after_observation_token"),
+        "{old_token_error}"
+    );
+    assert!(
+        !old_token_error.contains("obsolete-process-local-cursor"),
         "{old_token_error}"
     );
 }

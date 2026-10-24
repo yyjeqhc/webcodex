@@ -903,7 +903,19 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
     )
     .expect_err("caller-controlled completion author must fail closed");
     assert!(
-        forged_author_error.contains("unknown field `author_session_id`"),
+        forged_author_error.contains("[field]: unknown field"),
+        "{forged_author_error}"
+    );
+    assert!(
+        forged_author_error.contains("accepted top-level fields include"),
+        "{forged_author_error}"
+    );
+    assert!(
+        !forged_author_error.contains("author_session_id"),
+        "{forged_author_error}"
+    );
+    assert!(
+        !forged_author_error.contains("wc_sess_forged_should_be_ignored"),
         "{forged_author_error}"
     );
 

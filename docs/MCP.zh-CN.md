@@ -490,6 +490,24 @@ Adaptive Runtime 可以把常用工具直接暴露，把 long-tail 工具通过 
 
 ### 长任务使用 Job lifecycle
 
+普通 Job 观察保留一个可跨服务重启使用的 observation token，不再同时输出可能因
+进程重启或缓存淘汰而失效的 observation ref。无日志游标的交接 token 表示首次
+baseline，不代表日志重置；真正的日志代次变化和历史丢失仍保留 reset/retention
+证据。生命周期或退出码已表达的通用 running activity 和普通命令结果摘要省略；
+验证证据和有用的阶段变化继续保留。
+
+process、script、shell 在受理时同时考虑工具上限和 Runner 最近注册的超时策略。
+仅被截断且仍在后台的交接结果增加一行，例如
+`timeout: 3600s (requested 99999; capped by runner policy)`；快速结束的命令不增加
+说明。Runner 仍执行其当前策略。detached 保留 native argv 和按键恢复语义；虚拟
+环境训练应直接调用该环境的 Python 路径，而不是 `sh -c`。
+
+CLI 文本将文档符号显示为标识符位置和嵌套子项，将 Job/Project 清单与搜索文件/
+计数结果按行显示，并合并单 Job 的等待和更新信息。Rust 文档符号现在等待索引
+就绪，LSP 客户端声明支持层级符号。明确指定的文件行范围读完后不再建议越界续读；
+确实被截断的读取仍提供带快照版本约束的后续调用。同步 process/script/shell 输出
+每个流最多显示 200 行，保留截断标记，并说明如何将后续执行的完整输出写入项目文件。
+
 Stateless MCP 2026 的执行工具可通过 `_wc.compact_execution=true` 显式启用紧凑执行结果。
 它将稳定的 `output.execution` 控制事实与 `output.details` 分开（`observe_jobs`
 按条目处理），同时保留日志、恢复和协作义务。只有 `outcome=passed` 才能证明执行成功；

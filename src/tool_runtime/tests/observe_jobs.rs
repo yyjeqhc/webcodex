@@ -664,7 +664,7 @@ fn observe_jobs_compact_projection_single_running_unchanged_keeps_actionable_sta
     assert!(projected.output["wait"].get("waited_ms").is_none());
     let item = &projected.output["items"][0];
     assert_eq!(item["job_id"], "job-unchanged");
-    assert_eq!(item["project"], "agent:special:observe-kernel-projection");
+    assert!(item.get("project").is_none());
     assert_eq!(item["status"], "running");
     assert_eq!(item["terminal"], false);
     assert_eq!(item["changed"], false);
@@ -672,10 +672,7 @@ fn observe_jobs_compact_projection_single_running_unchanged_keeps_actionable_sta
     assert_eq!(item["observation_token"], token);
     assert!(item.get("continuation_semantics").is_none());
     assert!(projected.output.get("continuation_semantics").is_none());
-    assert_eq!(
-        item["activity"],
-        serde_json::to_value(process_activity()).unwrap()
-    );
+    assert!(item.get("activity").is_none());
     for omitted in [
         "index",
         "success",
@@ -762,10 +759,7 @@ async fn observe_jobs_kernel_model_surface_applies_compact_projection() {
     assert!(item["observation_token"]
         .as_str()
         .is_some_and(|token| !token.is_empty()));
-    assert_eq!(
-        item["activity"],
-        serde_json::to_value(process_activity()).unwrap()
-    );
+    assert!(item.get("activity").is_none());
     assert!(item.get("output").is_none());
     assert!(item.get("success").is_none());
 
@@ -1169,7 +1163,7 @@ async fn observe_jobs_inaccessible_and_unknown_items_are_indistinguishable() {
 }
 
 #[tokio::test]
-async fn observe_jobs_compact_ref_roundtrips_and_survives_model_projection() {
+async fn observe_jobs_ref_roundtrips_but_model_keeps_restart_safe_token() {
     let runtime = test_runtime();
     let (job_id, request, auth) =
         register_and_start_agent_job(&runtime, "observe-ref-roundtrip").await;
@@ -1205,7 +1199,13 @@ async fn observe_jobs_compact_ref_roundtrips_and_survives_model_projection() {
         .is_some());
 
     let projected = compact_projection(&first);
-    assert_eq!(projected.output["items"][0]["observation_ref"], first_ref);
+    assert!(projected.output["items"][0]
+        .get("observation_ref")
+        .is_none());
+    assert_eq!(
+        projected.output["items"][0]["observation_token"],
+        first.output["items"][0]["output"]["observation_token"]
+    );
 
     let second = runtime
         .observe_jobs_for_auth(

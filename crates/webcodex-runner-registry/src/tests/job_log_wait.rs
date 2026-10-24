@@ -1018,6 +1018,46 @@ async fn agent_job_log_observation_is_baseline_then_independent_deltas() {
 }
 
 #[tokio::test]
+async fn cursorless_handoff_token_is_first_baseline_observation() {
+    for log in [None, Some("hello\n")] {
+        let registry = RunnerRegistry::default();
+        let job = start_wait_job(&registry).await;
+        registry
+            .update_job(wait_job_update(
+                "inst-wait",
+                &job.job_id,
+                1,
+                "running",
+                log,
+                false,
+            ))
+            .await
+            .unwrap();
+
+        let lifecycle = registry
+            .get_job(&job.job_id)
+            .await
+            .expect("job lifecycle view");
+        let token = lifecycle.observation_token.expect("baseline token");
+        let parsed = crate::job_observation::JobObservationToken::parse(&token).unwrap();
+        assert!(parsed.requires_baseline());
+
+        let (_, stdout, stderr, _, _, observation) = registry
+            .job_log_for_auth(None, &job.job_id, None, None, Some(10), Some(&token), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            observation.log_delta_status,
+            crate::job_observation::JobLogDeltaStatus::Baseline
+        );
+        assert!(!observation.stdout_delta_reset);
+        assert_eq!(stdout.as_deref(), Some(log.unwrap_or("")));
+        assert!(!observation.stderr_delta_reset);
+        assert_eq!(stderr.as_deref(), Some(""));
+    }
+}
+
+#[tokio::test]
 async fn agent_job_log_replays_partial_lines_until_each_stream_completes() {
     let registry = RunnerRegistry::default();
     let job = start_wait_job(&registry).await;

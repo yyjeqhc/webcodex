@@ -533,6 +533,7 @@ fn write_result(
     let external_uri = "file:///usr/lib/rustlib/src/rust/library/core/src/lib.rs";
     let body = match method {
         "textDocument/documentSymbol" => match behavior {
+            "symbols_empty" => "[]".to_string(),
             "symbol_information" => format!(
                 r#"[{{"name":"main","kind":12,"location":{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}}}}]"#
             ),

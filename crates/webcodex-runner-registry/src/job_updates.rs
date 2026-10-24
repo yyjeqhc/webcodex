@@ -284,9 +284,14 @@ fn frozen_shell_job_log_projection(
         after.is_none_or(|token| token.matches_parent(&job.job_id, &job.observation.epoch));
     let base_mode = match after {
         None => webcodex_core::job_observation::JobLogSelectionMode::Baseline,
-        Some(token) if token.requires_baseline() || !epoch_matches => {
-            webcodex_core::job_observation::JobLogSelectionMode::Reset
+        // A cursor-less token is the lifecycle/initial handoff token. It proves
+        // the exact Job but carries no claimed log receipt, so the next detail
+        // observation is a first baseline rather than a recovery reset. Only an
+        // epoch mismatch means that previously observed log state may be lost.
+        Some(token) if epoch_matches && token.requires_baseline() => {
+            webcodex_core::job_observation::JobLogSelectionMode::Baseline
         }
+        Some(_) if !epoch_matches => webcodex_core::job_observation::JobLogSelectionMode::Reset,
         Some(token) => webcodex_core::job_observation::JobLogSelectionMode::Delta {
             cursor: token
                 .stdout_cursor
@@ -295,9 +300,10 @@ fn frozen_shell_job_log_projection(
     };
     let stderr_mode = match after {
         None => webcodex_core::job_observation::JobLogSelectionMode::Baseline,
-        Some(token) if token.requires_baseline() || !epoch_matches => {
-            webcodex_core::job_observation::JobLogSelectionMode::Reset
+        Some(token) if epoch_matches && token.requires_baseline() => {
+            webcodex_core::job_observation::JobLogSelectionMode::Baseline
         }
+        Some(_) if !epoch_matches => webcodex_core::job_observation::JobLogSelectionMode::Reset,
         Some(token) => webcodex_core::job_observation::JobLogSelectionMode::Delta {
             cursor: token
                 .stderr_cursor

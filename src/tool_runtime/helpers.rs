@@ -766,7 +766,7 @@ pub(crate) fn command_failed_message(
         .map(|code| code.to_string())
         .unwrap_or_else(|| "unknown".to_string());
     format!(
-        "Command exited with status {}.\nNo files were modified by WebCodex itself; command side effects, if any, are from the invoked command.\nstdout_tail:\n{}\nstderr_tail:\n{}\nRetry guidance: inspect stderr/stdout above, then fix the reported issue or use a narrower tool.",
+        "Command exited with status {}.\nstdout_tail:\n{}\nstderr_tail:\n{}\n",
         status, stdout_tail, stderr_tail
     )
 }

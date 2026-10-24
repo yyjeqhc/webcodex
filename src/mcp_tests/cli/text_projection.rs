@@ -214,7 +214,7 @@ fn cli_edits_preserve_revision_conflicts_and_bulk_warnings() {
 
 #[test]
 fn cli_execution_log_pointer_targets_visible_text() {
-    for tool in ["run_shell", "run_process"] {
+    for tool in ["run_shell", "run_process", "run_script"] {
         let mut body = json!({"result":{"structuredContent":{"success":false,"error":"Command failed. Logs: see output.stdout_tail and output.stderr_tail.","output":{"execution_state":"completed","exit_code":1,"failure_kind":"command_exit_nonzero","stdout_tail":"","stderr_tail":"拒绝访问"}},"content":[]}});
         crate::mcp::cli::project_response(Some(tool), &mut body);
         assert_snapshot(&format!("{tool}_failure_logs"), &body);
@@ -276,7 +276,7 @@ fn cli_ordinary_success_and_empty_snapshots() {
         (
             "shell_compact_success",
             "run_shell",
-            json!({"command_summary":"python heredoc","cwd":".","shell":"sh","stdout_tail":"wrote file\n"}),
+            json!({"stdout_tail":"wrote file\n"}),
         ),
         (
             "files_empty",
@@ -296,4 +296,116 @@ fn cli_ordinary_success_and_empty_snapshots() {
     ] {
         assert_snapshot(name, &project(tool, true, output));
     }
+}
+
+#[test]
+fn cli_document_symbols_use_identifier_positions_and_preserve_hierarchy_and_loss() {
+    let symbol = |name: &str, kind: &str, line, column| {
+        json!({
+            "name":name, "kind":kind, "kind_code":12,
+            "range":{"start":{"line":line,"column":1},"end":{"line":line+3,"column":2}},
+            "selection_range":{"start":{"line":line,"column":column},"end":{"line":line,"column":column+3}},
+            "children":[]
+        })
+    };
+    let mut parent = symbol("Task", "enum", 10, 6);
+    parent["children"] = json!([symbol("Ready", "enum_member", 11, 5)]);
+    let output = json!({"project":"p", "path":"src/lib.rs", "language":"rust",
+        "symbols":[parent, symbol("resolve_default_project", "function", 31, 15)],
+        "total_count":3,"returned_count":3,"truncated":false,
+        "invalid_results_omitted":0,"external_results_omitted":0});
+    let body = project("list_document_symbols", true, output.clone());
+    assert_eq!(text(&body), "src/lib.rs\n10:6 enum Task\n  11:5 enum_member Ready\n31:15 function resolve_default_project\n");
+    let mut incomplete = output;
+    incomplete["truncated"] = json!(true);
+    incomplete["invalid_results_omitted"] = json!(1);
+    let body = project("list_document_symbols", true, incomplete);
+    assert!(text(&body).contains("truncated: true"));
+    assert!(text(&body).contains("invalid_results_omitted: 1"));
+}
+
+#[test]
+fn cli_single_observation_combines_wait_without_hiding_reset_or_timeout() {
+    for outcome in ["updated", "timeout", "terminal"] {
+        let body = project(
+            "observe_jobs",
+            true,
+            json!({"items":[{
+            "job_id":"job", "status": if outcome == "terminal" {"completed"} else {"running"},
+            "terminal":outcome == "terminal", "changed":true,"meaningful_changed":true,
+            "heartbeat_changed":false,"log_delta_status":"reset","stdout_delta_reset":true,
+            "observation_token":"token"
+        }],"wait":{"outcome":outcome,"waited_ms":267,"update_kind":"meaningful"}}),
+        );
+        let rendered = text(&body);
+        assert!(!rendered.contains("wait:"));
+        assert!(rendered.contains("log_delta_status: reset"));
+        if outcome == "terminal" {
+            assert!(!rendered.contains("updates:"));
+        } else {
+            assert!(rendered.contains("updates: meaningful (waited 267ms)"));
+        }
+        assert_eq!(
+            rendered.contains("wait deadline reached"),
+            outcome == "timeout"
+        );
+    }
+}
+
+#[test]
+fn cli_compact_inventories_search_and_explicit_reads_keep_useful_evidence() {
+    let jobs = project(
+        "list_jobs",
+        true,
+        json!({"jobs":[{"job_id":"j1","status":"running",
+        "kind":"shell", "command_summary":"python train.py", "created_at":1,"exit_code":null,
+        "recovery_reason_code":"reconciling"}],"count":1}),
+    );
+    assert!(text(&jobs).contains("j1 | running | python train.py"));
+    assert!(text(&jobs).contains("reconciling"));
+    assert!(!text(&jobs).contains("null"));
+    for files in [
+        json!(["a.rs", "b.rs"]),
+        json!([{"path":"a.rs","count":2},{"path":"b.rs","count":3}]),
+    ] {
+        let body = project(
+            "search_project_texts",
+            true,
+            json!({"files":files,"truncated":true}),
+        );
+        assert!(!text(&body).contains("[0]"));
+        assert!(text(&body).contains("a.rs"));
+        assert!(text(&body).contains("truncated: true"));
+    }
+    let read = project(
+        "read_files",
+        true,
+        json!({"items":[{"index":0,"path":"a.rs","success":true,"error":null,
+        "output":{"text":"two","start_line":2,"end_line":2,"read_revision":9,"total_lines":20,
+        "returned_lines":1,"limit":1,"has_more":true,"next_start_line":3,"truncated":false}}]}),
+    );
+    assert_eq!(
+        text(&read),
+        "==> a.rs:2-2 (read_revision 9)\ntwo\ntotal_lines: 20\n"
+    );
+    let clean = project(
+        "read_workspace_changes",
+        true,
+        json!({"clean":true,"suggested_next_actions":["no action needed"],
+        "verdict":{"status":"pass","blocking":false,"blocking_reasons":[],"warning_reasons":[],"suggested_next_actions":["no action needed"]}}),
+    );
+    assert_eq!(text(&clean), "Workspace clean.\n");
+}
+
+#[test]
+fn cli_missing_file_uses_one_path_and_one_reason() {
+    let body = project(
+        "read_files",
+        true,
+        json!({"project":"p", "requested_count":1,
+        "returned_count":1,"succeeded_count":0,"failed_count":1,"output_truncated":false,"next_index":null,
+        "items":[{"index":0,"path":"missing.rs","success":false,"error":"read_file failed: not_found",
+            "output":{"path":"missing.rs","error_kind":"read_file_failed","reason_code":"not_found","state_changed":false}}]}),
+    );
+    assert_eq!(text(&body), "missing.rs: read_file failed: not_found\n");
 }

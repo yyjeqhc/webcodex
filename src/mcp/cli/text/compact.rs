@@ -22,7 +22,7 @@ fn take(value: &mut Value, key: &str) -> Option<Value> {
     value.as_object_mut()?.remove(key)
 }
 
-fn one_line(value: &Value) -> String {
+pub(super) fn one_line(value: &Value) -> String {
     match value.as_str() {
         Some(s) if !s.chars().any(char::is_control) => s.to_owned(),
         _ => value.to_string(),
@@ -93,6 +93,71 @@ pub(super) fn locations(text: &mut String, mut output: Value) {
     render_fields(text, &output);
 }
 
+/// The declaration span remains in the canonical typed Runner result. The
+/// model's next navigation action needs the identifier selection, with nesting.
+pub(super) fn symbols(text: &mut String, mut output: Value) {
+    fn valid(symbol: &Value) -> bool {
+        symbol["name"].is_string()
+            && symbol["kind"].is_string()
+            && range(&symbol["selection_range"]).is_some()
+            && symbol
+                .get("children")
+                .is_none_or(|v| v.as_array().is_some_and(|a| a.iter().all(valid)))
+    }
+    fn emit(text: &mut String, mut symbol: Value, depth: usize) -> usize {
+        let start = &symbol["selection_range"]["start"];
+        let _ = writeln!(
+            text,
+            "{}{}:{} {} {}",
+            "  ".repeat(depth.min(32)),
+            start["line"],
+            start["column"],
+            one_line(&symbol["kind"]),
+            one_line(&symbol["name"])
+        );
+        let children = take(&mut symbol, "children");
+        remove(
+            &mut symbol,
+            &["name", "kind", "kind_code", "range", "selection_range"],
+        );
+        // Signature/detail is meaningful when the server supplies it.
+        render_fields(text, &symbol);
+        1 + children
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|child| emit(text, child, depth + 1))
+            .sum::<usize>()
+    }
+    let Some(symbols) = output["symbols"].as_array().filter(|a| a.iter().all(valid)) else {
+        render_fields(text, &output);
+        return;
+    };
+    if symbols.is_empty() {
+        text.push_str("No symbols.\n");
+    }
+    if let Some(path) = output.get("path") {
+        let _ = writeln!(text, "{}", one_line(path));
+    }
+    let count: usize = take(&mut output, "symbols")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .cloned()
+        .map(|symbol| emit(text, symbol, 0))
+        .sum();
+    remove(&mut output, &["project", "path", "language"]);
+    for key in ["returned_count", "total_count"] {
+        omit_equal(&mut output, key, json!(count));
+    }
+    omit_equal(&mut output, "truncated", json!(false));
+    for key in ["external_results_omitted", "invalid_results_omitted"] {
+        omit_equal(&mut output, key, json!(0));
+    }
+    render_fields(text, &output);
+}
+
 pub(super) fn files(text: &mut String, mut output: Value) {
     let Some(entries) = output["entries"].as_array() else {
         render_fields(text, &output);
@@ -143,6 +208,26 @@ pub(super) fn files(text: &mut String, mut output: Value) {
 }
 
 pub(super) fn execution(text: &mut String, mut output: Value) {
+    if output.as_object().is_some_and(|fields| {
+        fields.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "stdout_tail" | "stderr_tail" | "stdout_truncated" | "stderr_truncated"
+            )
+        })
+    }) && output["stdout_tail"].is_string()
+        && output.get("stderr_tail").is_none_or(|v| v == "")
+        && ["stdout_truncated", "stderr_truncated"]
+            .iter()
+            .all(|key| output.get(key).is_none_or(|v| v == false))
+    {
+        let stdout = output["stdout_tail"].as_str().unwrap();
+        text.push_str(stdout);
+        if !stdout.is_empty() && !stdout.ends_with('\n') {
+            text.push('\n');
+        }
+        return;
+    }
     // Present lifecycle literally, including outcome_unknown and pending. This
     // renderer never decides whether an execution may be retried.
     // Drop lifecycle echoes only when the producer's facts agree. Uncertain,
@@ -150,7 +235,7 @@ pub(super) fn execution(text: &mut String, mut output: Value) {
     if output["execution_state"] == "completed"
         && output["command_started"] == true
         && output["command_completed"] == true
-        && output["terminal"] == true
+        && output.get("terminal").is_none_or(|v| v == true)
         && output["promoted_to_job"] == false
         && output["job_id"].is_null()
         && matches!(
@@ -202,6 +287,15 @@ pub(super) fn execution(text: &mut String, mut output: Value) {
             );
         }
     }
+    if output["status"] == "completed" {
+        omit_equal(&mut output, "command_execution_state", json!("completed"));
+    }
+    if matches!(
+        output["log_delta_status"].as_str(),
+        Some("baseline" | "delta" | "unchanged")
+    ) {
+        remove(&mut output, &["log_delta_status"]);
+    }
     let mut header = Vec::new();
     for key in [
         "job_id",
@@ -245,6 +339,54 @@ pub(super) fn execution(text: &mut String, mut output: Value) {
 }
 
 pub(super) fn jobs(text: &mut String, mut output: Value) {
+    if output["items"]
+        .as_array()
+        .is_some_and(|items| items.len() == 1)
+        && output["items"][0].get("output").is_none()
+        && matches!(
+            output["wait"]["outcome"].as_str(),
+            Some("immediate" | "updated" | "terminal" | "timeout")
+        )
+        && output["wait"].as_object().is_some_and(|wait| {
+            wait.keys()
+                .all(|k| matches!(k.as_str(), "outcome" | "waited_ms" | "update_kind"))
+        })
+    {
+        let item = &output["items"][0];
+        if let (Some(changed), Some(meaningful), Some(heartbeat)) = (
+            item["changed"].as_bool(),
+            item["meaningful_changed"].as_bool(),
+            item["heartbeat_changed"].as_bool(),
+        ) {
+            if changed == (meaningful || heartbeat) {
+                let wait = &output["wait"];
+                let outcome = wait["outcome"].as_str().unwrap();
+                let waited = wait["waited_ms"].as_u64().unwrap_or(0);
+                if outcome != "terminal" {
+                    let label = if meaningful {
+                        "meaningful"
+                    } else if heartbeat {
+                        "heartbeat"
+                    } else {
+                        "none"
+                    };
+                    let _ = write!(text, "updates: {label}");
+                    if waited > 0 {
+                        let _ = write!(text, " (waited {waited}ms)");
+                    }
+                    if outcome == "timeout" {
+                        text.push_str("; wait deadline reached");
+                    }
+                    text.push('\n');
+                }
+                remove(
+                    &mut output["items"][0],
+                    &["changed", "meaningful_changed", "heartbeat_changed"],
+                );
+                remove(&mut output, &["wait"]);
+            }
+        }
+    }
     if let Some(items) = output.get("items").and_then(Value::as_array) {
         let count = items.len();
         if count == 0 {
@@ -308,6 +450,34 @@ pub(super) fn jobs(text: &mut String, mut output: Value) {
 }
 
 pub(super) fn changes(text: &mut String, mut output: Value) {
+    // One copy of the exact actions; preserve every nonempty blocking reason.
+    if output["suggested_next_actions"].is_array()
+        && output["verdict"]["suggested_next_actions"] == output["suggested_next_actions"]
+    {
+        remove(&mut output["verdict"], &["suggested_next_actions"]);
+    }
+    if output["clean"] == true
+        && output["verdict"]["status"] == "pass"
+        && output["verdict"]["blocking"] == false
+        && output["verdict"]["blocking_reasons"] == json!([])
+        && output["verdict"]["warning_reasons"] == json!([])
+    {
+        remove(
+            &mut output["verdict"],
+            &["status", "blocking", "blocking_reasons", "warning_reasons"],
+        );
+        omit_equal(
+            &mut output["verdict"],
+            "suggested_next_actions",
+            json!(["no action needed"]),
+        );
+        omit_equal(&mut output, "verdict", json!({}));
+        omit_equal(
+            &mut output,
+            "suggested_next_actions",
+            json!(["no action needed"]),
+        );
+    }
     if let Some(clean) = output["clean"].as_bool() {
         let _ = writeln!(
             text,
@@ -491,5 +661,82 @@ pub(super) fn edits(text: &mut String, mut output: Value) {
             omit_equal(summary, "changed_files", json!(0));
         }
     }
+    render_fields(text, &output);
+}
+
+/// Inventory rows expose selection identity first, while exceptional authority,
+/// recovery and validation evidence remains in the remaining fields.
+pub(super) fn inventory(text: &mut String, mut output: Value, collection: &str) {
+    let Some(items) = output.get(collection).and_then(Value::as_array) else {
+        render_fields(text, &output);
+        return;
+    };
+    let count = items.len();
+    if count == 0 {
+        let _ = writeln!(text, "No {collection}.");
+    }
+    for mut item in take(&mut output, collection)
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .cloned()
+    {
+        let keys: &[&str] = if collection == "jobs" {
+            &["job_id", "status", "command_summary", "exit_code"]
+        } else {
+            &["project_ref", "id", "name", "path", "agent_status"]
+        };
+        let mut row = Vec::new();
+        for key in keys {
+            if let Some(value) = take(&mut item, key).filter(|v| !v.is_null()) {
+                row.push(one_line(&value));
+            }
+        }
+        let _ = writeln!(text, "{}", row.join(" | "));
+        for key in [
+            "project",
+            "session_id",
+            "started_at",
+            "ended_at",
+            "exit_code",
+            "activity",
+            "command_execution_state",
+            "validation",
+            "build_artifacts",
+            "state_changed",
+            "failure_kind",
+            "recovery_state",
+            "recovery_reason",
+            "recovery_reason_code",
+            "last_update_seq",
+        ] {
+            omit_equal(&mut item, key, Value::Null);
+        }
+        if collection == "jobs" {
+            remove(
+                &mut item,
+                &["created_at", "started_at", "ended_at", "duration_ms"],
+            );
+            omit_equal(&mut item, "command_execution_state", json!("completed"));
+        } else {
+            remove(
+                &mut item,
+                &["agent_project_id", "client_id", "executor", "last_seen"],
+            );
+            for key in ["enabled", "connected"] {
+                omit_equal(&mut item, key, json!(true));
+            }
+            omit_equal(&mut item, "disabled", json!(false));
+            omit_equal(&mut item, "active_jobs", json!(0));
+            omit_equal(&mut item, "description", json!(""));
+        }
+        render_fields(text, &item);
+    }
+    for key in ["count", "matched_count"] {
+        omit_equal(&mut output, key, json!(count));
+    }
+    omit_equal(&mut output, "truncated", json!(false));
+    omit_equal(&mut output, "recommended_for_smoke", json!([]));
     render_fields(text, &output);
 }

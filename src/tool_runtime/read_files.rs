@@ -419,7 +419,23 @@ pub(crate) fn add_actionable_read_continuations(
     let truncated = output.get("output_truncated").and_then(Value::as_bool) == Some(true);
     let mut next_items = returned
         .iter()
-        .filter_map(read_range_next_item)
+        .filter_map(|item| {
+            let mut next = read_range_next_item(item)?;
+            let original = original_items.get(item["index"].as_u64()? as usize)?;
+            if original.limit.is_some() {
+                let end = webcodex_workspace::file_read_range::EffectiveRange::new(
+                    original.start_line,
+                    original.limit,
+                )
+                .end_line();
+                let start = next.start_line?;
+                if start > end {
+                    return None;
+                }
+                next.limit = Some(next.limit?.min(end - start + 1));
+            }
+            Some(next)
+        })
         .collect::<Vec<_>>();
     let mut next_budget = *max_result_bytes;
     if truncated {

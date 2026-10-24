@@ -30,6 +30,50 @@ pub(crate) struct StructuredExecutionBudget {
     pub(crate) sync_wait_secs: u64,
 }
 
+/// Resolve the last-registered machine ceiling before dispatch. The Runner
+/// still enforces its live policy; this can only narrow the tool budget.
+/// The notice is presentation data, never a parsed execution contract.
+pub(crate) async fn apply_runner_timeout_cap(
+    registry: &RunnerRegistry,
+    client_id: &str,
+    auth: Option<&AuthContext>,
+    requested_timeout_secs: Option<u64>,
+    mut budget: StructuredExecutionBudget,
+) -> (StructuredExecutionBudget, Option<String>) {
+    let requested = requested_timeout_secs.unwrap_or(STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS);
+    let policy_max = registry
+        .get_runner_view_for_auth(
+            client_id,
+            crate::runner_http::runner_access_from_auth(auth).as_ref(),
+        )
+        .await
+        .and_then(|view| view.policy.map(|policy| policy.max_timeout_secs.max(1)));
+    let source = if policy_max.is_some_and(|max| max <= budget.effective_timeout_secs) {
+        "runner policy"
+    } else {
+        "tool limit"
+    };
+    if let Some(max) = policy_max {
+        budget.effective_timeout_secs = budget.effective_timeout_secs.min(max);
+        budget.sync_wait_secs = budget.sync_wait_secs.min(budget.effective_timeout_secs);
+    }
+    let notice = (budget.effective_timeout_secs < requested).then(|| {
+        format!(
+            "{}s (requested {requested}; capped by {source})",
+            budget.effective_timeout_secs
+        )
+    });
+    (budget, notice)
+}
+
+pub(crate) fn add_timeout_cap_notice(result: &mut ToolResult, notice: Option<String>) {
+    if result.success && result.output["terminal"] == false {
+        if let Some(notice) = notice {
+            result.output["timeout"] = json!(notice);
+        }
+    }
+}
+
 impl StructuredExecutionBudget {
     pub(crate) fn resolve_process(timeout_secs: Option<u64>) -> Result<Self, String> {
         Self::resolve_with_timeout_max(timeout_secs, None, PROCESS_TIMEOUT_MAX_SECS)

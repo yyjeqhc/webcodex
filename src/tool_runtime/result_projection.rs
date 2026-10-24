@@ -183,8 +183,8 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
     }
 }
 
-/// Shell context is runtime-selected, so it is not redundant with the request.
-/// Only a proven ordinary synchronous terminal result may lose lifecycle facts.
+/// Only a proven ordinary synchronous terminal result may lose lifecycle and
+/// request echoes. Remote execution retains its selected target context.
 fn sparsify_terminal_shell_success(result: &mut ToolResult) {
     if result.error.is_some()
         || !ExecutionOutcomeFacts::from_result(result).is_terminal_command_success()
@@ -239,6 +239,13 @@ fn sparsify_terminal_shell_success(result: &mut ToolResult) {
         "execution_source",
     ] {
         output.remove(key);
+    }
+    for key in ["command_summary", "purpose"] {
+        output.remove(key);
+    }
+    if output.get("ssh_resource").is_none_or(Value::is_null) {
+        output.remove("cwd");
+        output.remove("shell");
     }
     // Availability cannot change continuation once this execution is terminal.
     if output
@@ -298,6 +305,40 @@ pub(super) fn sparsify_failure_model_result_metadata(tool_name: &str, result: &m
     }
     output.remove("session_recorded");
     output.remove("session_event_id");
+    if matches!(tool_name, "run_shell" | "run_process" | "run_script")
+        && output.get("execution_state").and_then(Value::as_str) == Some("completed")
+        && output.get("failure_kind").and_then(Value::as_str) == Some("command_exit_nonzero")
+        && output.get("command_completed").and_then(Value::as_bool) == Some(true)
+        && output.get("command_started").and_then(Value::as_bool) == Some(true)
+        && output.get("terminal").and_then(Value::as_bool) == Some(true)
+        && output.get("promoted_to_job").and_then(Value::as_bool) == Some(false)
+        && output.get("tool_failure").and_then(Value::as_bool) == Some(false)
+        && output.get("job_id").is_none_or(Value::is_null)
+        && output.get("job_status").is_none_or(Value::is_null)
+        && output.get("observation_token").is_none_or(Value::is_null)
+        && [
+            "continuation",
+            "recovery",
+            "recovery_state",
+            "recovery_reason_code",
+            "suggested_call",
+        ]
+        .iter()
+        .all(|key| output.get(*key).is_none_or(Value::is_null))
+    {
+        for key in [
+            "async_handoff_available",
+            "effective_timeout_secs",
+            "sync_wait_secs",
+            "command_summary",
+            "terminal",
+            "job_id",
+            "job_status",
+            "observation_token",
+        ] {
+            output.remove(key);
+        }
+    }
     if tool_name == "run_shell" {
         // Internal classification/timing has already served audit and telemetry.
         // Keep runtime-selected cwd/shell, lifecycle and all recovery evidence.

@@ -162,7 +162,6 @@ fn shell_success_preserves_selected_context_output_loss_and_sidecars() {
     project("run_shell", &mut result);
     assert_shell_schema(&result);
     for key in [
-        "command_summary",
         "cwd",
         "shell",
         "manage_ssh_resource",
@@ -171,7 +170,6 @@ fn shell_success_preserves_selected_context_output_loss_and_sidecars() {
         "stdout_lines",
         "stderr_lines",
         "stdout_truncated",
-        "purpose",
     ] {
         assert_eq!(result.output[key], before[key], "{key}");
     }
@@ -267,13 +265,7 @@ fn shell_sparse_schema_rejects_lifecycle_fragments() {
     assert_shell_schema(&result);
     let schema = crate::tool_runtime::registry::output_schema_for_tool("run_shell");
     for key in ["shell", "cwd", "command_summary"] {
-        let mut wire = serde_json::to_value(&result).unwrap();
-        wire["output"].as_object_mut().unwrap().remove(key);
-        assert!(
-            crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&wire, &schema)
-                .is_err(),
-            "{key}"
-        );
+        assert!(result.output.get(key).is_none(), "local request echo {key}");
     }
     for (key, value) in [
         ("exit_code", json!(1)),
@@ -342,4 +334,75 @@ fn shell_pending_and_terminal_failures_keep_their_existing_model_contracts() {
         assert_eq!(serde_json::to_value(&result).unwrap(), before);
         assert_shell_schema(&result);
     }
+}
+
+#[test]
+fn execution_tail_bound_keeps_failure_and_loss_evidence_without_duplicate_full_logs() {
+    let stdout = (0..210)
+        .map(|i| format!("stdout-{i:03}\n"))
+        .collect::<String>();
+    let stderr = (0..205)
+        .map(|i| format!("stderr-{i:03}\n"))
+        .collect::<String>();
+    for name in ["run_shell", "run_process", "run_script"] {
+        let mut result = ToolResult::err_with_output(
+            crate::tool_runtime::helpers::command_failed_message(Some(9), &stdout, &stderr),
+            json!({"execution_state":"completed","command_started":true,"command_completed":true,
+                "failure_kind":"command_exit_nonzero","exit_code":9,"stdout_tail":stdout,"stderr_tail":stderr}),
+        );
+        project(name, &mut result);
+        for stream in ["stdout", "stderr"] {
+            assert_eq!(
+                result.output[format!("{stream}_tail")]
+                    .as_str()
+                    .unwrap()
+                    .lines()
+                    .count(),
+                200
+            );
+            assert_eq!(result.output[format!("{stream}_truncated")], true);
+            assert!(!result
+                .error
+                .as_ref()
+                .unwrap()
+                .contains(&format!("{stream}-000")));
+        }
+        assert_eq!(result.output["exit_code"], 9);
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("Command exited with status 9"));
+    }
+}
+
+#[test]
+fn ordinary_shell_failure_omits_timing_but_keeps_outcome_and_schema() {
+    let mut result = terminal_shell_result();
+    result.success = false;
+    result.error = Some("Command exited with status 9.".into());
+    result.output["exit_code"] = json!(9);
+    result.output["command_ok"] = json!(false);
+    result.output["failure_kind"] = json!("command_exit_nonzero");
+    let canonical = result.output.clone();
+    sparsify_failure_model_result_metadata("run_shell", &mut result);
+    for omitted in [
+        "async_handoff_available",
+        "effective_timeout_secs",
+        "sync_wait_secs",
+        "command_summary",
+        "terminal",
+    ] {
+        assert!(result.output.get(omitted).is_none(), "{omitted}");
+    }
+    for retained in [
+        "execution_state",
+        "command_started",
+        "command_completed",
+        "exit_code",
+        "failure_kind",
+    ] {
+        assert_eq!(result.output[retained], canonical[retained], "{retained}");
+    }
+    assert_shell_schema(&result);
 }

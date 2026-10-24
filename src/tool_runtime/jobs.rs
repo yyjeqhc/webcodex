@@ -1120,9 +1120,13 @@ pub(super) fn sparsify_job_handoff_model_result(result: &mut ToolResult) {
         return;
     }
     let continuation = call.clone();
+    let timeout = output.get("timeout").cloned();
     output.clear();
     output.insert("execution_state".to_string(), json!("pending"));
     output.insert("continuation".to_string(), continuation);
+    if let Some(timeout) = timeout {
+        output.insert("timeout".to_string(), timeout);
+    }
 }
 
 fn list_jobs_recovery_suggested_call(project: Option<&str>) -> Value {
@@ -1986,7 +1990,25 @@ impl ToolRuntime {
         let summaries = page
             .jobs
             .iter()
-            .map(|job| self.model_job_summary_value(job))
+            .map(|job| {
+                let mut summary = self.model_job_summary_value(job);
+                summary["command_summary"] = json!(job.command_preview);
+                if let Some(fields) = summary.as_object_mut() {
+                    fields.retain(|_, value| !value.is_null());
+                    for key in [
+                        "executor",
+                        "client_id",
+                        "last_update_seq",
+                        "structured_execution",
+                    ] {
+                        fields.remove(key);
+                    }
+                    if fields.get("recovered_after_server_restart") == Some(&json!(false)) {
+                        fields.remove("recovered_after_server_restart");
+                    }
+                }
+                summary
+            })
             .collect::<Vec<_>>();
         ToolResult::ok(json!({
             "jobs": summaries,

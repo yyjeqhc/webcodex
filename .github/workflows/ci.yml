@@ -326,7 +326,7 @@ jobs:
         if: matrix.shard == 'server'
         env:
           CI_RUST_SHARD: cli-preserve-order
-        run: python3 scripts/ci_rust_test.py --report target/ci-test-reports/cli-preserve-order.json -- cargo test --locked -p webcodex --lib --features serde_json/preserve_order cli
+        run: python3 scripts/ci_rust_test.py --report target/ci-test-reports/cli-preserve-order.json -- cargo test --locked -p webcodex --features serde_json/preserve_order cli
       - name: Run real Clippy smoke regression
         if: matrix.shard == 'runner'
         run: cargo test --locked -p webcodex-runner --features runner-real-process-tests --bin webcodex-runner runner_real_process_rust_clippy_warnings_pass_and_correctness_fails -- --ignored

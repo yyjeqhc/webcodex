@@ -325,6 +325,8 @@ mod execution_feedback;
 mod experience_baseline;
 #[path = "mcp_tests/file_import.rs"]
 mod file_import;
+#[path = "mcp_tests/fixed_scope.rs"]
+mod fixed_scope;
 #[path = "mcp_tests/goal_plan_app.rs"]
 mod goal_plan_app;
 #[path = "mcp_tests/host_review.rs"]

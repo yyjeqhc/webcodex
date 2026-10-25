@@ -1,0 +1,13 @@
+isError: false
+==> query 0
+src/sample.txt-1-before
+src/sample.txt:2:needle 中文
+src/sample.txt-3-between
+--
+src/sample.txt-3-between
+src/sample.txt:4:needle again
+src/sample.txt-5-after
+context_after: 1
+context_before: 1
+path: src
+pattern_mode: literal

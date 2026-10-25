@@ -784,6 +784,7 @@ fn sparse_success_item(item: &Value) -> Option<Value> {
     // sole model continuation so restart/eviction cannot discard log position.
 
     for key in [
+        "error",
         "exit_code",
         "command_execution_state",
         "detected_summary",

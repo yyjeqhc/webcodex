@@ -158,6 +158,60 @@ pub(super) fn symbols(text: &mut String, mut output: Value) {
     render_fields(text, &output);
 }
 
+/// Workspace symbols have a file and an optional location, unlike document
+/// symbols' mandatory identifier selection. Never invent a missing position.
+pub(super) fn workspace_symbols(text: &mut String, mut output: Value) {
+    let Some(symbols) = output["symbols"].as_array().filter(|symbols| {
+        symbols.iter().all(|symbol| {
+            symbol["path"].is_string()
+                && symbol["name"].is_string()
+                && symbol["kind"].is_string()
+                && symbol
+                    .get("range")
+                    .is_none_or(|value| value.is_null() || range(value).is_some())
+        })
+    }) else {
+        render_fields(text, &output);
+        return;
+    };
+    let count = symbols.len();
+    if count == 0 {
+        text.push_str("No symbols.\n");
+    }
+    for mut symbol in take(&mut output, "symbols")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .cloned()
+    {
+        let location = match range(&symbol["range"]) {
+            Some(position) => format!("{}:{position}", one_line(&symbol["path"])),
+            None => format!("{} (position unavailable)", one_line(&symbol["path"])),
+        };
+        let _ = writeln!(
+            text,
+            "{location} {} {}",
+            one_line(&symbol["kind"]),
+            one_line(&symbol["name"])
+        );
+        // kind_code can name an unknown LSP extension or disagree with kind.
+        // Preserve the producer value instead of maintaining another kind map.
+        remove(&mut symbol, &["path", "range", "kind", "name"]);
+        omit_equal(&mut symbol, "container_name", Value::Null);
+        render_fields(text, &symbol);
+    }
+    remove(&mut output, &["project", "query"]);
+    for key in ["returned_count", "total_results"] {
+        omit_equal(&mut output, key, json!(count));
+    }
+    omit_equal(&mut output, "truncated", json!(false));
+    for key in ["external_results_omitted", "invalid_results_omitted"] {
+        omit_equal(&mut output, key, json!(0));
+    }
+    render_fields(text, &output);
+}
+
 pub(super) fn files(text: &mut String, mut output: Value) {
     let Some(entries) = output["entries"].as_array() else {
         render_fields(text, &output);
@@ -185,7 +239,11 @@ pub(super) fn files(text: &mut String, mut output: Value) {
             text,
             "{}{}",
             one_line(&entry["path"]),
-            if entry["kind"] == "dir" { "/" } else { "" }
+            if entry["kind"] == "dir" && !entry["path"].as_str().unwrap().ends_with('/') {
+                "/"
+            } else {
+                ""
+            }
         );
         if let Some(count) = entry.get("file_count").and_then(Value::as_u64) {
             let _ = write!(text, " ({count} files)");
@@ -207,16 +265,75 @@ pub(super) fn files(text: &mut String, mut output: Value) {
     render_fields(text, &output);
 }
 
+pub(super) fn job_started(text: &mut String, mut output: Value) {
+    use webcodex_core::runtime_contract::{
+        ContinuationCarrier, ContinuationKind, ContinuationSemantics,
+    };
+
+    // Only an exact same-Job continuation can replace the standalone token.
+    // Keep the full callable arguments and follow-up posture without rewriting.
+    let exact_observation = output["job_id"].is_string()
+        && output["continuation"]["tool"] == "observe_jobs"
+        && output["continuation"]["arguments"]["items"]
+            .as_array()
+            .is_some_and(|items| items.len() == 1 && items[0]["job_id"] == output["job_id"]);
+    if exact_observation {
+        if output["observation_token"].is_string()
+            && output["observation_token"]
+                == output["continuation"]["arguments"]["items"][0]["after_observation_token"]
+        {
+            remove(&mut output, &["observation_token"]);
+        }
+        omit_equal(
+            &mut output,
+            "continuation_semantics",
+            ContinuationSemantics::new(
+                ContinuationKind::Observe,
+                ContinuationCarrier::ObservationToken,
+            )
+            .to_value(),
+        );
+    }
+    for stream in ["stdout", "stderr"] {
+        if output[format!("{stream}_tail")].as_str() == Some("") {
+            omit_equal(&mut output, &format!("{stream}_lines"), json!(0));
+        }
+    }
+    omit_equal(&mut output, "ssh_resource", Value::Null);
+    omit_equal(&mut output, "execution_source", json!("run_job"));
+    omit_equal(&mut output, "purpose", json!("other"));
+    // execution keeps status, command_started, timeout/ownership facts,
+    // nondefault configuration, unknown fields and every loss/recovery marker.
+    execution(text, output);
+}
+
 pub(super) fn execution(text: &mut String, mut output: Value) {
     if output.as_object().is_some_and(|fields| {
         fields.keys().all(|key| {
             matches!(
                 key.as_str(),
-                "stdout_tail" | "stderr_tail" | "stdout_truncated" | "stderr_truncated"
+                "stdout_tail"
+                    | "stderr_tail"
+                    | "stdout_truncated"
+                    | "stderr_truncated"
+                    | "stdout_lines"
+                    | "stderr_lines"
             )
         })
     }) && output["stdout_tail"].is_string()
         && output.get("stderr_tail").is_none_or(|v| v == "")
+        && ["stdout", "stderr"].iter().all(|stream| {
+            output.get(format!("{stream}_lines")).is_none_or(|count| {
+                count.as_u64()
+                    == Some(
+                        output[format!("{stream}_tail")]
+                            .as_str()
+                            .unwrap_or("")
+                            .lines()
+                            .count() as u64,
+                    )
+            })
+        })
         && ["stdout_truncated", "stderr_truncated"]
             .iter()
             .all(|key| output.get(key).is_none_or(|v| v == false))
@@ -339,6 +456,23 @@ pub(super) fn execution(text: &mut String, mut output: Value) {
 }
 
 pub(super) fn jobs(text: &mut String, mut output: Value) {
+    // These are two labels for one exact recovery only when the entire call,
+    // including follow_up_kind, agrees. Keep distinct targets/cursors/semantics.
+    if let Some(call) = output
+        .get("suggested_call")
+        .filter(|call| call["tool"].is_string() && call["arguments"].is_object())
+    {
+        let repeated = output["items"].as_array().is_some_and(|items| {
+            items.iter().any(|item| {
+                item.get("continuation") == Some(call)
+                    || item["output"].get("continuation") == Some(call)
+            })
+        });
+        if repeated {
+            remove(&mut output, &["suggested_call"]);
+        }
+    }
+
     if output["items"]
         .as_array()
         .is_some_and(|items| items.len() == 1)
@@ -389,6 +523,14 @@ pub(super) fn jobs(text: &mut String, mut output: Value) {
     }
     if let Some(items) = output.get("items").and_then(Value::as_array) {
         let count = items.len();
+        // The visible item list proves these totals only for a complete batch.
+        // Keep classification/log counts, unequal totals and unknown evidence.
+        if output["output_truncated"] == false
+            && output["requested_count"].as_u64() == Some(count as u64)
+            && output["returned_count"].as_u64() == Some(count as u64)
+        {
+            remove(&mut output, &["requested_count", "returned_count"]);
+        }
         if count == 0 {
             text.push_str("No Jobs.\n");
         }
@@ -399,6 +541,17 @@ pub(super) fn jobs(text: &mut String, mut output: Value) {
             .iter()
             .cloned()
         {
+            if item["success"] == false
+                && item["job_id"].is_string()
+                && item["error_kind"].is_string()
+                && item.get("output") == Some(&Value::Null)
+            {
+                // No observation payload exists for this failed selector. Its
+                // identity, error and any execution/recovery facts remain below.
+                remove(&mut item, &["output"]);
+                execution(text, item);
+                continue;
+            }
             // Canonical partial batches wrap each observation; sparse batches
             // already expose its fields. Never flatten away a failed item.
             if let Some(mut observation) = take(&mut item, "output") {
@@ -730,6 +883,15 @@ pub(super) fn inventory(text: &mut String, mut output: Value, collection: &str) 
             omit_equal(&mut item, "disabled", json!(false));
             omit_equal(&mut item, "active_jobs", json!(0));
             omit_equal(&mut item, "description", json!(""));
+            omit_equal(&mut item, "description", Value::Null);
+            if item.get("resolved_shell_profile") == Some(&Value::Null)
+                && item["shell_profile_status"] == "not_configured"
+            {
+                remove(
+                    &mut item,
+                    &["resolved_shell_profile", "shell_profile_status"],
+                );
+            }
         }
         render_fields(text, &item);
     }

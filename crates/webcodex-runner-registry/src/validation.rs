@@ -6,7 +6,8 @@ use webcodex_core::runner_protocol::{
     ShellProcessArgv, ShellRunRequest, ShellScriptPayload, ToolProvidersStatus,
     PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
     PROJECT_INVENTORY_SNAPSHOT_MAX_SERIALIZED_BYTES, PROJECT_ROOT_FINGERPRINT_PREFIX,
-    RUNNER_CONFIG_RESTART_REQUIRED_FIELDS, STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
+    RAW_SHELL_JOB_TIMEOUT_MAX_SECS, RUNNER_CONFIG_RESTART_REQUIRED_FIELDS,
+    STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS,
 };
 
 const MAX_CLIENT_ID_LEN: usize = 80;
@@ -22,7 +23,6 @@ const MAX_ARTIFACT_PAYLOAD_BYTES: usize = 15 * 1024 * 1024;
 const MAX_CHECKPOINT_PAYLOAD_BYTES: usize = 15 * 1024 * 1024;
 pub(super) const MAX_RUN_STDIN_BYTES: usize = 15 * 1024 * 1024;
 const MAX_SYNC_WAIT_SECS: u64 = 120;
-const MAX_COMMAND_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 const MAX_PROVIDER_TEXT_CHARS: usize = 120;
 const MAX_PROVIDER_TOOL_NAMES: usize = 64;
 
@@ -551,10 +551,10 @@ pub(super) fn validate_job_scope(cwd: Option<&str>, timeout_secs: u64) -> Result
             return Err("cwd cannot contain NUL bytes".to_string());
         }
     }
-    if timeout_secs == 0 || timeout_secs > MAX_COMMAND_TIMEOUT_SECS {
+    if timeout_secs == 0 || timeout_secs > RAW_SHELL_JOB_TIMEOUT_MAX_SECS {
         return Err(format!(
             "timeout_secs must be between 1 and {}",
-            MAX_COMMAND_TIMEOUT_SECS
+            RAW_SHELL_JOB_TIMEOUT_MAX_SECS
         ));
     }
     Ok(())

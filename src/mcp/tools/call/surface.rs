@@ -64,11 +64,12 @@ impl RuntimeSurface {
                             required_scope,
                             description,
                         }) => {
-                            if let Some(lc) = lifecycle.as_deref() {
-                                lc.dispatch_failed("forbidden");
-                                lc.dispatch_finished(false, Some(false), "forbidden");
-                            }
-                            return Err(scope_forbidden(auth, required_scope, description));
+                            return Err(tool_scope_denied(
+                                context,
+                                lifecycle.as_deref(),
+                                required_scope,
+                                description,
+                            ));
                         }
                         Err(ToolCallErrorStatus::InvalidArguments { message }) => {
                             if let Some(lc) = lifecycle.as_deref() {

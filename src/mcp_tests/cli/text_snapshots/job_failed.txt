@@ -11,5 +11,3 @@ state_changed: null
 stderr_delta_reset: true
 stdout_truncated: true
 output_truncated: true
-suggested_call:
-  {"arguments":{"items":[{"after_observation_token":"opaque:token/+=","job_id":"wc_job_exact"}],"tail_lines":17},"follow_up_kind":"mechanically_followable","tool":"observe_jobs"}

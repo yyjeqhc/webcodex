@@ -112,6 +112,9 @@ pub(crate) enum LspError {
     },
     InvalidProjectRoot(String),
     CallHierarchyUnsupported,
+    WorkspaceReadinessTimeout {
+        readiness: LspIndexReadiness,
+    },
     WorkspaceNotReady(&'static str),
 }
 
@@ -158,6 +161,19 @@ impl fmt::Display for LspError {
             Self::InvalidProjectRoot(message) => write!(f, "invalid project root: {message}"),
             Self::CallHierarchyUnsupported => {
                 f.write_str("language server does not support call hierarchy")
+            }
+            Self::WorkspaceReadinessTimeout { readiness } => {
+                let state = match readiness {
+                    LspIndexReadiness::Unknown => "unknown",
+                    LspIndexReadiness::Indexing => "indexing",
+                    LspIndexReadiness::Ready => "ready",
+                    LspIndexReadiness::Unhealthy => "unhealthy",
+                    LspIndexReadiness::Unsupported => "unsupported",
+                };
+                write!(
+                    f,
+                    "language server workspace readiness timed out (last_index_state={state})"
+                )
             }
             Self::WorkspaceNotReady(health) => {
                 write!(
@@ -1673,6 +1689,20 @@ struct ServerStatusState {
     closed: bool,
 }
 
+impl ServerStatusState {
+    fn readiness(&self) -> LspIndexReadiness {
+        if self.closed {
+            return LspIndexReadiness::Unknown;
+        }
+        match self.latest {
+            None => LspIndexReadiness::Unknown,
+            Some(status) if !status.quiescent => LspIndexReadiness::Indexing,
+            Some(status) if status.health == ServerStatusHealth::Ok => LspIndexReadiness::Ready,
+            Some(_) => LspIndexReadiness::Unhealthy,
+        }
+    }
+}
+
 #[derive(Default)]
 struct ServerStatusCache {
     state: Mutex<ServerStatusState>,
@@ -1706,16 +1736,7 @@ impl ServerStatusCache {
     }
 
     fn readiness(&self) -> LspIndexReadiness {
-        let state = lock_unpoison(&self.state);
-        if state.closed {
-            return LspIndexReadiness::Unknown;
-        }
-        match state.latest {
-            None => LspIndexReadiness::Unknown,
-            Some(status) if !status.quiescent => LspIndexReadiness::Indexing,
-            Some(status) if status.health == ServerStatusHealth::Ok => LspIndexReadiness::Ready,
-            Some(_) => LspIndexReadiness::Unhealthy,
-        }
+        lock_unpoison(&self.state).readiness()
     }
 
     fn validate_epoch(&self, epoch: u64) -> Result<(), LspError> {
@@ -1746,9 +1767,8 @@ impl ServerStatusCache {
             }
             let remaining = remaining_until(deadline);
             if remaining.is_zero() {
-                return Err(LspError::RequestTimeout {
-                    method: "workspace/readiness".to_string(),
-                    timeout: Duration::ZERO,
+                return Err(LspError::WorkspaceReadinessTimeout {
+                    readiness: state.readiness(),
                 });
             }
             let waited = self.changed.wait_timeout(state, remaining);
@@ -1758,9 +1778,8 @@ impl ServerStatusCache {
             };
             state = next;
             if wait_result.timed_out() {
-                return Err(LspError::RequestTimeout {
-                    method: "workspace/readiness".to_string(),
-                    timeout: remaining,
+                return Err(LspError::WorkspaceReadinessTimeout {
+                    readiness: state.readiness(),
                 });
             }
         }

@@ -60,16 +60,19 @@ async fn work_result_thread_empty_panel_requires_scope_and_protocol_admission() 
     let temp = tempfile::tempdir().unwrap();
     let db = Arc::new(crate::Database::open(&temp.path().join("thread-empty.db")).unwrap());
     let runtime = ToolRuntime::new_for_tests().with_window_activity_database(db.clone());
-    let mut auth = crate::auth::shared_key_context("thread-empty-scope");
+    let mut auth = mcp_export_api_auth("thread-empty-scope", "alice");
     auth.scopes = vec![crate::auth::SCOPE_RUNTIME_READ.into()];
     let window = ClientWindow::for_test("thread-empty-scope-window");
-    assert!(matches!(
-        open_panel(&runtime, Some(&auth), Some(&window), true, true).await,
-        McpOutcome::Forbidden {
-            required_scope: Some(crate::auth::SCOPE_PROJECT_READ),
-            ..
-        }
-    ));
+    let McpOutcome::Ok(denied) = open_panel(&runtime, Some(&auth), Some(&window), true, true).await
+    else {
+        panic!("fixed credential scope denial must be a failed MCP result");
+    };
+    super::fixed_scope::assert_fixed_scope_failure(
+        &denied,
+        crate::auth::SCOPE_PROJECT_READ,
+        false,
+        "fixed token",
+    );
 
     auth.scopes.push(crate::auth::SCOPE_PROJECT_READ.into());
     for (enabled, stateless) in [(false, true), (true, false)] {

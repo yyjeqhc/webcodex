@@ -125,13 +125,17 @@ impl ProjectInventoryPage {
                 value
             })
             .collect();
-        ToolResult::ok(json!({
+        let mut output = json!({
             "count": projects.len(),
             "matched_count": self.matched_count,
             "truncated": projects.len() < self.matched_count,
             "projects": projects,
             "recommended_for_smoke": recommended,
-        }))
+        });
+        if self.matched_count == 0 {
+            output["hint"] = json!("No accessible Projects match this request. Check the filters and the current credential identity and authorization.");
+        }
+        ToolResult::ok(output)
     }
 }
 

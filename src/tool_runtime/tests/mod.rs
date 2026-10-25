@@ -14,6 +14,8 @@ mod browser_user_handoff;
 mod builtin_coding_workflow;
 #[cfg(feature = "workspace-checkpoints")]
 mod checkpoint;
+#[cfg(unix)]
+mod cli_runtime_projection;
 #[cfg(feature = "experimental-code-mode")]
 mod code_mode;
 #[cfg(feature = "experimental-code-mode")]

@@ -147,6 +147,8 @@ codegen-units = 16
 incremental = true
 
 [dev-dependencies]
+# Bounded normalization of Runtime-generated CLI regression snapshots.
+regex = "1"
 tokio = { version = "1", features = ["test-util"] }
 webcodex-runner-registry = { path = "crates/webcodex-runner-registry", features = ["root-test-support"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }

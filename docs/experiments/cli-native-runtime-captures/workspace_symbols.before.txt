@@ -1,0 +1,21 @@
+external_results_omitted: 0
+invalid_results_omitted: 0
+project: agent:input-runner:demo
+query: fixture_symbol
+returned_count: 1
+symbols:
+  [0]
+    container_name: null
+    kind: function
+    kind_code: 12
+    name: fixture_symbol
+    path: src/lib.rs
+    range:
+      end:
+        column: 22
+        line: 1
+      start:
+        column: 8
+        line: 1
+total_results: 1
+truncated: false

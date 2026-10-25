@@ -393,7 +393,50 @@ fn server_status_cache_malformed_notification_clears_stale_readiness() {
 
     cache.record(Some(&json!({"health": "ok"})));
     let error = cache.wait_for_quiescent_ok(Instant::now()).unwrap_err();
-    assert!(matches!(error, LspError::RequestTimeout { .. }));
+    assert_eq!(
+        error,
+        LspError::WorkspaceReadinessTimeout {
+            readiness: LspIndexReadiness::Unknown,
+        }
+    );
+}
+
+#[test]
+fn server_status_readiness_timeout_retains_state_without_permitting_restart() {
+    for (notification, expected, label) in [
+        (None, LspIndexReadiness::Unknown, "unknown"),
+        (
+            Some(json!({"health":"ok"})),
+            LspIndexReadiness::Unknown,
+            "unknown",
+        ),
+        (
+            Some(json!({"health":"ok","quiescent":false})),
+            LspIndexReadiness::Indexing,
+            "indexing",
+        ),
+    ] {
+        // Exercise both an already-expired deadline and a Condvar timeout.
+        for budget in [Duration::ZERO, Duration::from_millis(1)] {
+            let cache = ServerStatusCache::default();
+            if let Some(notification) = &notification {
+                cache.record(Some(notification));
+            }
+            let error = cache
+                .wait_for_quiescent_ok(Instant::now() + budget)
+                .unwrap_err();
+            assert_eq!(
+                error,
+                LspError::WorkspaceReadinessTimeout {
+                    readiness: expected,
+                }
+            );
+            assert!(!error.permits_restart(), "{error}");
+            assert!(error
+                .to_string()
+                .contains(&format!("last_index_state={label}")));
+        }
+    }
 }
 
 #[test]
@@ -2049,27 +2092,62 @@ fn navigation_distinguishes_indexing_valid_results_and_valid_empty_results() {
                 deadline,
             )
         };
-        server
-            .server_status
-            .record(Some(&json!({"health":"ok","quiescent":false})));
-        let result = execute(Instant::now() + Duration::from_millis(20));
-        assert!(!result.success, "{result:?}");
-        assert_eq!(
-            result.error.as_ref().map(|error| error.code.as_str()),
-            Some("lsp_request_timeout")
-        );
-        assert!(result.error.as_ref().unwrap().message.contains("readiness"));
-        assert!(!fs::read_to_string(&fixture.marker)
-            .unwrap()
-            .contains("request:textDocument/definition"));
-        assert_eq!(
-            fixture
-                .supervisor
-                .project_server_status(&fixture.root, LspServerKind::RustAnalyzer)
+        for (notification, code, diagnostic, readiness) in [
+            (
+                json!({"health":"ok"}),
+                "lsp_request_timeout",
+                "last_index_state=unknown",
+                LspIndexReadiness::Unknown,
+            ),
+            (
+                json!({"health":"ok","quiescent":false}),
+                "lsp_request_timeout",
+                "last_index_state=indexing",
+                LspIndexReadiness::Indexing,
+            ),
+            (
+                json!({"health":"warning","quiescent":true}),
+                "lsp_server_failed",
+                "not ready (warning)",
+                LspIndexReadiness::Unhealthy,
+            ),
+            (
+                json!({"health":"error","quiescent":true}),
+                "lsp_server_failed",
+                "not ready (error)",
+                LspIndexReadiness::Unhealthy,
+            ),
+        ] {
+            server.server_status.record(Some(&notification));
+            let result = execute(Instant::now() + Duration::from_millis(20));
+            assert!(!result.success, "{result:?}");
+            assert!(result.result.is_none(), "{result:?}");
+            let error = result.error.as_ref().unwrap();
+            assert_eq!(error.code, code);
+            assert!(error.message.contains(diagnostic), "{error:?}");
+            assert!(error.message.contains("no navigation result"), "{error:?}");
+            assert!(
+                error
+                    .message
+                    .split("; ")
+                    .any(|part| part == "inspect get_lsp_status"),
+                "{error:?}"
+            );
+            assert!(error.message.contains("search_project_texts"), "{error:?}");
+            assert!(error.message.len() <= 240, "{error:?}");
+            assert_eq!(fixture.starts(), 1, "unready index must not restart LSP");
+            assert!(!fs::read_to_string(&fixture.marker)
                 .unwrap()
-                .2,
-            LspIndexReadiness::Indexing
-        );
+                .contains("request:textDocument/definition"));
+            assert_eq!(
+                fixture
+                    .supervisor
+                    .project_server_status(&fixture.root, LspServerKind::RustAnalyzer)
+                    .unwrap()
+                    .2,
+                readiness
+            );
+        }
 
         server
             .server_status
@@ -2146,7 +2224,9 @@ fn server_status_readiness_invalidations_and_exit_fail_closed() {
         assert_eq!(cache.readiness(), LspIndexReadiness::Unknown);
         assert!(matches!(
             cache.wait_for_quiescent_ok(Instant::now()),
-            Err(LspError::RequestTimeout { .. })
+            Err(LspError::WorkspaceReadinessTimeout {
+                readiness: LspIndexReadiness::Unknown,
+            })
         ));
     }
     cache.record(Some(&json!({"health":"ok","quiescent":true})));

@@ -57,7 +57,7 @@ async fn oauth_mcp_service_with_plugin_runner(
     (tmp, service, token)
 }
 
-fn assert_mcp_oauth_scope_rejected(
+pub(super) fn assert_mcp_oauth_scope_rejected(
     status: StatusCode,
     body: &Value,
     challenge: Option<&str>,

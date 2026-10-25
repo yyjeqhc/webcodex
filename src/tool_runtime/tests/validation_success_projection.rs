@@ -74,6 +74,7 @@ fn project(tool: &'static str, policy: ValidationSuccessPolicy, result: &mut Too
         Box::new(execution::ExecutionProjection {
             tool_name: tool,
             validation_policy: policy,
+            default_execution_context: false,
         }),
         result,
     );

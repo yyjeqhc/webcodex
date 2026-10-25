@@ -115,20 +115,24 @@ fn sparsify_structured_validation_runtime_metadata(tool_name: &str, result: &mut
 /// structured execution, but only after the complete ToolResult has already
 /// been recorded into the Session ledger. Failure/uncertain/Job projections
 /// remain explicit because they participate in retry and reconciliation safety.
-fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut ToolResult) {
+fn sparsify_terminal_structured_execution_success(
+    tool_name: &str,
+    result: &mut ToolResult,
+) -> bool {
     if is_structured_validation_tool(tool_name) {
         sparsify_terminal_structured_validation_success(tool_name, result);
-        return;
+        return false;
     }
     if !matches!(
         tool_name,
         "project_build" | "run_process" | "run_script" | "run_skill_resource"
-    ) || !ExecutionOutcomeFacts::from_result(result).is_terminal_command_success()
+    ) || result.error.is_some()
+        || !ExecutionOutcomeFacts::from_result(result).is_terminal_command_success()
     {
-        return;
+        return false;
     }
     let Some(output) = result.output.as_object_mut() else {
-        return;
+        return false;
     };
 
     for key in [
@@ -146,15 +150,18 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
         "exit_code",
         "duration_ms",
         "purpose",
-        "cwd",
         "executor",
     ] {
         output.remove(key);
     }
+    // Direct execution needs request-aware cwd handling. Keep it until the
+    // captured projection proves the default; failures retain it as well.
+    if !matches!(tool_name, "run_process" | "run_script") {
+        output.remove("cwd");
+    }
     if output
         .get("async_handoff_available")
-        .and_then(Value::as_bool)
-        == Some(true)
+        .is_some_and(Value::is_boolean)
     {
         output.remove("async_handoff_available");
     }
@@ -181,18 +188,19 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
         output.remove(summary_key);
         output.remove("execution_source");
     }
+    canonical_source && canonical_summary
 }
 
 /// Only a proven ordinary synchronous terminal result may lose lifecycle and
 /// request echoes. Remote execution retains its selected target context.
-fn sparsify_terminal_shell_success(result: &mut ToolResult) {
+fn sparsify_terminal_shell_success(result: &mut ToolResult) -> bool {
     if result.error.is_some()
         || !ExecutionOutcomeFacts::from_result(result).is_terminal_command_success()
     {
-        return;
+        return false;
     }
     let Some(output) = result.output.as_object_mut() else {
-        return;
+        return false;
     };
     if output.get("exit_code").and_then(Value::as_i64) != Some(0)
         || output.get("tool_failure").and_then(Value::as_bool) != Some(false)
@@ -217,7 +225,7 @@ fn sparsify_terminal_shell_success(result: &mut ToolResult) {
         .iter()
         .any(|key| output.get(*key).is_some_and(|value| !value.is_null()))
     {
-        return;
+        return false;
     }
     for key in [
         "execution_state",
@@ -253,6 +261,7 @@ fn sparsify_terminal_shell_success(result: &mut ToolResult) {
         output.remove("async_handoff_available");
     }
     sparsify_empty_execution_streams(output);
+    true
 }
 
 /// Strip successful wrapper/audit facts only after every authority and Session
@@ -348,14 +357,11 @@ pub(super) fn sparsify_failure_model_result_metadata(tool_name: &str, result: &m
         tool_name,
         "project_build" | "run_process" | "run_script" | "run_skill_resource"
     ) {
-        for key in [
-            "executor",
-            "duration_ms",
-            "purpose",
-            "cwd",
-            "execution_source",
-        ] {
+        for key in ["executor", "duration_ms", "purpose", "execution_source"] {
             output.remove(key);
+        }
+        if !matches!(tool_name, "run_process" | "run_script") {
+            output.remove("cwd");
         }
         output.remove(match tool_name {
             "project_build" | "run_process" | "run_skill_resource" => "process_summary",
@@ -919,11 +925,11 @@ mod structured_execution_sparse_projection_tests {
             "exit_code",
             "duration_ms",
             "purpose",
-            "cwd",
             "executor",
         ] {
             assert!(canonical.output.get(omitted).is_none(), "{omitted}");
         }
+        assert_eq!(canonical.output["cwd"], ".");
 
         let mut alternate = terminal_process_result("alternate_process_source");
         sparsify_terminal_structured_execution_success("run_process", &mut alternate);
@@ -932,7 +938,7 @@ mod structured_execution_sparse_projection_tests {
             alternate.output["execution_source"],
             "alternate_process_source"
         );
-        assert!(alternate.output.get("cwd").is_none());
+        assert_eq!(alternate.output["cwd"], ".");
         assert!(alternate.output.get("executor").is_none());
         assert!(alternate.output.get("execution_state").is_none());
     }
@@ -1064,7 +1070,6 @@ mod structured_execution_sparse_projection_tests {
             "executor",
             "duration_ms",
             "purpose",
-            "cwd",
             "execution_source",
             "process_summary",
         ] {
@@ -1075,6 +1080,7 @@ mod structured_execution_sparse_projection_tests {
             );
         }
         for retained in [
+            "cwd",
             "failure_kind",
             "execution_state",
             "command_started",

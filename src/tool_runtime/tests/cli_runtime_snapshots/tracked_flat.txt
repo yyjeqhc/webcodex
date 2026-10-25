@@ -1,0 +1,7 @@
+isError: false
+apps/main.txt
+src/sample.txt
+depth: null
+depth_auto: false
+source: git_index
+total_files: 2

@@ -1409,6 +1409,13 @@ fn project_mcp_model_default_input_schema(tool_name: &str, input_schema: &mut Va
                 summary.insert("default".to_string(), json!(true));
                 summary.insert("description".to_string(), json!("MCP defaults to compact proven-success validation logs. Set false to expand retained logs from the original cursor. Failures, unknown results and ordinary commands keep full evidence."));
             }
+            if let Some(wake_on) = input_schema
+                .pointer_mut("/properties/wake_on")
+                .and_then(Value::as_object_mut)
+            {
+                wake_on.insert("default".to_string(), json!("meaningful_change"));
+                wake_on.insert("description".to_string(), json!("MCP defaults to meaningful_change (ignores pure heartbeats). Set change for all updates; terminal/all_terminal for completion. Missing tokens return an immediate baseline."));
+            }
         }
         _ => {}
     }
@@ -1440,6 +1447,11 @@ pub(super) fn project_mcp_model_argument_defaults(tool_name: &str, arguments: &m
     }
     if let Some(arguments) = arguments.as_object_mut() {
         arguments.entry(field).or_insert(json!(true));
+        if tool_name == "observe_jobs" {
+            arguments
+                .entry("wake_on")
+                .or_insert(json!("meaningful_change"));
+        }
     }
 }
 
@@ -1492,7 +1504,7 @@ fn mcp_tool_parts_json(
     }
 
     if tool_name == "observe_jobs" {
-        description.push_str(" MCP defaults summary_only=true; set false for full retained logs.");
+        description.push_str(" MCP defaults: wake_on=meaningful_change, summary_only=true.");
     }
 
     if matches!(tool_name.as_str(), "observe_computer" | "observe_browser") {

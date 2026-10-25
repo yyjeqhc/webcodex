@@ -197,6 +197,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("items", array_schema(open_object_schema("Input-indexed Project result with success/output/error; partial outcomes are not atomic."), "Per-item results.")),
         ])),
         "list_projects" => Some(wrapped_output_schema(vec![
+            ("hint", schema_type("string", "Guidance when no caller-visible Projects match the filters; does not disclose hidden resources.")),
             (
                 "projects",
                 array_schema(open_object_schema("Project summary including canonical id, Server-issued project_ref when a stable Project root identity is available, and capabilities.git_available/supports_cleanup_verification/recommended_for_smoke."), "Runtime projects."),
@@ -219,6 +220,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
         ])),
         "list_runners" => Some(wrapped_output_schema(vec![
+            ("hint", schema_type("string", "Guidance when no caller-visible Runners match the filters; does not disclose hidden resources.")),
             ("matched_count", schema_type("integer", "Visible matching Runners before limit.")),
             ("truncated", schema_type("boolean", "Narrow filters when more Runners matched than were returned.")),
             (

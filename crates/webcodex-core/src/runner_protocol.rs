@@ -2046,6 +2046,10 @@ pub const DETACHED_IDEMPOTENCY_KEY_MAX_BYTES: usize = 128;
 pub const STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS: u64 = 1;
 pub const STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS: u64 = 3_600;
 pub const STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS: u64 = 60;
+/// Raw asynchronous shell Jobs keep the existing one-day admission ceiling.
+/// This is independent from the shorter sync-first shell tool ceiling.
+pub const RAW_SHELL_JOB_TIMEOUT_DEFAULT_SECS: u64 = 3_600;
+pub const RAW_SHELL_JOB_TIMEOUT_MAX_SECS: u64 = 24 * 60 * 60;
 /// Ceiling for direct synchronous structured Runner requests.
 /// Durable typed Jobs use their execution-form lifetime ceiling instead.
 pub const STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS: u64 = 120;
@@ -2060,13 +2064,15 @@ pub const SCRIPT_STDIN_MAX_BYTES: usize = 64 * 1024;
 pub const SCRIPT_CWD_MAX_BYTES: usize = 1_024;
 pub const SCRIPT_TIMEOUT_MAX_SECS: u64 = 7 * 24 * 60 * 60;
 
-/// Canonical maximum execution lifetime for a durable Job kind. Unknown,
-/// validation, shell, and Skill Job kinds retain the shared 1-hour ceiling.
+/// Canonical maximum execution lifetime for a durable Job kind. Shell includes
+/// raw asynchronous Jobs, whose admission ceiling is longer than sync-first shell.
+/// Unknown, validation, and Skill kinds retain the shared 1-hour ceiling.
 pub fn job_execution_timeout_max_secs(kind: &str) -> u64 {
     match kind {
         "project_format" => crate::project_format::PROJECT_FORMAT_TIMEOUT_MAX_SECS,
         "project_build" | "run_process" | "run_detached_process" => PROCESS_TIMEOUT_MAX_SECS,
         "run_script" => SCRIPT_TIMEOUT_MAX_SECS,
+        "shell" => RAW_SHELL_JOB_TIMEOUT_MAX_SECS,
         _ => STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
     }
 }
@@ -3889,7 +3895,12 @@ mod envelope_tests {
             job_execution_timeout_max_secs("run_script"),
             SCRIPT_TIMEOUT_MAX_SECS
         );
-        for kind in ["shell", "validation", "run_skill_resource", "unknown"] {
+        assert_eq!(
+            job_execution_timeout_max_secs("shell"),
+            RAW_SHELL_JOB_TIMEOUT_MAX_SECS
+        );
+        assert_eq!(RAW_SHELL_JOB_TIMEOUT_MAX_SECS, 86_400);
+        for kind in ["validation", "run_skill_resource", "unknown"] {
             assert_eq!(
                 job_execution_timeout_max_secs(kind),
                 STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS

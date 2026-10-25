@@ -1,0 +1,1190 @@
+{
+  "format": "webcodex.cli_native_runtime_validation.v1",
+  "date": "2026-10-25",
+  "source": {
+    "code_commit": "d7a8b6eec06db49b46ab01e4018b66c888085a16",
+    "worktree_clean_at_build": true,
+    "origin_main": "f387d0a19f481bba0ead3bc2dd6b89581f074536",
+    "profile": "default dev; existing target/debug cache",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "build_command": [
+      "cargo",
+      "build",
+      "--locked",
+      "-p",
+      "webcodex",
+      "-p",
+      "webcodex-runner",
+      "--bin",
+      "webcodex-server",
+      "--bin",
+      "webcodex-runner",
+      "--message-format=json-render-diagnostics"
+    ],
+    "binaries": {
+      "webcodex-server": {
+        "path": "/Users/yyjeqhc/git/webcodex/target/debug/webcodex-server",
+        "sha256": "1927d30a922db0b3a9a81193505e655b12a15f476015d0eccc43464ea1353557"
+      },
+      "webcodex-runner": {
+        "path": "/Users/yyjeqhc/git/webcodex/target/debug/webcodex-runner",
+        "sha256": "e633d5158a16538222d055c0efcc8a3458a2f331968af08024c531733edd331e"
+      }
+    },
+    "diagnostics": [],
+    "harness_sha256": "dbb4f17607fdff67d67bca9ad9819067eb4dad84cc366c87ecf9349c073ee0e7"
+  },
+  "native": {
+    "command": [
+      "python3",
+      "scripts/e2e_cli_runtime_output.py",
+      "--bin-dir",
+      "target/debug",
+      "--output-dir",
+      "/tmp/webcodex-series-native-smoke-294v96zq/captures"
+    ],
+    "sample_count": 32,
+    "workspace_symbols": {
+      "state": "ready",
+      "http_status": 200,
+      "adaptive_state": "ready"
+    },
+    "run_job_oracles": {
+      "timeout": {
+        "job_id": "wc_job_qrK2J-wWUg1nyYf7",
+        "terminal_timeout_visible": true,
+        "worker_error_visible": true,
+        "partial_stdout_visible": true
+      },
+      "policy_cap": {
+        "job_id": "wc_job_XKOiW_jVF7Ce_Zoi",
+        "requested_timeout_secs": 90000,
+        "registered_runner_max_timeout_secs": 3600,
+        "effective_timeout_secs": 3600,
+        "receipt_state": "queued",
+        "command_started": false
+      }
+    },
+    "edit_oracle": {
+      "dry_run_unchanged": true,
+      "actual_edit_applied": true,
+      "stale_edit_unchanged": true
+    },
+    "scope_oracle": {
+      "denied_before_execution": true
+    },
+    "samples": [
+      {
+        "name": "projects",
+        "tool": "list_projects",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 469,
+        "text_chars": 469,
+        "wire_response_bytes": 677,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 7,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "~p1 | agent:input-runner:demo | demo | /private/var/folders/2d/fl2p2tk96f3gtvj40qrl4lsc0000gn/T/webcodex-cli-output-o70qij5a/project | online\ncapabilities:\n  git_available: true\n  recommended_for_smoke: false\nsource: agent_registered\n~p2 | agent:input-runner:other | other | /private/var/folders/2d/fl2p2tk96f3gtvj40qrl4lsc0000gn/T/webcodex-cli-output-o70qij5a/other | online\ncapabilities:\n  git_available: false\n  recommended_for_smoke: false\nsource: agent_registered\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "d490fa5353454268eb5db1e07ce204b3df3769c16bb053ef3b11a83e22c9362c"
+      },
+      {
+        "name": "bootstrap",
+        "tool": "work_on_project",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 1313,
+        "text_chars": 1313,
+        "wire_response_bytes": 1572,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 8,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "session_id: wc_sess_WOTaGqFN86N6tNkE\nproject: agent:input-runner:demo\nresolved_project: agent:input-runner:demo\ncontinuation: created\nworkspace:\n  status: dirty\n  git:\n    status: dirty\n    reason_code: null\n  branch: main\n  upstream_status: absent\n  changed_paths:\n    [0]\n      apps/main.txt\n    [1]\n      src/sample.txt\n    [2]\n      AGENTS.md\n    [3]\n      one.txt\n    [4]\n      two.txt\n  changed_paths_total: 5\ninstructions:\n  key: project.instructions\n  status: available\n  projection:\n    status: loaded\n    sources:\n      [0]\n        source_scope: project\n        path: AGENTS.md\n        fingerprint: ea50a49693f5ecf7095f67b6398d6d57bafd171ebdfb3441da168de1383ec622\n        truncated: false\n        headings:\n        []\n        content: Temporary smoke fixture only. Do not access any other directory.\n        read_more: null\n    changed_sources:\n      []\n    content_included: true\n    truncated: false\n    total_chars: 64\nsemantic_navigation:\n  supported: true\n  available: null\n  index_readiness: unknown\n  status: not_observed\n  capability: lsp_read_only_navigation\n  reason_code: null\nsession_ref: ~s2\nproject_ref: ~p1\nreadiness:\n  status: warn\n  blocking: false\nwarnings:\n  [0]\n    dirty_worktree\nsuggested_next_actions:\n  [0]\n    inspect and preserve the existing worktree changes while continuing\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "144b1227f8007601e7e5f14de069fb08613e35b12f9b1086daddc6858aa8bfb2"
+      },
+      {
+        "name": "files",
+        "tool": "list_project_files",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 43,
+        "text_chars": 43,
+        "wire_response_bytes": 247,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 9,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": ".git/\nAGENTS.md\napps/\none.txt\nsrc/\ntwo.txt\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "23b106e62ae481fb9ee286af764dc421844a286e9f8dd6290422ef264c343a07"
+      },
+      {
+        "name": "tracked_folded",
+        "tool": "list_project_tracked_files",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 91,
+        "text_chars": 91,
+        "wire_response_bytes": 296,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "apps/ (1 files)\nsrc/ (1 files)\ndepth_auto: false\ntotal_files: 2\nsource: git_index\ndepth: 1\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "d9195e0a5642b90b10b12dcfcb3d6fd8b6e23fb3d82c6c633ca7d766330958ad"
+      },
+      {
+        "name": "search_context",
+        "tool": "search_project_texts",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 240,
+        "text_chars": 236,
+        "wire_response_bytes": 451,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 11,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "==> query 0\nsrc/sample.txt-1-before\nsrc/sample.txt:2:needle 中文\nsrc/sample.txt-3-between\n--\nsrc/sample.txt-3-between\nsrc/sample.txt:4:needle again\nsrc/sample.txt-5-after\npath: src\ncontext_before: 1\ncontext_after: 1\npattern_mode: literal\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "6479894b984389a17daf4a8dd97e4b02609e5529467bf4b0ca9027727dccd572"
+      },
+      {
+        "name": "search_file_context",
+        "tool": "search_file_context",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 264,
+        "text_chars": 260,
+        "wire_response_bytes": 477,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 12,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "src/sample.txt:2\nsrc/sample.txt:4\npath: src\npattern_mode: literal\n==> src/sample.txt:1-5 (read_revision 4484684928507905)\nbefore\nneedle 中文\nbetween\nneedle again\nafter\ntotal_lines: 5\nproject: agent:input-runner:demo\nread_request_count: 2\ncoalesced_read_count: 1\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "35d690cda8385d614f4825a402b3bf6be48f6e969693c2d5ca028de572369cb8"
+      },
+      {
+        "name": "read_versioned",
+        "tool": "read_files",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 71,
+        "text_chars": 71,
+        "wire_response_bytes": 273,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 15,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "==> one.txt (read_revision 4484684928507906)\nbefore one\ntotal_lines: 1\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "527ec60e1cf51df854ab9a1bf4af7a4bd184559dd00df2e69aa3624347509bae"
+      },
+      {
+        "name": "edit_dry_run",
+        "tool": "edit_project_files",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 242,
+        "text_chars": 242,
+        "wire_response_bytes": 453,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 16,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Dry run; no files written.\nedit one.txt; would change\n  replace_exact lines 1-1 -> 1 lines\nwould_change: true\nread_revision: null\nchanged_paths:\n  [0]\n    one.txt\nchange_summary:\n  resolved_matches: 1\n  logical_edits: 1\nignored_noop_count: 0\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "e5073d38be00a8357a5d0a8952b3e4243b7f985251aaf3a2cb1b749a41736859"
+      },
+      {
+        "name": "edit_applied",
+        "tool": "edit_project_files",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 241,
+        "text_chars": 241,
+        "wire_response_bytes": 451,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 17,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "edit one.txt; read_revision 4484684928507907; changed\n  replace_exact lines 1-1 -> 1 lines\nwould_change: true\nchange_summary:\n  resolved_matches: 1\n  changed_files: 1\n  logical_edits: 1\nchanged_paths:\n  [0]\n    one.txt\nignored_noop_count: 0\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "2f0534e060389fe096b331616a3ea1a99c81be3943d272b884c759eedee048b9"
+      },
+      {
+        "name": "edit_stale",
+        "tool": "edit_project_files",
+        "http_status": 200,
+        "is_error": true,
+        "text_utf8_bytes": 443,
+        "text_chars": 443,
+        "wire_response_bytes": 673,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 18,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "ERROR: Rejected transactional file batch: the source changed before mutation. No files were modified.\nchanged: false\nerror_kind: stale_file_revision\nstate_changed: false\nchange_index: 0\nkind: edit\npath: one.txt\nexecution_state: not_started\ndirect_retry_safe: false\nreread_required: true\nrecovery:\n  {\"follow_up_kind\":\"mechanically_followable\",\"tool\":\"read_files\",\"arguments\":{\"project\":\"agent:input-runner:demo\",\"items\":[{\"path\":\"one.txt\"}]}}\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": true,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "9af585725d3265a8b100d4b36408cd16dc3d65e19663ae8bafc2262122bb5e1f"
+      },
+      {
+        "name": "shell_success",
+        "tool": "run_shell",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 6,
+        "text_chars": 6,
+        "wire_response_bytes": 206,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 19,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "hello\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "be21ce6105691b5a5ad49daa6954573b8f76b05295fb1a9c83e028ed126ed8ea"
+      },
+      {
+        "name": "shell_failure",
+        "tool": "run_shell",
+        "http_status": 200,
+        "is_error": true,
+        "text_utf8_bytes": 258,
+        "text_chars": 258,
+        "wire_response_bytes": 468,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 20,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "ERROR: Command exited with status 7.\nLogs: available stdout_tail and stderr_tail are included below.\n\nexecution_state: completed; exit_code: 7\nstderr_tail:\ndenied\n\nfailure_kind: command_exit_nonzero\nshell: configured\ncwd: .\nstderr_lines: 1\ncommand_ok: false\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": true,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "c980934ecc60725f311d503fa27851d738b7a27dd7f833ce1e2a7eef1d5e93d2"
+      },
+      {
+        "name": "shell_nondefault",
+        "tool": "run_shell",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 173,
+        "text_chars": 173,
+        "wire_response_bytes": 379,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 21,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "stdout_tail:\n/private/var/folders/2d/fl2p2tk96f3gtvj40qrl4lsc0000gn/T/webcodex-cli-output-o70qij5a/project/subdir\n5.3.15(1)-release\n\nshell: bash\nstdout_lines: 2\ncwd: subdir\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "f4c43effffb16e9aaf6503ad72fe1fa4c3371e9eee0fe6244f402fe62dc639f4"
+      },
+      {
+        "name": "process_success",
+        "tool": "run_process",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 6,
+        "text_chars": 6,
+        "wire_response_bytes": 206,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 22,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "hello\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "b9b42c37cea8696edec25e759e4a4cd7e49442c6b3b6c506051f6114e00cc13c"
+      },
+      {
+        "name": "script_success",
+        "tool": "run_script",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 49,
+        "text_chars": 49,
+        "wire_response_bytes": 253,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 23,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "stdout_tail:\nhello\n\nlanguage: sh\nstdout_lines: 1\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "ccb26c2a11de1152fe7f0dab5105b85ee1325edc5e0b321842eed1b9fffb626f"
+      },
+      {
+        "name": "process_nondefault",
+        "tool": "run_process",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 143,
+        "text_chars": 143,
+        "wire_response_bytes": 347,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 24,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "stdout_tail:\n/private/var/folders/2d/fl2p2tk96f3gtvj40qrl4lsc0000gn/T/webcodex-cli-output-o70qij5a/project/subdir\n\ncwd: subdir\nstdout_lines: 1\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "15dabe34d1d6b22c282322681fb636fb6da6c410bdfbf704cb85480af6a3d6d9"
+      },
+      {
+        "name": "process_failure_nondefault",
+        "tool": "run_process",
+        "http_status": 200,
+        "is_error": true,
+        "text_utf8_bytes": 376,
+        "text_chars": 376,
+        "wire_response_bytes": 589,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 25,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "ERROR: Command exited with status 7.\nLogs: available stdout_tail and stderr_tail are included below.\n\nexecution_state: completed; exit_code: 7\nstdout_tail:\n/private/var/folders/2d/fl2p2tk96f3gtvj40qrl4lsc0000gn/T/webcodex-cli-output-o70qij5a/project/subdir\n\nstderr_tail:\ndenied\n\ncommand_ok: false\ncwd: subdir\nfailure_kind: command_exit_nonzero\nstderr_lines: 1\nstdout_lines: 1\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": true,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "f0f02980716d24987fd6fd889877bbc5ca8aea786b25146815eb28b4da92950a"
+      },
+      {
+        "name": "script_nondefault",
+        "tool": "run_script",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 156,
+        "text_chars": 156,
+        "wire_response_bytes": 361,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 26,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "stdout_tail:\n/private/var/folders/2d/fl2p2tk96f3gtvj40qrl4lsc0000gn/T/webcodex-cli-output-o70qij5a/project/subdir\n\nlanguage: sh\nstdout_lines: 1\ncwd: subdir\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "4adc7ccdd7c3a61d0beca0d5a6ea4cdfb4838f70c57bdd688a4c204bb1511b0b"
+      },
+      {
+        "name": "script_failure_nondefault",
+        "tool": "run_script",
+        "http_status": 200,
+        "is_error": true,
+        "text_utf8_bytes": 389,
+        "text_chars": 389,
+        "wire_response_bytes": 603,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 27,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "ERROR: Command exited with status 7.\nLogs: available stdout_tail and stderr_tail are included below.\n\nexecution_state: completed; exit_code: 7\nstdout_tail:\n/private/var/folders/2d/fl2p2tk96f3gtvj40qrl4lsc0000gn/T/webcodex-cli-output-o70qij5a/project/subdir\n\nstderr_tail:\ndenied\n\ncommand_ok: false\nlanguage: sh\nfailure_kind: command_exit_nonzero\ncwd: subdir\nstdout_lines: 1\nstderr_lines: 1\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": true,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "3a9879b0dff7b18588ade373c628913c81f823286caa1c46732a3688a8465e87"
+      },
+      {
+        "name": "shell_timeout",
+        "tool": "run_shell",
+        "http_status": 200,
+        "is_error": true,
+        "text_utf8_bytes": 954,
+        "text_chars": 954,
+        "wire_response_bytes": 1174,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 28,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "ERROR: Command timed out after 1s.\nCommand definitely started, but WebCodex cannot prove its side effects ended with the timeout.\nOutput tails before timeout:\nLogs: available stdout_tail and stderr_tail are included below.\nRetry guidance: do not blindly retry. First inspect the actual Job, process, service, and target state. On a fresh safe attempt, keep ordinary long work on its canonical execution tool and Job handoff; use run_job only for intentional asynchronous shell start. If a new native child must survive Runner restart/replacement, use run_detached_process from the start instead of changing tools merely for duration.\nexecution_state: timed_out; exit_code: -1\nstdout_tail:\npartial\n\nstderr_tail:\ncommand timed out after 1 seconds\ncommand_summary: printf 'partial\\n'; sleep 3\nshell: configured\ntool_failure: false\nfailure_kind: timeout\nstdout_lines: 1\nstderr_lines: 1\ncwd: .\ncommand_ok: false\ncommand_started: true\ncommand_completed: false\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": true,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "f6f57df86746ef192d816bba706598b0b283b7fda2e753f4142f6a9a00b48b55"
+      },
+      {
+        "name": "job_started",
+        "tool": "run_job",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 737,
+        "text_chars": 737,
+        "wire_response_bytes": 982,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 29,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "job_id: wc_job_1Vok9jI2sBkLKEzf; status: queued; execution_state: queued\nlast_update_seq: 0\nkind: shell\ntimeout_limit_source: request\nproject: agent:input-runner:demo\ntimeout_notice: Dispatch budget only; Runner enforces its current policy.\ncreated_at: 1792921869\ncommand_summary: printf 'job-first\\njob-last\\n'\ncwd: .\nshell: configured\nexecutor: agent\ntimeout_policy_basis: last_registered_runner_policy\ncontinuation:\n  {\"follow_up_kind\":\"fallback_recovery\",\"tool\":\"observe_jobs\",\"arguments\":{\"items\":[{\"job_id\":\"wc_job_1Vok9jI2sBkLKEzf\",\"after_observation_token\":\"wj3_uVMuWSRIuB1WH0nT.0.0.0\"}],\"wait_secs\":5,\"wake_on\":\"terminal\"}}\ncommand_started: false\nexecution_lifetime: runner\nrequested_timeout_secs: 30\neffective_timeout_secs: 30\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "5603e522041a4d8578e59fe15a206c444c25d1b16c0d4aeafbcc74c2e3654a2a"
+      },
+      {
+        "name": "job_ready",
+        "tool": "wait_for_job_readiness",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 103,
+        "text_chars": 103,
+        "wire_response_bytes": 305,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 30,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "job_id: wc_job_1Vok9jI2sBkLKEzf; status: completed; outcome: succeeded\npending: none\nwait_state: ready\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "2a2459067f30942f15221cec85827f7e5e22bcf594c1421645edf817cc7efcef"
+      },
+      {
+        "name": "job_observed",
+        "tool": "observe_jobs",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 362,
+        "text_chars": 362,
+        "wire_response_bytes": 578,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 31,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "updates: none\njob_id: wc_job_1Vok9jI2sBkLKEzf; status: completed; exit_code: 0\nstdout_tail:\njob-last\n\nstderr_lines: 0\nstdout_lines: 2\nstdout_retained_from_line: 1\nlast_update_seq: 4\ncursor:\n  stdout: 3\n  stderr: 1\nstderr_retained_from_line: 1\nstdout_returned_lines: 1\nobservation_token: wj3_uVMuWSRIuB1WH0nT.5.3.1\nstdout_truncated: true\nstderr_returned_lines: 0\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "8ba207652900f08a1769e8aaefad59e3ed0574149efbf277f7abb5090643866a"
+      },
+      {
+        "name": "jobs_partial_unknown",
+        "tool": "observe_jobs",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 1132,
+        "text_chars": 1132,
+        "wire_response_bytes": 1400,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 32,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "job_id: missing-fixture-job\nindex: 0\nsuccess: false\nsuggested_call:\n  {\"follow_up_kind\":\"fallback_recovery\",\"tool\":\"call_runtime_tool\",\"arguments\":{\"tool\":\"list_jobs\",\"arguments\":{}}}\nerror_kind: unknown_job\nerror: unknown job: missing-fixture-job\nupdates: none\njob_id: wc_job_1Vok9jI2sBkLKEzf; status: completed; exit_code: 0\nstdout_tail:\njob-last\n\npurpose: other\nproject: agent:input-runner:demo\nssh_resource: null\ncwd: .\nsession_id: null\nstructured_execution: null\nactivity: null\nshell: configured\ndetected_summary:\n  kind: operation\n  outcome: passed\nstdout_lines: 2\nstderr_lines: 0\nstdout_returned_lines: 1\nstderr_returned_lines: 0\nstdout_truncated: true\nvalidation: null\nstdout_retained_from_line: 1\nstderr_retained_from_line: 1\nlast_update_seq: 4\ncursor:\n  stdout: 3\n  stderr: 1\nrecovery_state: null\nrecovery_reason_code: null\nrecovery_reason: null\nobservation_token: wj3_uVMuWSRIuB1WH0nT.5.3.1\ncommand_summary: printf 'job-first\\njob-last\\n'\nexecutor: agent\nindex: 1\nobservation_ref: ~j1\noutput_truncated: false\nterminal_count: 1\nsucceeded_count: 1\nfailed_count: 1\nchanged_count: 0\nwait:\n  outcome: immediate\n  waited_ms: 0\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "39af2056ed82e43e1f6e2cf50a142ffdd04acd8129b43780f0ba9287de1e7901"
+      },
+      {
+        "name": "job_timeout_started",
+        "tool": "run_job",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 744,
+        "text_chars": 744,
+        "wire_response_bytes": 988,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 33,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "job_id: wc_job_qrK2J-wWUg1nyYf7; status: queued; execution_state: queued\nlast_update_seq: 0\nkind: shell\ntimeout_limit_source: request\nproject: agent:input-runner:demo\ntimeout_notice: Dispatch budget only; Runner enforces its current policy.\ncreated_at: 1792921869\ncommand_summary: printf 'job-timeout-partial\\n'; sleep 3\ncwd: .\nshell: configured\nexecutor: agent\ntimeout_policy_basis: last_registered_runner_policy\ncontinuation:\n  {\"follow_up_kind\":\"fallback_recovery\",\"tool\":\"observe_jobs\",\"arguments\":{\"items\":[{\"job_id\":\"wc_job_qrK2J-wWUg1nyYf7\",\"after_observation_token\":\"wj3_g-qOt2trxl1btqQN.0.0.0\"}],\"wait_secs\":5,\"wake_on\":\"terminal\"}}\ncommand_started: false\nexecution_lifetime: runner\nrequested_timeout_secs: 1\neffective_timeout_secs: 1\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "5d2a2bf6c0be6857cd7ca73d8cafedab9c48668461fcd8367f6effd925472a83"
+      },
+      {
+        "name": "job_timeout_ready",
+        "tool": "wait_for_job_readiness",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 103,
+        "text_chars": 103,
+        "wire_response_bytes": 305,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 34,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "job_id: wc_job_qrK2J-wWUg1nyYf7; status: timed_out; outcome: timed_out\npending: none\nwait_state: ready\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "ee4506ceffe02c3dd95c2c427933daf88dcbb14996319053a96936ad3f34a703"
+      },
+      {
+        "name": "job_timeout_observed",
+        "tool": "observe_jobs",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 288,
+        "text_chars": 288,
+        "wire_response_bytes": 497,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 35,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "updates: none\njob_id: wc_job_qrK2J-wWUg1nyYf7; status: timeout; command_execution_state: timed_out; exit_code: -1\nstdout_tail:\njob-timeout-partial\n\nerror: job timed out after 1 seconds\nobservation_token: wj3_g-qOt2trxl1btqQN.5.2.1\ndetected_summary:\n  kind: operation\n  outcome: timed_out\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "2771078e62cf6e8bdf65b52d6d1cdbbd4b68fb6dbac4158756ac3ac5f193167a"
+      },
+      {
+        "name": "job_budget_capped_started",
+        "tool": "run_job",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 748,
+        "text_chars": 748,
+        "wire_response_bytes": 992,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 37,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "job_id: wc_job_XKOiW_jVF7Ce_Zoi; status: queued; execution_state: queued\nlast_update_seq: 0\nkind: shell\ntimeout_limit_source: runner_policy\nproject: agent:input-runner:demo\ntimeout_notice: Dispatch budget only; Runner enforces its current policy.\ncreated_at: 1792921871\ncommand_summary: printf 'budget-cap-complete\\n'\ncwd: .\nshell: configured\nexecutor: agent\ntimeout_policy_basis: last_registered_runner_policy\ncontinuation:\n  {\"follow_up_kind\":\"fallback_recovery\",\"tool\":\"observe_jobs\",\"arguments\":{\"items\":[{\"job_id\":\"wc_job_XKOiW_jVF7Ce_Zoi\",\"after_observation_token\":\"wj3_opaBRzgKOmkXd0qP.0.0.0\"}],\"wait_secs\":5,\"wake_on\":\"terminal\"}}\ncommand_started: false\nexecution_lifetime: runner\nrequested_timeout_secs: 90000\neffective_timeout_secs: 3600\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "746d78d9f5aa1d76837b52939a3565936f2ba4614edc3bb7ab016c558294ece0"
+      },
+      {
+        "name": "job_budget_capped_ready",
+        "tool": "wait_for_job_readiness",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 103,
+        "text_chars": 103,
+        "wire_response_bytes": 305,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 38,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "job_id: wc_job_XKOiW_jVF7Ce_Zoi; status: completed; outcome: succeeded\npending: none\nwait_state: ready\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "67685ccbc58d42ddcb7b2e564744eeaff73c316329fcf99eb2bd4979b027dd5c"
+      },
+      {
+        "name": "job_budget_capped_observed",
+        "tool": "observe_jobs",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 159,
+        "text_chars": 159,
+        "wire_response_bytes": 364,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 39,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "updates: none\njob_id: wc_job_XKOiW_jVF7Ce_Zoi; status: completed; exit_code: 0\nstdout_tail:\nbudget-cap-complete\n\nobservation_token: wj3_opaBRzgKOmkXd0qP.5.2.1\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "5ace3525c8a00355bddd4ba3f0445fd852716dbdc5ef27c630cded3741596f3b"
+      },
+      {
+        "name": "pat_scope_denied",
+        "tool": "run_shell",
+        "http_status": 200,
+        "is_error": true,
+        "text_utf8_bytes": 385,
+        "text_chars": 385,
+        "wire_response_bytes": 588,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 40,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "ERROR: insufficient_scope: missing_scope=job:run; execution_started=false. missing required scope: job:run. Use a token issued with the required scope; this fixed token cannot add scopes through OAuth.\nerror_kind: insufficient_scope\nexecution_started: false\nrecovery: Use a token issued with the required scope; this fixed token cannot add scopes through OAuth.\nmissing_scope: job:run\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": true,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "c670170935b650b2db1327e13e6f1a79e0681af36e1b6ee107c8ac7041cdc686"
+      },
+      {
+        "name": "workspace_symbols",
+        "tool": "list_workspace_symbols",
+        "http_status": 200,
+        "is_error": false,
+        "text_utf8_bytes": 58,
+        "text_chars": 58,
+        "wire_response_bytes": 259,
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 41,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "src/lib.rs:1:8-1:22 function fixture_symbol\nkind_code: 12\n"
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol/serverInfo": {
+                "name": "webcodex",
+                "version": "0.5.0"
+              }
+            },
+            "isError": false,
+            "resultType": "complete"
+          }
+        },
+        "original_saved_response_sha256": "48bdbed2c16e945463366631155e2e3011bc939479fbbb863ef77e270e114023"
+      }
+    ]
+  },
+  "replay": {
+    "measurement": "same native Runtime output; two compiled CLI projections; no Host tokens or end-to-end timing",
+    "test": "mcp::tests::cli::text_projection::cli_runtime_replay_captured_native_response",
+    "test_binaries": {
+      "before": {
+        "path": "/private/tmp/webcodex-pr3-before-5c5a224f-w2bzu_1f/webcodex-lib-before",
+        "sha256": "d6237e1bfd73d085c01b092e8ec6984faf0e4f72d3a1c271bc60797e7d50b4a2"
+      },
+      "after": {
+        "path": "/private/tmp/webcodex-pr3-after-4cba98a5-lf4xhxsd/webcodex-lib-after",
+        "sha256": "158d85d332e4e9775803fe68ad153808924e400d7e750eecd530b17c44c7e16c"
+      }
+    },
+    "samples": [
+      {
+        "tool": "list_projects",
+        "capture": "/private/tmp/webcodex-series-native-smoke-294v96zq/captures/projects.runtime.json",
+        "capture_evidence": {
+          "tool": "list_projects",
+          "sha256": "77cb7438c112243cc2f9fb65cea4c265b4bed27ea1c0ddfa6a6b529160494f6d",
+          "source": {
+            "transport": "loopback MCP Adaptive",
+            "runtime": "one isolated native Server and Runner",
+            "binaries": {
+              "webcodex-server": "1927d30a922db0b3a9a81193505e655b12a15f476015d0eccc43464ea1353557",
+              "webcodex-runner": "e633d5158a16538222d055c0efcc8a3458a2f331968af08024c531733edd331e"
+            }
+          },
+          "input_bytes": 2781
+        },
+        "before": {
+          "is_error": false,
+          "response_json_bytes": 852,
+          "text_chars": 637,
+          "text_utf8_bytes": 637,
+          "tool": "list_projects"
+        },
+        "after": {
+          "is_error": false,
+          "response_json_bytes": 678,
+          "text_chars": 469,
+          "text_utf8_bytes": 469,
+          "tool": "list_projects"
+        },
+        "text_utf8_bytes_delta": -168,
+        "text_chars_delta": -168,
+        "text_utf8_reduction_percent": 26.37
+      },
+      {
+        "tool": "list_workspace_symbols",
+        "capture": "/private/tmp/webcodex-series-native-smoke-294v96zq/captures/workspace_symbols.runtime.json",
+        "capture_evidence": {
+          "tool": "list_workspace_symbols",
+          "sha256": "706d56310b44cbec6ab9044db82eda643c7205b6a9f0dd0f8a2eeeeb05c732fe",
+          "source": {
+            "transport": "loopback MCP Adaptive",
+            "runtime": "one isolated native Server and Runner",
+            "binaries": {
+              "webcodex-server": "1927d30a922db0b3a9a81193505e655b12a15f476015d0eccc43464ea1353557",
+              "webcodex-runner": "e633d5158a16538222d055c0efcc8a3458a2f331968af08024c531733edd331e"
+            }
+          },
+          "input_bytes": 1715
+        },
+        "before": {
+          "is_error": false,
+          "response_json_bytes": 609,
+          "text_chars": 389,
+          "text_utf8_bytes": 389,
+          "tool": "list_workspace_symbols"
+        },
+        "after": {
+          "is_error": false,
+          "response_json_bytes": 259,
+          "text_chars": 58,
+          "text_utf8_bytes": 58,
+          "tool": "list_workspace_symbols"
+        },
+        "text_utf8_bytes_delta": -331,
+        "text_chars_delta": -331,
+        "text_utf8_reduction_percent": 85.09
+      }
+    ]
+  },
+  "published_captures": [
+    {
+      "file": "cli-native-runtime-captures/projects.runtime.json",
+      "sha256": "77cb7438c112243cc2f9fb65cea4c265b4bed27ea1c0ddfa6a6b529160494f6d"
+    },
+    {
+      "file": "cli-native-runtime-captures/workspace_symbols.runtime.json",
+      "sha256": "706d56310b44cbec6ab9044db82eda643c7205b6a9f0dd0f8a2eeeeb05c732fe"
+    },
+    {
+      "file": "cli-native-runtime-captures/projects.before.txt",
+      "sha256": "5aac311c061e413cd336cee3eb8020f138acc30a2a95d15985fd64085da50aab"
+    },
+    {
+      "file": "cli-native-runtime-captures/projects.after.txt",
+      "sha256": "c5fd79eb301b365a5fb0397820aab65076a12b35d544a6ffd295b2c02aaffae7"
+    },
+    {
+      "file": "cli-native-runtime-captures/workspace_symbols.before.txt",
+      "sha256": "a551882142a13678d58d20283156a4e4032c03806675eae73ee315a65d8af217"
+    },
+    {
+      "file": "cli-native-runtime-captures/workspace_symbols.after.txt",
+      "sha256": "d3556f50f57cffd5516e0a92bfa16e2e8ec0bb67a36acd3db4b6bd6dc351ec69"
+    }
+  ],
+  "independent_checks": {
+    "all_32_texts_equal_mcp_content": true,
+    "all_32_scalar_and_utf8_counts_match": true,
+    "all_32_compact_response_json_lengths_match_wire_count": true,
+    "capture_and_all_four_binary_hashes_match": true,
+    "replay_after_equals_native_cli_for_both_tools": true,
+    "job_lifecycle_identity_and_exact_recovery_match": true,
+    "nondefault_context_preserved": true
+  },
+  "validation_history": [
+    {
+      "commit": "1019a324dde2e83e63ab05bb5dc34c7da0b323a9",
+      "outcome": "incomplete; not a native pass",
+      "completed_cli_samples": 6,
+      "reason": "Native capture reused CLI direct-tool discovery for an Adaptive request. The old capture did not preserve the rejected reply, so its exact HTTP/RPC rejection was not observed.",
+      "correction": "Discover one separate Adaptive inventory; preserve strict canonical-result and all success assertions; add bounded secret-checked rejection diagnostics."
+    },
+    {
+      "commit": "d7a8b6eec06db49b46ab01e4018b66c888085a16",
+      "outcome": "passed",
+      "cli_samples": 32,
+      "adaptive_captures": 2,
+      "replay_test_executions": 4
+    }
+  ],
+  "measurement_boundaries": [
+    "CLI text_utf8_bytes counts the final content text; text_chars counts Unicode scalar values.",
+    "wire_response_bytes is the captured HTTP JSON body length. It is different from pretty-printed capture-file bytes and replay response_json_bytes.",
+    "Before/after replay uses the exact same native Adaptive response with preserved PR3 projection binaries, not two end-to-end runs.",
+    "CLI and Adaptive capture requests are separate. Both were ready and the two replay-after texts independently matched native CLI bytes.",
+    "Native sample data is unnormalized. Fixture Job IDs, observation tokens, revisions, timestamps and paths are preserved.",
+    "No ChatGPT, Claude Code or Codex Host-token, typical-task call-count, or end-to-end latency measurement was performed.",
+    "The 90000-second case ran an immediate printf; the timeout case used a one-second budget. Neither is an hour/day lifetime experiment.",
+    "The known registration-policy snapshot versus final Worker acknowledgement gap remains; no policy cap was raised.",
+    "Successful symbol data has no index-state field and no omissions. Other index/failure/unknown-field branches are covered by separate regression tests."
+  ],
+  "residuals": [
+    "Fixed-credential scope recovery appears in both headline and recovery field (385 bytes).",
+    "Explicit full Job observation still contains optional metadata nulls; the stray unknown-job null line is removed.",
+    "Real multi-hour training, Runner replacement, Supervisor recovery and retention-expiry experiments were not performed."
+  ]
+}

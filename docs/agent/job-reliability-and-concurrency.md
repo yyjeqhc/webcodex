@@ -66,13 +66,17 @@ handoff/continuation slices and Job lifetimes are unchanged. This tool is ordina
 MCP/Adaptive Runtime only;
 no nested Code Mode admission or frozen legacy Actions membership is added.
 
-`observe_jobs` keeps `wake_on=change` backward-compatible: any accepted observation
-revision, including sequence-only Runner liveness, may wake it. Use
-`wake_on=meaningful_change` only when sequence-only liveness should be skipped; it
-advances a private wait cursor across those revisions while preserving one absolute
-deadline, and still wakes for logs, lifecycle, activity, recovery, epoch/reset, or
-terminal changes. Returned `meaningful_changed` and `heartbeat_changed` classify the
-observed revision without changing the opaque observation-token contract.
+The Canonical API keeps the `observe_jobs` default `wake_on=change`: any accepted
+observation revision, including sequence-only Runner liveness, may wake it.
+MCP, including CLI, defaults an omitted `wake_on` to `meaningful_change` so pure
+heartbeats do not consume another model observation. Explicit values remain
+unchanged on every surface, including `change`, `terminal`, and `all_terminal`.
+The meaningful policy advances a private wait cursor across sequence-only revisions
+while preserving one absolute deadline, and still wakes for logs, lifecycle,
+activity, recovery, epoch/reset, or terminal changes. A missing observation token
+still returns an immediate baseline; terminal policies keep their existing any/all
+completion conditions. Returned `meaningful_changed` and `heartbeat_changed`
+classify the observed revision without changing the opaque observation-token contract.
 
 `wait_for_job_terminal(job_id="<job>", idempotency_key="<wait-key>")` registers
 bounded one-shot terminal attention. Prefer it when progress genuinely depends
@@ -299,10 +303,22 @@ credentials, and private paths are not required.
 
 ## Long-running native process/script Jobs
 
-Execution duration and lifetime ownership are separate policies. `run_process`,
-`run_script`, and `run_detached_process` default to 60 seconds and accept a
-total execution lifetime up to 604800 seconds (7 days). Values above that
-ceiling clamp to 7 days. The Server-owned bounded synchronous handoff grace is
+Execution duration and lifetime ownership are separate policies. The
+[Runner execution budget table](../RUNNER.md#execution-budgets-and-lifetime-ownership)
+records the distinct tool ceilings: `run_job` keeps its raw asynchronous shell
+admission limit of 86400 seconds and its 3600-second default; `run_shell` keeps
+its shorter 3600-second ceiling. `run_process`, `run_script`, and
+`run_detached_process` default to 60 seconds and accept a total execution
+lifetime up to 604800 seconds (7 days). Positive values above each ceiling clamp
+to that ceiling. Runner `policy.max_timeout_secs` (default 3600) can further
+narrow execution; the shared budget resolver reports that cap without widening
+policy. The `run_job` receipt records the requested/effective budget and limiting
+source even when uncapped, plus Runner lifetime and observed command-start truth.
+Its policy basis and notice identify a dispatch/admission budget derived from the
+last registered policy. With no reported Runner policy, the effective budget is
+null and the known Server dispatch budget remains explicit; the Runner may impose
+a lower ceiling. Queued admission is not proof that the payload started, and the
+last registered policy is not a guarantee of survival through a live policy change. The Server-owned bounded synchronous handoff grace is
 return-latency policy only; it never extends execution lifetime. Normal
 model-facing discovery exposes no handoff-timing tuning input; compatibility
 inputs, when present on older callers, can only be tightened by trusted Server
@@ -486,8 +502,10 @@ observation-field schemas should make clear that:
 - `unknown_job` after same-process reconciliation is a diagnostic signal, not an
   automatic instruction to create a replacement Job.
 
-`observe_jobs` adds an optional `wake_on` policy: `change` is the compatible
-wire default and wakes on any observable update. `terminal` coalesces ordinary
+`observe_jobs` has an optional `wake_on` policy. The Canonical API retains
+`change` as its compatible wire default, waking on any observable update.
+MCP, including CLI, projects omitted values to `meaningful_change`; explicit
+values are preserved. `terminal` coalesces ordinary
 stdout/stderr/progress/activity changes until any watched Job is terminal, an
 item errors, or one shared absolute deadline expires. It never returns an
 `updated` wake reason: at the deadline `wait.outcome=timeout` can coexist with

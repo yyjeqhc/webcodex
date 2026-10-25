@@ -1,0 +1,22 @@
+isError: true
+ERROR: Command timed out after 1s.
+Command definitely started, but WebCodex cannot prove its side effects ended with the timeout.
+Output tails before timeout:
+Logs: available stdout_tail and stderr_tail are included below.
+Retry guidance: do not blindly retry. First inspect the actual Job, process, service, and target state. On a fresh safe attempt, keep ordinary long work on its canonical execution tool and Job handoff; use run_job only for intentional asynchronous shell start. If a new native child must survive Runner restart/replacement, use run_detached_process from the start instead of changing tools merely for duration.
+execution_state: timed_out; exit_code: -1
+stdout_tail:
+partial
+
+stderr_tail:
+Command timed out after 1 seconds
+command_completed: false
+command_ok: false
+command_started: true
+command_summary: printf 'partial\n'; sleep 2
+cwd: .
+failure_kind: timeout
+shell: configured
+stderr_lines: 1
+stdout_lines: 1
+tool_failure: false

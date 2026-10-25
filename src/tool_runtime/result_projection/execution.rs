@@ -11,6 +11,9 @@ use super::{
 pub(super) struct ExecutionProjection {
     pub(super) tool_name: &'static str,
     pub(super) validation_policy: ValidationSuccessPolicy,
+    // A Session or an explicit setting may change execution semantics even
+    // when the resolved output happens to look like an ordinary default.
+    pub(super) default_execution_context: bool,
 }
 
 pub(super) fn capture(call: &ToolCall) -> Option<CapturedProjection> {
@@ -38,9 +41,26 @@ pub(super) fn capture(call: &ToolCall) -> Option<CapturedProjection> {
         | ToolCall::GoTest { .. } => ValidationSuccessPolicy::default(),
         _ => return None,
     };
+    let default_execution_context = match call {
+        ToolCall::RunShell {
+            session_id,
+            cwd,
+            shell,
+            login,
+            ..
+        } => session_id.is_none() && cwd.is_none() && shell.is_none() && !*login,
+        ToolCall::RunProcess {
+            session_id, cwd, ..
+        }
+        | ToolCall::RunScript {
+            session_id, cwd, ..
+        } => session_id.is_none() && cwd.is_none(),
+        _ => false,
+    };
     Some(Box::new(ExecutionProjection {
         tool_name: call.tool_name(),
         validation_policy,
+        default_execution_context,
     }))
 }
 
@@ -51,10 +71,25 @@ impl ResultProjection for ExecutionProjection {
             self.validation_policy,
             result,
         );
-        if self.tool_name == "run_shell" {
-            sparsify_terminal_shell_success(result);
+        let ordinary_terminal_success = if self.tool_name == "run_shell" {
+            sparsify_terminal_shell_success(result)
+        } else {
+            sparsify_terminal_structured_execution_success(self.tool_name, result)
+        };
+        if self.default_execution_context && ordinary_terminal_success {
+            // Request facts and actual resolved values must both prove the
+            // context redundant. Never infer this from cwd/shell values alone.
+            if let Some(output) = result.output.as_object_mut() {
+                if output.get("cwd").and_then(serde_json::Value::as_str) == Some(".") {
+                    output.remove("cwd");
+                }
+                if self.tool_name == "run_shell"
+                    && output.get("shell").and_then(serde_json::Value::as_str) == Some("configured")
+                {
+                    output.remove("shell");
+                }
+            }
         }
-        sparsify_terminal_structured_execution_success(self.tool_name, result);
         sparsify_structured_validation_runtime_metadata(self.tool_name, result);
         super::super::jobs::sparsify_job_handoff_model_result(result);
         if matches!(self.tool_name, "run_shell" | "run_process" | "run_script") {

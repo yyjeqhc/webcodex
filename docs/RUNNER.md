@@ -558,6 +558,43 @@ max_concurrent_jobs = 4
 When all slots are occupied, an accepted Job remains the same queryable Job
 with the same `job_id` and reports `agent_queued`.
 
+
+### Execution budgets and lifetime ownership
+
+| Entry | Default | Tool/admission ceiling |
+|---|---:|---:|
+| `run_shell` | 60 s | 3600 s (1 hour) |
+| `run_job` | 3600 s | 86400 s (24 hours) |
+| `run_process`, `run_script`, `run_detached_process` | 60 s | 604800 s (7 days) |
+
+Positive oversized tool budgets are clamped. The Runner additionally enforces
+`policy.max_timeout_secs` (default 3600 s); a longer tool ceiling does not raise
+that policy. `run_job` reports `requested_timeout_secs`,
+`effective_timeout_secs`, and `timeout_limit_source` (`request`, `tool_limit`,
+`runner_policy`, or `runner_policy_unknown`). `timeout_policy_basis` and a short
+notice identify the last-registered-policy evidence boundary: the Runner still
+enforces its policy at execution admission. When a legacy Runner has not reported
+its policy, `effective_timeout_secs=null` and `dispatched_timeout_secs` is only the
+known Server budget; the actual Runner budget may be lower. Acceptance is not a
+guarantee that a process will run until the reported dispatch deadline.
+
+The initial `run_job` receipt retains its Job id and exact `observe_jobs`
+continuation. A queued receipt has `command_started=false`: that observation
+proves admission, not native process start. Ordinary Jobs are Runner-owned;
+Runner replacement does not inherit them. Choose `run_detached_process` from
+the start only when a native executable and explicit argv need supervisor
+ownership across Runner replacement. It does not accept an arbitrary shell
+command or guarantee survival across host reboot.
+
+Terminal Job records and detached replay keys have a separate bounded
+24-hour retention window after completion; this does not limit an active
+process to 24 hours. Count limits can shorten ordinary terminal retention.
+Job output is a bounded tail, so training should write full logs, checkpoints,
+and artifacts to project files. Those files are not deleted when a Job receipt
+expires. A timeout or unknown outcome never authorizes automatic re-execution
+and does not prove that every side effect ended. Observe the original Job and
+inspect the target state before deciding whether another attempt is safe.
+
 ## Transports in more detail
 
 ### Server requirements for QUIC

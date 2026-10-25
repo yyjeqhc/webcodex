@@ -2293,7 +2293,7 @@ async fn observe_jobs_generic_failed_test_identity_survives_small_model_tail() {
         let request = wait_for_patch_agent_request(&runtime, client).await;
         let handoff = task.await.unwrap();
         assert!(handoff.success, "{handoff:?}");
-        let job = assert_sparse_pending_job_handoff(&handoff.output);
+        let job = assert_sparse_pending_job_handoff_with_unreported_policy(&handoff.output, 30);
         let stdout = "running 1 test\ntest cases::outside_tail ... FAILED\n".to_string()
             + &"retained diagnostic padding\n".repeat(400)
             + "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.1s\n";

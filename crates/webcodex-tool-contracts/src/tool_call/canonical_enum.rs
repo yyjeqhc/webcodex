@@ -2780,7 +2780,13 @@ pub enum ToolCall {
         /// unlinked to Workflow Session state.
         #[serde(default)]
         session_id: Option<String>,
-        /// Maximum runtime in seconds.
+        /// Total Runner-owned shell Job execution lifetime in seconds (minimum 1, default 3600).
+        /// Values above 86400 (24 hours) are accepted and clamped to 86400. Runner policy can impose
+        /// a lower ceiling; the receipt reports the requested and admission budgets, source and policy basis.
+        /// Without reported Runner policy the effective budget is unknown; only the dispatch budget is known.
+        /// Queued acceptance does not prove command start or guarantee survival until the deadline.
+        #[schemars(extend("default" = 3600))]
+        #[schemars(range(min = 1))]
         #[serde(default)]
         timeout_secs: Option<i64>,
         /// Working directory contract: without a Session SSH resource, omit, empty string, or '.' selects

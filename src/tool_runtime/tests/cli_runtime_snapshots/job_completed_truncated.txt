@@ -1,0 +1,18 @@
+isError: false
+updates: none
+job_id: wc_job_FIXTURE; status: completed; exit_code: 0
+stdout_tail:
+last
+
+cursor:
+  stderr: 1
+  stdout: 4
+last_update_seq: 0
+observation_token: wj3_EPOCH.3.4.1
+stderr_lines: 0
+stderr_retained_from_line: 1
+stderr_returned_lines: 0
+stdout_lines: 3
+stdout_retained_from_line: 1
+stdout_returned_lines: 1
+stdout_truncated: true

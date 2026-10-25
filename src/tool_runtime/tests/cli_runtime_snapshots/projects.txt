@@ -1,0 +1,6 @@
+isError: false
+agent:cli-runtime-files:demo | demo | <ROOT> | online
+capabilities:
+  git_available: false
+  recommended_for_smoke: false
+source: agent_registered

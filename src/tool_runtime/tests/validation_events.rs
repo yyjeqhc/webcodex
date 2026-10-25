@@ -250,7 +250,8 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
     assert_eq!(request.process.as_ref().unwrap().executable, "cargo");
     let handoff = task.await.unwrap();
     assert!(handoff.success, "{:?}", handoff.error);
-    let job_id = assert_sparse_pending_job_handoff(&handoff.output).to_string();
+    let job_id =
+        assert_sparse_pending_job_handoff_with_unreported_policy(&handoff.output, 121).to_string();
     let admitted = runtime.runner_registry.get_job(&job_id).await.unwrap();
     let metadata = admitted.structured_execution.as_ref().unwrap();
     assert_eq!(metadata.execution_source, "run_process");

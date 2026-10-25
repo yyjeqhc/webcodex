@@ -4,6 +4,8 @@ use crate::mcp_host::{McpHostConfig, McpHostProfile, McpHostRuntimePolicy};
 use salvo::http::{HeaderMap, HeaderValue};
 #[path = "request_policy/diagnostics.rs"]
 mod diagnostics;
+#[path = "request_policy/runtime_status.rs"]
+mod runtime_status;
 
 fn deployment() -> McpHostRuntimePolicy {
     McpHostConfig {

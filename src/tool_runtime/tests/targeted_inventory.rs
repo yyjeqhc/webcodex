@@ -28,6 +28,8 @@ fn list_runners_call(
     summary_only: bool,
 ) -> ToolCall {
     ToolCall::ListRunners {
+        projects_offset: 0,
+        offset: 0,
         query: None,
         status: None,
         limit: None,
@@ -793,7 +795,7 @@ async fn list_runners_supports_exact_batch_and_compact_projection() {
     .await;
 
     let legacy = runtime
-        .dispatch(list_runners_call(None, None, None, false))
+        .dispatch(list_runners_call(None, None, Some(true), false))
         .await;
     assert!(legacy.success);
     assert_eq!(legacy.output["count"], 3);
@@ -808,9 +810,14 @@ async fn list_runners_supports_exact_batch_and_compact_projection() {
     let agent = &focused.output["runners"][0];
     assert_eq!(agent["client_id"], "special");
     assert_eq!(agent["projects_count"], 2);
-    assert_eq!(agent["build"]["built_at"], "300");
-    assert_eq!(agent["build"]["target"], "x86_64-pc-windows-msvc");
-    assert_eq!(agent["build"]["architecture"], "x86_64");
+    assert!(agent.get("build").is_none());
+    let detailed = runtime
+        .dispatch(list_runners_call(Some("special"), None, Some(false), false))
+        .await;
+    let build = &detailed.output["runners"][0]["build"];
+    assert_eq!(build["built_at"], "300");
+    assert_eq!(build["target"], "x86_64-pc-windows-msvc");
+    assert_eq!(build["architecture"], "x86_64");
     for omitted in [
         "projects",
         "capabilities",
@@ -862,6 +869,8 @@ async fn list_runners_supports_exact_batch_and_compact_projection() {
         .collect::<Vec<_>>();
     let too_many = runtime
         .dispatch(ToolCall::ListRunners {
+            projects_offset: 0,
+            offset: 0,
             query: None,
             status: None,
             limit: None,
@@ -1178,6 +1187,8 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
     assert!(matches!(
         agents,
         ToolCall::ListRunners {
+            projects_offset: 0,
+            offset: 0,
             query: None,
             status: None,
             limit: None,

@@ -490,6 +490,8 @@ async fn computer_session_availability_reaches_only_authorized_overview_and_runn
     let full = runtime
         .dispatch_with_auth(
             ToolCall::ListRunners {
+                projects_offset: 0,
+                offset: 0,
                 query: None,
                 status: None,
                 limit: None,

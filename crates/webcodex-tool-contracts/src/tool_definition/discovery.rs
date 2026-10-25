@@ -136,7 +136,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolActivityPresentation::Support,
             super::ToolActivityInteraction::NonMeaningful,
         ),
-        "Find Runners by client_id/client_ids, query, status or limit; summary_only returns compact health/build/Job counts without full inventories. Full mode includes shared Job concurrency and host_context advisory metadata; never authority.",
+        "Find Runners by client_id/client_ids, query or status. Default: 30 compact entries in client_id order; limit is capped at 100, offset/next_offset traverse fresh authorized pages. summary_only=false expands capabilities/build/status. Independently, include_projects=true adds at most 100 enabled Projects per Runner; continue with exact client_id and projects_offset=projects_next_offset. Full mode includes shared Job concurrency and host_context advisory metadata; never authority.",
     ),
     adaptive_runtime_direct(
         model_spec(

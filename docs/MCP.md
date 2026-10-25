@@ -742,6 +742,39 @@ prose.
 | `required_capability_unavailable` | The current Runner/runtime lacks a required coding capability | Upgrade all binaries |
 | `project_registry_scope_denied` | A project-scoped credential tried to expand or mutate the Project registry outside its granted visibility | Use an already-visible Project or `work_on_project(mode=worktree)` |
 
+## Runner discovery bounds
+
+`list_runners` defaults to `summary_only=true` on the canonical API, Adaptive MCP,
+and CLI MCP. Each page contains at most 30 Runners by default; `limit` is clamped
+to 1–100. Authorization and `client_id`/`client_ids`, `query`, and `status`
+filters run before stable `client_id` sorting and `offset` paging. The response
+returns `matched_count`, `count`, effective `limit`, `offset`, `has_more`,
+`next_offset`, and `truncated`. Continue with the same filters and the returned
+`next_offset`; null means the current inventory ends.
+
+Pages are fresh observations, not a retained snapshot or authority lease.
+Registration, removal, or authorization changes between calls can repeat or skip
+entries. Restart at offset zero and reconcile exact `client_id` values when the
+inventory changes. No caller can use another caller's offset to widen visibility.
+
+The default returns identity, online state, Project and active Job counts, shared
+Job concurrency, and provider choices. `summary_only=false` explicitly expands
+capabilities, build information, policy and diagnostic metadata. Independently,
+`include_projects=true` adds at most 100 enabled Projects in Project-id order,
+including in summary mode. Each Runner reports `projects_count` (the full enabled
+total), `projects_returned_count`, `projects_offset`, `projects_truncated` and
+nullable `projects_next_offset`. Continue `list_runners` with that exact `client_id`,
+`include_projects=true`, and `projects_offset=projects_next_offset`. These fresh
+pages require no resource-link root identity and have no total Project source cap;
+registration or visibility changes have the same repeat/skip semantics as Runner
+pages. `list_projects` remains the richer filtered Project discovery tool.
+
+`project_inventory` in detailed mode is path-free synchronization status, not a
+second Project collection. It remains available to the CLI controller's explicit
+`summary_only=false, include_projects=false` query. Console operator pages use the
+same authorization/filtering query with an explicit complete internal inventory;
+the public tool page cap does not truncate their fleet counts.
+
 ## Adaptive Runtime extensions
 
 The same ToolRuntime serves project-scoped local `share`/`run` instances and multi-project hosted Servers through one Adaptive Runtime contract. Project-scoped credentials change visibility and authority, not the model-facing runtime shape. Protocol-specific capabilities and MCP Apps may admit additional hidden presentation or resource operations without creating another runtime surface.

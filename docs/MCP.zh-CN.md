@@ -565,6 +565,35 @@ stderr、provider stderr 或任意 provider prose。
 | `required_capability_unavailable` | 当前 Runner/runtime 缺少所需 coding capability | 升级所有二进制 |
 | `project_registry_scope_denied` | Project-scoped credential 尝试扩张或修改其授权可见范围之外的 Project registry | 使用已可见的 Project，或使用 `work_on_project(mode=worktree)` |
 
+## Runner 发现边界
+
+`list_runners` 在 Canonical API、Adaptive MCP 和 CLI MCP 均默认
+`summary_only=true`。每页默认最多 30 个 Runner，`limit` 归一到 1–100。
+先按当前身份授权，再应用 `client_id`/`client_ids`、`query` 和 `status`
+筛选，按 `client_id` 稳定排序后执行 `offset` 分页。结果包含
+`matched_count`、`count`、生效的 `limit`、`offset`、`has_more`、
+`next_offset` 和 `truncated`。保持筛选条件并使用返回的 `next_offset`
+继续；null 表示当前清单已到末尾。
+
+分页每次都是重新授权的最新观察，不是保留的快照或授权租约。两次调用之间发生
+登记、移除或授权变化时，可能重复或跳过条目；此时从 offset 0 重新遍历并按
+精确 `client_id` 核对。复制其他调用者的 offset 不会扩大可见范围。
+
+默认只返回身份、在线状态、项目与活跃 Job 数、共享 Job 并发及 Provider 选择。
+显式 `summary_only=false` 展开能力、构建、策略及诊断资料。
+`include_projects=true` 独立控制项目预览，摘要模式也能返回最多 100 个启用项目，
+按 Project id 排序。每个 Runner 返回完整启用项目数 `projects_count`、
+本页数量 `projects_returned_count`、`projects_offset`、`projects_truncated`
+及可为 null 的 `projects_next_offset`。使用该 Runner 的精确 `client_id`，
+保持 `include_projects=true`，令 `projects_offset=projects_next_offset` 继续。
+这种分页不要求资源链接的 root 身份，也没有项目源总量截断；登记或授权变化
+仍可能重复或跳过项目。`list_projects` 继续提供更丰富的项目筛选与发现。
+
+详细模式中的 `project_inventory` 是不含路径的同步状态，并非第二份项目清单；
+CLI Controller 显式使用 `summary_only=false, include_projects=false` 时仍可读取。
+Console 运维页面显式使用同一授权与筛选查询的完整内部清单，公共工具的分页上限
+不会截断其 Runner 汇总计数。
+
 ## Adaptive Runtime extensions
 
 同一个 ToolRuntime 通过一套 Adaptive Runtime contract 服务单项目、project-scoped 的本地 `share` / `run` 和多项目 hosted Server。project-scoped credential 改变可见性与 authority，不改变 model-facing runtime shape。特定 protocol capability 与 MCP App 可以 admission 额外的 hidden presentation/resource operation，但不会形成第二套 runtime surface。

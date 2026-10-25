@@ -20,7 +20,12 @@ async fn operator_grant_reads_canonical_runner_owner_and_rejects_wrong_or_offlin
         let hash = hash_token("live-fixture-token");
         db.insert_api_key(&key, &hash).unwrap();
         let registry = Arc::new(crate::runner_http::RunnerRegistry::default());
-        for (client_id, runner_owner) in [("target", owner), ("peer", "alice")] {
+        // The exact target sorts beyond the public discovery page of 30.
+        let mut registrations = (0..40)
+            .map(|index| (format!("peer-{index:03}"), "alice"))
+            .collect::<Vec<_>>();
+        registrations.push(("target".into(), owner));
+        for (client_id, runner_owner) in registrations {
             // These are registration wire keys, deliberately unchanged by #579.
             let registration = serde_json::from_value(json!({
                 "client_id":client_id, "agent_instance_id":"inst",

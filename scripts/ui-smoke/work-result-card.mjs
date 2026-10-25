@@ -85,17 +85,21 @@ try {
     const card = page.frameLocator('iframe');
     if (thread) {
       await card.getByRole('heading', { name: 'Changed files', exact: true }).waitFor();
-      assert.equal(await card.getByRole('tab', { name: 'Review', exact: true }).getAttribute('aria-selected'), 'true');
+      assert.equal(await card.getByRole('tab', { name: 'Results', exact: true }).getAttribute('aria-selected'), 'true');
       assert.equal(await card.locator('#diagnostics').evaluate(node => node.open), false);
       assert.equal(await card.locator('#projectIdentity').isVisible(), false);
       assert.equal(await page.evaluate(() => window.reads.some(args => args.files)), false);
       await page.screenshot({ path: fileURLToPath(new URL(`work-result-${surface}-review-${width}.png`, output)), fullPage: true });
       await card.getByRole('tab', { name: 'Activity', exact: true }).click();
     } else {
-      await card.locator('#projectIdentity').waitFor();
-      assert.equal(await card.locator('#diagnostics').isVisible(), false);
+      // Identity lives in Diagnostics; the always-visible overview is the summary strip.
+      await card.locator('#summaryStrip').waitFor();
+      assert.equal(await card.locator('#projectIdentity').isVisible(), false);
     }
-    await card.getByText('run_shell', { exact: true }).waitFor();
+    assert.deepEqual(await card.locator('#summaryStrip .summary-item').allTextContents(),
+      ['1 file changed · +4 −1', 'Checks passed', '1 running in background', '1 background job failed']);
+    assert.equal(await card.locator('.app-header .card-appearance').count(), 0, 'Appearance stays out of the header');
+    await card.locator('#activityStatus').filter({ hasText: 'Running tools' }).waitFor();
     assert.equal(await card.getByText('Running', { exact: true }).count(), 3);
     assert.equal(await card.locator('#jobsSection').evaluate(node => node.closest('.progress-section') !== null), true);
     assert.equal(await card.locator('#jobResults').evaluate(node => node.open), false);
@@ -107,9 +111,9 @@ try {
     await card.locator('#jobResultsSummary').click();
     assert(await card.locator('body').evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await page.screenshot({ path: fileURLToPath(new URL(`work-result-${surface}-activity-${width}.png`, output)), fullPage: true });
-    await card.getByRole('tab', { name: thread ? 'Review' : 'Results', exact: true }).click();
+    await card.getByRole('tab', { name: 'Results', exact: true }).click();
     await card.getByRole('button', { name: 'src/a.rs · +4 −1', exact: true }).waitFor();
-    await card.getByText('Checks passed', { exact: true }).waitFor();
+    await card.locator('#validationStatus').filter({ hasText: 'Checks passed' }).waitFor();
     assert.equal(await card.locator('#finalChanges').isVisible(), false);
     assert(await card.locator('body').evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await card.locator('#workspaceFiles .file-toggle').evaluate(node => {
@@ -174,7 +178,7 @@ try {
       assert.equal(await page.evaluate(() => window.frozenReads.length), 1);
     }
     await page.screenshot({ path: fileURLToPath(new URL(`work-result-${surface}-files-${width}.png`, output)), fullPage: true });
-    await card.getByRole('button', { name: 'Discuss these changes', exact: true }).click();
+    await card.getByRole('tab', { name: 'Collaboration', exact: true }).click();
     await card.getByText('Saved', { exact: true }).waitFor();
     await card.locator('#messages .message-copy').evaluate(node => {
       window.originalMessage = node;

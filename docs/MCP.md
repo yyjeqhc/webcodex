@@ -149,10 +149,16 @@ this durable binding without starting live Window activity; the thread entrypoin
 and App refresh calls also stay outside live Window activity. The model still
 calls `present_work_result` once near the first successful Project action.
 
-The thread panel opens Review first: Changed files and lazy diffs, Session checks,
-then sealed Final Changes. Activity and Collaboration remain secondary tabs;
-Project, Window and Session identifiers are folded under Diagnostics. The inline
-card retains its Activity-first layout. Opening Review does not eagerly load diffs.
+Both the inline card and the thread panel use the same Activity / Results /
+Collaboration tabs and section names. A summary row above the tabs states each
+outcome once (changed files, checks, background work, final changes) and opens the
+section that owns its evidence; failing checks and failed background work are
+flagged there instead of being repeated across panels. Results lists Session
+checks first, then Changed files with lazy diffs and sealed Final Changes. The
+thread panel opens on Results; the inline card opens on Activity, whose Window call
+history is newest first and labels each call by what it did. Project, Window and
+Session identifiers are folded under Diagnostics, and the local Appearance
+preference sits in the footer. Opening Results does not eagerly load diffs.
 
 An open panel retains its exact Project and explicit Session selection on refresh.
 Window-linked Session evidence never becomes refresh authority. Reopen the panel
@@ -192,8 +198,7 @@ per-file diffs. Those diffs keep their original snapshot identity even if the li
 workspace changes. Refresh uses the existing App-only observation path; opening
 Results adds no tool calls. Automatic refresh pauses while the App document is
 hidden and uses a bounded visible cadence so background cards do not continuously
-exercise the Host tool bridge. Discuss these changes opens the existing composer
-without sending a message. Window activity calls are compact, collapsed by default,
+exercise the Host tool bridge. Window activity calls are compact, collapsed by default,
 and fetch their sanitized trace/timing details only when expanded. The inline card
 shows the canonical hashed Window key used by the Window activity ledger; the
 thread panel puts the same identity under Diagnostics, making

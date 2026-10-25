@@ -677,13 +677,13 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "id=\"windowIdentity\"",
         "Project · ",
         "Session · ",
-        "Calls in this chat, earliest first.",
+        "id=\"summaryStrip\"",
         "Activity",
         "Collaboration",
         "Final changes",
         "id=\"tabResults\"",
         "id=\"workspaceFiles\"",
-        "Workspace changes",
+        "Changed files",
         "Checks and review",
         "Message this Window",
         "No messages yet",
@@ -709,6 +709,18 @@ fn work_result_html_is_bounded_live_progress_ui() {
         assert!(
             MCP_WORK_RESULT_APP_HTML.contains(required),
             "missing {required}"
+        );
+    }
+    // Explanations that only restate the UI stay out of the always-visible body.
+    for retired in [
+        "Calls in this chat, earliest first.",
+        "id=\"viewResults\"",
+        "id=\"discussResults\"",
+        "id=\"reviewSections\"",
+    ] {
+        assert!(
+            !MCP_WORK_RESULT_APP_HTML.contains(retired),
+            "retired {retired}"
         );
     }
     assert!(MCP_WORK_RESULT_APP_HTML.contains("const VISIBLE_REFRESH_MS = 10000;"));

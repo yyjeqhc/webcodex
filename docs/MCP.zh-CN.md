@@ -215,10 +215,13 @@ credential。独立/network-accessible Server 仍默认关闭，不应使用它�
 成功展示的 Project，以及该次展示显式传入的业务 Session。其他操作或失败的展示不能
 重新指定侧边栏目标。
 
-侧边栏默认打开 Review，依次展示 Changed files / 按需 Diff、Session 检查结果和
-sealed Final Changes。Activity / Collaboration 保留在次级页签；Project / Window /
-Session 标识收进默认折叠的 Diagnostics。inline card 继续采用 Activity 优先的布局，
-打开 Review 不会提前加载所有 Diff。
+inline card 和侧边栏使用相同的 Activity / Results / Collaboration 页签和分区名称。
+页签上方的摘要行把每项结果只陈述一次（变更文件、检查、后台任务、最终变更），点击即
+打开承载证据的分区；失败的检查和失败的后台任务在这里醒目标出，不在各面板重复。
+Results 先列 Session 检查，再列 Changed files / 按需 Diff 和 sealed Final Changes。
+侧边栏默认打开 Results；inline card 默认打开 Activity，其中 Window 调用历史按最新
+优先排列，并以“做了什么”作为标题。Project / Window / Session 标识收进默认折叠的
+Diagnostics，本地 Appearance 偏好位于底栏。打开 Results 不会提前加载所有 Diff。
 
 已打开的侧边栏在刷新时保留原 Project 和显式 Session 选择；Window 关联的 Session
 证据不会成为刷新授权依据。重新打开才选择更新的成功展示记录。缺少稳定 Window

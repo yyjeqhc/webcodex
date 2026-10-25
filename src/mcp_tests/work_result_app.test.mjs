@@ -322,14 +322,14 @@ test("thread review puts checks before long file lists while keeping diagnostics
   await view.initialize();
   assert.equal(view.nodes.panelResults.hidden, false);
   assert.equal(view.nodes.panelActivity.hidden, true);
-  assert.equal(view.nodes.tabResults.textContent, "Review");
-  assert.equal(view.nodes.workspaceHeading.textContent, "Changed files");
-  assert.deepEqual(view.nodes.viewTabs.children, [view.nodes.tabResults, view.nodes.tabActivity, view.nodes.tabCollaboration]);
+  // Thread review keeps the card's tab order and names; it only opens on Results.
+  assert.equal(view.nodes.tabResults.getAttribute("aria-selected"), "true");
+  assert.equal(view.nodes.viewTabs.children.length, 0, "tabs are not reordered for thread review");
   assert.deepEqual(view.nodes.panelResults.children.slice(0, 4), [view.nodes.resultChecks, view.nodes.quotePanel, view.nodes.workspaceChangesSection, view.nodes.finalChanges]);
   assert.equal(view.nodes.quotePanel.hidden, true);
   assert.equal(view.nodes.diagnostics.open, false);
   assert.deepEqual(view.nodes.diagnosticContent.children, [view.nodes.taskContext]);
-  view.nodes.tabResults.onkeydown({ key: "ArrowRight", preventDefault() {} });
+  view.nodes.tabResults.onkeydown({ key: "ArrowLeft", preventDefault() {} });
   assert.equal(view.nodes.panelActivity.hidden, false);
 });
 
@@ -1445,9 +1445,12 @@ test("Activity and Collaboration tabs preserve Window activity and drafts across
   assert.equal(view.nodes.sessionIdentity.textContent, "Session · " + session_id);
   assert.equal(view.nodes.windowSource.textContent, "Source · mcp");
   assert.equal(view.nodes.windowActivity.children.length, 2);
-  assert.equal(view.nodes.windowActivity.children[0].children[0].children[0].children[0].textContent, "get_runtime_status");
-  assert.equal(view.nodes.windowActivity.children[0].children[0].children[1].textContent, "Observe · Succeeded");
-  assert.equal(view.nodes.windowActivity.children[1].children[0].children[0].children[0].textContent, "read_workspace_changes");
+  // Newest first; the semantic label leads and the tool name stays on the detail line.
+  assert.equal(view.nodes.windowActivity.children[0].children[0].children[0].children[0].textContent, "Reviewed changes");
+  assert.match(view.nodes.windowActivity.children[0].children[0].children[0].children[1].textContent, /^read_workspace_changes · /);
+  assert.equal(view.nodes.windowActivity.children[1].children[0].children[0].children[0].textContent, "Observed Runtime status");
+  assert.equal(view.nodes.windowActivity.children[1].children[0].children[1].textContent, "Observe · Succeeded");
+  assert.equal(view.nodes.windowActivity.children[1].className, "activity-call observe");
   assert.equal(view.nodes.windowActivity.children.every(row => row.tagName === "DETAILS" && row.open === false), true);
   assert.equal(view.calls("read_work_result_activity_detail").length, 0);
   view.nodes.messageInput.value = "Keep my draft";
@@ -1536,7 +1539,7 @@ for (const receipt of [{}, toolResult({}), toolResult({ message_id: 42 })]) {
   });
 }
 
-test("Window activity renders oldest-first and keeps the latest call last", async () => {
+test("Window activity renders newest-first and keeps the running call on top", async () => {
   const state = { ...baseState, window_activity: { ...baseState.window_activity,
     active: true,
     active_requests: [{ label: "Running checks", tool_name: "run_shell", server_trace_id: "trace-running", started_at_ms: 1_999_999_995_000 }],
@@ -1545,15 +1548,15 @@ test("Window activity renders oldest-first and keeps the latest call last", asyn
   view.toolResult({ work_result: state });
   await view.initialize();
   const titles = view.nodes.windowActivity.children.map(row => row.children[0].children[0].children[0].textContent);
-  assert.deepEqual(titles, ["get_runtime_status", "read_workspace_changes", "run_shell"]);
-  assert.equal(view.nodes.windowActivity.children.at(-1).children[0].children[1].textContent, "Running");
+  assert.deepEqual(titles, ["Running checks", "Reviewed changes", "Observed Runtime status"]);
+  assert.equal(view.nodes.windowActivity.children[0].children[0].children[1].textContent, "Running");
 });
 
 test("completed Window call details are folded and loaded once on first expansion", async () => {
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: baseState });
   await view.initialize();
-  const row = view.nodes.windowActivity.children.find(item => item.children[0].children[0].children[0].textContent === "read_workspace_changes");
+  const row = view.nodes.windowActivity.children.find(item => item.children[0].children[0].children[0].textContent === "Reviewed changes");
   assert.equal(row.tagName, "DETAILS");
   assert.equal(row.open, false);
   assert.equal(view.calls("read_work_result_activity_detail").length, 0);
@@ -1589,7 +1592,7 @@ test("completed Window call details are folded and loaded once on first expansio
 });
 
 test("card renders each concurrent call and reconciles completion by exact trace", async () => {
-  const completed = { ...baseState.window_activity.events[0], tool_name: "read_files", server_trace_id: "trace-completed" };
+  const completed = { ...baseState.window_activity.events[0], label: "Read files", tool_name: "read_files", server_trace_id: "trace-completed" };
   const state = { ...baseState, window_activity: { ...baseState.window_activity,
     active: true, events: [completed], events_returned: 1, events_observed: 1,
     active_requests: [
@@ -1602,7 +1605,7 @@ test("card renders each concurrent call and reconciles completion by exact trace
   view.toolResult({ work_result: state }); await view.initialize();
   const rows = view.nodes.windowActivity.children;
   assert.equal(rows.length, 3);
-  assert(rows.every(row => row.children[0].children[0].children[0].textContent === "read_files"));
+  assert(rows.every(row => row.children[0].children[0].children[0].textContent === "Read files"));
   assert.equal(rows.filter(row => row.children[0].children[1].textContent === "Running").length, 2);
 });
 
@@ -1651,7 +1654,7 @@ test("Results shows live file states and checks, preserving nodes on unrelated r
   state.workspace.files_total = 12;
   state.workspace.truncated = true;
   view.toolResult({ work_result: state }); await view.initialize();
-  view.nodes.viewResults.onclick();
+  view.nodes.summaryStrip.children.find(item => /^12 files changed/.test(item.textContent)).onclick();
   assert.equal(view.nodes.panelResults.hidden, false);
   assert.equal(view.nodes.workspaceFiles.children.length, 3);
   const row = view.nodes.workspaceFiles.children[0];
@@ -1674,7 +1677,7 @@ test("Results shows live file states and checks, preserving nodes on unrelated r
   assert.equal(view.nodes.workspaceFiles.children[0], row);
   assert.equal(view.nodes.panelResults.hidden, false);
   view.nodes.messageInput.value = 'Existing draft';
-  view.nodes.discussResults.onclick();
+  view.nodes.tabCollaboration.onclick();
   assert.equal(view.nodes.panelCollaboration.hidden, false);
   assert.equal(view.nodes.messageInput.value, 'Existing draft');
   assert.equal(view.calls('send_work_result_message').length, 0);
@@ -1712,7 +1715,7 @@ test("Results works without a Session and does not invent check evidence", async
 
 test("final results and current workspace remain separate across refresh", async () => {
   const view = await frozenView();
-  view.nodes.viewResults.onclick();
+  view.nodes.summaryStrip.children.find(item => item.textContent === "Final changes ready").onclick();
   const frozen = frozenNodes(view);
   assert.equal(view.nodes.panelResults.hidden, false);
   assert.equal(view.nodes.finalChanges.hidden, false);
@@ -1922,19 +1925,19 @@ function readingFile(view, final = false, index = 0) {
   return { row, controls, pre, text: preview.children[1], markdown: preview.children[2], button: label => controls.children.find(node => node.textContent === label) };
 }
 
-test("thread section navigation moves focus without reading files or resetting an expanded row", async () => {
+test("summary navigation moves focus without reading files or resetting an expanded row", async () => {
   const view = await readingView(frozenWork());
-  assert.equal(view.nodes.reviewSections.hidden, false);
-  assert.equal(view.nodes.jumpWorkspace.hidden, false);
-  assert.equal(view.nodes.jumpFinal.hidden, false);
-  assert.equal(view.nodes.jumpOutputs.hidden, true);
+  const item = text => view.nodes.summaryStrip.children.find(node => node.textContent.startsWith(text));
+  assert.equal(view.nodes.summaryStrip.hidden, false);
+  assert.ok(item("Final changes ready"));
+  assert.equal(item("1 task output"), undefined);
   const moves = [];
   for (const id of ["workspaceChangesSection", "finalChanges", "resultChecks"]) {
     view.nodes[id].scrollIntoView = () => moves.push(id);
     view.nodes[id].focus = options => assert.equal(options.preventScroll, true);
   }
-  view.nodes.jumpWorkspace.onclick();
-  view.nodes.jumpFinal.onclick();
+  item("1 file changed").onclick();
+  item("Final changes ready").onclick();
   view.nodes.workspaceNavigator.children[3].onclick();
   view.nodes.frozenNavigator.children[3].onclick();
   assert.deepEqual(moves, ["workspaceChangesSection", "finalChanges", "resultChecks", "resultChecks"]);
@@ -1945,9 +1948,10 @@ test("thread section navigation moves focus without reading files or resetting a
   view.nodes.frozenNavigator.children[3].onclick();
   assert.equal(file.row.children[0].getAttribute("aria-expanded"), "true");
   assert.equal(view.sent.length, requests);
+  const summaryWorkspace = item("1 file changed");
   await view.teardown();
   const before = moves.length;
-  view.nodes.jumpWorkspace.onclick();
+  summaryWorkspace.onclick();
   assert.equal(moves.length, before, "teardown stops section actions");
 });
 
@@ -1960,7 +1964,9 @@ test("thread overview preserves failed, stale, missing and unrun evidence", asyn
     const view = await readingView(state);
     assert.equal(view.nodes.validationStatus.textContent, label);
     assert.equal(view.nodes.resultChecks.hidden, false);
-    assert.equal(view.nodes.jumpFinal.hidden, true);
+    assert.equal(view.nodes.checksScope.hidden, true, "a linked Session needs no scope disclaimer");
+    assert.ok(view.nodes.summaryStrip.children.some(node => node.textContent === label));
+    assert.equal(view.nodes.summaryStrip.children.some(node => node.textContent === "Final changes ready"), false);
   }
   const state = structuredClone(baseState);
   for (const key of ["session_id", "session", "validation", "review"]) delete state[key];
@@ -1971,6 +1977,7 @@ test("thread overview preserves failed, stale, missing and unrun evidence", asyn
   assert.equal(view.nodes.validationStatus.textContent, "Check status unavailable");
   assert.equal(view.nodes.reviewStatus.textContent, "Review status unavailable");
   assert.match(view.nodes.checksScope.textContent, /No Session is linked/);
+  assert.equal(view.nodes.checksScope.hidden, false);
   view.toolInput({ project: "other-project" });
   assert.equal(view.nodes.resultChecks.hidden, true, "invalid binding clears the overview");
 });
@@ -2685,4 +2692,31 @@ test("fail-closed Work Result distinguishes invalid state from thread binding lo
   await missingThread.initialize();
   assert.equal(missingThread.nodes.status.textContent, "This Work Result card is unavailable · WR-THREAD-BINDING-MISSING");
   assert.equal(missingThread.nodes.refresh.disabled, true);
+});
+
+test("summary strip states each outcome once, flags failures and opens the owning section", async () => {
+  const state = structuredClone(baseState);
+  state.validation = { ...state.validation, status: "failed", latest_status: "failed", current_status: "failed", unresolved_failures: 1 };
+  state.jobs = { available: true, active: true, truncated: false, items: [
+    { job_id: "job-running", tool: "cargo_test", status: "running", state: "active" },
+    { job_id: "job-failed", tool: "project_build", status: "failed", state: "terminal", outcome: "failed" },
+    { job_id: "job-passed", tool: "project_validate", status: "completed", state: "terminal", outcome: "passed" },
+  ] };
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: state }); await view.initialize();
+  const items = [...view.nodes.summaryStrip.children];
+  assert.deepEqual(items.map(item => item.textContent),
+    ["1 file changed · +4 −1", "Checks need attention", "1 running in background", "1 background job failed"]);
+  assert.deepEqual(items.map(item => item.className),
+    ["summary-item", "summary-item tone-attention", "summary-item", "summary-item tone-attention"]);
+  view.nodes.tabCollaboration.onclick();
+  items[3].onclick();
+  assert.equal(view.nodes.panelActivity.hidden, false);
+  assert.equal(view.nodes.jobResults.open, true, "failed background results open on request");
+  items[1].onclick();
+  assert.equal(view.nodes.panelResults.hidden, false);
+  assert.equal(view.calls("get_work_result_state").length, 0, "navigation never reads state");
+  view.nodes.refresh.onclick(); await flush();
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: { ...state, state_version: `wr2_${"b".repeat(64)}` } }));
+  assert.deepEqual([...view.nodes.summaryStrip.children], items, "refresh keeps focusable summary nodes");
 });

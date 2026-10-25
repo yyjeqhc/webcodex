@@ -62,6 +62,21 @@ h2 { font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none;
 .details { border-radius: 8px; }
 .details > summary { min-height: 36px; display: list-item; align-content: center; }
 .app-footer { gap: 8px; background: var(--surface); }
+.app-footer > .status { min-width: 0; flex: 1; }
+.app-footer > .card-appearance { flex: 0 0 auto; }
+.app-footer > .card-appearance > summary { min-height: 26px; padding: 3px 8px; border-color: transparent; color: var(--muted); }
+/* Open upward from the footer even before the shared controller measures it. */
+.app-footer > .card-appearance > .card-selection-preference { top: auto; bottom: 44px; left: auto; right: 8px; }
+/* One overview row: each item opens the section that owns its evidence. */
+.summary-strip { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 12px 0; }
+.summary-item {
+  min-height: 28px; padding: 4px 10px; border: 1px solid var(--card-border); border-radius: 999px;
+  background: var(--card-body); color: CanvasText; font: inherit; font-size: 12px; cursor: pointer;
+}
+.summary-item:hover { background: var(--surface-hover); }
+.summary-item.tone-attention { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--card-border)); background: var(--danger-soft); }
+.summary-item.tone-good { color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, var(--card-border)); background: var(--success-soft); }
+.activity-call.observe .call-title { color: var(--muted); font-weight: 500; }
 .live-dot { background: var(--faint); box-shadow: none; }
 [data-unavailable] .live-dot { background: var(--danger); }
 [data-unavailable] #badge { color: var(--danger); background: var(--danger-soft); border-color: var(--divider); }
@@ -75,6 +90,7 @@ select:disabled { opacity: .48; cursor: default; }
 :root[data-display-mode="fullscreen"] .app-header { padding: 12px 20px; }
 :root[data-display-mode="fullscreen"] h1 { font-size: 14px; }
 :root[data-display-mode="fullscreen"] .card-tabs { padding: 4px; margin: 0 20px; }
+:root[data-display-mode="fullscreen"] .summary-strip { margin-inline: 20px; }
 :root[data-display-mode="fullscreen"] .card-tabs button { padding: 7px 16px; }
 @media (max-width: 620px) {
   .app-header { align-items: center; }
@@ -90,6 +106,6 @@ select:disabled { opacity: .48; cursor: default; }
 }
 @media (pointer: coarse) {
   .actions > .badge { min-height: 44px; }
-  .refresh, .card-tabs button, .file-views button, select, .conversation-intent select, .file-navigator select { min-height: 44px; }
+  .refresh, .card-tabs button, .file-views button, .summary-item, .app-footer > .card-appearance > summary, select, .conversation-intent select, .file-navigator select { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }

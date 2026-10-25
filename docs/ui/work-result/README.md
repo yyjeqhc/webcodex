@@ -3,6 +3,22 @@
 For the subsequent Appearance, focus and Results action corrections, see
 [Control corrections](controls.md).
 
+## Information hierarchy
+
+The card answers "is it still running, what changed, and what needs me" before any
+detail. The header keeps only the task identity, Refresh and one status badge. A
+summary row states each outcome once — changed files, checks, background work,
+final changes — and each item opens the section that owns its evidence; failures
+are tinted there instead of being restated across panels. Inline card and thread
+panel share the Activity / Results / Collaboration tabs and section names; the
+thread panel only opens on Results. Results lists checks first. Window activity is
+newest first and titled by what each call did, with the tool name as detail.
+Explanations that merely restate the UI were removed; scope notes appear only when
+they disambiguate (for example, current workspace changes beside sealed final
+changes, or checks without a linked Session). The Appearance preference lives in
+the footer. The thread file navigator stays available for every list because it
+also carries the only full-path copy control.
+
 Work Result uses the same opaque, neutral surfaces, terminal brand, compact
 controls and flowing selection as Workbench, Desktop and Runtime WebUI. Inline
 cards and fullscreen review keep the same information hierarchy: identity and
@@ -39,7 +55,7 @@ No new tool call is introduced by the selection controller.
 - [App HTML](../../../src/mcp_work_result_app.html) contains the bridge and generated assets.
 - [Card skin](../../../frontend/src/mcp-apps/work-result/work-result.css) owns presentation.
 - [Shared builder](../../../frontend/scripts/build-selection-motion.mjs) embeds only first-party selection code, CSS and brand in both Apps, without an external request.
-- Work Result is `ui://webcodex/work-result/v32`. Workbench is `ui://webcodex/workbench/v7` because its embedded controller also receives the roving-tabindex correction. Previous identities are retired; these are resource cache identities, not a product release.
+- Work Result is `ui://webcodex/work-result/v37`. Workbench is `ui://webcodex/workbench/v7` because its embedded controller also receives the roving-tabindex correction. Previous identities are retired; these are resource cache identities, not a product release.
 
 ## Browser evidence
 

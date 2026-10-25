@@ -4,7 +4,7 @@ export function renderWindowCurrentActivity({ el, activityIdleElapsed, idleAfter
   const lastAt = activity.last_activity_at_ms ?? activity.last_meaningful_activity_at_ms;
   if (activity.active && activity.current) {
     el("activityStatus").textContent = activity.current.label;
-    el("activityDetail").textContent = "This Window is active";
+    el("activityDetail").textContent = "";
     el("activityAge").textContent = "Active now";
     return;
   }

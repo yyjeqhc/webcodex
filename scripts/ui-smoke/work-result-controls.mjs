@@ -83,8 +83,11 @@ try {
       await check(`Header geometry (${label})`, async () => {
         assert.equal(await frame.evaluate(() => getComputedStyle(document.documentElement).colorScheme), theme);
         assert.equal(await frame.locator('#badge').innerText(), 'Waiting');
-        const sizes = await frame.locator('.actions > .card-appearance > summary, #refresh, #badge').evaluateAll(nodes => nodes.map(node => ({ height: node.getBoundingClientRect().height, fontSize: getComputedStyle(node).fontSize })));
-        assert.equal(sizes.length, 3);
+        // Appearance is a quiet footer preference; the header keeps only Refresh and status.
+        assert.equal(await frame.locator('.app-header .card-appearance').count(), 0);
+        assert.equal(await frame.locator('.app-footer > .card-appearance').count(), 1);
+        const sizes = await frame.locator('#refresh, #badge').evaluateAll(nodes => nodes.map(node => ({ height: node.getBoundingClientRect().height, fontSize: getComputedStyle(node).fontSize })));
+        assert.equal(sizes.length, 2);
         assert.ok(Math.max(...sizes.map(size => size.height)) - Math.min(...sizes.map(size => size.height)) <= 1, `Header heights must agree: ${JSON.stringify(sizes)}`);
         assert.equal(new Set(sizes.map(size => size.fontSize)).size, 1, 'Header control text sizes must agree');
         await assertLayout(frame);
@@ -227,9 +230,9 @@ try {
     try {
       await check(`Coarse pointer controls (${theme} 390px)`, async () => {
         assert.equal(await frame.evaluate(() => matchMedia('(pointer:coarse)').matches), true);
-        const heights = await frame.locator('.actions > .card-appearance > summary, #refresh, #badge').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height));
-        assert.ok(heights.every(height => height >= 44), `Touch header controls need 44px height: ${JSON.stringify(heights)}`);
-        assert.ok(Math.max(...heights) - Math.min(...heights) <= 1, 'Touch header heights must agree');
+        const heights = await frame.locator('.app-footer > .card-appearance > summary, #refresh, #badge').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height));
+        assert.ok(heights.every(height => height >= 44), `Touch controls need 44px height: ${JSON.stringify(heights)}`);
+        assert.ok(Math.max(...heights) - Math.min(...heights) <= 1, 'Touch control heights must agree');
         await frame.locator('.card-appearance > summary').tap();
         const fits = await frame.locator('.card-selection-preference').evaluate(node => {
           const box = node.getBoundingClientRect();

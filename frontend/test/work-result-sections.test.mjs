@@ -83,7 +83,9 @@ test("activity uses the supplied clock adapters and Window observation, not Sess
   const { sections, el } = fixture();
   sections.renderWindowCurrentActivity(frozen({ active: true, current: { label: "Reading" } }));
   assert.equal(el("activityStatus").textContent, "Reading");
-  assert.equal(el("activityDetail").textContent, "This Window is active");
+  // "Active now" already states liveness; the detail line stays empty instead of repeating it.
+  assert.equal(el("activityDetail").textContent, "");
+  assert.equal(el("activityAge").textContent, "Active now");
   sections.renderWindowCurrentActivity(frozen({ active: false, last: { label: "Read" }, idle: 60_000 }));
   assert.equal(el("activityStatus").textContent, "No WebCodex activity");
   assert.equal(el("activityAge").textContent, "Idle for duration:60000");

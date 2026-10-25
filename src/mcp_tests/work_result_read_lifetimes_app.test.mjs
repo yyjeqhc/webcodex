@@ -10,7 +10,7 @@ const detail = {
   observed_job_ids: [], workflow_sessions: [{ workflow_session_id: session_id, project, relation: "recorded" }],
 };
 function activityRow(view) {
-  return view.nodes.windowActivity.children.find(row => row.children[0]?.children[0]?.children[0]?.textContent === "read_workspace_changes");
+  return view.nodes.windowActivity.children.find(row => row.children[0]?.children[0]?.children[0]?.textContent === "Reviewed changes");
 }
 async function pendingActivity() {
   const view = app("mcp_work_result_app.html");

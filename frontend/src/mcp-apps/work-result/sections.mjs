@@ -5,6 +5,7 @@ import { renderWindowCurrentActivity, renderActivityDetail } from "./activity.mj
 export { createReadCache } from "./read-cache.mjs";
 export { createActivityDetails } from "./activity-details.mjs";
 export { createCollaborationRenderer } from "./collaboration.mjs";
+export { createSummaryRenderer, summaryItems } from "./summary.mjs";
 
 
 // Static bundled composition, not a third-party UI sandbox. The mounted App

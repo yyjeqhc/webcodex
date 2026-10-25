@@ -616,7 +616,7 @@ try {
   for (const width of [320, 1440]) await run(`work_result: file view selection and forced colors (${width})`, async () => {
     const { page, frame, errors } = await mount('work_result', width, 'fullscreen', false, width === 1440, 'no-preference', true);
     try {
-      assert.equal(await frame.locator('#tabResults').textContent(), 'Review');
+      assert.equal(await frame.locator('#tabResults').textContent(), 'Results', 'thread review keeps the card tab name');
       await frame.locator('#workspaceFiles .file-toggle').first().click();
       const group = frame.locator('#workspaceFiles .file-views').first();
       const plate = group.locator('[data-selection-motion-plate]');

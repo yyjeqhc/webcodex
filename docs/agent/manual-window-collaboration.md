@@ -90,7 +90,11 @@ accepted or executed.
 
 The WebUI keeps its selected Window when a bounded inventory omits it or an exact
 Window detail becomes unavailable; only user selection changes the communication
-target. Authority failures still clear unavailable data. A successful send receipt
+target. The WebUI composer's Session context is the same single Session focus as the
+Window activity filter and is always visible and editable before sending. The Work
+Result card sends kind and priority (low/normal/high) with the exact retry payload and
+shows the receipt-confirmed message immediately; the following history read only
+reconciles it. Authority failures still clear unavailable data. A successful send receipt
 releases the composer immediately and replaces any pre-send transcript read, so a
 slow refresh cannot delay draft completion or postpone the new read until polling.
 
@@ -98,8 +102,10 @@ The WebUI follows new messages while the reader is near the end of the thread.
 Reading earlier messages keeps the scroll position and offers **View new messages**.
 Both surfaces offer **Load earlier messages** and **Return to latest messages**.
 The DOM keeps at most 200 messages while the database retains earlier history.
-New head slices do not delete previously displayed messages; explicit older-page
-navigation is not overwritten by polling. Reply quotations use exact message IDs,
+New head slices do not delete previously displayed messages unless a truncated head
+no longer reaches them: that gap is never spliced, the view restarts at the new head
+and earlier pages stay reachable through the cursor. Explicit older-page navigation
+is not overwritten by polling. Reply quotations use exact message IDs,
 not text/title matching. Message kind and ACK are conversational semantics, not
 execution approval. Already-deleted records cannot be reconstructed by this upgrade.
 Ctrl/Command + Enter does not submit while an input method is composing. The card

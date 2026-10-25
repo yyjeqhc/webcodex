@@ -185,7 +185,11 @@ pub(super) fn files(text: &mut String, mut output: Value) {
             text,
             "{}{}",
             one_line(&entry["path"]),
-            if entry["kind"] == "dir" { "/" } else { "" }
+            if entry["kind"] == "dir" && !entry["path"].as_str().unwrap().ends_with('/') {
+                "/"
+            } else {
+                ""
+            }
         );
         if let Some(count) = entry.get("file_count").and_then(Value::as_u64) {
             let _ = write!(text, " ({count} files)");
@@ -339,6 +343,23 @@ pub(super) fn execution(text: &mut String, mut output: Value) {
 }
 
 pub(super) fn jobs(text: &mut String, mut output: Value) {
+    // These are two labels for one exact recovery only when the entire call,
+    // including follow_up_kind, agrees. Keep distinct targets/cursors/semantics.
+    if let Some(call) = output
+        .get("suggested_call")
+        .filter(|call| call["tool"].is_string() && call["arguments"].is_object())
+    {
+        let repeated = output["items"].as_array().is_some_and(|items| {
+            items.iter().any(|item| {
+                item.get("continuation") == Some(call)
+                    || item["output"].get("continuation") == Some(call)
+            })
+        });
+        if repeated {
+            remove(&mut output, &["suggested_call"]);
+        }
+    }
+
     if output["items"]
         .as_array()
         .is_some_and(|items| items.len() == 1)
@@ -399,6 +420,17 @@ pub(super) fn jobs(text: &mut String, mut output: Value) {
             .iter()
             .cloned()
         {
+            if item["success"] == false
+                && item["job_id"].is_string()
+                && item["error_kind"].is_string()
+                && item.get("output") == Some(&Value::Null)
+            {
+                // No observation payload exists for this failed selector. Its
+                // identity, error and any execution/recovery facts remain below.
+                remove(&mut item, &["output"]);
+                execution(text, item);
+                continue;
+            }
             // Canonical partial batches wrap each observation; sparse batches
             // already expose its fields. Never flatten away a failed item.
             if let Some(mut observation) = take(&mut item, "output") {

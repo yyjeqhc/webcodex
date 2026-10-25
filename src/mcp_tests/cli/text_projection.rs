@@ -121,8 +121,28 @@ fn cli_job_lifecycles_and_exact_recovery_calls_survive() {
             .lines()
             .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
             .collect();
-        assert_eq!(calls, vec![call.clone(), call.clone()]);
+        assert_eq!(calls, vec![call.clone()]);
         assert_eq!(body["result"]["isError"], false); // observation succeeded; Job may have failed
+    }
+}
+
+#[test]
+fn cli_recovery_calls_with_distinct_semantics_are_not_deduplicated() {
+    let continuation = json!({"tool":"observe_jobs","arguments":{"items":[{"job_id":"job-a"}]},"follow_up_kind":"fallback_recovery"});
+    for suggested in [
+        json!({"tool":"observe_jobs","arguments":{"items":[{"job_id":"job-b"}]},"follow_up_kind":"fallback_recovery"}),
+        json!({"tool":"observe_jobs","arguments":{"items":[{"job_id":"job-a"}]},"follow_up_kind":"mechanically_followable"}),
+    ] {
+        let body = project(
+            "observe_jobs",
+            true,
+            json!({"items":[{"job_id":"job-a","continuation":continuation}],"suggested_call":suggested}),
+        );
+        let calls: Vec<Value> = text(&body)
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+            .collect();
+        assert_eq!(calls, vec![continuation.clone(), suggested]);
     }
 }
 
@@ -146,7 +166,7 @@ fn cli_readiness_partial_and_tracked_listing_keep_exact_evidence() {
     let listing = project(
         "list_project_tracked_files",
         true,
-        json!({"entries":[{"path":"src","kind":"dir","file_count":5}],"returned":1,"total_entries":1,"total_files":5,"depth":1,"list_truncated":true,"source":"git_index","next_offset":null,"truncated":false}),
+        json!({"entries":[{"path":"src/","kind":"dir","file_count":5}],"returned":1,"total_entries":1,"total_files":5,"depth":1,"list_truncated":true,"source":"git_index","next_offset":null,"truncated":false}),
     );
     assert_snapshot("tracked_files_truncated", &listing);
     assert!(text(&listing).starts_with("src/ (5 files)\n"));
@@ -164,6 +184,7 @@ fn cli_readiness_partial_and_tracked_listing_keep_exact_evidence() {
         json!({"items":[{"index":0,"job_id":"missing","success":false,"output":null,"error_kind":"unknown_job","error":"Job unavailable","recovery_kind":"reobserve"}],"failed_count":1}),
     );
     assert_snapshot("jobs_partial_failure", &partial);
+    assert!(!text(&partial).lines().any(|line| line.trim() == "null"));
     for evidence in [
         "missing",
         "success: false",

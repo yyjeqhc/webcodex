@@ -128,7 +128,7 @@ pub fn work_result_app_tool_descriptors() -> Vec<ToolDescriptor> {
         ),
         tool_descriptor(
             "send_work_result_message",
-            "Work Result App-only Operator-to-Window message. Routes to the current stable ClientWindow, never a Session or peer sender. Project authorization and session:collaborate scope are required; optional session_id is exact, visible, explicitly linked context only. Stores a bounded durable message without consuming model attention or creating a Session. Retry uncertain results with the same delivery_key and payload; conflicting reuse is rejected.",
+            "App-only Operator->Window, not Session/peer. Project auth + session:collaborate required; session_id only exact visible linked context. Priority advisory (default normal). Bounded durable message, no Session/model attention. Uncertain retry identical delivery_key/payload; conflicts fail.",
         ),
         tool_descriptor(
             "read_changed_file_diff",

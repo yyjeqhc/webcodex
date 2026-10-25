@@ -78,7 +78,7 @@ manifests and full canonical descriptions; it is not a claimed saving for every
 | Adaptive with Apps, 74 tools | 105,055 | 105,425 | +370 |
 | Default workflow, Direct, on-demand/unknown | 12,832 | 12,163 | −669 |
 | Default workflow, Host Code Mode, on-demand/unknown | 14,683 | 14,014 | −669 |
-| Optional Goal chapter, on-demand/unknown | 3,485 | 3,577 | +92 |
+| Optional Goal chapter, on-demand/unknown | 3,485 | 3,486 | +1 |
 
 The compact catalogs grow by 0.95%, 0.53% and 0.35%, respectively. They now carry
 the concise canonical lifecycle distinctions; the MCP observer still appends
@@ -88,10 +88,11 @@ Default workflow reductions are 669–773 bytes depending on the previous Host
 resume mode; both default profiles retain the same shared orchestration rules.
 
 The complete default workflow contains more than the two removed fields. The
-optional chapter grows by 92 bytes to keep the explicit no-Goal checkpoint guard
+optional chapter grows by 1 byte to keep the explicit no-Goal checkpoint guard
 at the workflow's own entry point. All policy combinations remain under its
-existing 4,096-byte regression target. No budget was increased to accommodate
-the change.
+existing 4,096-byte regression target, including the unchanged 480-byte checkpoint
+field bound. CI caught the initially overlong checkpoint prose; it was condensed
+without removing its semantic assertions or increasing either budget.
 
 ## Compatibility and validation
 
@@ -117,8 +118,8 @@ Validation reuses existing facilities:
 
 Local results on mini: **335 tool-contract tests passed** (one existing ignored),
 **429 MCP tests passed** (one existing ignored), **7 model-workflow tests passed**,
-**13 built-in-workflow tests passed**, and **11 guidance-verifier Python tests
-passed**. Guidance preflight, formatting and diff checks passed. The exact
+**13 built-in-workflow tests passed**, **14 startup-brief tests passed**, and
+**11 guidance-verifier Python tests passed**. Guidance preflight, formatting and diff checks passed. The exact
 measurement commands are:
 
 ```sh
@@ -128,6 +129,7 @@ cargo test --locked -p webcodex-tool-contracts --lib
 cargo test --locked -p webcodex --lib mcp::tests -- --nocapture
 cargo test --locked -p webcodex --lib model_workflow -- --nocapture
 cargo test --locked -p webcodex --lib builtin_coding_workflow
+cargo test --locked -p webcodex --lib tool_runtime::tests::startup_brief -- --nocapture
 ```
 
 This PR removes an incorrect mandatory-wait implication and redundant default

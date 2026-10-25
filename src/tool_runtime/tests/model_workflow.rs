@@ -106,6 +106,8 @@ fn model_workflow_preferences_fit_workflow_schema_and_keep_goal_rules_optional()
             assert!(continuation.contains("normal final assistant response now"));
             assert!(continuation.contains("card success is not final"));
             assert!(continuation.contains("without awaiting readiness/follow-up"));
+            // Keep the existing startup checkpoint budget in this focused policy gate too.
+            assert!(details["checkpoint"].as_str().unwrap().len() <= 480);
             assert!(details["checkpoint"]
                 .as_str()
                 .unwrap()

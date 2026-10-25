@@ -201,9 +201,11 @@ fn canonical_audit_output(tool_name: &str, output: &Value) -> Option<Value> {
                 tool_name, output,
             ),
         ),
-        "edit_project_files" | "read_files" | "search_project_texts" | "wait_for_job_readiness" => {
-            Some(session_log_result_for_tool(tool_name, output))
-        }
+        "edit_project_files"
+        | "read_files"
+        | "search_project_texts"
+        | "observe_jobs"
+        | "wait_for_job_readiness" => Some(session_log_result_for_tool(tool_name, output)),
         _ => None,
     }
 }

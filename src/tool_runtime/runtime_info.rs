@@ -16,6 +16,9 @@ use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 use webcodex_runner_registry::RuntimeJobAggregateSnapshot;
 
 const LIST_RUNNERS_MAX_CLIENT_IDS: usize = 8;
+const LIST_RUNNERS_DEFAULT_LIMIT: usize = 30;
+const LIST_RUNNERS_MAX_LIMIT: usize = 100;
+const LIST_RUNNERS_MAX_EMBEDDED_PROJECTS: usize = 100;
 const TARGET_CLIENT_ID_MAX_CHARS: usize = 128;
 
 #[derive(Debug, Default)]
@@ -23,10 +26,12 @@ pub(crate) struct ListRunnersOptions {
     pub(crate) client_id: Option<String>,
     pub(crate) client_ids: Option<Vec<String>>,
     pub(crate) include_projects: Option<bool>,
+    pub(crate) projects_offset: usize,
     pub(crate) summary_only: bool,
     pub(crate) query: Option<String>,
     pub(crate) status: Option<webcodex_tool_contracts::tool_call::RunnerStatusFilter>,
     pub(crate) limit: Option<usize>,
+    pub(crate) offset: usize,
 }
 
 /// No serialization on query facts: each output owns its projection.
@@ -63,9 +68,6 @@ impl RunnerInventoryPage {
                 "status": client.status,
                 "connected": client.connected,
                 "runner_protocol_generation": client.runner_protocol_generation.get(),
-                "transport": client.transport,
-                "last_seen_age_secs": row.last_seen_age_secs,
-                "pending_requests": client.pending_requests,
                 "projects_count": row.projects_count,
                 "active_jobs": row.active.active,
                 "job_concurrency": {
@@ -74,12 +76,15 @@ impl RunnerInventoryPage {
                     "queued": row.active.queued,
                 },
                 "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
-                "build": client.build,
             });
             if let Some(availability) = client.computer_session_availability {
                 value["computer_session_availability"] = json!(availability);
             }
             if !options.summary_only {
+                value["build"] = json!(client.build);
+                value["transport"] = json!(client.transport);
+                value["last_seen_age_secs"] = json!(row.last_seen_age_secs);
+                value["pending_requests"] = json!(client.pending_requests);
                 value["owner"] = json!(client.owner);
                 value["hostname"] = json!(client.hostname);
                 value["host_context"] = host_context_projection(client.host_context.as_ref());
@@ -91,16 +96,42 @@ impl RunnerInventoryPage {
                     client.policy.as_ref().and_then(|policy| policy.shell_profiles.as_ref()),
                 );
                 value["tool_providers"] = json!(client.policy.as_ref().and_then(|policy| policy.tool_providers.as_ref()));
-                if options.include_projects.unwrap_or(true) {
-                    value["projects"] = json!(client.projects);
+            }
+            if options.include_projects.unwrap_or(false) {
+                let mut projects = client.projects.iter()
+                    .filter(|project| !project.disabled)
+                    .collect::<Vec<_>>();
+                projects.sort_by(|left, right| left.id.cmp(&right.id));
+                let total = projects.len();
+                let skip = options.projects_offset.min(total);
+                projects.drain(..skip);
+                projects.truncate(LIST_RUNNERS_MAX_EMBEDDED_PROJECTS);
+                let next = options.projects_offset.saturating_add(projects.len());
+                let next_offset = (next < total).then_some(next);
+                value["projects"] = json!(projects);
+                value["projects_returned_count"] = json!(projects.len());
+                value["projects_offset"] = json!(options.projects_offset);
+                value["projects_next_offset"] = json!(next_offset);
+                value["projects_truncated"] = json!(next_offset.is_some());
+                if let Some(next) = next_offset {
+                    value["projects_hint"] = json!(format!(
+                        "Continue list_runners(client_id={:?}, include_projects=true, projects_offset={next}).",
+                        client.client_id,
+                    ));
                 }
             }
             value
         }).collect();
+        let next = options.offset.saturating_add(runners.len());
+        let has_more = next < self.matched_count;
         let mut output = json!({
             "count": runners.len(),
             "matched_count": self.matched_count,
-            "truncated": runners.len() < self.matched_count,
+            "truncated": has_more,
+            "offset": options.offset,
+            "limit": options.limit,
+            "has_more": has_more,
+            "next_offset": has_more.then_some(next),
             "summary": {
                 "count": runners.len(),
                 "online": online,
@@ -231,6 +262,7 @@ impl ToolRuntime {
         })
     }
 
+    #[cfg(test)]
     pub(crate) async fn list_runners(&self, auth: Option<&AuthContext>) -> ToolResult {
         self.list_runners_with_options(auth, ListRunnersOptions::default())
             .await
@@ -239,8 +271,16 @@ impl ToolRuntime {
     pub(crate) async fn list_runners_with_options(
         &self,
         auth: Option<&AuthContext>,
-        options: ListRunnersOptions,
+        mut options: ListRunnersOptions,
     ) -> ToolResult {
+        // Public tools are always bounded. Console callers use the shared typed
+        // query explicitly, retaining their complete operator inventory.
+        options.limit = Some(
+            options
+                .limit
+                .unwrap_or(LIST_RUNNERS_DEFAULT_LIMIT)
+                .clamp(1, LIST_RUNNERS_MAX_LIMIT),
+        );
         match self.query_runner_inventory(auth, &options).await {
             Ok(page) => page.into_tool_result(&options),
             Err(result) => result,
@@ -316,20 +356,21 @@ impl ToolRuntime {
             .filter(|q| !q.is_empty())
             .map(str::to_lowercase);
         let access = crate::runner_http::runner_access_from_auth(auth);
-        let (mut clients, project_counts) = if options.summary_only {
-            let snapshot = self
-                .runner_registry
-                .console_registry_snapshot_for_auth(access.as_ref(), true)
-                .await;
-            (snapshot.runners, Some(snapshot.projects_by_runner))
-        } else {
-            (
-                self.runner_registry
-                    .list_runners_for_auth(access.as_ref())
-                    .await,
-                None,
-            )
-        };
+        let (mut clients, project_counts) =
+            if options.summary_only && !options.include_projects.unwrap_or(false) {
+                let snapshot = self
+                    .runner_registry
+                    .console_registry_snapshot_for_auth(access.as_ref(), true)
+                    .await;
+                (snapshot.runners, Some(snapshot.projects_by_runner))
+            } else {
+                (
+                    self.runner_registry
+                        .list_runners_for_auth(access.as_ref())
+                        .await,
+                    None,
+                )
+            };
         clients.sort_by(|a, b| a.client_id.cmp(&b.client_id));
         clients.retain(|client| {
             if let Some(expected) = options.client_id.as_deref() {
@@ -359,8 +400,10 @@ impl ToolRuntime {
                 })
         });
         let matched_count = clients.len();
+        let skip = options.offset.min(matched_count);
+        clients.drain(..skip);
         if let Some(limit) = options.limit {
-            clients.truncate(limit.clamp(1, 100));
+            clients.truncate(limit.clamp(1, LIST_RUNNERS_MAX_LIMIT));
         }
         let mut active_counts = self
             .runner_registry

@@ -244,6 +244,7 @@ async fn selector_and_session_access_follow_authoritative_project_visibility() {
         .dispatch_with_auth(
             ToolCall::ListProjects {
                 include_git_summary: false,
+                offset: 0,
                 client_id: None,
                 project: None,
                 query: None,
@@ -490,6 +491,8 @@ async fn computer_session_availability_reaches_only_authorized_overview_and_runn
     let full = runtime
         .dispatch_with_auth(
             ToolCall::ListRunners {
+                projects_offset: 0,
+                offset: 0,
                 query: None,
                 status: None,
                 limit: None,

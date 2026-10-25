@@ -1,5 +1,6 @@
 //! Phase D bounded batch Job observation.
 
+mod mixed_projection;
 mod readiness;
 mod summary;
 
@@ -922,10 +923,17 @@ fn observe_jobs_compact_projection_preserves_mixed_failure_and_budget_recovery()
         "error": "unknown job: missing-job"
     });
     let mixed = canonical_batch(vec![success.clone(), failure], "item_error", 0);
+    let projected = compact_projection(&mixed);
+    assert_eq!(projected.success, mixed.success);
+    assert_eq!(projected.error, mixed.error);
     assert_eq!(
-        serde_json::to_value(compact_projection(&mixed)).unwrap(),
-        serde_json::to_value(&mixed).unwrap()
+        projected.output["failed_count"],
+        mixed.output["failed_count"]
     );
+    assert_eq!(projected.output["wait"], mixed.output["wait"]);
+    assert_eq!(projected.output["items"][0]["status"], "running");
+    assert!(projected.output["items"][0].get("output").is_none());
+    assert_eq!(projected.output["items"][1], mixed.output["items"][1]);
     assert_eq!(
         mixed.output["items"][1]["suggested_call"],
         json!({"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {}})
@@ -1112,15 +1120,9 @@ fn observe_jobs_projection_reports_deterministic_byte_measurements() {
         println!(
             "OBSERVE_JOBS_PROJECTION_BYTES {name} canonical={canonical_bytes} projected={projected_bytes} reduction_pct={reduction:.1}"
         );
-        assert!(projected_bytes <= canonical_bytes);
-        if name != "mixed_success_unknown" {
-            assert!(projected_bytes < canonical_bytes);
-        } else {
-            assert_eq!(
-                serde_json::to_value(&projected).unwrap(),
-                serde_json::to_value(&canonical).unwrap()
-            );
-        }
+        assert!(projected_bytes < canonical_bytes, "{name}");
+        assert_eq!(projected.success, canonical.success);
+        assert_eq!(projected.error, canonical.error);
     }
 }
 

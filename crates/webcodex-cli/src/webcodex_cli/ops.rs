@@ -189,7 +189,9 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
         OpsCommand::Projects(opts) => {
             let token = resolve_ops_token(&opts)?;
             let report =
-                match fetch_projects(&opts.server_url, &opts.server_http, token.as_deref()).await {
+                match fetch_projects(&opts.server_url, &opts.server_http, token.as_deref(), None)
+                    .await
+                {
                     Ok(projects) => ops_projects_report(&opts.server_url, Some(&projects)),
                     Err(failure) => ops_http_failure_report(
                         &opts.server_url,
@@ -251,6 +253,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                 &opts.common.server_url,
                 &opts.common.server_http,
                 token.as_deref(),
+                Some(&opts.project),
             )
             .await
             {
@@ -482,10 +485,56 @@ async fn fetch_projects(
     server_url: &str,
     server_http: &ServerHttpOptions,
     token: Option<&str>,
+    project: Option<&str>,
 ) -> Result<Value, OpsHttpFailure> {
-    call_runtime_tool(server_url, server_http, token, "list_projects", json!({}))
-        .await
-        .map(|output| output.unwrap_or(Value::Null))
+    // Operator fleet reports explicitly traverse bounded pages. Exact smoke
+    // targets never depend on their position in the global inventory.
+    let mut projects = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut offset = 0;
+    for page in 0..20 {
+        let mut arguments = json!({"limit":100,"offset":offset,"summary_only":false});
+        if let Some(project) = project {
+            arguments["project"] = json!(project);
+        }
+        let mut output =
+            call_runtime_tool(server_url, server_http, token, "list_projects", arguments)
+                .await?
+                .unwrap_or(Value::Null);
+        let Some(rows) = output.get("projects").and_then(Value::as_array) else {
+            return Err(OpsHttpFailure::from_transport_error(
+                "invalid project inventory page".into(),
+            ));
+        };
+        for row in rows {
+            let Some(id) = row["id"].as_str() else {
+                return Err(OpsHttpFailure::from_transport_error(
+                    "project inventory row omitted identity".into(),
+                ));
+            };
+            if seen.insert(id.to_string()) {
+                projects.push(row.clone());
+            }
+        }
+        let next = output["next_offset"].as_u64();
+        if project.is_some() || next.is_none() || page == 19 {
+            output["count"] = json!(projects.len());
+            output["projects"] = json!(projects);
+            output["offset"] = json!(0);
+            // Preserve an older Server's explicit truncation too; never claim
+            // complete inventory merely because it omitted a continuation.
+            output["truncated"] = json!(next.is_some() || output["truncated"] == true);
+            return Ok(output);
+        }
+        let next = next.unwrap();
+        if next <= offset {
+            return Err(OpsHttpFailure::from_transport_error(
+                "non-advancing project inventory page".into(),
+            ));
+        }
+        offset = next;
+    }
+    unreachable!("the final bounded page returns")
 }
 
 fn ops_http_failure_report(
@@ -842,6 +891,10 @@ pub(crate) fn ops_projects_report(server_url: &str, projects: Option<&Value>) ->
     let mut verdict = OpsVerdict::pass();
     let projects_list = project_entries(projects);
     let total = projects_list.len();
+    let truncated = projects.is_some_and(|value| value["truncated"] == true);
+    if truncated {
+        verdict.warn_reason("project_inventory_truncated", "the operator report reached its bounded inventory limit; use list_projects filters and next_offset for the remaining Projects");
+    }
     let online = projects_list
         .iter()
         .filter(|project| project_online(project))
@@ -902,6 +955,8 @@ pub(crate) fn ops_projects_report(server_url: &str, projects: Option<&Value>) ->
     }
     let summary = json!({
         "count": total,
+        "matched_count": projects.and_then(|value| value["matched_count"].as_u64()).unwrap_or(total as u64),
+        "truncated": truncated,
         "online_count": online,
         "disconnected_count": disconnected,
         "stale_count": stale,

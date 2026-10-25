@@ -1,6 +1,6 @@
 //! Tool-specific text layouts. Consume only fields represented in the text or
 //! proven redundant for this shape; unknown and exceptional evidence falls back.
-use super::{render_fields, scalar};
+use super::{ordered_json, render_fields, scalar};
 use serde_json::{json, Value};
 use std::fmt::Write;
 
@@ -25,7 +25,7 @@ fn take(value: &mut Value, key: &str) -> Option<Value> {
 pub(super) fn one_line(value: &Value) -> String {
     match value.as_str() {
         Some(s) if !s.chars().any(char::is_control) => s.to_owned(),
-        _ => value.to_string(),
+        _ => ordered_json(value),
     }
 }
 
@@ -643,8 +643,8 @@ pub(super) fn changes(text: &mut String, mut output: Value) {
                 text,
                 "upstream: {}; ahead {}; behind {}",
                 one_line(&output["upstream"]),
-                output["ahead"],
-                output["behind"]
+                ordered_json(&output["ahead"]),
+                ordered_json(&output["behind"])
             );
             remove(
                 &mut output,
@@ -895,8 +895,11 @@ pub(super) fn inventory(text: &mut String, mut output: Value, collection: &str) 
         }
         render_fields(text, &item);
     }
-    for key in ["count", "matched_count"] {
-        omit_equal(&mut output, key, json!(count));
+    // Paginated Project discovery states both the page and total counts.
+    if collection != "projects" || output.get("next_offset").is_none() {
+        for key in ["count", "matched_count"] {
+            omit_equal(&mut output, key, json!(count));
+        }
     }
     omit_equal(&mut output, "truncated", json!(false));
     omit_equal(&mut output, "recommended_for_smoke", json!([]));

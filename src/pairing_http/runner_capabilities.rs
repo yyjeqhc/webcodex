@@ -3,6 +3,7 @@
 //! administrator/bootstrap authority and never accepts arbitrary scope names.
 use super::*;
 use crate::runtime_http::require_runtime;
+#[cfg(test)]
 use serde_json::Value;
 use webcodex_store::Database;
 
@@ -106,19 +107,20 @@ pub(crate) async fn grant_runner_capabilities(
     let Some(runtime) = require_runtime(depot, res) else {
         return;
     };
-    let observed = runtime.list_runners(Some(&auth)).await;
-    let owner = observed
-        .output
-        .get("runners")
-        .and_then(Value::as_array)
-        .and_then(|runners| {
-            runners.iter().find(|runner| {
-                runner.get("client_id").and_then(Value::as_str) == Some(body.client_id.as_str())
-                    && runner.get("connected").and_then(Value::as_bool) == Some(true)
-            })
-        })
-        .and_then(|runner| runner.get("owner"))
-        .and_then(Value::as_str);
+    let owner = runtime
+        .query_runner_inventory(
+            Some(&auth),
+            &crate::tool_runtime::ListRunnersOptions {
+                client_id: Some(body.client_id.clone()),
+                summary_only: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .ok()
+        .and_then(|page| page.runners.into_iter().next())
+        .filter(|row| row.client.connected)
+        .and_then(|row| row.client.owner);
     let Some(owner) = owner else {
         grant_error(res, StatusCode::CONFLICT);
         return;
@@ -126,7 +128,7 @@ pub(crate) async fn grant_runner_capabilities(
     match grant_for_owner(
         &db,
         &body.user_token_hash,
-        owner,
+        &owner,
         chrono::Utc::now().timestamp(),
     ) {
         Ok(changed) => res.render(Json(json!({

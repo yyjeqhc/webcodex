@@ -6,6 +6,90 @@ use crate::webcodex_cli::ops::{
 use crate::webcodex_cli::run_ops_command;
 use std::time::Duration;
 
+// A stateful HTTP fixture proves that an operator inventory follows the actual
+// continuation and does not silently treat the first model page as complete.
+#[tokio::test]
+async fn bounded_project_discovery_ops_traverses_all_pages() {
+    use std::io::BufRead as _;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+    let server = thread::spawn(move || {
+        let mut offsets = Vec::new();
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut reader = std::io::BufReader::new(&mut stream);
+                    let mut length = 0;
+                    loop {
+                        let mut line = String::new();
+                        reader.read_line(&mut line).unwrap();
+                        if line == "\r\n" || line.is_empty() {
+                            break;
+                        }
+                        if let Some(value) =
+                            line.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            length = value.trim().parse::<usize>().unwrap();
+                        }
+                    }
+                    let mut body = vec![0u8; length];
+                    reader.read_exact(&mut body).unwrap();
+                    let request: Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(request["tool"], "list_projects");
+                    assert_eq!(request["params"]["summary_only"], false);
+                    assert_eq!(request["params"]["limit"], 100);
+                    let offset = request["params"]["offset"].as_u64().unwrap();
+                    offsets.push(offset);
+                    let end = (offset + 100).min(211);
+                    let projects = (offset..end)
+                        .map(|index| {
+                            json!({
+                                "id":format!("agent:ops:p{index:03}"),"connected":true,
+                                "agent_status":"online","enabled":true,
+                                "capabilities":{"recommended_for_smoke":false}
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    let response = json!({"success":true,"output":{
+                        "projects":projects,"count":end-offset,"matched_count":211,
+                        "offset":offset,"limit":100,"next_offset":(end < 211).then_some(end),
+                        "truncated":end < 211
+                    }})
+                    .to_string();
+                    write!(stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response.len(), response).unwrap();
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if stop_rx.try_recv().is_ok() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("fixture accept: {error}"),
+            }
+        }
+        offsets
+    });
+    let mut opts = ops_common_opts(format!("http://{address}"));
+    opts.token = Some("wc_pat_bounded_inventory_fixture".into());
+    opts.json = true;
+    let result = run_ops_command(OpsCommand::Projects(opts)).await;
+    stop_tx.send(()).unwrap();
+    let offsets = server.join().unwrap();
+    assert_eq!(offsets, vec![0, 100, 200]);
+    let output: Value = serde_json::from_str(&result.unwrap().stdout).unwrap();
+    assert_eq!(output["summary"]["count"], 211, "{output}");
+    assert_eq!(output["summary"]["matched_count"], 211);
+    assert_eq!(output["summary"]["truncated"], false);
+}
+
 #[test]
 fn ops_help_entrypoints_print_usage() {
     let cases: &[(&[&str], &[&str])] = &[
@@ -870,6 +954,14 @@ async fn run_smoke_preflight_with_projects(
     .stdout;
     stop_tx.send(()).unwrap();
     let requests = handle.join().unwrap();
+    for request in &requests {
+        let (_, body) = request.split_once("\r\n\r\n").unwrap();
+        let body: Value = serde_json::from_str(body).unwrap();
+        if body["tool"] == "list_projects" {
+            assert_eq!(body["params"]["project"], project);
+            assert_eq!(body["params"]["summary_only"], false);
+        }
+    }
     (output, requests)
 }
 

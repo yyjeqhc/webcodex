@@ -1715,6 +1715,11 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
                     " MCP defaults to sparse status; compact=false opts into full diagnostics.",
                 );
             }
+            if name == "list_projects" {
+                assert_eq!(expected["properties"]["summary_only"]["default"], false);
+                expected["properties"]["summary_only"]["default"] = json!(true);
+                expected["properties"]["summary_only"]["description"] = json!("MCP defaults to a Project identity/path/state summary. Set false for revision, shell, policy and smoke capabilities.");
+            }
             if name == "observe_jobs" {
                 assert_eq!(expected["properties"]["wake_on"]["default"], "change");
                 expected["properties"]["wake_on"]["default"] = json!("meaningful_change");

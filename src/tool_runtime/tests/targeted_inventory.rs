@@ -456,6 +456,147 @@ async fn list_projects_targets_visible_inventory_before_limit_and_compacts() {
 }
 
 #[tokio::test]
+async fn empty_inventory_hints_do_not_distinguish_hidden_from_nonexistent_resources() {
+    for managed in [false, true] {
+        let runtime = test_runtime();
+        let caller = if managed {
+            managed_discovery_auth("visible-owner")
+        } else {
+            shared_key_auth_context("visible-owner")
+        };
+        let hidden_owner = if managed {
+            managed_discovery_auth("hidden-owner")
+        } else {
+            shared_key_auth_context("hidden-owner")
+        };
+        let empty_caller = if managed {
+            managed_discovery_auth("empty-owner")
+        } else {
+            shared_key_auth_context("empty-owner")
+        };
+        if managed {
+            register_managed_target_agent(
+                &runtime,
+                "visible-client",
+                "visible-owner",
+                "visible-project",
+                "/tmp/visible-project",
+            )
+            .await;
+            register_managed_target_agent(
+                &runtime,
+                "hidden-client",
+                "hidden-owner",
+                "hidden-project",
+                "/tmp/hidden-project",
+            )
+            .await;
+        } else {
+            register_target_agent_for_auth(&runtime, "visible-client", "visible-project", &caller)
+                .await;
+            register_target_agent_for_auth(
+                &runtime,
+                "hidden-client",
+                "hidden-project",
+                &hidden_owner,
+            )
+            .await;
+        }
+
+        for summary in [false, true] {
+            for (hidden_call, missing_call, resource) in [
+                (
+                    list_projects_call(Some("hidden-client"), None, None, None, summary),
+                    list_projects_call(Some("missing-client"), None, None, None, summary),
+                    "Projects",
+                ),
+                (
+                    list_projects_call(
+                        None,
+                        Some("agent:hidden-client:hidden-project"),
+                        None,
+                        None,
+                        summary,
+                    ),
+                    list_projects_call(
+                        None,
+                        Some("agent:missing-client:missing-project"),
+                        None,
+                        None,
+                        summary,
+                    ),
+                    "Projects",
+                ),
+                (
+                    list_projects_call(None, None, Some("hidden-project"), None, summary),
+                    list_projects_call(None, None, Some("missing-project"), None, summary),
+                    "Projects",
+                ),
+                (
+                    list_runners_call(Some("hidden-client"), None, Some(true), summary),
+                    list_runners_call(Some("missing-client"), None, Some(true), summary),
+                    "Runners",
+                ),
+                (
+                    list_runners_call(None, Some(&["hidden-client"]), Some(true), summary),
+                    list_runners_call(None, Some(&["missing-client"]), Some(true), summary),
+                    "Runners",
+                ),
+            ] {
+                let hidden = runtime.dispatch_with_auth(hidden_call, Some(&caller)).await;
+                let missing = runtime
+                    .dispatch_with_auth(missing_call, Some(&caller))
+                    .await;
+                assert!(hidden.success && missing.success);
+                assert_eq!(
+                    serde_json::to_value(&hidden).unwrap(),
+                    serde_json::to_value(&missing).unwrap(),
+                    "whole response must not reveal existence: managed={managed}, summary={summary}"
+                );
+                assert_eq!(hidden.output["count"], 0);
+                assert_eq!(hidden.output["matched_count"], 0);
+                assert_eq!(
+                    hidden.output["hint"],
+                    format!("No accessible {resource} match this request. Check the filters and the current credential identity and authorization.")
+                );
+                let text = serde_json::to_string(&hidden).unwrap();
+                for secret in ["hidden-client", "hidden-owner", "hidden-project"] {
+                    assert!(!text.contains(secret), "{text}");
+                }
+            }
+
+            for (call, resource) in [
+                (
+                    list_projects_call(None, None, None, None, summary),
+                    "Projects",
+                ),
+                (
+                    list_runners_call(None, None, Some(true), summary),
+                    "Runners",
+                ),
+            ] {
+                let empty = runtime.dispatch_with_auth(call, Some(&empty_caller)).await;
+                assert!(empty.success);
+                assert_eq!(empty.output["count"], 0);
+                assert_eq!(
+                    empty.output["hint"],
+                    format!("No accessible {resource} match this request. Check the filters and the current credential identity and authorization.")
+                );
+            }
+            for call in [
+                list_projects_call(None, None, None, None, summary),
+                list_runners_call(None, None, Some(true), summary),
+            ] {
+                let visible = runtime.dispatch_with_auth(call, Some(&caller)).await;
+                assert!(visible.success);
+                assert_eq!(visible.output["count"], 1);
+                assert!(visible.output.get("hint").is_none());
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn list_projects_filters_only_after_authorization_visibility() {
     let runtime = test_runtime();
     let auth_a = shared_key_auth_context("targeted-a");

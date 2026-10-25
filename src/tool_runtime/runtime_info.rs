@@ -97,7 +97,7 @@ impl RunnerInventoryPage {
             }
             value
         }).collect();
-        ToolResult::ok(json!({
+        let mut output = json!({
             "count": runners.len(),
             "matched_count": self.matched_count,
             "truncated": runners.len() < self.matched_count,
@@ -108,7 +108,11 @@ impl RunnerInventoryPage {
                 "stale": stale,
             },
             "runners": runners,
-        }))
+        });
+        if self.matched_count == 0 {
+            output["hint"] = json!("No accessible Runners match this request. Check the filters and the current credential identity and authorization.");
+        }
+        ToolResult::ok(output)
     }
 }
 

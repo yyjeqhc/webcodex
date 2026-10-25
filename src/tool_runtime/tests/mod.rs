@@ -84,6 +84,7 @@ mod specialized_dispatch;
 mod startup_brief;
 mod startup_catalog;
 mod sync_timeout;
+mod runner_discovery;
 mod targeted_inventory;
 mod task_outputs;
 mod trusted_smoke;

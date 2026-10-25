@@ -1,0 +1,54 @@
+isError: false
+job_id: missing-job
+error: unknown job: missing-job
+error_kind: unknown_job
+index: 0
+success: false
+suggested_call:
+  {"arguments":{"arguments":{},"tool":"list_jobs"},"follow_up_kind":"fallback_recovery","tool":"call_runtime_tool"}
+updates: none
+job_id: wc_job_FIXTURE; status: completed; exit_code: 0
+stdout_tail:
+last
+
+activity: null
+command_summary: printf 'first\n中文\nlast\n'
+cursor:
+  stderr: 1
+  stdout: 4
+cwd: .
+detected_summary:
+  kind: operation
+  outcome: passed
+executor: agent
+last_update_seq: 0
+observation_token: wj3_EPOCH.3.4.1
+project: agent:cli-runtime-jobs:demo
+purpose: other
+recovery_reason: null
+recovery_reason_code: null
+recovery_state: null
+session_id: null
+shell: configured
+ssh_resource: null
+stderr_lines: 0
+stderr_retained_from_line: 1
+stderr_returned_lines: 0
+stdout_lines: 3
+stdout_retained_from_line: 1
+stdout_returned_lines: 1
+stdout_truncated: true
+structured_execution: null
+validation: null
+index: 1
+observation_ref: ~j2
+changed_count: 0
+failed_count: 1
+output_truncated: false
+requested_count: 2
+returned_count: 2
+succeeded_count: 1
+terminal_count: 1
+wait:
+  outcome: immediate
+  waited_ms: <CLOCK>

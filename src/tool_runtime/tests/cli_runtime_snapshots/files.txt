@@ -1,0 +1,4 @@
+isError: false
+.git/
+apps/
+src/

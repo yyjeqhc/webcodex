@@ -1,0 +1,7 @@
+isError: false
+apps/ (1 files)
+src/ (1 files)
+depth: 1
+depth_auto: false
+source: git_index
+total_files: 2

@@ -1,0 +1,22 @@
+isError: true
+ERROR: Command execution outcome is unknown: Runner transport disconnected without reconciliation support.
+The command may have started or produced side effects, but WebCodex did not receive a terminal result.
+Do not automatically retry a potentially side-effecting command.
+Retry guidance: inspect the actual Job, process, service, or target state as appropriate before deciding whether retry is safe.
+execution_state: outcome_unknown
+async_handoff_available: true
+command_completed: false
+command_ok: false
+command_started: true
+command_summary: printf 'executed\n' >> effect.txt
+cwd: .
+effective_timeout_secs: 30
+exit_code: null
+failure_kind: outcome_unknown
+job_id: null
+job_status: null
+promoted_to_job: false
+shell: configured
+sync_wait_secs: 10
+terminal: false
+tool_failure: true

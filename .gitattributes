@@ -2,6 +2,9 @@
 *.toml text eol=lf
 # Benchmark fixture bytes are part of the independent oracle.
 tests/fixtures/agent-loop-multi-file/*.txt text eol=lf
+# Runtime text snapshots preserve meaningful source/log whitespace and empty fields.
+# Limit the blank-at-eol exception to this exact evidence corpus.
+src/tool_runtime/tests/cli_runtime_snapshots/*.txt text eol=lf whitespace=-blank-at-eol
 
 # Frontend freshness checks compare these generated assets byte-for-byte.
 frontend/dist/** text eol=lf

@@ -1594,11 +1594,16 @@ pub(crate) async fn cli_call_for_test(
     arguments: Value,
     auth: &AuthContext,
 ) -> Value {
+    let params = if cli::is_direct(tool) {
+        json!({"name":tool,"arguments":arguments})
+    } else {
+        json!({"name":"call_runtime_tool","arguments":{"tool":tool,"arguments":arguments}})
+    };
     let request = JsonRpcRequest {
         jsonrpc: Some("2.0".into()),
         method: "tools/call".into(),
         id: Some(json!(1)),
-        params: json!({"name":tool,"arguments":arguments}),
+        params,
     };
     let outcome = handle_mcp_request_for_surface(
         runtime,

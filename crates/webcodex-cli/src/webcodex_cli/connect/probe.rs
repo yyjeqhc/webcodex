@@ -100,7 +100,7 @@ pub(super) async fn wait_for_connection(
                 server_http,
                 Some(key),
                 "list_projects",
-                json!({}),
+                json!({"project":runtime_project_id,"client_id":client_id,"limit":1,"summary_only":true}),
             )
             .await?;
             if !(200..300).contains(&status) {

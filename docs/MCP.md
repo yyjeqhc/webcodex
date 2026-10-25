@@ -730,6 +730,45 @@ Failures return small structured errors with project-relative paths only —
 never absolute paths, commands, Runner/provider stderr, or arbitrary provider
 prose.
 
+### Project discovery and recovery
+
+`list_projects` returns 30 Projects by default and clamps explicit `limit` to
+1–100 on both MCP and the canonical Runtime API. Authorization and exact
+`client_id` / `project` or literal `query` filters run before stable ascending
+Runtime Project ID ordering and `offset` pagination. Responses include
+`matched_count`, page `count`, effective `offset` / `limit`, and
+`next_offset` (null at the end); `truncated` means another page remains.
+Keep the same filters and pass `next_offset` as the next request's `offset`.
+
+Offsets use current authorized inventory on every request, without retained
+pagination state. New/deleted registrations or changed permissions can repeat or
+omit rows between pages. Restart at zero and deduplicate exact IDs when that
+matters; pagination is not an immutable inventory snapshot. A fixed set of 107
+matches is fully traversable despite the 100-row page ceiling.
+
+MCP CLI and Adaptive calls default to `summary_only=true`: exact identity, path,
+name, provenance, availability and active-Job counts. Set it to false to retrieve
+revision, shell/policy and smoke-test capabilities, including before maintenance
+that needs a revision. Canonical API calls retain detailed rows by default within
+the same page bounds. Console's explicit inventory query keeps its separate
+2,000-row operator ceiling and the shared authorization/filter implementation.
+CLI operator fleet reports traverse at most twenty 100-row pages and explicitly
+report truncation. Known-target connection/removal/smoke checks use exact IDs.
+
+Automatic registrations remain discoverable, including queries for authoritative
+`registration_source` or `kind` metadata such as `auto_registered` and
+`managed_worktree`. Paths are not used to infer provenance. No registrations,
+worktrees or branches are removed; no recent-use ordering is inferred.
+
+Project-resolution errors expose at most five authorized suggestions, ranked by
+exact short ID/name, case-insensitive equality, prefix/substring, then thresholded
+edit distance over at most 64 characters, connection state and stable ID. Labels
+and input displays are bounded; overlong identities are omitted rather than
+shortened into a different selector. `candidate_count` describes the authorized
+candidate pool for that resolution scope, and `candidates_truncated` reports
+omissions. Candidates appear once, with a bounded `list_projects` recovery call.
+Matching suggestions never authorizes or automatically retargets execution.
+
 ## Common errors
 
 | Code | Meaning | Action |

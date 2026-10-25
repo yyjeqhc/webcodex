@@ -895,8 +895,11 @@ pub(super) fn inventory(text: &mut String, mut output: Value, collection: &str) 
         }
         render_fields(text, &item);
     }
-    for key in ["count", "matched_count"] {
-        omit_equal(&mut output, key, json!(count));
+    // Paginated Project discovery states both the page and total counts.
+    if collection != "projects" || output.get("next_offset").is_none() {
+        for key in ["count", "matched_count"] {
+            omit_equal(&mut output, key, json!(count));
+        }
     }
     omit_equal(&mut output, "truncated", json!(false));
     omit_equal(&mut output, "recommended_for_smoke", json!([]));

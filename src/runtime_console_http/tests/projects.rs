@@ -244,6 +244,7 @@ async fn selector_and_session_access_follow_authoritative_project_visibility() {
         .dispatch_with_auth(
             ToolCall::ListProjects {
                 include_git_summary: false,
+                offset: 0,
                 client_id: None,
                 project: None,
                 query: None,

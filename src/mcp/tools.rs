@@ -1401,6 +1401,15 @@ fn project_mcp_runtime_status_input_schema(input_schema: &mut Value) {
 fn project_mcp_model_default_input_schema(tool_name: &str, input_schema: &mut Value) {
     match tool_name {
         "get_runtime_status" => project_mcp_runtime_status_input_schema(input_schema),
+        "list_projects" => {
+            if let Some(summary) = input_schema
+                .pointer_mut("/properties/summary_only")
+                .and_then(Value::as_object_mut)
+            {
+                summary.insert("default".to_string(), json!(true));
+                summary.insert("description".to_string(), json!("MCP defaults to a Project identity/path/state summary. Set false for revision, shell, policy and smoke capabilities."));
+            }
+        }
         "observe_jobs" => {
             if let Some(summary) = input_schema
                 .pointer_mut("/properties/summary_only")
@@ -1439,7 +1448,7 @@ fn project_mcp_model_manifest_defaults(result: &mut ToolResult) {
 pub(super) fn project_mcp_model_argument_defaults(tool_name: &str, arguments: &mut Value) {
     let field = match tool_name {
         "get_runtime_status" => "compact",
-        "observe_jobs" => "summary_only",
+        "observe_jobs" | "list_projects" => "summary_only",
         _ => return,
     };
     if arguments.is_null() {

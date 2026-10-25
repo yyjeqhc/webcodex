@@ -200,16 +200,23 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("hint", schema_type("string", "Guidance when no caller-visible Projects match the filters; does not disclose hidden resources.")),
             (
                 "projects",
-                array_schema(open_object_schema("Project summary including canonical id, Server-issued project_ref when a stable Project root identity is available, and capabilities.git_available/supports_cleanup_verification/recommended_for_smoke."), "Runtime projects."),
+                {
+                    let mut schema = array_schema(open_object_schema("Project identity/path/state summary; exact id and optional principal-scoped project_ref remain reusable. Full mode also includes revision, policy, shell and smoke capabilities."), "Bounded page of caller-visible Runtime projects.");
+                    schema["maxItems"] = json!(100);
+                    schema
+                },
             ),
-            ("count", schema_type("integer", "Project count.")),
+            ("count", schema_type("integer", "Projects returned on this page.")),
+            ("offset", schema_type("integer", "Effective live offset after authorization, filtering and stable Runtime ID ordering.")),
+            ("limit", schema_type("integer", "Effective page size; default 30, maximum 100 for canonical tools.")),
+            ("next_offset", nullable_schema("integer", "Next live offset or null when no later page remains. Changes to registry or visibility may repeat/omit rows; restart at zero and deduplicate IDs.")),
             (
                 "matched_count",
                 schema_type("integer", "Caller-visible Project count matching filters before limit."),
             ),
             (
                 "truncated",
-                schema_type("boolean", "Whether limit truncated matching Projects."),
+                schema_type("boolean", "Whether later matching Projects remain after this page."),
             ),
             (
                 "recommended_for_smoke",

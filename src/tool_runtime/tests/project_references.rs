@@ -5,6 +5,51 @@ use crate::tool_runtime::{ToolCall, ToolRuntime};
 use serde_json::json;
 use std::sync::Arc;
 
+#[tokio::test]
+async fn bounded_project_discovery_late_page_references_resolve_exactly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = runtime_with_reference_db(&tmp.path().join("paged-refs.db"));
+    let projects = (0..107)
+        .map(|index| {
+            let id = format!("p{index:03}");
+            let mut entry = project("pages", &id, &id, &format!("/repo/{id}"), '7');
+            entry.root_fingerprint = Some(format!("wc_projroot_{index:064x}"));
+            entry
+        })
+        .collect();
+    register_agent_projects(
+        &runtime,
+        "pages",
+        None,
+        RunnerCapabilities::default(),
+        projects,
+    )
+    .await;
+    let auth = auth_context(None, true);
+    let result = runtime
+        .list_projects_with_options(
+            Some(&auth),
+            ListProjectsOptions {
+                offset: 100,
+                limit: Some(100),
+                summary_only: true,
+                ..Default::default()
+            },
+        )
+        .await;
+    assert_eq!(result.output["count"], 7);
+    assert_eq!(result.output["next_offset"], serde_json::Value::Null);
+    for row in result.output["projects"].as_array().unwrap() {
+        let reference = row["project_ref"].as_str().unwrap();
+        let resolved = runtime
+            .resolve_project_input_for_auth(reference, Some(&auth))
+            .await
+            .unwrap();
+        assert_eq!(resolved.resolved_id, row["id"].as_str().unwrap());
+        assert_eq!(resolved.config.path, row["path"].as_str().unwrap());
+    }
+}
+
 fn root(hex: char) -> String {
     format!("wc_projroot_{}", hex.to_string().repeat(64))
 }
@@ -294,6 +339,7 @@ async fn server_issued_project_ref_crosses_real_project_scoped_dispatch_paths() 
         .dispatch_with_auth(
             ToolCall::ListProjects {
                 include_git_summary: false,
+                offset: 0,
                 client_id: None,
                 project: None,
                 query: None,

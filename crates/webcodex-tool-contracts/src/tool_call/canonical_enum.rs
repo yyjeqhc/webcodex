@@ -3838,10 +3838,13 @@ pub enum ToolCall {
         #[schemars(length(min = 1, max = 200))]
         #[serde(default)]
         query: Option<String>,
-        /// Maximum results, clamped to 100. Filtered queries default to 100; unfiltered omission returns all visible Projects.
+        /// Page size, default 30, clamped to 100 after authorization and filters.
         #[schemars(range(min = 1))]
         #[serde(default)]
         limit: Option<usize>,
+        /// Live offset, default 0, in stable Runtime Project ID order. Registry or authorization changes may repeat/omit rows; restart at zero and deduplicate IDs.
+        #[serde(default)]
+        offset: usize,
         /// Include cached Runner-inventory Git branch/HEAD/dirty, not a fresh filesystem read.
         #[serde(default)]
         include_git_summary: bool,

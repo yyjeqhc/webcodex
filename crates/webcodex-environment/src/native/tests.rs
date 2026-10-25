@@ -1089,6 +1089,17 @@ async fn uncertain_project_removal_is_not_dispatched_again() {
         "revision-a"
     );
     let pending: ProjectRemoval = store.read_json("remove-project.json").unwrap().unwrap();
+    for request in requests
+        .iter()
+        .filter(|request| request.body["tool"] == "list_projects")
+    {
+        assert_eq!(
+            request.body["params"]["project"],
+            "agent:alice-client:project-a"
+        );
+        assert_eq!(request.body["params"]["summary_only"], false);
+        assert_eq!(request.body["params"]["limit"], 1);
+    }
     assert!(pending.dispatched && !pending.confirmed);
     assert_eq!(store.load_environment().unwrap().unwrap().projects.len(), 1);
 }

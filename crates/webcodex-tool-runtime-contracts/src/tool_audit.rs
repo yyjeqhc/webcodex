@@ -2159,6 +2159,7 @@ impl ToolCallAuditProjection for ToolCall {
                 project,
                 query,
                 limit,
+                offset,
                 summary_only,
                 include_git_summary,
             } => serde_json::json!({
@@ -2167,6 +2168,7 @@ impl ToolCallAuditProjection for ToolCall {
                 "query_present": query.is_some(),
                 "query_length": query.as_deref().map(|value| value.chars().count()).unwrap_or_default(),
                 "limit": limit,
+                "offset": offset,
                 "summary_only": summary_only,
                 "include_git_summary": include_git_summary,
             }),

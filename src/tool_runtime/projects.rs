@@ -32,6 +32,7 @@ const PROJECT_OP_WAIT_SECS: u64 = 32;
 const AUTO_REGISTERED_PROJECT_SOURCE: &str = "auto_registered";
 
 const LIST_PROJECTS_MAX_QUERY_CHARS: usize = 200;
+const LIST_PROJECTS_DEFAULT_RESULTS: usize = 30;
 const LIST_PROJECTS_MAX_RESULTS: usize = 100;
 const RUNTIME_CONSOLE_LIST_PROJECTS_MAX_RESULTS: usize = 2_000;
 
@@ -41,6 +42,7 @@ pub(crate) struct ListProjectsOptions {
     pub(crate) project: Option<String>,
     pub(crate) query: Option<String>,
     pub(crate) limit: Option<usize>,
+    pub(crate) offset: usize,
     pub(crate) summary_only: bool,
     pub(crate) include_git_summary: bool,
 }
@@ -50,6 +52,8 @@ pub(crate) struct ListProjectsOptions {
 pub(crate) struct ProjectInventoryPage {
     pub(crate) projects: Vec<ProjectInventoryRow>,
     pub(crate) matched_count: usize,
+    offset: usize,
+    limit: usize,
 }
 
 pub(crate) struct ProjectInventoryRow {
@@ -77,12 +81,6 @@ struct ProjectCapabilities {
 
 impl ProjectInventoryPage {
     fn into_tool_result(self, options: &ListProjectsOptions) -> ToolResult {
-        let recommended: Vec<_> = self
-            .projects
-            .iter()
-            .filter(|row| row.capabilities.recommended_for_smoke)
-            .map(|row| row.id.as_str())
-            .collect();
         let projects: Vec<_> = self
             .projects
             .iter()
@@ -90,25 +88,31 @@ impl ProjectInventoryPage {
                 let project = &row.project;
                 let mut value = json!({
                     "id": row.id,
-                    "agent_project_id": project.id,
                     "name": project.name,
                     "path": project.path,
-                    "description": project.description,
-                    "executor": "agent",
                     "client_id": row.client_id,
                     "enabled": !project.disabled,
                     "active_jobs": row.active_jobs,
                     "source": project_source(project),
-                    "agent_status": row.runner_status,
                     "connected": row.connected,
-                    "resolved_shell_profile": row.resolved_shell_profile,
-                    "shell_profile_status": row.shell_profile_status,
-                    "capabilities": {
-                        "git_available": row.capabilities.git_available,
-                        "recommended_for_smoke": row.capabilities.recommended_for_smoke,
-                    },
                 });
+                if let Some(description) = project
+                    .description
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                {
+                    value["description"] = json!(description);
+                }
+                if !row.connected || row.runner_status != "online" {
+                    value["agent_status"] = json!(row.runner_status);
+                }
                 if !options.summary_only {
+                    value["agent_project_id"] = json!(project.id);
+                    value["description"] = json!(project.description);
+                    value["executor"] = json!("agent");
+                    value["agent_status"] = json!(row.runner_status);
+                    value["resolved_shell_profile"] = json!(row.resolved_shell_profile);
+                    value["shell_profile_status"] = json!(row.shell_profile_status);
                     value["allow_patch"] = json!(project.allow_patch);
                     value["disabled"] = json!(project.disabled);
                     value["revision"] = json!(project.revision);
@@ -125,13 +129,25 @@ impl ProjectInventoryPage {
                 value
             })
             .collect();
+        let end = self.offset.saturating_add(projects.len());
+        let next_offset = (end < self.matched_count).then_some(end);
         let mut output = json!({
             "count": projects.len(),
             "matched_count": self.matched_count,
-            "truncated": projects.len() < self.matched_count,
+            "offset": self.offset,
+            "limit": self.limit,
+            "next_offset": next_offset,
+            "truncated": next_offset.is_some(),
             "projects": projects,
-            "recommended_for_smoke": recommended,
         });
+        if !options.summary_only {
+            output["recommended_for_smoke"] = json!(self
+                .projects
+                .iter()
+                .filter(|row| row.capabilities.recommended_for_smoke)
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>());
+        }
         if self.matched_count == 0 {
             output["hint"] = json!("No accessible Projects match this request. Check the filters and the current credential identity and authorization.");
         }
@@ -149,7 +165,7 @@ pub(super) struct ProjectCandidate {
 fn validate_list_projects_options(
     options: &ListProjectsOptions,
     max_results: usize,
-) -> Result<(Option<String>, Option<usize>), ToolResult> {
+) -> Result<(Option<String>, usize), ToolResult> {
     if options
         .client_id
         .as_deref()
@@ -191,12 +207,10 @@ fn validate_list_projects_options(
         }
         None => None,
     };
-    let filtered =
-        options.client_id.is_some() || options.project.is_some() || options.query.is_some();
     let limit = options
         .limit
-        .map(|limit| limit.clamp(1, max_results))
-        .or_else(|| filtered.then_some(max_results));
+        .unwrap_or(LIST_PROJECTS_DEFAULT_RESULTS)
+        .clamp(1, max_results);
     Ok((query, limit))
 }
 
@@ -445,15 +459,20 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         options: &ListProjectsOptions,
         query: Option<&str>,
-        limit: Option<usize>,
+        limit: usize,
         clients: &[RunnerSemanticView],
     ) -> ProjectInventoryPage {
         let access = crate::runner_http::runner_access_from_auth(auth);
-        let mut candidates = project_candidates(clients, options, query);
+        let candidates = project_candidates(clients, options, query);
         let matched_count = candidates.len();
-        if let Some(limit) = limit {
-            candidates.truncate(limit);
-        }
+        // Offsets address this request's authorized, filtered, ID-sorted snapshot.
+        // Registration or authorization changes between calls may shift rows;
+        // callers needing a fresh traversal restart at zero and deduplicate IDs.
+        let candidates = candidates
+            .into_iter()
+            .skip(options.offset)
+            .take(limit)
+            .collect::<Vec<_>>();
         let project_ids: Vec<&str> = candidates
             .iter()
             .map(|candidate| candidate.runtime_id.as_str())
@@ -501,6 +520,8 @@ impl ToolRuntime {
         ProjectInventoryPage {
             projects,
             matched_count,
+            offset: options.offset,
+            limit,
         }
     }
 
@@ -1039,6 +1060,9 @@ fn project_query_matches(needle: &str, runtime_id: &str, project: &RunnerProject
         project.name.as_deref(),
         project.description.as_deref(),
         Some(project.path.as_str()),
+        project.registration_source.as_deref(),
+        project.kind.as_deref(),
+        Some(project_source(project)),
     ]
     .into_iter()
     .flatten()

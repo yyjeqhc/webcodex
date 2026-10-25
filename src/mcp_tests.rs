@@ -309,8 +309,6 @@ mod agent_continuation_app;
 mod artifact_export;
 #[path = "mcp_tests/cli.rs"]
 mod cli;
-#[path = "mcp_tests/project_discovery.rs"]
-mod project_discovery;
 #[path = "mcp_tests/computer_app.rs"]
 mod computer_app;
 #[path = "mcp_tests/computer_contracts.rs"]
@@ -351,6 +349,8 @@ mod pdf_document_app;
 mod plugin_check;
 #[path = "mcp_tests/plugin_tools.rs"]
 mod plugin_tools;
+#[path = "mcp_tests/project_discovery.rs"]
+mod project_discovery;
 #[path = "mcp_tests/protocol.rs"]
 mod protocol;
 #[path = "mcp_tests/request_policy.rs"]

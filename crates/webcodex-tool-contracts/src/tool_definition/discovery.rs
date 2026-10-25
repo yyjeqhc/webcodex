@@ -62,7 +62,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolActivityPresentation::Support,
             super::ToolActivityInteraction::NonMeaningful,
         ),
-        "List registered Projects on an exact Runner; use resolve_workspace for unique path/name selection, or include_git_summary for cached maintenance facts. Results keep canonical Runtime Project ids and, when stable root identity is available, also issue a short principal-scoped project_ref for later model calls. project_ref is convenience only and grants no authority. When Runner/Project identity is known, pass exact client_id/project filters; use bounded query and summary_only instead of reading the full registry.",
+        "Discover caller-visible Projects with exact client_id/project filters or literal query. Pages default to 30 and clamp to 100 in stable Runtime Project ID order; continue with next_offset. Each page rechecks current visibility, so registry/authorization changes may repeat or omit rows: restart at offset=0 and deduplicate exact IDs. summary_only omits maintenance details; include_git_summary adds cached Git facts. Use resolve_workspace for unique path selection. Exact Runtime IDs and principal-scoped project_ref remain authoritative selectors; refs grant no authority.",
     ),
     model_spec(
         control_def(

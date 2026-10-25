@@ -19,6 +19,7 @@ fn list_projects_call(
         project: project.map(str::to_string),
         query: query.map(str::to_string),
         limit,
+        offset: 0,
         summary_only,
     }
 }
@@ -308,20 +309,21 @@ async fn list_projects_large_single_runner_inventory_preserves_linear_staging_co
             .await;
         assert!(full.success, "{:?}", full.error);
         assert_eq!(full.output["matched_count"], project_count);
-        assert_eq!(full.output["count"], project_count);
-        assert_eq!(full.output["truncated"], false);
+        assert_eq!(full.output["count"], 30);
+        assert_eq!(full.output["truncated"], true);
+        assert_eq!(full.output["next_offset"], 30);
         assert_eq!(
             runtime.runner_registry.project_job_scan_count_for_test(),
             3,
-            "a full inventory must scan Jobs once, not once per Project"
+            "a page must scan Jobs once, not once per Project"
         );
         assert_eq!(
             full.output["projects"][0]["id"],
             "agent:special:project-0000"
         );
         assert_eq!(
-            full.output["projects"][project_count - 1]["id"],
-            format!("agent:special:project-{:04}", project_count - 1)
+            full.output["projects"][29]["id"],
+            "agent:special:project-0029"
         );
         let first = &full.output["projects"][0];
         assert!(
@@ -372,7 +374,9 @@ async fn list_projects_targets_visible_inventory_before_limit_and_compacts() {
         .dispatch(list_projects_call(None, None, None, None, false))
         .await;
     assert!(full.success, "{:?}", full.error);
-    assert_eq!(full.output["count"], 124);
+    assert_eq!(full.output["count"], 30);
+    assert_eq!(full.output["matched_count"], 124);
+    assert_eq!(full.output["next_offset"], 30);
 
     let focused = runtime
         .dispatch(list_projects_call(
@@ -396,10 +400,8 @@ async fn list_projects_targets_visible_inventory_before_limit_and_compacts() {
             "summary_only leaked {omitted}: {project}"
         );
     }
-    let capabilities = project["capabilities"].as_object().unwrap();
-    assert_eq!(capabilities.len(), 2);
-    assert!(capabilities.contains_key("git_available"));
-    assert!(capabilities.contains_key("recommended_for_smoke"));
+    assert!(project.get("capabilities").is_none());
+    assert!(project.get("shell_profile_status").is_none());
 
     let exact = runtime
         .dispatch(list_projects_call(
@@ -445,7 +447,8 @@ async fn list_projects_targets_visible_inventory_before_limit_and_compacts() {
         .await;
     assert!(bounded_query.success);
     assert_eq!(bounded_query.output["matched_count"], 123);
-    assert_eq!(bounded_query.output["count"], 100);
+    assert_eq!(bounded_query.output["count"], 30);
+    assert_eq!(bounded_query.output["next_offset"], 30);
     assert_eq!(bounded_query.output["truncated"], true);
 
     for query in ["   ".to_string(), "x".repeat(201)] {
@@ -1165,6 +1168,7 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
             query: Some(_),
             limit: Some(3),
             summary_only: true,
+            offset: 0,
         }
     ));
 

@@ -185,6 +185,7 @@ fn runtime_status_call() -> ToolCall {
 fn list_projects_call() -> ToolCall {
     ToolCall::ListProjects {
         include_git_summary: false,
+        offset: 0,
         client_id: None,
         project: None,
         query: None,

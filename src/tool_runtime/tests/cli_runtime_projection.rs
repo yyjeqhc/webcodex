@@ -254,9 +254,23 @@ async fn cli_runtime_files_search_and_execution_snapshots() {
         .await;
     assert_eq!(projects["result"]["isError"], false, "{projects}");
     assert!(cli_text(&projects).contains(&f.project), "{projects}");
-    // Inventory reports the registered Runner's Git evidence; do not infer it
-    // again from the test process's local checkout.
-    assert!(cli_text(&projects).contains("git_available:"), "{projects}");
+    assert!(
+        !cli_text(&projects).contains("git_available:"),
+        "{projects}"
+    );
+    assert!(cli_text(&projects).contains("count: 1"), "{projects}");
+    assert!(
+        cli_text(&projects).contains("next_offset: null"),
+        "{projects}"
+    );
+    // Maintenance details stay explicitly available from the same inventory.
+    let details = f
+        .call(
+            "list_projects",
+            json!({"project":f.project,"summary_only":false}),
+        )
+        .await;
+    assert!(cli_text(&details).contains("git_available:"), "{details}");
     snapshot("projects", &projects, f.root.path(), None);
     let mut directory_texts = Vec::new();
     for (name, tool, extra) in [

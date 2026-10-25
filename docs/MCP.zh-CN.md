@@ -553,6 +553,38 @@ backend 失败、Runner 失败、超时、请求丢失及 provider 失败都会�
 失败返回只含项目相对路径的小型结构化错误——绝不包含绝对路径、命令或 Runner
 stderr、provider stderr 或任意 provider prose。
 
+### 项目发现与恢复
+
+`list_projects` 在 MCP 和 canonical Runtime API 中均默认返回 30 个项目，
+显式 `limit` 归一化到 1–100。每次先鉴权，再应用精确 `client_id` /
+`project` 和字面 `query` 筛选，最后按 Runtime Project ID 稳定升序排列，
+再用 `offset` 分页。响应包含 `matched_count`、本页 `count`、实际
+`offset` / `limit` 和 `next_offset`；末页的 `next_offset` 为 null，
+`truncated` 表示后面仍有页。后续请求保持相同筛选，将 `next_offset`
+作为新的 `offset`。
+
+分页没有全局保留状态，每次重新获取当前授权可见的清单。两页之间发生登记、
+删除或权限变化时可能重复或遗漏；需要重新遍历时从零开始并按精确 ID 去重。
+这不是不可变快照。固定的 107 个匹配结果可以完整访问，不受单页 100 上限阻挡。
+
+MCP CLI 与 Adaptive 默认 `summary_only=true`，保留精确身份、路径、名称、
+来源、可用状态与活跃 Job 数。需要 revision、Shell/策略或烟雾测试能力时显式
+设为 false；依赖 revision 的维护操作也应先读取详情。Canonical API 默认仍
+返回详情，但数量同样有界。Console 保留显式完整查询的独立 2,000 行运维上限，
+复用同一鉴权和筛选实现。CLI 运维清单最多遍历 20 个 100 行分页，并明确报告
+截断；已知目标的连接、注销和烟雾检查使用精确 ID。
+
+自动登记项目继续可被发现，也可用权威 `registration_source` / `kind`
+元数据（例如 `auto_registered`、`managed_worktree`）进行查询。不会根据
+路径猜测来源，不会删除登记、worktree 或分支，也不会推断最近使用时间。
+
+项目解析错误最多展示 5 个授权可见候选，依次按精确短 ID/名称、忽略大小写的
+相等、前缀/子串、最多 64 字符上的有阈值编辑距离、连接状态和稳定 ID 排序。
+名称及输入展示有界，过长身份会被省略，不会截成另一个看似可执行的选择器。
+`candidate_count` 表示本次解析范围内授权可见的候选池大小，
+`candidates_truncated` 表示有省略。候选只列一次，并提供有界的
+`list_projects` 恢复调用；模糊建议不会自动选择执行目标或扩大权限。
+
 ## 常见错误
 
 | 错误码 | 含义 | 处理 |

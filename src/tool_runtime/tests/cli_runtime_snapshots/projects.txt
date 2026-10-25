@@ -1,6 +1,8 @@
 isError: false
-agent:cli-runtime-files:demo | demo | <ROOT> | online
-capabilities:
-  git_available: false
-  recommended_for_smoke: false
+agent:cli-runtime-files:demo | demo | <ROOT>
 source: agent_registered
+count: 1
+limit: 30
+matched_count: 1
+next_offset: null
+offset: 0

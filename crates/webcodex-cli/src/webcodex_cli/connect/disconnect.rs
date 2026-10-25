@@ -337,7 +337,7 @@ async fn unregister_live_project(
         server_http,
         Some(observer_token),
         "list_projects",
-        json!({}),
+        json!({"project":runtime_project_id,"limit":1,"summary_only":false}),
     )
     .await
     .map_err(LiveUnregisterError::NoUnregister)?;
@@ -801,6 +801,8 @@ mod tests {
                 let (path, body) = if index == 0 {
                     assert!(text.starts_with("POST /api/tools/call "), "{text}");
                     assert!(text.contains(r#""tool":"list_projects""#), "{text}");
+                    assert!(text.contains(r#""project":"agent:client:repo""#), "{text}");
+                    assert!(text.contains(r#""summary_only":false"#), "{text}");
                     (
                         "/api/tools/call",
                         json!({"success":true,"output":{"projects":[{"id":"agent:client:repo","revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}),

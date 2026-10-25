@@ -1277,7 +1277,6 @@ async fn structured_execution_fast_terminal_jobs_project_back_without_visible_du
                     "exit_code",
                     "duration_ms",
                     "purpose",
-                    "cwd",
                     "executor",
                     "promoted_to_job",
                     "terminal",
@@ -1298,6 +1297,12 @@ async fn structured_execution_fast_terminal_jobs_project_back_without_visible_du
                         "{entry} boring terminal success field {omitted} should be omitted: {}",
                         result.output
                     );
+                }
+                if entry == "shell" {
+                    assert_eq!(result.output["cwd"], ".");
+                    assert!(result.output["shell"].is_string());
+                } else {
+                    assert!(result.output.get("cwd").is_none());
                 }
             } else {
                 assert_eq!(result.output["execution_state"], "completed");

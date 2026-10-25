@@ -57,7 +57,9 @@ async fn run_shell_declared_validation_enters_unified_summary_with_shell_and_roo
     assert!(execution.success, "{:?}", execution.error);
     assert_eq!(execution.output["cwd"], ".");
     assert_eq!(execution.output["shell"], "bash");
-    assert_eq!(execution.output["purpose"], "test");
+    // Declared purpose is redundant in the terminal receipt, but the
+    // canonical validation event must preserve its exact classification.
+    assert!(execution.output.get("purpose").is_none());
 
     let summary = runtime
         .dispatch_with_auth(

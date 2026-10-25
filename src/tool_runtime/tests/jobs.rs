@@ -1058,9 +1058,11 @@ async fn long_run_shell_fast_terminal_returns_ordinary_result_without_visible_jo
     }
     assert_eq!(result.output["stdout_tail"], "fast\n");
     assert_eq!(result.output["stderr_tail"], "warning\n");
-    for key in ["command_summary", "cwd", "shell", "purpose"] {
+    for key in ["command_summary", "purpose"] {
         assert!(result.output.get(key).is_none(), "{key}");
     }
+    assert!(result.output["cwd"].is_string());
+    assert!(result.output["shell"].is_string());
     assert_run_shell_result_matches_schema(&result);
     let completion = timer.finish();
     let metrics = completion.record_for_tool_result(&result).unwrap();

@@ -116,7 +116,7 @@ async fn read_file_accepts_unique_short_id() {
 }
 
 #[tokio::test]
-async fn read_files_short_id_continuation_binds_resolved_project_across_registry_churn() {
+async fn read_files_short_id_explicit_followup_binds_project_across_registry_churn() {
     let runtime = runtime_with_resolver_projects().await;
     let auth = auth_context(None, true);
     let first = tokio::spawn({
@@ -160,20 +160,27 @@ async fn read_files_short_id_continuation_binds_resolved_project_across_registry
         .unwrap();
     let first = first.await.unwrap();
     assert!(first.success, "{:?}", first.error);
-    let suggested = &first.output["suggested_call"];
-    assert_eq!(
-        suggested["arguments"]["project"],
-        "agent:workstation:other-repo"
-    );
-    assert!(suggested["arguments"].get("session_id").is_none());
-    let next_call = ToolCall::from_tool_name(
-        suggested["tool"].as_str().unwrap(),
-        suggested["arguments"].clone(),
-    )
-    .expect("short-id continuation suggested_call must parse");
+    // A completed explicit range must not suggest reading another page. A
+    // caller can still form an exact, revision-fenced request if needed.
+    assert!(first.output.get("suggested_call").is_none());
+    let revision = first.output["items"][0]["output"]["read_revision"]
+        .as_u64()
+        .expect("successful range must expose a revision");
+    let next_call = ToolCall::ReadFiles {
+        project: "agent:workstation:other-repo".to_string(),
+        items: vec![ReadFilesItem {
+            path: "README.md".to_string(),
+            start_line: Some(2),
+            limit: Some(1),
+            expected_read_revision: Some(revision),
+        }],
+        session_id: None,
+        with_line_numbers: None,
+        max_result_bytes: None,
+    };
 
-    // Make the original shorthand ambiguous after the first read. The already
-    // constructed recovery call must remain bound to workstation.
+    // Make the original shorthand ambiguous after the first read. The
+    // explicitly constructed, revision-fenced call remains bound to workstation.
     register_agent_projects(
         &runtime,
         "laptop",
@@ -237,7 +244,7 @@ async fn read_files_short_id_continuation_binds_resolved_project_across_registry
 }
 
 #[tokio::test]
-async fn read_files_short_id_item_continuation_uses_resolved_project_id() {
+async fn read_files_short_id_explicit_range_has_no_automatic_continuation() {
     let runtime = runtime_with_resolver_projects().await;
     let auth = auth_context(None, true);
     let task = tokio::spawn({
@@ -280,13 +287,10 @@ async fn read_files_short_id_item_continuation_uses_resolved_project_id() {
         .unwrap();
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(
-        result.output["suggested_call"]["arguments"]["project"],
-        "agent:workstation:other-repo"
-    );
-    assert!(result.output["suggested_call"]["arguments"]
-        .get("session_id")
-        .is_none());
+    assert!(result.output.get("suggested_call").is_none());
+    assert!(result.output["items"][0]["output"]["read_revision"].is_u64());
+    assert_eq!(result.output["items"][0]["output"]["end_line"], 1);
+    assert_eq!(result.output["items"][0]["output"]["has_more"], true);
 }
 
 #[tokio::test]

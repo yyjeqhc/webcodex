@@ -264,9 +264,12 @@ fn shell_sparse_schema_rejects_lifecycle_fragments() {
     project("run_shell", &mut result);
     assert_shell_schema(&result);
     let schema = crate::tool_runtime::registry::output_schema_for_tool("run_shell");
-    for key in ["shell", "cwd", "command_summary"] {
-        assert!(result.output.get(key).is_none(), "local request echo {key}");
-    }
+    assert_eq!(result.output["shell"], "bash");
+    assert!(
+        result.output.get("cwd").is_some(),
+        "retain actual resolved cwd"
+    );
+    assert!(result.output.get("command_summary").is_none());
     for (key, value) in [
         ("exit_code", json!(1)),
         ("duration_ms", json!(1)),

@@ -243,10 +243,8 @@ fn sparsify_terminal_shell_success(result: &mut ToolResult) {
     for key in ["command_summary", "purpose"] {
         output.remove(key);
     }
-    if output.get("ssh_resource").is_none_or(Value::is_null) {
-        output.remove("cwd");
-        output.remove("shell");
-    }
+    // Resolved cwd/shell can be selected by the Workflow Session rather than
+    // echoed from the caller. Preserve these small, nonredundant execution facts.
     // Availability cannot change continuation once this execution is terminal.
     if output
         .get("async_handoff_available")

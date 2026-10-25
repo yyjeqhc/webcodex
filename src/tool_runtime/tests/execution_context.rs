@@ -191,6 +191,7 @@ async fn run_shell_inherits_session_context_and_explicit_arguments_override_it()
         Some(root.to_string_lossy().as_ref())
     );
     assert_eq!(no_session_request.command, "pwd");
+    assert!(no_session_request.shell.is_none());
     complete_patch_agent_request(
         &runtime,
         "context-shell",
@@ -202,8 +203,9 @@ async fn run_shell_inherits_session_context_and_explicit_arguments_override_it()
     .await;
     let no_session = no_session_task.await.unwrap();
     assert!(no_session.success, "{:?}", no_session.error);
-    assert_eq!(no_session.output["cwd"], ".");
-    assert_eq!(no_session.output["shell"], "configured");
+    // The Runner request above proves the defaults; the model receipt omits them.
+    assert!(no_session.output.get("cwd").is_none());
+    assert!(no_session.output.get("shell").is_none());
 }
 
 #[tokio::test]

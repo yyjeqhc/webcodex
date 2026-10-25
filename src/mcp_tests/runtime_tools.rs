@@ -449,7 +449,14 @@ async fn mcp_runtime_status_defaults_sparse_preserves_explicit_full_and_gateway_
             let output = &value["result"]["structuredContent"]["output"];
             assert_eq!(value["result"]["structuredContent"]["success"], true);
             assert_eq!(output.get("authority").is_none(), sparse);
-            assert_eq!(output.get("mcp_host").is_some(), sparse);
+            assert_eq!(
+                output["mcp_host"],
+                json!({
+                    "profile": runtime.mcp_host_policy.profile.as_str(),
+                    "deployment_profile": runtime.deployment_mcp_host_policy.profile.as_str(),
+                    "profile_source": "deployment",
+                }),
+            );
             if !sparse {
                 for field in [
                     "effective_config",

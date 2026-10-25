@@ -2068,13 +2068,13 @@ fn map_lsp_error(error: LspError) -> RunnerLspResultEnvelope {
             error_codes::LSP_SERVER_UNAVAILABLE,
             "language server is unavailable".to_string(),
         ),
-        LspError::RequestTimeout { method, .. } if method == "workspace/readiness" => (
+        LspError::WorkspaceReadinessTimeout { .. } => (
             error_codes::LSP_REQUEST_TIMEOUT,
-            "language server workspace index readiness was not confirmed within the request deadline; no navigation result is available; retry this read-only request later".to_string(),
+            format!("{error}; no navigation result; inspect get_lsp_status; use search_project_texts while waiting for readiness"),
         ),
-        LspError::WorkspaceNotReady(_) => (
+        LspError::WorkspaceNotReady(reason) => (
             error_codes::LSP_SERVER_FAILED,
-            "language server workspace index is not ready or changed during the request; no navigation result is available; retry this read-only request after readiness is restored".to_string(),
+            format!("language server workspace index is not ready ({reason}); no navigation result; inspect get_lsp_status; use search_project_texts until readiness is restored"),
         ),
         LspError::RequestTimeout { .. } => (
             error_codes::LSP_REQUEST_TIMEOUT,

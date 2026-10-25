@@ -634,7 +634,15 @@ async fn e2c_job_handoff_has_exact_continuation_and_later_write_invalidates_term
     assert!(listed_job["validation"]["source_state"]
         .get("start_fence")
         .is_none());
-    assert!(listed_job.get("command_summary").is_none());
+    let command_summary = listed_job["command_summary"]
+        .as_str()
+        .expect("listed Job must include a command preview");
+    assert!(!command_summary.is_empty());
+    assert!(
+        command_summary.chars().count()
+            <= webcodex_core::audit_preview::COMMAND_PREVIEW_MAX_CHARS + 1,
+        "Job command preview must be bounded: {command_summary:?}"
+    );
     assert!(listed_job.get("stdout_tail").is_none());
     let active = runtime
         .active_jobs_summary(Some(&project), Some(&session), None, 20)

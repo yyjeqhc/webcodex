@@ -110,7 +110,7 @@ pub(crate) async fn grant_runner_capabilities(
     let owner = runtime
         .query_runner_inventory(
             Some(&auth),
-            &crate::tool_runtime::runtime_info::ListRunnersOptions {
+            &crate::tool_runtime::ListRunnersOptions {
                 client_id: Some(body.client_id.clone()),
                 summary_only: true,
                 ..Default::default()

@@ -4,6 +4,8 @@ use super::support::*;
 use crate::runner_protocol::{RunnerBuildInfo, RunnerCapabilities, RunnerRegisterRequest};
 use serde_json::json;
 
+mod bounded_discovery;
+
 fn list_projects_call(
     client_id: Option<&str>,
     project: Option<&str>,

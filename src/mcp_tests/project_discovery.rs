@@ -1,0 +1,59 @@
+use super::*;
+use crate::mcp::request_policy::McpSurface;
+
+async fn call(runtime: &ToolRuntime, surface: McpSurface, tool: &str, arguments: Value) -> Value {
+    let params = if surface == McpSurface::Cli {
+        json!({"name":tool,"arguments":arguments})
+    } else {
+        adaptive_runtime_gateway_params(tool, arguments)
+    };
+    match super::super::handle_mcp_request_for_surface(
+        runtime, rpc("tools/call", Some(json!(1)), params), None,
+        McpProtocolEra::Legacy, HostFileImportTrust::Untrusted,
+        None, None, None, true, true, None, surface, None,
+    ).await {
+        McpOutcome::Ok(value) => value,
+        other => panic!("project discovery failed: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn bounded_project_discovery_mcp_surfaces() {
+    let runtime = test_runtime();
+    runtime.runner_registry.register(crate::test_support::runner_registration(
+        "bounded", "bounded-instance", RunnerCapabilities::default(),
+    )).await.unwrap();
+    let projects = (0..211).map(|index| {
+        let id = if index == 210 { "webcodex".to_string() } else { format!("project-{index:04}") };
+        RunnerProjectSummary {
+            name: Some(format!("Large Fixture Project {index:04}")),
+            path: format!("/tmp/large-fixture/{id}"), id,
+            allow_patch: true, kind: Some("repo".into()), registration_source: None,
+            description: Some("large-fixture".into()), hooks: Vec::new(), disabled: false,
+            revision: Some("revision".into()), root_fingerprint: None, lineage: None,
+            git_branch: None, git_head: None, git_dirty: None, updated_at: 1, shell_profile: None,
+        }
+    }).collect();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.runner_registry, "bounded", "bounded-instance", projects,
+    ).await;
+    let adaptive = call(&runtime, McpSurface::Adaptive, "list_projects", json!({})).await;
+    let cli = call(&runtime, McpSurface::Cli, "list_projects", json!({})).await;
+    let error = call(&runtime, McpSurface::Cli, "read_files",
+        json!({"project":"webcodx","items":[{"path":"README.md","limit":1}]})).await;
+    let cli_text = cli["result"]["content"][0]["text"].as_str().unwrap();
+    let error_text = error["result"]["content"][0]["text"].as_str().unwrap();
+    println!("PROJECT_MCP_BYTES adaptive={} cli_text={} typo_cli_text={}",
+        serde_json::to_vec(&adaptive["result"]["structuredContent"]).unwrap().len(),
+        cli_text.len(), error_text.len());
+    assert_eq!(adaptive["result"]["structuredContent"]["output"]["count"], 30);
+    assert_eq!(adaptive["result"]["structuredContent"]["output"]["next_offset"], 30);
+    assert!(adaptive["result"]["structuredContent"]["output"]["projects"][0].get("revision").is_none());
+    assert!(cli["result"].get("structuredContent").is_none());
+    assert!(cli_text.contains("next_offset: 30"), "{cli_text}");
+    assert!(error_text.len() < 6000, "{error_text}");
+    assert_eq!(error["result"]["isError"], true);
+    let full = call(&runtime, McpSurface::Adaptive, "list_projects",
+        json!({"summary_only":false,"project":"agent:bounded:webcodex"})).await;
+    assert_eq!(full["result"]["structuredContent"]["output"]["projects"][0]["revision"], "revision");
+}

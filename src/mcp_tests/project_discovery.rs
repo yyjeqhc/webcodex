@@ -8,11 +8,10 @@ async fn call(
     tool: &str,
     arguments: Value,
 ) -> Value {
-    let params = if surface == McpSurface::Cli {
-        json!({"name":tool,"arguments":arguments})
-    } else {
-        adaptive_runtime_gateway_params(tool, arguments)
-    };
+    if surface == McpSurface::Cli {
+        return crate::mcp::cli_call_for_test(runtime, tool, arguments, auth).await;
+    }
+    let params = adaptive_runtime_gateway_params(tool, arguments);
     match super::super::handle_mcp_request_for_surface(
         runtime,
         rpc("tools/call", Some(json!(1)), params),
@@ -52,6 +51,7 @@ async fn bounded_project_discovery_mcp_surfaces() {
         )
         .await
         .unwrap();
+    let revision = format!("sha256:{}", "a".repeat(64));
     let projects = (0..211)
         .map(|index| {
             let id = if index == 210 {
@@ -69,7 +69,7 @@ async fn bounded_project_discovery_mcp_surfaces() {
                 description: Some("large-fixture".into()),
                 hooks: Vec::new(),
                 disabled: false,
-                revision: Some("revision".into()),
+                revision: Some(revision.clone()),
                 root_fingerprint: None,
                 lineage: None,
                 git_branch: None,
@@ -87,6 +87,17 @@ async fn bounded_project_discovery_mcp_surfaces() {
         projects,
     )
     .await;
+    // The paged inventory protocol returns Ok(degraded) on invalid summaries.
+    // Verify publication separately so an empty fixture cannot look compact.
+    let visible = runtime
+        .runner_registry
+        .list_project_semantic_views_for_auth(Some(&access), Some("bounded"), None)
+        .await;
+    assert_eq!(visible.len(), 1);
+    let inventory = visible[0].view.project_inventory.as_ref().unwrap();
+    assert_eq!(inventory.sync_state, "complete", "{inventory:?}");
+    assert_eq!(inventory.total_synced, 211, "{inventory:?}");
+    assert_eq!(visible[0].view.projects.len(), 211);
     let adaptive = call(
         &runtime,
         &auth,
@@ -144,7 +155,7 @@ async fn bounded_project_discovery_mcp_surfaces() {
     .await;
     assert_eq!(
         full["result"]["structuredContent"]["output"]["projects"][0]["revision"],
-        "revision"
+        revision
     );
     let full_cli = call(
         &runtime,
@@ -157,7 +168,7 @@ async fn bounded_project_discovery_mcp_surfaces() {
     assert!(full_cli["result"]["content"][0]["text"]
         .as_str()
         .unwrap()
-        .contains("revision: revision"));
+        .contains(&format!("revision: {revision}")));
     let second = call(
         &runtime,
         &auth,

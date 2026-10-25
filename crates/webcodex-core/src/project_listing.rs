@@ -94,7 +94,7 @@ pub fn normalize_scope(path: Option<&str>) -> String {
 
 /// Match one project-relative path against a glob.
 ///
-/// Supported: `*` (any run except `/`), `?` (one character except `/`), `**`
+/// Supported: `*` (any run except `/`), `?` (one byte except `/`), `**`
 /// (any run including `/`). Deliberately no character classes or braces —
 /// a pattern language the model can predict beats an expressive one it cannot.
 ///
@@ -103,68 +103,67 @@ pub fn normalize_scope(path: Option<&str>) -> String {
 pub fn glob_matches(pattern: &str, path: &str) -> bool {
     if !pattern.contains('/') {
         let basename = path.rsplit('/').next().unwrap_or(path);
-        if glob_match_segment(pattern.as_bytes(), basename.as_bytes()) {
-            return true;
+        let matched = glob_match_segment(pattern.as_bytes(), basename.as_bytes());
+        if matched || basename == path {
+            return matched;
         }
     }
     glob_match_segment(pattern.as_bytes(), path.as_bytes())
 }
 
-/// Backtracking glob matcher over bytes.
-///
-/// Iterative rather than recursive so a hostile pattern like `**a**a**a**`
-/// cannot blow the call stack. Every encountered star keeps one bounded
-/// backtrack frame: a later single `*` may get stuck at `/`, in which case the
-/// matcher must still be able to widen an earlier `**` (for example `**/*`
-/// against `a/b/c`).
+/// Byte glob matcher with O(pattern length * text length) work and O(text
+/// length) memory. Literal and one-star-run patterns avoid the DP allocation.
 fn glob_match_segment(pattern: &[u8], text: &[u8]) -> bool {
-    let (mut p, mut t) = (0usize, 0usize);
-    // (pattern index just after the star, next text index consumed by that
-    // star, whether the star may cross `/`). The number of frames is bounded
-    // by the pattern length (itself capped by the public input contract).
-    let mut stars: Vec<(usize, usize, bool)> = Vec::new();
-    while t < text.len() {
-        if p < pattern.len() {
-            match pattern[p] {
-                b'*' => {
-                    let crosses_slash = pattern.get(p + 1) == Some(&b'*');
-                    p += if crosses_slash { 2 } else { 1 };
-                    stars.push((p, t, crosses_slash));
-                    continue;
-                }
-                b'?' if text[t] != b'/' => {
-                    p += 1;
-                    t += 1;
-                    continue;
-                }
-                byte if byte == text[t] => {
-                    p += 1;
-                    t += 1;
-                    continue;
-                }
-                _ => {}
-            }
-        }
-
-        let mut resumed = false;
-        while let Some((resume_p, resume_t, crosses_slash)) = stars.last_mut() {
-            if *resume_t < text.len() && (*crosses_slash || text[*resume_t] != b'/') {
-                *resume_t += 1;
-                p = *resume_p;
-                t = *resume_t;
-                resumed = true;
-                break;
-            }
-            stars.pop();
-        }
-        if !resumed {
+    let Some(first_star) = pattern.iter().position(|byte| *byte == b'*') else {
+        return pattern.len() == text.len()
+            && pattern.iter().zip(text).all(|(&expected, &actual)| {
+                expected == actual || (expected == b'?' && actual != b'/')
+            });
+    };
+    let mut after_star = first_star + 1;
+    while pattern.get(after_star) == Some(&b'*') {
+        after_star += 1;
+    }
+    let prefix = &pattern[..first_star];
+    let suffix = &pattern[after_star..];
+    if !prefix.contains(&b'?') && !suffix.iter().any(|byte| matches!(*byte, b'*' | b'?')) {
+        if prefix.len() + suffix.len() > text.len()
+            || !text.starts_with(prefix)
+            || !text.ends_with(suffix)
+        {
             return false;
         }
+        return after_star - first_star >= 2
+            || !text[prefix.len()..text.len() - suffix.len()].contains(&b'/');
     }
-    while pattern.get(p) == Some(&b'*') {
-        p += 1;
+
+    // Each cell means the consumed pattern prefix matches this text prefix.
+    // Stars propagate left-to-right; literals read the previous row in reverse.
+    let mut reachable = vec![false; text.len() + 1];
+    reachable[0] = true;
+    let mut p = 0;
+    while p < pattern.len() {
+        if pattern[p] == b'*' {
+            let start = p;
+            while pattern.get(p) == Some(&b'*') {
+                p += 1;
+            }
+            // Consecutive stars can be empty; any pair permits crossing '/'.
+            let crosses_slash = p - start >= 2;
+            for t in 1..=text.len() {
+                reachable[t] =
+                    reachable[t] || (reachable[t - 1] && (crosses_slash || text[t - 1] != b'/'));
+            }
+        } else {
+            for t in (1..=text.len()).rev() {
+                reachable[t] = reachable[t - 1]
+                    && (pattern[p] == text[t - 1] || (pattern[p] == b'?' && text[t - 1] != b'/'));
+            }
+            reachable[0] = false;
+            p += 1;
+        }
     }
-    p == pattern.len()
+    reachable[text.len()]
 }
 
 /// Number of entries a rollup at `depth` would produce for `paths`, where each
@@ -222,11 +221,6 @@ pub fn build_listing_with_query(
     limit: usize,
     offset: usize,
 ) -> Listing {
-    let depth = if query.is_some() {
-        Some(usize::MAX)
-    } else {
-        depth
-    };
     let limit = limit.max(1);
     let mut matched: Vec<&str> = paths
         .iter()
@@ -254,10 +248,13 @@ pub fn build_listing_with_query(
         .map(|path| &path[scope.len().min(path.len())..])
         .collect();
 
-    let (effective_depth, depth_auto) = match depth {
-        Some(requested) => (Some(requested.max(1)), false),
-        None if total_files <= limit => (None, false),
-        None => (Some(auto_depth(&relatives, limit)), true),
+    let (effective_depth, depth_auto) = match (query, depth) {
+        // Queries return exact files even when paging or depth was requested.
+        // None already represents this mode; never serialize a usize::MAX sentinel.
+        (Some(_), _) => (None, false),
+        (None, Some(requested)) => (Some(requested.max(1)), false),
+        (None, None) if total_files <= limit => (None, false),
+        (None, None) => (Some(auto_depth(&relatives, limit)), true),
     };
 
     let mut entries: Vec<ListingEntry> = match effective_depth {
@@ -390,13 +387,28 @@ mod tests {
             "src/long/deep/nested/path/with/more/than/sixteen/parts/a/b/c/d/e/f/g/h/中文.rs".into(),
             "zz.txt".into(),
         ];
-        let first = build_listing_with_query(&files, "", &[], Some("中文"), None, 1, 0);
-        assert_eq!(first.total_files, 2);
-        assert_eq!(first.entries[0].kind, EntryKind::File);
-        assert_eq!(first.next_offset, Some(1));
-        let last = build_listing_with_query(&files, "", &[], Some("中文"), None, 1, 1);
-        assert_eq!(last.entries[0].kind, EntryKind::File);
-        assert_eq!(last.next_offset, None);
+        for depth in [None, Some(1), Some(2)] {
+            let first = build_listing_with_query(&files, "", &[], Some("中文"), depth, 1, 0);
+            assert_eq!(first.total_files, 2);
+            assert_eq!(first.entries[0].kind, EntryKind::File);
+            assert_eq!(first.entries[0].path, "src/%_中文.rs");
+            assert_eq!(first.next_offset, Some(1));
+            assert_eq!(first.depth, None);
+            assert!(!first.depth_auto);
+            assert_eq!(
+                first.to_json("demo", "", false).get("depth"),
+                Some(&Value::Null)
+            );
+            let last = build_listing_with_query(&files, "", &[], Some("中文"), depth, 1, 1);
+            assert_eq!(last.entries[0].kind, EntryKind::File);
+            assert_eq!(last.entries[0].path, files[2]);
+            assert_eq!(last.next_offset, None);
+            assert_eq!(last.depth, None);
+        }
+        let empty_query = build_listing_with_query(&files, "", &[], Some(""), Some(1), 1, 0);
+        assert_eq!(empty_query.total_files, 4);
+        assert_eq!(empty_query.depth, None);
+        assert!(!empty_query.depth_auto);
         let literal = build_listing_with_query(&files, "", &[], Some("%_"), None, 10, 0);
         assert_eq!(literal.total_files, 1);
         assert_eq!(literal.entries[0].path, "src/%_中文.rs");
@@ -571,6 +583,93 @@ mod tests {
             samples[1].as_nanos(),
             samples[2].as_nanos(),
         );
+    }
+
+    #[test]
+    fn glob_matching_agrees_with_an_independent_bounded_reference() {
+        fn reference(pattern: &[u8], text: &[u8]) -> bool {
+            let Some((&first, rest)) = pattern.split_first() else {
+                return text.is_empty();
+            };
+            match first {
+                b'*' => {
+                    let (remaining, max_consumed) = if rest.first() == Some(&b'*') {
+                        (&rest[1..], text.len())
+                    } else {
+                        (
+                            rest,
+                            text.iter()
+                                .position(|byte| *byte == b'/')
+                                .unwrap_or(text.len()),
+                        )
+                    };
+                    (0..=max_consumed).any(|count| reference(remaining, &text[count..]))
+                }
+                b'?' => !text.is_empty() && text[0] != b'/' && reference(rest, &text[1..]),
+                literal => !text.is_empty() && text[0] == literal && reference(rest, &text[1..]),
+            }
+        }
+        fn words(alphabet: &[u8], max_len: usize) -> Vec<Vec<u8>> {
+            let mut words = vec![Vec::new()];
+            let mut level = 0..1;
+            for _ in 0..max_len {
+                let start = words.len();
+                for i in level.clone() {
+                    for byte in alphabet {
+                        let mut next = words[i].clone();
+                        next.push(*byte);
+                        words.push(next);
+                    }
+                }
+                level = start..words.len();
+            }
+            words
+        }
+        let patterns = words(b"a/*?", 5);
+        let texts = words(b"ab/", 4);
+        assert_eq!(patterns.len() * texts.len(), 165_165);
+        for pattern in &patterns {
+            for text in &texts {
+                assert_eq!(
+                    glob_match_segment(pattern, text),
+                    reference(pattern, text),
+                    "pattern={:?} text={:?}",
+                    String::from_utf8_lossy(pattern),
+                    String::from_utf8_lossy(text),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn glob_matching_keeps_byte_and_literal_separator_boundaries() {
+        for (pattern, text, expected) in [
+            ("?", "é", false),
+            ("??", "é", true),
+            ("?*", "é", true),
+            ("*?", "é", true),
+            ("*/*", "/", true),
+            ("**?", "/", false),
+            ("?**", "/", false),
+            ("**/a", "a", false),
+            ("**/a", "/a", true),
+            ("ab*bc", "abc", false),
+            ("ab*bc", "abbc", true),
+            ("ab***bc", "ab/x/bc", true),
+            ("a*/b", "a/x/b", false),
+            ("a**/b", "a/x/b", true),
+        ] {
+            assert_eq!(
+                glob_match_segment(pattern.as_bytes(), text.as_bytes()),
+                expected,
+                "pattern={pattern:?} text={text:?}"
+            );
+        }
+        // A slash forces the old multi-star matcher to enumerate allocations.
+        assert!(!glob_match_segment(
+            b"**a*a*a*a*a*b",
+            format!("{}/b", "a".repeat(2048)).as_bytes()
+        ));
     }
 
     #[test]

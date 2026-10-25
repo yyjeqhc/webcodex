@@ -221,7 +221,13 @@ jobs:
       - name: Ensure test inventory dependency
         run: |
           if ! command -v rg >/dev/null 2>&1; then
-            sudo apt-get update
+            # Ubuntu CI tools come from the official Ubuntu archive. Hosted
+            # runners may add unrelated APT sources that fail (for example 403).
+            ubuntu_sources=/etc/apt/sources.list.d/ubuntu.sources
+            if [ ! -f "$ubuntu_sources" ]; then
+              ubuntu_sources=/etc/apt/sources.list
+            fi
+            sudo apt-get update -o "Dir::Etc::sourcelist=$ubuntu_sources" -o "Dir::Etc::sourceparts=-"
             sudo apt-get install --no-install-recommends -y ripgrep
           fi
       - name: Check test inventory contract
@@ -305,7 +311,13 @@ jobs:
         if: matrix.shard == 'server'
         run: |
           if ! command -v rg >/dev/null 2>&1; then
-            sudo apt-get update
+            # Ubuntu CI tools come from the official Ubuntu archive. Hosted
+            # runners may add unrelated APT sources that fail (for example 403).
+            ubuntu_sources=/etc/apt/sources.list.d/ubuntu.sources
+            if [ ! -f "$ubuntu_sources" ]; then
+              ubuntu_sources=/etc/apt/sources.list
+            fi
+            sudo apt-get update -o "Dir::Etc::sourcelist=$ubuntu_sources" -o "Dir::Etc::sourceparts=-"
             sudo apt-get install --no-install-recommends -y ripgrep
           fi
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
@@ -370,7 +382,13 @@ jobs:
       - name: Ensure Python tooling test dependencies
         run: |
           if ! command -v rg >/dev/null 2>&1 || ! command -v zstd >/dev/null 2>&1; then
-            sudo apt-get update
+            # Ubuntu CI tools come from the official Ubuntu archive. Hosted
+            # runners may add unrelated APT sources that fail (for example 403).
+            ubuntu_sources=/etc/apt/sources.list.d/ubuntu.sources
+            if [ ! -f "$ubuntu_sources" ]; then
+              ubuntu_sources=/etc/apt/sources.list
+            fi
+            sudo apt-get update -o "Dir::Etc::sourcelist=$ubuntu_sources" -o "Dir::Etc::sourceparts=-"
             sudo apt-get install --no-install-recommends -y ripgrep zstd
           fi
       - name: Test opt-in knowledge and Skill acceptance evidence

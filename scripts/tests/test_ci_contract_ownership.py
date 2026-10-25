@@ -29,6 +29,15 @@ class ContractOwnershipTests(unittest.TestCase):
         self.assertIn("test-linux-rust", gate)
         self.assertIn('"$RUST_RESULT" != success', gate)
 
+    def test_ubuntu_tooling_install_does_not_depend_on_third_party_apt_sources(self) -> None:
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        for lane in ("contract", "test-linux-rust", "test-linux-tooling"):
+            body = job(ci, lane)
+            self.assertIn('ubuntu_sources=/etc/apt/sources.list.d/ubuntu.sources', body)
+            self.assertIn('Dir::Etc::sourcelist=$ubuntu_sources', body)
+            self.assertIn('Dir::Etc::sourceparts=-', body)
+            self.assertNotRegex(body, r"(?m)^\s+sudo apt-get update\s*$")
+
     def test_production_warning_gate_is_separate_from_test_feature_unification(self) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
         for lane in ("test-linux-tooling", "test-windows-core", "test-macos-core"):

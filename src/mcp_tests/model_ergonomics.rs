@@ -1,5 +1,148 @@
 use super::*;
 
+#[test]
+fn mcp_final_response_measurement_is_exact_and_payload_free() {
+    use crate::mcp::request_policy::McpSurface;
+    let result = json!({
+        "content": [
+            {"type":"text", "text":"PRIVATE_TEXT\n证据"},
+            {"type":"text", "text":"tail"},
+            {"type":"image", "data":"PRIVATE_IMAGE", "mimeType":"image/png"},
+            {"type":"resource", "resource":{"uri":"private://resource", "text":"PRIVATE_RESOURCE"}}
+        ],
+        "structuredContent":{"success":false,"output":{"failure_kind":"outcome_unknown","private":"PRIVATE_OUTPUT"}},
+        "_meta":{"private":"PRIVATE_META"},
+        "isError":true
+    });
+    let measured = mcp_tool_response_audit_summary(&result, McpSurface::Adaptive).unwrap();
+    assert_eq!(
+        measured,
+        json!({
+            "schema_version":1,
+            "surface":"adaptive",
+            "result_json_bytes":serde_json::to_vec(&result).unwrap().len(),
+            "text_utf8_bytes":"PRIVATE_TEXT\n证据".len() + "tail".len(),
+            "structured_json_bytes":serde_json::to_vec(&result["structuredContent"]).unwrap().len(),
+            "text_blocks":2,
+            "non_text_blocks":2
+        })
+    );
+    assert!(!measured.to_string().contains("PRIVATE"));
+    assert!(!measured.to_string().contains("private://"));
+
+    let text_only = json!({"content":[{"type":"text","text":"证据"}],"isError":false});
+    let measured = mcp_tool_response_audit_summary(&text_only, McpSurface::Cli).unwrap();
+    assert_eq!(measured["structured_json_bytes"], Value::Null);
+    assert_eq!(measured["text_utf8_bytes"], 6);
+    for malformed in [
+        json!({}),
+        json!({"content":null}),
+        json!({"content":[{"type":"text"}]}),
+        json!({"content":[{"text":"untyped"}]}),
+    ] {
+        assert!(mcp_tool_response_audit_summary(&malformed, McpSurface::Cli).is_none());
+    }
+}
+
+#[tokio::test]
+async fn http_mcp_final_response_audit_measures_each_surface_after_projection() {
+    use crate::mcp::request_policy::{McpSurface, SURFACE_HEADER};
+    let (_tmp, db) = test_db();
+    let service = Service::new(build_test_router(
+        test_config(Some("secret")),
+        db.clone(),
+        Arc::new(test_runtime()),
+    ));
+    for stateless in [false, true] {
+        for cli in [false, true] {
+            for success in [false, true] {
+                let (tool, arguments) = if success {
+                    ("read_tool_manifest", json!({"tool_name":"run_script"}))
+                } else {
+                    (
+                        "read_files",
+                        json!({"project":"agent:missing:PRIVATE_PROJECT","items":[{"path":"PRIVATE_PATH"}]}),
+                    )
+                };
+                let audit_id = format!("response-projection-{stateless}-{cli}-{success}");
+                let params = json!({"name":tool,"arguments":arguments});
+                let params = if stateless {
+                    mcp_2026_params(params)
+                } else {
+                    params
+                };
+                let mut request = TestClient::post("http://localhost/mcp")
+                    .bearer_auth("secret")
+                    .add_header("x-action-session-id", &audit_id, true);
+                if cli {
+                    request = request.add_header(SURFACE_HEADER, "cli", true);
+                }
+                if stateless {
+                    request = request
+                        .add_header(
+                            MCP_PROTOCOL_VERSION_HEADER,
+                            MCP_STATELESS_PROTOCOL_VERSION,
+                            true,
+                        )
+                        .add_header(MCP_METHOD_HEADER, "tools/call", true)
+                        .add_header(MCP_NAME_HEADER, tool, true);
+                }
+                let mut response = request
+                    .json(&json!({"jsonrpc":"2.0","id":401,"method":"tools/call","params":params}))
+                    .send(&service)
+                    .await;
+                let status = effective_status(&response);
+                let body: Value = response.take_json().await.unwrap();
+                assert_eq!(status, StatusCode::OK, "{body}");
+                let result = &body["result"];
+                assert_eq!(result["isError"], !success, "{body}");
+                assert_eq!(result.get("structuredContent").is_none(), cli, "{body}");
+                let events = db.list_action_events(&audit_id, 10).unwrap();
+                assert_eq!(events.len(), 1);
+                let summary: Value = serde_json::from_str(&events[0].summary_json).unwrap();
+                let expected = mcp_tool_response_audit_summary(
+                    result,
+                    if cli {
+                        McpSurface::Cli
+                    } else {
+                        McpSurface::Adaptive
+                    },
+                )
+                .unwrap();
+                assert_eq!(summary["response_projection"], expected);
+                assert_eq!(
+                    expected["result_json_bytes"],
+                    serde_json::to_vec(result).unwrap().len()
+                );
+                let expected_text: usize = result["content"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|block| block["type"] == "text")
+                    .map(|block| block["text"].as_str().unwrap().len())
+                    .sum();
+                assert_eq!(expected["text_utf8_bytes"], expected_text);
+                assert_eq!(summary["model_ergonomics"]["success"], success);
+                // Keep the old structured metric unchanged, even on text-only CLI.
+                assert!(summary["model_ergonomics"]["serialized_result_bytes"].is_u64());
+                let durable_measurement = expected.to_string();
+                for forbidden in [
+                    "PRIVATE",
+                    "description",
+                    "input_schema",
+                    "arguments",
+                    "output",
+                ] {
+                    assert!(
+                        !durable_measurement.contains(forbidden),
+                        "{durable_measurement}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 // Durable model-ergonomics and MCP tool-surface measurement integration tests.
 // Keep these separate from the general HTTP transport lifecycle coverage.
 

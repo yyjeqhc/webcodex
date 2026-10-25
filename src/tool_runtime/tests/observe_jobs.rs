@@ -1,5 +1,6 @@
 //! Phase D bounded batch Job observation.
 
+mod mixed_projection;
 mod readiness;
 mod summary;
 

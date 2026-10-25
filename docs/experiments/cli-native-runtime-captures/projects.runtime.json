@@ -1,0 +1,87 @@
+{
+  "format": "webcodex.cli_runtime_capture.v1",
+  "tool": "list_projects",
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 14,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "WebCodex tool completed successfully."
+        }
+      ],
+      "structuredContent": {
+        "success": true,
+        "output": {
+          "count": 2,
+          "matched_count": 2,
+          "truncated": false,
+          "projects": [
+            {
+              "id": "agent:input-runner:demo",
+              "agent_project_id": "demo",
+              "name": "demo",
+              "path": "/private/var/folders/2d/fl2p2tk96f3gtvj40qrl4lsc0000gn/T/webcodex-cli-output-o70qij5a/project",
+              "description": null,
+              "executor": "agent",
+              "client_id": "input-runner",
+              "enabled": true,
+              "active_jobs": 0,
+              "source": "agent_registered",
+              "agent_status": "online",
+              "connected": true,
+              "resolved_shell_profile": null,
+              "shell_profile_status": "not_configured",
+              "capabilities": {
+                "git_available": true,
+                "recommended_for_smoke": false
+              },
+              "project_ref": "~p1"
+            },
+            {
+              "id": "agent:input-runner:other",
+              "agent_project_id": "other",
+              "name": "other",
+              "path": "/private/var/folders/2d/fl2p2tk96f3gtvj40qrl4lsc0000gn/T/webcodex-cli-output-o70qij5a/other",
+              "description": null,
+              "executor": "agent",
+              "client_id": "input-runner",
+              "enabled": true,
+              "active_jobs": 0,
+              "source": "agent_registered",
+              "agent_status": "online",
+              "connected": true,
+              "resolved_shell_profile": null,
+              "shell_profile_status": "not_configured",
+              "capabilities": {
+                "git_available": false,
+                "recommended_for_smoke": false
+              },
+              "project_ref": "~p2"
+            }
+          ],
+          "recommended_for_smoke": []
+        },
+        "error": null
+      },
+      "isError": false,
+      "resultType": "complete",
+      "_meta": {
+        "io.modelcontextprotocol/serverInfo": {
+          "name": "webcodex",
+          "version": "0.5.0"
+        }
+      }
+    }
+  },
+  "source": {
+    "transport": "loopback MCP Adaptive",
+    "runtime": "one isolated native Server and Runner",
+    "binaries": {
+      "webcodex-server": "1927d30a922db0b3a9a81193505e655b12a15f476015d0eccc43464ea1353557",
+      "webcodex-runner": "e633d5158a16538222d055c0efcc8a3458a2f331968af08024c531733edd331e"
+    }
+  },
+  "wire_response_bytes": 1383
+}

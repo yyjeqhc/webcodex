@@ -1,0 +1,65 @@
+{
+  "format": "webcodex.cli_runtime_capture.v1",
+  "tool": "list_workspace_symbols",
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 42,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "WebCodex tool completed successfully."
+        }
+      ],
+      "structuredContent": {
+        "success": true,
+        "output": {
+          "project": "agent:input-runner:demo",
+          "query": "fixture_symbol",
+          "symbols": [
+            {
+              "name": "fixture_symbol",
+              "kind": "function",
+              "kind_code": 12,
+              "container_name": null,
+              "path": "src/lib.rs",
+              "range": {
+                "start": {
+                  "line": 1,
+                  "column": 8
+                },
+                "end": {
+                  "line": 1,
+                  "column": 22
+                }
+              }
+            }
+          ],
+          "total_results": 1,
+          "returned_count": 1,
+          "truncated": false,
+          "external_results_omitted": 0,
+          "invalid_results_omitted": 0
+        },
+        "error": null
+      },
+      "isError": false,
+      "resultType": "complete",
+      "_meta": {
+        "io.modelcontextprotocol/serverInfo": {
+          "name": "webcodex",
+          "version": "0.5.0"
+        }
+      }
+    }
+  },
+  "source": {
+    "transport": "loopback MCP Adaptive",
+    "runtime": "one isolated native Server and Runner",
+    "binaries": {
+      "webcodex-server": "1927d30a922db0b3a9a81193505e655b12a15f476015d0eccc43464ea1353557",
+      "webcodex-runner": "e633d5158a16538222d055c0efcc8a3458a2f331968af08024c531733edd331e"
+    }
+  },
+  "wire_response_bytes": 652
+}

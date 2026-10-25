@@ -1,0 +1,16 @@
+~p1 | agent:input-runner:demo | demo | /private/var/folders/2d/fl2p2tk96f3gtvj40qrl4lsc0000gn/T/webcodex-cli-output-o70qij5a/project | online
+capabilities:
+  git_available: true
+  recommended_for_smoke: false
+description: null
+resolved_shell_profile: null
+shell_profile_status: not_configured
+source: agent_registered
+~p2 | agent:input-runner:other | other | /private/var/folders/2d/fl2p2tk96f3gtvj40qrl4lsc0000gn/T/webcodex-cli-output-o70qij5a/other | online
+capabilities:
+  git_available: false
+  recommended_for_smoke: false
+description: null
+resolved_shell_profile: null
+shell_profile_status: not_configured
+source: agent_registered

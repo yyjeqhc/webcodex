@@ -1,0 +1,2 @@
+src/lib.rs:1:8-1:22 function fixture_symbol
+kind_code: 12

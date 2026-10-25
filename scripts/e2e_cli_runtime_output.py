@@ -60,6 +60,7 @@ class CliRuntimeSmoke(InteractiveSmoke):
         self.capture_binaries = {name: digest(bin_dir / name)
                                  for name in ["webcodex-server", "webcodex-runner"]}
         self.direct_names = set()
+        self.adaptive_direct_names = None
         self.extra_secrets = []
         # A local rust-analyzer may run Cargo metadata; this fixture has no
         # dependencies and must not acquire anything from the network.
@@ -144,19 +145,49 @@ class CliRuntimeSmoke(InteractiveSmoke):
             return
         check(tool in {"list_projects", "list_workspace_symbols"},
               "raw native capture is restricted to inventory and workspace symbols")
-        params = ({"name": tool, "arguments": arguments} if tool in self.direct_names else
-                  {"name": "call_runtime_tool",
-                   "arguments": {"tool": tool, "arguments": arguments}})
-        status, reply, wire_bytes = self.cli_rpc("tools/call", params, surface=None)
-        check(status == 200 and isinstance(reply.get("result"), dict),
-              f"{name}: native capture did not return an MCP ToolResult")
-        result = reply["result"]
+
+        def checked_result(operation, status, reply):
+            serialized = json.dumps(reply, ensure_ascii=False, separators=(",", ":"))
+            for secret in [self.bootstrap, self.owner, self.foreign, *self.extra_secrets]:
+                check(secret not in serialized, "a temporary credential appeared in native capture")
+            result = reply.get("result") if isinstance(reply, dict) else None
+            if status != 200 or not isinstance(result, dict):
+                error = reply.get("error") if isinstance(reply, dict) else None
+                error = error if isinstance(error, dict) else {}
+                diagnostic = {
+                    "operation": operation, "surface": "adaptive", "http_status": status,
+                    "rpc_code": str(error.get("code", ""))[:64],
+                    "rpc_message": str(error.get("message", ""))[:400],
+                }
+                with (self.output_dir / f"{name}.runtime_error.json").open(
+                        "x", encoding="utf-8") as destination:
+                    json.dump(diagnostic, destination, ensure_ascii=False, indent=2)
+                    destination.write("\n")
+                check(False, f"{name}: native MCP result missing; "
+                      + json.dumps(diagnostic, ensure_ascii=False))
+            return result
+
+        # Discovery is surface-specific. Cache one Adaptive inventory separately
+        # from the CLI inventory used by sample(); discovery grants no authority.
+        if self.adaptive_direct_names is None:
+            status, reply, _ = self.cli_rpc("tools/list", {}, surface="adaptive")
+            inventory = checked_result("tools/list", status, reply).get("tools")
+            check(isinstance(inventory, list) and all(
+                isinstance(item, dict) and isinstance(item.get("name"), str)
+                for item in inventory), "Adaptive discovery lost its tool names")
+            self.adaptive_direct_names = {item["name"] for item in inventory}
+        if tool in self.adaptive_direct_names:
+            params = {"name": tool, "arguments": arguments}
+        else:
+            check("call_runtime_tool" in self.adaptive_direct_names,
+                  f"{name}: Adaptive discovery has no callable gateway")
+            params = {"name": "call_runtime_tool",
+                      "arguments": {"tool": tool, "arguments": arguments}}
+        status, reply, wire_bytes = self.cli_rpc("tools/call", params, surface="adaptive")
+        result = checked_result("tools/call", status, reply)
         structured = result.get("structuredContent")
         check(isinstance(structured, dict) and isinstance(structured.get("success"), bool),
               f"{name}: Adaptive native capture lost canonical ToolResult evidence")
-        serialized = json.dumps(reply, ensure_ascii=False, separators=(",", ":"))
-        for secret in [self.bootstrap, self.owner, self.foreign, *self.extra_secrets]:
-            check(secret not in serialized, "a temporary credential appeared in native capture")
         record = {
             "format": "webcodex.cli_runtime_capture.v1", "tool": tool, "response": reply,
             "source": {"transport": "loopback MCP Adaptive",

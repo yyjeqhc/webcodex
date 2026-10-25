@@ -496,21 +496,16 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let run_shell_desc = desc("run_shell");
     for phrase in [
-        "bounded shell grammar or a short related command chain",
-        "prefer run_process for literal argv",
-        "run_script for program-like scripts",
-        "predetermined related observations may share one command",
-        "result-dependent follow-ups stay sequential",
-        "project-source mutation should normally use canonical structured editors",
-        "runner-owned execution",
-        "timeout_secs is total lifetime",
-        "server timing policy controls job-handoff grace",
-        "execution_state=pending",
-        "continue independent work",
-        "sparse terminal job attention",
-        "observe_jobs only for logs/details/recovery",
-        "bounded wait_for_job_readiness when terminal outcome blocks progress",
-        "duration alone does not select a detached primitive",
+        "shell grammar or a short related command chain",
+        "run_process takes literal argv",
+        "run_script program text",
+        "local jobs are runner-owned",
+        "named session ssh has no durable job handoff",
+        "observe_jobs for job recovery",
+        "never redispatch pending or outcome_unknown",
+        "inspect existing execution",
+        "structured source editors",
+        "runner replacement cannot inherit local jobs",
     ] {
         assert!(
             run_shell_desc.contains(phrase),
@@ -522,25 +517,17 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     // Cover the selection and lifecycle choices, not the retired full prose.
     // Interactive mode shares the tool but has a deliberately explicit contract.
     for phrase in [
-        "native executable with structured literal argv",
-        "run_shell for shell grammar",
-        "windows batch shims",
-        "runner-owned quoting",
-        "persistent shell is only for retained same-process",
-        "same execution",
-        "owned by runner",
-        "continue independent work",
-        "sparse terminal job attention",
-        "observe_jobs only for logs/details/recovery",
-        "bounded wait_for_job_readiness when terminal outcome blocks progress",
-        "run_detached_process",
-        "survive runner restart/upgrade/stop/replacement",
-        "never for duration alone",
+        "native executable literal argv",
+        "run_shell takes shell grammar",
+        "runner ownership",
         "interactive=true",
-        "write_job_input",
-        "bytes/eof",
-        "no pty",
-        "structured validation evidence",
+        "stdin pipe",
+        "keyed write_job_input",
+        "no pty/ssh/initial stdin/structured validation evidence",
+        "retain returned job/continuation",
+        "never redispatch pending or outcome_unknown",
+        "inspect existing execution",
+        "runner replacement cannot inherit",
     ] {
         assert!(
             run_process_desc.contains(phrase),
@@ -552,19 +539,14 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     // this model-facing description test keeps selection and lifecycle decisions dense.
     let run_script_desc = desc("run_script");
     for phrase in [
-        "sh, bash, powershell, python, javascript, or typescript",
-        "run_process for native argv",
-        "computation/inspection/generation/non-source transforms",
-        "run_shell for shell grammar",
-        "project-source mutation should normally use canonical structured editors",
-        "same execution and remains runner-owned",
-        "execution_state=pending",
-        "continue independent work",
-        "sparse terminal job attention",
-        "observe_jobs only for logs/details/recovery",
-        "bounded wait_for_job_readiness when terminal outcome blocks progress",
-        "script bodies never become shell command text",
-        "survive runner restart/upgrade/stop/replacement",
+        "sh/bash/powershell/python/javascript/typescript script data",
+        "run_process takes literal argv",
+        "run_shell takes shell grammar",
+        "structured source editors",
+        "never interpolated into shell command text",
+        "retain returned job/continuation",
+        "never redispatch pending or outcome_unknown",
+        "runner-owned; replacement cannot inherit",
     ] {
         assert!(
             run_script_desc.contains(phrase),
@@ -575,9 +557,9 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     let run_job_desc = desc("run_job");
     for phrase in [
         "runner-owned",
-        "server disconnect/restart",
-        "replacement runner does not inherit",
-        "outlive the current runner process",
+        "server reconnects reconcile",
+        "runner replacement does not inherit",
+        "outlive the runner",
         "run_detached_process",
     ] {
         assert!(
@@ -589,15 +571,12 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     let detached_desc = desc("run_detached_process");
     for phrase in [
         "supervisor-owned",
-        "outlive the initiating runner process",
-        "runner exit",
-        "restart",
-        "upgrade",
-        "replacement",
-        "ownership is handed off before payload start",
-        "expired keys are not retry tokens",
-        "workflow will restart, upgrade, stop, or replace this runner",
-        "duration alone is not a reason to detach",
+        "survive runner replacement",
+        "ownership transfers before payload start",
+        "supervisor identity and lifetime fence",
+        "expired keys never authorize retry",
+        "duration alone is insufficient",
+        "outcome_unknown never authorizes redispatch",
     ] {
         assert!(
             detached_desc.contains(phrase),
@@ -1097,14 +1076,10 @@ fn observe_jobs_wake_policy_schema_is_closed_and_compatible() {
         .contains(&serde_json::json!("wake_on")));
     for phrase in [
         "No token",
-        "no wait_secs",
-        "wake_on=change",
-        "wake_on=meaningful_change",
-        "wake_on=terminal",
-        "useful progress is blocked on terminal outcome",
-        "independent work remains",
-        "do not poll for visibility",
-        "changed=true",
+        "omitted wait_secs",
+        "immediate baseline",
+        "bounded wait_secs",
+        "Terminal is not success",
     ] {
         assert!(spec.description.contains(phrase), "missing {phrase}");
     }
@@ -1119,6 +1094,18 @@ fn observe_jobs_wake_policy_schema_is_closed_and_compatible() {
     let wake_description = wake["description"].as_str().unwrap();
     assert!(wake_description.contains("any terminal result unblocks progress"));
     assert!(wake_description.contains("predetermined set"));
+    for boundary in [
+        "change (default)",
+        "meaningful_change",
+        "sequence-only heartbeat",
+        "terminal waits for any Job",
+        "all_terminal waits for every",
+        "changed=true",
+        "No token means immediate baseline",
+        "no wait_secs means immediate observation",
+    ] {
+        assert!(wake_description.contains(boundary), "missing {boundary}");
+    }
     for policy in ["change", "meaningful_change", "terminal", "all_terminal"] {
         test_support::validate_schema_instance(
             &json!({"items": [{"job_id": "job"}], "wake_on": policy}),

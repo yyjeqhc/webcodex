@@ -131,6 +131,7 @@ async fn runner_discovery_pages_all_107_matches_after_filtering_and_clamps_limit
         assert_eq!(page.output["matched_count"], 107);
         assert_eq!(page.output["limit"], 30);
         assert_eq!(page.output["offset"], offset);
+        assert_eq!(page.output["truncated"], page.output["has_more"]);
         let rows = page.output["runners"].as_array().unwrap();
         ids.extend(
             rows.iter()
@@ -344,6 +345,7 @@ async fn runner_discovery_project_pages_are_complete_without_resource_root_ident
                 runner["projects_next_offset"],
                 if end < count { json!(end) } else { Value::Null }
             );
+            assert_eq!(runner["projects_truncated"], end < count);
         }
         if count == 201 {
             assert_eq!(collected, expected);
@@ -356,5 +358,6 @@ async fn runner_discovery_project_pages_are_complete_without_resource_root_ident
         assert!(beyond.success);
         assert_eq!(beyond.output["runners"][0]["projects_returned_count"], 0);
         assert!(beyond.output["runners"][0]["projects_next_offset"].is_null());
+        assert_eq!(beyond.output["runners"][0]["projects_truncated"], false);
     }
 }

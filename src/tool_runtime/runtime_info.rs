@@ -112,7 +112,7 @@ impl RunnerInventoryPage {
                 value["projects_returned_count"] = json!(projects.len());
                 value["projects_offset"] = json!(options.projects_offset);
                 value["projects_next_offset"] = json!(next_offset);
-                value["projects_truncated"] = json!(projects.len() < total);
+                value["projects_truncated"] = json!(next_offset.is_some());
                 if let Some(next) = next_offset {
                     value["projects_hint"] = json!(format!(
                         "Continue list_runners(client_id={:?}, include_projects=true, projects_offset={next}).",
@@ -127,7 +127,7 @@ impl RunnerInventoryPage {
         let mut output = json!({
             "count": runners.len(),
             "matched_count": self.matched_count,
-            "truncated": runners.len() < self.matched_count,
+            "truncated": has_more,
             "offset": options.offset,
             "limit": options.limit,
             "has_more": has_more,

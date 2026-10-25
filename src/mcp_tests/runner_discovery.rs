@@ -91,8 +91,35 @@ async fn runner_request(
     )
     .await;
     match outcome {
-        McpOutcome::Ok(value) => value,
+        McpOutcome::Ok(mut value) => {
+            // The HTTP adapter applies CLI text projection after canonical dispatch.
+            // Match that boundary, as cli_call_for_test does for other fixtures.
+            if surface == crate::mcp::request_policy::McpSurface::Cli {
+                crate::mcp::cli::project_response(Some("list_runners"), &mut value);
+            }
+            value
+        }
         other => panic!("unexpected Runner discovery outcome: {other:?}"),
+    }
+}
+
+fn runner_cli_text(response: &Value) -> &str {
+    let result = &response["result"];
+    assert!(result.get("structuredContent").is_none(), "{response}");
+    assert_eq!(result["isError"], false, "{response}");
+    let content = result["content"].as_array().expect("CLI content blocks");
+    assert_eq!(content.len(), 1, "{response}");
+    assert_eq!(content[0]["type"], "text");
+    content[0]["text"].as_str().expect("CLI text result")
+}
+
+fn assert_runner_cli_field(text: &str, field: &str, expected: Value) {
+    if let Ok(structured) = serde_json::from_str::<Value>(text) {
+        // The formatter may use its lossless canonical JSON fallback.
+        assert_eq!(structured["output"][field], expected, "{text}");
+    } else {
+        let expected_line = format!("{field}: {expected}");
+        assert!(text.lines().any(|line| line == expected_line), "{text}");
     }
 }
 
@@ -118,9 +145,15 @@ async fn mcp_runner_discovery_adaptive_and_cli_share_bounded_defaults_and_paging
     assert_eq!(output["next_offset"], 30);
     assert!(output["runners"][0].get("capabilities").is_none());
     let cli = runner_request(&runtime, json!({}), McpSurface::Cli).await;
-    assert!(cli["result"].get("structuredContent").is_none());
-    let text = cli["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("next_offset"), "{text}");
+    let text = runner_cli_text(&cli);
+    assert_runner_cli_field(text, "count", json!(30));
+    assert_runner_cli_field(text, "matched_count", json!(31));
+    assert_runner_cli_field(text, "next_offset", json!(30));
+    assert!(
+        text.contains("runner-000") && text.contains("runner-029"),
+        "{text}"
+    );
+    assert!(!text.contains("runner-030"), "{text}");
     assert!(!text.contains("capabilities"), "{text}");
     let last = runner_request(&runtime, json!({"offset":30}), McpSurface::Adaptive).await;
     assert_eq!(
@@ -128,4 +161,11 @@ async fn mcp_runner_discovery_adaptive_and_cli_share_bounded_defaults_and_paging
         "runner-030"
     );
     assert!(last["result"]["structuredContent"]["output"]["next_offset"].is_null());
+    let cli_last = runner_request(&runtime, json!({"offset":30}), McpSurface::Cli).await;
+    let text = runner_cli_text(&cli_last);
+    assert_runner_cli_field(text, "count", json!(1));
+    assert_runner_cli_field(text, "matched_count", json!(31));
+    assert_runner_cli_field(text, "next_offset", Value::Null);
+    assert!(text.contains("runner-030"), "{text}");
+    assert!(!text.contains("runner-029"), "{text}");
 }

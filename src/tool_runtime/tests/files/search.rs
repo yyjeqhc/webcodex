@@ -3413,8 +3413,15 @@ async fn list_project_files_rejects_non_agent_project_id() {
         })
         .await;
     assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "unknown_project");
+    assert_eq!(result.output["project"], "some-local-id");
+    assert!(result.output["candidates"]
+        .as_array()
+        .is_some_and(|candidates| candidates.len() <= 5));
     let err = result.error.unwrap();
-    assert!(err.contains("agent"), "{err}");
+    assert!(err.contains("unknown_project"), "{err}");
+    assert!(err.contains("some-local-id"), "{err}");
+    assert!(err.contains("list_projects"), "{err}");
     assert!(!err.contains("projects.toml"), "{err}");
 }
 

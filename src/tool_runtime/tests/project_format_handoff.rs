@@ -484,9 +484,24 @@ async fn project_format_continuation_observes_authoritative_mutation_and_failure
                 observed.output["items"][0]["output"]["failure_kind"],
                 failure_kind
             );
+            let canonical_item = observed.output["items"][0].clone();
             super::super::observe_jobs::sparsify_observe_jobs_model_result(&mut observed);
-            assert_eq!(observed.output["items"][0]["state_changed"], changed);
-            assert_eq!(observed.output["items"][0]["failure_kind"], failure_kind);
+            if canonical_item["output"]["command_execution_state"] == "outcome_unknown" {
+                // Unknown mutation outcomes retain the complete canonical evidence.
+                assert_eq!(observed.output["items"][0], canonical_item);
+                assert_eq!(
+                    observed.output["items"][0]["output"]["state_changed"],
+                    changed
+                );
+                assert_eq!(
+                    observed.output["items"][0]["output"]["failure_kind"],
+                    failure_kind
+                );
+            } else {
+                assert!(observed.output["items"][0].get("output").is_none());
+                assert_eq!(observed.output["items"][0]["state_changed"], changed);
+                assert_eq!(observed.output["items"][0]["failure_kind"], failure_kind);
+            }
         }
     }
 }

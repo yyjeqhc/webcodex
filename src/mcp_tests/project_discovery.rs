@@ -1,7 +1,13 @@
 use super::*;
 use crate::mcp::request_policy::McpSurface;
 
-async fn call(runtime: &ToolRuntime, surface: McpSurface, tool: &str, arguments: Value) -> Value {
+async fn call(
+    runtime: &ToolRuntime,
+    auth: &crate::auth::AuthContext,
+    surface: McpSurface,
+    tool: &str,
+    arguments: Value,
+) -> Value {
     let params = if surface == McpSurface::Cli {
         json!({"name":tool,"arguments":arguments})
     } else {
@@ -10,7 +16,7 @@ async fn call(runtime: &ToolRuntime, surface: McpSurface, tool: &str, arguments:
     match super::super::handle_mcp_request_for_surface(
         runtime,
         rpc("tools/call", Some(json!(1)), params),
-        None,
+        Some(auth),
         McpProtocolEra::Legacy,
         HostFileImportTrust::Untrusted,
         None,
@@ -32,13 +38,18 @@ async fn call(runtime: &ToolRuntime, surface: McpSurface, tool: &str, arguments:
 #[tokio::test]
 async fn bounded_project_discovery_mcp_surfaces() {
     let runtime = test_runtime();
+    let auth = crate::auth::shared_key_context("project-discovery-fixture");
+    let access = crate::test_support::runner_access(&auth);
     runtime
         .runner_registry
-        .register(crate::test_support::runner_registration(
-            "bounded",
-            "bounded-instance",
-            RunnerCapabilities::default(),
-        ))
+        .register_with_auth(
+            crate::test_support::runner_registration(
+                "bounded",
+                "bounded-instance",
+                RunnerCapabilities::default(),
+            ),
+            Some(&access),
+        )
         .await
         .unwrap();
     let projects = (0..211)
@@ -76,10 +87,18 @@ async fn bounded_project_discovery_mcp_surfaces() {
         projects,
     )
     .await;
-    let adaptive = call(&runtime, McpSurface::Adaptive, "list_projects", json!({})).await;
-    let cli = call(&runtime, McpSurface::Cli, "list_projects", json!({})).await;
+    let adaptive = call(
+        &runtime,
+        &auth,
+        McpSurface::Adaptive,
+        "list_projects",
+        json!({}),
+    )
+    .await;
+    let cli = call(&runtime, &auth, McpSurface::Cli, "list_projects", json!({})).await;
     let error = call(
         &runtime,
+        &auth,
         McpSurface::Cli,
         "read_files",
         json!({"project":"webcodx","items":[{"path":"README.md","limit":1}]}),
@@ -117,6 +136,7 @@ async fn bounded_project_discovery_mcp_surfaces() {
     assert_eq!(error_text.matches("agent:bounded:webcodex").count(), 1);
     let full = call(
         &runtime,
+        &auth,
         McpSurface::Adaptive,
         "list_projects",
         json!({"summary_only":false,"project":"agent:bounded:webcodex"}),
@@ -128,6 +148,7 @@ async fn bounded_project_discovery_mcp_surfaces() {
     );
     let full_cli = call(
         &runtime,
+        &auth,
         McpSurface::Cli,
         "list_projects",
         json!({"summary_only":false,"project":"agent:bounded:webcodex"}),
@@ -139,6 +160,7 @@ async fn bounded_project_discovery_mcp_surfaces() {
         .contains("revision: revision"));
     let second = call(
         &runtime,
+        &auth,
         McpSurface::Adaptive,
         "list_projects",
         json!({"offset":30}),
@@ -148,7 +170,7 @@ async fn bounded_project_discovery_mcp_surfaces() {
         second["result"]["structuredContent"]["output"]["projects"][0]["id"],
         "agent:bounded:project-0030"
     );
-    let descriptor = crate::mcp::cli::tools_list(None, false);
+    let descriptor = crate::mcp::cli::tools_list(Some(&auth), false);
     let schema = &descriptor["tools"]
         .as_array()
         .unwrap()

@@ -844,10 +844,7 @@ async fn read_files_returns_ordered_normalized_successes_after_out_of_order_comp
             max_result_bytes: None,
         });
     projection.project(&mut result);
-    assert_eq!(
-        result.output["suggested_call"]["arguments"]["items"][0]["start_line"],
-        4
-    );
+    assert!(result.output.get("suggested_call").is_none());
     let schema = crate::tool_runtime::registry::output_schema_for_tool("read_files");
     let serialized = serde_json::to_value(&result).unwrap();
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
@@ -1239,7 +1236,7 @@ async fn read_file_dispatch_complete_success_is_sparse_after_session_recording()
 }
 
 #[tokio::test]
-async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
+async fn read_file_dispatch_explicit_range_does_not_suggest_unrequested_lines() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "read-partial-visible";
@@ -1292,58 +1289,8 @@ async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
     assert_eq!(item["output"]["returned_lines"], 1);
     assert_eq!(item["output"]["end_line"], 2);
     assert_eq!(item["output"]["has_more"], true);
-    assert_eq!(
-        result.output["suggested_call"]["arguments"]["items"][0]["start_line"],
-        3
-    );
-    let suggested = &result.output["suggested_call"];
-    let read_revision = item["output"]["read_revision"]
-        .as_u64()
-        .expect("successful read must expose read_revision");
-    assert!(item["output"].get("sha256").is_none());
-    assert!((1..=9_007_199_254_740_991).contains(&read_revision));
-    assert_eq!(suggested["tool"], "read_files");
-    assert_eq!(suggested["follow_up_kind"], "mechanically_followable");
-    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(suggested)
-        .expect("read_files continuation must pass the registered inputSchema");
-    assert_eq!(suggested["arguments"]["session_id"], session_id);
-    let next_call = ToolCall::from_tool_name(
-        suggested["tool"].as_str().unwrap(),
-        suggested["arguments"].clone(),
-    )
-    .expect("read_files continuation suggested_call must parse");
-    assert!(matches!(
-        &next_call,
-        ToolCall::ReadFiles {
-            project: next_project,
-            items,
-            session_id: Some(next_session_id),
-            with_line_numbers: None,
-            max_result_bytes: None,
-        } if next_project == &project
-            && items.len() == 1
-            && items[0].path == "src/lib.rs"
-            && items[0].start_line == Some(3)
-            && items[0].limit == Some(1)
-            && items[0].expected_read_revision == Some(read_revision)
-            && next_session_id == &session_id
-    ));
-
-    let second = tokio::spawn({
-        let runtime = runtime.clone();
-        let auth = auth.clone();
-        async move { runtime.dispatch_with_auth(next_call, Some(&auth)).await }
-    });
-    let second_request = next_read_request(&runtime, client_id).await;
-    assert_eq!(second_request.start_line, Some(3));
-    complete_read(&runtime, client_id, &second_request, content).await;
-    let second = second.await.unwrap();
-    assert!(second.success, "{:?}", second.error);
-    let second_item = &second.output["items"][0];
-    assert_eq!(second_item["success"], true);
-    assert_eq!(second_item["output"]["text"], "three");
-    assert_eq!(second_item["output"]["read_revision"], read_revision);
-
+    assert!(result.output.get("suggested_call").is_none());
+    assert!(item["output"]["read_revision"].is_u64());
     let schema = crate::tool_runtime::registry::output_schema_for_tool("read_files");
     let serialized = serde_json::to_value(&result).unwrap();
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
@@ -1353,7 +1300,7 @@ async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
 }
 
 #[tokio::test]
-async fn read_files_continuation_rejects_changed_snapshot() {
+async fn read_files_explicit_followup_rejects_changed_snapshot() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "read-source-change";
@@ -1392,17 +1339,19 @@ async fn read_files_continuation_rejects_changed_snapshot() {
     let first_revision = first_item["output"]["read_revision"]
         .as_u64()
         .expect("first read revision");
-    let suggested = &first.output["suggested_call"];
-    let next_call = ToolCall::from_tool_name(
-        suggested["tool"].as_str().unwrap(),
-        suggested["arguments"].clone(),
-    )
-    .expect("snapshot-fenced continuation must parse");
-    assert!(matches!(
-        &next_call,
-        ToolCall::ReadFiles { items, .. }
-            if items[0].expected_read_revision == Some(first_revision)
-    ));
+    assert!(first.output.get("suggested_call").is_none());
+    let next_call = ToolCall::ReadFiles {
+        project: project.clone(),
+        items: vec![ReadFilesItem {
+            path: "src/lib.rs".into(),
+            start_line: Some(2),
+            limit: Some(1),
+            expected_read_revision: Some(first_revision),
+        }],
+        session_id: None,
+        with_line_numbers: None,
+        max_result_bytes: None,
+    };
 
     // Insert a line before the cursor between calls. The range request still
     // reaches the exact Runner, but Runtime must reject its changed full-file
@@ -1726,7 +1675,7 @@ async fn read_files_dispatch_complete_batch_is_sparse_and_schema_valid() {
 }
 
 #[tokio::test]
-async fn read_files_partial_item_has_one_invocation_follow_up() {
+async fn read_files_completed_explicit_range_in_batch_has_no_follow_up() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "read-batch-item-continuation";
@@ -1776,32 +1725,7 @@ async fn read_files_partial_item_has_one_invocation_follow_up() {
     assert_eq!(result.output["output_truncated"], false);
     assert!(result.output.get("continuation").is_none());
     let items = result.output["items"].as_array().unwrap();
-    let suggested = &result.output["suggested_call"];
-    assert_eq!(suggested["arguments"]["session_id"], session_id);
-    assert_eq!(
-        suggested["arguments"]["items"][0]["expected_read_revision"],
-        items[0]["output"]["read_revision"]
-    );
-    let next_call = ToolCall::from_tool_name(
-        suggested["tool"].as_str().unwrap(),
-        suggested["arguments"].clone(),
-    )
-    .expect("item continuation must parse");
-    assert!(matches!(
-        next_call,
-        ToolCall::ReadFiles {
-            project: ref next_project,
-            ref items,
-            session_id: Some(ref next_session_id),
-            with_line_numbers: Some(true),
-            max_result_bytes: None,
-        } if next_project == &project
-            && items.len() == 1
-            && items[0].path == "src/lib.rs"
-            && items[0].start_line == Some(3)
-            && items[0].limit == Some(1)
-            && next_session_id == &session_id
-    ));
+    assert!(result.output.get("suggested_call").is_none());
     assert!(items[1].get("continuation").is_none());
 
     let schema = crate::tool_runtime::registry::output_schema_for_tool("read_files");
@@ -1915,16 +1839,7 @@ async fn read_files_dispatch_mixed_batch_keeps_outer_and_failure_semantics() {
     assert_eq!(items[0]["path"], "good.txt");
     assert_eq!(items[0]["output"]["text"], "ok");
     assert_eq!(items[0]["output"]["has_more"], true);
-    assert_eq!(
-        result.output["suggested_call"]["arguments"]["items"][0]["start_line"],
-        2
-    );
-    let suggested = &result.output["suggested_call"];
-    ToolCall::from_tool_name(
-        suggested["tool"].as_str().unwrap(),
-        suggested["arguments"].clone(),
-    )
-    .expect("successful mixed-batch item continuation must remain parseable");
+    assert!(result.output.get("suggested_call").is_none());
     assert_eq!(items[1]["success"], false);
     assert_eq!(items[1]["path"], ".env");
     assert_eq!(items[1]["output"]["error_kind"], "read_file_failed");

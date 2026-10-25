@@ -18,13 +18,12 @@ fully available.
   "_wc": {
     "control": {
       "before": {
-        "goal_progress": {
-          "goal_id": "wc_goal_abcdefghijklmnop",
-          "expected_revision": 3,
-          "idempotency_key": "implementation-complete",
-          "completed_step_ids": ["implement"],
-          "current_step_id": "tests",
-          "summary": "Implementation complete; begin focused tests"
+        "attempt_heartbeat": {
+          "task_id": "wc_task_abcdefghijklmnop",
+          "attempt_id": "wc_attempt_abcdefghijklmnop",
+          "assignee_agent_id": "wc_dagent_abcdefghijklmnop",
+          "attempt_fence": "<exact existing attempt fence>",
+          "attempt_controller_generation": 1
         }
       }
     }
@@ -33,34 +32,35 @@ fully available.
 ```
 
 Use this only when an explicit control fact is already established and another
-ordinary tool call is needed. Omit it otherwise. After completing a plan phase,
-attach the previous phase's completion and next current phase to the next ordinary
-call; do not pre-complete tests or postpone all checkpoints to task closeout.
+ordinary tool call is needed. Omit it otherwise. Operations requiring individual
+Host review must use their canonical standalone callable. MCP rejects `before.goal_progress`,
+`before.wake_consume` and `after_success.goal_completion` before any main or
+sidecar effect; use `checkpoint_goal`, `consume_agent_wake` and `update_goal`
+respectively. Their omission or refusal by the Host never permits a sidecar or
+gateway fallback. After completing a plan phase, checkpoint its actual progress
+with the standalone tool; do not pre-complete tests or postpone checkpoints.
 Standalone tools are always valid, including when there is no suitable main call.
 Traffic, validation results, Window activity and App polling never infer a
 transition or renew a lease.
 
 | Phase / field | Canonical invocation |
 | --- | --- |
-| `before.goal_progress` | `checkpoint_goal`, identical fields |
-| `before.wake_consume` | `consume_agent_wake`, identical exact continuation proof |
 | `before.attempt_heartbeat` | `heartbeat_agent_task_attempt`, identical fences and Server lease policy |
 | `before.session_context_update` | Reserved canonical `update_session_context` payload; currently rejected before main |
-| `after_success.goal_completion` | `update_goal` with explicit `lifecycle=completed`; only Goal id, revision, key and optional terminal reason |
 | `after_success.session_close` | `close_session`, exact Session id |
 | `after_success.todo_completion` | `complete_session_message`, including the unchanged exact assignment fence |
 
 The envelope and payloads are closed. A present phase has exactly one mutation;
 there is no operation list. Existing `_wc.resolve` is also an
 effectful before mutation, so combining it with `_wc.control.before` is rejected.
-ACK and context material requests do not count. Goal completion and Session close
-are admitted only on `finish_coding_task`; it must succeed with explicit
+ACK and context material requests do not count. Session close is admitted only on `finish_coding_task`; it must succeed with explicit
 `task_outcome.blocking=false`. Todo completion also requires a known successful
 main result; asynchronous handoff/unknown results do not qualify.
 
 ## Execution and authority
 
-1. Strip/parse the wrapper and eagerly parse both canonical sidecar requests.
+1. Strip/parse the wrapper, eagerly parse canonical sidecar requests, and reject
+   operations requiring individual Host review before any effect.
 2. Check adapter admission and each canonical sidecar scope independently.
 3. Authorize recorder, main request scope and exact business targets.
 4. Run the optional before mutation through the canonical kernel, including its
@@ -85,8 +85,8 @@ main effect into an overall failure. `control.main.execution_state` distinguishe
 `succeeded`, `failed`, `started`, `outcome_unknown`, and
 `definitely_not_started`. `state_changed=null` means unknown, never false by
 assumption. Each requested phase reports kind, success, execution state, change
-and replay truth, plus a bounded error code on failure. Goal results include the
-current revision. Skipped phases explicitly report `definitely_not_started`.
+and replay truth, plus a bounded error code on failure. Skipped phases explicitly
+report `definitely_not_started`.
 
 A before rejection proves main was not dispatched. After main succeeds but the
 post mutation fails, recover just that mutation with its standalone canonical

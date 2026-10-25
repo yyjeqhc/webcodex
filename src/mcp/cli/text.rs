@@ -1,6 +1,8 @@
 //! Render already-bounded canonical observations without escaping source text.
 //! Only known presentation redundancy is removed. Unknown fields, failures,
 //! revision fences, incomplete coverage and exact recovery calls survive.
+mod compact;
+
 use serde_json::{json, Value};
 use std::fmt::Write;
 
@@ -25,13 +27,31 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
         let _ = writeln!(
             text,
             "ERROR: {}",
-            structured["error"].as_str().unwrap_or("Tool failed")
+            execution_error_text(
+                tool,
+                structured["error"].as_str().unwrap_or("Tool failed"),
+                &output
+            )
         );
     }
     if let Some(fields) = output.as_object_mut() {
         fields.remove("peer_awareness");
     }
     match tool {
+        "read_tool_manifest" if success => render_manifest(&mut text, output),
+        "find_definition" | "find_references" if success => compact::locations(&mut text, output),
+        "list_project_files" | "list_project_tracked_files" if success => {
+            compact::files(&mut text, output)
+        }
+        "list_jobs" if success => compact::inventory(&mut text, output, "jobs"),
+        "list_projects" if success => compact::inventory(&mut text, output, "projects"),
+        "list_document_symbols" if success => compact::symbols(&mut text, output),
+        "observe_jobs" | "wait_for_job_readiness" => compact::jobs(&mut text, output),
+        "run_shell" | "run_process" | "run_script" | "run_detached_process" => {
+            compact::execution(&mut text, output)
+        }
+        "read_workspace_changes" if success => compact::changes(&mut text, output),
+        "edit_project_files" if success => compact::edits(&mut text, output),
         "read_files" => render_reads(&mut text, output),
         "search_project_texts" => render_search_batch(&mut text, output),
         "search_file_context" => {
@@ -88,12 +108,126 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
     }
 }
 
+fn render_manifest(text: &mut String, mut output: Value) {
+    let Some(fields) = output.as_object_mut() else {
+        render_fields(text, &output);
+        return;
+    };
+    let schema = fields.remove("input_schema");
+    if let Some(name) = fields.remove("name") {
+        let _ = writeln!(text, "{}", name.as_str().unwrap_or("?"));
+    }
+    if let Some(tools) = fields.remove("tools") {
+        if let Some(tools) = tools.as_array() {
+            for tool in tools {
+                let (Some(name), Some(route)) =
+                    (tool["name"].as_str(), tool["route"]["mode"].as_str())
+                else {
+                    render_fields(text, tool);
+                    continue;
+                };
+                let via = tool["route"]["via"]
+                    .as_str()
+                    .map(|via| format!(" via {via}"))
+                    .unwrap_or_default();
+                let description = tool["description"].as_str().unwrap_or("");
+                let _ = writeln!(text, "{name} [{route}{via}] {description}");
+                let mut remaining = tool.as_object().unwrap().clone();
+                for key in ["name", "description"] {
+                    remaining.remove(key);
+                }
+                if let Some(route) = remaining.get_mut("route").and_then(Value::as_object_mut) {
+                    route.remove("mode");
+                    route.remove("via");
+                    if route.is_empty() {
+                        remaining.remove("route");
+                    }
+                }
+                // Keep selection-relevant authority/effect and any future fields.
+                if !remaining.is_empty() {
+                    let _ = writeln!(text, "  {}", Value::Object(remaining));
+                }
+            }
+            if tools.is_empty() {
+                let _ = writeln!(text, "No matching tools.");
+            }
+        } else {
+            fields.insert("tools".into(), tools);
+        }
+    }
+    if let Some(route) = fields.remove("route") {
+        let _ = writeln!(text, "route: {route}");
+    }
+    if let Some(flows) = fields
+        .get_mut("recommended_flows")
+        .and_then(Value::as_array_mut)
+    {
+        for flow in std::mem::take(flows) {
+            // Canonical flow prose and partial/omitted membership stay together.
+            let _ = writeln!(text, "flow: {flow}");
+        }
+        fields.remove("recommended_flows");
+    }
+    render_fields(text, &output);
+    if let Some(schema) = schema {
+        // Exact lookup keeps the full necessary schema as one parser-ready JSON line.
+        let _ = writeln!(text, "input_schema: {schema}");
+    }
+}
+
+fn ordinary_read_failure(item: &Value) -> bool {
+    let read = &item["output"];
+    item["success"] == false
+        && item["path"].is_string()
+        && read["path"] == item["path"]
+        && read["error_kind"] == "read_file_failed"
+        && read["state_changed"] == false
+        && read["reason_code"]
+            .as_str()
+            .is_some_and(|reason| item["error"] == format!("read_file failed: {reason}"))
+        && read.as_object().is_some_and(|fields| fields.len() == 4)
+        && item.as_object().is_some_and(|fields| {
+            fields.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "index" | "path" | "success" | "output" | "error"
+                )
+            })
+        })
+}
+
 fn render_reads(text: &mut String, mut output: Value) {
+    let has_followup = output.get("suggested_call").is_some();
     let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) else {
         render_fields(text, &output);
         return;
     };
-    for mut item in std::mem::take(items) {
+    let count = items.len();
+    let succeeded = items
+        .iter()
+        .filter(|item| {
+            item.get("success").is_none_or(|v| v == true) && item["output"]["text"].is_string()
+        })
+        .count();
+    let all_presented = !items.is_empty()
+        && items.iter().all(|item| {
+            (item
+                .get("success")
+                .is_none_or(|v| v.as_bool() == Some(true))
+                && item["error"].is_null()
+                && item["output"]["text"].is_string())
+                || ordinary_read_failure(item)
+        });
+    for (index, mut item) in std::mem::take(items).into_iter().enumerate() {
+        if ordinary_read_failure(&item) {
+            let _ = writeln!(
+                text,
+                "{}: {}",
+                compact::one_line(&item["path"]),
+                compact::one_line(&item["error"])
+            );
+            continue;
+        }
         let path = item["path"].as_str().unwrap_or("?").to_string();
         let read = &mut item["output"];
         if let Some(source) = read.get("text").and_then(Value::as_str).map(str::to_string) {
@@ -123,6 +257,14 @@ fn render_reads(text: &mut String, mut output: Value) {
                 ] {
                     fields.remove(key);
                 }
+                if fields.get("truncated").is_none_or(|v| v == false) && !has_followup {
+                    for key in ["limit", "returned_lines", "has_more", "next_start_line"] {
+                        fields.remove(key);
+                    }
+                }
+                if fields.get("truncated") == Some(&json!(false)) {
+                    fields.remove("truncated");
+                }
             }
             render_fields(text, read);
             if let Some(fields) = item.as_object_mut() {
@@ -136,58 +278,83 @@ fn render_reads(text: &mut String, mut output: Value) {
                     fields.remove("error");
                 }
             }
+            if item["index"].as_u64() == Some(index as u64) {
+                item.as_object_mut().unwrap().remove("index");
+            }
             render_fields(text, &item);
         } else {
             let _ = writeln!(text, "==> {path}");
+            if let Some(fields) = item.as_object_mut() {
+                fields.remove("path");
+                if fields.get("index") == Some(&json!(index)) {
+                    fields.remove("index");
+                }
+            }
+            if item["success"] == false {
+                let error = item["error"].clone();
+                if let Some(fields) = item.get_mut("output").and_then(Value::as_object_mut) {
+                    if fields.get("error") == Some(&error) {
+                        fields.remove("error");
+                    }
+                    if fields.get("path") == Some(&json!(path)) {
+                        fields.remove("path");
+                    }
+                    if fields.is_empty() {
+                        item.as_object_mut().unwrap().remove("output");
+                    }
+                }
+                item.as_object_mut().unwrap().remove("success");
+            }
             render_fields(text, &item);
         }
     }
     output.as_object_mut().unwrap().remove("items");
-    render_read_continuation(text, &mut output);
+    if all_presented
+        && output
+            .get("output_truncated")
+            .is_none_or(|v| v.as_bool() == Some(false))
+    {
+        for key in ["requested_count", "returned_count"] {
+            if output[key].as_u64() == Some(count as u64) {
+                output.as_object_mut().unwrap().remove(key);
+            }
+        }
+        for (key, value) in [
+            ("succeeded_count", json!(succeeded)),
+            ("failed_count", json!(count - succeeded)),
+            ("output_truncated", json!(false)),
+            ("next_index", Value::Null),
+        ] {
+            if output.get(key) == Some(&value) {
+                output.as_object_mut().unwrap().remove(key);
+            }
+        }
+        output.as_object_mut().unwrap().remove("project");
+    }
     render_fields(text, &output);
 }
 
-fn render_read_continuation(text: &mut String, output: &mut Value) {
-    let Some(call) = output.get("suggested_call") else {
-        return;
+/// Replace only the MCP adapter's exact native execution log pointer. The
+/// following renderer prints those tails directly; provider errors never enter.
+fn execution_error_text(tool: &str, error: &str, output: &Value) -> String {
+    if !matches!(tool, "run_shell" | "run_process" | "run_script") {
+        return error.to_owned();
+    }
+    let logs = output.get("details").unwrap_or(output);
+    let replacement = if logs["stdout_tail"] == "" && logs["stderr_tail"] == "" {
+        "Logs: stdout and stderr were empty."
+    } else {
+        "Logs: available stdout_tail and stderr_tail are included below."
     };
-    if call["tool"] != "read_files" || !call["arguments"]["items"].is_array() {
-        return;
-    }
-    let mut call = output
-        .as_object_mut()
-        .unwrap()
-        .remove("suggested_call")
-        .unwrap();
-    let _ = writeln!(text, "Next read_files:");
-    let arguments = &mut call["arguments"];
-    let items = arguments.as_object_mut().unwrap().remove("items").unwrap();
-    for mut item in items.as_array().unwrap().iter().cloned() {
-        let path = item
-            .as_object_mut()
-            .and_then(|fields| fields.remove("path"));
-        let _ = write!(
-            text,
-            "  {}",
-            path.as_ref().map(scalar).unwrap_or_else(|| "?".into())
-        );
-        if let Some(fields) = item.as_object() {
-            for (key, value) in fields {
-                let _ = write!(text, "; {key}: {}", scalar(value));
-            }
-        } else {
-            let _ = write!(text, "; {item}");
-        }
-        text.push('\n');
-    }
-    // Keep the exact bound Project, explicit Session, byte budget and follow-up
-    // posture once, including zero-progress recovery. None may be inferred.
-    render_fields(text, arguments);
-    if let Some(fields) = call.as_object_mut() {
-        fields.remove("tool");
-        fields.remove("arguments");
-    }
-    render_fields(text, &call);
+    error
+        .replace(
+            "Logs: see output.stdout_tail and output.stderr_tail.",
+            replacement,
+        )
+        .replace(
+            "Logs: see output.details.stdout_tail and output.details.stderr_tail.",
+            replacement,
+        )
 }
 
 fn render_search_batch(text: &mut String, mut output: Value) {
@@ -216,6 +383,26 @@ fn render_search_batch(text: &mut String, mut output: Value) {
 }
 
 fn render_search(text: &mut String, mut output: Value) {
+    if output["files"].as_array().is_some_and(|files| {
+        files
+            .iter()
+            .all(|file| file.is_string() || file["path"].is_string())
+    }) {
+        let files = output.as_object_mut().unwrap().remove("files").unwrap();
+        for file in files.as_array().unwrap() {
+            if file.is_string() {
+                let _ = writeln!(text, "{}", compact::one_line(file));
+            } else {
+                let mut fields = file.as_object().unwrap().clone();
+                let path = fields.remove("path").unwrap();
+                let _ = write!(text, "{}", compact::one_line(&path));
+                for (key, value) in fields {
+                    let _ = write!(text, " {key}: {}", scalar(&value));
+                }
+                text.push('\n');
+            }
+        }
+    }
     if let Some(matches) = output.get_mut("matches").and_then(Value::as_array_mut) {
         for mut matched in std::mem::take(matches) {
             let _ = writeln!(
@@ -245,6 +432,12 @@ fn render_value(text: &mut String, value: &Value, depth: usize) {
     let indent = "  ".repeat(depth.min(4));
     match value {
         Value::Object(fields) => {
+            if fields.get("tool").is_some_and(Value::is_string)
+                && fields.get("arguments").is_some_and(Value::is_object)
+            {
+                let _ = writeln!(text, "{indent}{value}");
+                return;
+            }
             for (key, value) in fields {
                 // Do not recursively filter arbitrary keys: provider data,
                 // source text and error/recovery payloads retain their meaning.

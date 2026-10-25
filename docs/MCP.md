@@ -230,6 +230,65 @@ advanced identity flow.
 
 One canonical ToolRuntime serves both MCP projections. **Adaptive Runtime** remains the default, including ChatGPT: canonical `ToolDefinition` rank decides the direct tools; ordinary model-visible long-tail tools are invoked through `call_runtime_tool`; server-owned protocol capabilities and MCP App admission may add hidden extensions for the relevant protocol request. An explicit request-local CLI surface changes discovery and presentation only, as described below. `read_tool_manifest(tool_name=...)` is discovery only: it never dynamically registers a new Host tool. Its exact `route.primary` describes the preferred callable, and a normal direct tool also exposes `route.fallback` through `call_runtime_tool` for the case where that direct callable is not present; explicit MCP App presentation tools mark that fallback as blocked while Apps are enabled. Direct versus gateway routing changes presentation only and never bypasses the target tool's authentication, Project authority, permission, Runner capability, Session, or safety checks.
 
+When their workflow group is enabled, nine durable Agent and Goal operations have a stricter Host exposure contract: `create_agent_identity`, `rotate_agent_continuation_endpoint`, `list_agent_identities`, `prepare_goal_workflow`, `get_goal`, `checkpoint_goal`, `update_goal`, `bootstrap_agent_conversation`, and `consume_agent_wake` are independently exposed with their canonical input schemas, accurate effect annotations and applicable OAuth requirements. They require normal Host tool review before a new trial. If a Host does not load or rejects one of these dedicated descriptors, WebCodex does not substitute `call_runtime_tool`; that generic route is not a fallback for these operations. Their `_wc.control` forms for Goal checkpoints, Wake consumption and Goal completion are also rejected before any main or sidecar effect; use the standalone canonical tools. This bounded stage does not claim compliance for unrelated Plugin operations. This exposure policy does not grant authority or guarantee Host acceptance, and does not alter each operation's existing authentication, OAuth scopes, permissions, ownership, lifecycle, replay-safety, or effect checks. The cause of a prior Host refusal remains unknown; this contract does not claim to resolve it. Other ordinary direct tools retain their existing gateway fallback, and hidden App methods remain hidden.
+
+### Optional workflow tools per client
+
+Both Adaptive Runtime (including ChatGPT) and CLI default to a small workflow
+surface: model-facing Goal, Agent continuation and Job continuation tools are
+opt-in. Configure the Server's `WEBCODEX_MCP_TOOL_EXPOSURE` as closed JSON:
+
+```json
+{
+  "adaptive": {"goals": false, "agent_continuation": false, "job_continuation": false},
+  "cli": {"goals": false, "agent_continuation": false, "job_continuation": false},
+  "oauth_clients": [
+    {
+      "client_id": "YOUR_REGISTERED_CHATGPT_OAUTH_CLIENT_ID",
+      "adaptive": {"goals": true, "agent_continuation": true, "job_continuation": true}
+    }
+  ]
+}
+```
+
+For example, place the compact JSON value in the existing Server environment
+configuration. The value is read and validated once before the Server starts;
+restart the Server and refresh/reconnect the Host's tool catalog after an operator
+changes it. This example enables the full workflow surface only for the exact
+authenticated OAuth client, so online ChatGPT needs no custom request headers.
+`X-WebCodex-MCP-Surface: cli` still selects the CLI surface on each request.
+An omitted client surface inherits its deployment surface; a supplied surface is
+a complete replacement, with omitted booleans defaulting to false. Client names,
+`clientInfo`, client windows, Sessions and previous requests never select an override.
+
+| Setting | Model tools controlled |
+|---|---|
+| `goals` | The canonical Goal category, including preparation, reads, checkpoints, updates and `present_goal_plan`. |
+| `agent_continuation` | Agent identity/setup, Endpoint rotation/detach, bootstrap/Wake consumption, `wait_for_agent_events`, Task Endpoint continuation and the Agent continuation card/bridge. |
+| `job_continuation` | `wait_for_job_terminal` and its Job continuation card/bridge. Ordinary same-Job readiness and observation remain available. |
+
+The switches are independent. Enable both `goals` and `agent_continuation` for
+Goal-driven automatic continuation. Enabled individually reviewed operations
+receive canonical standalone descriptors on both surfaces; CLI still has text
+results, no Apps and no `_wc`. Disabling a group removes its model descriptors
+and optional App resources/bridge helpers. Exact manifests report unavailable
+routes, generated follow-ups omit unavailable targets, and direct/gateway calls
+cannot enable the omitted group. The Workbench independently retains its existing
+App-only Goal read/create/update controls: those remain `ui.visibility=["app"]`,
+are not model routes and do not become gateway fallbacks. This MCP exposure policy
+is not a credential scope or a global feature-disable switch for Runtime API/UI.
+
+Configuration is limited to 16 KiB and 64 unique OAuth client entries; client ids
+are non-empty, at most 256 UTF-8 bytes, without whitespace/control characters.
+Unknown fields, duplicate clients, malformed JSON and wrong types fail startup;
+diagnostics omit input values and client ids. Operator status reports surface
+defaults and the override count. Scope filtering, canonical business schemas,
+ownership, generation/revision fences, effect checks and the independent Host
+review requirement still apply. `WEBCODEX_MCP_COMPACT_SCHEMAS` controls schema
+detail, and `WEBCODEX_MCP_APPS_ENABLED` separately controls App admission; neither
+implicitly enables workflow tools. Exposure is also separate from
+`WEBCODEX_GOAL_WORKFLOW` preference and `WEBCODEX_MCP_APP_RESUME_MODE` readiness policy.
+
 ### Request-local client policy
 
 A shared Server can serve ordinary calls and Host-native orchestration without
@@ -578,6 +637,29 @@ The removed ProjectConnector capability names (`task_start`, `files_read`, `edit
 
 ### Long work continues as Jobs
 
+Routine Job observations keep one restart-safe observation token rather than also
+emitting a process-local, evictable observation ref. A cursorless handoff token is
+an initial baseline, not a log reset; actual generation changes and lost history
+still report reset/retention evidence. Generic running activity and ordinary
+command outcome summaries are omitted when lifecycle/exit code already express
+them. Validation evidence and useful phase changes remain.
+
+Process, script and shell admission applies the last registered Runner timeout
+policy as well as the tool ceiling. Only capped active handoffs include
+`timeout: 3600s (requested 99999; capped by runner policy)`; fast terminal commands
+do not add this notice. The Runner still enforces its live policy. Detached
+execution keeps native argv and keyed replay semantics; invoke a virtualenv's
+Python executable directly instead of `sh -c`.
+
+CLI text renders document symbols as identifier positions with nested children,
+Job/Project inventories and search file/count results as rows, and combines single
+Job wait/update information. Rust document symbols now wait for index readiness;
+the LSP client advertises hierarchical symbol support. Explicit file ranges do
+not suggest reading beyond their requested end; genuinely truncated reads retain
+snapshot-fenced continuation calls. Synchronous process/script/shell output displays
+at most 200 lines per stream, with truncation flags and guidance to capture full
+future output in a Project file.
+
 Stateless MCP 2026 execution tools can opt in to `_wc.compact_execution=true`.
 This separates stable `output.execution` control facts from `output.details`
 (per item for `observe_jobs`) while retaining logs, recovery and collaboration
@@ -740,6 +822,21 @@ payloads through model text:
   are short-lived process-local presentation state, and the normal size, MIME,
   path, and authorization bounds remain in force.
 
+Artifact uploads reserve the known `expected_bytes` exactly, including zero;
+unknown sizes reserve their bounded limit (256 MiB by default). Each Project
+still permits at most 32 active uploads and 512 MiB of reserved bytes. When a new
+upload would exceed either quota, the Runner checks its bounded reservation
+index, removes upload pairs idle for at least 24 hours, and recalculates usage
+under the upload lock. It does not recursively scan the Project or start a
+background task. Recent chunk writes keep an upload live; unreadable or
+inconsistent recovery evidence fails closed. Successful finish/abort releases
+reservations after cleanup. An uncertain transport result never authorizes a
+replay. Existing reservations recover with their original limits and unchanged
+record format. For older Runners the Server sends a minimum one-byte limit for
+empty files; current Runners reserve zero bytes for `expected_bytes=0`.
+Finish or abort these zero-byte reservations before downgrading to a Runner that
+requires positive persisted limits.
+
 The lower-level `read_project_artifact_metadata` and `read_project_artifact_chunk`
 tools remain operator/gateway primitives. The legacy `export_project_artifact`
 compatibility tool has been removed; complete host delivery is exposed only as
@@ -752,13 +849,17 @@ Use [Coding Workflow](CODING_WORKFLOW.md) for the canonical `work_on_project` bo
 
 ## Goal and Agent continuation timing diagnostics
 
-Current resources are `ui://webcodex/goal-plan/v9` (App 8.0.0) and
-`ui://webcodex/agent-continuation/v21` (App 21.0.0). Retired resource aliases are rejected.
+Current resources are `ui://webcodex/goal-plan/v10` (App 10.0.0) and
+`ui://webcodex/agent-continuation/v24` (App 24.0.0). Retired resource aliases are rejected.
 Goal Plan and Agent Continuation cards offer **Enable timing diagnostics**, off by
 default. The local View retains at most 64 timing records: scheduled versus actual
 poll delay, monotonic tool RPC start/completion/error duration, visibility and teardown.
-`ui/message` duration is not separately measured; its outcome remains the existing
-prepare/finish acceptance or unknown observation.
+The Agent ring also records `host_dispatch_start`, `host_dispatch_complete` or
+`host_dispatch_error` around its existing `ui/message` call, elapsed `duration_ms`,
+and closed outcomes (`dispatch_accepted`, `delivery_unknown`). The existing
+`host_dispatch_result` records the same outcome after the call. Errors
+carry only a closed failure class; message bodies, consume tokens and raw errors
+never enter the ring. Host acceptance remains separate from exact Wake consume.
 Disabling clears the ring; remounting starts empty. No additional RPC, browser
 storage, model message, timing authority or scheduler is introduced. Goal diagnostics
 optionally attach the existing bounded `app_call_id`; the MCP adapter validates and
@@ -774,6 +875,13 @@ they add no prompts, message bodies, consume tokens or raw ClientWindow values a
 are never copied into model-facing Goal results. Existing full tracing has its
 separate payload/privacy contract. Negative lease margin identifies stale observation;
 missing observation/partial coverage are evidence limits, not permission to wake.
+
+Goal Plan targets 30s while hidden, retaining the 75s observation lease and 10s
+RPC timeout. The elapsed-aware scheduler shortens that target near lease expiry
+and backs off after an expired attempt. This adds scheduling margin; browser
+throttling may still exceed it. Agent hidden heartbeat remains 15s. See the
+[real-Host comparison procedure](implementation/mcp-app-auto-resume-restoration.md#goal-hidden-cadence-baseline-and-candidate-comparison)
+for the user-assisted baseline/candidate evidence gate.
 
 For separately authorized ChatGPT acceptance, bind the actual Agent carrier and
 present its exact correlated Goal. Enable the local diagnostics and metadata tracing,

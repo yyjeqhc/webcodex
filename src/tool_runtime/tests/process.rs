@@ -179,6 +179,7 @@ async fn register_detached_process_job_agent_with_policy(
         async_shell_jobs: true,
         structured_validation_argv: true,
         structured_process_argv: true,
+        structured_script_payload: true,
         structured_execution_jobs: true,
         detached_process_jobs: true,
         ..Default::default()
@@ -914,7 +915,7 @@ async fn detached_process_idempotency_replays_same_intent_and_rejects_conflict()
         )
         .await;
     assert!(first.success, "{:?}", first.error);
-    let job_id = first.output["job_id"].as_str().unwrap().to_string();
+    let job_id = observe_job_continuation_job_id(&first.output).to_string();
     let request = wait_for_patch_agent_request(&runtime, "detached-idempotency").await;
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
 
@@ -931,7 +932,7 @@ async fn detached_process_idempotency_replays_same_intent_and_rejects_conflict()
         )
         .await;
     assert!(replay.success, "{:?}", replay.error);
-    assert_eq!(replay.output["job_id"], job_id);
+    assert_eq!(observe_job_continuation_job_id(&replay.output), job_id);
     assert!(
         probe_patch_agent_request(&runtime, "detached-idempotency")
             .await
@@ -1031,7 +1032,7 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
         )
         .await;
     assert!(first.success, "{:?}", first.error);
-    let job_id = first.output["job_id"].as_str().unwrap().to_string();
+    let job_id = observe_job_continuation_job_id(&first.output).to_string();
     let request = wait_for_patch_agent_request(&first_runtime, "detached-restart-recovery").await;
     let context = request
         .job_context
@@ -1171,8 +1172,7 @@ async fn detached_process_uses_existing_job_identity_and_typed_runner_request() 
         .dispatch_with_auth(detached_process_call(project), Some(&auth))
         .await;
     assert!(result.success, "{:?}", result.error);
-    let job_id = result.output["job_id"].as_str().unwrap().to_string();
-    assert_eq!(result.output["execution_source"], "run_detached_process");
+    let job_id = assert_sparse_pending_job_handoff(&result.output).to_string();
     assert_observe_job_continuation(&result.output);
 
     let request = wait_for_patch_agent_request(&runtime, "detached-product-path").await;
@@ -1208,10 +1208,11 @@ async fn detached_process_reports_runner_policy_timeout_clamp_at_admission() {
 
     let result = runtime.dispatch_with_auth(call, Some(&auth)).await;
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["requested_timeout_secs"], 18_000);
-    assert_eq!(result.output["effective_timeout_secs"], 3_600);
-    assert_eq!(result.output["runner_policy_max_timeout_secs"], 3_600);
-    assert_eq!(result.output["timeout_clamped"], true);
+    assert_eq!(
+        result.output["timeout"],
+        "3600s (requested 18000; capped by runner policy)"
+    );
+    assert_observe_job_continuation(&result.output);
 
     let request = wait_for_patch_agent_request(&runtime, "detached-policy-clamp").await;
     assert_eq!(request.timeout_secs, 18_000);
@@ -1276,7 +1277,6 @@ async fn structured_execution_fast_terminal_jobs_project_back_without_visible_du
                     "exit_code",
                     "duration_ms",
                     "purpose",
-                    "cwd",
                     "executor",
                     "promoted_to_job",
                     "terminal",
@@ -1292,14 +1292,17 @@ async fn structured_execution_fast_terminal_jobs_project_back_without_visible_du
                     "stdout_truncated",
                     "stderr_truncated",
                 ] {
-                    if entry == "shell" && matches!(omitted, "purpose" | "cwd") {
-                        continue; // Shell retains its command presentation on fast success.
-                    }
                     assert!(
                         result.output.get(omitted).is_none(),
                         "{entry} boring terminal success field {omitted} should be omitted: {}",
                         result.output
                     );
+                }
+                if entry == "shell" {
+                    assert_eq!(result.output["cwd"], ".");
+                    assert!(result.output["shell"].is_string());
+                } else {
+                    assert!(result.output.get("cwd").is_none());
                 }
             } else {
                 assert_eq!(result.output["execution_state"], "completed");
@@ -1545,7 +1548,7 @@ async fn run_process_terminal_success_is_sparse_after_full_session_effect_record
 }
 
 #[tokio::test]
-async fn run_process_fast_terminal_projection_does_not_silently_drop_retained_lines() {
+async fn run_process_fast_terminal_projection_bounds_lines_with_explicit_loss_notice() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));
     let project = register_process_job_agent(&runtime, "process-fast-log-job", temp.path()).await;
@@ -1598,10 +1601,14 @@ async fn run_process_fast_terminal_projection_does_not_silently_drop_retained_li
     assert!(result.success, "{:?}", result.error);
     assert_eq!(
         result.output["stdout_tail"].as_str(),
-        Some(retained_stdout.as_str())
+        Some(retained_stdout[retained_stdout.find("retained-line-100").unwrap()..].as_ref())
     );
     assert_eq!(result.output["stdout_lines"], 300);
-    assert!(result.output.get("stdout_truncated").is_none());
+    assert_eq!(result.output["stdout_truncated"], true);
+    assert!(result.output["output_hint"]
+        .as_str()
+        .unwrap()
+        .contains("200 lines"));
     assert!(result.output.get("promoted_to_job").is_none());
     assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 }
@@ -3034,6 +3041,81 @@ async fn typed_execution_admission_projection_preserves_not_started_for_all_runn
             assert_eq!(&result.output, expected);
         } else {
             expected_output = Some(result.output);
+        }
+    }
+}
+
+#[tokio::test]
+async fn structured_entries_apply_runner_ceiling_and_only_explain_background_caps() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));
+    let client = "structured-policy-cap";
+    let project = register_detached_process_job_agent_with_policy(
+        &runtime,
+        client,
+        temp.path(),
+        RunnerPolicySummary {
+            max_timeout_secs: 120,
+            ..Default::default()
+        },
+    )
+    .await;
+    let auth = auth_context(None, true);
+    for fast in [false, true] {
+        for (entry, call) in structured_execution_calls(&project, 99_999, None) {
+            let (task, request) =
+                dispatch_process_until_request(&runtime, client, call, auth.clone()).await;
+            assert_eq!(request.timeout_secs, 120, "{entry}");
+            if fast {
+                update_process_job(
+                    &runtime,
+                    client,
+                    &request,
+                    "completed",
+                    Some(ShellCommandExecutionState::Completed),
+                    Some(0),
+                    Some("done\n"),
+                    None,
+                    None,
+                )
+                .await;
+            }
+            let result = task.await.unwrap();
+            assert!(result.success, "{entry}: {result:?}");
+            if fast {
+                assert!(
+                    result.output.get("timeout").is_none(),
+                    "{entry}: {}",
+                    result.output
+                );
+            } else {
+                assert_eq!(
+                    result.output["timeout"], "120s (requested 99999; capped by runner policy)",
+                    "{entry}"
+                );
+                assert_observe_job_continuation(&result.output);
+                update_process_job(
+                    &runtime,
+                    client,
+                    &request,
+                    "completed",
+                    Some(ShellCommandExecutionState::Completed),
+                    Some(0),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+            }
+            crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+                &serde_json::to_value(&result).unwrap(),
+                &crate::tool_runtime::registry::output_schema_for_tool(match entry {
+                    "process" => "run_process",
+                    "script" => "run_script",
+                    _ => "run_shell",
+                }),
+            )
+            .unwrap();
         }
     }
 }

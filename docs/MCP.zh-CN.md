@@ -272,6 +272,56 @@ OAuth 仍是独立的高级身份路径。
 
 同一个 canonical ToolRuntime 服务两种 MCP 投影。**Adaptive Runtime** 仍是包括 ChatGPT 在内的默认路径：canonical `ToolDefinition` rank 决定 direct tools；普通 model-visible long-tail tools 通过 `call_runtime_tool` 调用；server-owned protocol capability 与 MCP App admission 可以为对应请求加入 hidden extension。显式的请求级 CLI surface 只改变 discovery 与 presentation，配置见下文。`read_tool_manifest(tool_name=...)` 只负责 discovery，不会动态向 Host 注册一个新 tool。exact manifest 的 `route.primary` 给出首选 callable；普通 direct tool 还会给出经 `call_runtime_tool` 的 `route.fallback`，用于 Host 当前没有该 direct callable 的情况；显式 MCP App presentation tool 会标明 Apps enabled 时该 fallback 被禁止。direct/gateway 只改变 presentation，不会绕过目标工具的 authentication、Project authority、permission、Runner capability、Session 或 safety checks。
 
+### 按客户端配置可选工作流工具
+
+Adaptive Runtime（包括 ChatGPT）和 CLI 默认都精简工作流工具：面向模型的 Goal、
+Agent 续跑和 Job 续跑入口需要显式启用。在 Server 的既有环境配置中设置
+`WEBCODEX_MCP_TOOL_EXPOSURE`，值为闭合 JSON：
+
+```json
+{
+  "adaptive": {"goals": false, "agent_continuation": false, "job_continuation": false},
+  "cli": {"goals": false, "agent_continuation": false, "job_continuation": false},
+  "oauth_clients": [
+    {
+      "client_id": "YOUR_REGISTERED_CHATGPT_OAUTH_CLIENT_ID",
+      "adaptive": {"goals": true, "agent_continuation": true, "job_continuation": true}
+    }
+  ]
+}
+```
+
+Server 在启动前一次性读取并验证配置。运维修改后需要重启 Server，并在 Host
+刷新工具目录或重新连接。示例只为精确匹配的已认证 OAuth 客户端启用完整工作流，
+所以线上 ChatGPT 无需自定义请求头。`X-WebCodex-MCP-Surface: cli` 仍按请求选择
+CLI surface。客户端未提供的 surface 继承部署默认；提供的 surface 完整替换默认，
+其中省略的布尔开关为 false。不会根据客户端名称、`clientInfo`、Window、Session
+或之前的请求推断覆盖配置。
+
+| 开关 | 控制的模型工具 |
+|---|---|
+| `goals` | canonical Goal 类别，包括准备、读取、checkpoint、更新及 `present_goal_plan`。 |
+| `agent_continuation` | Agent 身份/设置、Endpoint 轮换/分离、bootstrap/Wake 消费、`wait_for_agent_events`、Task Endpoint 续跑及 Agent 续跑卡片/bridge。 |
+| `job_continuation` | `wait_for_job_terminal` 及 Job 续跑卡片/bridge。同一 Job 的普通 readiness 和 observation 仍可用。 |
+
+三个开关独立。Goal 驱动的自动续跑需要同时启用 `goals` 和 `agent_continuation`。
+启用后，需要独立审核的操作在两种 surface 都得到 canonical standalone descriptor；
+CLI 仍使用文本结果，没有 Apps 或 `_wc`。关闭分组会移除模型 descriptor 及对应
+可选 App resource/bridge helper；exact manifest 报告 unavailable route，生成的
+follow-up 不再指向不可用目标，direct/gateway 调用也不能启用该分组。工作台独立
+保留既有 App-only Goal 读取/创建/更新控件：这些 descriptor 仍为
+`ui.visibility=["app"]`，不属于模型路由，也不提供 gateway fallback。
+这属于 MCP 暴露策略，不是凭据 scope，也不是 Runtime API/UI 的全局功能禁用开关。
+
+配置最多 16 KiB、64 个唯一 OAuth 客户端条目；client id 非空、最多 256 UTF-8
+字节，不含空白或控制字符。未知字段、重复客户端、JSON 格式或类型错误会拒绝启动；
+诊断不输出输入值或 client id。运维状态仅报告 surface 默认和覆盖条目数量。
+原有 scope 过滤、canonical business schema、所有权、generation/revision fence、
+effect 检查和独立 Host 审核要求继续适用。`WEBCODEX_MCP_COMPACT_SCHEMAS` 控制
+schema 详略，`WEBCODEX_MCP_APPS_ENABLED` 独立控制 App 准入，两者都不会隐式启用
+工作流工具。暴露配置也独立于 `WEBCODEX_GOAL_WORKFLOW` 偏好和
+`WEBCODEX_MCP_APP_RESUME_MODE` readiness 策略。
+
 ### Tool result framing
 
 默认 Adaptive surface 的 MCP tool machine-readable 结果位于 `structuredContent`；`content` 只保留简短的人类可读或 protocol-native fallback。需要结构化字段的 client 应读取 `structuredContent`，不要解析文本。
@@ -434,9 +484,29 @@ Rust `project_build` 可选 `dependency_resolution_policy: "offline"`，Runner �
 
 Adaptive Runtime 可以把常用工具直接暴露，把 long-tail 工具通过 `call_runtime_tool` 暴露。direct/gateway 只影响 model exposure，不改变 schema validation、OAuth scope、Project authority、permission policy、Runner capability、Session fence 或 tool effects。
 
+在对应工作流分组启用后，九个持久 Agent 和 Goal 操作遵循更严格的 Host 暴露契约：`create_agent_identity`、`rotate_agent_continuation_endpoint`、`list_agent_identities`、`prepare_goal_workflow`、`get_goal`、`checkpoint_goal`、`update_goal`、`bootstrap_agent_conversation` 和 `consume_agent_wake` 分别以独立 Host tool 暴露，并携带canonical 输入 schema、准确的 effect annotations 和适用的 OAuth 要求。开始新的试用前，Host 必须正常审核这些工具。如果 Host 未加载或拒绝某个专用 descriptor，WebCodex 不会改用 `call_runtime_tool`；该 generic route 不是这些操作的 fallback。`_wc.control` 中对应的 Goal checkpoint、Wake 消费和 Goal 完成表达也会在任何主调用或 sidecar 副作用发生前被拒绝，必须使用独立的 canonical 工具。这一有限阶段不声称其他 Plugin 操作也已满足独立审查要求。此暴露策略不授予 authority，也不保证 Host 接受调用，并且不改变各操作现有的 authentication、OAuth scopes、permissions、ownership、lifecycle、replay-safety 或 effect checks。此前 Host 拒绝的原因仍未知；本契约不声称已经解决该问题。其他普通 direct tools 保留现有 gateway fallback，hidden App methods 仍保持隐藏。
+
 已删除的 ProjectConnector capability 名称（`task_start`、`files_read`、`edits_apply`、`task_finish` 等）不会作为 runtime 工具的 compatibility alias 保留。请使用当前 `tools/list` / `read_tool_manifest` 返回的 ToolRuntime 名称。
 
 ### 长任务使用 Job lifecycle
+
+普通 Job 观察保留一个可跨服务重启使用的 observation token，不再同时输出可能因
+进程重启或缓存淘汰而失效的 observation ref。无日志游标的交接 token 表示首次
+baseline，不代表日志重置；真正的日志代次变化和历史丢失仍保留 reset/retention
+证据。生命周期或退出码已表达的通用 running activity 和普通命令结果摘要省略；
+验证证据和有用的阶段变化继续保留。
+
+process、script、shell 在受理时同时考虑工具上限和 Runner 最近注册的超时策略。
+仅被截断且仍在后台的交接结果增加一行，例如
+`timeout: 3600s (requested 99999; capped by runner policy)`；快速结束的命令不增加
+说明。Runner 仍执行其当前策略。detached 保留 native argv 和按键恢复语义；虚拟
+环境训练应直接调用该环境的 Python 路径，而不是 `sh -c`。
+
+CLI 文本将文档符号显示为标识符位置和嵌套子项，将 Job/Project 清单与搜索文件/
+计数结果按行显示，并合并单 Job 的等待和更新信息。Rust 文档符号现在等待索引
+就绪，LSP 客户端声明支持层级符号。明确指定的文件行范围读完后不再建议越界续读；
+确实被截断的读取仍提供带快照版本约束的后续调用。同步 process/script/shell 输出
+每个流最多显示 200 行，保留截断标记，并说明如何将后续执行的完整输出写入项目文件。
 
 Stateless MCP 2026 的执行工具可通过 `_wc.compact_execution=true` 显式启用紧凑执行结果。
 它将稳定的 `output.execution` 控制事实与 `output.details` 分开（`observe_jobs`
@@ -555,6 +625,17 @@ Rust/Go 构建使用当前 `project_build`；项目级验证不会执行修改�
   URI 本身不是独立 bearer authority；export handle 只是短期、process-local 的
   presentation state，现有大小、MIME、路径与 authorization 边界继续生效。
 
+Artifact 上传按已知 `expected_bytes` 精确预留，零字节也合法；大小未知时预留
+有界上限（默认 256 MiB）。每个 Project 仍最多允许 32 个活动上传和 512 MiB
+预留字节。新上传将超出任一配额时，Runner 在上传锁内检查有界 reservation
+索引，清理至少空闲 24 小时的上传记录和临时文件，再重新计算配额；不会递归扫描
+Project，也不新增后台任务。最近的 chunk 写入会保留上传的有效状态；恢复证据
+不可读或不一致时拒绝继续。Finish/Abort 成功清理后释放预留；传输结果不确定
+不构成重放授权。已有 reservation 沿用原始额度恢复，记录格式不变。为兼容旧
+Runner，Server 对空文件发送最小 1 字节上限；当前 Runner 对
+`expected_bytes=0` 精确预留 0 字节。
+降级到要求持久化额度为正数的旧 Runner 前，应先完成或终止这些零字节上传。
+
 底层 `read_project_artifact_metadata` 与 `read_project_artifact_chunk` 继续作为
 operator/gateway primitive 保留。旧的 `export_project_artifact` compatibility tool 已
 删除；完整 host 交付统一通过 `inspect_project_artifact(action=export)` 暴露。DOCX/PPTX/XLSX
@@ -565,12 +646,16 @@ operator/gateway primitive 保留。旧的 `export_project_artifact` compatibili
 
 ## Goal 与 Agent 续接时序诊断
 
-当前资源为 `ui://webcodex/goal-plan/v9`（App 8.0.0）与
-`ui://webcodex/agent-continuation/v21`（App 21.0.0），旧资源别名被拒绝。
+当前资源为 `ui://webcodex/goal-plan/v10`（App 10.0.0）与
+`ui://webcodex/agent-continuation/v24`（App 24.0.0），旧资源别名被拒绝。
 Goal Plan 和 Agent Continuation 卡片提供 **Enable timing diagnostics**，默认关闭。
 每个 View 本地最多保留 64 条时序记录：计划与实际轮询延迟、单调时钟测量的 RPC
-开始/完成/错误耗时（仅工具 RPC）、可见性与卸载。`ui/message` 不单独测量耗时，
-结果仍由现有 prepare/finish 的接受或未知观测表达。关闭即清空，重新挂载从空记录开始。不增加 RPC、
+开始/完成/错误耗时、可见性与卸载。Agent 环形缓冲区还围绕现有 `ui/message`
+记录 `host_dispatch_start`、`host_dispatch_complete` 或 `host_dispatch_error`、
+`duration_ms` 耗时，以及封闭结果（`dispatch_accepted`、`delivery_unknown`）。现有
+`host_dispatch_result` 在调用结束后记录同一结果。
+错误仅含封闭失败类别；不记录消息正文、消费 token 或原始错误。Host 接受与精确 Wake
+消费仍分别表达。关闭即清空，重新挂载从空记录开始。不增加 RPC、
 浏览器持久化、模型消息、时间权威或调度器。Goal 诊断可附带已有的有界 `app_call_id`；
 MCP 适配器验证并移除该字段后才进入 ToolRuntime。Agent 调用保留现有的关联方式。
 
@@ -581,6 +666,11 @@ MCP 适配器验证并移除该字段后才进入 ToolRuntime。Agent 调用保�
 这些记录复用有界且失败开放的 trace 写入器，不添加提示词、消息正文、消费 token
 或原始 ClientWindow，也不复制到模型可见的 Goal 结果。现有 full trace 的正文与
 隐私规则独立适用。租约剩余量为负表示观测已过期；缺失观测或部分覆盖不能授予唤醒权限。
+
+Goal Plan 隐藏时目标轮询间隔为 30 秒，仍保留 75 秒观测租约与 10 秒 RPC 超时。
+接近租约到期时按已过时间缩短间隔，过期尝试之后退避；增加的余量无法保证浏览器
+不会继续节流。Agent 隐藏心跳仍为 15 秒。用户辅助的基线/候选版本证据流程见
+[真实 Host 对照步骤](implementation/mcp-app-auto-resume-restoration.md#goal-hidden-cadence-baseline-and-candidate-comparison)。
 
 单独获授权后，可在真实 ChatGPT 中绑定 Agent 载体并展示精确关联的 Goal，启用本地
 诊断和 metadata trace，对比前台轮询与隐藏聊天/浏览器超过 75 秒的行为。将实际

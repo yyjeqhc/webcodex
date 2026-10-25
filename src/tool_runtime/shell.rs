@@ -11,8 +11,9 @@ use super::process::{
     outcome_unknown_result, process_tool_failure_result, success_output,
 };
 use super::structured_execution::{
-    await_structured_job_result, await_structured_request_response, structured_response_result,
-    StructuredExecutionBudget, StructuredRequestKind,
+    add_timeout_cap_notice, apply_runner_timeout_cap, await_structured_job_result,
+    await_structured_request_response, structured_response_result, StructuredExecutionBudget,
+    StructuredRequestKind,
 };
 use super::tool_result::ToolResult;
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
@@ -437,6 +438,15 @@ impl ToolRuntime {
         let declared_purpose = purpose.unwrap_or_default();
         let command_summary = command_preview(&command);
         let client_id = proj.client_id.clone();
+        let (budget, timeout_notice) = apply_runner_timeout_cap(
+            &self.runner_registry,
+            &client_id,
+            auth,
+            timeout_secs,
+            budget,
+        )
+        .await;
+        let timeout = budget.effective_timeout_secs;
         let (effective_cwd, resolved_cwd) = if ssh_resource.is_some() {
             let remote_cwd = cwd.as_deref().map(str::trim).filter(|cwd| !cwd.is_empty());
             if remote_cwd.is_some_and(|cwd| cwd.len() > 4096 || cwd.chars().any(char::is_control)) {
@@ -643,6 +653,7 @@ impl ToolRuntime {
                 Ok(result) => result,
                 Err(failure) => return failure.into_tool_result(&project, budget),
             };
+            add_timeout_cap_notice(&mut result, timeout_notice);
             decorate_execution_output(
                 &mut result.output,
                 declared_purpose,

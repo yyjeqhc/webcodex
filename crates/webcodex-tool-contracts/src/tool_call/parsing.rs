@@ -363,11 +363,9 @@ impl ToolCall {
         if name == "work_on_project" {
             validate_coding_project_source_shape(name, &arguments)?;
         }
-        let mut wrapped = serde_json::Map::new();
-        wrapped.insert(
-            TOOL_CALL_TOOL_FIELD.to_string(),
-            Value::String(name.to_string()),
-        );
+        // Tag before content avoids adjacent-tag buffering, which otherwise
+        // discards the nested deserializer's error path. No JSON round-trip.
+        let mut wrapped = vec![(TOOL_CALL_TOOL_FIELD, Value::String(name.to_string()))];
         if definition.requires_artifact_upload_path_binding() {
             let missing_path = arguments
                 .as_object()
@@ -394,10 +392,24 @@ impl ToolCall {
             } else {
                 arguments
             };
-            wrapped.insert(TOOL_CALL_PARAMS_FIELD.to_string(), params);
+            wrapped.push((TOOL_CALL_PARAMS_FIELD, params));
         }
-        let call: Self = serde_json::from_value(Value::Object(wrapped))
-            .map_err(|e| format!("invalid arguments for tool '{}': {}", name, e))?;
+        let input = wrapped
+            .iter()
+            .find(|(key, _)| *key == TOOL_CALL_PARAMS_FIELD)
+            .map(|(_, value)| value)
+            .unwrap_or(&Value::Null);
+        let call: Self = serde_path_to_error::deserialize(serde::de::value::MapDeserializer::new(
+            wrapped.iter().map(|(key, value)| (*key, value)),
+        ))
+        .map_err(|error| safe_argument_error(name, input, error))?;
+        if let Self::SearchAndRead { query, queries, .. } = &call {
+            validate_search_context_query_selection(
+                query.is_some(),
+                queries.as_ref().map(Vec::len),
+            )
+            .map_err(|error| format!("invalid arguments for tool '{name}': {error}"))?;
+        }
         if let Self::PluginTool(plugin) = &call {
             plugin
                 .validate()
@@ -893,5 +905,135 @@ impl ToolCall {
             Self::SessionHandoffState { project, .. } => Some(project.as_str()),
             _ => None,
         }
+    }
+}
+
+// serde errors may contain caller-supplied values and dynamic object keys.
+// Emit only public schema names and indexes, never the original error text.
+fn safe_argument_error(
+    name: &str,
+    input: &Value,
+    error: serde_path_to_error::Error<serde_json::Error>,
+) -> String {
+    fn collect_names(value: &Value, names: &mut HashSet<String>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(properties) = object.get("properties").and_then(Value::as_object) {
+                    names.extend(properties.keys().cloned());
+                }
+                for child in object.values() {
+                    collect_names(child, names);
+                }
+            }
+            Value::Array(values) => {
+                for child in values {
+                    collect_names(child, names);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut names = HashSet::new();
+    let schema = crate::input_schema_for_tool(name);
+    collect_names(&schema, &mut names);
+    if name == "search_file_context" {
+        // Public compatibility alias intentionally omitted from model discovery.
+        names.insert("query".into());
+    }
+    let mut path = String::new();
+    let mut at_path = input;
+    let truncated = error.path().iter().count() > 12;
+    for (index, segment) in error.path().iter().take(12).enumerate() {
+        use serde_path_to_error::Segment;
+        match segment {
+            Segment::Map { key } if index == 0 && key == TOOL_CALL_PARAMS_FIELD => {}
+            Segment::Map { key } => {
+                if !path.is_empty() {
+                    path.push('.');
+                }
+                path.push_str(if names.contains(key) { key } else { "[field]" });
+                at_path = &at_path[key];
+            }
+            Segment::Seq { index } => {
+                path.push_str(&format!("[{index}]"));
+                at_path = &at_path[*index];
+            }
+            Segment::Enum { .. } => {}
+            Segment::Unknown => {}
+        }
+    }
+    if truncated {
+        path.push_str(".…");
+    }
+    let message = error.inner().to_string();
+    let missing = message
+        .strip_prefix("missing field `")
+        .and_then(|s| s.strip_suffix('`'));
+    let reason = if let Some(field) = missing.filter(|field| names.contains(*field)) {
+        if !truncated
+            && at_path
+                .as_object()
+                .is_some_and(|object| !object.contains_key(field))
+        {
+            if !path.is_empty() {
+                path.push('.');
+            }
+            path.push_str(field);
+            "missing required field".to_string()
+        } else {
+            // Internally tagged serde enums can buffer nested content and lose
+            // deeper segments. Do not falsely label an existing parent field.
+            format!("nested object is missing required field {field}")
+        }
+    } else if message.starts_with("unknown field `") {
+        "unknown field (see input schema)".to_string()
+    } else {
+        "invalid value or type (see input schema)".to_string()
+    };
+    if path.is_empty() {
+        path.push_str("arguments");
+    }
+    let expected = if path == "[field]" && message.starts_with("unknown field `") {
+        let fields = schema["properties"]
+            .as_object()
+            .map(|properties| {
+                properties
+                    .keys()
+                    .take(16)
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        format!("; accepted top-level fields include {fields}")
+    } else {
+        schema["properties"][&path]["enum"]
+            .as_array()
+            .map(|values| {
+                // These choices come from the static schema, never from the input or
+                // serde's value-bearing diagnostic.
+                format!(
+                    "; expected {}",
+                    values
+                        .iter()
+                        .map(Value::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+            .unwrap_or_default()
+    };
+    format!("invalid arguments for tool '{name}': {path}: {reason}{expected}")
+}
+
+/// Canonical legacy-single/batch selection rule, shared by parsing and internal dispatch.
+pub fn validate_search_context_query_selection(
+    single: bool,
+    batch_len: Option<usize>,
+) -> Result<(), &'static str> {
+    match (single, batch_len) {
+        (true, None) | (false, Some(1..=8)) => Ok(()),
+        (true, Some(_)) => Err("search_file_context accepts query or queries, not both"),
+        _ => Err("search_file_context requires query or 1..8 queries"),
     }
 }

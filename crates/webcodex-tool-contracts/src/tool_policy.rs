@@ -77,6 +77,11 @@ impl ToolDefinition {
         self.adaptive_runtime_direct.map(|policy| policy.reason)
     }
 
+    pub fn requires_individual_host_review(self) -> bool {
+        self.adaptive_runtime_direct_reason()
+            == Some(super::tool_definition::ToolDirectReason::HostReview)
+    }
+
     pub fn session_evidence_policy(self) -> ToolSessionEvidencePolicy {
         self.session_evidence
     }

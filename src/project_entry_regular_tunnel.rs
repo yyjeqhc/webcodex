@@ -154,10 +154,16 @@ async fn report_regular_tunnel_health(
     let mut interval = tokio::time::interval(Duration::from_secs(2));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut events = health_events::HealthEvents::new(parent_heartbeat);
+    let mut enqueue_diagnostics = EnqueueDiagnostics::new(
+        std::env::var("WEBCODEX_TUNNEL_ENQUEUE_DIAGNOSTICS").as_deref() == Ok("1"),
+    );
     loop {
         interval.tick().await;
         let tunnel_ready = health.is_ready();
         let local_mcp_ready = probe_local_mcp(&client, local_mcp_url, bootstrap).await;
+        if let Some(event) = enqueue_diagnostics.observe(health.enqueue_timestamp_counts()) {
+            println!("{event}");
+        }
         if let Some(path) = service_readiness {
             webcodex_environment::write_tunnel_health(path, tunnel_ready, local_mcp_ready)
                 .map_err(|_| tunnel_auth_error("Could not persist service connection health"))?;
@@ -168,6 +174,32 @@ async fn report_regular_tunnel_health(
                 json!({"event":"health", "schema_version":1, "tunnel_ready":tunnel_ready, "local_mcp_ready":local_mcp_ready})
             );
         }
+    }
+}
+
+// Temporary operator preflight: default off, at most 16 payload-free records per
+// process, at the existing two-second health cadence. No request identifiers or
+// timestamps are retained or exposed by this diagnostic.
+struct EnqueueDiagnostics {
+    remaining: usize,
+    previous: (u64, u64),
+}
+impl EnqueueDiagnostics {
+    fn new(enabled: bool) -> Self {
+        Self {
+            remaining: if enabled { 16 } else { 0 },
+            previous: (0, 0),
+        }
+    }
+    fn observe(&mut self, counts: (u64, u64)) -> Option<Value> {
+        if self.remaining == 0 || counts == self.previous {
+            return None;
+        }
+        self.remaining -= 1;
+        self.previous = counts;
+        Some(
+            json!({"event":"enqueue_timestamp_diagnostic", "valid":counts.0, "unverifiable":counts.1}),
+        )
     }
 }
 
@@ -364,6 +396,25 @@ mod startup_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enqueue_diagnostics_are_opt_in_bounded_and_payload_free() {
+        assert!(EnqueueDiagnostics::new(false).observe((1, 1)).is_none());
+        let mut diagnostics = EnqueueDiagnostics::new(true);
+        assert!(diagnostics.observe((0, 0)).is_none());
+        for count in 1..=16 {
+            let event = diagnostics.observe((count, 2)).unwrap();
+            assert_eq!(
+                event,
+                json!({
+                    "event": "enqueue_timestamp_diagnostic",
+                    "valid": count, "unverifiable": 2
+                })
+            );
+            assert!(diagnostics.observe((count, 2)).is_none());
+        }
+        assert!(diagnostics.observe((17, 3)).is_none());
+    }
 
     #[tokio::test]
     async fn persistent_tunnel_does_not_poll_stdin_eof() {

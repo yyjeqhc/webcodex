@@ -780,15 +780,12 @@ fn sparse_success_item(item: &Value) -> Option<Value> {
     sparse.insert("heartbeat_changed".to_string(), json!(heartbeat_changed));
     sparse.insert("log_delta_status".to_string(), json!(log_delta_status));
     sparse.insert("observation_token".to_string(), json!(observation_token));
-    copy_non_null(observation, &mut sparse, "project");
-    if let Some(observation_ref) = item.get("observation_ref").and_then(Value::as_str) {
-        sparse.insert("observation_ref".to_string(), json!(observation_ref));
-    }
+    // Refs are process-local and capacity-evicted. Keep the raw token as the
+    // sole model continuation so restart/eviction cannot discard log position.
 
     for key in [
         "exit_code",
         "command_execution_state",
-        "activity",
         "detected_summary",
         "validation",
         "build_artifacts",
@@ -797,6 +794,51 @@ fn sparse_success_item(item: &Value) -> Option<Value> {
         "suggested_call",
     ] {
         copy_non_null(observation, &mut sparse, key);
+    }
+
+    // Keep validation/test evidence and useful phase changes. Generic process
+    // activity merely repeats `running`; its derived summary adds no evidence.
+    if let Some(summary) = sparse
+        .get_mut("detected_summary")
+        .and_then(Value::as_object_mut)
+    {
+        if summary
+            .get("progress")
+            .and_then(|p| p.get("state"))
+            .and_then(Value::as_str)
+            == Some("working")
+            && summary
+                .get("progress")
+                .and_then(|p| p.get("reason_code"))
+                .and_then(Value::as_str)
+                == Some("process_running")
+        {
+            summary.remove("progress");
+        }
+        let redundant_outcome = match summary.get("outcome").and_then(Value::as_str) {
+            Some("in_progress") => !terminal,
+            Some("passed") => {
+                status == "completed" && observation.get("exit_code") == Some(&json!(0))
+            }
+            Some("failed") => {
+                terminal
+                    && observation
+                        .get("exit_code")
+                        .and_then(Value::as_i64)
+                        .is_some_and(|code| code != 0)
+            }
+            Some("cancelled") => matches!(status.as_str(), "stopped" | "cancelled"),
+            _ => false,
+        };
+        if redundant_outcome
+            && summary.len() == 2
+            && matches!(
+                summary.get("kind").and_then(Value::as_str),
+                Some("operation" | "diagnostic")
+            )
+        {
+            sparse.remove("detected_summary");
+        }
     }
 
     if observation.contains_key("state_changed") || observation.contains_key("failure_kind") {
@@ -875,7 +917,7 @@ fn sparse_success_item(item: &Value) -> Option<Value> {
         }
     }
 
-    if matches!(log_delta_status, "baseline" | "reset") {
+    if log_delta_status == "reset" {
         for key in ["purpose", "command_summary"] {
             copy_non_null(observation, &mut sparse, key);
         }

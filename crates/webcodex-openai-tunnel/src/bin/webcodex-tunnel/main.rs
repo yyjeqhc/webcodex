@@ -52,6 +52,22 @@ async fn execute() -> Result<(), &'static str> {
         _ => {}
     }
     let client = config.client()?;
+    if matches!(config.action, Action::AuthorizeLocalCredential) {
+        let transition = config.authorize_local_credential(&client)?;
+        println!(
+            "{}",
+            serde_json::json!({
+                "event": "local_credential_authorized",
+                "revision": transition.revision,
+                "enqueue_after_unix_seconds": transition.cutoff_seconds,
+                "replayed": transition.replayed,
+                "time_authority": "operator_attested",
+                "configuration_updated": false,
+                "network_checked": false,
+            })
+        );
+        return Ok(());
+    }
     if matches!(config.action, Action::Doctor) {
         if config.json {
             println!("{{\"event\":\"configuration_valid\",\"network_checked\":false}}");

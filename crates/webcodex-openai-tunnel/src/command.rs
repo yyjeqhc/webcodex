@@ -106,6 +106,13 @@ pub(crate) fn validate(command: &Command) -> Result<bool, Error> {
 }
 impl TunnelClient {
     pub(crate) async fn execute(&self, command: Command, received: Instant) -> Result<(), Error> {
+        let (known_enqueue_time, admitted) =
+            crate::credential_cutoff::admission(command.created_at.as_deref(), self.enqueue_after);
+        self.health.record_enqueue_timestamp(known_enqueue_time);
+        if !admitted {
+            self.health.0.rejected.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
         let deadline = match self.policy.deadline(command.response_timeout, received) {
             Ok(d) => d,
             Err(_) => {

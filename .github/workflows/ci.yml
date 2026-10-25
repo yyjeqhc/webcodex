@@ -368,6 +368,8 @@ jobs:
           scripts.tests.test_agent_knowledge_fixture
           scripts.tests.test_agent_knowledge_evidence
           scripts.tests.test_agent_knowledge_benchmark
+      - name: Test bounded read-only continuation evidence
+        run: python3 -B -m unittest scripts.tests.test_continuation_capture scripts.tests.test_continuation_snapshot
       - name: Test optional Codex observation adapter
         run: python3 -m unittest discover -s integrations/codex -p 'test_*.py' -v
       - name: Test optional project knowledge provider

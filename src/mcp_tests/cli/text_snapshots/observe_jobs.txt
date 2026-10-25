@@ -1,0 +1,5 @@
+job_id: wc_job_exact; status: completed; exit_code: 0
+stdout_tail:
+Tests passed.
+observation_token: obs_exact
+project: agent:mini:webcodex

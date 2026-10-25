@@ -42,7 +42,7 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
         MCP_WORK_RESULT_UI_RESOURCE_URI,
         "ui://webcodex/work-result/v36"
     );
-    let runtime = test_runtime();
+    let runtime = workflow_runtime();
 
     let ui = handle_with_app_policy(
         &runtime,
@@ -141,7 +141,7 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
         )
     );
 
-    let full = test_runtime();
+    let full = workflow_runtime();
     let full_ui = handle_with_app_policy(
         &full,
         rpc(

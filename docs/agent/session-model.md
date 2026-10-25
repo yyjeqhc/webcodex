@@ -166,7 +166,9 @@ Project scope is fail-closed. An explicit project-scoped business Session or rec
 The JSON ledger restores only the current version-2 top-level shape and canonical current Session rows. Pre-current ledger versions are rejected rather than migrated. Within v2, fields explicitly declared optional/default may be absent and restore conservatively. The retired `context_revision` members are accepted only through explicit read-only compatibility sinks and are never restored into live Session state or re-emitted. A `retention_tombstone` object is a recognized non-Session row in the v2 `sessions` array. A malformed tombstone drops that row only. Unknown members on a Session row still fail that row closed. A live Session row wins over a tombstone with the same canonical id. General `ClientWindow` support remains available to explicitly designed non-Workflow observations; Workflow Sessions do not use it for selection or authority.
 Optional explicit control mutations may also use the Stateless MCP 2026
 [`_wc.control` sidecar contract](control-sidecars.md). Each phase admits one mutation
-with its canonical authority and replay fences; standalone tools remain valid.
+with its canonical authority and replay fences. Operations requiring individual
+Host review must use their standalone callable; their sidecar forms are rejected
+before any effect.
 
 ### Assignment-fenced todo completion
 

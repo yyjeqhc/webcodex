@@ -103,10 +103,11 @@ pub(super) fn write_upload_state(
         .create_new(true)
         .open(sidecar)
         .map_err(|e| format!("upload state failed: {e}"))?;
-    file.write_all(&data)
-        .map_err(|e| format!("upload state failed: {e}"))?;
-    file.sync_all()
-        .map_err(|e| format!("upload state failed: {e}"))?;
+    if let Err(e) = file.write_all(&data).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = std::fs::remove_file(sidecar);
+        return Err(format!("upload state failed: {e}"));
+    }
     Ok(())
 }
 
@@ -168,9 +169,7 @@ fn upload_pair_is_stale(
 ) -> bool {
     let newest_modified = match (part_metadata.modified(), sidecar_metadata.modified()) {
         (Ok(part), Ok(sidecar)) => Some(if part >= sidecar { part } else { sidecar }),
-        (Ok(part), Err(_)) => Some(part),
-        (Err(_), Ok(sidecar)) => Some(sidecar),
-        (Err(_), Err(_)) => None,
+        _ => None,
     };
     newest_modified
         .and_then(|modified| now.duration_since(modified).ok())
@@ -236,14 +235,7 @@ pub(super) fn sweep_artifact_upload_directory(
                     cleaned |= remove_upload_temp_file(&sidecar)?;
                     continue;
                 }
-                let state = match read_upload_state_file(&sidecar) {
-                    Ok(state) => state,
-                    Err(_) => {
-                        cleaned |= remove_upload_temp_file(&part)?;
-                        cleaned |= remove_upload_temp_file(&sidecar)?;
-                        continue;
-                    }
-                };
+                let state = read_upload_state_file(&sidecar)?;
                 active.push((upload_id, state.max_bytes));
             }
             (Some(part), None) => cleaned |= remove_upload_temp_file(&part)?,
@@ -288,7 +280,7 @@ fn read_upload_reservation_file(path: &Path) -> Result<ArtifactUploadReservation
     serde_json::from_slice(&data).map_err(|e| format!("invalid upload reservation: {e}"))
 }
 
-fn canonical_reserved_parent(root: &Path, directory: &Path) -> Result<PathBuf, String> {
+fn canonical_reserved_parent(root: &Path, directory: &Path) -> Result<Option<PathBuf>, String> {
     if directory.is_absolute()
         || directory.components().any(|component| {
             matches!(
@@ -299,12 +291,15 @@ fn canonical_reserved_parent(root: &Path, directory: &Path) -> Result<PathBuf, S
     {
         return Err("invalid upload reservation directory".to_string());
     }
-    let parent = std::fs::canonicalize(root.join(directory))
-        .map_err(|e| format!("invalid upload reservation directory: {e}"))?;
+    let parent = match std::fs::canonicalize(root.join(directory)) {
+        Ok(parent) => parent,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("invalid upload reservation directory: {e}")),
+    };
     if parent != root && !parent.starts_with(root) {
         return Err("upload reservation directory escapes project root".to_string());
     }
-    Ok(parent)
+    Ok(Some(parent))
 }
 
 fn relative_upload_directory(root: &Path, directory: &Path) -> Result<PathBuf, String> {
@@ -326,7 +321,7 @@ fn write_upload_reservation(
     upload_id: &str,
     max_bytes: usize,
 ) -> Result<(), String> {
-    if max_bytes == 0 || max_bytes > MAX_ARTIFACT_UPLOAD_BYTES {
+    if max_bytes > MAX_ARTIFACT_UPLOAD_BYTES {
         return Err("upload reservation max_bytes is invalid".to_string());
     }
     let reservation = ArtifactUploadReservation {
@@ -347,10 +342,11 @@ fn write_upload_reservation(
         .open(&path)
     {
         Ok(mut file) => {
-            file.write_all(&data)
-                .map_err(|e| format!("upload reservation failed: {e}"))?;
-            file.sync_all()
-                .map_err(|e| format!("upload reservation failed: {e}"))?;
+            if let Err(e) = file.write_all(&data).and_then(|()| file.sync_all()) {
+                drop(file);
+                let _ = std::fs::remove_file(&path);
+                return Err(format!("upload reservation failed: {e}"));
+            }
         }
         Err(e) if e.kind() == ErrorKind::AlreadyExists => {
             let existing = read_upload_reservation_file(&path)?;
@@ -425,11 +421,7 @@ fn recover_artifact_upload_reservations(
                 "upload reservation index has more than {MAX_ARTIFACT_UPLOAD_RESERVATION_SCAN_ENTRIES} entries"
             ));
         }
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(e) if upload_scan_ignores_entry_error(&e) => continue,
-            Err(e) => return Err(format!("upload reservation recovery failed: {e}")),
-        };
+        let entry = entry.map_err(|e| format!("upload reservation recovery failed: {e}"))?;
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
@@ -439,23 +431,15 @@ fn recover_artifact_upload_reservations(
         if validate_upload_id(&upload_id).is_err() {
             continue;
         }
-        let reservation = match read_upload_reservation_file(&entry.path()) {
-            Ok(reservation) => reservation,
-            Err(_) => {
-                remove_upload_reservation(store_root, root, &upload_id)?;
-                continue;
-            }
-        };
-        if reservation.max_bytes == 0 || reservation.max_bytes > MAX_ARTIFACT_UPLOAD_BYTES {
+        // An unreadable index or redirected directory is not evidence that its
+        // reservation can be released. Fail closed and retain the charge.
+        let reservation = read_upload_reservation_file(&entry.path())?;
+        if reservation.max_bytes > MAX_ARTIFACT_UPLOAD_BYTES {
+            return Err("upload reservation max_bytes is invalid".to_string());
+        }
+        let Some(parent) = canonical_reserved_parent(root, &reservation.directory)? else {
             remove_upload_reservation(store_root, root, &upload_id)?;
             continue;
-        }
-        let parent = match canonical_reserved_parent(root, &reservation.directory) {
-            Ok(parent) => parent,
-            Err(_) => {
-                remove_upload_reservation(store_root, root, &upload_id)?;
-                continue;
-            }
         };
         let (part, sidecar) = upload_paths(&parent, &upload_id);
         let part_metadata = match std::fs::metadata(&part) {
@@ -478,13 +462,7 @@ fn recover_artifact_upload_reservations(
             clean_reserved_upload(store_root, root, &upload_id, Some(&part), Some(&sidecar))?;
             continue;
         }
-        let state = match read_upload_state_file(&sidecar) {
-            Ok(state) => state,
-            Err(_) => {
-                clean_reserved_upload(store_root, root, &upload_id, Some(&part), Some(&sidecar))?;
-                continue;
-            }
-        };
+        let state = read_upload_state_file(&sidecar)?;
         let state_parent = if validate_artifact_runner_path(&state.path).is_ok() {
             Path::new(&state.path)
                 .parent()
@@ -496,8 +474,7 @@ fn recover_artifact_upload_reservations(
         if state.max_bytes != reservation.max_bytes
             || state_parent.as_deref() != Some(parent.as_path())
         {
-            clean_reserved_upload(store_root, root, &upload_id, Some(&part), Some(&sidecar))?;
-            continue;
+            return Err("upload reservation does not match existing state".to_string());
         }
         active.push((upload_id, reservation.max_bytes));
     }
@@ -506,6 +483,7 @@ fn recover_artifact_upload_reservations(
 
 // Steady-state accounting is in memory. Restart recovery reads only the Runner-owned reservation
 // index, whose size is bounded by the upload quota, and then directly validates those upload pairs.
+// Admission pressure reuses that same bounded recovery under the upload operation mutex.
 // It never walks the Project tree. The current target directory is still swept once to clean
 // legacy/orphan pairs and to migrate any live pre-index upload encountered there.
 #[derive(Debug, Default)]
@@ -558,9 +536,15 @@ impl ArtifactUploadRuntimeState {
         Ok(())
     }
 
-    fn release(&mut self, root: &Path, upload_id: &str, store_root: Option<&Path>) {
+    fn release(
+        &mut self,
+        root: &Path,
+        upload_id: &str,
+        store_root: Option<&Path>,
+    ) -> Result<(), String> {
         if let Some(store_root) = store_root {
-            let _ = remove_upload_reservation(store_root, root, upload_id);
+            // Keep accounting conservative until indexed recovery can finish cleanup.
+            remove_upload_reservation(store_root, root, upload_id)?;
         }
         let remove_project = self
             .active_by_project
@@ -573,6 +557,7 @@ impl ArtifactUploadRuntimeState {
         if remove_project {
             self.active_by_project.remove(root);
         }
+        Ok(())
     }
 
     fn prepare_directory(
@@ -612,193 +597,34 @@ impl ArtifactUploadRuntimeState {
         Ok(())
     }
 
-    fn check_begin_admission(&self, root: &Path, max_bytes: usize) -> Result<(), String> {
+    fn check_begin_admission(
+        &mut self,
+        root: &Path,
+        max_bytes: usize,
+        store_root: Option<&Path>,
+    ) -> Result<(), String> {
+        let usage = self.project_usage(root)?;
+        if enforce_artifact_upload_begin_admission(&usage, max_bytes).is_ok() {
+            return Ok(());
+        }
+        if let Some(store_root) = store_root {
+            let active = recover_artifact_upload_reservations(
+                store_root,
+                root,
+                SystemTime::now(),
+                Duration::from_secs(ARTIFACT_UPLOAD_IDLE_TTL_SECS),
+            )?;
+            self.active_by_project
+                .insert(root.to_path_buf(), active.into_iter().collect());
+        }
         let usage = self.project_usage(root)?;
         enforce_artifact_upload_begin_admission(&usage, max_bytes)
     }
 }
 
 #[cfg(test)]
-mod runtime_state_tests {
-    use super::*;
-
-    fn write_active_upload(
-        store_root: &Path,
-        root: &Path,
-        directory: &Path,
-        upload_id: &str,
-        max_bytes: usize,
-    ) {
-        std::fs::create_dir_all(directory).unwrap();
-        let relative_file = directory
-            .strip_prefix(root)
-            .unwrap()
-            .join(format!("{upload_id}.bin"));
-        let path = relative_file
-            .to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "/");
-        let (part, sidecar) = upload_paths(directory, upload_id);
-        std::fs::write(part, b"").unwrap();
-        write_upload_state(
-            &sidecar,
-            &ArtifactUploadState {
-                path,
-                expected_bytes: None,
-                expected_sha256: None,
-                mime_type: None,
-                overwrite: false,
-                max_bytes,
-            },
-        )
-        .unwrap();
-        write_upload_reservation(store_root, root, directory, upload_id, max_bytes).unwrap();
-    }
-
-    #[test]
-    fn restart_adopts_cross_directory_active_upload_limit_before_new_begin() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().join("project");
-        let store_root = tmp.path().join("registry");
-        std::fs::create_dir_all(&root).unwrap();
-        let root = std::fs::canonicalize(root).unwrap();
-        for index in 0..MAX_ACTIVE_ARTIFACT_UPLOADS_PER_PROJECT {
-            let directory = root.join(format!("artifacts/set-{index}"));
-            write_active_upload(
-                &store_root,
-                &root,
-                &directory,
-                &format!("wc_upload_restart_count_{index}"),
-                1,
-            );
-        }
-        let target = root.join("artifacts/new");
-        std::fs::create_dir_all(&target).unwrap();
-
-        let mut runtime = ArtifactUploadRuntimeState::new();
-        runtime
-            .prepare_directory(&root, &target, Some(&store_root))
-            .unwrap();
-        let error = runtime.check_begin_admission(&root, 1).unwrap_err();
-        assert!(error.contains("active upload limit"), "{error}");
-    }
-
-    #[test]
-    fn restart_adopts_cross_directory_reserved_byte_quota_before_new_begin() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().join("project");
-        let store_root = tmp.path().join("registry");
-        std::fs::create_dir_all(&root).unwrap();
-        let root = std::fs::canonicalize(root).unwrap();
-        for index in 0..2 {
-            let directory = root.join(format!("artifacts/quota-{index}"));
-            write_active_upload(
-                &store_root,
-                &root,
-                &directory,
-                &format!("wc_upload_restart_quota_{index}"),
-                MAX_ARTIFACT_UPLOAD_BYTES,
-            );
-        }
-        let target = root.join("artifacts/new");
-        std::fs::create_dir_all(&target).unwrap();
-
-        let mut runtime = ArtifactUploadRuntimeState::new();
-        runtime
-            .prepare_directory(&root, &target, Some(&store_root))
-            .unwrap();
-        let error = runtime.check_begin_admission(&root, 1).unwrap_err();
-        assert!(error.contains("reserved byte quota exceeded"), "{error}");
-    }
-
-    #[test]
-    fn persisted_tracking_is_recovered_and_release_removes_reservation() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().join("project");
-        let store_root = tmp.path().join("registry");
-        std::fs::create_dir_all(&root).unwrap();
-        let root = std::fs::canonicalize(root).unwrap();
-        let directory = root.join("artifacts/persisted");
-        std::fs::create_dir_all(&directory).unwrap();
-        let upload_id = "wc_upload_persisted";
-        let (part, sidecar) = upload_paths(&directory, upload_id);
-        std::fs::write(&part, b"").unwrap();
-        write_upload_state(
-            &sidecar,
-            &ArtifactUploadState {
-                path: "artifacts/persisted/file.bin".to_string(),
-                expected_bytes: None,
-                expected_sha256: None,
-                mime_type: None,
-                overwrite: false,
-                max_bytes: 17,
-            },
-        )
-        .unwrap();
-
-        let mut runtime = ArtifactUploadRuntimeState::new();
-        runtime
-            .track_persisted(&root, &directory, upload_id, 17, Some(&store_root))
-            .unwrap();
-        assert!(reservation_path(&store_root, &root, upload_id).exists());
-
-        let target = root.join("artifacts/new");
-        std::fs::create_dir_all(&target).unwrap();
-        let mut recovered = ArtifactUploadRuntimeState::new();
-        recovered
-            .prepare_directory(&root, &target, Some(&store_root))
-            .unwrap();
-        assert_eq!(
-            recovered.project_usage(&root).unwrap(),
-            ArtifactUploadProjectUsage {
-                active_uploads: 1,
-                reserved_bytes: 17,
-            }
-        );
-
-        recovered.release(&root, upload_id, Some(&store_root));
-        assert!(!reservation_path(&store_root, &root, upload_id).exists());
-    }
-
-    #[test]
-    fn restart_recovery_does_not_recurse_into_unindexed_project_children() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().join("project");
-        let store_root = tmp.path().join("registry");
-        std::fs::create_dir_all(&root).unwrap();
-        let root = std::fs::canonicalize(root).unwrap();
-        let sibling = root.join("artifacts/unindexed");
-        let target = root.join("artifacts/new");
-        std::fs::create_dir_all(&sibling).unwrap();
-        std::fs::create_dir_all(&target).unwrap();
-        let upload_id = "wc_upload_unindexed_sibling";
-        let (part, sidecar) = upload_paths(&sibling, upload_id);
-        std::fs::write(&part, b"").unwrap();
-        write_upload_state(
-            &sidecar,
-            &ArtifactUploadState {
-                path: "artifacts/unindexed/file.bin".to_string(),
-                expected_bytes: None,
-                expected_sha256: None,
-                mime_type: None,
-                overwrite: false,
-                max_bytes: MAX_ARTIFACT_UPLOAD_BYTES,
-            },
-        )
-        .unwrap();
-
-        let mut runtime = ArtifactUploadRuntimeState::new();
-        runtime
-            .prepare_directory(&root, &target, Some(&store_root))
-            .unwrap();
-
-        assert_eq!(
-            runtime.project_usage(&root).unwrap(),
-            ArtifactUploadProjectUsage::default()
-        );
-        assert!(part.exists());
-        assert!(sidecar.exists());
-    }
-}
+#[path = "upload_tests.rs"]
+mod runtime_state_tests;
 
 pub(super) fn enforce_artifact_upload_begin_admission(
     usage: &ArtifactUploadProjectUsage,
@@ -889,6 +715,9 @@ pub(super) fn handle_artifact_upload_begin(
             start,
         );
     }
+    // Persist the actual reservation in the existing max_bytes field. Old live
+    // reservations retain their original cap; no disk-format migration is needed.
+    let max_bytes = expected_bytes.unwrap_or(max_bytes);
     let expected_sha256 = match parse_optional_clean_string(&payload, "expected_sha256", 64) {
         Ok(value) => value,
         Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
@@ -964,7 +793,7 @@ pub(super) fn handle_artifact_upload_begin(
     if let Err(e) = runtime.prepare_directory(&root, parent, store_root) {
         return line_edit_stdout(upload_error(Some(path), None, e), start);
     }
-    if let Err(e) = runtime.check_begin_admission(&root, max_bytes) {
+    if let Err(e) = runtime.check_begin_admission(&root, max_bytes, store_root) {
         return line_edit_stdout(upload_error(Some(path), None, e), start);
     }
     let state = ArtifactUploadState {
@@ -1015,14 +844,15 @@ pub(super) fn handle_artifact_upload_begin(
                         );
                     }
                 }
+                runtime.track_existing(&root, &upload_id, state.max_bytes);
                 if let Err(e) = write_upload_state(&sidecar, &state) {
-                    let _ = std::fs::remove_file(&part);
-                    if let Some(store_root) = store_root {
-                        let _ = remove_upload_reservation(store_root, &root, &upload_id);
+                    if remove_upload_temp_file(&part).is_ok()
+                        && matches!(std::fs::symlink_metadata(&sidecar), Err(error) if error.kind() == ErrorKind::NotFound)
+                    {
+                        let _ = runtime.release(&root, &upload_id, store_root);
                     }
                     return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
                 }
-                runtime.track_existing(&root, &upload_id, state.max_bytes);
                 if let Ok(dir) = std::fs::File::open(parent) {
                     let _ = dir.sync_all();
                 }
@@ -1434,8 +1264,11 @@ pub(super) fn handle_artifact_upload_finish(
     if let Ok(dir) = std::fs::File::open(parent) {
         let _ = dir.sync_all();
     }
-    let _ = std::fs::remove_file(&sidecar);
-    runtime.release(&root, &upload_id, store_root);
+    // Commit already succeeded. Cleanup failure must not invite a replay of the
+    // write, nor release the charge while private files may still exist.
+    if remove_upload_temp_file(&part).is_ok() && remove_upload_temp_file(&sidecar).is_ok() {
+        let _ = runtime.release(&root, &upload_id, store_root);
+    }
     line_edit_stdout(
         json!({
             "path": path,
@@ -1506,9 +1339,16 @@ pub(super) fn handle_artifact_upload_abort(
     let received_bytes = std::fs::metadata(&part)
         .map(|metadata| metadata.len() as usize)
         .unwrap_or(0);
-    let temp_file_removed = std::fs::remove_file(&part).is_ok();
-    let sidecar_removed = std::fs::remove_file(&sidecar).is_ok();
-    runtime.release(&root, &upload_id, store_root);
+    let cleanup = (|| {
+        let temp_file_removed = remove_upload_temp_file(&part)?;
+        let sidecar_removed = remove_upload_temp_file(&sidecar)?;
+        runtime.release(&root, &upload_id, store_root)?;
+        Ok::<_, String>((temp_file_removed, sidecar_removed))
+    })();
+    let (temp_file_removed, sidecar_removed) = match cleanup {
+        Ok(removed) => removed,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
+    };
     if let Ok(dir) = std::fs::File::open(parent) {
         let _ = dir.sync_all();
     }

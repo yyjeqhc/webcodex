@@ -28,7 +28,7 @@ fn goal_auth(username: &str) -> crate::auth::AuthContext {
 fn goal_runtime() -> (tempfile::TempDir, Arc<crate::db::Database>, ToolRuntime) {
     let temp = tempfile::tempdir().unwrap();
     let db = Arc::new(crate::db::Database::open(&temp.path().join("goal-plan.db")).unwrap());
-    let runtime = ToolRuntime::new_for_tests().with_communication_database(db.clone());
+    let runtime = workflow_runtime().with_communication_database(db.clone());
     (temp, db, runtime)
 }
 
@@ -48,10 +48,15 @@ fn create_goal(runtime: &ToolRuntime, auth: &crate::auth::AuthContext, key: &str
 
 #[tokio::test]
 async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptive_direct() {
-    assert_eq!(MCP_GOAL_PLAN_UI_RESOURCE_URI, "ui://webcodex/goal-plan/v9");
+    assert_eq!(MCP_GOAL_PLAN_UI_RESOURCE_URI, "ui://webcodex/goal-plan/v10");
+    let version = MCP_GOAL_PLAN_UI_RESOURCE_URI
+        .rsplit_once("/v")
+        .expect("versioned Goal Plan resource")
+        .1;
+    assert!(version.parse::<u32>().is_ok());
     assert!(
-        MCP_GOAL_PLAN_APP_HTML.contains("version: \"8.0.0\""),
-        "Goal Plan App self-version must advance with its cache-breaking resource identity"
+        MCP_GOAL_PLAN_APP_HTML.contains(&format!("version: \"{version}.0.0\"")),
+        "Goal Plan App self-version must match its cache-breaking resource identity"
     );
     let (_temp, _db, adaptive) = goal_runtime();
     let auth = goal_auth("goal-plan-descriptor");

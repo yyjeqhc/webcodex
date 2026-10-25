@@ -42,7 +42,7 @@ pub(crate) struct LanguageProfile {
     /// repository code or fetch dependencies.
     pub(crate) initialization_options: fn() -> Value,
     /// Whether the server supports rust-analyzer's bounded server-status
-    /// notification used to fence workspace-level queries until background
+    /// notification used to fence semantic navigation queries until background
     /// indexing is quiescent. Other language servers keep their existing
     /// request semantics.
     pub(crate) server_status_notification: bool,

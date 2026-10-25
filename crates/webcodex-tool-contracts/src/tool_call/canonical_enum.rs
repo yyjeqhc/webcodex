@@ -3105,8 +3105,9 @@ pub enum ToolCall {
         /// is returned by the read phase.
         #[serde(default)]
         query: Option<SearchProjectTextsQuery>,
-        /// Batch of 1..8 predetermined independent queries. Exactly one of `query`
-        /// or `queries` is required; all queries share the global `max_reads` budget.
+        /// Batch of 1..8 predetermined independent queries sharing the global
+        /// `max_reads` budget. Match mode and zero search context are fixed;
+        /// use read_before/read_after to control the returned source context.
         #[schemars(length(max = 8))]
         #[serde(default)]
         queries: Option<Vec<SearchProjectTextsQuery>>,

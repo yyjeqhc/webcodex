@@ -48,7 +48,7 @@ pub(super) fn is_app_tool(name: &str) -> bool {
 }
 
 pub(super) fn suggested_route(name: &str, stateless: bool) -> SuggestedToolCallRoute {
-    if is_app_tool(name) {
+    if is_app_tool(name) || crate::model_surface::tool_requires_individual_host_review(name) {
         SuggestedToolCallRoute::Unavailable
     } else if is_direct(name) {
         SuggestedToolCallRoute::Direct
@@ -62,14 +62,23 @@ pub(super) fn suggested_route(name: &str, stateless: bool) -> SuggestedToolCallR
     }
 }
 
+#[cfg(test)]
 pub(super) fn tools_list(auth: Option<&AuthContext>, default_project: bool) -> Value {
+    tools_list_with_exposure(auth, default_project, Default::default())
+}
+
+pub(super) fn tools_list_with_exposure(
+    auth: Option<&AuthContext>,
+    default_project: bool,
+    exposure: super::tool_exposure::ToolExposure,
+) -> Value {
     let specs = webcodex_tool_contracts::registry::registered_tool_descriptors()
         .into_iter()
-        .filter(|spec| is_direct(&spec.name))
+        .filter(|spec| exposure.is_direct(super::request_policy::McpSurface::Cli, &spec.name))
         .collect();
     let mut tools: Vec<Value> = super::tools::filter_descriptors_for_oauth(specs, auth)
         .into_iter()
-        .map(|spec| super::tools::mcp_tool_descriptor_json(spec, true, false, None))
+        .map(|spec| super::tools::mcp_tool_descriptor_json(spec, true, false))
         .collect();
     tools.push(super::tools::adaptive_runtime_gateway_tool_json(true));
     for tool in &mut tools {
@@ -84,6 +93,8 @@ pub(super) fn tools_list(auth: Option<&AuthContext>, default_project: bool) -> V
             }
             tool["description"] = json!("Start work in a Project (Git optional), returning workspace status and repository instructions. Omit session_id for a fresh Workflow Session; supply the exact id to resume. Read missing/truncated instructions before dependent work. Session creation is stateful: after uncertainty, observe Sessions before starting another.");
         }
+        let name = tool["name"].as_str().unwrap().to_owned();
+        project_manifest_limit_schema(&name, &mut tool["inputSchema"]);
         if tool["name"] == "call_runtime_tool" {
             tool["description"] = json!("Call one admitted runtime tool using its exact read_tool_manifest contract. Prefer a direct callable when listed. Normal authorization, permissions, capability and effect checks apply. MCP App tools and _wc sidecars are unavailable. Never replay uncertain effects.");
         }
@@ -105,6 +116,15 @@ pub(super) fn tools_list(auth: Option<&AuthContext>, default_project: bool) -> V
         }
     }
     json!({"tools": tools})
+}
+
+pub(super) const MANIFEST_DEFAULT_LIMIT: usize = 20;
+
+fn project_manifest_limit_schema(name: &str, schema: &mut Value) {
+    if name == "read_tool_manifest" {
+        schema["properties"]["limit"]["default"] = json!(MANIFEST_DEFAULT_LIMIT);
+        schema["properties"]["limit"]["description"] = json!("Maximum catalog entries, clamped to 1..100; CLI defaults to 20. Narrow by query/category/intent, or use tool_name for one full input contract.");
+    }
 }
 
 pub(super) fn project_can_default(tool: &str) -> bool {
@@ -155,25 +175,28 @@ pub(super) fn project_default_schema(tool: &str, schema: &mut Value) {
 
 pub(super) fn project_manifest(
     result: &mut crate::tool_runtime::ToolResult,
-    stateless: bool,
     default_project: bool,
 ) {
     if !result.success {
+        if result.output["code"] == "tool_unavailable_on_surface" {
+            result.error = Some(format!(
+                "tool '{}' is unavailable on the CLI surface",
+                result.output["tool_name"].as_str().unwrap_or("?")
+            ));
+        }
         return;
     }
-    fn entry(value: &mut Value, stateless: bool, default_project: bool) {
+    fn entry(value: &mut Value, default_project: bool) {
         let Some(name) = value["name"].as_str().map(str::to_string) else {
             return;
-        };
-        value["route"] = match suggested_route(&name, stateless) {
-            SuggestedToolCallRoute::Direct => json!({"mode":"direct"}),
-            SuggestedToolCallRoute::Gateway(via) => json!({"mode":"gateway", "via":via}),
-            SuggestedToolCallRoute::Unavailable => json!({"mode":"unavailable"}),
         };
         if default_project {
             if let Some(schema) = value.get_mut("input_schema") {
                 project_default_schema(&name, schema);
             }
+        }
+        if let Some(schema) = value.get_mut("input_schema") {
+            project_manifest_limit_schema(&name, schema);
         }
         if name == "work_on_project" {
             value["description"] = json!("Start/resume work in a Project. Fresh Session: omit session_id; exact resume: supply session_id, with an optional matching project. An explicit client_id+path resolves/registers an authorized directory; mode=worktree requires an explicit source Project and exact base. CLI automatically returns bounded project instructions and workspace status; follow read_more before dependent work. include_extension_catalog defaults false on CLI; set true for extension discovery. Startup creates/resumes Session state, never implies permission to replay effects. After uncertainty, observe Sessions before creating another. Project authority, worktree fences and permissions still apply; _wc is unavailable.");
@@ -184,10 +207,17 @@ pub(super) fn project_manifest(
             }
         }
     }
-    entry(&mut result.output, stateless, default_project);
+    entry(&mut result.output, default_project);
+    if let Some(contract) = result
+        .output
+        .get_mut("contract")
+        .filter(|value| value.is_object())
+    {
+        entry(contract, default_project);
+    }
     if let Some(tools) = result.output.get_mut("tools").and_then(Value::as_array_mut) {
         for tool in tools {
-            entry(tool, stateless, default_project);
+            entry(tool, default_project);
         }
     }
 }

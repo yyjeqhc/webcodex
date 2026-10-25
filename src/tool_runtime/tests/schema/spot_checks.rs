@@ -210,23 +210,23 @@ fn schema_tree_requires_field(schema: &serde_json::Value, field: &str) -> bool {
 }
 
 #[test]
-fn job_activity_is_required_nullable_on_explicit_job_observation_surfaces() {
+fn job_inventory_activity_is_sparse_but_observation_activity_is_required() {
     let specs = registered_tool_specs();
-    for name in ["list_jobs", "observe_jobs"] {
-        let spec = spec_named(&specs, name);
-        assert!(
-            schema_tree_requires_field(&spec.output_schema, "activity"),
-            "{name} must require activity on its explicit Job projection"
-        );
-    }
-
     let list = spec_named(&specs, "list_jobs");
     let summary = &list.output_schema["properties"]["output"]["properties"]["jobs"]["items"];
-    assert!(summary["required"]
+    assert!(!summary["required"]
         .as_array()
         .unwrap()
         .iter()
         .any(|field| field == "activity"));
+    assert!(summary["properties"]["activity"].is_object());
+    assert_eq!(summary["properties"]["command_summary"]["type"], "string");
+
+    let observe = spec_named(&specs, "observe_jobs");
+    assert!(
+        schema_tree_requires_field(&observe.output_schema, "activity"),
+        "detailed Job observation must retain required activity"
+    );
 
     let observe = spec_named(&specs, "observe_jobs");
     let observation = &observe.output_schema["properties"]["output"]["anyOf"][0]["properties"]

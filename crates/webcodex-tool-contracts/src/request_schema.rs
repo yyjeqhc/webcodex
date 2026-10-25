@@ -91,6 +91,7 @@ fn derive_tool_input_schemas() -> BTreeMap<String, Value> {
             .unwrap_or_else(empty_object_schema);
         normalize_host_schema(&mut input_schema);
         normalize_closed_object_unions(&mut input_schema);
+        project_compatibility_inputs(tool_name, &mut input_schema);
         decorate_model_wrapper_schema(tool_name, &mut input_schema);
         let previous = schemas.insert(tool_name.to_string(), input_schema);
         assert!(
@@ -99,6 +100,40 @@ fn derive_tool_input_schemas() -> BTreeMap<String, Value> {
         );
     }
     schemas
+}
+
+// Accepted legacy inputs remain in ToolCall serde. Model discovery advertises
+// only parameters that affect execution, using the same derived query schema.
+fn project_compatibility_inputs(tool_name: &str, schema: &mut Value) {
+    if tool_name == "work_on_project" {
+        // serde's empty string is an internal omission sentinel, not a valid
+        // caller value. Keep this optional field and its nonempty constraint.
+        schema["properties"]["project"]
+            .as_object_mut()
+            .unwrap()
+            .remove("default");
+    }
+    if tool_name == "search_file_context" {
+        schema["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("query");
+        let query = &mut schema["properties"]["queries"]["items"]["properties"];
+        for key in ["result_mode", "context_before", "context_after"] {
+            query.as_object_mut().unwrap().remove(key);
+        }
+        schema["properties"]["queries"]["minItems"] = json!(1);
+        let required = schema
+            .as_object_mut()
+            .unwrap()
+            .entry("required")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .unwrap();
+        if !required.iter().any(|field| field == "queries") {
+            required.push(json!("queries"));
+        }
+    }
 }
 
 fn decorate_model_wrapper_schema(tool_name: &str, schema: &mut Value) {

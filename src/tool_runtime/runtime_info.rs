@@ -145,6 +145,7 @@ pub struct RuntimeInfo {
     /// Effective MCP App exposure flag captured when this Runtime was built.
     /// Same startup-snapshot semantics as [`Self::mcp_compact_schemas`].
     pub mcp_apps_enabled: bool,
+    pub(crate) mcp_tool_exposure: crate::mcp::tool_exposure::ToolExposureConfig,
     /// Effective MCP text-JSON compatibility projection captured at Runtime
     /// construction. Ordinary tool-result framing must not re-read ambient env.
     pub mcp_text_json_compat_enabled: bool,
@@ -185,6 +186,7 @@ impl RuntimeInfo {
                 crate::config::mcp_compact_schemas_override(),
             ),
             mcp_apps_enabled: crate::config::mcp_apps_enabled(),
+            mcp_tool_exposure: Default::default(),
             mcp_text_json_compat_enabled: crate::config::mcp_text_json_compat_enabled(),
         }
     }
@@ -212,6 +214,7 @@ impl ToolRuntime {
                 "max_sync_wait_secs": self.deployment_mcp_host_policy.max_sync_wait_secs,
                 "continuation_wait_secs": self.deployment_mcp_host_policy.continuation_wait_secs,
             },
+            "mcp_tool_exposure": self.runtime_info.mcp_tool_exposure.status(),
             "tool_request_trace_mode": crate::config::tool_request_trace_mode().as_str(),
         })
     }
@@ -1749,6 +1752,7 @@ impl Default for RuntimeInfo {
             // text-JSON compatibility remains opt-in.
             mcp_compact_schemas: true,
             mcp_apps_enabled: true,
+            mcp_tool_exposure: Default::default(),
             mcp_text_json_compat_enabled: false,
         }
     }

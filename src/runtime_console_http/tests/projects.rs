@@ -390,13 +390,32 @@ async fn server_and_runner_overviews_stay_within_caller_authorization_and_safe_p
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        vec!["auth", "mcp_host", "tool_request_trace_mode"]
+        vec![
+            "auth",
+            "mcp_host",
+            "mcp_tool_exposure",
+            "tool_request_trace_mode"
+        ]
     );
     assert!(overview_view.effective_config["auth"]
         .as_object()
         .unwrap()
         .values()
         .all(Value::is_boolean));
+    assert_eq!(
+        overview_view.effective_config["mcp_tool_exposure"]["oauth_client_overrides"],
+        0,
+    );
+    for surface in ["adaptive", "cli"] {
+        assert_eq!(
+            overview_view.effective_config["mcp_tool_exposure"][surface],
+            serde_json::json!({
+                "goals": false,
+                "agent_continuation": false,
+                "job_continuation": false,
+            }),
+        );
+    }
 
     let runner_view = runner_for_auth(&runtime, &auth_a, "client-a", Some(20))
         .await

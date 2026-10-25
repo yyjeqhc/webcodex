@@ -119,7 +119,11 @@ pub struct TunnelClient {
     limits: Limits,
     health: Health,
     receipts: Option<run_fence::Receipts>,
+    enqueue_after: Option<u64>,
 }
+
+mod credential_cutoff;
+pub use credential_cutoff::OperatorEnqueueCutoff;
 impl TunnelClient {
     pub fn new(
         cp: ControlPlaneIdentity,
@@ -191,6 +195,7 @@ impl TunnelClient {
             limits,
             health: Health::default(),
             receipts: None,
+            enqueue_after: None,
         })
     }
     pub fn health(&self) -> Health {
@@ -206,30 +211,69 @@ impl TunnelClient {
         owner_started: Option<u64>,
         owner_absent: impl FnOnce(&run_fence::RunIdentity) -> bool,
     ) -> Result<(Self, run_fence::RunFence), &'static str> {
+        let binding = self.receipt_binding(self.target.credential.as_ref());
+        let (guard, receipts, enqueue_after) = run_fence::RunFence::acquire_restartable(
+            root,
+            self.cp.origin.as_str(),
+            &self.cp.tunnel,
+            binding,
+            owner_started,
+            owner_absent,
+        )?;
+        self.receipts = Some(receipts);
+        self.enqueue_after = enqueue_after;
+        Ok((self, guard))
+    }
+
+    fn receipt_binding(&self, credential: Option<&Credential>) -> [u8; 32] {
         use sha2::{Digest, Sha256};
         let mut hash = Sha256::new();
         for value in [
             self.cp.origin.as_str().as_bytes(),
             self.cp.tunnel.as_bytes(),
             self.target.url.as_str().as_bytes(),
-            self.target
-                .credential
-                .as_ref()
-                .map_or(&[][..], |c| c.0.as_bytes()),
+            credential.map_or(&[][..], |c| c.0.as_bytes()),
         ] {
             hash.update((value.len() as u64).to_le_bytes());
             hash.update(value);
         }
-        let (guard, receipts) = run_fence::RunFence::acquire_restartable(
+        hash.finalize().into()
+    }
+
+    /// Explicitly authorize a credential-only transition in existing protected
+    /// history. This does not start a client, change configuration or make any
+    /// network request. The exact old owner must have stopped cleanly.
+    ///
+    /// The operator must confirm, using a trusted UTC source, that `cutoff` is
+    /// later than the start of this operation. The fixed control plane must
+    /// truthfully retain each request's original RFC3339 enqueue timestamp.
+    /// These are explicit trust inputs, not a claim of a server queue barrier.
+    /// New credentials permanently reject commands at/before the cutoff and
+    /// commands without valid timestamps; response deadlines are unchanged.
+    ///
+    /// After authorization, install the supplied credential through the host's
+    /// normal protected configuration path. An interrupted configuration update
+    /// leaves the old binding unable to start. Repeat only the exact operation
+    /// with the original revision to recover; never reset protected history.
+    pub fn authorize_local_credential_transition(
+        &self,
+        root: &std::path::Path,
+        credential: Credential,
+        cutoff: OperatorEnqueueCutoff,
+        expected_revision: u64,
+    ) -> Result<run_fence::CredentialTransition, &'static str> {
+        if self.receipts.is_some() || self.target.credential.is_none() {
+            return Err("tunnel_transition_requires_stopped_authenticated_binding");
+        }
+        run_fence::RunFence::authorize_credential_transition(
             root,
             self.cp.origin.as_str(),
             &self.cp.tunnel,
-            hash.finalize().into(),
-            owner_started,
-            owner_absent,
-        )?;
-        self.receipts = Some(receipts);
-        Ok((self, guard))
+            self.receipt_binding(self.target.credential.as_ref()),
+            self.receipt_binding(Some(&credential)),
+            cutoff.0,
+            expected_revision,
+        )
     }
     /// Stop ingress, then allow admitted work ten seconds to settle, including response
     /// delivery. Dropping this future is abrupt owner loss, not a clean shutdown.

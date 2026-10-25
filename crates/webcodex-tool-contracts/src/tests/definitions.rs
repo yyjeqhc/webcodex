@@ -721,7 +721,7 @@ fn stop_job_preserves_one_canonical_effect() {
 }
 
 #[test]
-fn agent_continuation_setup_descriptions_are_self_guiding_without_direct_expansion() {
+fn agent_continuation_setup_descriptions_are_self_guiding_and_individually_reviewable() {
     let description = |name: &str| {
         lookup_tool_definition(name)
             .unwrap_or_else(|| panic!("missing ToolDefinition {name}"))
@@ -752,12 +752,11 @@ fn agent_continuation_setup_descriptions_are_self_guiding_without_direct_expansi
     assert!(present.contains("production_auto_resume_available"));
     assert!(present.contains("not production auto-resume readiness"));
 
-    assert_eq!(
+    assert!(
         lookup_tool_definition("create_agent_identity")
             .unwrap()
-            .adaptive_runtime_direct_rank(),
-        None,
-        "identity creation stays discoverable through the gateway rather than expanding Direct"
+            .requires_individual_host_review(),
+        "identity creation exposes its own schema and effects for Host review"
     );
     assert_eq!(
         lookup_tool_definition("present_agent_continuation")
@@ -765,12 +764,44 @@ fn agent_continuation_setup_descriptions_are_self_guiding_without_direct_expansi
             .adaptive_runtime_direct_reason(),
         Some(crate::tool_definition::ToolDirectReason::Continuation)
     );
-    assert_eq!(
-        lookup_tool_definition("rotate_agent_continuation_endpoint")
-            .unwrap()
-            .adaptive_runtime_direct_rank(),
-        None
-    );
+    assert!(lookup_tool_definition("rotate_agent_continuation_endpoint")
+        .unwrap()
+        .requires_individual_host_review());
+}
+
+#[test]
+fn individual_host_review_is_bounded_to_the_nine_goal_continuation_operations() {
+    let mut actual = crate::tool_definition::tool_definitions()
+        .filter(|definition| definition.requires_individual_host_review())
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    let mut expected = vec![
+        "create_agent_identity",
+        "rotate_agent_continuation_endpoint",
+        "list_agent_identities",
+        "prepare_goal_workflow",
+        "get_goal",
+        "checkpoint_goal",
+        "update_goal",
+        "bootstrap_agent_conversation",
+        "consume_agent_wake",
+    ];
+    actual.sort_unstable();
+    expected.sort_unstable();
+    assert_eq!(actual, expected);
+    for name in expected {
+        let definition = lookup_tool_definition(name).unwrap();
+        assert!(definition.adaptive_runtime_direct_rank().is_some());
+        assert_eq!(
+            definition.adaptive_runtime_direct_reason(),
+            Some(crate::tool_definition::ToolDirectReason::HostReview)
+        );
+        assert_eq!(
+            definition.requires_permission(),
+            !definition.is_read_like(),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -782,7 +813,7 @@ fn retired_endpoint_name_is_absent_from_every_tool_surface() {
         .any(|spec| spec.name == "attach_agent_endpoint"));
     let canonical = lookup_tool_definition("rotate_agent_continuation_endpoint").unwrap();
     assert!(canonical.visibility.is_model_visible());
-    assert_eq!(canonical.adaptive_runtime_direct, None);
+    assert!(canonical.requires_individual_host_review());
 }
 
 #[test]
@@ -887,6 +918,7 @@ fn adaptive_direct_reason_is_independent_of_domain_and_authority() {
             ToolDirectReason::HostIntegration,
             ToolDirectReason::Presentation,
             ToolDirectReason::Continuation,
+            ToolDirectReason::HostReview,
         ] {
             let mut changed = *original;
             // Only change an existing policy; never admit a hidden/gateway tool.
@@ -994,7 +1026,6 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     for name in [
         "read_workspace_changes",
         "read_session_handoff",
-        "rotate_agent_continuation_endpoint",
         "run_skill_resource",
         "stop_job",
         "run_detached_process",

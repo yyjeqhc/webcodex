@@ -23,6 +23,15 @@ Hidden/App-only tools remain independently capability-admitted. A gateway cannot
 turn presentation metadata into authority or call an unadmitted hidden tool.
 Host schema refresh and workflow guidance refresh remain distinct operations.
 
+The MCP adapter owns `WEBCODEX_MCP_TOOL_EXPOSURE`: Goal, Agent continuation and
+Job continuation model surfaces default off, with independent Adaptive/CLI
+defaults and bounded exact authenticated OAuth-client overrides. Keep selection
+request-local, snapshot configuration at startup, and align discovery, manifests,
+suggested calls, static App resources and call admission. Workbench App-only Goal
+controls retain their independent admission; they never create a model/gateway
+route. Enabled Host-reviewed tools require standalone descriptors even on CLI.
+See [client configuration](../MCP.md#optional-workflow-tools-per-client).
+
 `X-WebCodex-MCP-Surface: cli` selects an MCP-adapter-owned coding descriptor
 subset and text projection. Its direct entries come from canonical model-visible
 ToolDefinitions; long-tail calls still enter the same gateway and kernel. App

@@ -15,6 +15,7 @@ use std::sync::{mpsc, Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use url::Url;
+use webcodex_core::lsp_bridge::LspIndexReadiness;
 #[cfg(windows)]
 use webcodex_process::resolve_program_in_path;
 use webcodex_process::{find_executable_in_path, is_executable_file};
@@ -347,12 +348,13 @@ impl LspSupervisor {
         })
     }
 
-    /// Inspect an existing project server slot without starting one.
+    /// Observe lifecycle, encoding and index readiness from the same process slot.
+    /// This never starts a server; executable availability is a separate fact.
     pub(crate) fn project_server_status(
         &self,
         project_root: &Path,
         kind: LspServerKind,
-    ) -> Option<LspServerStatus> {
+    ) -> Option<(LspServerStatus, Option<PositionEncoding>, LspIndexReadiness)> {
         let root = fs::canonicalize(project_root).ok()?;
         let key = ProcessKey {
             project_root: root,
@@ -361,30 +363,25 @@ impl LspSupervisor {
         let servers = lock_unpoison(&self.inner.servers);
         let slot = servers.get(&key)?;
         let state = lock_unpoison(&slot.state);
-        match &*state {
-            SlotState::Starting => Some(LspServerStatus::Initializing),
-            SlotState::Running(server) => Some(server.connection.status()),
-            SlotState::Failed(_) => Some(LspServerStatus::Crashed),
-        }
-    }
-
-    pub(crate) fn project_position_encoding(
-        &self,
-        project_root: &Path,
-        kind: LspServerKind,
-    ) -> Option<PositionEncoding> {
-        let root = fs::canonicalize(project_root).ok()?;
-        let key = ProcessKey {
-            project_root: root,
-            kind,
-        };
-        let servers = lock_unpoison(&self.inner.servers);
-        let slot = servers.get(&key)?;
-        let state = lock_unpoison(&slot.state);
-        match &*state {
-            SlotState::Running(server) => Some(*lock_unpoison(&server.position_encoding)),
-            _ => None,
-        }
+        Some(match &*state {
+            SlotState::Starting => (
+                LspServerStatus::Initializing,
+                None,
+                LspIndexReadiness::Unknown,
+            ),
+            SlotState::Running(server) => {
+                let status = server.connection.status();
+                let readiness = if status != LspServerStatus::Running {
+                    LspIndexReadiness::Unknown
+                } else if profile_for_kind(kind).server_status_notification {
+                    server.server_status.readiness()
+                } else {
+                    LspIndexReadiness::Unsupported
+                };
+                (status, Some(server.position_encoding()), readiness)
+            }
+            SlotState::Failed(_) => (LspServerStatus::Crashed, None, LspIndexReadiness::Unknown),
+        })
     }
 
     #[cfg(test)]
@@ -404,7 +401,7 @@ impl LspSupervisor {
         )
     }
 
-    pub(crate) fn request_with_document(
+    pub(crate) fn request_with_document_until(
         &self,
         validated_project_root: &Path,
         kind: LspServerKind,
@@ -413,21 +410,26 @@ impl LspSupervisor {
         text: &str,
         method: &str,
         params: Value,
-    ) -> Result<Value, LspError> {
-        self.request_with_timeout_inner(
+        operation_deadline: Instant,
+    ) -> Result<(Value, PositionEncoding), LspError> {
+        self.request_with_timeout_and_encoding_inner(
             validated_project_root,
             kind,
             method,
             params,
             self.inner.config.request_timeout,
+            Some(operation_deadline),
             Some(DocumentOpen {
                 uri: document_uri,
                 language_id,
                 text,
             }),
+            false,
+            true,
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_document(
         &self,
         validated_project_root: &Path,
@@ -536,7 +538,7 @@ impl LspSupervisor {
             text,
         };
         for attempt in 0..=1 {
-            let server = match self.get_or_start(&key, attempt == 1, None) {
+            let server = match self.get_or_start(&key, attempt == 1, Some(deadline)) {
                 Ok(server) => server,
                 Err(error) if attempt == 0 && error.permits_restart() => continue,
                 Err(error) if attempt == 1 && error.permits_restart() => {
@@ -647,7 +649,7 @@ impl LspSupervisor {
                 text,
             }),
             true,
-            false,
+            true,
         )
     }
 
@@ -667,7 +669,7 @@ impl LspSupervisor {
             Some(operation_deadline),
             None,
             true,
-            false,
+            true,
         )
     }
 
@@ -687,10 +689,11 @@ impl LspSupervisor {
             Some(operation_deadline),
             None,
             true,
-            false,
+            true,
         )
     }
 
+    #[cfg(test)]
     fn request_with_timeout_inner(
         &self,
         validated_project_root: &Path,
@@ -747,22 +750,6 @@ impl LspSupervisor {
             if require_call_hierarchy && !server.call_hierarchy_supported() {
                 return Err(LspError::CallHierarchyUnsupported);
             }
-            if require_workspace_readiness && profile_for_kind(kind).server_status_notification {
-                match server.wait_for_workspace_readiness(
-                    operation_deadline.expect("workspace readiness requires an operation deadline"),
-                ) {
-                    Ok(()) => {}
-                    Err(error) if attempt == 0 && error.permits_restart() => {
-                        last_error = Some(error);
-                        continue;
-                    }
-                    Err(error) if attempt == 1 && error.permits_restart() => {
-                        self.evict_unusable(&key);
-                        return Err(LspError::RestartExhausted(error.to_string()));
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
             if let Some(document) = document {
                 if let Err(error) = server.synchronize_document(document) {
                     if attempt == 0 && error.permits_restart() {
@@ -779,9 +766,34 @@ impl LspSupervisor {
                     return Err(error);
                 }
             }
+            let readiness_epoch = if require_workspace_readiness
+                && profile_for_kind(kind).server_status_notification
+            {
+                match server.wait_for_workspace_readiness(
+                    operation_deadline.expect("workspace readiness requires an operation deadline"),
+                ) {
+                    Ok(epoch) => Some(epoch),
+                    Err(error) if attempt == 0 && error.permits_restart() => {
+                        last_error = Some(error);
+                        continue;
+                    }
+                    Err(error) if attempt == 1 && error.permits_restart() => {
+                        self.evict_unusable(&key);
+                        return Err(LspError::RestartExhausted(error.to_string()));
+                    }
+                    Err(error) => return Err(error),
+                }
+            } else {
+                None
+            };
             let request_timeout = ensure_request_budget(method, timeout, operation_deadline)?;
             match server.request(method, params.clone(), request_timeout) {
-                Ok(value) => return Ok((value, server.position_encoding())),
+                Ok(value) => {
+                    if let Some(epoch) = readiness_epoch {
+                        server.server_status.validate_epoch(epoch)?;
+                    }
+                    return Ok((value, server.position_encoding()));
+                }
                 Err(LspError::JsonRpc { code: -32601, .. }) if require_call_hierarchy => {
                     return Err(LspError::CallHierarchyUnsupported);
                 }
@@ -1657,6 +1669,7 @@ struct ServerStatusSnapshot {
 #[derive(Default)]
 struct ServerStatusState {
     latest: Option<ServerStatusSnapshot>,
+    invalidation_epoch: u64,
     closed: bool,
 }
 
@@ -1683,12 +1696,40 @@ impl ServerStatusCache {
         // that would turn an unparseable current server state into a false
         // authoritative readiness signal. Clear it and let the bounded waiter
         // require a later valid notification.
+        if !parsed.is_some_and(|status| status.quiescent && status.health == ServerStatusHealth::Ok)
+        {
+            state.invalidation_epoch = state.invalidation_epoch.saturating_add(1);
+        }
         state.latest = parsed;
         drop(state);
         self.changed.notify_all();
     }
 
-    fn wait_for_quiescent_ok(&self, deadline: Instant) -> Result<(), LspError> {
+    fn readiness(&self) -> LspIndexReadiness {
+        let state = lock_unpoison(&self.state);
+        if state.closed {
+            return LspIndexReadiness::Unknown;
+        }
+        match state.latest {
+            None => LspIndexReadiness::Unknown,
+            Some(status) if !status.quiescent => LspIndexReadiness::Indexing,
+            Some(status) if status.health == ServerStatusHealth::Ok => LspIndexReadiness::Ready,
+            Some(_) => LspIndexReadiness::Unhealthy,
+        }
+    }
+
+    fn validate_epoch(&self, epoch: u64) -> Result<(), LspError> {
+        let state = lock_unpoison(&self.state);
+        if state.closed {
+            return Err(LspError::ServerExited);
+        }
+        if state.invalidation_epoch != epoch || epoch == u64::MAX {
+            return Err(LspError::WorkspaceNotReady("changed during request"));
+        }
+        Ok(())
+    }
+
+    fn wait_for_quiescent_ok(&self, deadline: Instant) -> Result<u64, LspError> {
         let mut state = lock_unpoison(&self.state);
         loop {
             if state.closed {
@@ -1697,7 +1738,7 @@ impl ServerStatusCache {
             if let Some(status) = state.latest {
                 if status.quiescent {
                     return if status.health == ServerStatusHealth::Ok {
-                        Ok(())
+                        Ok(state.invalidation_epoch)
                     } else {
                         Err(LspError::WorkspaceNotReady(status.health.label()))
                     };
@@ -2130,6 +2171,9 @@ impl ServerInstance {
                 "positionEncodings": ["utf-8", "utf-16", "utf-32"]
             },
             "textDocument": {
+                "documentSymbol": {
+                    "hierarchicalDocumentSymbolSupport": true
+                },
                 "callHierarchy": {
                     "dynamicRegistration": false
                 }
@@ -2171,7 +2215,7 @@ impl ServerInstance {
         Ok(())
     }
 
-    fn wait_for_workspace_readiness(&self, deadline: Instant) -> Result<(), LspError> {
+    fn wait_for_workspace_readiness(&self, deadline: Instant) -> Result<u64, LspError> {
         self.server_status.wait_for_quiescent_ok(deadline)
     }
 

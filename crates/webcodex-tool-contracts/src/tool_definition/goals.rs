@@ -80,7 +80,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "Atomically admit one new durable Goal together with one exact independently authorized Workflow Session correlation and an optional explicit owned controller Agent. The Store commits Goal + correlation + keyed replay identity in one transaction at revision 1. This operation is Host-neutral: it never infers identity from a Window, creates/rotates Endpoints, mounts MCP Apps, establishes Host bindings, creates Wakes, or proves continuation readiness. Use present_goal_plan separately; if automatic continuation is desired, independently establish or verify the controller through the agent_continuation_setup flow.",
         ),
         GOAL_SESSION_ASSOCIATE_SCOPES,
-    ),
+    ).with_individual_host_review(173),
     require_all_scopes(
         model_spec(
             control_def(
@@ -125,7 +125,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "Read one exact caller-owned durable Goal, including its optional durable controller Agent identity. Unauthorized and nonexistent Goal ids are existence-hidden. Controller/correlation identities are routing or correlation only and never target-domain authority, Endpoint/window bindings, fences, tokens, credentials, Job state, or Workflow Session ledgers.",
         ),
         COMMUNICATION_READ_SCOPES,
-    ),
+    ).with_individual_host_review(174),
     require_all_scopes(
         adaptive_runtime_direct(
             model_spec(
@@ -217,7 +217,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "Checkpoint one exact owned active Goal at a recovery-worthy milestone. Atomically complete selected stable step ids, optionally select one current step, and record a bounded summary using the exact revision and idempotency key. The whole batch validates before mutation; completed steps never regress, at most one step is in_progress, and each new checkpoint increments revision once. Exact replay is read-only; changed replay conflicts. Terminal Goals are immutable. This is progress truth, not effect replay, execution authority, or a routine read_session_handoff requirement.",
         ),
         COMMUNICATION_MANAGE_SCOPES,
-    ),
+    ).with_individual_host_review(175),
     require_all_scopes(
         model_spec(
             control_def(
@@ -257,7 +257,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "Update bounded Goal metadata or completion_conditions, explicitly replace its exact independently authorized durable controller Agent, or transition active to completed/cancelled using an exact revision and idempotency key. Omitted completion_conditions preserves the current intent; an empty list clears it. Conditions use the creation bounds and never change steps or recorded progress. Omitted controller preserves the current routing identity; terminal Goal state is immutable. Controller routing grants no execution authority and no execution domain is inferred or mutated. Complete every plan step with checkpoint_goal and freshly verify/review before explicitly completing a Goal; the Server cannot judge natural-language completion conditions.",
         ),
         COMMUNICATION_MANAGE_SCOPES,
-    ),
+    ).with_individual_host_review(176),
     require_all_scopes(
         model_spec(
             control_def(

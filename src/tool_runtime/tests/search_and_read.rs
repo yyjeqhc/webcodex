@@ -19,7 +19,8 @@ fn start_inspection(
         json!({
             "project": project,
             "session_id": session_id,
-            "query": {"pattern": "needle", "pattern_mode": "literal", "path": "src/lib.rs"},
+            "query": {"pattern": "needle", "pattern_mode": "literal", "path": "src/lib.rs",
+                "result_mode": "count", "context_before": 9, "context_after": 9},
             "read_before": read_before,
             "read_after": read_after,
             "with_line_numbers": true
@@ -567,11 +568,10 @@ async fn search_and_read_budget_keeps_previews_for_trimmed_and_omitted_text() {
         assert!(matched.get("read_hint").is_none());
     }
     let continuation = &reads["suggested_call"]["arguments"]["items"];
-    // A returned range in the middle of a file keeps its ordinary next-page
-    // continuation alongside the budget-trimmed and entirely omitted ranges.
-    assert_eq!(continuation.as_array().unwrap().len(), 3);
-    assert_eq!(continuation[0]["start_line"], 31);
-    assert_eq!(continuation[1]["start_line"], retained_end + 1);
-    assert_eq!(continuation[2]["start_line"], 600);
+    // The completed explicit [10, 30] range must not trigger unrequested
+    // reads; only the budget-trimmed and omitted ranges need continuations.
+    assert_eq!(continuation.as_array().unwrap().len(), 2);
+    assert_eq!(continuation[0]["start_line"], retained_end + 1);
+    assert_eq!(continuation[1]["start_line"], 600);
     validate_compound_schema(&result);
 }

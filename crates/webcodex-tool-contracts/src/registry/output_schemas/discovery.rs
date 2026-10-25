@@ -5,6 +5,18 @@ use super::common::{
     wrapped_output_schema,
 };
 
+fn mcp_workflow_tools_schema() -> Value {
+    json!({
+        "type":"object", "additionalProperties":false,
+        "properties":{
+            "goals":{"type":"boolean"},
+            "agent_continuation":{"type":"boolean"},
+            "job_continuation":{"type":"boolean"}
+        },
+        "required":["goals", "agent_continuation", "job_continuation"]
+    })
+}
+
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "read_current_window_activity" => Some(wrapped_output_schema(vec![
@@ -70,13 +82,23 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                             },
                             "required": ["profile", "host_budget_secs", "initial_job_handoff_secs", "max_sync_wait_secs", "continuation_wait_secs"]
                         },
+                        "mcp_tool_exposure": {
+                            "type": "object", "additionalProperties": false,
+                            "description": "Startup MCP workflow-tool defaults and exact OAuth-client override count. No client identifiers or credentials.",
+                            "properties": {
+                                "adaptive": mcp_workflow_tools_schema(),
+                                "cli": mcp_workflow_tools_schema(),
+                                "oauth_client_overrides": {"type":"integer", "minimum":0, "maximum":64}
+                            },
+                            "required":["adaptive", "cli", "oauth_client_overrides"]
+                        },
                         "tool_request_trace_mode": {
                             "type": "string",
                             "enum": ["off", "metadata", "full"],
                             "description": "Effective bounded tool-request trace mode; no trace paths, request bodies, headers, or environment values are exposed."
                         }
                     },
-                    "required": ["auth", "mcp_host", "tool_request_trace_mode"]
+                    "required": ["auth", "mcp_host", "mcp_tool_exposure", "tool_request_trace_mode"]
                 }),
             ),
             ("version", schema_type("string", "Runtime version.")),

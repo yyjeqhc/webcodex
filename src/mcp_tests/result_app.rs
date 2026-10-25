@@ -1803,11 +1803,13 @@ async fn direct_job_continuation_presentation_reauthorizes_an_owned_gateway_wait
         )
         .await,
     );
-    let runtime = ToolRuntime::new(
-        registry,
-        Arc::new(crate::tool_runtime::RuntimeInfo::default()),
-    )
-    .with_job_terminal_attention(db, controller);
+    let runtime = with_workflow_tools(
+        ToolRuntime::new(
+            registry,
+            Arc::new(crate::tool_runtime::RuntimeInfo::default()),
+        )
+        .with_job_terminal_attention(db, controller),
+    );
     let owner = crate::auth::shared_key_context(&"8".repeat(64));
     register_job_runner(&runtime, &owner).await;
     let started = runtime

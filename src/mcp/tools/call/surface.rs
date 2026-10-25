@@ -135,6 +135,17 @@ impl RuntimeSurface {
                         | "list_sessions"
                         | "open_webcodex_workbench"
                 ));
+        // The Workbench retains independently admitted App-only Goal controls.
+        // This exception never admits a gateway target or advertises a model route.
+        if !context.exposure.allows(&params.name)
+            && !(workbench_view_call && !via_adaptive_runtime_gateway)
+        {
+            return Err(McpOutcome::BadRequest(rpc_error(
+                id,
+                -32602,
+                "Tool is unavailable on the configured MCP tool surface; refresh tools/list",
+            )));
+        }
         let direct_denied = !workbench_view_call
             && !app_only_artifact_read
             && !app_only_goal_plan_sync
@@ -146,11 +157,7 @@ impl RuntimeSurface {
             && !app_only_job_terminal_continuation
             && !protocol_extension_admitted
             && !via_adaptive_runtime_gateway
-            && !(if context.surface == crate::mcp::request_policy::McpSurface::Cli {
-                crate::mcp::cli::is_direct(&params.name)
-            } else {
-                is_adaptive_runtime_direct_tool(&params.name)
-            });
+            && !context.exposure.is_direct(context.surface, &params.name);
         if direct_denied {
             if let Some(lc) = lifecycle.as_deref() {
                 lc.dispatch_failed("direct_route_denied");
@@ -191,10 +198,11 @@ impl RuntimeSurface {
                 skill_management: stateless_2026,
                 memory_surface: stateless_2026,
                 trace_diagnostics: stateless_2026,
-                goal_plan_app: goal_plan_app_admitted,
+                goal_plan_app: goal_plan_app_admitted && context.exposure.goals,
                 work_result_app: work_result_app_admitted,
                 artifact_app: server_mcp_apps_enabled && stateless_2026,
-                agent_continuation_app: agent_continuation_app_admitted,
+                agent_continuation_app: agent_continuation_app_admitted
+                    && (context.exposure.agent_continuation || context.exposure.job_continuation),
             },
             work_result_thread_context,
             discard_recorder: (workbench_view_call

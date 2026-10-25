@@ -139,6 +139,9 @@ fn from_tool_name_rejects_removed_failure_kind_alias_as_tool_input() {
         }),
     )
     .unwrap_err();
-    assert!(error.contains("test_expect_failure_kind"), "{error}");
     assert!(error.contains("unknown field"), "{error}");
+    assert!(error.contains("[field]"), "{error}");
+    assert!(error.contains("see input schema"), "{error}");
+    assert!(!error.contains("test_expect_failure_kind"), "{error}");
+    assert!(!error.contains("job_not_found"), "{error}");
 }

@@ -77,10 +77,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 Some(COMMUNICATION_MANAGE),
                 false,
             ),
-            "Create a durable Server-owned Agent identity and mutable self-description card. For a new ChatGPT window that needs durable Agent continuation, this is the first setup step; use rotate_agent_continuation_endpoint for Endpoint preparation. Use present_agent_continuation only when its dedicated descriptor is advertised; an unavailable carrier is not a reason to repeat discovery. The canonical wc_dagent_* id remains independent from windows, Endpoints, Workflow Sessions, Projects, and execution authority. Exact idempotency-key replay returns the original Agent; changed reuse is rejected.",
+            "Create one caller-owned durable Agent metadata record on this Server, storing its handle, display name, description and labels. This call starts no model or process and creates no Endpoint, credential or Host binding. For a new ChatGPT window that needs durable Agent continuation, this is the first setup step; use rotate_agent_continuation_endpoint for Endpoint preparation. Use present_agent_continuation only when its dedicated descriptor is advertised; an unavailable carrier is not a reason to repeat discovery. The canonical wc_dagent_* id remains independent from windows, Endpoints, Workflow Sessions, Projects, and execution authority. Exact idempotency-key replay returns the original Agent; changed reuse is rejected.",
         ),
         COMMUNICATION_MANAGE_SCOPES,
-    ),
+    ).with_individual_host_review(170),
     require_all_scopes(
         model_spec(
             control_def(
@@ -108,7 +108,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "List bounded durable Agent cards owned by the current communication principal, or read one exact Agent. Each listed Agent includes production_auto_resume_available, a read-only conjunction of current durable Endpoint truth and the current Server process's production Host carrier for that exact generation. When one current unexpired Endpoint matches that generation, agent_continuation_ref names the pinned tuple for present_agent_continuation. The ref is not a credential and grants no authority. Readiness is not idle/presence, not a capacity reservation, not execution authority, and not a guarantee of immediate Host scheduling. Handles, names, descriptions, labels, and Endpoint counts are metadata only and never grant Project, filesystem, Runner, or Workflow Session authority.",
         ),
         COMMUNICATION_READ_SCOPES,
-    ),
+    ).with_individual_host_review(172),
     require_all_scopes(
         permission_risk(
             model_spec(
@@ -154,7 +154,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 PERMISSION_RISK_WRITE,
             ),
         COMMUNICATION_MANAGE_SCOPES,
-    ),
+    ).with_individual_host_review(171),
 
     require_all_scopes(
         adaptive_runtime_direct(model_spec(
@@ -447,7 +447,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "Verify an exact Agent/Endpoint generation and return bounded turn context without Message bodies. activation_idempotency_key is only for explicit activation of an eligible pending Inbox-style Wake into this already-active turn; omit it for agent_task_attempt, attention_event, and agent_wait_events Wakes already dispatched by an Endpoint carrier. Explicit activation never requests a new model turn.",
         ),
         COMMUNICATION_MANAGE_SCOPES,
-    ),
+    ).with_individual_host_review(177),
     require_all_scopes(
         permission_risk(
             model_spec(
@@ -693,5 +693,5 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             PERMISSION_RISK_WRITE,
         ),
         COMMUNICATION_MANAGE_SCOPES,
-    ),
+    ).with_individual_host_review(178),
 ];

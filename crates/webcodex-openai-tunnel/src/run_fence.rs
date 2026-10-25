@@ -11,6 +11,9 @@ use std::{
 #[path = "run_receipts.rs"]
 mod receipts;
 pub(crate) use receipts::Receipts;
+#[path = "run_transitions.rs"]
+mod transitions;
+pub use transitions::CredentialTransition;
 
 const PROTECTED_HISTORY_MAGIC: &[u8; 8] = b"WCTHST01";
 const PROTECTED_HISTORY_BYTES: usize = 72;
@@ -116,28 +119,7 @@ fn lock(root: &Path, origin: &str, tunnel: &str) -> Result<(PathBuf, File), &'st
 /// The lock file survives clean stops. Its immutable protected-history header
 /// distinguishes a fresh store from missing receipts even without an active run.
 fn protected_binding(lock: &mut File) -> Result<Option<[u8; 32]>, &'static str> {
-    let length = lock.metadata().map_err(|_| "tunnel_fence_io")?.len();
-    if length == 0 {
-        return Ok(None);
-    }
-    if length != PROTECTED_HISTORY_BYTES as u64 {
-        return Err("tunnel_protected_history_invalid");
-    }
-    lock.seek(SeekFrom::Start(0))
-        .map_err(|_| "tunnel_fence_io")?;
-    let mut header = [0; PROTECTED_HISTORY_BYTES];
-    lock.read_exact(&mut header)
-        .map_err(|_| "tunnel_fence_io")?;
-    if &header[..8] != PROTECTED_HISTORY_MAGIC
-        || Sha256::digest(&header[..40]).as_slice() != &header[40..]
-    {
-        return Err("tunnel_protected_history_invalid");
-    }
-    Ok(Some(
-        header[8..40]
-            .try_into()
-            .map_err(|_| "tunnel_protected_history_invalid")?,
-    ))
+    Ok(transitions::read_history(lock)?.map(|history| history.original_binding))
 }
 
 fn initialize_protected_history(
@@ -183,6 +165,7 @@ fn check_archives(
     directory: &Path,
     incoming: Option<u64>,
     require_legacy: bool,
+    history: Option<&transitions::ProtectedHistory>,
 ) -> Result<(), &'static str> {
     if incoming.is_some_and(|bytes| bytes > MAX_RUN_MARKER_BYTES) {
         return Err("tunnel_archive_invalid");
@@ -214,10 +197,22 @@ fn check_archives(
         if bytes > MAX_AUTO_ARCHIVE_BYTES {
             return Err("tunnel_archive_capacity");
         }
-        if require_legacy {
-            let identity = read(&entry.path())?.ok_or("tunnel_protected_history_missing")?;
-            if identity.version != 2 {
+        if require_legacy || history.is_some() {
+            let identity = read(&entry.path())
+                .map_err(|_| "tunnel_archive_invalid")?
+                .ok_or("tunnel_archive_invalid")?;
+            if require_legacy && identity.version != 2 {
                 return Err("tunnel_protected_history_missing");
+            }
+            if identity.version == 3
+                && !history.is_some_and(|history| {
+                    identity
+                        .receipt_binding
+                        .as_deref()
+                        .is_some_and(|text| history.contains_binding_text(text))
+                })
+            {
+                return Err("tunnel_archive_binding_changed");
             }
             if entry.file_name().to_str() != Some(identity.run_id.as_str()) {
                 return Err("tunnel_archive_invalid");
@@ -285,13 +280,16 @@ impl RunFence {
         if protected_binding(&mut lock)?.is_some() {
             return Err("tunnel_receipts_required");
         }
+        if !missing(&path.with_extension("transitions"))? {
+            return Err("tunnel_protected_history_missing");
+        }
         match fs::symlink_metadata(path.with_extension("receipts")) {
             // Legacy callers must not bypass history left by a protected run.
             Ok(_) => return Err("tunnel_receipts_required"),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err("tunnel_fence_io"),
         }
-        check_archives(&archive_directory(&path)?, None, true)?;
+        check_archives(&archive_directory(&path)?, None, true, None)?;
         let identity = RunIdentity {
             version: 2,
             run_id: uuid::Uuid::new_v4().to_string(),
@@ -327,12 +325,23 @@ impl RunFence {
         binding: [u8; 32],
         owner_started: Option<u64>,
         owner_absent: impl FnOnce(&RunIdentity) -> bool,
-    ) -> Result<(Self, Receipts), &'static str> {
+    ) -> Result<(Self, Receipts, Option<u64>), &'static str> {
         let (path, mut lock) = lock(root, origin, tunnel)?;
         let previous = read(&path)?;
         let binding_text = format!("{:x}", Sha256::digest(binding));
+        let history = transitions::read_history(&mut lock)?;
+        if let Some(history) = history.as_ref() {
+            let _ = transitions::check_intents(&path, history, false)?;
+        } else if !missing(&path.with_extension("transitions"))? {
+            return Err("tunnel_protected_history_missing");
+        }
         if let Some(identity) = &previous {
-            if identity.version != 3 || identity.receipt_binding.as_ref() != Some(&binding_text) {
+            if identity.version != 3
+                || identity.receipt_binding.as_ref() != Some(&binding_text)
+                || !history
+                    .as_ref()
+                    .is_some_and(|history| history.current_binding() == binding)
+            {
                 return Err("tunnel_restart_uncertain");
             }
             if !owner_absent(identity) {
@@ -341,9 +350,8 @@ impl RunFence {
         }
         let journal_path = path.with_extension("receipts");
         let directory = archive_directory(&path)?;
-        let history = protected_binding(&mut lock)?;
-        let initialize = match history {
-            Some(saved) if saved == binding => false,
+        let initialize = match history.as_ref() {
+            Some(saved) if saved.current_binding() == binding => false,
             Some(_) => return Err("tunnel_protected_history_binding_changed"),
             None => {
                 // Surviving protected evidence cannot become a fresh namespace
@@ -351,7 +359,7 @@ impl RunFence {
                 if previous.is_some() || !missing(&journal_path)? {
                     return Err("tunnel_protected_history_missing");
                 }
-                check_archives(&directory, None, true)?;
+                check_archives(&directory, None, true, None)?;
                 true
             }
         };
@@ -363,9 +371,12 @@ impl RunFence {
             let incoming = fs::symlink_metadata(&path)
                 .map_err(|_| "tunnel_fence_io")?
                 .len();
-            check_archives(&directory, Some(incoming), false)?;
+            check_archives(&directory, Some(incoming), false, history.as_ref())?;
             Some(archived)
         } else {
+            if !initialize {
+                check_archives(&directory, None, false, history.as_ref())?;
+            }
             None
         };
         if initialize {
@@ -374,7 +385,13 @@ impl RunFence {
             initialize_protected_history(&mut lock, binding, root)?;
         }
         // Existing protection requires receipts after *both* clean and dirty stops.
-        let journal = Receipts::open(&journal_path, binding, !initialize)?;
+        let original_binding = history
+            .as_ref()
+            .map_or(binding, |history| history.original_binding);
+        let cutoff_seconds = history
+            .as_ref()
+            .and_then(|history| history.cutoff_seconds());
+        let journal = Receipts::open(&journal_path, original_binding, !initialize)?;
         if let Some(archived) = archived {
             private_directory(&directory)?;
             fs::rename(&path, archived).map_err(|_| "tunnel_fence_io")?;
@@ -403,6 +420,7 @@ impl RunFence {
                 _lock: lock,
             },
             journal,
+            cutoff_seconds,
         ))
     }
     /// Only call after observing the owned task complete without uncertain work.

@@ -198,7 +198,7 @@ async fn wait_for_mcp_agent_request(
 #[tokio::test]
 async fn mcp_tools_list_uses_adaptive_inventory_in_both_schema_modes() {
     for compact in [false, true] {
-        let runtime = test_runtime_with_mcp_settings(compact, true);
+        let runtime = with_workflow_tools(test_runtime_with_mcp_settings(compact, true));
         let outcome = handle_mcp_request(
             &runtime,
             rpc("tools/list", Some(Value::from(3)), json!({})),
@@ -2532,7 +2532,7 @@ fn discovery_is_app_only(tool: &Value) -> bool {
         .is_some_and(|visibility| visibility.iter().any(|value| value == "app"))
 }
 
-fn model_visible_discovery_projection(result: &Value) -> Value {
+pub(super) fn model_visible_discovery_projection(result: &Value) -> Value {
     let tools = result["tools"]
         .as_array()
         .unwrap()
@@ -2663,6 +2663,50 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
             "project_format marginal cost {marginal_cost} bytes exceeds 2000 byte allowance ceiling"
         );
         marginal_cost
+    }
+
+    // Individual Host review requires these nine formerly lazy manifest
+    // contracts in tools/list. Charge only their measured descriptor cost;
+    // retain every existing product ceiling for the rest of the inventory.
+    // Explicit names and finite per-tool/aggregate caps prevent this allowance
+    // from silently admitting other Direct operations or unlimited schema growth.
+    fn host_review_marginal_allowance(model_tools: &[Value]) -> usize {
+        const NAMES: &[&str] = &[
+            "create_agent_identity",
+            "rotate_agent_continuation_endpoint",
+            "list_agent_identities",
+            "prepare_goal_workflow",
+            "get_goal",
+            "checkpoint_goal",
+            "update_goal",
+            "bootstrap_agent_conversation",
+            "consume_agent_wake",
+        ];
+        let total = model_tools
+            .iter()
+            .filter_map(|tool| {
+                let name = tool["name"].as_str()?;
+                if !NAMES.contains(&name) {
+                    return None;
+                }
+                assert!(webcodex_tool_contracts::lookup_tool_definition(name)
+                    .unwrap()
+                    .requires_individual_host_review());
+                let cost =
+                    serde_json::to_vec(tool).unwrap().len() + usize::from(model_tools.len() > 1);
+                assert!(
+                    cost <= 8 * 1024,
+                    "{name} Host-review descriptor cost {cost} exceeds 8 KiB"
+                );
+                eprintln!("MCP_HOST_REVIEW_DESCRIPTOR {name} bytes={cost}");
+                Some(cost)
+            })
+            .sum::<usize>();
+        assert!(
+            total <= 32 * 1024,
+            "nine Host-review descriptors cost {total} exceeds 32 KiB"
+        );
+        total
     }
 
     // Only the new Rust project_build offline input receives a marginal budget;
@@ -2865,7 +2909,12 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                         0
                     }
                     + project_build_offline_marginal_byte_budget
-                    + project_exclusions_schema_marginal_byte_budget;
+                    + project_exclusions_schema_marginal_byte_budget
+                    + if compact {
+                        host_review_marginal_allowance(model_tools)
+                    } else {
+                        0
+                    };
                 // Raw transport includes private App bridge descriptors and Host
                 // presentation metadata. Keep a coarse overhead ceiling so transport
                 // cannot grow silently, but do not force model guidance to pay for it.
@@ -3229,7 +3278,7 @@ async fn mcp_tools_call_rejects_legacy_reserved_session_id_before_dispatch() {
         other => panic!("expected invalid-params BadRequest, got {other:?}"),
     };
     let message = value["error"]["message"].as_str().unwrap();
-    assert!(message.contains("_session_id"));
+    assert!(!message.contains(&session.session_id));
     assert!(message.contains("unknown field"));
     assert_eq!(
         runtime
@@ -3494,7 +3543,7 @@ async fn mcp_tools_call_rejects_legacy_session_alias_even_with_canonical_recorde
     assert!(value["error"]["message"]
         .as_str()
         .is_some_and(
-            |message| message.contains("_session_id") && message.contains("unknown field")
+            |message| message.contains("unknown field") && !message.contains(&canonical.session_id)
         ));
     // Explicit recorder provenance still records the rejected canonical tool
     // attempt; the retired business alias is rejected before any main effect.
@@ -4221,7 +4270,7 @@ async fn mcp_tools_call_unknown_tool_is_bad_request() {
 }
 
 #[tokio::test]
-async fn mcp_2026_control_sidecars_gateway_strip_and_closed_schema() {
+async fn mcp_2026_control_sidecars_require_reviewed_operations_and_keep_closed_schema() {
     let temp = tempfile::tempdir().unwrap();
     let db =
         std::sync::Arc::new(crate::db::Database::open(&temp.path().join("sidecars.db")).unwrap());
@@ -4247,8 +4296,8 @@ async fn mcp_2026_control_sidecars_gateway_strip_and_closed_schema() {
         "summary": "already inspected", "idempotency_key": "checkpoint"
     }}});
     let mut arguments = json!({
-        "tool": "get_goal",
-        "arguments": {"goal_id": goal_id},
+        "tool": "list_projects",
+        "arguments": {},
         "_wc": {"control": control.clone()}
     });
     let outcome = handle_mcp_request(
@@ -4261,18 +4310,23 @@ async fn mcp_2026_control_sidecars_gateway_strip_and_closed_schema() {
         None,
     )
     .await;
-    let McpOutcome::Ok(value) = outcome else {
-        panic!("expected structured success")
+    let McpOutcome::BadRequest(value) = outcome else {
+        panic!("review-required Goal mutation must use its own callable")
     };
-    let result = &value["result"]["structuredContent"];
-    assert_eq!(result["success"], true, "{value}");
-    assert_eq!(result["output"]["goal"]["summary"]["revision"], 2);
-    assert_eq!(result["output"]["control"]["before"]["replayed"], false);
-    assert_eq!(result["output"]["control"]["before"]["revision"], 2);
+    assert!(value["error"]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("direct_host_review_required: 'checkpoint_goal'"));
+    assert_eq!(
+        runtime
+            .get_goal(None, goal_id.as_str().unwrap().to_string())
+            .output["goal"]["summary"]["revision"],
+        1
+    );
 
     arguments = json!({
-        "tool": "get_goal",
-        "arguments": {"goal_id": goal_id, "_wc": {"control": control.clone()}}
+        "tool": "list_projects",
+        "arguments": {"_wc": {"control": control.clone()}}
     });
     let rejected_inner = handle_mcp_request(
         &runtime,
@@ -4298,8 +4352,8 @@ async fn mcp_2026_control_sidecars_gateway_strip_and_closed_schema() {
             "tools/call",
             Some(json!(603)),
             mcp_2026_params(json!({"name": "call_runtime_tool", "arguments": {
-                "tool": "get_goal",
-                "arguments": {"goal_id": goal_id},
+                "tool": "list_projects",
+                "arguments": {},
                 "_wc": {"control": {"before": {"unknown_private_value": {}}}}
             }})),
         ),

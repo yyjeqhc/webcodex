@@ -16,6 +16,10 @@ pub struct Command {
     pub headers: Headers,
     #[serde(default)]
     pub response_timeout: ResponseTimeout,
+    // Additive metadata remains opaque on unchanged bindings. A credential
+    // transition requires a valid trusted control-plane enqueue timestamp.
+    #[serde(default)]
+    pub created_at: Option<Box<RawValue>>,
     #[serde(default)]
     pub jsonrpc: Option<Box<RawValue>>,
 }

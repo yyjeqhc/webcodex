@@ -157,6 +157,17 @@ must not be restored independently. A bounded directory containing only valid,
 exact v2 archives proves explicit legacy reconciliation and permits first
 initialization of protected history; empty, invalid or v3 archives do not.
 
+A separate, explicit operator action may authorize a credential-only transition
+for a cleanly stopped protected Tunnel. It appends bounded linked records after
+the original header and retains the same receipt journal and archived history.
+The new binding permanently requires a trustworthy original enqueue timestamp
+after an operator-attested future UTC cutoff; response deadlines stay unchanged.
+Automatic restart cannot authorize this transition. Its full-intent recovery,
+configuration-update order and compatible-build rollback requirements are owned
+by the [native Tunnel contract](../../crates/webcodex-openai-tunnel/README.md#explicit-local-credential-transition).
+Unknown clock or enqueue-time trust must block the operator action, rather than
+be replaced by an empty poll or a fixed wait. No Host review is bypassed.
+
 Automatic archival is limited to 128 files and 64 KiB of marker contents per
 Tunnel, with a 4-KiB per-marker bound. A bounded, read-only preflight checks the
 budget before receipt-tail repair or active-marker movement. Exhaustion reports

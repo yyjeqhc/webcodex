@@ -1628,3 +1628,70 @@ fn rust_clippy_uses_project_validate_without_new_tool_or_argv() {
         assert!(ToolCall::from_tool_name("project_validate", value).is_err());
     }
 }
+
+#[test]
+fn search_context_schema_has_one_effective_query_contract_and_legacy_parser_compatibility() {
+    let schema = input_schema_for_tool("search_file_context");
+    let properties = &schema["properties"];
+    assert!(properties.get("query").is_none());
+    assert_eq!(properties["queries"]["minItems"], 1);
+    assert_eq!(properties["queries"]["maxItems"], 8);
+    assert!(schema["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("queries")));
+    for key in ["result_mode", "context_before", "context_after"] {
+        assert!(properties["queries"]["items"]["properties"]
+            .get(key)
+            .is_none());
+        assert!(
+            input_schema_for_tool("search_project_texts")["properties"]["queries"]["items"]
+                ["properties"]
+                .get(key)
+                .is_some()
+        );
+    }
+    let current = json!({"project":"demo","queries":[{"pattern":"needle"}],"read_before":4});
+    crate::test_support::validate_schema_instance(&current, &schema).unwrap();
+    ToolCall::from_tool_name("search_file_context", current).unwrap();
+    for key in ["query", "queries"] {
+        let query =
+            json!({"pattern":"needle","result_mode":"count","context_before":9,"context_after":9});
+        let mut arguments = json!({"project":"demo"});
+        arguments[key] = if key == "query" {
+            query
+        } else {
+            json!([query])
+        };
+        ToolCall::from_tool_name("search_file_context", arguments).unwrap();
+    }
+    let bytes = schema.to_string().len();
+    eprintln!("search_file_context schema bytes={bytes}");
+    assert!(bytes < 3500, "{bytes}");
+}
+
+#[test]
+fn work_on_project_optional_selector_has_no_invalid_empty_default() {
+    let schema = input_schema_for_tool("work_on_project");
+    assert_eq!(schema["properties"]["project"]["minLength"], 1);
+    assert!(schema["properties"]["project"].get("default").is_none());
+    assert!(!schema["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("project")));
+    for arguments in [
+        json!({"project":"agent:c:p","instruction":"work"}),
+        json!({"client_id":"c","path":"/tmp/p","instruction":"work"}),
+        json!({"session_id":"wc_sess_exact","instruction":"work"}),
+    ] {
+        crate::test_support::validate_schema_instance(&arguments, &schema).unwrap();
+        ToolCall::from_tool_name("work_on_project", arguments).unwrap();
+    }
+    for project in ["", " "] {
+        assert!(ToolCall::from_tool_name(
+            "work_on_project",
+            json!({"project":project,"instruction":"work"})
+        )
+        .is_err());
+    }
+}

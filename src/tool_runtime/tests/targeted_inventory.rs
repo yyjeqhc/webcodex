@@ -1108,8 +1108,12 @@ fn targeted_inventory_tool_calls_reject_unknown_filter_fields() {
     ] {
         let error = ToolCall::from_tool_name(tool, arguments)
             .expect_err("unknown targeted-inventory fields must not widen the query");
-        assert!(error.contains("unknown field"), "{tool}: {error}");
-        assert!(error.contains(typo), "{tool}: {error}");
+        assert!(error.contains("[field]: unknown field"), "{tool}: {error}");
+        assert!(
+            error.contains("accepted top-level fields include"),
+            "{tool}: {error}"
+        );
+        assert!(!error.contains(typo), "{tool}: {error}");
     }
 }
 

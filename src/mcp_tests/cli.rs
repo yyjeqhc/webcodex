@@ -99,8 +99,8 @@ fn cli_reads_keep_raw_source_revision_partial_failures_and_fenced_continuation()
         "File missing",
         "not_found",
         "output_truncated: true",
-        "expected_read_revision: 7",
-        "start_line: 3",
+        "\"expected_read_revision\":7",
+        "\"start_line\":3",
         "unreturned.rs",
     ] {
         assert!(rendered.contains(expected), "{rendered}");
@@ -166,9 +166,11 @@ fn cli_preserves_unknown_effects_and_native_blocks_and_provider_results() {
     ] {
         assert!(text(&body).contains(expected));
     }
-    let mut native = json!({"result":{"structuredContent":{"success":true,"output":{"content_delivery":"mcp_image"}},"content":[{"type":"image","data":"fixture","mimeType":"image/png"}]}});
+    let mut native = json!({"result":{"structuredContent":{"success":true,"output":{"content_delivery":"mcp_image"}},"content":[{"type":"image","data":"fixture","mimeType":"image/png"},{"type":"resource","resource":{"uri":"fixture://text","text":"native resource"}},{"type":"resource_link","uri":"fixture://download","name":"download"}]}});
     crate::mcp::cli::project_response(Some("observe_computer"), &mut native);
     assert_eq!(native["result"]["content"][1]["type"], "image");
+    assert_eq!(native["result"]["content"][2]["type"], "resource");
+    assert_eq!(native["result"]["content"][3]["type"], "resource_link");
     for name in ["mcp_tool", "plugin_tool", "ssh_resource"] {
         let mut provider = json!({"result":{"structuredContent":{"success":true,"output":output},"content":[{"type":"text","text":"provider-owned"}]}});
         let original = provider.clone();
@@ -458,7 +460,7 @@ async fn cli_default_project_discovery_and_direct_gateway_calls_agree() {
                 .unwrap()
                 .contains(&json!("project")));
         } else if params["name"] == "read_tool_manifest" {
-            assert!(text(&body).contains("mode: direct"));
+            assert!(text(&body).contains(r#""mode":"direct""#));
         } else {
             assert_eq!(body["result"]["isError"], true);
             assert!(!text(&body).contains("missing field"), "{}", text(&body));
@@ -525,7 +527,81 @@ fn cli_manifest_routes_match_the_advertised_surface() {
         let mut result = ToolResult::ok(
             json!({"name":name,"route":{"mode":"wrong"},"input_schema":webcodex_tool_contracts::input_schema_for_tool(name)}),
         );
-        crate::mcp::cli::project_manifest(&mut result, true, true);
+        crate::mcp::cli::project_manifest(&mut result, true);
+        crate::mcp::tool_exposure::ToolExposure::default().project_manifest(
+            &mut result,
+            McpSurface::Cli,
+            true,
+        );
         assert_eq!(result.output["route"]["mode"], mode);
     }
 }
+
+#[tokio::test]
+async fn cli_manifest_text_is_bounded_and_exact_schema_remains_complete() {
+    let (_tmp, db) = test_db();
+    let service = Service::new(build_test_router(
+        test_config(Some("secret")),
+        db,
+        Arc::new(test_runtime()),
+    ));
+    let (_, catalog) = post_cli(
+        &service,
+        "tools/call",
+        json!({"name":"read_tool_manifest","arguments":{}}),
+        true,
+    )
+    .await;
+    let rendered = text(&catalog);
+    assert!(
+        rendered.contains("[gateway via call_runtime_tool]"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("truncated: true"), "{rendered}");
+    assert!(!rendered.contains("present_work_result"));
+    assert!(!rendered.lines().any(|line| line.trim() == "[0]"));
+    assert!(rendered.len() < 12000, "{}", rendered.len());
+    let (_, exact) = post_cli(
+        &service,
+        "tools/call",
+        json!({"name":"read_tool_manifest","arguments":{"tool_name":"search_file_context"}}),
+        true,
+    )
+    .await;
+    let rendered = text(&exact);
+    let line = rendered
+        .lines()
+        .find_map(|line| line.strip_prefix("input_schema: "))
+        .unwrap();
+    let schema: Value = serde_json::from_str(line).unwrap();
+    assert!(schema["properties"].get("query").is_none());
+    assert!(schema["properties"]["queries"]["items"]["properties"]["pattern"].is_object());
+    assert!(rendered.contains("authority:"));
+    assert!(rendered.contains("route:"));
+    assert!(rendered.contains("preserving per-query batch failures"));
+}
+
+#[tokio::test]
+async fn cli_manifest_omitted_and_null_options_keep_the_catalog_bound() {
+    let (_tmp, db) = test_db();
+    let service = Service::new(build_test_router(
+        test_config(Some("secret")),
+        db,
+        Arc::new(test_runtime()),
+    ));
+    for params in [
+        json!({"name":"read_tool_manifest"}),
+        json!({"name":"read_tool_manifest","arguments":{"tool_name":null,"limit":null}}),
+    ] {
+        let (_, body) = post_cli(&service, "tools/call", params, true).await;
+        assert_eq!(body["result"]["isError"], false, "{body}");
+        assert!(
+            text(&body).contains("returned_count: 20"),
+            "{}",
+            text(&body)
+        );
+        assert!(text(&body).contains("truncated: true"));
+    }
+}
+#[path = "cli/text_projection.rs"]
+mod text_projection;

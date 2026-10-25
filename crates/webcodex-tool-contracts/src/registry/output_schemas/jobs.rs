@@ -388,6 +388,8 @@ fn structured_execution_output_properties() -> Vec<(&'static str, Value)> {
 
 fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
     vec![
+        ("output_hint", schema_type("string", "Output display limit and guidance for retaining full output in future executions; never authorizes replay.")),
+        ("timeout", schema_type("string", "Only on capped active handoff: effective seconds, requested seconds and the limiting tool or last-registered Runner policy.")),
         (
             "promoted_to_job",
             schema_type(
@@ -650,7 +652,7 @@ fn observe_jobs_output_schema() -> Value {
                 "pattern": "^~j[0-9]+$",
                 "minLength": 3,
                 "maxLength": webcodex_core::job_observation::MAX_OBSERVATION_REF_LEN,
-                "description": "Compact server-issued selector retained on the model-facing sparse item for the next ordinary observe_jobs follow-up."
+                "description": "Process-local selector available on canonical observations. Sparse model observations keep the restart-safe observation_token instead."
             },
             "exit_code": schema_type("integer", "Terminal process exit code when available and meaningful."),
             "command_execution_state": job_command_execution_state_schema(),
@@ -684,8 +686,8 @@ fn observe_jobs_output_schema() -> Value {
                 "description": "Diagnostic absolute cursor retained only with exceptional reset/truncation evidence; observation_token remains authoritative."
             },
             "ssh_resource": nullable_schema("string", "Named SSH resource when present on the observed Job."),
-            "purpose": nullable_schema("string", "Declared purpose retained on baseline/reset observations for disambiguation."),
-            "command_summary": nullable_schema("string", "Bounded safe command summary retained on baseline/reset observations for disambiguation."),
+            "purpose": nullable_schema("string", "Declared purpose retained on reset observations for disambiguation."),
+            "command_summary": nullable_schema("string", "Bounded safe command summary retained on reset observations for disambiguation."),
             "detected_summary": {"type": "object", "additionalProperties": true},
             "validation": validation_job_projection_schema(),
             "build_artifacts": build_artifacts_schema(),
@@ -950,10 +952,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ("failure_kind", nullable_schema("string", "Structured detached initiation failure kind.")),
                 ("tool_failure", schema_type("boolean", "True for WebCodex initiation/runtime failures.")),
                 ("terminal", schema_type("boolean", "False for active detached handoff; true when exact keyed replay finds the original Job already terminal.")),
-                ("requested_timeout_secs", schema_type("integer", "Caller-requested detached lifetime before protocol or Runner-policy clamping.")),
-                ("effective_timeout_secs", schema_type("integer", "Admission-effective detached lifetime after protocol and last-registered Runner-policy clamping.")),
-                ("runner_policy_max_timeout_secs", nullable_schema("integer", "Last-registered Runner policy timeout ceiling used for admission visibility; null for legacy Runners.")),
-                ("timeout_clamped", schema_type("boolean", "True when the admission-effective detached lifetime is below the caller-requested lifetime.")),
+                ("timeout", schema_type("string", "Only on capped active handoff: effective seconds, requested seconds and the limiting tool or last-registered Runner policy.")),
                 ("created_at", schema_type("integer", "Durable Job creation timestamp.")),
                 ("continuation", observe_job_continuation_schema()),
                 ("last_update_seq", nullable_schema("integer", "Latest agent update sequence when available.")),
@@ -1381,7 +1380,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             let mut schema = wrapped_output_schema(properties);
             schema["properties"]["output"]["allOf"] =
                 structured_execution_lifecycle_constraints("run_shell");
-            schema["description"] = json!("Ordinary proven synchronous terminal success is sparse: success=true implies completed exit 0 and no active Job. Runtime-selected command_summary, cwd, shell and any manage_ssh_resource remain explicit. Nonempty output, truncation/loss, expectations and sidecars remain. Failure, uncertainty and exceptional/recovery results retain rich lifecycle evidence; normal pending handoff remains execution_state plus continuation.");
+            schema["description"] = json!("Ordinary proven synchronous terminal success is sparse: success=true implies completed exit 0 and no active Job. Request echoes are omitted; remote target context and any manage_ssh_resource remain explicit. Nonempty output, truncation/loss, expectations and sidecars remain. Failure, uncertainty and exceptional/recovery results retain rich lifecycle evidence; normal pending handoff remains execution_state plus continuation.");
             for key in ["duration_ms", "exit_code", "command_started", "command_completed",
                 "command_ok", "failure_kind", "tool_failure", "executor", "execution_source",
                 "execution_state", "promoted_to_job", "terminal", "job_id", "job_status",
@@ -1408,7 +1407,6 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                         "required":["success", "output"]
                     },
                     "then": {"properties":{"output":{
-                        "required":["command_summary", "cwd", "shell"],
                         "not":{"anyOf":[
                             {"required":["duration_ms"]}, {"required":["exit_code"]},
                             {"required":["command_started"]}, {"required":["command_completed"]},
@@ -1984,9 +1982,10 @@ fn persistent_shell_output_schema() -> Value {
 fn job_summary_schema() -> Value {
     json!({
         "type": "object",
-        "description": "Bounded job metadata summary. Does not include stdout, stderr, command text, or log bodies.",
+        "description": "Bounded job metadata summary. Includes a bounded command preview for identification; no stdout/stderr bodies.",
         "properties": {
             "job_id": schema_type("string", "Runtime job id."),
+            "command_summary": schema_type("string", "Bounded command preview for distinguishing Jobs."),
             "kind": schema_type("string", "Job kind."),
             "status": schema_type("string", "Current job status."),
             "project": nullable_schema("string", "Project id, when known."),
@@ -2013,18 +2012,7 @@ fn job_summary_schema() -> Value {
             "recovery_reason_code": nullable_schema("string", "Structured bounded recovery reason code."),
             "last_update_seq": nullable_schema("integer", "Latest accepted runner update sequence.")
         },
-        "required": [
-            "job_id",
-            "kind",
-            "status",
-            "project",
-            "executor",
-            "created_at",
-            "started_at",
-            "ended_at",
-            "exit_code",
-            "activity"
-        ],
+        "required": ["job_id", "kind", "status", "created_at"],
         "additionalProperties": true
     })
 }

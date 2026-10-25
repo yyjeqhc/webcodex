@@ -238,7 +238,7 @@ fn resource_failure_fallbacks_use_canonical_presentation_policy() {
 #[tokio::test]
 async fn gateway_and_app_canonical_failures_use_request_presentation() {
     let (_tmp, db) = test_db();
-    let runtime = test_runtime().with_communication_database(db);
+    let runtime = workflow_runtime().with_communication_database(db);
     let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap);
     auth.is_bootstrap = true;
     for call_params in [

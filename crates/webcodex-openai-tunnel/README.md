@@ -200,6 +200,93 @@ Do not downgrade, delete receipt/protection history, switch hosts or change stat
 bypass replay protection. Restored connection readiness does not settle an old
 task's unknown result; archived run markers remain available for reconciliation.
 
+### Explicit local credential transition
+
+`authorize-local-credential` authorizes a credential-only change for an existing
+protected Tunnel. It preserves the original protection header, receipt journal
+and archived runs. It neither creates credentials nor changes a control-plane
+key, Tunnel ID, URL, configuration file or Host review decision. The operator
+must first stop the exact owner cleanly; an active marker, unknown shutdown,
+missing/corrupt history or concurrent owner blocks authorization. Ordinary
+restart and legacy recovery do not authorize a credential change.
+
+The operation requires two explicit trust inputs:
+
+- The fixed control plane truthfully supplies each command's original RFC3339
+  `created_at` enqueue time, including on delayed or repeated delivery.
+- The operator checks a trusted UTC source and confirms a whole-second UTC
+  cutoff later than the start of this operation. This is recorded as
+  `operator_attested`; the client does not independently verify clock accuracy
+  or interpret an empty poll as a queue barrier.
+
+The new binding permanently admits only commands whose valid enqueue timestamp
+is strictly after that cutoff. Old, equal, missing and malformed timestamps
+are rejected before local dispatch, across restarts and recovery. Every old
+admission receipt still suppresses its request ID, even if a repeated command
+claims a newer timestamp. This authority check also covers session termination.
+Bindings that have never transitioned retain their existing timestamp behavior.
+Response deadlines remain anchored to poll receipt; the cutoff is not a timeout.
+Do not substitute a fixed waiting period for this predicate.
+
+After checking those premises, with the existing control-plane configuration
+and original local authorization, run:
+
+```sh
+webcodex-tunnel authorize-local-credential \
+  --state-dir /absolute/existing/tunnel-runs \
+  --mcp.authorization file:/absolute/private/original-header \
+  --new-mcp-authorization file:/absolute/private/replacement-header \
+  --enqueue-after "$WEBCODEX_REBIND_CUTOFF_UTC" \
+  --expected-revision 0 \
+  --confirm-future-enqueue-cutoff
+```
+
+Both files hold complete local authorization headers and must stay private;
+the replacement file must be a bounded regular file, not a symlink, and on Unix
+must have no group/other permissions or extra hard links. `env:NAME` is also
+supported; literal credentials in arguments are rejected. The exact state path
+and all transition options are required, with no implicit environment defaults.
+Revision zero denotes the initial protected header. Later changes require the
+current revision and a strictly increasing cutoff. At most 16 transitions are
+retained; capacity exhaustion stops without eviction.
+
+Authorization appends a checksummed, linked record to the existing protection
+file; it does not rewrite its original header or any receipt. A synced immutable
+intent precedes the append. Only after success should the operator update the
+same host's protected local configuration to the authorized credential and
+restart its protected client. The JSON receipt reports the revision, cutoff,
+exact-retry status and unchanged configuration; it contains no credentials or
+binding hashes. Starting with the old binding is rejected. Older binaries also
+reject the extended protection format, so binary rollback requires a compatible
+build; never restore an older receipt/history snapshot as a rollback mechanism.
+
+If interrupted, retain all files and repeat only the same authorization inputs,
+including the original expected revision and cutoff. A complete matching record
+is synchronized again; a partial append is completed only against its intact,
+matching published intent and exact byte prefix. Normal startup never repairs
+a transition. Conflicting retries, a missing/corrupt intent or inconsistent
+history remain blocked. A failure between authorization and configuration update
+therefore leaves a stopped, diagnosable binding rather than selecting another
+credential automatically. Returning to an earlier credential is another explicit
+transition with a later cutoff, not a history rewind.
+
+Protocol reference: the official `openai/tunnel-client` checkout at
+`0e4201e5e17dac104a091a16afc5609f6ef68420`, `docs/protocol.md` and
+`docs/openapi.json`, defines `created_at` as enqueue time and keeps it separate
+from response deadlines. The
+[hosted service limits](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels#limits)
+describe an absolute request budget; that budget alone is not a local credential
+transition fence. If the operator cannot establish the two trust inputs above,
+the transition must not be authorized.
+
+For a live enqueue-field preflight, `webcodex server tunnel` accepts
+`WEBCODEX_TUNNEL_ENQUEUE_DIAGNOSTICS=1`. This defaults off and emits at most 16
+changed counter snapshots per process at its existing health cadence. Each
+`enqueue_timestamp_diagnostic` reports only valid/unverifiable timestamp counts,
+without request IDs, raw timestamps, payloads or credentials. A valid count
+establishes syntax observed on this connection, not independent proof of the
+control plane's clock or enqueue semantics. Disable it after preflight.
+
 The library owns no background tasks. `TunnelClient::run` owns its poll and worker futures and
 cancels them on shutdown. `Health` exposes safe local observations; readiness
 requires a successful poll and never claims that a ChatGPT connector was created.

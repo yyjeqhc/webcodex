@@ -934,6 +934,38 @@ async fn goal_workflow_unobserved_or_stale_card_never_wakes_even_when_attention_
 }
 
 #[tokio::test]
+async fn goal_workflow_delayed_hidden_card_requires_new_observation_without_new_epoch() {
+    for gap in [75_001, 180_000] {
+        let fixture = Workflow::new(true).await;
+        let observed_at = T0 + THRESHOLD - 1;
+        fixture.poll(observed_at);
+        let resumed_at = observed_at + gap;
+        assert_no_attention(&fixture.recheck(resumed_at).await);
+        assert_eq!(
+            fixture.counts(),
+            (0, 0),
+            "elapsed cards cannot create attention"
+        );
+
+        // A delayed callback can renew observation, but it cannot create a new
+        // meaningful-work epoch or bypass the ordinary server eligibility checks.
+        fixture.poll(resumed_at);
+        let attention = fixture.recheck(resumed_at).await;
+        assert!(attention.success, "{:?}", attention.output);
+        assert_eq!(attention.output["state_changed"], true);
+        let wake_id = attention.output["attention"]["wake_id"].clone();
+        for offset in [1, 15_000, 30_000, 60_000] {
+            fixture.poll(resumed_at + offset);
+            let replay = fixture.recheck(resumed_at + offset).await;
+            assert!(replay.success, "{:?}", replay.output);
+            assert_eq!(replay.output["state_changed"], false);
+            assert_eq!(replay.output["attention"]["wake_id"], wake_id);
+        }
+        assert_eq!(fixture.counts(), (1, 1));
+    }
+}
+
+#[tokio::test]
 async fn goal_workflow_partial_window_coverage_never_commits_attention() {
     let fixture = Workflow::new(true).await;
     for index in 0..16 {

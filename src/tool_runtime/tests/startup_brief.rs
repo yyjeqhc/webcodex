@@ -311,11 +311,12 @@ fn assert_builtin_workflow(output: &Value) {
     let checkpoint = details["checkpoint"].as_str().unwrap();
     for phrase in [
         "After a plan phase completes",
-        "_wc.control.before.goal_progress",
+        "call checkpoint_goal",
         "facts already true",
         "never pre-complete tests",
-        "checkpoint_goal remains valid standalone",
+        "no gateway or _wc.control fallback",
         "explicit update_goal",
+        "current client configuration",
         "cannot judge natural-language conditions",
     ] {
         assert!(checkpoint.contains(phrase), "{phrase}");

@@ -222,7 +222,7 @@ async fn execution_control_observe_direct_gateway_preserves_job_and_diagnostics(
 
 #[tokio::test]
 async fn execution_control_gateway_cannot_apply_to_unrelated_or_hidden_tools() {
-    let runtime = test_runtime();
+    let runtime = workflow_runtime();
     for tool in ["list_projects", "sync_goal_plan"] {
         let result = handle_mcp_request(
             &runtime,

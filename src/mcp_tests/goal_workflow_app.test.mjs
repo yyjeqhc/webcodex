@@ -89,12 +89,12 @@ test("near-attention and active Wake transitions temporarily use the 5s cadence"
   assert.equal(view.calls("goal_plan_recheck_attention").length, 0);
 });
 
-test("hidden cards use 60s polling, stay inside the 75s observation lease, and refresh immediately when visible", async () => {
+test("hidden cards use 30s polling, stay inside the 75s observation lease, and refresh immediately when visible", async () => {
   const view = await ready();
   await view.visibility(true);
   await view.fireTimers(12000);
   assert.equal(view.calls("sync_goal_plan").length, 1);
-  await view.fireTimers(60000);
+  await view.fireTimers(30000);
   assert.equal(view.calls("sync_goal_plan").length, 2);
   await view.reply(view.calls("sync_goal_plan")[1], toolResult({ goal_plan: plan }));
   await view.visibility(false);
@@ -108,31 +108,31 @@ test("an accepted sync restarts the hidden lease budget", async () => {
   await view.reply(view.calls("sync_goal_plan")[1], toolResult({ goal_plan: plan }));
   await view.visibility(true);
   assert.equal(view.timers.size, 1);
-  assert.equal([...view.timers.values()][0].delay, 60_000);
+  assert.equal([...view.timers.values()][0].delay, 30_000);
 });
 
 test("hiding after elapsed time keeps the next sync inside the observation lease", async () => {
   const view = await ready();
-  view.advanceTime(20_000);
+  view.advanceTime(40_000);
   await view.visibility(true);
   assert.equal(view.timers.size, 1);
   const delay = [...view.timers.values()][0].delay;
-  assert.equal(delay, 45_000);
-  await view.fireTimers(45_000);
+  assert.equal(delay, 25_000);
+  await view.fireTimers(25_000);
   assert.equal(view.calls("sync_goal_plan").length, 2);
 });
 
 test("a failed hidden sync keeps the lease budget measured from the last success", async () => {
   const view = await ready();
   await view.fireTimers(12_000);
-  view.advanceTime(20_000);
+  view.advanceTime(30_000);
   await view.visibility(true);
   await view.reject(view.calls("sync_goal_plan")[1]);
   assert.equal(view.timers.size, 1);
-  assert.equal([...view.timers.values()][0].delay, 33_000);
+  assert.equal([...view.timers.values()][0].delay, 23_000);
 });
 
-test("a hidden card past the lease budget syncs once immediately and then waits 60s", async () => {
+test("a hidden card past the lease budget syncs once immediately and then waits 30s", async () => {
   const view = await ready();
   view.advanceTime(65_000);
   await view.visibility(true);
@@ -141,7 +141,7 @@ test("a hidden card past the lease budget syncs once immediately and then waits 
   assert.equal(view.calls("sync_goal_plan").length, 2);
   await view.reject(view.calls("sync_goal_plan")[1]);
   assert.equal(view.timers.size, 1);
-  assert.equal([...view.timers.values()][0].delay, 60_000);
+  assert.equal([...view.timers.values()][0].delay, 30_000);
   assert.equal(view.calls("sync_goal_plan").length, 2);
 });
 
@@ -152,7 +152,9 @@ test("slow successful replies consume the hidden observation lease", async () =>
   await view.reply(view.calls("sync_goal_plan")[1], toolResult({ goal_plan: plan }));
   await view.visibility(true);
   // Server observation can precede reply delivery by the full response delay.
-  assert.equal([...view.timers.values()][0].delay, 57_000);
+  view.advanceTime(40_000);
+  await view.visibility(true);
+  assert.equal([...view.timers.values()][0].delay, 17_000);
 });
 
 test("terminal Goal stops polling and late visibility changes cannot restart it", async () => {
@@ -243,4 +245,56 @@ test("latency fields are bounded projection only and do not change fresh-turn se
   assert.equal(view.nodes["fresh-turn"].textContent, "Confirmed");
   assert.equal(view.nodes["host-delivery"].textContent, "Accepted");
   assert.match(view.nodes["last-resume"].textContent, /^Confirmed/);
+});
+
+test("hidden target leaves 35s scheduling slack before the 10s RPC budget", async () => {
+  const view = await ready();
+  await view.visibility(true);
+  assert.equal([...view.timers.values()][0].delay, 30_000);
+  view.advanceTime(35_000); // Host defers the scheduled callback beyond its target.
+  await view.fireTimers(30_000);
+  assert.equal(view.calls("sync_goal_plan").length, 2);
+  view.advanceTime(9_000);
+  await view.reply(view.calls("sync_goal_plan")[1], toolResult({ goal_plan: plan }));
+  assert.equal([...view.timers.values()][0].delay, 30_000);
+  assert.equal(view.sent.filter(message => message.method === "ui/message").length, 0);
+});
+
+test("elapsed hidden scheduling shortens the 30s target near lease expiry", async () => {
+  const view = await ready();
+  view.advanceTime(45_000);
+  await view.visibility(true);
+  assert.equal([...view.timers.values()][0].delay, 20_000);
+  await view.fireTimers(20_000);
+  await view.fireTimers(10_000); // Timeout consumes the reserved RPC budget.
+  assert.equal(view.calls("sync_goal_plan").length, 2);
+  assert.equal([...view.timers.values()][0].delay, 30_000, "expired budget backs off without a retry loop");
+  await view.teardown();
+  await view.visibility(false);
+  assert.equal(view.timers.size, 0);
+});
+
+test("a slow hidden reply uses request start rather than response arrival for the lease", async () => {
+  const view = await ready();
+  await view.visibility(true);
+  await view.fireTimers(30_000);
+  view.advanceTime(9_000);
+  await view.reply(view.calls("sync_goal_plan")[1], toolResult({ goal_plan: plan }));
+  view.advanceTime(40_000);
+  await view.visibility(true);
+  assert.equal([...view.timers.values()][0].delay, 16_000);
+});
+
+test("hidden callback after lease expiry sends one sync without catch-up bursts", async () => {
+  const view = await ready();
+  await view.visibility(true);
+  view.advanceTime(80_000);
+  await view.fireTimers(30_000);
+  await view.visibility(false);
+  await view.visibility(true);
+  await view.fireTimers(0);
+  assert.equal(view.calls("sync_goal_plan").length, 2, "visibility cannot duplicate the active sync");
+  await view.reject(view.calls("sync_goal_plan")[1]);
+  assert.equal([...view.timers.values()][0].delay, 30_000);
+  assert.equal(view.sent.filter(message => message.method === "ui/message").length, 0);
 });

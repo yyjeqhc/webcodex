@@ -11,6 +11,7 @@ use surface::RuntimeSurface;
 struct CallContext<'a> {
     runtime: &'a ToolRuntime,
     surface: crate::mcp::request_policy::McpSurface,
+    exposure: crate::mcp::tool_exposure::ToolExposure,
     default_project: Option<&'a str>,
     id: Option<Value>,
     auth: Option<&'a AuthContext>,
@@ -89,6 +90,10 @@ pub(in crate::mcp) async fn handle_call(
     let context = CallContext {
         runtime,
         surface,
+        exposure: runtime
+            .runtime_info
+            .mcp_tool_exposure
+            .resolve(surface, auth),
         default_project,
         id,
         auth,
@@ -203,6 +208,22 @@ impl ParsedCall {
                 return Err(McpOutcome::BadRequest(rpc_error(id, -32602, message)));
             }
         };
+        if invocation
+            .metadata
+            .control
+            .as_ref()
+            .is_some_and(|sidecars| {
+                sidecars
+                    .canonical_tools()
+                    .any(|name| !context.exposure.allows(name))
+            })
+        {
+            return Err(McpOutcome::BadRequest(rpc_error(
+                id,
+                -32602,
+                "Control operation is unavailable on the configured MCP tool surface",
+            )));
+        }
         if via_adaptive_runtime_gateway {
             let (target, arguments) =
                 match unwrap_adaptive_runtime_gateway_arguments(params.arguments) {
@@ -211,6 +232,13 @@ impl ParsedCall {
                         return Err(McpOutcome::BadRequest(rpc_error(id, -32602, message)));
                     }
                 };
+            if !context.exposure.allows(&target) {
+                return Err(McpOutcome::BadRequest(rpc_error(
+                    id,
+                    -32602,
+                    "Tool is unavailable on the configured MCP tool surface; refresh tools/list",
+                )));
+            }
             match mcp_adaptive_runtime_gateway_target_route(&target, stateless_2026) {
                 crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Gateway
                 | crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Direct => {
@@ -242,6 +270,19 @@ impl ParsedCall {
                     }
                     params.name = target;
                     params.arguments = arguments;
+                }
+                crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::DirectOnly => {
+                    if let Some(lc) = lifecycle.as_deref() {
+                        lc.dispatch_failed("direct_host_review_required");
+                        lc.dispatch_finished(false, Some(false), "direct_host_review_required");
+                    }
+                    return Err(McpOutcome::BadRequest(rpc_error(
+                        id,
+                        -32602,
+                        format!(
+                            "direct_host_review_required: '{target}' requires its own Host-reviewed callable descriptor; call_runtime_tool cannot invoke it. Refresh tools/list if the descriptor is unavailable. A Host refusal must not be retried through another route."
+                        ),
+                    )));
                 }
                 crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Unknown => {
                     if let Some(lc) = lifecycle.as_deref() {
@@ -359,6 +400,35 @@ impl PreparedRuntimeCall {
                     .entry("include_extension_catalog")
                     .or_insert(json!(false));
             }
+        }
+        if params.name == "read_tool_manifest" {
+            if context.surface == crate::mcp::request_policy::McpSurface::Cli {
+                if params.arguments.is_null() {
+                    params.arguments = json!({});
+                }
+                if let Some(arguments) = params.arguments.as_object_mut() {
+                    if arguments.get("tool_name").is_none_or(Value::is_null)
+                        && arguments.get("limit").is_none_or(Value::is_null)
+                    {
+                        arguments.insert(
+                            "limit".into(),
+                            json!(crate::mcp::cli::MANIFEST_DEFAULT_LIMIT),
+                        );
+                    }
+                }
+            }
+            metadata.discovery_tools = Some(
+                webcodex_tool_contracts::tool_definitions()
+                    .filter(|definition| {
+                        context.exposure.route(
+                            context.surface,
+                            definition.name,
+                            context.stateless_2026,
+                        ) != crate::model_surface::SuggestedToolCallRoute::Unavailable
+                    })
+                    .map(|definition| definition.name.to_owned())
+                    .collect(),
+            );
         }
         let runtime = context.runtime;
         let auth = context.auth;

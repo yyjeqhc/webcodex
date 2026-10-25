@@ -8,7 +8,7 @@
 
 use crate::tool_runtime::tool_definition::{
     adaptive_runtime_direct_tool_definitions, is_adaptive_runtime_direct_tool,
-    is_model_visible_tool_name,
+    is_model_visible_tool_name, lookup_tool_definition,
 };
 use crate::tool_runtime::ToolResult;
 #[cfg(test)]
@@ -21,6 +21,11 @@ pub(crate) const ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME: &str = "call_runtime_tool";
 pub(crate) const TOOL_SURFACE_AVAILABILITY_DIRECT: &str = "direct";
 pub(crate) const TOOL_SURFACE_AVAILABILITY_GATEWAY: &str = "gateway";
 pub(crate) const TOOL_SURFACE_AVAILABILITY_UNAVAILABLE: &str = "unavailable";
+
+pub(crate) fn tool_requires_individual_host_review(tool_name: &str) -> bool {
+    lookup_tool_definition(tool_name)
+        .is_some_and(|definition| definition.requires_individual_host_review())
+}
 
 pub(crate) fn tool_requires_direct_app_presentation(tool_name: &str) -> bool {
     matches!(
@@ -39,6 +44,7 @@ pub(crate) fn tool_requires_direct_app_presentation(tool_name: &str) -> bool {
 pub(crate) enum AdaptiveRuntimeGatewayTargetRoute {
     Gateway,
     Direct,
+    DirectOnly,
     Recursive,
     Unknown,
 }
@@ -84,6 +90,9 @@ pub(crate) fn adaptive_runtime_gateway_target_route(
     if target == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME {
         return AdaptiveRuntimeGatewayTargetRoute::Recursive;
     }
+    if tool_requires_individual_host_review(target) {
+        return AdaptiveRuntimeGatewayTargetRoute::DirectOnly;
+    }
     match adaptive_runtime_tool_invocation_route(target) {
         (TOOL_SURFACE_AVAILABILITY_DIRECT, None) => AdaptiveRuntimeGatewayTargetRoute::Direct,
         (TOOL_SURFACE_AVAILABILITY_GATEWAY, Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)) => {
@@ -118,6 +127,31 @@ pub(crate) fn suggested_tool_call_route(
         }
         _ => SuggestedToolCallRoute::Unavailable,
     }
+}
+
+/// Exact manifest route for canonical or adapter-projected discovery. A Host
+/// review requirement is never converted into a generic fallback.
+pub(crate) fn manifest_invocation_route(target: &str, route: SuggestedToolCallRoute) -> Value {
+    let primary = match route {
+        SuggestedToolCallRoute::Direct => json!({"mode":"direct", "tool":target}),
+        SuggestedToolCallRoute::Gateway(via) => {
+            json!({"mode":"gateway", "tool":via, "target":target})
+        }
+        SuggestedToolCallRoute::Unavailable => {
+            json!({"mode":"unavailable", "tool":Value::Null, "target":target})
+        }
+    };
+    let fallback = if route == SuggestedToolCallRoute::Direct
+        && target != ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+        && !tool_requires_individual_host_review(target)
+    {
+        json!({"mode":"gateway", "tool":ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME, "target":target,
+            "when":"direct_callable_unavailable",
+            "blocked_when_mcp_apps_enabled":tool_requires_direct_app_presentation(target)})
+    } else {
+        Value::Null
+    };
+    json!({"primary":primary, "fallback":fallback, "tool_manifest_registers_host_tool":false, "discovery_effect":"none"})
 }
 
 /// Project formally declared SuggestedToolCall schemas to the callable shape of
@@ -582,6 +616,27 @@ mod tests {
             assert_eq!(
                 adaptive_runtime_gateway_target_route(tool_name),
                 AdaptiveRuntimeGatewayTargetRoute::Direct
+            );
+        }
+    }
+
+    #[test]
+    fn individually_reviewed_tools_are_direct_without_gateway_replay() {
+        for definition in adaptive_runtime_direct_tool_definitions()
+            .into_iter()
+            .filter(|definition| definition.requires_individual_host_review())
+        {
+            assert_eq!(
+                adaptive_runtime_tool_invocation_route(definition.name),
+                (TOOL_SURFACE_AVAILABILITY_DIRECT, None)
+            );
+            assert_eq!(
+                adaptive_runtime_gateway_target_route(definition.name),
+                AdaptiveRuntimeGatewayTargetRoute::DirectOnly
+            );
+            assert_eq!(
+                suggested_tool_call_route(definition.name, false),
+                SuggestedToolCallRoute::Direct
             );
         }
     }

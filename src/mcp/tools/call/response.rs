@@ -89,25 +89,22 @@ impl RuntimeResponse {
         if tool_name == "read_tool_manifest" {
             project_mcp_model_manifest_defaults(&mut result);
             if context.surface == crate::mcp::request_policy::McpSurface::Cli {
-                crate::mcp::cli::project_manifest(
-                    &mut result,
-                    stateless_2026,
-                    context.default_project.is_some(),
-                );
+                crate::mcp::cli::project_manifest(&mut result, context.default_project.is_some());
             }
+            context
+                .exposure
+                .project_manifest(&mut result, context.surface, stateless_2026);
         }
         project_job_terminal_resume_suggested_call(
             app_enabled
-                && surface.capabilities.agent_continuation_app
+                && context.exposure.job_continuation
                 && tool_name == "wait_for_job_terminal",
             &mut result,
         );
         project_tool_result_suggested_calls(tool_name, &mut result, &|target| {
-            if context.surface == crate::mcp::request_policy::McpSurface::Cli {
-                crate::mcp::cli::suggested_route(target, stateless_2026)
-            } else {
-                mcp_suggested_tool_call_route(target, stateless_2026)
-            }
+            context
+                .exposure
+                .route(context.surface, target, stateless_2026)
         });
         // App display consumes the existing observation shape before the Host view
         // separates details. Keep only its bounded projection, not another log copy.

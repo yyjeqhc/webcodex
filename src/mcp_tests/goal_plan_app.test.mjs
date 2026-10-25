@@ -382,7 +382,7 @@ test("opt-in bounded timing tracks delayed hidden polls and slow/error RPC witho
   await view.reply(first, toolResult({ goal_plan: plan }));
   await view.visibility(true);
   view.advanceTime(80000); // Host throttling exceeds the 75s lease; no browser Wake.
-  await view.fireTimers(56000);
+  await view.fireTimers(30000);
   assert.equal(view.calls("sync_goal_plan").length, 2);
   await view.visibility(false);
   await view.visibility(true);

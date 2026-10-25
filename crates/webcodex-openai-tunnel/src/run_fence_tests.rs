@@ -242,7 +242,7 @@ fn oversized_receipt_history_is_rejected_without_reading_or_replacing_it() {
     drop(receipts);
     drop(owner);
     let file = private_options()
-        .open(&path.with_extension("receipts"))
+        .open(path.with_extension("receipts"))
         .unwrap();
     file.set_len(64_000_041).unwrap();
     drop(file);
@@ -263,18 +263,23 @@ fn restartable(
     RunFence::acquire_restartable(root, origin, tunnel, binding, None, |identity| {
         owner_absent(identity.owner_pid)
     })
+    .map(|(guard, receipts, cutoff)| {
+        assert_eq!(cutoff, None);
+        (guard, receipts)
+    })
 }
 
 #[test]
 fn protected_run_retains_the_exact_process_instance_for_reboot_pid_reuse() {
     let temp = root();
     let root = temp.path().canonicalize().unwrap();
-    let (owner, receipts) =
+    let (owner, receipts, cutoff) =
         RunFence::acquire_restartable(&root, ORIGIN, "instance", [1; 32], Some(123), |_| true)
             .unwrap();
+    assert_eq!(cutoff, None);
     drop(receipts);
     drop(owner);
-    let (next, _) =
+    let (next, _, _) =
         RunFence::acquire_restartable(&root, ORIGIN, "instance", [1; 32], Some(456), |old| {
             assert_eq!(old.owner_started, Some(123));
             true

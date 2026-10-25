@@ -27,6 +27,26 @@ pub(crate) struct ControlSidecars {
     pub(crate) after_success: Option<AfterSuccessControl>,
 }
 
+impl ControlSidecars {
+    pub(crate) fn canonical_tools(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.before
+            .iter()
+            .map(|control| canonical_tool(control.kind()))
+            .chain(self.communication.iter().flat_map(|control| {
+                control
+                    .before
+                    .iter()
+                    .chain(&control.after_success)
+                    .map(|message| canonical_tool(message.kind()))
+            }))
+            .chain(
+                self.after_success
+                    .iter()
+                    .map(|control| canonical_tool(control.kind())),
+            )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct CommunicationControl {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -187,7 +207,7 @@ impl CommunicationMessage {
     }
 }
 
-fn canonical_tool(kind: &str) -> &'static str {
+pub(crate) fn canonical_tool(kind: &str) -> &'static str {
     match kind {
         "goal_progress" => "checkpoint_goal",
         "wake_consume" => "consume_agent_wake",

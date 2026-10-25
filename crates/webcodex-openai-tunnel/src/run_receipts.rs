@@ -31,6 +31,24 @@ impl Receipts {
         binding: [u8; 32],
         required: bool,
     ) -> Result<Self, &'static str> {
+        Self::open_inner(path, binding, required, true)
+    }
+
+    /// Authorization must validate existing history without repairing even an
+    /// incomplete tail. Rebinding never changes or reseeds admission evidence.
+    pub(super) fn open_for_transition(
+        path: &Path,
+        binding: [u8; 32],
+    ) -> Result<Self, &'static str> {
+        Self::open_inner(path, binding, true, false)
+    }
+
+    fn open_inner(
+        path: &Path,
+        binding: [u8; 32],
+        required: bool,
+        repair_tail: bool,
+    ) -> Result<Self, &'static str> {
         let existing = match fs::symlink_metadata(path) {
             Ok(meta) => {
                 if !meta.is_file()
@@ -97,6 +115,9 @@ impl Receipts {
         // Complete records are checksummed; corruption is never silently repaired.
         let committed_length = HEADER_BYTES + count * RECORD_BYTES;
         if length != committed_length {
+            if !repair_tail {
+                return Err("tunnel_receipts_incomplete");
+            }
             file.set_len(committed_length)
                 .and_then(|_| file.sync_all())
                 .map_err(|_| "tunnel_receipts_io")?;

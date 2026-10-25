@@ -211,7 +211,7 @@ agent_continuation_wake_finish    # dispatch_accepted | delivery_unknown
 later model turn exact-consumes Wake
 ```
 
-The only card-creating entry is the explicit read `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)`, bound to the current `ui://webcodex/agent-continuation/v21` resource. Bind/recover/state/acquire/prepare/finish/unbind are globally ModelHidden and are projected only as App-visible tools on eligible Stateless MCP 2026 operator surfaces. They do not bind the resource again, so polling/coordination does not create a stream of custom cards. Ordinary communication and coding tools keep native Host presentation.
+The only card-creating entry is the explicit read `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)`, bound to the current `ui://webcodex/agent-continuation/v24` resource. Bind/recover/state/acquire/prepare/finish/unbind are globally ModelHidden and are projected only as App-visible tools on eligible Stateless MCP 2026 operator surfaces. They do not bind the resource again, so polling/coordination does not create a stream of custom cards. Ordinary communication and coding tools keep native Host presentation.
 
 The setup invariant is `create_agent_identity -> rotate_agent_continuation_endpoint -> present_agent_continuation -> normal final assistant response`; the card/tool result alone does not finish the presenting turn. The presentation response precedes any guaranteed View bind, and the presenting turn has no authoritative fully-mounted signal; continuing long coordinator work after presentation can therefore outlive the bounded Endpoint lease before a carrier exists. Verify the later exact-generation carrier with `list_agent_identities.production_auto_resume_available`; do not treat presentation success or ClientWindow activity as readiness/model-liveness proof.
 
@@ -247,7 +247,7 @@ Visible status distinguishes script activity, Host initialization, exact identit
 selection, and live binding/polling, with separate initialization, binding, and
 identity errors. Diagnostics do not display binding ids, claim fences, or consume
 tokens. `tools/list` and `resources/list` advertise only the canonical
-`ui://webcodex/agent-continuation/v21` and `ui://webcodex/goal-plan/v9` resources. Goal Plan now uses only its current resource (wire version 3), with no old Goal-resource aliases. The G5 projection keeps production carrier readiness, exact Goal-stall Wake lifecycle, Host delivery outcome, and exact-consume fresh-turn proof as separate bounded facts; it exposes no Wake/Attempt/Endpoint identifiers or continuation proofs.
+`ui://webcodex/agent-continuation/v24` and `ui://webcodex/goal-plan/v10` resources. Goal Plan now uses only its current resource (wire version 3), with no old Goal-resource aliases. The G5 projection keeps production carrier readiness, exact Goal-stall Wake lifecycle, Host delivery outcome, and exact-consume fresh-turn proof as separate bounded facts; it exposes no Wake/Attempt/Endpoint identifiers or continuation proofs.
 
 The v20 Agent View also accepts a valid `agent_continuation_ref` presentation
 input without treating its absent tuple as an invalid identity. That opaque ref

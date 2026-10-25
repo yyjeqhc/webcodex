@@ -16,6 +16,8 @@ pub(crate) struct State {
     pub first_poll_request_ms: AtomicU64,
     pub unsettled: AtomicUsize,
     pub rejected: AtomicUsize,
+    enqueue_timestamp_valid: AtomicU64,
+    enqueue_timestamp_unverifiable: AtomicU64,
 }
 /// A payload-free observation for embedding hosts and the standalone daemon.
 /// Counters are sampled independently; this is not an execution/replay ledger.
@@ -29,6 +31,37 @@ pub struct HealthSnapshot {
     pub rejected_commands: usize,
 }
 impl Health {
+    /// Payload-free preflight evidence; valid syntax alone does not establish
+    /// the control plane's truthfulness or the operator's clock attestation.
+    pub fn enqueue_timestamp_counts(&self) -> (u64, u64) {
+        (
+            self.0.enqueue_timestamp_valid.load(Ordering::Relaxed),
+            self.0
+                .enqueue_timestamp_unverifiable
+                .load(Ordering::Relaxed),
+        )
+    }
+
+    pub(crate) fn record_enqueue_timestamp(&self, valid: bool) {
+        let counter = if valid {
+            &self.0.enqueue_timestamp_valid
+        } else {
+            &self.0.enqueue_timestamp_unverifiable
+        };
+        let mut current = counter.load(Ordering::Relaxed);
+        while current != u64::MAX {
+            match counter.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
     pub fn snapshot(&self) -> HealthSnapshot {
         HealthSnapshot {
             schema_version: 1,
@@ -82,5 +115,29 @@ impl Health {
     }
     pub(crate) fn ready(&self, ready: bool) {
         self.0.ready.store(ready, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enqueue_counters_saturate_independently() {
+        let health = Health::default();
+        health
+            .0
+            .enqueue_timestamp_valid
+            .store(u64::MAX - 1, Ordering::Relaxed);
+        health.record_enqueue_timestamp(true);
+        health.record_enqueue_timestamp(true);
+        health.record_enqueue_timestamp(false);
+        assert_eq!(health.enqueue_timestamp_counts(), (u64::MAX, 1));
+        health
+            .0
+            .enqueue_timestamp_unverifiable
+            .store(u64::MAX, Ordering::Relaxed);
+        health.record_enqueue_timestamp(false);
+        assert_eq!(health.enqueue_timestamp_counts(), (u64::MAX, u64::MAX));
     }
 }

@@ -17,6 +17,7 @@ path = "src/bin/webcodex-tunnel/main.rs"
 required-features = ["cli"]
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures-util = "0.3"
 httpdate = "1"
 sha2 = "0.10"

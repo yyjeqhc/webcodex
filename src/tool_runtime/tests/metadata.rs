@@ -2406,8 +2406,16 @@ async fn runtime_status_preserves_allowlisted_effective_config_across_projection
     let config_object = config.as_object().expect("effective_config object");
     assert_eq!(
         config_object.len(),
-        3,
+        4,
         "effective_config must stay allowlisted"
+    );
+    assert_eq!(
+        config["mcp_tool_exposure"],
+        json!({
+            "adaptive":{"goals":false,"agent_continuation":false,"job_continuation":false},
+            "cli":{"goals":false,"agent_continuation":false,"job_continuation":false},
+            "oauth_client_overrides":0
+        })
     );
     assert_eq!(config["tool_request_trace_mode"], "full");
     let auth = config["auth"].as_object().expect("effective auth object");

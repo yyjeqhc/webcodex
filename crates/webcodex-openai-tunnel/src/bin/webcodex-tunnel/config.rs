@@ -1,15 +1,28 @@
 use std::{collections::BTreeMap, io::Read, net::SocketAddr, path::PathBuf, time::Duration};
 use webcodex_openai_tunnel::{
     policy::{DeadlinePolicy, Limits},
-    ControlPlaneIdentity, Credential, FixedMcpTarget, TunnelClient,
+    ControlPlaneIdentity, Credential, FixedMcpTarget, OperatorEnqueueCutoff, TunnelClient,
 };
 
 pub const HELP: &str = "webcodex-tunnel: standalone Secure MCP Tunnel client
 
-Usage: webcodex-tunnel [run|doctor|status] [OPTIONS]
+Usage: webcodex-tunnel [run|doctor|status|authorize-local-credential] [OPTIONS]
   run       Forward one main channel until Ctrl-C / SIGTERM (default)
   doctor    Validate configuration without network requests or starting a Tunnel
   status    Read the local health endpoint; exits 0 only when polling is ready
+  authorize-local-credential
+            Authorize a stopped protected Tunnel's credential transition; no network calls
+
+Credential transition only (all required, no environment defaults):
+  --new-mcp-authorization REF        env:NAME or private file:PATH; complete new header
+  --enqueue-after UTC               Whole-second RFC3339 UTC boundary
+  --expected-revision N             Current protected-history revision (initially 0)
+  --confirm-future-enqueue-cutoff    Operator checked trusted UTC: boundary is after operation start
+  --state-dir PATH                  Exact existing protected history directory
+The original MCP authorization remains --mcp.authorization. Authorization preserves
+all receipts and disables the old binding; then update the host's protected local
+configuration normally. Exact retries retain the original cutoff and revision.
+An unreadable/uncertain history remains blocked; never reset it. See the README.
 
 Options (flags override environment):
   --control-plane.base-url URL       CONTROL_PLANE_BASE_URL (https://api.openai.com)
@@ -39,6 +52,7 @@ pub enum Action {
     Run,
     Doctor,
     Status,
+    AuthorizeLocalCredential,
 }
 pub struct Config {
     pub action: Action,
@@ -49,6 +63,7 @@ pub struct Config {
     pub base: String,
     pub tunnel: String,
     options: BTreeMap<String, String>,
+    confirm_cutoff: bool,
 }
 
 impl Config {
@@ -58,6 +73,7 @@ impl Config {
         let mut options = BTreeMap::new();
         let mut json = false;
         let mut stdin_eof = false;
+        let mut confirm_cutoff = false;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -81,11 +97,16 @@ impl Config {
                     stdin_eof = true;
                     continue;
                 }
-                "run" | "doctor" | "status" if !named_action => {
+                "--confirm-future-enqueue-cutoff" if !confirm_cutoff => {
+                    confirm_cutoff = true;
+                    continue;
+                }
+                "run" | "doctor" | "status" | "authorize-local-credential" if !named_action => {
                     named_action = true;
                     action = match arg.as_str() {
                         "doctor" => Action::Doctor,
                         "status" => Action::Status,
+                        "authorize-local-credential" => Action::AuthorizeLocalCredential,
                         _ => Action::Run,
                     };
                     continue;
@@ -106,6 +127,9 @@ impl Config {
                     | "--state-dir"
                     | "--max-response-seconds"
                     | "--concurrency"
+                    | "--new-mcp-authorization"
+                    | "--enqueue-after"
+                    | "--expected-revision"
             ) {
                 return Err("unsupported option; see --help (argument values are not logged)");
             }
@@ -122,6 +146,31 @@ impl Config {
         }
         // Help and version must work without credentials, state or a valid environment.
         let informational = matches!(action, Action::Help | Action::Version | Action::BuildInfo);
+        if !informational {
+            let transition = matches!(action, Action::AuthorizeLocalCredential);
+            let transition_options = [
+                "--new-mcp-authorization",
+                "--enqueue-after",
+                "--expected-revision",
+            ];
+            if transition {
+                if !confirm_cutoff
+                    || !transition_options
+                        .iter()
+                        .all(|name| options.contains_key(*name))
+                    || !options.contains_key("--state-dir")
+                    || stdin_eof
+                {
+                    return Err("credential transition requires explicit state, new credential, revision, UTC cutoff and operator confirmation");
+                }
+            } else if confirm_cutoff
+                || transition_options
+                    .iter()
+                    .any(|name| options.contains_key(*name))
+            {
+                return Err("credential transition options require authorize-local-credential");
+            }
+        }
         let listen = if informational {
             "127.0.0.1:8080".into()
         } else {
@@ -174,7 +223,39 @@ impl Config {
             base,
             tunnel,
             options,
+            confirm_cutoff,
         })
+    }
+
+    pub fn authorize_local_credential(
+        &self,
+        client: &TunnelClient,
+    ) -> Result<webcodex_openai_tunnel::run_fence::CredentialTransition, &'static str> {
+        if !matches!(self.action, Action::AuthorizeLocalCredential) || !self.confirm_cutoff {
+            return Err("explicit credential transition confirmation required");
+        }
+        let root = self
+            .state_dir
+            .as_deref()
+            .ok_or("explicit state directory required")?;
+        let cutoff = OperatorEnqueueCutoff::attest_future_utc(
+            self.options
+                .get("--enqueue-after")
+                .ok_or("UTC cutoff required")?,
+        )?;
+        let revision = self
+            .options
+            .get("--expected-revision")
+            .and_then(|s| s.parse::<u64>().ok())
+            .ok_or("invalid expected history revision")?;
+        let reference = self
+            .options
+            .get("--new-mcp-authorization")
+            .ok_or("new credential required")?;
+        let value = transition_secret(reference)?;
+        let credential =
+            Credential::authorization(&value).map_err(|_| "invalid new local authorization")?;
+        client.authorize_local_credential_transition(root, credential, cutoff, revision)
     }
 
     pub fn client(&self) -> Result<TunnelClient, &'static str> {
@@ -212,6 +293,56 @@ impl Config {
         }
         TunnelClient::new(cp, target, policy, limits).map_err(|_| "invalid Tunnel configuration")
     }
+}
+
+fn transition_secret(reference: &str) -> Result<String, &'static str> {
+    if let Some(name) = reference.strip_prefix("env:") {
+        return std::env::var(name)
+            .ok()
+            .filter(|s| !s.is_empty() && s.len() <= 8192)
+            .ok_or("new credential environment reference unavailable");
+    }
+    let path = reference
+        .strip_prefix("file:")
+        .ok_or("new credential requires env:NAME or private file:PATH")?;
+    if !std::path::Path::new(path).is_absolute() {
+        return Err("new credential file path must be absolute");
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    }
+    let initial = std::fs::symlink_metadata(path).map_err(|_| "new credential file unavailable")?;
+    if !initial.is_file() || initial.file_type().is_symlink() {
+        return Err("new credential file must be a regular file, not a symlink");
+    }
+    let file = options
+        .open(path)
+        .map_err(|_| "new credential file unavailable")?;
+    let meta = file
+        .metadata()
+        .map_err(|_| "new credential file unavailable")?;
+    if !meta.is_file() || meta.len() > 8192 {
+        return Err("new credential file must be a bounded regular file");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.mode() & 0o077 != 0 || meta.nlink() != 1 {
+            return Err("new credential file must be private and not hard-linked");
+        }
+    }
+    let mut value = String::new();
+    file.take(8193)
+        .read_to_string(&mut value)
+        .map_err(|_| "new credential file unreadable")?;
+    if value.len() > 8192 {
+        return Err("new credential file too large");
+    }
+    Ok(value.trim_end_matches(['\r', '\n']).to_owned())
 }
 fn setting(
     options: &BTreeMap<String, String>,

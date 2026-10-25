@@ -881,8 +881,8 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
         .iter()
         .find(|job| job["job_id"] == job_id)
         .expect("durable shell Job in list_jobs");
-    assert!(listed_job.as_object().unwrap().contains_key("activity"));
-    assert!(listed_job["activity"].is_null());
+    assert!(listed_job.get("activity").is_none());
+    assert!(listed_job["command_summary"].is_string());
 
     let observed = runtime
         .observe_jobs_for_auth(
@@ -1058,7 +1058,9 @@ async fn long_run_shell_fast_terminal_returns_ordinary_result_without_visible_jo
     }
     assert_eq!(result.output["stdout_tail"], "fast\n");
     assert_eq!(result.output["stderr_tail"], "warning\n");
-    assert_eq!(result.output["command_summary"], "printf fast");
+    for key in ["command_summary", "purpose"] {
+        assert!(result.output.get(key).is_none(), "{key}");
+    }
     assert!(result.output["cwd"].is_string());
     assert!(result.output["shell"].is_string());
     assert_run_shell_result_matches_schema(&result);
@@ -1365,10 +1367,10 @@ async fn run_shell_failure_reports_command_started_and_output_tail() {
     assert!(!result.success);
     let error = result.error.as_deref().unwrap_or("");
     assert!(error.contains("Command exited with status 7"));
-    assert!(error.contains("No files were modified by WebCodex itself"));
+    assert!(!error.contains("No files were modified by WebCodex itself"));
     assert!(error.contains("stdout_tail"));
     assert!(error.contains("stderr_tail"));
-    assert!(error.contains("Retry guidance"));
+    assert!(!error.contains("Retry guidance"));
     assert_eq!(result.output["exit_code"], 7);
     assert_eq!(result.output["stdout_tail"], "run-shell-out");
     assert_eq!(result.output["stderr_tail"], "run-shell-err");

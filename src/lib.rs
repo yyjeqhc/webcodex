@@ -276,6 +276,8 @@ pub async fn run_server_with_shutdown(
         );
     }
     let config = Config::from_env();
+    let mcp_tool_exposure =
+        mcp::tool_exposure::ToolExposureConfig::from_env().map_err(std::io::Error::other)?;
     let mcp_host_timing =
         mcp_host::McpHostTimingOverrides::from_env().map_err(std::io::Error::other)?;
     let mcp_host_policy = mcp_host::McpHostConfig::from_env()
@@ -381,6 +383,7 @@ explicitly allow remote shared-key auth."
     let mut runtime_info =
         tool_runtime::RuntimeInfo::from_config_with_quic_config(&config, &quic_cfg);
     runtime_info.tunnels = tunnels.status();
+    runtime_info.mcp_tool_exposure = mcp_tool_exposure;
     let runtime_info = Arc::new(runtime_info);
     let runtime_state_dir = config.runtime_state_dir();
     let mut tool_runtime_builder =

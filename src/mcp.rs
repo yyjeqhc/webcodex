@@ -8,6 +8,7 @@ mod protocol;
 mod request_policy;
 mod resources;
 mod response;
+pub(crate) mod tool_exposure;
 mod tools;
 mod workbench;
 
@@ -1326,6 +1327,10 @@ async fn handle_mcp_request_for_surface(
 ) -> McpOutcome {
     let server_mcp_apps_enabled =
         server_mcp_apps_enabled && surface != request_policy::McpSurface::Cli;
+    let exposure = runtime
+        .runtime_info
+        .mcp_tool_exposure
+        .resolve(surface, auth);
     let stateless_2026 = protocol_era == McpProtocolEra::Stateless2026;
     let resource_read_bypasses_runtime_read = request.method == "resources/read"
         && resources::resource_read_bypasses_runtime_read(&request.params);
@@ -1412,7 +1417,8 @@ async fn handle_mcp_request_for_surface(
         "ping" if !stateless_2026 => rpc_result(id, json!({})),
         "tools/list" => {
             if surface == request_policy::McpSurface::Cli {
-                let result = cli::tools_list(auth, default_project.is_some());
+                let result =
+                    cli::tools_list_with_exposure(auth, default_project.is_some(), exposure);
                 return McpOutcome::Ok(rpc_result(
                     id,
                     if stateless_2026 {
@@ -1433,9 +1439,32 @@ async fn handle_mcp_request_for_surface(
             .await;
         }
         "resources/list" if runtime_resource_method => {
-            return resources::handle_list(runtime, id, mcp_app_enabled);
+            let mut outcome = resources::handle_list(runtime, id, mcp_app_enabled);
+            if let McpOutcome::Ok(body) = &mut outcome {
+                if let Some(resources) = body
+                    .pointer_mut("/result/resources")
+                    .and_then(Value::as_array_mut)
+                {
+                    resources.retain(|resource| {
+                        resource["uri"]
+                            .as_str()
+                            .is_some_and(|uri| exposure.allows_resource(uri))
+                    });
+                }
+            }
+            return outcome;
         }
         "resources/read" if runtime_resource_method => {
+            if request.params["uri"]
+                .as_str()
+                .is_some_and(|uri| !exposure.allows_resource(uri))
+            {
+                return McpOutcome::BadRequest(rpc_error(
+                    id,
+                    -32602,
+                    "MCP App resource is unavailable on the configured tool surface",
+                ));
+            }
             return resources::handle_read(
                 runtime,
                 request.params,

@@ -176,6 +176,17 @@ fn test_runtime() -> ToolRuntime {
     ToolRuntime::new_for_tests()
 }
 
+/// Workflow/App fixtures explicitly opt into the surface they exercise.
+fn with_workflow_tools(mut runtime: ToolRuntime) -> ToolRuntime {
+    std::sync::Arc::make_mut(&mut runtime.runtime_info).mcp_tool_exposure =
+        crate::mcp::tool_exposure::ToolExposureConfig::all_enabled();
+    runtime
+}
+
+fn workflow_runtime() -> ToolRuntime {
+    with_workflow_tools(test_runtime())
+}
+
 /// Build a runtime with an explicit MCP startup snapshot, so tests assert the
 /// frozen values instead of holding process-global env guards across requests.
 fn test_runtime_with_mcp_snapshot(
@@ -314,6 +325,8 @@ mod execution_feedback;
 mod file_import;
 #[path = "mcp_tests/goal_plan_app.rs"]
 mod goal_plan_app;
+#[path = "mcp_tests/host_review.rs"]
+mod host_review;
 #[path = "mcp_tests/http_transport.rs"]
 mod http_transport;
 #[path = "mcp_tests/invocation_envelope.rs"]
@@ -348,6 +361,8 @@ mod runtime_tools;
 mod ssh_resource;
 #[path = "mcp_tests/structured_failure.rs"]
 mod structured_failure;
+#[path = "mcp_tests/tool_exposure.rs"]
+mod tool_exposure;
 #[path = "mcp_tests/tools.rs"]
 mod tools;
 #[path = "mcp_tests/work_result_app.rs"]

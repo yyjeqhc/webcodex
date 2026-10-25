@@ -7,7 +7,6 @@ use serde_json::{json, Value};
 use webcodex_tool_contracts::tool_call::WebcodexResourceKind;
 
 pub(crate) const RESOURCE_PREFIX: &str = "webcodex-resource://";
-const SOURCE_LIMIT: usize = 2000;
 
 #[derive(Debug, PartialEq, Eq)]
 enum ResourceIdentity {

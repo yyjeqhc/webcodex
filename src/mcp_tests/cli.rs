@@ -582,6 +582,102 @@ async fn cli_manifest_text_is_bounded_and_exact_schema_remains_complete() {
 }
 
 #[tokio::test]
+async fn published_edit_selector_schemas_reject_runtime_conflicts() {
+    use webcodex_tool_contracts::test_support::validate_schema_instance;
+
+    let choices = [None, Some(Value::Null), Some(json!(1))];
+    let mut cases = Vec::new();
+    for occurrence in &choices {
+        for count in &choices {
+            let mut edit = json!({"kind":"replace_exact","old_text":"old","new_text":"new"});
+            for (key, value) in [("occurrence", occurrence), ("expected_match_count", count)] {
+                if let Some(value) = value {
+                    edit[key] = value.clone();
+                }
+            }
+            let conflict = occurrence.as_ref().is_some_and(Value::is_number)
+                && count.as_ref().is_some_and(Value::is_number);
+            let has_null = occurrence.as_ref().is_some_and(Value::is_null)
+                || count.as_ref().is_some_and(Value::is_null);
+            cases.push((
+                json!({"project":"demo","changes":[{
+                    "kind":"edit","path":"a.rs","expected_read_revision":123,"edits":[edit]
+                }]}),
+                !conflict && !has_null,
+            ));
+        }
+    }
+    let mut mixed = json!({"project":"demo","changes":[{
+        "kind":"edit","path":"a.rs","expected_read_revision":123,"edits":[
+            {"kind":"insert_before","anchor_text":"anchor","new_text":"prefix","occurrence":1},
+            {"kind":"replace_exact","old_text":"old","new_text":"new","expected_match_count":2}
+        ]
+    }]});
+    cases.push((mixed.clone(), true));
+    mixed["changes"][0]["edits"][1]["occurrence"] = json!(1);
+    cases.push((mixed, false));
+
+    for compact in [false, true] {
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_test_router(
+            test_config(Some("secret")),
+            db,
+            Arc::new(test_runtime_with_mcp_settings(compact, false)),
+        ));
+        for cli in [false, true] {
+            for stateless in [false, true] {
+                let params = |value| {
+                    if stateless {
+                        mcp_2026_params(value)
+                    } else {
+                        value
+                    }
+                };
+                let (status, listed) =
+                    post_cli(&service, "tools/list", params(json!({})), cli).await;
+                assert_eq!(status, StatusCode::OK, "{listed}");
+                let descriptor = listed["result"]["tools"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|tool| tool["name"] == "edit_project_files")
+                    .expect("published editor");
+                let (status, manifest) = post_cli(
+                    &service, "tools/call",
+                    params(json!({"name":"read_tool_manifest","arguments":{"tool_name":"edit_project_files"}})),
+                    cli,
+                ).await;
+                assert_eq!(status, StatusCode::OK, "{manifest}");
+                let exact = if cli {
+                    let line = text(&manifest)
+                        .lines()
+                        .find_map(|line| line.strip_prefix("input_schema: "))
+                        .expect("exact CLI manifest schema");
+                    serde_json::from_str::<Value>(line).unwrap()
+                } else {
+                    manifest["result"]["structuredContent"]["output"]["input_schema"].clone()
+                };
+                for (source, schema) in [
+                    ("tools/list", &descriptor["inputSchema"]),
+                    ("manifest", &exact),
+                ] {
+                    assert!(schema.is_object(), "{source}: {manifest}");
+                    for (request, expected) in &cases {
+                        assert_eq!(
+                            validate_schema_instance(request, schema).is_ok(),
+                            *expected,
+                            "compact={compact} cli={cli} stateless={stateless} {source}: {request}"
+                        );
+                    }
+                    eprintln!("edit_selector_schema compact={compact} cli={cli} stateless={stateless} source={source} bytes={}",
+                        serde_json::to_vec(schema).unwrap().len());
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn cli_manifest_omitted_and_null_options_keep_the_catalog_bound() {
     let (_tmp, db) = test_db();
     let service = Service::new(build_test_router(

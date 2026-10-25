@@ -452,13 +452,13 @@ fn observation_schemas_do_not_repeat_static_continuation_semantics() {
         .iter()
         .find(|variant| variant["properties"].get("suggested_call").is_some())
         .expect("observe_jobs full batch output");
-    // Both the full batch and model-facing sparse batch have closed wait
-    // objects, so newly emitted wait context must be described by both.
+    // Full canonical, all-success sparse and mixed projected batches each
+    // advertise the same closed shared-wait context.
     let wait_variants = variants
         .iter()
         .filter(|variant| variant["properties"].get("wait").is_some())
         .collect::<Vec<_>>();
-    assert_eq!(wait_variants.len(), 2);
+    assert_eq!(wait_variants.len(), 3);
     for variant in wait_variants {
         let wait_properties = &variant["properties"]["wait"]["properties"];
         for field in ["update_kind"] {
@@ -468,6 +468,17 @@ fn observation_schemas_do_not_repeat_static_continuation_semantics() {
             );
         }
     }
+    let projected = variants
+        .iter()
+        .find(|variant| variant["properties"]["items"]["items"]["anyOf"].is_array())
+        .expect("mixed observation batch projection");
+    let projected_items = projected["properties"]["items"]["items"]["anyOf"]
+        .as_array()
+        .expect("canonical and compact projected items");
+    assert_eq!(projected_items.len(), 2);
+    assert!(projected_items[1]["required"]
+        .as_array()
+        .is_some_and(|required| required.contains(&json!("index"))));
     let item_output = &full["properties"]["items"]["items"]["properties"]["output"]["anyOf"][0];
     assert!(
         item_output["properties"]

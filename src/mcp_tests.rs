@@ -321,6 +321,8 @@ mod conformance;
 mod execution_control;
 #[path = "mcp_tests/execution_feedback.rs"]
 mod execution_feedback;
+#[path = "mcp_tests/experience_baseline.rs"]
+mod experience_baseline;
 #[path = "mcp_tests/file_import.rs"]
 mod file_import;
 #[path = "mcp_tests/goal_plan_app.rs"]

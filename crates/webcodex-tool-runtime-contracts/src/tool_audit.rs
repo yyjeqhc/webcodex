@@ -2124,8 +2124,10 @@ impl ToolCallAuditProjection for ToolCall {
                 message,
                 delivery_key,
                 kind,
+                priority,
             } => serde_json::json!({
                 "kind": kind,
+                "priority": priority,
                 "project": project,
                 "session_id": session_id,
                 "message_chars": message.chars().count(),

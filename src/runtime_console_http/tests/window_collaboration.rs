@@ -268,12 +268,13 @@ async fn window_collaboration_app_pages_are_window_scoped_read_only_and_independ
     record_window_event(&db, &auth, client_window.key(), Some(project), None, 5000);
     for i in 0..9 {
         let result = runtime
-            .work_result_send_message_with_kind(
+            .work_result_send_message_with_options(
                 project.into(),
                 None,
                 format!("saved-{i}"),
                 format!("history-key-{i}"),
                 "question",
+                "normal",
                 Some(&auth),
                 Some(&client_window),
             )

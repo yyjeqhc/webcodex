@@ -499,6 +499,16 @@ pub enum SessionMessagePriority {
     High,
 }
 
+impl SessionMessagePriority {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Normal => "normal",
+            Self::High => "high",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionOutcome {
     AutoApproved,

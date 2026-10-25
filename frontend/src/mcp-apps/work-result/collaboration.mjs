@@ -38,7 +38,7 @@ export function createCollaborationRenderer({document, root, formatAge, delivery
         if (entry.copy.textContent !== row.message) entry.copy.textContent = row.message;
         const kind = node('span', 'message-kind'); kind.textContent = KINDS[row.kind] || 'Note';
         entry.footer.replaceChildren(kind);
-        for (const text of [row.priority === 'high' ? 'High priority' : null, deliveryLabel(row),
+        for (const text of [row.priority === 'high' ? 'High priority' : row.priority === 'low' ? 'Low priority' : null, deliveryLabel(row),
           answered.has(row.message_id) ? 'Reply received' : null,
           row.context_session_id ? 'Session · ' + row.context_session_id.slice(8, 14) : null]) {
           if (!text) continue;

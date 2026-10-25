@@ -141,7 +141,7 @@ impl ToolRuntime {
             sender_peer_id: sender_peer_id.clone(),
             recipient_peer_id: peer_id.clone(),
             kind: kind.as_str().to_string(),
-            priority: priority_name(priority).to_string(),
+            priority: priority.as_str().to_string(),
             message,
             tags,
             requires_ack,
@@ -411,14 +411,6 @@ impl ToolRuntime {
             ack_message_ids,
             std::time::Instant::now() + std::time::Duration::from_secs(10),
         );
-    }
-}
-
-fn priority_name(priority: sessions::SessionMessagePriority) -> &'static str {
-    match priority {
-        sessions::SessionMessagePriority::Low => "low",
-        sessions::SessionMessagePriority::Normal => "normal",
-        sessions::SessionMessagePriority::High => "high",
     }
 }
 

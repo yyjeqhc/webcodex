@@ -13,12 +13,18 @@ async function setup() {
   view.toolResult({ work_result: { ...baseState, collaboration: page([row('current', 200)], true) } });
   await view.initialize(); return view;
 }
-test('disjoint head refresh preserves the missing-page boundary', async () => {
+test('disjoint head refresh never splices across the gap and reloads one head page', async () => {
   const view = await setup();
   view.toolResult({work_result: {...baseState, state_version: 'wr2_' + 'c'.repeat(64), collaboration: page([row('jump', 500)], true)}});
+  assert.deepEqual([...view.nodes.messages.children].map(node => node.getAttribute('data-message-id')), ['wc_msg_jump']);
+  await flush();
+  const head = view.calls('get_work_result_state').at(-1);
+  assert.deepEqual(JSON.parse(JSON.stringify(head.params.arguments.collaboration)), { limit: 50 });
+  await view.reply(head, toolResult({work_result_collaboration: page([row('before-jump', 450), row('jump', 500)], true)}));
+  assert.deepEqual([...view.nodes.messages.children].map(node => node.getAttribute('data-message-id')), ['wc_msg_before-jump', 'wc_msg_jump']);
   view.nodes.historyOlder.onclick(); await flush();
   const call = view.calls('get_work_result_state').at(-1);
-  assert.equal(call.params.arguments.collaboration.before_message_id, 'wc_msg_jump');
+  assert.equal(call.params.arguments.collaboration.before_message_id, 'wc_msg_before-jump');
   await view.reply(call, toolResult({work_result_collaboration: page([row('gap', 400)], true)}));
   view.nodes.historyOlder.onclick(); await flush();
   assert.equal(view.calls('get_work_result_state').at(-1).params.arguments.collaboration.before_message_id, 'wc_msg_gap');
@@ -80,4 +86,22 @@ test('history DOM remains bounded while all older pages remain navigable', async
   }
   assert.equal(view.nodes.historyOlder.hidden, false);
   assert.equal(view.nodes.historyLatest.hidden, false);
+});
+test('priority travels with the send and the confirmed row appears before the history read', async () => {
+  const view = await setup();
+  view.nodes.messageInput.value = 'Stop after this test'; view.nodes.messagePriority.value = 'high';
+  view.nodes.composer.onsubmit({preventDefault() {}}); await flush();
+  const call = view.calls('send_work_result_message')[0];
+  assert.equal(call.params.arguments.priority, 'high');
+  assert.equal(call.params.arguments.kind, 'guidance');
+  await view.reply(call, toolResult({ success: true, message_id: 'wc_msg_sent', replayed: false, state_changed: true }));
+  const historyRead = view.calls('get_work_result_state').find(item => item.params.arguments.collaboration);
+  assert.ok(historyRead, 'history still reconciles the receipt');
+  const ids = [...view.nodes.messages.children].map(node => node.getAttribute('data-message-id'));
+  assert.deepEqual(ids, ['wc_msg_current', 'wc_msg_sent']);
+  const sent = view.nodes.messages.children[1];
+  assert.equal(sent.children[2].textContent, 'Stop after this test');
+  assert(sent.children.at(-1).children.some(item => item.textContent === 'High priority'));
+  await view.reply(historyRead, toolResult({ work_result_collaboration: page([row('current', 200), {...row('sent', 300, 'Stop after this test'), priority: 'high'}], true) }));
+  assert.deepEqual([...view.nodes.messages.children].map(node => node.getAttribute('data-message-id')), ['wc_msg_current', 'wc_msg_sent']);
 });

@@ -274,6 +274,9 @@ pub enum ToolCall {
         delivery_key: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         kind: Option<SessionMessageKind>,
+        /// Optional conversational priority; defaults to normal and never gates execution.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        priority: Option<SessionMessagePriority>,
     },
 
     /// Work Result App-only lazy read from one opaque frozen final-changes snapshot.

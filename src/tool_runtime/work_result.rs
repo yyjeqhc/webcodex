@@ -227,35 +227,15 @@ impl ToolRuntime {
         ToolResult::ok(json!({"work_result_collaboration":page}))
     }
 
-    #[cfg(test)]
-    pub(crate) async fn work_result_send_message(
-        &self,
-        project: String,
-        session_id: Option<String>,
-        message: String,
-        delivery_key: String,
-        auth: Option<&AuthContext>,
-        window: Option<&ClientWindow>,
-    ) -> ToolResult {
-        self.work_result_send_message_with_kind(
-            project,
-            session_id,
-            message,
-            delivery_key,
-            "guidance",
-            auth,
-            window,
-        )
-        .await
-    }
-
-    pub(crate) async fn work_result_send_message_with_kind(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn work_result_send_message_with_options(
         &self,
         project: String,
         session_id: Option<String>,
         message: String,
         delivery_key: String,
         kind: &str,
+        priority: &str,
         auth: Option<&AuthContext>,
         window: Option<&ClientWindow>,
     ) -> ToolResult {
@@ -271,7 +251,7 @@ impl ToolRuntime {
             session_id.as_deref(),
             Some(&project),
             kind,
-            "normal",
+            priority,
             true,
             message,
             delivery_key,

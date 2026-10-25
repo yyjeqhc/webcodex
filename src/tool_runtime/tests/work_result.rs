@@ -1153,7 +1153,7 @@ async fn work_result_collaboration_is_window_first_without_creating_session() {
         ToolProtocolCapabilities, ToolTransport,
     };
     let send = runtime.call_tool_with_invocation_metadata(
-        ToolCallRequest { tool_name: "send_work_result_message".into(), arguments: json!({"project":project,"message":"Check tests","delivery_key":"card-1"}) },
+        ToolCallRequest { tool_name: "send_work_result_message".into(), arguments: json!({"project":project,"message":"Check tests","delivery_key":"card-1","priority":"high"}) },
         ToolCallContext { transport: ToolTransport::Mcp, session_id: None, auth: Some(&auth), window: Some(&window), record_oauth_scope_denials: false, host_file_import_trust: HostFileImportTrust::Untrusted },
         ToolInvocationMetadata::default(), ToolProtocolCapabilities {work_result_app:true,..Default::default()},
     ).await;
@@ -1161,12 +1161,15 @@ async fn work_result_collaboration_is_window_first_without_creating_session() {
     let send = send.result.unwrap();
     assert!(send.output.get("operator_messages").is_none());
     assert!(send.success, "{:?}", send.error);
+    assert_eq!(send.output["priority"], "high");
     let replay = runtime
-        .work_result_send_message(
+        .work_result_send_message_with_options(
             project.clone(),
             None,
             "Check tests".into(),
             "card-1".into(),
+            "guidance",
+            "high",
             Some(&auth),
             Some(&window),
         )
@@ -1214,6 +1217,7 @@ async fn work_result_collaboration_is_window_first_without_creating_session() {
     let messages = &state.output["work_result"]["collaboration"]["messages"];
     assert_eq!(messages[0]["message_id"], send.output["message_id"]);
     assert_eq!(messages[0]["source"], "operator");
+    assert_eq!(messages[0]["priority"], "high");
     assert!(messages[0]["first_projected_at_ms"].is_null());
     let count: i64 = db
         .conn_for_tests()

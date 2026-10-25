@@ -118,13 +118,15 @@ impl ToolRuntime {
                 message,
                 delivery_key,
                 kind,
+                priority,
             } => {
-                self.work_result_send_message_with_kind(
+                self.work_result_send_message_with_options(
                     project,
                     session_id,
                     message,
                     delivery_key,
                     kind.map(|kind| kind.as_str()).unwrap_or("guidance"),
+                    priority.unwrap_or_default().as_str(),
                     auth,
                     window,
                 )

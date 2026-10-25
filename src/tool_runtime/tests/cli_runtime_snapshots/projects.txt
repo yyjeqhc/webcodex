@@ -3,7 +3,4 @@ agent:cli-runtime-files:demo | demo | <ROOT> | online
 capabilities:
   git_available: false
   recommended_for_smoke: false
-description: null
-resolved_shell_profile: null
-shell_profile_status: not_configured
 source: agent_registered

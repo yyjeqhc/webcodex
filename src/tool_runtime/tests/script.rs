@@ -1330,7 +1330,7 @@ async fn run_script_session_defaults_and_evidence_are_body_and_stdin_free() {
     .await;
     let result = task.await.unwrap();
     assert!(result.success);
-    assert!(result.output.get("cwd").is_none());
+    assert_eq!(result.output["cwd"], "frontend");
 
     let summary = runtime
         .sessions

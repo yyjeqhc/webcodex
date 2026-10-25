@@ -45,8 +45,6 @@ observation_ref: ~j2
 changed_count: 0
 failed_count: 1
 output_truncated: false
-requested_count: 2
-returned_count: 2
 succeeded_count: 1
 terminal_count: 1
 wait:

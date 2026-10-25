@@ -1,6 +1,6 @@
 isError: false
-src/sample.txt:2:
-src/sample.txt:4:
+src/sample.txt:2
+src/sample.txt:4
 path: src
 pattern_mode: literal
 ==> src/sample.txt:1-5 (read_revision 101)
@@ -12,6 +12,4 @@ pattern_mode: literal
 total_lines: 5
 coalesced_read_count: 1
 project: agent:cli-runtime-files:demo
-read_error: null
 read_request_count: 2
-read_success: true

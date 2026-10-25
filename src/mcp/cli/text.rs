@@ -36,6 +36,30 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
     }
     if let Some(fields) = output.as_object_mut() {
         fields.remove("peer_awareness");
+        // Native LSP failures already name the exact code and message in the
+        // error header. Keep the code and all state/recovery fields.
+        if !success
+            && matches!(
+                tool,
+                "get_lsp_status"
+                    | "list_document_symbols"
+                    | "read_document_diagnostics"
+                    | "read_symbol_hover"
+                    | "list_workspace_symbols"
+                    | "find_definition"
+                    | "find_references"
+                    | "read_call_hierarchy"
+            )
+            && fields
+                .get("code")
+                .and_then(Value::as_str)
+                .zip(fields.get("message").and_then(Value::as_str))
+                .is_some_and(|(code, message)| {
+                    structured["error"].as_str() == Some(format!("{code}: {message}").as_str())
+                })
+        {
+            fields.remove("message");
+        }
     }
     match tool {
         "read_tool_manifest" if success => render_manifest(&mut text, output),
@@ -46,6 +70,8 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
         "list_jobs" if success => compact::inventory(&mut text, output, "jobs"),
         "list_projects" if success => compact::inventory(&mut text, output, "projects"),
         "list_document_symbols" if success => compact::symbols(&mut text, output),
+        "list_workspace_symbols" if success => compact::workspace_symbols(&mut text, output),
+        "run_job" if success => compact::job_started(&mut text, output),
         "observe_jobs" | "wait_for_job_readiness" => compact::jobs(&mut text, output),
         "run_shell" | "run_process" | "run_script" | "run_detached_process" => {
             compact::execution(&mut text, output)
@@ -61,6 +87,14 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
                 }
                 if let Some(reads) = fields.remove("reads") {
                     render_reads(&mut text, reads);
+                }
+                // An empty read error is redundant only when the producer
+                // confirms success. Partial/failed read diagnostics stay visible.
+                if fields.get("read_success") == Some(&Value::Bool(true)) {
+                    fields.remove("read_success");
+                    if fields.get("read_error") == Some(&Value::Null) {
+                        fields.remove("read_error");
+                    }
                 }
             }
             render_fields(&mut text, &output);
@@ -382,6 +416,28 @@ fn render_search_batch(text: &mut String, mut output: Value) {
     }
 }
 
+fn render_search_context(text: &mut String, path: &str, matched: &mut Value, key: &str) {
+    let Some(lines) = matched[key].as_array().filter(|lines| {
+        lines.iter().all(|line| {
+            line.as_object().is_some_and(|fields| fields.len() == 2)
+                && line["line"].as_u64().is_some_and(|number| number > 0)
+                && line["text"].is_string()
+        })
+    }) else {
+        // Unknown context shapes retain every field in the generic projection.
+        return;
+    };
+    for line in lines {
+        let _ = writeln!(
+            text,
+            "{path}-{}-{}",
+            line["line"],
+            line["text"].as_str().unwrap()
+        );
+    }
+    matched.as_object_mut().unwrap().remove(key);
+}
+
 fn render_search(text: &mut String, mut output: Value) {
     if output["files"].as_array().is_some_and(|files| {
         files
@@ -404,14 +460,36 @@ fn render_search(text: &mut String, mut output: Value) {
         }
     }
     if let Some(matches) = output.get_mut("matches").and_then(Value::as_array_mut) {
-        for mut matched in std::mem::take(matches) {
-            let _ = writeln!(
-                text,
-                "{}:{}:{}",
-                matched["path"].as_str().unwrap_or("?"),
-                matched["line"],
-                matched["preview"].as_str().unwrap_or("")
-            );
+        let grouped = matches.iter().any(|matched| {
+            ["context_before", "context_after"].iter().any(|key| {
+                matched[*key]
+                    .as_array()
+                    .is_some_and(|lines| !lines.is_empty())
+            })
+        });
+        for (index, mut matched) in std::mem::take(matches).into_iter().enumerate() {
+            // Keep context groups separate instead of deduplicating overlapping
+            // lines: a later hit must retain its own matching-line marker.
+            if grouped && index > 0 {
+                text.push_str("--\n");
+            }
+            let valid = matched["path"].is_string()
+                && matched["line"].as_u64().is_some_and(|line| line > 0)
+                && matched.get("preview").is_none_or(Value::is_string);
+            if !valid {
+                render_fields(text, &matched);
+                continue;
+            }
+            let path = compact::one_line(&matched["path"]);
+            render_search_context(text, &path, &mut matched, "context_before");
+            if let Some(preview) = matched.get("preview").and_then(Value::as_str) {
+                let _ = writeln!(text, "{path}:{}:{preview}", matched["line"]);
+            } else {
+                // search_file_context removes previews already covered by its
+                // versioned read ranges. The match location still matters.
+                let _ = writeln!(text, "{path}:{}", matched["line"]);
+            }
+            render_search_context(text, &path, &mut matched, "context_after");
             if let Some(fields) = matched.as_object_mut() {
                 for key in ["path", "line", "preview", "read_hint"] {
                     fields.remove(key);

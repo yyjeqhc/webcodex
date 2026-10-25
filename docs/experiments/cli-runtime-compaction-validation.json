@@ -1,0 +1,725 @@
+{
+  "format": "webcodex.cli_runtime_compaction_validation.v1",
+  "captured_date_utc": "2026-10-25",
+  "environment": {
+    "machine": "mini",
+    "repository": "/Users/yyjeqhc/git/webcodex",
+    "target": "aarch64-apple-darwin",
+    "rustc": "1.96.0 (ac68faa20 2026-05-25)",
+    "profile": "test, unoptimized",
+    "producer": "in-process Runtime with bounded local Runner test transport; actual CLI/MCP projection",
+    "native_server_runner_started": false
+  },
+  "measurement": {
+    "primary": "raw CLI text UTF-8 bytes",
+    "characters": "Rust chars(): Unicode scalar values",
+    "response_json_bytes": "diagnostic serialized MCP response size only",
+    "samples": "one before and one after capture per named Runtime fixture sample",
+    "not_measured": [
+      "Host tokens",
+      "ChatGPT/Claude Code/Codex conversation cost",
+      "remote end-to-end latency",
+      "production throughput"
+    ],
+    "dynamic_values": "Raw counters include the actual opaque identities and revisions. A later correctness run can differ by revision digit width; normalized snapshot sizes are not savings."
+  },
+  "artifacts": {
+    "before": {
+      "file": "/tmp/webcodex-pr3-before-5c5a224f-w2bzu_1f/manifest.json",
+      "sha256": "2366a7d4c60685947d640598d9861e63d69b567ac1f6be5960f34a1df3026e49",
+      "binary": "/tmp/webcodex-pr3-before-5c5a224f-w2bzu_1f/webcodex-lib-before",
+      "binary_sha256": "d6237e1bfd73d085c01b092e8ec6984faf0e4f72d3a1c271bc60797e7d50b4a2",
+      "source_head": "5c5a224f6e10d1ce68b93c1e1d9858477eb6f636",
+      "source_tree": "acf1e7860b57eff166ca9dfcd6c5f7a942df327c",
+      "source_patch": "foundation.patch",
+      "source_patch_sha256": "5f23a6ec8d7a3f96cbbb173587458818bdcea1fe81c4f43757eb4ad50308a8ee",
+      "foundation_file_sha256": {
+        "scripts/e2e_cli_runtime_output.py": "18ed5accf28225d0cb18787131c59bd34bfbcd5c405b9e38016285d77fe5c24f",
+        "scripts/measure_cli_runtime_projection.py": "0eead0db0b793ba395606082b006377dae4ddbfb5a87073440559444fd70aa18",
+        "src/mcp_tests/cli/text_projection.rs": "9cf65ac1ed6a25d9296f8abeff7ee149366ffdc8a98ac30598f1167284637245",
+        "src/tool_runtime/tests/cli_runtime_projection.rs": "9a06d90a57513cf98e1e75e9df8010d2315f2b6e8d0175d68107a6323af789a7",
+        "src/tool_runtime/tests/cli_runtime_snapshots/README.md": "6f4c5990cfb983de31da0b9b58a255c9c51aa6238e89c800438f6731970b7525",
+        "src/tool_runtime/tests/support/runner.rs": "4b7af41958b59524bcd2d14b03405233121fe4bd4d509a3dad90205edab98437"
+      },
+      "renderer_file_sha256": {
+        "src/mcp/cli/text.rs": "fbde691b88f8c27d37dd7e264d3883327f7f3e769a47f3b07e248e013f64acb6",
+        "src/mcp/cli/text/compact.rs": "df813c5dd08f1c07fad86ebfb337d51f983ba709c14e1e56d15b1d91d2043f81",
+        "src/tool_runtime/result_projection.rs": "003a7d689c9995789643a702e45ec7f35f3536a664f31b048ea8b5f8959b5517",
+        "src/tool_runtime/result_projection/execution.rs": "824b975c327e8fb347fbcd2edfbcdd7e442063d360207b74507c561aa467ceab"
+      }
+    },
+    "after": {
+      "file": "/tmp/webcodex-pr3-after-4cba98a5-lf4xhxsd/manifest.json",
+      "sha256": "9267f1387f81f7464b6bc76e707b6824f46efff6a073dbdf08b7c6f6e225ad20",
+      "binary": "/tmp/webcodex-pr3-after-4cba98a5-lf4xhxsd/webcodex-lib-after",
+      "binary_sha256": "158d85d332e4e9775803fe68ad153808924e400d7e750eecd530b17c44c7e16c",
+      "source_head": "4cba98a56e9fdab142d16391cc8344d732c70105",
+      "source_tree": "3d0b9d82ca09ab1148ab2a683b8dbba44259e332",
+      "source_patch": "projection.patch",
+      "source_patch_sha256": "cae0f3308e92cfac5f2b5c44bf1faf222dc04c3f6334584bec82cb351135f871",
+      "file_sha256": {
+        "src/mcp/cli/text.rs": "759a60fb58e357accaca40393d66b15c30c8e067cdc5a16276875026f467c909",
+        "src/mcp/cli/text/compact.rs": "0bdb41e18060f014651fb9ece557b6b4e1223dd52e3a56c551866cc31c1b8f68",
+        "src/mcp_tests/cli/text_projection.rs": "2759b8a835ea067fd110e4d8e4b04968576e472f50e8dc5d4ac630cbdf163f48",
+        "src/tool_runtime/result_projection.rs": "96a0ef2de97541a670ec00b0da6ae8566606eb69ccaebbe5b0268da6169587df",
+        "src/tool_runtime/result_projection/execution.rs": "96d58b8e786a57bc90a2824c3bc62cef54a18632285a84b77a27e5af99626760",
+        "src/tool_runtime/result_projection/registry/tests.rs": "d524aa3de1224af1835a99d59d434b5ab8523b6268039b0c8b144d81748eacb1",
+        "src/tool_runtime/tests/cli_runtime_projection.rs": "d023c4912cf7825bdc883a50336dcb77a1f5ea193efa5da799ffcf1a3a9f8bf4",
+        "src/tool_runtime/tests/execution_projection.rs": "f572a623447b1be09f9503aab0a4450db2b877fcfb04f5a2cf433c34e12a3f54",
+        "src/tool_runtime/tests/process.rs": "378de80d3401273a0260a1e651dbb8e759792a608be19d559860744360f20b33",
+        "src/tool_runtime/tests/script.rs": "595010666a5fd63c4ad3cdd0127c809e18402f9a1ac89348fae9661da88fc020",
+        "src/tool_runtime/tests/validation_success_projection.rs": "57261f2c8d9ce89796e233433311cce740d3f9b5b6fde4c2b457ef5c88186f6c"
+      }
+    },
+    "build_command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "webcodex",
+      "--lib",
+      "--no-run",
+      "--message-format=json-render-diagnostics"
+    ]
+  },
+  "baseline": {
+    "valid_samples": 22,
+    "product_regression": "one aggregate presentation assertion after all samples; compact search, default Process redundancy, and lost explicit Process cwd on real success and exit-7 failure",
+    "tests": {
+      "process_neighbors": {
+        "command": [
+          "/tmp/webcodex-pr3-before-5c5a224f-w2bzu_1f/webcodex-lib-before",
+          "--exact",
+          "tool_runtime::tests::process::run_process_enqueues_only_typed_argv_and_reports_completed_exit_codes",
+          "tool_runtime::tests::process::run_process_short_timeout_stays_direct_without_job_headroom",
+          "tool_runtime::tests::process::run_process_fast_prestart_rejection_retains_not_started_through_the_hidden_job",
+          "tool_runtime::tests::process::run_process_session_default_cwd_applies_without_default_shell",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "counts": {
+          "failed": 0,
+          "ignored": 0,
+          "passed": 4
+        },
+        "exit_code": 0
+      },
+      "runtime_before": {
+        "command": [
+          "/tmp/webcodex-pr3-before-5c5a224f-w2bzu_1f/webcodex-lib-before",
+          "tool_runtime::tests::cli_runtime_projection::",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "exit_code": 101,
+        "counts": {
+          "failed": 1,
+          "ignored": 0,
+          "passed": 3
+        },
+        "verified_presentation_red": true
+      },
+      "cli_neighbors": {
+        "command": [
+          "/tmp/webcodex-pr3-before-5c5a224f-w2bzu_1f/webcodex-lib-before",
+          "mcp::tests::cli::",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "counts": {
+          "failed": 0,
+          "ignored": 1,
+          "passed": 30
+        },
+        "exit_code": 0
+      }
+    },
+    "excluded_attempts": "Two earlier Process responder failures were harness faults: start_process_job was not handled as native argv with typed terminal Job evidence. They are excluded from product-red counts and measurements."
+  },
+  "tests": {
+    "cli-refresh": {
+      "command": [
+        "/tmp/webcodex-pr3-after-4cba98a5-lf4xhxsd/webcodex-lib-after",
+        "mcp::tests::cli::text_projection::",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "counts": {
+        "failed": 0,
+        "ignored": 1,
+        "passed": 22
+      },
+      "exit_code": 0,
+      "update_snapshots": true
+    },
+    "execution-context-and-budgets": {
+      "command": [
+        "/tmp/webcodex-pr3-after-4cba98a5-lf4xhxsd/webcodex-lib-after",
+        "--exact",
+        "tool_runtime::tests::process::execution_timeout_matrix_preserves_form_limits_and_runner_caps",
+        "tool_runtime::tests::process::execution_timeout_matrix_rejects_zero_before_dispatch",
+        "tool_runtime::tests::process::execution_timeout_matrix_observes_same_job_after_start_failure_timeout_and_unknown",
+        "tool_runtime::tests::process::execution_timeout_matrix_admission_errors_remain_typed_without_connection_hints",
+        "tool_runtime::tests::process::structured_entries_apply_runner_ceiling_and_only_explain_background_caps",
+        "tool_runtime::tests::process::run_process_enqueues_only_typed_argv_and_reports_completed_exit_codes",
+        "tool_runtime::tests::process::structured_execution_fast_terminal_jobs_project_back_without_visible_duplicates",
+        "tool_runtime::tests::process::run_process_terminal_success_is_sparse_after_full_session_effect_recording",
+        "tool_runtime::tests::process::run_process_fast_terminal_projection_bounds_lines_with_explicit_loss_notice",
+        "tool_runtime::tests::process::run_process_session_default_cwd_applies_without_default_shell",
+        "tool_runtime::tests::process::structured_execution_fast_outcome_unknown_preserves_visible_recovery_job",
+        "tool_runtime::tests::process::run_process_short_timeout_stays_direct_without_job_headroom",
+        "tool_runtime::tests::script::run_script_wire_is_typed_body_free_command_and_supports_more_than_32_kib",
+        "tool_runtime::tests::script::python_script_preserves_typed_body_argv_stdin_cwd_and_nonzero_exit",
+        "tool_runtime::tests::script::run_script_fast_success_projects_back_and_removes_the_hidden_job",
+        "tool_runtime::tests::script::run_script_session_defaults_and_evidence_are_body_and_stdin_free",
+        "tool_runtime::tests::script::run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_truthful",
+        "tool_runtime::tests::script::run_script_fast_missing_interpreter_retains_not_started_through_the_hidden_job",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "counts": {
+        "failed": 0,
+        "ignored": 0,
+        "passed": 18
+      },
+      "exit_code": 0,
+      "update_snapshots": false
+    },
+    "projections-and-snapshots": {
+      "command": [
+        "/tmp/webcodex-pr3-after-4cba98a5-lf4xhxsd/webcodex-lib-after",
+        "mcp::tests::cli::",
+        "tool_runtime::tests::cli_runtime_projection::",
+        "tool_runtime::result_projection::",
+        "tool_runtime::tests::execution_projection::",
+        "tool_runtime::tests::validation_success_projection::",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "counts": {
+        "passed": 72,
+        "failed": 0,
+        "ignored": 1
+      },
+      "exit_code": 0,
+      "update_snapshots": false
+    },
+    "runtime-refresh": {
+      "command": [
+        "/tmp/webcodex-pr3-after-4cba98a5-lf4xhxsd/webcodex-lib-after",
+        "tool_runtime::tests::cli_runtime_projection::",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "counts": {
+        "failed": 0,
+        "ignored": 0,
+        "passed": 4
+      },
+      "exit_code": 0,
+      "update_snapshots": true
+    }
+  },
+  "test_summary_extraction": "Counts come from anchored final libtest summary lines in each preserved log, excluding embedded example output.",
+  "normal_mode_result": {
+    "passed": 90,
+    "failed": 0,
+    "ignored": 1,
+    "ignored_test": "mcp::tests::cli::text_projection::cli_runtime_replay_captured_native_response"
+  },
+  "post_build_foundation_changes": {
+    "foundation_commit": "4cba98a56e9fdab142d16391cc8344d732c70105",
+    "changes": [
+      "test root spelling replacement ordered by string length for macOS/Linux snapshot parity",
+      "native smoke reads an explicit empty env file and verifies nonempty symbol name/path/range; CLI and Adaptive requests documented separately"
+    ],
+    "effect": "No change to measured raw before text or the preserved old renderer; only three normalized cwd snapshot strings changed. The opt-in native replay test does not use this normalizer."
+  },
+  "samples": [
+    {
+      "after": {
+        "name": "projects",
+        "normalized_text_utf8_bytes": 162,
+        "response_json_bytes": 294,
+        "text_chars": 200,
+        "text_utf8_bytes": 200
+      },
+      "before": {
+        "name": "projects",
+        "normalized_text_utf8_bytes": 246,
+        "response_json_bytes": 381,
+        "text_chars": 284,
+        "text_utf8_bytes": 284
+      },
+      "name": "projects",
+      "text_chars_saved": 84,
+      "text_utf8_bytes_saved": 84,
+      "normalized_snapshots": {
+        "before": "isError: false\nagent:cli-runtime-files:demo | demo | <ROOT> | online\ncapabilities:\n  git_available: false\n  recommended_for_smoke: false\ndescription: null\nresolved_shell_profile: null\nshell_profile_status: not_configured\nsource: agent_registered\n",
+        "after": "isError: false\nagent:cli-runtime-files:demo | demo | <ROOT> | online\ncapabilities:\n  git_available: false\n  recommended_for_smoke: false\nsource: agent_registered\n"
+      }
+    },
+    {
+      "after": {
+        "name": "files",
+        "normalized_text_utf8_bytes": 32,
+        "response_json_bytes": 109,
+        "text_chars": 17,
+        "text_utf8_bytes": 17
+      },
+      "before": {
+        "name": "files",
+        "normalized_text_utf8_bytes": 32,
+        "response_json_bytes": 109,
+        "text_chars": 17,
+        "text_utf8_bytes": 17
+      },
+      "name": "files",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    },
+    {
+      "after": {
+        "name": "tracked_folded",
+        "normalized_text_utf8_bytes": 106,
+        "response_json_bytes": 186,
+        "text_chars": 91,
+        "text_utf8_bytes": 91
+      },
+      "before": {
+        "name": "tracked_folded",
+        "normalized_text_utf8_bytes": 106,
+        "response_json_bytes": 186,
+        "text_chars": 91,
+        "text_utf8_bytes": 91
+      },
+      "name": "tracked_folded",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    },
+    {
+      "after": {
+        "name": "tracked_flat",
+        "normalized_text_utf8_bytes": 107,
+        "response_json_bytes": 187,
+        "text_chars": 92,
+        "text_utf8_bytes": 92
+      },
+      "before": {
+        "name": "tracked_flat",
+        "normalized_text_utf8_bytes": 107,
+        "response_json_bytes": 187,
+        "text_chars": 92,
+        "text_utf8_bytes": 92
+      },
+      "name": "tracked_flat",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    },
+    {
+      "after": {
+        "name": "search_context",
+        "normalized_text_utf8_bytes": 255,
+        "response_json_bytes": 341,
+        "text_chars": 236,
+        "text_utf8_bytes": 240
+      },
+      "before": {
+        "name": "search_context",
+        "normalized_text_utf8_bytes": 358,
+        "response_json_bytes": 455,
+        "text_chars": 339,
+        "text_utf8_bytes": 343
+      },
+      "name": "search_context",
+      "text_chars_saved": 103,
+      "text_utf8_bytes_saved": 103,
+      "normalized_snapshots": {
+        "before": "isError: false\n==> query 0\nsrc/sample.txt:2:needle 中文\ncontext_after:\n  [0]\n    line: 3\n    text: between\ncontext_before:\n  [0]\n    line: 1\n    text: before\nsrc/sample.txt:4:needle again\ncontext_after:\n  [0]\n    line: 5\n    text: after\ncontext_before:\n  [0]\n    line: 3\n    text: between\ncontext_after: 1\ncontext_before: 1\npath: src\npattern_mode: literal\n",
+        "after": "isError: false\n==> query 0\nsrc/sample.txt-1-before\nsrc/sample.txt:2:needle 中文\nsrc/sample.txt-3-between\n--\nsrc/sample.txt-3-between\nsrc/sample.txt:4:needle again\nsrc/sample.txt-5-after\ncontext_after: 1\ncontext_before: 1\npath: src\npattern_mode: literal\n"
+      }
+    },
+    {
+      "after": {
+        "name": "search_file_context",
+        "normalized_text_utf8_bytes": 291,
+        "response_json_bytes": 392,
+        "text_chars": 285,
+        "text_utf8_bytes": 289
+      },
+      "before": {
+        "name": "search_file_context",
+        "normalized_text_utf8_bytes": 329,
+        "response_json_bytes": 432,
+        "text_chars": 323,
+        "text_utf8_bytes": 327
+      },
+      "name": "search_file_context",
+      "text_chars_saved": 38,
+      "text_utf8_bytes_saved": 38,
+      "normalized_snapshots": {
+        "before": "isError: false\nsrc/sample.txt:2:\nsrc/sample.txt:4:\npath: src\npattern_mode: literal\n==> src/sample.txt:1-5 (read_revision 101)\n1 | before\n2 | needle 中文\n3 | between\n4 | needle again\n5 | after\ntotal_lines: 5\ncoalesced_read_count: 1\nproject: agent:cli-runtime-files:demo\nread_error: null\nread_request_count: 2\nread_success: true\n",
+        "after": "isError: false\nsrc/sample.txt:2\nsrc/sample.txt:4\npath: src\npattern_mode: literal\n==> src/sample.txt:1-5 (read_revision 101)\n1 | before\n2 | needle 中文\n3 | between\n4 | needle again\n5 | after\ntotal_lines: 5\ncoalesced_read_count: 1\nproject: agent:cli-runtime-files:demo\nread_request_count: 2\n"
+      }
+    },
+    {
+      "after": {
+        "name": "shell_success",
+        "normalized_text_utf8_bytes": 21,
+        "response_json_bytes": 96,
+        "text_chars": 6,
+        "text_utf8_bytes": 6
+      },
+      "before": {
+        "name": "shell_success",
+        "normalized_text_utf8_bytes": 76,
+        "response_json_bytes": 156,
+        "text_chars": 61,
+        "text_utf8_bytes": 61
+      },
+      "name": "shell_success",
+      "text_chars_saved": 55,
+      "text_utf8_bytes_saved": 55,
+      "normalized_snapshots": {
+        "before": "isError: false\nstdout_tail:\nhello\n\ncwd: .\nshell: configured\nstdout_lines: 1\n",
+        "after": "isError: false\nhello\n"
+      }
+    },
+    {
+      "after": {
+        "name": "shell_failure",
+        "normalized_text_utf8_bytes": 311,
+        "response_json_bytes": 401,
+        "text_chars": 297,
+        "text_utf8_bytes": 297
+      },
+      "before": {
+        "name": "shell_failure",
+        "normalized_text_utf8_bytes": 311,
+        "response_json_bytes": 401,
+        "text_chars": 297,
+        "text_utf8_bytes": 297
+      },
+      "name": "shell_failure",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    },
+    {
+      "after": {
+        "name": "shell_nondefault_cwd",
+        "normalized_text_utf8_bytes": 83,
+        "response_json_bytes": 224,
+        "text_chars": 129,
+        "text_utf8_bytes": 129
+      },
+      "before": {
+        "name": "shell_nondefault_cwd",
+        "normalized_text_utf8_bytes": 91,
+        "response_json_bytes": 224,
+        "text_chars": 129,
+        "text_utf8_bytes": 129
+      },
+      "name": "shell_nondefault_cwd",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0,
+      "normalized_snapshots": {
+        "before": "isError: false\nstdout_tail:\n/private<ROOT>/src\n\ncwd: src\nshell: configured\nstdout_lines: 1\n",
+        "after": "isError: false\nstdout_tail:\n<ROOT>/src\n\ncwd: src\nshell: configured\nstdout_lines: 1\n"
+      }
+    },
+    {
+      "after": {
+        "name": "process_success",
+        "normalized_text_utf8_bytes": 21,
+        "response_json_bytes": 96,
+        "text_chars": 6,
+        "text_utf8_bytes": 6
+      },
+      "before": {
+        "name": "process_success",
+        "normalized_text_utf8_bytes": 51,
+        "response_json_bytes": 129,
+        "text_chars": 36,
+        "text_utf8_bytes": 36
+      },
+      "name": "process_success",
+      "text_chars_saved": 30,
+      "text_utf8_bytes_saved": 30,
+      "normalized_snapshots": {
+        "before": "isError: false\nstdout_tail:\nhello\n\nstdout_lines: 1\n",
+        "after": "isError: false\nhello\n"
+      }
+    },
+    {
+      "after": {
+        "name": "process_nondefault_cwd",
+        "normalized_text_utf8_bytes": 65,
+        "response_json_bytes": 205,
+        "text_chars": 111,
+        "text_utf8_bytes": 111
+      },
+      "before": {
+        "name": "process_nondefault_cwd",
+        "normalized_text_utf8_bytes": 64,
+        "response_json_bytes": 195,
+        "text_chars": 102,
+        "text_utf8_bytes": 102
+      },
+      "name": "process_nondefault_cwd",
+      "text_chars_saved": -9,
+      "text_utf8_bytes_saved": -9,
+      "normalized_snapshots": {
+        "before": "isError: false\nstdout_tail:\n/private<ROOT>/src\n\nstdout_lines: 1\n",
+        "after": "isError: false\nstdout_tail:\n<ROOT>/src\n\ncwd: src\nstdout_lines: 1\n"
+      }
+    },
+    {
+      "after": {
+        "name": "process_failure_nondefault_cwd",
+        "normalized_text_utf8_bytes": 297,
+        "response_json_bytes": 447,
+        "text_chars": 344,
+        "text_utf8_bytes": 344
+      },
+      "before": {
+        "name": "process_failure_nondefault_cwd",
+        "normalized_text_utf8_bytes": 296,
+        "response_json_bytes": 437,
+        "text_chars": 335,
+        "text_utf8_bytes": 335
+      },
+      "name": "process_failure_nondefault_cwd",
+      "text_chars_saved": -9,
+      "text_utf8_bytes_saved": -9,
+      "normalized_snapshots": {
+        "before": "isError: true\nERROR: Command exited with status 7.\nLogs: available stdout_tail and stderr_tail are included below.\n\nexecution_state: completed; exit_code: 7\nstdout_tail:\n/private<ROOT>/src\n\nstderr_tail:\ndenied\n\ncommand_ok: false\nfailure_kind: command_exit_nonzero\nstderr_lines: 1\nstdout_lines: 1\n",
+        "after": "isError: true\nERROR: Command exited with status 7.\nLogs: available stdout_tail and stderr_tail are included below.\n\nexecution_state: completed; exit_code: 7\nstdout_tail:\n<ROOT>/src\n\nstderr_tail:\ndenied\n\ncommand_ok: false\ncwd: src\nfailure_kind: command_exit_nonzero\nstderr_lines: 1\nstdout_lines: 1\n"
+      }
+    },
+    {
+      "after": {
+        "name": "job_started",
+        "normalized_text_utf8_bytes": 772,
+        "response_json_bytes": 926,
+        "text_chars": 785,
+        "text_utf8_bytes": 789
+      },
+      "before": {
+        "name": "job_started",
+        "normalized_text_utf8_bytes": 1042,
+        "response_json_bytes": 1222,
+        "text_chars": 1066,
+        "text_utf8_bytes": 1070
+      },
+      "name": "job_started",
+      "text_chars_saved": 281,
+      "text_utf8_bytes_saved": 281,
+      "normalized_snapshots": {
+        "before": "isError: false\ncommand_started: false\ncommand_summary: printf 'first\\n中文\\nlast\\n'\ncontinuation:\n  {\"arguments\":{\"items\":[{\"after_observation_token\":\"wj3_EPOCH.0.0.0\",\"job_id\":\"wc_job_FIXTURE\"}],\"wait_secs\":55,\"wake_on\":\"terminal\"},\"follow_up_kind\":\"fallback_recovery\",\"tool\":\"observe_jobs\"}\ncontinuation_semantics:\n  carrier: observation_token\n  kind: observe\ncreated_at: <CLOCK>\ncwd: .\ndispatched_timeout_secs: 30\neffective_timeout_secs: null\nexecution_lifetime: runner\nexecution_source: run_job\nexecution_state: queued\nexecutor: agent\njob_id: wc_job_FIXTURE\nkind: shell\nlast_update_seq: 0\nobservation_token: wj3_EPOCH.0.0.0\nproject: agent:cli-runtime-jobs:demo\npurpose: other\nrequested_timeout_secs: 30\nshell: configured\nssh_resource: null\nstatus: queued\nstderr_lines: 0\nstderr_tail: \nstderr_truncated: false\nstdout_lines: 0\nstdout_tail: \nstdout_truncated: false\ntimeout_limit_source: runner_policy_unknown\ntimeout_notice: Runner policy unavailable; actual execution budget may be lower.\ntimeout_policy_basis: runner_policy_unavailable\n",
+        "after": "isError: false\njob_id: wc_job_FIXTURE; status: queued; execution_state: queued\ncommand_started: false\ncommand_summary: printf 'first\\n中文\\nlast\\n'\ncontinuation:\n  {\"arguments\":{\"items\":[{\"after_observation_token\":\"wj3_EPOCH.0.0.0\",\"job_id\":\"wc_job_FIXTURE\"}],\"wait_secs\":55,\"wake_on\":\"terminal\"},\"follow_up_kind\":\"fallback_recovery\",\"tool\":\"observe_jobs\"}\ncreated_at: <CLOCK>\ncwd: .\ndispatched_timeout_secs: 30\neffective_timeout_secs: null\nexecution_lifetime: runner\nexecutor: agent\nkind: shell\nlast_update_seq: 0\nproject: agent:cli-runtime-jobs:demo\nrequested_timeout_secs: 30\nshell: configured\ntimeout_limit_source: runner_policy_unknown\ntimeout_notice: Runner policy unavailable; actual execution budget may be lower.\ntimeout_policy_basis: runner_policy_unavailable\n"
+      }
+    },
+    {
+      "after": {
+        "name": "job_running",
+        "normalized_text_utf8_bytes": 104,
+        "response_json_bytes": 201,
+        "text_chars": 109,
+        "text_utf8_bytes": 109
+      },
+      "before": {
+        "name": "job_running",
+        "normalized_text_utf8_bytes": 104,
+        "response_json_bytes": 201,
+        "text_chars": 109,
+        "text_utf8_bytes": 109
+      },
+      "name": "job_running",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    },
+    {
+      "after": {
+        "name": "job_completed_truncated",
+        "normalized_text_utf8_bytes": 353,
+        "response_json_bytes": 464,
+        "text_chars": 358,
+        "text_utf8_bytes": 358
+      },
+      "before": {
+        "name": "job_completed_truncated",
+        "normalized_text_utf8_bytes": 353,
+        "response_json_bytes": 464,
+        "text_chars": 358,
+        "text_utf8_bytes": 358
+      },
+      "name": "job_completed_truncated",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    },
+    {
+      "after": {
+        "name": "jobs_partial_unknown",
+        "normalized_text_utf8_bytes": 1117,
+        "response_json_bytes": 1275,
+        "text_chars": 1112,
+        "text_utf8_bytes": 1116
+      },
+      "before": {
+        "name": "jobs_partial_unknown",
+        "normalized_text_utf8_bytes": 1154,
+        "response_json_bytes": 1314,
+        "text_chars": 1149,
+        "text_utf8_bytes": 1153
+      },
+      "name": "jobs_partial_unknown",
+      "text_chars_saved": 37,
+      "text_utf8_bytes_saved": 37,
+      "normalized_snapshots": {
+        "before": "isError: false\njob_id: missing-job\nerror: unknown job: missing-job\nerror_kind: unknown_job\nindex: 0\nsuccess: false\nsuggested_call:\n  {\"arguments\":{\"arguments\":{},\"tool\":\"list_jobs\"},\"follow_up_kind\":\"fallback_recovery\",\"tool\":\"call_runtime_tool\"}\nupdates: none\njob_id: wc_job_FIXTURE; status: completed; exit_code: 0\nstdout_tail:\nlast\n\nactivity: null\ncommand_summary: printf 'first\\n中文\\nlast\\n'\ncursor:\n  stderr: 1\n  stdout: 4\ncwd: .\ndetected_summary:\n  kind: operation\n  outcome: passed\nexecutor: agent\nlast_update_seq: 0\nobservation_token: wj3_EPOCH.3.4.1\nproject: agent:cli-runtime-jobs:demo\npurpose: other\nrecovery_reason: null\nrecovery_reason_code: null\nrecovery_state: null\nsession_id: null\nshell: configured\nssh_resource: null\nstderr_lines: 0\nstderr_retained_from_line: 1\nstderr_returned_lines: 0\nstdout_lines: 3\nstdout_retained_from_line: 1\nstdout_returned_lines: 1\nstdout_truncated: true\nstructured_execution: null\nvalidation: null\nindex: 1\nobservation_ref: ~j2\nchanged_count: 0\nfailed_count: 1\noutput_truncated: false\nrequested_count: 2\nreturned_count: 2\nsucceeded_count: 1\nterminal_count: 1\nwait:\n  outcome: immediate\n  waited_ms: <CLOCK>\n",
+        "after": "isError: false\njob_id: missing-job\nerror: unknown job: missing-job\nerror_kind: unknown_job\nindex: 0\nsuccess: false\nsuggested_call:\n  {\"arguments\":{\"arguments\":{},\"tool\":\"list_jobs\"},\"follow_up_kind\":\"fallback_recovery\",\"tool\":\"call_runtime_tool\"}\nupdates: none\njob_id: wc_job_FIXTURE; status: completed; exit_code: 0\nstdout_tail:\nlast\n\nactivity: null\ncommand_summary: printf 'first\\n中文\\nlast\\n'\ncursor:\n  stderr: 1\n  stdout: 4\ncwd: .\ndetected_summary:\n  kind: operation\n  outcome: passed\nexecutor: agent\nlast_update_seq: 0\nobservation_token: wj3_EPOCH.3.4.1\nproject: agent:cli-runtime-jobs:demo\npurpose: other\nrecovery_reason: null\nrecovery_reason_code: null\nrecovery_state: null\nsession_id: null\nshell: configured\nssh_resource: null\nstderr_lines: 0\nstderr_retained_from_line: 1\nstderr_returned_lines: 0\nstdout_lines: 3\nstdout_retained_from_line: 1\nstdout_returned_lines: 1\nstdout_truncated: true\nstructured_execution: null\nvalidation: null\nindex: 1\nobservation_ref: ~j2\nchanged_count: 0\nfailed_count: 1\noutput_truncated: false\nsucceeded_count: 1\nterminal_count: 1\nwait:\n  outcome: immediate\n  waited_ms: <CLOCK>\n"
+      }
+    },
+    {
+      "after": {
+        "name": "read_versioned",
+        "normalized_text_utf8_bytes": 103,
+        "response_json_bytes": 194,
+        "text_chars": 97,
+        "text_utf8_bytes": 101
+      },
+      "before": {
+        "name": "read_versioned",
+        "normalized_text_utf8_bytes": 103,
+        "response_json_bytes": 194,
+        "text_chars": 97,
+        "text_utf8_bytes": 101
+      },
+      "name": "read_versioned",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    },
+    {
+      "after": {
+        "name": "edit_unknown_revision",
+        "normalized_text_utf8_bytes": 483,
+        "response_json_bytes": 587,
+        "text_chars": 469,
+        "text_utf8_bytes": 469
+      },
+      "before": {
+        "name": "edit_unknown_revision",
+        "normalized_text_utf8_bytes": 483,
+        "response_json_bytes": 587,
+        "text_chars": 469,
+        "text_utf8_bytes": 469
+      },
+      "name": "edit_unknown_revision",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    },
+    {
+      "after": {
+        "name": "read_truncated",
+        "normalized_text_utf8_bytes": 3436,
+        "response_json_bytes": 3557,
+        "text_chars": 3434,
+        "text_utf8_bytes": 3434
+      },
+      "before": {
+        "name": "read_truncated",
+        "normalized_text_utf8_bytes": 3436,
+        "response_json_bytes": 3557,
+        "text_chars": 3434,
+        "text_utf8_bytes": 3434
+      },
+      "name": "read_truncated",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    },
+    {
+      "after": {
+        "name": "read_recovered",
+        "normalized_text_utf8_bytes": 3067,
+        "response_json_bytes": 3157,
+        "text_chars": 3065,
+        "text_utf8_bytes": 3065
+      },
+      "before": {
+        "name": "read_recovered",
+        "normalized_text_utf8_bytes": 3067,
+        "response_json_bytes": 3157,
+        "text_chars": 3065,
+        "text_utf8_bytes": 3065
+      },
+      "name": "read_recovered",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    },
+    {
+      "after": {
+        "name": "shell_timeout",
+        "normalized_text_utf8_bytes": 968,
+        "response_json_bytes": 1064,
+        "text_chars": 954,
+        "text_utf8_bytes": 954
+      },
+      "before": {
+        "name": "shell_timeout",
+        "normalized_text_utf8_bytes": 968,
+        "response_json_bytes": 1064,
+        "text_chars": 954,
+        "text_utf8_bytes": 954
+      },
+      "name": "shell_timeout",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    },
+    {
+      "after": {
+        "name": "shell_outcome_unknown",
+        "normalized_text_utf8_bytes": 801,
+        "response_json_bytes": 897,
+        "text_chars": 787,
+        "text_utf8_bytes": 787
+      },
+      "before": {
+        "name": "shell_outcome_unknown",
+        "normalized_text_utf8_bytes": 801,
+        "response_json_bytes": 897,
+        "text_chars": 787,
+        "text_utf8_bytes": 787
+      },
+      "name": "shell_outcome_unknown",
+      "text_chars_saved": 0,
+      "text_utf8_bytes_saved": 0
+    }
+  ],
+  "pending_native": {
+    "workspace_symbols": {
+      "status": "pending",
+      "reason": "Actual native LSP producer response and same-producer old/new CLI replay still required; boundary JSON tests do not count as native measurements."
+    },
+    "list_projects": {
+      "status": "in-process Runtime measured; native same-producer replay pending"
+    },
+    "work_on_project": {
+      "status": "native bootstrap capture pending; no new compaction applied",
+      "reason": "Existing bootstrap projection retains required instructions, catalog, project identity and recovery; workflow separation was already handled by prior work."
+    },
+    "success_edit_and_scope": {
+      "status": "single isolated native smoke pending"
+    },
+    "planned_profile": "dev binaries in target/debug; functional/output validation only, not optimized production performance"
+  },
+  "run_job_series": {
+    "raw_cli_utf8_bytes": {
+      "pr1_baseline": 764,
+      "pr2_complete_budget_evidence": 1070,
+      "pr3_compact_receipt": 789
+    },
+    "pr3_vs_pr2_bytes": -281,
+    "series_vs_pr1_bytes": 25,
+    "interpretation": "PR2 adds truthful timeout budget/ownership facts; PR3 removes presentation redundancy while keeping those facts. The series does not claim a 281-byte reduction from PR1."
+  }
+}

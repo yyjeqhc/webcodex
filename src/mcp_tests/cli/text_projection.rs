@@ -531,3 +531,337 @@ fn cli_missing_file_uses_one_path_and_one_reason() {
     );
     assert_eq!(text(&body), "missing.rs: read_file failed: not_found\n");
 }
+
+#[test]
+fn cli_search_context_unknown_fields_and_partial_reads_survive() {
+    let body = project(
+        "search_project_texts",
+        true,
+        json!({
+            "matches":[{"path":"src/a.rs","line":2,"preview":"hit",
+                "context_before":[{"line":1,"text":"before","future_evidence":"keep"}],
+                "context_after":[{"line":3,"text":"after"}]}],
+            "truncated":true,"truncation_reason":"limit"
+        }),
+    );
+    for evidence in [
+        "src/a.rs:2:hit",
+        "src/a.rs-3-after",
+        "future_evidence: keep",
+        "truncated: true",
+        "truncation_reason: limit",
+    ] {
+        assert!(text(&body).contains(evidence), "{}", text(&body));
+    }
+    let partial = project(
+        "search_file_context",
+        true,
+        json!({
+            "search":{"matches":[{"path":"src/a.rs","line":2}]},
+            "reads":{"items":[],"output_truncated":true},
+            "read_success":false,"read_error":"permission denied",
+            "read_request_count":1,"coalesced_read_count":1
+        }),
+    );
+    for evidence in [
+        "src/a.rs:2\n",
+        "read_success: false",
+        "permission denied",
+        "output_truncated: true",
+    ] {
+        assert!(text(&partial).contains(evidence), "{}", text(&partial));
+    }
+}
+
+#[test]
+fn cli_workspace_symbols_preserve_missing_positions_and_index_evidence() {
+    let body = project(
+        "list_workspace_symbols",
+        true,
+        json!({
+            "project":"p","query":"fixture",
+            "symbols":[
+                {"path":"src/a.rs","name":"fixture_a","kind":"function","kind_code":12,
+                 "range":{"start":{"line":2,"column":4},"end":{"line":2,"column":9}},
+                 "container_name":"Module"},
+                {"path":"src/b.rs","name":"fixture_b","kind":"function","kind_code":12,"range":null}
+            ],
+            "returned_count":2,"total_results":4,"truncated":true,"external_results_omitted":1,
+            "invalid_results_omitted":1,"index_state":"building"
+        }),
+    );
+    for evidence in [
+        "src/a.rs:2:4-2:9 function fixture_a",
+        "container_name: Module",
+        "src/b.rs (position unavailable) function fixture_b",
+        "total_results: 4",
+        "truncated: true",
+        "external_results_omitted: 1",
+        "invalid_results_omitted: 1",
+        "index_state: building",
+    ] {
+        assert!(text(&body).contains(evidence), "{}", text(&body));
+    }
+}
+
+#[test]
+fn cli_job_receipt_preserves_exact_followup_and_distinct_tokens() {
+    let call = json!({"tool":"observe_jobs","arguments":{
+        "items":[{"job_id":"wc_job_exact","after_observation_token":"opaque:/+="}],
+        "wait_secs":37,"wake_on":"terminal"},"follow_up_kind":"fallback_recovery"});
+    for (token, expected_count) in [("opaque:/+=", 1), ("distinct-token", 1)] {
+        let body = project(
+            "run_job",
+            true,
+            json!({
+                "job_id":"wc_job_exact","status":"queued","execution_state":"queued",
+                "command_started":false,"execution_lifetime":"runner",
+                "requested_timeout_secs":7200,"effective_timeout_secs":3600,
+                "timeout_limit_source":"runner_policy",
+                "timeout_policy_basis":"last_registered_runner_policy",
+                "timeout_notice":"Dispatch budget only; Runner enforces its current policy.",
+                "cwd":"subdir","shell":"bash",
+                "observation_token":token,
+                "continuation_semantics":webcodex_core::runtime_contract::ContinuationSemantics::new(
+                    webcodex_core::runtime_contract::ContinuationKind::Observe,
+                    webcodex_core::runtime_contract::ContinuationCarrier::ObservationToken
+                ).to_value(),
+                "continuation":call,"stdout_tail":"","stdout_lines":0,
+                "new_evidence":{"unknown_is_meaningful":null}
+            }),
+        );
+        let rendered = text(&body);
+        for evidence in [
+            "wc_job_exact",
+            "queued",
+            "command_started: false",
+            "execution_lifetime: runner",
+            "requested_timeout_secs: 7200",
+            "effective_timeout_secs: 3600",
+            "timeout_limit_source: runner_policy",
+            "timeout_policy_basis: last_registered_runner_policy",
+            "Dispatch budget only; Runner enforces its current policy.",
+            "cwd: subdir",
+            "shell: bash",
+            "unknown_is_meaningful: null",
+            &call.to_string(),
+        ] {
+            assert!(rendered.contains(evidence), "{rendered}");
+        }
+        assert_eq!(
+            rendered.matches(token).count(),
+            expected_count,
+            "{rendered}"
+        );
+        let calls: Vec<Value> = rendered
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .collect();
+        assert_eq!(calls, vec![call.clone()]);
+    }
+}
+
+#[test]
+fn cli_lsp_error_message_is_deduplicated_only_when_exact() {
+    for (error, duplicate) in [
+        ("lsp_not_ready: indexing is building", true),
+        ("transport failure while indexing", false),
+    ] {
+        let mut body = json!({"result":{"structuredContent":{
+            "success":false,"error":error,"output":{
+                "code":"lsp_not_ready","message":"indexing is building",
+                "index_state":"building","retry_after_ms":1000
+            }},"content":[]}});
+        crate::mcp::cli::project_response(Some("list_workspace_symbols"), &mut body);
+        let rendered = text(&body);
+        assert_eq!(body["result"]["isError"], true);
+        assert_eq!(
+            rendered.contains("message: indexing is building"),
+            !duplicate
+        );
+        for evidence in [
+            "lsp_not_ready",
+            "index_state: building",
+            "retry_after_ms: 1000",
+        ] {
+            assert!(rendered.contains(evidence), "{rendered}");
+        }
+    }
+}
+
+#[test]
+fn cli_plain_stdout_requires_exact_visible_counts_and_no_loss() {
+    let complete = project(
+        "run_process",
+        true,
+        json!({"stdout_tail":"hello\n","stdout_lines":1}),
+    );
+    assert_eq!(text(&complete), "hello\n");
+    for output in [
+        json!({"stdout_tail":"hello\n","stdout_lines":2}),
+        json!({"stdout_tail":"hello\n","stdout_lines":1,"stdout_truncated":true}),
+        json!({"stdout_tail":"hello\n","stdout_lines":1,"cwd":"."}),
+        json!({"stdout_tail":"hello\n","stdout_lines":1,"future_evidence":true}),
+    ] {
+        assert_ne!(text(&project("run_process", true, output)), "hello\n");
+    }
+}
+
+#[test]
+fn cli_job_receipt_keeps_unknown_runner_policy_budget() {
+    let body = project(
+        "run_job",
+        true,
+        json!({
+            "job_id":"wc_job_unknown_policy","status":"queued","execution_state":"queued",
+            "command_started":false,"execution_lifetime":"runner",
+            "requested_timeout_secs":7200,"effective_timeout_secs":null,
+            "dispatched_timeout_secs":7200,"timeout_limit_source":"runner_policy_unknown",
+            "timeout_policy_basis":"runner_policy_unavailable",
+            "timeout_notice":"Runner policy unavailable; actual execution budget may be lower.",
+            "future_budget_evidence":{"confirmed":false}
+        }),
+    );
+    for evidence in [
+        "queued",
+        "command_started: false",
+        "execution_lifetime: runner",
+        "requested_timeout_secs: 7200",
+        "effective_timeout_secs: null",
+        "dispatched_timeout_secs: 7200",
+        "timeout_limit_source: runner_policy_unknown",
+        "timeout_policy_basis: runner_policy_unavailable",
+        "Runner policy unavailable; actual execution budget may be lower.",
+        "confirmed: false",
+    ] {
+        assert!(text(&body).contains(evidence), "{}", text(&body));
+    }
+}
+
+#[test]
+fn cli_job_batch_totals_are_omitted_only_when_visible_complete_items_prove_them() {
+    let complete = json!({
+        "items":[
+            {"job_id":"missing","success":false,"output":null,"error_kind":"unknown_job","error":"unavailable"},
+            {"job_id":"done","status":"completed","stdout_lines":3,"stdout_returned_lines":1,
+             "stdout_retained_from":1,"stdout_truncated":true}
+        ],
+        "output_truncated":false,"requested_count":2,"returned_count":2,
+        "failed_count":1,"succeeded_count":1,"terminal_count":1,"changed_count":0,
+        "future_evidence":null
+    });
+    let rendered = text(&project("observe_jobs", true, complete.clone())).to_owned();
+    assert!(!rendered.contains("requested_count:"));
+    assert!(!rendered.contains("returned_count:"));
+    for evidence in [
+        "missing",
+        "unknown_job",
+        "done",
+        "output_truncated: false",
+        "failed_count: 1",
+        "succeeded_count: 1",
+        "terminal_count: 1",
+        "changed_count: 0",
+        "stdout_lines: 3",
+        "stdout_returned_lines: 1",
+        "stdout_retained_from: 1",
+        "stdout_truncated: true",
+        "future_evidence: null",
+    ] {
+        assert!(rendered.contains(evidence), "{rendered}");
+    }
+    for (key, value) in [
+        ("output_truncated", Some(json!(true))),
+        ("output_truncated", None),
+        ("requested_count", Some(json!(3))),
+        ("requested_count", None),
+        ("returned_count", Some(json!(1))),
+        ("returned_count", None),
+    ] {
+        let mut incomplete = complete.clone();
+        if let Some(value) = value {
+            incomplete[key] = value;
+        } else {
+            incomplete.as_object_mut().unwrap().remove(key);
+        }
+        let expected_requested = incomplete.get("requested_count").is_some();
+        let expected_returned = incomplete.get("returned_count").is_some();
+        let rendered = text(&project("observe_jobs", true, incomplete)).to_owned();
+        assert_eq!(
+            rendered.contains("requested_count:"),
+            expected_requested,
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered.contains("returned_count:"),
+            expected_returned,
+            "{rendered}"
+        );
+    }
+}
+
+#[test]
+fn cli_workspace_symbols_keep_unknown_or_inconsistent_kind_codes_and_ranges() {
+    for (kind, code) in [
+        ("unknown", json!(99)),
+        ("function", json!(99)),
+        ("function", json!("future-code")),
+        ("function", Value::Null),
+    ] {
+        let body = project(
+            "list_workspace_symbols",
+            true,
+            json!({
+                "symbols":[{"path":"src/a.rs","name":"fixture","kind":kind,"kind_code":code,
+                    "range":{"start":{"line":2,"column":4},"end":{"line":2,"column":9}}}]
+            }),
+        );
+        let value = code
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| code.to_string());
+        assert!(
+            text(&body).contains(&format!("kind_code: {value}")),
+            "{}",
+            text(&body)
+        );
+        assert!(text(&body).contains(&format!("src/a.rs:2:4-2:9 {kind} fixture")));
+    }
+    let body = project(
+        "list_workspace_symbols",
+        true,
+        json!({
+            "symbols":[{"path":"src/a.rs","name":"fixture","kind":"function","kind_code":12,
+                "range":{"start":{"line":2,"column":4,"future_encoding":"utf32"},
+                         "end":{"line":2,"column":9}}}],
+            "index_state":"building"
+        }),
+    );
+    for evidence in [
+        "src/a.rs",
+        "future_encoding: utf32",
+        "kind_code: 12",
+        "index_state: building",
+    ] {
+        assert!(text(&body).contains(evidence), "{}", text(&body));
+    }
+    assert!(!text(&body).contains("src/a.rs:2:4-2:9"));
+}
+
+#[test]
+fn cli_job_receipt_does_not_fold_a_different_jobs_continuation() {
+    let call = json!({"tool":"observe_jobs","arguments":{
+        "items":[{"job_id":"wc_job_other","after_observation_token":"same-looking-token"}]},
+        "follow_up_kind":"fallback_recovery"});
+    let body = project(
+        "run_job",
+        true,
+        json!({
+            "job_id":"wc_job_original","status":"queued","command_started":false,
+            "observation_token":"same-looking-token","continuation":call
+        }),
+    );
+    assert!(text(&body).contains("observation_token: same-looking-token"));
+    assert!(text(&body).contains(&call.to_string()));
+    assert_eq!(text(&body).matches("same-looking-token").count(), 2);
+}

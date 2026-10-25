@@ -6,6 +6,7 @@ fn project(name: &'static str, result: &mut ToolResult) {
         Box::new(execution::ExecutionProjection {
             tool_name: name,
             validation_policy: ValidationSuccessPolicy::default(),
+            default_execution_context: false,
         }),
         result,
     );

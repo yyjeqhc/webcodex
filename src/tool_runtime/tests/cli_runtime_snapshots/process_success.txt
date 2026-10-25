@@ -1,5 +1,2 @@
 isError: false
-stdout_tail:
 hello
-
-stdout_lines: 1

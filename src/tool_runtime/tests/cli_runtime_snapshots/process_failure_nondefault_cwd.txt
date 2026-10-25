@@ -10,6 +10,7 @@ stderr_tail:
 denied
 
 command_ok: false
+cwd: src
 failure_kind: command_exit_nonzero
 stderr_lines: 1
 stdout_lines: 1

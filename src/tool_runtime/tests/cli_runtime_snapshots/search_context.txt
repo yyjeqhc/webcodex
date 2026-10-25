@@ -1,23 +1,12 @@
 isError: false
 ==> query 0
+src/sample.txt-1-before
 src/sample.txt:2:needle 中文
-context_after:
-  [0]
-    line: 3
-    text: between
-context_before:
-  [0]
-    line: 1
-    text: before
+src/sample.txt-3-between
+--
+src/sample.txt-3-between
 src/sample.txt:4:needle again
-context_after:
-  [0]
-    line: 5
-    text: after
-context_before:
-  [0]
-    line: 3
-    text: between
+src/sample.txt-5-after
 context_after: 1
 context_before: 1
 path: src

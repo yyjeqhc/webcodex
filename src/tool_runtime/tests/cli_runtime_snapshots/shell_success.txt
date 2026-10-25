@@ -1,7 +1,2 @@
 isError: false
-stdout_tail:
 hello
-
-cwd: .
-shell: configured
-stdout_lines: 1

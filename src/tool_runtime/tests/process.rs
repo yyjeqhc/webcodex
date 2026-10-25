@@ -1672,11 +1672,9 @@ async fn structured_execution_fast_terminal_jobs_project_back_without_visible_du
                         result.output
                     );
                 }
+                assert!(result.output.get("cwd").is_none());
                 if entry == "shell" {
-                    assert_eq!(result.output["cwd"], ".");
-                    assert!(result.output["shell"].is_string());
-                } else {
-                    assert!(result.output.get("cwd").is_none());
+                    assert!(result.output.get("shell").is_none());
                 }
             } else {
                 assert_eq!(result.output["execution_state"], "completed");
@@ -1851,6 +1849,10 @@ async fn run_process_terminal_success_is_sparse_after_full_session_effect_record
     let metrics = timer.finish().record_for_tool_result(&result).unwrap();
     assert_eq!(metrics.execution_state.as_deref(), Some("completed"));
     assert!(result.success, "{:?}", result.error);
+    assert_eq!(
+        result.output["cwd"], ".",
+        "explicit Session context must remain visible"
+    );
     for omitted in [
         "execution_state",
         "command_started",
@@ -1859,7 +1861,6 @@ async fn run_process_terminal_success_is_sparse_after_full_session_effect_record
         "exit_code",
         "duration_ms",
         "purpose",
-        "cwd",
         "executor",
         "promoted_to_job",
         "terminal",
@@ -2795,7 +2796,7 @@ async fn run_process_session_default_cwd_applies_without_default_shell() {
     .await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert!(result.output.get("cwd").is_none());
+    assert_eq!(result.output["cwd"], "frontend");
     let summary = runtime
         .sessions
         .summary(&session.session_id, Some(20))

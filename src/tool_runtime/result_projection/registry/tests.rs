@@ -187,3 +187,79 @@ fn native_result_echo_cleanup_keeps_fences_and_failure_evidence() {
         assert!(failed.output.get(key).is_none());
     }
 }
+
+#[test]
+fn execution_projection_requires_request_and_resolved_context_proof() {
+    for (tool, base) in [
+        ("run_shell", json!({"project":"p","command":"printf hello"})),
+        (
+            "run_process",
+            json!({"project":"p","executable":"printf","args":["hello"]}),
+        ),
+        (
+            "run_script",
+            json!({"project":"p","language":"sh","script":"printf hello"}),
+        ),
+    ] {
+        let mut cases = vec![
+            (json!({}), ".", false),
+            (json!({}), "selected-cwd", true),
+            (json!({"cwd":"."}), ".", true),
+            (json!({"cwd":"src"}), "src", true),
+            (json!({"session_id":"wc_sess_1234567890abcdef"}), ".", true),
+        ];
+        if tool == "run_shell" {
+            cases.push((json!({"shell":"bash"}), ".", true));
+            cases.push((json!({"shell":"bash","login":true}), ".", true));
+        }
+        for (settings, resolved_cwd, keep_context) in cases {
+            let mut arguments = base.clone();
+            arguments
+                .as_object_mut()
+                .unwrap()
+                .extend(settings.as_object().unwrap().clone());
+            let call = call(tool, arguments);
+            let mut result =
+                super::super::structured_execution_sparse_projection_tests::terminal_process_result(
+                    tool,
+                );
+            result.output["cwd"] = json!(resolved_cwd);
+            result.output["stdout_tail"] = json!("hello\n");
+            result.output["stdout_lines"] = json!(1);
+            if tool != "run_process" {
+                result
+                    .output
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("process_summary");
+                result.output[if tool == "run_shell" {
+                    "command_summary"
+                } else {
+                    "script_summary"
+                }] = json!("fixture command");
+            }
+            if tool == "run_shell" {
+                result.output["shell"] = settings
+                    .get("shell")
+                    .cloned()
+                    .unwrap_or(json!("configured"));
+            }
+            ModelFacingProjectionPlan::capture(&call).project(&mut result);
+            assert_eq!(
+                result.output.get("cwd").is_some(),
+                keep_context,
+                "{tool} {settings}: {}",
+                result.output
+            );
+            if keep_context {
+                assert_eq!(result.output["cwd"], resolved_cwd);
+            }
+            if tool == "run_shell" {
+                assert_eq!(
+                    result.output.get("shell").is_some(),
+                    !settings.as_object().unwrap().is_empty()
+                );
+            }
+        }
+    }
+}

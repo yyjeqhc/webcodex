@@ -1,35 +1,20 @@
 isError: false
+job_id: wc_job_FIXTURE; status: queued; execution_state: queued
 command_started: false
 command_summary: printf 'first\n中文\nlast\n'
 continuation:
   {"arguments":{"items":[{"after_observation_token":"wj3_EPOCH.0.0.0","job_id":"wc_job_FIXTURE"}],"wait_secs":55,"wake_on":"terminal"},"follow_up_kind":"fallback_recovery","tool":"observe_jobs"}
-continuation_semantics:
-  carrier: observation_token
-  kind: observe
 created_at: <CLOCK>
 cwd: .
 dispatched_timeout_secs: 30
 effective_timeout_secs: null
 execution_lifetime: runner
-execution_source: run_job
-execution_state: queued
 executor: agent
-job_id: wc_job_FIXTURE
 kind: shell
 last_update_seq: 0
-observation_token: wj3_EPOCH.0.0.0
 project: agent:cli-runtime-jobs:demo
-purpose: other
 requested_timeout_secs: 30
 shell: configured
-ssh_resource: null
-status: queued
-stderr_lines: 0
-stderr_tail: 
-stderr_truncated: false
-stdout_lines: 0
-stdout_tail: 
-stdout_truncated: false
 timeout_limit_source: runner_policy_unknown
 timeout_notice: Runner policy unavailable; actual execution budget may be lower.
 timeout_policy_basis: runner_policy_unavailable

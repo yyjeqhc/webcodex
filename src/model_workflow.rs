@@ -99,10 +99,6 @@ impl ModelWorkflowPolicy {
         }
     }
 
-    pub(crate) fn goal_checkpoint_guidance(self) -> &'static str {
-        "Only maintain an explicitly established Goal. No Goal means no checkpoint or Goal closeout. Load webcodex.goal_workflow for exact revision/key transitions; record facts already true, never pre-complete tests. An existing Goal remains recoverable regardless of the current default preference."
-    }
-
     pub(crate) fn goal_workflow_projection(self) -> Value {
         json!({
             "authority": "model_guidance_only",
@@ -110,7 +106,7 @@ impl ModelWorkflowPolicy {
             "host_interaction": self.mcp_app_resume.guidance(),
             "workflow": "For selected Goal work, reuse the exact active Goal in work_on_project.goal_context with get_goal/present_goal_plan; explicitly choose among multiple candidates. Never infer from Project/Window/title/recency; available=false never proves no Goal. Without a reusable Goal, call prepare_goal_workflow with the exact current Workflow Session, bounded completion_conditions/steps and optional explicit controller Agent, then present_goal_plan when a plan card is requested/useful. Low-level create_goal and associate_goal_workflow_session remain available. Host continuation setup/readiness remains separate.",
             "continuation": "Automatic continuation needs an exact explicit durable controller Agent and a separately verified Host carrier. Reuse the same Agent from explicit setup or exact Wake context; never infer Agent identity from a Window or create a second Goal-only identity. An Agent may be both Task assignee and Goal controller; Tasks/Attempts own execution. Goal Plan detects; the separate Agent Continuation card requests a turn. Stalled is not offline; dispatch acceptance is not resume. An exact stall Wake requires bootstrap, immediate consume, get_goal and exact Session handoff recovery; never retry an uncertain prior effect.",
-            "checkpoint": "After a plan phase completes, call checkpoint_goal with exact revision/key. Record facts already true; never pre-complete tests or defer checkpoints. MCP requires individually reviewed checkpoint_goal and update_goal callables; no gateway or _wc.control fallback. Complete steps and verify/review before explicit update_goal; the Server cannot judge natural-language conditions. Use only tools admitted by current client configuration; refresh tools/list when unavailable.",
+            "checkpoint": "No Goal means no checkpoint. After a plan phase completes, call checkpoint_goal with exact revision/key and facts already true; never pre-complete tests or defer checkpoints. MCP needs individually reviewed checkpoint_goal/update_goal; no gateway or _wc.control fallback. Complete steps and verify/review before explicit update_goal; the Server cannot judge natural-language conditions. Use admitted tools in current client configuration; refresh tools/list if unavailable.",
             "plan_revision": "When evidence changes unfinished milestones, call revise_goal_plan with the exact Goal revision, full ordered replacement, bounded reason and a fresh key. Preserve completed ids/titles and retained statuses. New ids start pending; removing the current step leaves none. Completion intent is unchanged. On a revision conflict re-read get_goal and reconsider; exact same-key replay is inert. Terminal Goals are immutable.",
             "closeout": "Honor goal_follow_up only for explicitly correlated active Goals. Changing the default preference never completes/cancels a Goal, acknowledges a message, rotates an Endpoint, resends a Wake or retries a Job. Read the exact current state and preserve unresolved evidence before an explicit terminal transition.",
         })

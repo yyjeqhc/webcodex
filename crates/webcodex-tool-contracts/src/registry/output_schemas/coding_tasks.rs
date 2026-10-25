@@ -612,8 +612,6 @@ fn startup_workflow_schema() -> Value {
                         "runner_targeting": {"type": "string", "maxLength": 320},
                         "persistent_shell": {"type": "string", "maxLength": 320},
                         "goal_workflow": {"type": "string", "maxLength": 720},
-                        "goal_continuation": {"type": "string", "maxLength": 720},
-                        "goal_checkpoint": {"type": "string", "maxLength": 480},
                         "work_result_presentation": {"type": "string", "maxLength": 640},
                         "normal_closeout": {"type": "string", "maxLength": 480}
                     },
@@ -630,8 +628,6 @@ fn startup_workflow_schema() -> Value {
                         "runner_targeting",
                         "persistent_shell",
                         "goal_workflow",
-                        "goal_continuation",
-                        "goal_checkpoint",
                         "work_result_presentation",
                         "normal_closeout"
                     ],

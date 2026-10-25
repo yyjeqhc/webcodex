@@ -2310,6 +2310,94 @@ fn mcp_compact_common_copy_respects_tool_and_argument_boundaries() {
 }
 
 #[test]
+fn mcp_execution_descriptions_share_canonical_source_across_surfaces() {
+    let surfaces = [
+        mcp_tools_list_payload_with_compact(false),
+        mcp_tools_list_payload_with_compact(true),
+        crate::mcp::cli::tools_list(None, false),
+    ];
+    for name in [
+        "run_process",
+        "run_shell",
+        "run_script",
+        "run_job",
+        "run_detached_process",
+        "observe_jobs",
+        "list_jobs",
+        "wait_for_job_readiness",
+    ] {
+        let definition = webcodex_tool_contracts::lookup_tool_definition(name).unwrap();
+        let canonical = definition.model_spec.unwrap().description;
+        let mut descriptor = json!({
+            "name": name,
+            "description": canonical,
+            "inputSchema": webcodex_tool_contracts::input_schema_for_tool(name),
+        });
+        crate::mcp::discovery::compact_tool(&mut descriptor);
+        assert_eq!(descriptor["description"], canonical, "{name}");
+        assert!(canonical.chars().count() <= crate::mcp::discovery::TOOL_DESCRIPTION_MAX_CHARS);
+        for surface in &surfaces {
+            if let Some(tool) = surface["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == name)
+            {
+                // MCP changes the canonical observer's summary_only default.
+                // Keep this actual adapter difference without copying its L0 contract.
+                let expected = if name == "observe_jobs" {
+                    assert_eq!(
+                        tool["inputSchema"]["properties"]["summary_only"]["default"],
+                        true
+                    );
+                    format!("{canonical} MCP defaults summary_only=true; set false for full retained logs.")
+                } else {
+                    canonical.to_owned()
+                };
+                assert_eq!(tool["description"], expected, "{name}");
+            }
+        }
+    }
+    let process = webcodex_tool_contracts::lookup_tool_definition("run_process")
+        .unwrap()
+        .model_spec
+        .unwrap()
+        .description;
+    assert!(process.contains(
+        "stdin pipe via keyed write_job_input, no PTY/SSH/initial stdin/structured validation evidence"
+    ));
+    let detached = webcodex_tool_contracts::lookup_tool_definition("run_detached_process")
+        .unwrap()
+        .model_spec
+        .unwrap()
+        .description;
+    for boundary in [
+        "supervisor-owned",
+        "before payload start",
+        "identity and lifetime fence",
+        "expired keys never authorize retry",
+        "outcome_unknown never authorizes redispatch",
+        "No shell, script or SSH fallback",
+    ] {
+        assert!(detached.contains(boundary), "{boundary}");
+    }
+    let asynchronous = webcodex_tool_contracts::lookup_tool_definition("run_job")
+        .unwrap()
+        .model_spec
+        .unwrap()
+        .description;
+    for boundary in [
+        "stable job_id, including while queued",
+        "same execution when pending",
+        "Runner replacement does not inherit",
+        "Pending or outcome_unknown",
+        "never redispatch",
+    ] {
+        assert!(asynchronous.contains(boundary), "{boundary}");
+    }
+}
+
+#[test]
 fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
     use crate::mcp::discovery::{
         bound_description, compact_tool, INPUT_DESCRIPTION_MAX_CHARS, TOOL_DESCRIPTION_MAX_CHARS,
@@ -3044,10 +3132,11 @@ async fn list_jobs_direct_descriptor_preserves_read_only_contract_and_recovery_g
             assert_eq!(input, expected);
             let description = descriptor["description"].as_str().unwrap();
             for phrase in [
-                "continue independent work",
+                "not the normal continuation step",
                 "observe_jobs",
                 "stdout/stderr",
                 "AND",
+                "do not list first or poll inventory",
             ] {
                 assert!(description.contains(phrase), "{description}");
             }
@@ -4503,19 +4592,16 @@ async fn mcp_compact_general_workflow_preserves_recovery_and_business_schemas() 
                 for phrase in [
                     "literal argv",
                     "shell grammar",
-                    "same Job",
+                    "returned Job",
                     "continuation",
-                    "never redispatch",
-                    "independent work",
-                    "when blocked",
-                    "wait_for_job_readiness",
-                    "observe_jobs",
-                    "failures",
-                    "outcome_unknown requires observation.",
+                    "Never redispatch",
+                    "observe_jobs for Job recovery",
+                    "outcome_unknown",
+                    "replacement cannot inherit",
                 ] {
                     assert!(description.contains(phrase), "{name}: missing {phrase}");
                 }
-                assert!(description.ends_with("outcome_unknown requires observation."));
+                assert_eq!(description, full["description"].as_str().unwrap());
             }
             if name == "edit_project_files" {
                 for phrase in [

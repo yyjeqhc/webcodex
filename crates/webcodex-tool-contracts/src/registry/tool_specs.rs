@@ -561,17 +561,22 @@ mod tests {
             );
         }
 
-        for name in [
-            "run_process",
-            "run_script",
-            "cargo_fmt",
-            "cargo_check",
-            "cargo_test",
-            "go_test",
-        ] {
+        for name in ["cargo_fmt", "cargo_check", "cargo_test", "go_test"] {
             let description = &find(name).description;
             assert!(
                 description.contains("same execution"),
+                "{name}: {description}"
+            );
+            assert!(!description.contains("run_job"), "{name}: {description}");
+        }
+        for name in ["run_process", "run_script"] {
+            let description = &find(name).description;
+            assert!(
+                description.contains("retain returned Job/continuation"),
+                "{name}: {description}"
+            );
+            assert!(
+                description.contains("Never redispatch pending or outcome_unknown"),
                 "{name}: {description}"
             );
             assert!(!description.contains("run_job"), "{name}: {description}");
@@ -586,13 +591,16 @@ mod tests {
         let run_job = &find("run_job").description;
         assert!(run_job.contains("stable job_id"), "{run_job}");
         assert!(run_job.contains("observe"), "{run_job}");
-        assert!(run_job.contains("retry"), "{run_job}");
+        assert!(run_job.contains("never redispatch"), "{run_job}");
 
         let observe_jobs = find("observe_jobs");
         let description = &observe_jobs.description;
         let lower = description.to_ascii_lowercase();
         assert!(lower.contains("never"), "observe_jobs: {description}");
-        assert!(lower.contains("retr"), "observe_jobs: {description}");
+        assert!(
+            lower.contains("never redispatch"),
+            "observe_jobs: {description}"
+        );
 
         let token = observe_jobs.input_schema["properties"]["items"]["items"]["oneOf"][0]
             ["properties"]["after_observation_token"]["description"]

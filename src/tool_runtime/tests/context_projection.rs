@@ -283,10 +283,9 @@ async fn model_workflow_context_refresh_changes_guidance_only_and_chapters_are_e
                     material["projection"]["model_protocol"]["goal_workflow"],
                     policy.goal_selection_guidance()
                 );
-                assert_eq!(
-                    material["projection"]["model_protocol"]["goal_continuation"],
-                    policy.mcp_app_resume.guidance()
-                );
+                for key in ["goal_continuation", "goal_checkpoint"] {
+                    assert!(material["projection"]["model_protocol"].get(key).is_none());
+                }
                 assert_eq!(
                     result.output["context_projection"]["materials"]
                         .as_array()

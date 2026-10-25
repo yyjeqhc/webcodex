@@ -126,6 +126,9 @@ pub use webcodex_core::apply_edits_shared::{
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum ProjectTextEditInput {
+    // Host inputs require omission rather than null for these optional selectors.
+    // Keep the same mutual exclusion as validate(), at the typed schema owner.
+    #[schemars(extend("not" = {"required": ["occurrence", "expected_match_count"]}))]
     ReplaceExact {
         #[schemars(length(min = 1, max = 524288))]
         old_text: String,

@@ -1101,10 +1101,10 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         .contains("Recovery and inventory primitive"));
     assert!(list_jobs
         .description
-        .contains("retain that continuation and continue independent work"));
+        .contains("retain its identity/continuation"));
     assert!(list_jobs
         .description
-        .contains("using observe_jobs only when logs/details/recovery are needed"));
+        .contains("use observe_jobs for logs/details/recovery"));
 
     let git_review = registered_tool_specs()
         .into_iter()
@@ -1125,21 +1125,19 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
     for name in ["run_process", "run_script", "run_shell"] {
         let spec = spec_named(&specs, name);
         for phrase in [
-            "continue independent work",
-            "observe_jobs only for",
-            "bounded wait_for_job_readiness",
+            "literal argv",
+            "shell grammar",
+            "Pending: retain returned Job/continuation",
+            "observe_jobs for Job recovery",
+            "Never redispatch pending or outcome_unknown",
+            "inspect existing execution",
+            "replacement cannot inherit",
         ] {
             assert!(spec.description.contains(phrase), "{name}: {phrase}");
         }
-        assert!(
-            !spec.description.contains("Use observe_jobs later"),
-            "{name}"
-        );
-
-        assert!(
-            spec.description.contains("sparse terminal Job attention"),
-            "{name}"
-        );
+        for strategy in ["independent work", "Promise.", "Host activation budget"] {
+            assert!(!spec.description.contains(strategy), "{name}: {strategy}");
+        }
     }
 
     for name in ["cargo_check", "cargo_test"] {
@@ -1169,8 +1167,9 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
     let observe = spec_named(&specs, "observe_jobs");
     for phrase in [
         "logs/details/recovery",
-        "not the default follow-up to execution_state=pending",
-        "Never launches, retries",
+        "immediate baseline",
+        "Never redispatch, stop or subscribe",
+        "observation grants no execution authority",
     ] {
         assert!(
             observe.description.contains(phrase),
@@ -1195,10 +1194,10 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
         .contains("not the normal continuation step"));
     assert!(list
         .description
-        .contains("retain that continuation and continue independent work"));
+        .contains("retain its identity/continuation"));
     assert!(list
         .description
-        .contains("observe_jobs only when logs/details/recovery are needed"));
+        .contains("use observe_jobs for logs/details/recovery"));
 
     let edits = spec_named(&specs, "edit_project_files");
     for phrase in [
@@ -1479,14 +1478,14 @@ fn readiness_tool_is_sequential_outer_only() {
     let description = spec.description.as_str();
     for phrase in [
         "join barrier",
-        "currently-ready independent work",
-        "Use any when one terminal Job can unlock a useful dependent branch",
-        "use all only at a true join",
-        "do not mechanically repeat the same-set wait",
-        "largest safe remaining Host activation budget",
-        "no fixed 10/15/20s slice",
+        "exact authorized Jobs",
+        "1..45s",
+        "any returns when one is terminal",
+        "all requires every target",
+        "terminal-ready, not success",
+        "deadline may leave pending IDs",
+        "retry authority or automatic next turn",
         "Logs/details/recovery use observe_jobs",
-        "No automatic next turn",
     ] {
         assert!(description.contains(phrase), "{phrase}: {description}");
     }

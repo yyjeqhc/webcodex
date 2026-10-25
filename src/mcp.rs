@@ -286,6 +286,45 @@ fn log_mcp_computer_app_resource_outcome(
     );
 }
 
+/// Payload-free measurements of the final MCP tool result, after surface
+/// projection. UTF-8 text bytes and JSON bytes are proxies, never Host tokens.
+/// The existing model_ergonomics metric continues to measure structured results.
+fn mcp_tool_response_audit_summary(
+    result: &Value,
+    surface: request_policy::McpSurface,
+) -> Option<Value> {
+    let content = result.get("content")?.as_array()?;
+    let mut text_utf8_bytes = 0_u64;
+    let mut text_blocks = 0_u64;
+    let mut non_text_blocks = 0_u64;
+    for block in content {
+        if block.get("type")?.as_str()? == "text" {
+            text_utf8_bytes = text_utf8_bytes
+                .checked_add(u64::try_from(block.get("text")?.as_str()?.len()).ok()?)?;
+            text_blocks = text_blocks.checked_add(1)?;
+        } else {
+            non_text_blocks = non_text_blocks.checked_add(1)?;
+        }
+    }
+    let structured_json_bytes = result
+        .get("structuredContent")
+        .map(serialized_json_len)
+        .transpose()
+        .ok()?;
+    Some(json!({
+        "schema_version": 1,
+        "surface": match surface {
+            request_policy::McpSurface::Adaptive => "adaptive",
+            request_policy::McpSurface::Cli => "cli",
+        },
+        "result_json_bytes": serialized_json_len(result).ok()?,
+        "text_utf8_bytes": text_utf8_bytes,
+        "structured_json_bytes": structured_json_bytes,
+        "text_blocks": text_blocks,
+        "non_text_blocks": non_text_blocks,
+    }))
+}
+
 fn mcp_tools_list_audit_summary(
     result: &Value,
     protocol_era: McpProtocolEra,
@@ -1069,7 +1108,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 .and_then(|s| s.get("success").or_else(|| s.get("ok")))
                 .and_then(|v| v.as_bool());
             let audit_success = tool_success.unwrap_or(true);
-            let audit_event = build_audit_event(
+            let mut audit_event = build_audit_event(
                 audit_success,
                 StatusCode::OK,
                 if audit_success {
@@ -1085,6 +1124,14 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             );
             if surface == request_policy::McpSurface::Cli {
                 cli::project_response(tool_name.as_deref(), &mut body);
+            }
+            if let Some((event, _)) = audit_event.as_mut() {
+                if let Some(measurement) = body
+                    .get("result")
+                    .and_then(|result| mcp_tool_response_audit_summary(result, surface))
+                {
+                    event.summary["response_projection"] = measurement;
+                }
             }
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);

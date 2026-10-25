@@ -131,6 +131,63 @@ fn edit_project_files_range_edit_schema_is_closed_and_revision_fenced() {
 }
 
 #[test]
+fn edit_project_files_replace_selectors_match_schema_and_parser() {
+    let schema = input_schema_for_tool("edit_project_files");
+    // Published Host inputs already require omission rather than explicit null.
+    // Serde's existing Option compatibility still treats null as absence.
+    let choices = [None, Some(Value::Null), Some(json!(1))];
+    for occurrence in &choices {
+        for count in &choices {
+            let mut edit = json!({"kind":"replace_exact","old_text":"old","new_text":"new"});
+            for (key, value) in [("occurrence", occurrence), ("expected_match_count", count)] {
+                if let Some(value) = value {
+                    edit[key] = value.clone();
+                }
+            }
+            let request = json!({"project":"demo","changes":[{
+                "kind":"edit","path":"a.rs","expected_read_revision":123,"edits":[edit]
+            }]});
+            let conflict = occurrence.as_ref().is_some_and(Value::is_number)
+                && count.as_ref().is_some_and(Value::is_number);
+            let has_null = occurrence.as_ref().is_some_and(Value::is_null)
+                || count.as_ref().is_some_and(Value::is_null);
+            assert_eq!(
+                schema_accepts(&schema, &request),
+                !conflict && !has_null,
+                "{request}"
+            );
+            assert_eq!(
+                ToolCall::from_tool_name("edit_project_files", request.clone()).is_ok(),
+                !conflict,
+                "{request}"
+            );
+        }
+    }
+
+    let mut request = json!({"project":"demo","changes":[{
+        "kind":"edit","path":"a.rs","expected_read_revision":123,"edits":[
+            {"kind":"insert_before","anchor_text":"anchor","new_text":"prefix","occurrence":1},
+            {"kind":"replace_exact","old_text":"old","new_text":"new","expected_match_count":2}
+        ]
+    }]});
+    assert!(schema_accepts(&schema, &request));
+    assert!(ToolCall::from_tool_name("edit_project_files", request.clone()).is_ok());
+    request["changes"][0]["edits"][1]["occurrence"] = json!(1);
+    assert!(
+        !schema_accepts(&schema, &request),
+        "second edit conflict: {request}"
+    );
+    assert!(ToolCall::from_tool_name("edit_project_files", request.clone()).is_err());
+    request["changes"][0]["edits"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("occurrence");
+    request["changes"][0]["edits"][1]["unknown"] = json!(true);
+    assert!(!schema_accepts(&schema, &request));
+    assert!(ToolCall::from_tool_name("edit_project_files", request).is_err());
+}
+
+#[test]
 fn apply_text_edits_model_schema_size_is_bounded() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "edit_project_files");

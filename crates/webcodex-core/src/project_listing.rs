@@ -510,6 +510,70 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual glob complexity baseline; compare identical profiles on one machine"]
+    fn glob_matcher_measurements() {
+        use std::hint::black_box;
+        use std::time::{Duration, Instant};
+
+        for (n, k) in [(4, 2), (8, 4), (12, 6), (16, 8), (20, 10)] {
+            let pattern = format!("**{}b", "a*".repeat(k));
+            let text = format!("{}/b", "a".repeat(n));
+            assert!(pattern.len() <= 32 && text.len() <= 32);
+            let mut samples = [Duration::ZERO; 3];
+            for elapsed in &mut samples {
+                let start = Instant::now();
+                let matched =
+                    glob_match_segment(black_box(pattern.as_bytes()), black_box(text.as_bytes()));
+                *elapsed = start.elapsed();
+                assert!(!black_box(matched));
+            }
+            samples.sort_unstable();
+            eprintln!(
+                "glob_adversarial n={n} k={k} pattern_bytes={} text_bytes={} min_ns={} median_ns={} max_ns={}",
+                pattern.len(), text.len(), samples[0].as_nanos(),
+                samples[1].as_nanos(), samples[2].as_nanos(),
+            );
+            // Stop escalation, rather than making machine speed a CI gate.
+            if samples[1] >= Duration::from_millis(250) {
+                eprintln!("stopped before larger inputs: current case is already slow");
+                break;
+            }
+        }
+
+        let paths = [
+            "src/main.rs",
+            "src/server/router.rs",
+            "README.md",
+            "tests/ui.rs",
+            "src/app.ts",
+            "crates/core/lib.rs",
+            "src/assets/logo.svg",
+            "lib.rs",
+        ];
+        let repeats = 50_000;
+        let mut samples = [Duration::ZERO; 3];
+        for elapsed in &mut samples {
+            let start = Instant::now();
+            let mut matched = 0;
+            for _ in 0..repeats {
+                for path in paths {
+                    matched += usize::from(glob_matches(black_box("*.rs"), black_box(path)));
+                }
+            }
+            *elapsed = start.elapsed();
+            assert_eq!(black_box(matched), 5 * repeats);
+        }
+        samples.sort_unstable();
+        eprintln!(
+            "glob_common calls={} min_ns={} median_ns={} max_ns={}",
+            repeats * paths.len(),
+            samples[0].as_nanos(),
+            samples[1].as_nanos(),
+            samples[2].as_nanos(),
+        );
+    }
+
+    #[test]
     fn a_pathological_pattern_terminates_without_recursing() {
         // Would be exponential under naive backtracking recursion.
         let pattern = "**a**a**a**a**a**a**b";

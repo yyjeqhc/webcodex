@@ -115,6 +115,8 @@ pub struct ToolRuntime {
     /// clones may narrow or switch this preference without changing authority or
     /// execution lifetime.
     pub(crate) mcp_host_policy: crate::mcp_host::McpHostRuntimePolicy,
+    /// Request-local diagnostic provenance; never shared mutable Host preference.
+    pub(crate) mcp_host_profile_source: crate::mcp_host::McpHostPolicySource,
     /// Immutable deployment snapshot reported by runtime diagnostics. Request-local
     /// views must never rewrite this operator-facing configuration evidence.
     pub(crate) deployment_mcp_host_policy: crate::mcp_host::McpHostRuntimePolicy,
@@ -232,6 +234,7 @@ impl ToolRuntime {
             coding_agent_runs: Arc::new(super::coding_agent::CodingAgentServerState::default()),
             runtime_info,
             mcp_host_policy: crate::mcp_host::McpHostRuntimePolicy::default(),
+            mcp_host_profile_source: crate::mcp_host::McpHostPolicySource::Deployment,
             deployment_mcp_host_policy: crate::mcp_host::McpHostRuntimePolicy::default(),
             model_workflow_policy: crate::model_workflow::ModelWorkflowPolicy::default(),
             #[cfg(feature = "workspace-checkpoints")]
@@ -305,14 +308,16 @@ impl ToolRuntime {
     ) -> Self {
         self.mcp_host_policy = policy;
         self.deployment_mcp_host_policy = policy;
+        self.mcp_host_profile_source = crate::mcp_host::McpHostPolicySource::Deployment;
         self
     }
 
     pub(crate) fn with_request_mcp_host_policy(
         mut self,
-        policy: crate::mcp_host::McpHostRuntimePolicy,
+        selection: crate::mcp_host::McpHostPolicySelection,
     ) -> Self {
-        self.mcp_host_policy = policy;
+        self.mcp_host_policy = selection.effective;
+        self.mcp_host_profile_source = selection.profile_source;
         self
     }
 

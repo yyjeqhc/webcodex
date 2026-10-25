@@ -39,7 +39,16 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("truncated", schema_type("boolean", "Visible events from the bounded recent scan were omitted by the presentation or serialized byte bound; this is not a lifetime-history completeness claim.")),
         ])),
         "get_runtime_status" => Some(wrapped_output_schema(vec![
-            ("mcp_host", open_object_schema("Sparse status: effective MCP Host profile.")),
+            ("mcp_host", json!({
+                "type": "object", "additionalProperties": false,
+                "description": "Current request's effective Host profile and its provenance, alongside the immutable deployment default. This is guidance/wait strategy, never execution authority.",
+                "properties": {
+                    "profile": {"type": "string", "enum": ["direct", "host_code_mode"], "description": "Profile effective for this request."},
+                    "deployment_profile": {"type": "string", "enum": ["direct", "host_code_mode"]},
+                    "profile_source": {"type": "string", "enum": ["deployment", "request_header"]}
+                },
+                "required": ["profile", "deployment_profile", "profile_source"]
+            })),
             ("compatibility", open_object_schema("Sparse fleet protocol, build/source alignment and mixed-build evidence; no per-Runner rows.")),
             ("connection", open_object_schema("Sparse process, transport and Project registry states without timestamps.")),
 
@@ -62,12 +71,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                             "type": "object",
                             "additionalProperties": false,
                             "properties": {
+                                "shared_key_configured": {"type": "boolean", "description": "Deployment shared-key configuration before the remote-boundary policy is applied."},
+                                "shared_key_remote_enabled": {"type": "boolean", "description": "Explicit deployment opt-in for shared-key use at a remote boundary."},
                                 "shared_key_enabled": {"type": "boolean", "description": "Whether direct shared-key quick-start authentication is effective for the running Server."},
                                 "anonymous_enabled": {"type": "boolean", "description": "Whether explicit open-anonymous access is effective for the running Server."},
                                 "oauth2_enabled": {"type": "boolean", "description": "Whether OAuth2 support was enabled in the running Server configuration."},
                                 "oauth2_shared_key_bridge_enabled": {"type": "boolean", "description": "Whether the OAuth2 shared-key bridge is enabled in the running OAuth2 configuration; false whenever OAuth2 itself is disabled. This public OAuth flow is distinct from direct Bearer shared-key authentication."}
                             },
-                            "required": ["shared_key_enabled", "anonymous_enabled", "oauth2_enabled", "oauth2_shared_key_bridge_enabled"]
+                            "required": ["shared_key_configured", "shared_key_enabled", "shared_key_remote_enabled", "anonymous_enabled", "oauth2_enabled", "oauth2_shared_key_bridge_enabled"]
                         },
                         "mcp_host": {
                             "type": "object",

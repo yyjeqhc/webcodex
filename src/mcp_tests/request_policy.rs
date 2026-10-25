@@ -250,7 +250,7 @@ async fn request_policy_isolated_across_concurrent_http_direct_and_gateway_calls
     assert_eq!(compact_status.0, StatusCode::OK, "{}", compact_status.1);
     assert_eq!(
         compact_status.1["result"]["structuredContent"]["output"]["mcp_host"]["profile"],
-        "host_code_mode"
+        "direct"
     );
     let status = post(
         &service,

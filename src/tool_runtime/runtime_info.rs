@@ -197,6 +197,14 @@ impl RuntimeInfo {
 }
 
 impl ToolRuntime {
+    fn mcp_host_profile_status(&self) -> Value {
+        json!({
+            "profile": self.mcp_host_policy.profile.as_str(),
+            "deployment_profile": self.deployment_mcp_host_policy.profile.as_str(),
+            "profile_source": self.mcp_host_profile_source,
+        })
+    }
+
     pub(crate) fn effective_config_status(&self) -> Value {
         json!({
             "auth": {
@@ -521,6 +529,7 @@ impl ToolRuntime {
         // can overflow the default Tokio worker stack once a Runner is registered.
         let mut output = serde_json::Map::with_capacity(18);
         output.insert("service".to_string(), json!("webcodex"));
+        output.insert("mcp_host".to_string(), self.mcp_host_profile_status());
         output.insert(
             "mcp_compact_schemas".to_string(),
             json!(self.runtime_info.mcp_compact_schemas),
@@ -653,7 +662,7 @@ impl ToolRuntime {
             "service": "webcodex",
             "version": env!("CARGO_PKG_VERSION"),
             "build": {"git_commit": build.git_commit, "git_dirty": build.git_dirty},
-            "mcp_host": {"profile": self.deployment_mcp_host_policy.profile.as_str()},
+            "mcp_host": self.mcp_host_profile_status(),
             "projects": {"count": projects, "online_count": online_projects, "status": if projects > 0 { "ok" } else { "no_projects" }},
             "jobs": {
                 "active_count": jobs.active_count,
@@ -848,6 +857,7 @@ impl ToolRuntime {
         // status requests retain the same bounded worker-stack behavior.
         let mut output = serde_json::Map::with_capacity(17);
         output.insert("service".to_string(), json!("webcodex"));
+        output.insert("mcp_host".to_string(), self.mcp_host_profile_status());
         output.insert(
             "mcp_compact_schemas".to_string(),
             json!(self.runtime_info.mcp_compact_schemas),

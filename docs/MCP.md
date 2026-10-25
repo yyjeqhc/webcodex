@@ -327,8 +327,13 @@ are unchanged. Explicit `work_on_project.guidance_profile` still selects guidanc
 only; it does not override transport timing. Subsequent context refreshes use the
 policy of their own request. `/api/tools/call`, result-text compatibility,
 `tools/list`, Apps admission and standard error semantics are unaffected.
-`runtime_status.effective_config.mcp_host` remains the deployment snapshot, not a
-claim about every connected client's policy.
+`get_runtime_status.mcp_host.profile` reports the profile effective for this
+request in both sparse and full responses. `deployment_profile` identifies the
+immutable Server default, and `profile_source` is `deployment` or
+`request_header`, including an explicit header equal to the default. Omitted
+headers never inherit another client's selection. The full response's
+`effective_config.mcp_host` remains the deployment timing snapshot; request-local
+profile diagnostics do not change execution policy or that operator evidence.
 
 Metadata/full trace records the actual selection as `mcp_request_policy_selected`:
 `selection.effective`, separate profile/budget sources, parsed requested budget

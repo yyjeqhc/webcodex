@@ -754,17 +754,19 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             }
         };
     let policy = policy_selection.effective;
-    // Clone only the lightweight runtime view when a preference actually differs.
-    // Stores, execution ownership and fences stay shared; policy never mutates
-    // the deployment snapshot or leaks between concurrent requests.
-    let runtime = if policy == runtime.mcp_host_policy {
+    // Equal explicit profiles still have request-header provenance. Clone only
+    // the lightweight view when policy or its diagnostic source differs; shared
+    // stores, execution ownership and the deployment snapshot remain unchanged.
+    let runtime = if policy == runtime.mcp_host_policy
+        && policy_selection.profile_source == runtime.mcp_host_profile_source
+    {
         runtime
     } else {
         Arc::new(
             runtime
                 .as_ref()
                 .clone()
-                .with_request_mcp_host_policy(policy),
+                .with_request_mcp_host_policy(policy_selection),
         )
     };
     let window = match protocol_era {

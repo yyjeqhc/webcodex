@@ -90,8 +90,13 @@ Direct 默认执行 handoff=10 秒、同步/观察上限=50 秒；Host Code Mode
 命令 `timeout_secs`、Job 身份、权限、执行生命周期及内部编排上限不变。
 `work_on_project.guidance_profile` 仍只覆盖当次指导文本；后续 context refresh
 按其自身请求策略处理。API transport、tools/list、App admission、错误语义及
-`WEBCODEX_MCP_TEXT_JSON_COMPAT` 均不改变。get_runtime_status 中的 mcp_host 继续
-表示部署默认值，而非所有客户端当前请求的策略。
+`WEBCODEX_MCP_TEXT_JSON_COMPAT` 均不改变。
+
+`get_runtime_status.mcp_host.profile` 在摘要和完整响应中均报告当前请求实际生效的
+Profile；`deployment_profile` 标明不可变的 Server 部署默认值，`profile_source`
+为 `deployment` 或 `request_header`。显式 header 即使等于默认值，也保留请求来源。
+未传 header 的后续请求不会继承其他客户端的选择。完整响应中的
+`effective_config.mcp_host` 仍是部署时序快照；这些诊断字段不改变执行策略或运维证据。
 
 默认在当前 turn 完成工作：先做独立工作，依赖 Job 时进行一次有界
 wait_for_job_readiness，必要时 observe_jobs 获取结果。deadline 后重新判断工作与

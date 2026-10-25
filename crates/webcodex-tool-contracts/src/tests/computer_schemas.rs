@@ -392,6 +392,50 @@ fn computer_key_letter_shortcuts_require_the_exact_control_chord() {
 }
 
 #[test]
+fn computer_key_success_receipts_fit_primitive_and_gateway_output_schemas() {
+    let specs = registered_tool_specs();
+    let control = spec_named(&specs, "control_computer");
+    let primitive = output_schema_for_tool("computer_key_input");
+    let output_schemas = [
+        ("computer_key_input", &primitive),
+        ("control_computer", &control.output_schema),
+    ];
+    let mut failures = Vec::new();
+    for key in webcodex_core::computer_input_contract::COMPUTER_KEY_INPUT_KEYS
+        .iter()
+        .copied()
+        .chain(["j", "p"])
+    {
+        let modifiers = if matches!(key, "j" | "p") {
+            json!(["control"])
+        } else {
+            json!([])
+        };
+        let input = json!({"action":"key", "client_id":"client", "surface_id":"surface_test",
+            "key":key, "modifiers":modifiers});
+        test_support::validate_schema_instance(&input, &control.input_schema).unwrap();
+        let receipt = json!({"success":true, "output":{"platform":"windows",
+            "surface_id":"surface_test", "key":key, "modifiers":modifiers, "success":true}});
+        for (name, schema) in output_schemas {
+            if let Err(error) = test_support::validate_schema_instance(&receipt, schema) {
+                failures.push(format!("{name} {key}: {error}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    for key in ["a", "Ctrl+P", "P"] {
+        let receipt = json!({"success":true, "output":{"platform":"windows",
+            "surface_id":"surface_test", "key":key, "modifiers":["control"], "success":true}});
+        for (name, schema) in output_schemas {
+            assert!(
+                test_support::validate_schema_instance(&receipt, schema).is_err(),
+                "{name} accepted {receipt}"
+            );
+        }
+    }
+}
+
+#[test]
 fn computer_key_wire_keeps_optional_modifiers_and_canonical_strings() {
     let schema = crate::input_schema_for_tool("control_computer");
     for modifiers in [

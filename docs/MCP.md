@@ -668,6 +668,14 @@ or a successful observation alone does not. It neither waits nor retries command
 See [Host execution control](experiments/host-execution-control.md) for supported
 tools, gateway placement, unknown outcomes and pending-chain design limits.
 
+Mixed `observe_jobs` batches compact each eligible successful observation independently.
+Failed items and `outcome_unknown` observations retain their canonical evidence; mixed
+or truncated batches preserve the outer success/error, counts, input indexes and single
+shared wait. Observation tokens, log reset/truncation recovery and the exact omitted
+suffix continuation remain unchanged. An inconsistent batch is returned unchanged.
+Canonical Session and audit facts are captured before this model-facing projection.
+This presentation does not retry, dispatch or establish successful command execution.
+
 `observe_jobs(summary_only=true)` is an opt-in presentation mode for proven successful
 structured validation Jobs. It removes routine passed-test and Cargo progress lines,
 while preserving test summaries, unknown text, warnings, validation evidence, lifecycle,

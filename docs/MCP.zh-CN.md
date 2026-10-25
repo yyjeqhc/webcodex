@@ -496,6 +496,12 @@ baseline，不代表日志重置；真正的日志代次变化和历史丢失仍
 证据。生命周期或退出码已表达的通用 running activity 和普通命令结果摘要省略；
 验证证据和有用的阶段变化继续保留。
 
+`observe_jobs` 混合批次逐项精简符合条件的成功观察。失败项及 `outcome_unknown`
+观察保留 canonical 证据；混合或截断批次保留整体 success/error、计数、输入索引与
+唯一的共享等待结果。observation token、日志 reset/truncation 恢复信息及被省略后缀
+的精确继续调用保持不变；整体计数不一致时原样返回。Session 与审计事实在模型投影前
+记录。该展示不会重试或派发 Job，也不能证明命令执行成功。
+
 process、script、shell 在受理时同时考虑工具上限和 Runner 最近注册的超时策略。
 仅被截断且仍在后台的交接结果增加一行，例如
 `timeout: 3600s (requested 99999; capped by runner policy)`；快速结束的命令不增加

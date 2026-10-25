@@ -58,7 +58,7 @@ fn workflow_schema() -> Value {
 }
 
 #[test]
-fn model_workflow_preferences_fit_the_unchanged_workflow_schema_and_keep_goal_rules_optional() {
+fn model_workflow_preferences_fit_workflow_schema_and_keep_goal_rules_optional() {
     let schema = workflow_schema();
     let base =
         builtin_coding_workflow_projection_with_policy(Default::default(), Default::default());
@@ -81,25 +81,43 @@ fn model_workflow_preferences_fit_the_unchanged_workflow_schema_and_keep_goal_ru
             ];
             for profile in profiles {
                 let projection = builtin_coding_workflow_projection_with_policy(profile, policy);
+                eprintln!(
+                    "workflow_bytes preference={preference:?} mode={mode:?} profile={profile:?} default_json={} optional_goal_json={}",
+                    serde_json::to_vec(&projection).unwrap().len(),
+                    serde_json::to_vec(&policy.goal_workflow_projection()).unwrap().len(),
+                );
                 validate_schema_instance_for_test(&projection, &schema).unwrap();
                 assert_eq!(projection["authority"], "model_guidance_only");
                 assert_eq!(projection["guidance"], base["guidance"]);
                 assert_eq!(projection["roles"], base["roles"]);
-                let continuation = projection["model_protocol"]["goal_continuation"]
-                    .as_str()
-                    .unwrap();
-                assert!(continuation.contains("normal final assistant response"));
-                assert!(continuation.contains("normal final assistant response now"));
-                assert!(continuation.contains("card success is not final"));
-                assert!(continuation.contains("without awaiting readiness/follow-up"));
-                assert!(projection["model_protocol"]["goal_checkpoint"]
+                for key in ["goal_continuation", "goal_checkpoint"] {
+                    assert!(projection["model_protocol"].get(key).is_none());
+                }
+                assert!(projection["model_protocol"]["goal_workflow"]
                     .as_str()
                     .unwrap()
-                    .contains("No Goal means no checkpoint"));
+                    .contains(GOAL_WORKFLOW_CONTEXT_KEY));
             }
             let details = policy.goal_workflow_projection();
             assert_eq!(details["authority"], "model_guidance_only");
             assert_eq!(details["selection"], policy.goal_selection_guidance());
+            let continuation = details["host_interaction"].as_str().unwrap();
+            assert_eq!(continuation, policy.mcp_app_resume.guidance());
+            assert!(continuation.contains("normal final assistant response now"));
+            assert!(continuation.contains("card success is not final"));
+            assert!(continuation.contains("without awaiting readiness/follow-up"));
+            assert!(details["checkpoint"]
+                .as_str()
+                .unwrap()
+                .contains("No Goal means no checkpoint"));
+            assert!(details["checkpoint"]
+                .as_str()
+                .unwrap()
+                .contains("exact revision/key"));
+            assert!(details["checkpoint"]
+                .as_str()
+                .unwrap()
+                .contains("no gateway or _wc.control fallback"));
             assert!(details["workflow"]
                 .as_str()
                 .unwrap()

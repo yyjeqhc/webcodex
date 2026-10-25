@@ -299,10 +299,22 @@ credentials, and private paths are not required.
 
 ## Long-running native process/script Jobs
 
-Execution duration and lifetime ownership are separate policies. `run_process`,
-`run_script`, and `run_detached_process` default to 60 seconds and accept a
-total execution lifetime up to 604800 seconds (7 days). Values above that
-ceiling clamp to 7 days. The Server-owned bounded synchronous handoff grace is
+Execution duration and lifetime ownership are separate policies. The
+[Runner execution budget table](../RUNNER.md#execution-budgets-and-lifetime-ownership)
+records the distinct tool ceilings: `run_job` keeps its raw asynchronous shell
+admission limit of 86400 seconds and its 3600-second default; `run_shell` keeps
+its shorter 3600-second ceiling. `run_process`, `run_script`, and
+`run_detached_process` default to 60 seconds and accept a total execution
+lifetime up to 604800 seconds (7 days). Positive values above each ceiling clamp
+to that ceiling. Runner `policy.max_timeout_secs` (default 3600) can further
+narrow execution; the shared budget resolver reports that cap without widening
+policy. The `run_job` receipt records the requested/effective budget and limiting
+source even when uncapped, plus Runner lifetime and observed command-start truth.
+Its policy basis and notice identify a dispatch/admission budget derived from the
+last registered policy. With no reported Runner policy, the effective budget is
+null and the known Server dispatch budget remains explicit; the Runner may impose
+a lower ceiling. Queued admission is not proof that the payload started, and the
+last registered policy is not a guarantee of survival through a live policy change. The Server-owned bounded synchronous handoff grace is
 return-latency policy only; it never extends execution lifetime. Normal
 model-facing discovery exposes no handoff-timing tuning input; compatibility
 inputs, when present on older callers, can only be tightened by trusted Server

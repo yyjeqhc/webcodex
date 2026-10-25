@@ -547,6 +547,7 @@ fn observe_jobs_output_schema() -> Value {
             "job_id": schema_type("string", "Runtime Job id."),
             "project": nullable_schema("string", "Project id recorded on the observed Job, when available."),
             "status": schema_type("string", "Canonical current Job status."),
+            "error": schema_type("string", "Non-empty Runner-reported execution failure reason; successful observation does not imply successful execution."),
             "exit_code": nullable_schema("integer", "Process exit code, when terminal and available."),
             "command_execution_state": job_command_execution_state_schema(),
             "structured_execution": job_structured_execution_metadata_schema(),
@@ -632,6 +633,7 @@ fn observe_jobs_output_schema() -> Value {
             "job_id": schema_type("string", "Runtime Job id."),
             "project": nullable_schema("string", "Project id retained for Window/Job correlation when available."),
             "status": schema_type("string", "Canonical current Job status."),
+            "error": schema_type("string", "Non-empty Runner-reported execution failure reason retained from the canonical observation."),
             "terminal": schema_type("boolean", "Stable terminal/nonterminal abstraction over Job lifecycle variants; never inferred from batch counts."),
             "changed": schema_type("boolean", "Whether lifecycle revision or Server epoch differs from the supplied observation token."),
             "meaningful_changed": schema_type("boolean", "Whether a semantic/log/activity/lifecycle/recovery change occurred since the supplied token; false for sequence-only heartbeat revisions."),
@@ -1471,19 +1473,60 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "execution_state",
-                schema_type("string", "Initial execution state; started after acceptance."),
+                schema_type("string", "Initial execution state derived from Job lifecycle; queued admission is not command start."),
             ),
             (
                 "created_at",
                 schema_type("integer", "Job creation timestamp."),
             ),
+            ("command_started", schema_type("boolean", "Whether the initial Job observation proves command start.")),
+            ("execution_lifetime", json!({
+                "type": "string", "const": "runner",
+                "description": "The exact Runner instance owns this execution; replacement does not inherit it."
+            })),
+            ("requested_timeout_secs", schema_type("integer", "Requested execution budget, including the default when omitted.")),
+            ("effective_timeout_secs", nullable_schema("integer", "Admission budget after the tool ceiling and last-registered Runner policy; null when that policy is unavailable. The live Runner may further narrow execution.")),
+            ("dispatched_timeout_secs", schema_type("integer", "Known Server dispatch budget when the Runner policy is unavailable; not a claim about the actual Runner ceiling.")),
+            ("timeout_policy_basis", json!({
+                "type": "string", "enum": ["last_registered_runner_policy", "runner_policy_unavailable"]
+            })),
+            ("timeout_notice", schema_type("string", "Short evidence-boundary notice for the dispatch/admission budget.")),
+            ("timeout_limit_source", json!({
+                "type": "string", "enum": ["request", "tool_limit", "runner_policy", "runner_policy_unknown"],
+                "description": "The known source that determined the admission budget, or runner_policy_unknown when the Runner did not report its policy."
+            })),
             ("continuation", observe_job_continuation_schema()),
             (
                 "last_update_seq",
                 nullable_schema("integer", "Runner protocol diagnostic sequence; not a bounded-wait token."),
             ),
         ]);
-            require_success_output_field(&mut schema, "continuation");
+            for field in [
+                "continuation", "command_started", "execution_lifetime",
+                "requested_timeout_secs", "effective_timeout_secs", "timeout_limit_source",
+                "timeout_policy_basis", "timeout_notice",
+            ] {
+                require_success_output_field(&mut schema, field);
+            }
+            schema["properties"]["output"]["allOf"] = json!([{
+                "if": {
+                    "properties": {"timeout_limit_source": {"const": "runner_policy_unknown"}},
+                    "required": ["timeout_limit_source"]
+                },
+                "then": {
+                    "properties": {
+                        "effective_timeout_secs": {"type": "null"},
+                        "timeout_policy_basis": {"const": "runner_policy_unavailable"}
+                    },
+                    "required": ["dispatched_timeout_secs"]
+                },
+                "else": {
+                    "properties": {
+                        "effective_timeout_secs": {"type": "integer"},
+                        "timeout_policy_basis": {"const": "last_registered_runner_policy"}
+                    }
+                }
+            }]);
             Some(schema)
         }
         "list_jobs" => Some(wrapped_output_schema(vec![
@@ -1677,6 +1720,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "read_job_tail" => {
             let mut schema = wrapped_output_schema(vec![
             ("job_id", schema_type("string", "Runtime job id.")),
+            ("error", schema_type("string", "Non-empty Runner-reported execution failure reason; successful observation does not imply successful execution.")),
             ("suggested_call", list_jobs_recovery_call_schema(false)),
             (
                 "session_id",

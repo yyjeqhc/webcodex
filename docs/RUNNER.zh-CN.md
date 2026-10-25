@@ -455,6 +455,38 @@ max_concurrent_jobs = 4
 当所有槽位都被占用时，已接受的 Job 仍是同一个可查询 Job（同一 `job_id`），并
 报告 `agent_queued`。
 
+
+### 执行预算与生命周期所有权
+
+| 入口 | 默认值 | 工具／准入上限 |
+|---|---:|---:|
+| `run_shell` | 60 秒 | 3600 秒（1 小时） |
+| `run_job` | 3600 秒 | 86400 秒（24 小时） |
+| `run_process`、`run_script`、`run_detached_process` | 60 秒 | 604800 秒（7 天） |
+
+超过工具上限的正数预算会被收窄。Runner 还会执行 `policy.max_timeout_secs`
+（默认 3600 秒）；工具允许更长时间不等于提高该策略。`run_job` 返回
+`requested_timeout_secs`、`effective_timeout_secs` 和
+`timeout_limit_source`（`request`、`tool_limit`、`runner_policy` 或
+`runner_policy_unknown`）。`timeout_policy_basis` 及简短提示明确其证据边界：
+预算基于最近注册的策略，Runner 仍在执行准入时应用自身策略。旧 Runner 未报告
+策略时，`effective_timeout_secs=null`，`dispatched_timeout_secs` 只表示已知的
+服务端分发预算；Runner 的实际预算可能更低。接受请求不保证进程持续运行到
+所报告的分发期限。
+
+`run_job` 初始回执保留 Job 身份和完整的 `observe_jobs` 延续调用。
+queued 回执中的 `command_started=false` 表示该次观察只证明已经准入，
+不证明原生进程已启动。普通 Job 由 Runner 拥有，替换实例不会继承其进程。
+只有原生可执行程序及明确 argv 需要跨 Runner 替换存活时，才应从启动时选择
+supervisor 托管的 `run_detached_process`。它不接受任意 Shell 命令，
+也不保证主机重启后的进程存活。
+
+终态 Job 记录及 detached 重放键在完成后另有有界的 24 小时保留期，
+这不代表活跃进程最多运行 24 小时；数量限制还可能缩短普通终态记录的保留时间。
+Job 输出只有有界尾部，训练应把完整日志、checkpoint 和产物写入项目文件；
+Job 回执过期不会删除这些文件。超时或结果未知不授权自动重新执行，
+也不证明所有副作用已经结束。应先观察原 Job 并检查目标状态，再判断新尝试是否安全。
+
 ## 传输细节
 
 ### Server 的 QUIC 要求

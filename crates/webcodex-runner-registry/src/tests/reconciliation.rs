@@ -1028,6 +1028,28 @@ async fn long_process_terminal_wait_horizon_covers_execution_recovery_and_retent
 }
 
 #[tokio::test]
+async fn raw_shell_terminal_wait_horizon_covers_accepted_day_long_budget() {
+    let registry = RunnerRegistry::default();
+    register(&registry, INSTANCE_A, empty_inventory()).await;
+    let mut request = JobStartRequest::shell(CLIENT_ID, "echo long");
+    request.timeout_secs = 86_400;
+    request.cwd = Some("/srv/demo".to_string());
+    request.context.project_id = Some(RUNTIME_PROJECT_ID.to_string());
+    request.context.project_cwd = Some(".".to_string());
+    request.context.visibility = ShellJobVisibility::Public;
+    let job = registry.start_job(request, "tester".to_string(), None, None).await.unwrap();
+    let before = now_ts();
+    let snapshot = registry
+        .job_terminal_registration_snapshot_for_auth(None, &job.job_id)
+        .await.unwrap();
+    let after = now_ts();
+    let expected_horizon = 86_400 + JOB_RECOVERY_GRACE_MAX_SECS + JOB_TERMINAL_RETENTION_SECS;
+    assert_eq!(expected_horizon, 176_400);
+    assert!(snapshot.wait_expires_at >= before + expected_horizon);
+    assert!(snapshot.wait_expires_at <= after + expected_horizon);
+}
+
+#[tokio::test]
 async fn structured_process_reconciliation_restores_active_and_terminal_evidence_without_redispatch(
 ) {
     let registry_a = RunnerRegistry::default();

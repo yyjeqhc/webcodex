@@ -9,8 +9,9 @@ use crate::auth::AuthContext;
 use crate::runner_http::RunnerRegistry;
 use crate::runner_protocol::{
     ShellCommandExecutionState, ShellJobInfo, ShellRunResponse, PROCESS_TIMEOUT_MAX_SECS,
-    SCRIPT_TIMEOUT_MAX_SECS, STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS,
-    STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS, STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
+    RAW_SHELL_JOB_TIMEOUT_DEFAULT_SECS, RAW_SHELL_JOB_TIMEOUT_MAX_SECS, SCRIPT_TIMEOUT_MAX_SECS,
+    STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
+    STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -30,16 +31,46 @@ pub(crate) struct StructuredExecutionBudget {
     pub(crate) sync_wait_secs: u64,
 }
 
+/// Timeout evidence shared by execution receipts and their lightweight notice.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ExecutionTimeoutEvidence {
+    requested_timeout_secs: u64,
+    effective_timeout_secs: u64,
+    pub(crate) source: &'static str,
+    pub(crate) runner_policy_known: bool,
+}
+
+impl std::fmt::Display for ExecutionTimeoutEvidence {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.runner_policy_known {
+            return write!(
+                formatter,
+                "{}s dispatch budget (requested {}); Runner policy unavailable and may further limit execution",
+                self.effective_timeout_secs, self.requested_timeout_secs
+            );
+        }
+        let source = match self.source {
+            "runner_policy" => "runner policy",
+            _ => "tool limit",
+        };
+        write!(
+            formatter,
+            "{}s (requested {}; capped by {source})",
+            self.effective_timeout_secs, self.requested_timeout_secs
+        )
+    }
+}
+
 /// Resolve the last-registered machine ceiling before dispatch. The Runner
 /// still enforces its live policy; this can only narrow the tool budget.
-/// The notice is presentation data, never a parsed execution contract.
+/// A legacy Runner without policy metadata leaves the actual ceiling unknown.
 pub(crate) async fn apply_runner_timeout_cap(
     registry: &RunnerRegistry,
     client_id: &str,
     auth: Option<&AuthContext>,
     requested_timeout_secs: Option<u64>,
     mut budget: StructuredExecutionBudget,
-) -> (StructuredExecutionBudget, Option<String>) {
+) -> (StructuredExecutionBudget, ExecutionTimeoutEvidence) {
     let requested = requested_timeout_secs.unwrap_or(STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS);
     let policy_max = registry
         .get_runner_view_for_auth(
@@ -48,33 +79,49 @@ pub(crate) async fn apply_runner_timeout_cap(
         )
         .await
         .and_then(|view| view.policy.map(|policy| policy.max_timeout_secs.max(1)));
-    let source = if policy_max.is_some_and(|max| max <= budget.effective_timeout_secs) {
-        "runner policy"
+    let cap_source = if policy_max.is_some_and(|max| max <= budget.effective_timeout_secs) {
+        "runner_policy"
     } else {
-        "tool limit"
+        "tool_limit"
     };
     if let Some(max) = policy_max {
         budget.effective_timeout_secs = budget.effective_timeout_secs.min(max);
         budget.sync_wait_secs = budget.sync_wait_secs.min(budget.effective_timeout_secs);
     }
-    let notice = (budget.effective_timeout_secs < requested).then(|| {
-        format!(
-            "{}s (requested {requested}; capped by {source})",
-            budget.effective_timeout_secs
-        )
-    });
-    (budget, notice)
+    let source = if policy_max.is_none() {
+        "runner_policy_unknown"
+    } else if budget.effective_timeout_secs < requested {
+        cap_source
+    } else {
+        "request"
+    };
+    let evidence = ExecutionTimeoutEvidence {
+        requested_timeout_secs: requested,
+        effective_timeout_secs: budget.effective_timeout_secs,
+        source,
+        runner_policy_known: policy_max.is_some(),
+    };
+    (budget, evidence)
 }
 
-pub(crate) fn add_timeout_cap_notice(result: &mut ToolResult, notice: Option<String>) {
-    if result.success && result.output["terminal"] == false {
-        if let Some(notice) = notice {
-            result.output["timeout"] = json!(notice);
-        }
+pub(crate) fn add_timeout_cap_notice(result: &mut ToolResult, evidence: ExecutionTimeoutEvidence) {
+    if result.success
+        && result.output["terminal"] == false
+        && (!evidence.runner_policy_known
+            || evidence.effective_timeout_secs < evidence.requested_timeout_secs)
+    {
+        result.output["timeout"] = json!(evidence.to_string());
     }
 }
 
 impl StructuredExecutionBudget {
+    pub(crate) fn resolve_raw_shell_job(timeout_secs: Option<i64>) -> Result<Self, String> {
+        let requested = timeout_secs.unwrap_or(RAW_SHELL_JOB_TIMEOUT_DEFAULT_SECS as i64);
+        let timeout_secs =
+            u64::try_from(requested).map_err(|_| "timeout_secs must be at least 1".to_string())?;
+        Self::resolve_with_timeout_max(Some(timeout_secs), None, RAW_SHELL_JOB_TIMEOUT_MAX_SECS)
+    }
+
     pub(crate) fn resolve_process(timeout_secs: Option<u64>) -> Result<Self, String> {
         Self::resolve_with_timeout_max(timeout_secs, None, PROCESS_TIMEOUT_MAX_SECS)
     }
@@ -634,7 +681,7 @@ pub(crate) async fn await_hidden_structured_job(
     result
 }
 
-fn continued_execution_state(status: &str, started: bool) -> (&'static str, bool) {
+pub(crate) fn continued_execution_state(status: &str, started: bool) -> (&'static str, bool) {
     // Recovery is a Server observation overlay, not Runner lifecycle truth, and
     // does not prove that execution is presently running.
     if status == "recovering" {

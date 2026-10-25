@@ -9,6 +9,10 @@ use super::helpers::{
     command_rejected_message, explicit_shell_dispatch_command, is_safe_job_id,
     project_relative_runner_cwd, resolve_runner_cwd, validate_raw_shell_command_length,
 };
+use super::process::{execution_admission_failure_result, process_tool_failure_result};
+use super::structured_execution::{
+    apply_runner_timeout_cap, continued_execution_state, StructuredExecutionBudget,
+};
 use super::tool_result::{RecoveryKind, SuggestedToolCall, ToolResult};
 use super::{
     execution_outcome::ExecutionOutcomeFacts, ExecutionPurpose, ExecutionShell, ToolRuntime,
@@ -19,9 +23,9 @@ use crate::runner_http::{
     JobValidationPlan, COMMAND_PREVIEW_MAX_CHARS,
 };
 use crate::runner_protocol::{
-    ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
-    ShellJobInfo, ShellJobStructuredExecutionMetadata, ShellJobTestCountEvidence,
-    ShellJobValidationStep,
+    ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource,
+    ShellJobActivityState, ShellJobInfo, ShellJobStructuredExecutionMetadata,
+    ShellJobTestCountEvidence, ShellJobValidationStep, RAW_SHELL_JOB_TIMEOUT_DEFAULT_SECS,
 };
 
 pub(crate) fn is_blocking_active_job_status(status: &str) -> bool {
@@ -1482,6 +1486,22 @@ impl ToolRuntime {
         shell: Option<ExecutionShell>,
         ssh_resource: Option<&str>,
     ) -> ToolResult {
+        let budget = match StructuredExecutionBudget::resolve_raw_shell_job(timeout_secs) {
+            Ok(budget) => budget,
+            Err(error) => {
+                return process_tool_failure_result(
+                    command_rejected_message(
+                        format!("run_job {error}"),
+                        "pass a positive timeout_secs, or omit it for the 3600-second default; values above 86400 seconds are clamped.",
+                    ),
+                    "invalid_arguments",
+                    ShellCommandExecutionState::NotStarted,
+                )
+            }
+        };
+        let requested_timeout_secs = timeout_secs
+            .map(|timeout| timeout as u64)
+            .unwrap_or(RAW_SHELL_JOB_TIMEOUT_DEFAULT_SECS);
         if let Err(error) = validate_raw_shell_command_length(&command) {
             return ToolResult::err(command_rejected_message(
                 error,
@@ -1497,10 +1517,17 @@ impl ToolRuntime {
         };
         let project_id = resolved.resolved_id.clone();
         let proj = resolved.config;
-        let max_runtime = timeout_secs.unwrap_or(3600).clamp(1, 604800);
         let declared_purpose = purpose.unwrap_or_default();
         let command_summary = command_preview(&command);
         let client_id = proj.client_id.clone();
+        let (budget, timeout_cap) = apply_runner_timeout_cap(
+            &self.runner_registry,
+            &client_id,
+            auth,
+            Some(requested_timeout_secs),
+            budget,
+        )
+        .await;
         let remote = ssh_resource.is_some();
         if remote && !validation_steps.is_empty() {
             return ToolResult::err(
@@ -1565,18 +1592,23 @@ impl ToolRuntime {
             _ => command.clone(),
         };
         match self
-                .runner_registry
-                .start_job(
+            .runner_registry
+            .start_job(
                 JobStartRequest {
                     client_id: client_id,
                     cwd: effective_cwd,
-                    timeout_secs: max_runtime as u64,
+                    timeout_secs: budget.effective_timeout_secs,
                     execution: if validation_steps.is_empty() {
                         JobStartExecution::Shell {
                             command: dispatched_command,
                             target: match ssh_resource {
-                                Some(resource) => JobShellTarget::Ssh { resource: resource.to_string() },
-                                None => JobShellTarget::Local { shell, login: false },
+                                Some(resource) => JobShellTarget::Ssh {
+                                    resource: resource.to_string(),
+                                },
+                                None => JobShellTarget::Local {
+                                    shell,
+                                    login: false,
+                                },
                             },
                         }
                     } else {
@@ -1599,14 +1631,14 @@ impl ToolRuntime {
                 crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 None,
             )
-                .await
-            {
-                Ok(job) => {
-                    let continuation = observe_job_continuation(
-                        &job.job_id,
-                        job.observation_token.as_deref(),
-                    );
-                    ToolResult::ok(json!({
+            .await
+        {
+            Ok(job) => {
+                let continuation =
+                    observe_job_continuation(&job.job_id, job.observation_token.as_deref());
+                let (execution_state, command_started) =
+                    continued_execution_state(&job.status, job.started_at.is_some());
+                let mut output = json!({
                     "job_id": job.job_id,
                     "kind": job.kind,
                     "status": job.status,
@@ -1618,7 +1650,18 @@ impl ToolRuntime {
                     "shell": actual_shell,
                     "executor": "agent",
                     "ssh_resource": ssh_resource,
-                    "execution_state": "started",
+                    "execution_state": execution_state,
+                    "command_started": command_started,
+                    "execution_lifetime": "runner",
+                    "requested_timeout_secs": requested_timeout_secs,
+                    "effective_timeout_secs": timeout_cap.runner_policy_known.then_some(budget.effective_timeout_secs),
+                    "timeout_limit_source": timeout_cap.source,
+                    "timeout_policy_basis": if timeout_cap.runner_policy_known { "last_registered_runner_policy" } else { "runner_policy_unavailable" },
+                    "timeout_notice": if timeout_cap.runner_policy_known {
+                        "Dispatch budget only; Runner enforces its current policy."
+                    } else {
+                        "Runner policy unavailable; actual execution budget may be lower."
+                    },
                     "created_at": job.created_at,
                     "observation_token": job.observation_token,
                     "continuation_semantics": job_observation_continuation_semantics(),
@@ -1630,13 +1673,27 @@ impl ToolRuntime {
                     "stdout_truncated": false,
                     "stderr_truncated": false,
                     "continuation": continuation,
-                }))
+                });
+                if !timeout_cap.runner_policy_known {
+                    output["dispatched_timeout_secs"] = json!(budget.effective_timeout_secs);
                 }
-                Err(e) => ToolResult::err(command_rejected_message(
-                    e.to_string(),
-                    "confirm the agent is connected and async jobs are allowed, then retry or use run_shell for short commands.",
-                )),
+                ToolResult::ok(output)
             }
+            Err(error) => {
+                let next_step = match error.failure_kind() {
+                    "invalid_arguments" => {
+                        "correct the rejected execution arguments before retrying."
+                    }
+                    "agent_offline" => "check the selected Runner connection before retrying.",
+                    "capability_unavailable" => "select a Runner that supports asynchronous Jobs.",
+                    "permission_denied" => {
+                        "check the current connection identity and execution authorization."
+                    }
+                    _ => "inspect the admission failure before retrying this unstarted request.",
+                };
+                execution_admission_failure_result(error, next_step)
+            }
+        }
     }
 
     #[cfg(test)]
@@ -1935,6 +1992,13 @@ impl ToolRuntime {
                     "detected_summary": detected_summary,
                     "validation": validation,
                 });
+                if let Some(error) = job
+                    .error
+                    .as_deref()
+                    .filter(|error| !error.trim().is_empty())
+                {
+                    output["error"] = json!(error);
+                }
                 if let Some(artifacts) = &job.build_artifacts {
                     output["build_artifacts"] = json!(artifacts);
                 }

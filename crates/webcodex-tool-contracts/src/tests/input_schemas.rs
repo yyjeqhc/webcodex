@@ -796,6 +796,36 @@ fn execution_timeout_schema_descriptions_keep_form_specific_lifetime_ceilings() 
 }
 
 #[test]
+fn run_job_timeout_schema_matches_bounded_admission() {
+    let specs = registered_tool_specs();
+    let schema = &spec_named(&specs, "run_job").input_schema;
+    let timeout = &schema["properties"]["timeout_secs"];
+    assert_eq!(timeout["minimum"], 1);
+    assert_eq!(timeout["default"], 3600);
+    assert!(
+        timeout.get("maximum").is_none(),
+        "oversized budgets are normalized"
+    );
+    let description = timeout["description"].as_str().unwrap();
+    assert!(description.contains("86400"));
+    assert!(description.contains("Runner policy"));
+    for timeout_secs in [1, 3600, 86400, 86401] {
+        assert!(test_support::validate_schema_instance(
+            &json!({"project": "demo", "command": "echo ok", "timeout_secs": timeout_secs}),
+            schema,
+        )
+        .is_ok());
+    }
+    for timeout_secs in [0, -1] {
+        assert!(test_support::validate_schema_instance(
+            &json!({"project": "demo", "command": "echo ok", "timeout_secs": timeout_secs}),
+            schema,
+        )
+        .is_err());
+    }
+}
+
+#[test]
 fn cargo_fmt_conditional_timeout_schema_matches_contract() {
     let specs = registered_tool_specs();
     let schema = &spec_named(&specs, "cargo_fmt").input_schema;

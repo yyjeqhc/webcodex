@@ -88,6 +88,25 @@ fn schema_samples_choose_declared_values_and_required_children() {
 }
 
 #[test]
+fn schema_samples_validate_bounded_all_of_constraints() {
+    let schema = json!({"type":"integer", "minimum":2, "allOf":[{"maximum":3}]});
+    assert_eq!(sample_schema_value(&schema).unwrap(), json!(2));
+    for schema in [
+        json!({"type":"integer", "minimum":2, "allOf":[{"maximum":1}]}),
+        json!({"type":"integer", "const":2, "allOf":[{"maximum":1}]}),
+        json!({"type":"integer", "allOf":[{"unsupported":true}]}),
+        json!({"type":"integer", "allOf":vec![json!({}); 257]}),
+    ] {
+        assert!(sample_schema_value(&schema).is_err(), "{schema}");
+    }
+    let mut schema = json!({"type":"integer"});
+    for _ in 0..17 {
+        schema = json!({"type":"integer", "allOf":[schema]});
+    }
+    assert!(sample_schema_value(&schema).is_err());
+}
+
+#[test]
 fn schema_samples_fail_closed_and_bound_resources() {
     for schema in [
         json!({"$ref":"#/recursive"}),

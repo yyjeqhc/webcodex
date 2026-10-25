@@ -291,7 +291,7 @@ fn validate_candidate(value: &Value, schema: &Value, fixtures: bool) -> Result<(
         *budget -= 1;
         let object = schema.as_object().ok_or("unsupported boolean schema")?;
         check_keywords(object, fixtures)?;
-        for key in ["oneOf", "anyOf"] {
+        for key in ["oneOf", "anyOf", "allOf"] {
             if let Some(variants) = schema.get(key).and_then(Value::as_array) {
                 for variant in variants {
                     visit(value, variant, fixtures, depth + 1, budget)?;
@@ -323,7 +323,7 @@ fn check_keywords(object: &Map<String, Value>, fixtures: bool) -> Result<(), Str
             "minimum" | "maximum" if value.is_number() => {}
             "minLength" | "maxLength" | "minItems" | "maxItems" if value.as_u64().is_some() => {}
             "additionalProperties" if value.is_boolean() => {}
-            "required" | "enum" | "anyOf" | "oneOf"
+            "required" | "enum" | "anyOf" | "oneOf" | "allOf"
                 if value.as_array().is_some_and(|a| a.len() <= 256) => {}
             // Opaque formats are allowed only in the explicit semantic-fixture path.
             "pattern" if fixtures => {}

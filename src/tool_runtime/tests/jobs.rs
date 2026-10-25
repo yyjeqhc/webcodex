@@ -829,7 +829,10 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
 
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(assert_sparse_pending_job_handoff(&result.output), job_id);
+    assert_eq!(
+        assert_sparse_pending_job_handoff_with_unreported_policy(&result.output, 600),
+        job_id
+    );
     assert_run_shell_result_matches_schema(&result);
     assert!(
         probe_patch_agent_request(&runtime, client_id)

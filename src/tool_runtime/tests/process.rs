@@ -1545,7 +1545,8 @@ async fn detached_process_uses_existing_job_identity_and_typed_runner_request() 
         .dispatch_with_auth(detached_process_call(project), Some(&auth))
         .await;
     assert!(result.success, "{:?}", result.error);
-    let job_id = assert_sparse_pending_job_handoff(&result.output).to_string();
+    let job_id =
+        assert_sparse_pending_job_handoff_with_unreported_policy(&result.output, 30).to_string();
     assert_observe_job_continuation(&result.output);
 
     let request = wait_for_patch_agent_request(&runtime, "detached-product-path").await;
@@ -2086,7 +2087,8 @@ async fn run_process_six_hour_handoff_is_queryable_once_and_keeps_the_original_b
     let handoff = task.await.unwrap();
     assert!(started.elapsed() < Duration::from_secs(1));
     assert!(handoff.success, "{:?}", handoff.error);
-    let job_id = assert_sparse_pending_job_handoff(&handoff.output).to_string();
+    let job_id = assert_sparse_pending_job_handoff_with_unreported_policy(&handoff.output, 21_600)
+        .to_string();
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
 
     let status = runtime
@@ -2268,7 +2270,8 @@ async fn structured_execution_stop_job_preserves_handoff_identity_without_replac
         )
         .await;
         let handoff = task.await.unwrap();
-        let job_id = assert_sparse_pending_job_handoff(&handoff.output).to_string();
+        let job_id = assert_sparse_pending_job_handoff_with_unreported_policy(&handoff.output, 30)
+            .to_string();
         assert_eq!(start_request.kind, structured_job_request_kind(entry));
         assert_eq!(start_request.job_id.as_deref(), Some(job_id.as_str()));
         assert!(
@@ -2352,7 +2355,7 @@ async fn promoted_process_inherits_the_initiating_session_without_a_second_tool_
     )
     .await;
     let handoff = task.await.unwrap();
-    let job_id = assert_sparse_pending_job_handoff(&handoff.output);
+    let job_id = assert_sparse_pending_job_handoff_with_unreported_policy(&handoff.output, 30);
     let job = runtime.runner_registry.get_job(job_id).await.unwrap();
     assert_eq!(job.session_id.as_deref(), Some(session.session_id.as_str()));
     assert_eq!(job.project_id.as_deref(), Some(project.as_str()));

@@ -144,7 +144,10 @@ async fn promoted_run_shell_preserves_assertion_identity_in_terminal_validation_
         .unwrap();
     let handoff = task.await.unwrap();
     assert!(handoff.success, "{:?}", handoff.error);
-    assert_eq!(assert_sparse_pending_job_handoff(&handoff.output), job_id);
+    assert_eq!(
+        assert_sparse_pending_job_handoff_with_unreported_policy(&handoff.output, 120),
+        job_id
+    );
 
     runtime
         .runner_registry

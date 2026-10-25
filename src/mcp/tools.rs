@@ -1504,7 +1504,7 @@ fn mcp_tool_parts_json(
     }
 
     if tool_name == "observe_jobs" {
-        description.push_str(" MCP defaults wake_on=meaningful_change and summary_only=true; set wake_on=change for all updates or summary_only=false for full retained logs.");
+        description.push_str(" MCP defaults: wake_on=meaningful_change, summary_only=true.");
     }
 
     if matches!(tool_name.as_str(), "observe_computer" | "observe_browser") {

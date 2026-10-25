@@ -1716,11 +1716,14 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
                 );
             }
             if name == "observe_jobs" {
+                assert_eq!(expected["properties"]["wake_on"]["default"], "change");
+                expected["properties"]["wake_on"]["default"] = json!("meaningful_change");
+                expected["properties"]["wake_on"]["description"] = json!("MCP defaults to meaningful_change (ignores pure heartbeats). Set change for all updates; terminal/all_terminal for completion. Missing tokens return an immediate baseline.");
                 assert_eq!(expected["properties"]["summary_only"]["default"], false);
                 expected["properties"]["summary_only"]["default"] = json!(true);
                 expected["properties"]["summary_only"]["description"] = json!("MCP defaults to compact proven-success validation logs. Set false to expand retained logs from the original cursor. Failures, unknown results and ordinary commands keep full evidence.");
                 expected_description
-                    .push_str(" MCP defaults summary_only=true; set false for full retained logs.");
+                    .push_str(" MCP defaults: wake_on=meaningful_change, summary_only=true.");
             }
             let mut actual = tool["inputSchema"].clone();
             if compact {
@@ -2343,17 +2346,27 @@ fn mcp_execution_descriptions_share_canonical_source_across_surfaces() {
                 .iter()
                 .find(|tool| tool["name"] == name)
             {
-                // MCP changes the canonical observer's summary_only default.
-                // Keep this actual adapter difference without copying its L0 contract.
+                // MCP changes the canonical observer's wake_on and summary_only defaults.
+                // Keep these adapter differences without copying its L0 contract.
                 let expected = if name == "observe_jobs" {
+                    assert_eq!(
+                        tool["inputSchema"]["properties"]["wake_on"]["default"],
+                        "meaningful_change"
+                    );
                     assert_eq!(
                         tool["inputSchema"]["properties"]["summary_only"]["default"],
                         true
                     );
-                    format!("{canonical} MCP defaults summary_only=true; set false for full retained logs.")
+                    format!(
+                        "{canonical} MCP defaults: wake_on=meaningful_change, summary_only=true."
+                    )
                 } else {
                     canonical.to_owned()
                 };
+                assert!(
+                    expected.chars().count() <= crate::mcp::discovery::TOOL_DESCRIPTION_MAX_CHARS,
+                    "{name}"
+                );
                 assert_eq!(tool["description"], expected, "{name}");
             }
         }

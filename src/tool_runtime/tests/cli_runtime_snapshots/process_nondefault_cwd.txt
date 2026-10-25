@@ -1,0 +1,5 @@
+isError: false
+stdout_tail:
+<ROOT>/src
+
+stdout_lines: 1

@@ -1,5 +1,106 @@
 use super::*;
 
+#[test]
+#[ignore = "requires captured native Runtime response"]
+fn cli_runtime_replay_captured_native_response() {
+    use std::io::{Read, Write as _};
+
+    const MAX_CAPTURE_BYTES: u64 = 2 * 1024 * 1024;
+    let input = std::env::var_os("WEBCODEX_CLI_RUNTIME_CAPTURE")
+        .expect("set WEBCODEX_CLI_RUNTIME_CAPTURE to a native MCP capture");
+    let output = std::env::var_os("WEBCODEX_CLI_RUNTIME_REPLAY_OUTPUT")
+        .expect("set WEBCODEX_CLI_RUNTIME_REPLAY_OUTPUT to a new output file");
+    let file = std::fs::File::open(&input).expect("open native MCP capture");
+    assert!(
+        file.metadata().unwrap().is_file(),
+        "capture must be a regular file"
+    );
+    let mut raw = Vec::new();
+    file.take(MAX_CAPTURE_BYTES + 1)
+        .read_to_end(&mut raw)
+        .unwrap();
+    assert!(
+        raw.len() as u64 <= MAX_CAPTURE_BYTES,
+        "native MCP capture exceeds 2 MiB"
+    );
+    let capture: Value = serde_json::from_slice(&raw).expect("native MCP capture JSON");
+    assert_eq!(capture["format"], "webcodex.cli_runtime_capture.v1");
+    let tool = capture["tool"]
+        .as_str()
+        .expect("captured canonical tool name");
+    assert!(
+        matches!(tool, "list_projects" | "list_workspace_symbols"),
+        "only inventory and workspace-symbol native captures are admitted"
+    );
+    let mut response = capture["response"].clone();
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert!(response.get("id").is_some_and(|id| !id.is_null()));
+    assert!(
+        response.get("error").is_none(),
+        "RPC failures are not ToolResult captures"
+    );
+    let result = response["result"]
+        .as_object()
+        .expect("native MCP result object");
+    assert!(result.get("content").is_some_and(Value::is_array));
+    let structured = result
+        .get("structuredContent")
+        .and_then(Value::as_object)
+        .expect("native Adaptive MCP structuredContent");
+    let success = structured
+        .get("success")
+        .and_then(Value::as_bool)
+        .expect("native ToolResult.success");
+    assert!(
+        structured
+            .get("output")
+            .is_some_and(|value| value.is_object() || (!success && value.is_null())),
+        "expected inventory/symbol output object or failed null output"
+    );
+    assert!(
+        structured
+            .get("error")
+            .is_some_and(|value| value.is_null() || value.is_string()),
+        "expected canonical ToolResult.error"
+    );
+    if let Some(is_error) = result.get("isError") {
+        assert_eq!(
+            is_error.as_bool(),
+            Some(!success),
+            "capture failure semantics disagree"
+        );
+    }
+    crate::mcp::cli::project_response(Some(tool), &mut response);
+    assert!(response["result"].get("structuredContent").is_none());
+    assert_eq!(response["result"]["isError"], !success);
+    let blocks = response["result"]["content"]
+        .as_array()
+        .expect("CLI content");
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0]["type"], "text");
+    let rendered = text(&response);
+    assert!(
+        !rendered.is_empty(),
+        "native capture produced no visible CLI evidence"
+    );
+    let mut destination = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .expect("replay output must be a new writable file");
+    destination.write_all(rendered.as_bytes()).unwrap();
+    eprintln!(
+        "runtime_cli_replay {}",
+        json!({
+            "tool":tool,
+            "is_error":!success,
+            "text_utf8_bytes":rendered.len(),
+            "text_chars":rendered.chars().count(),
+            "response_json_bytes":serde_json::to_vec(&response).unwrap().len()
+        })
+    );
+}
+
 fn samples() -> Vec<(&'static str, Value)> {
     vec![
         (

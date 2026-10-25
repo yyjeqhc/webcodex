@@ -3,8 +3,12 @@
 `cli_runtime_projection.rs` starts one in-memory Runtime and one temporary Git
 checkout per related test group. It reuses the local Runner request responder:
 file listing and reading use the real local filesystem, search executes the
-Runtime-generated bounded search program, and Shell/Job logs come from commands
-that actually ran. Every sample then enters the real MCP CLI adapter through
+Runtime-generated bounded search program, and Shell/Process/Job logs come from
+commands that actually ran. The native argv cases reuse the bounded local command
+helper and report a completed process only after obtaining its actual exit status;
+spawn/capture/timeout failures remain fixture failures. Typed completion evidence
+is supplied through the existing Runner result helper, not a fabricated ToolResult.
+Every sample then enters the real MCP CLI adapter through
 `cli_call_for_test`; these snapshots are not hand-written ToolResult fixtures.
 No standalone Server process is started for each sample. The local process
 fixture is Unix-gated; Windows protocol/rendering coverage stays in the existing
@@ -78,3 +82,53 @@ An existing `rust-analyzer` triggers one bounded workspace-symbol request with
 Cargo offline; otherwise the ledger explicitly records a skip. A readiness or
 indexing failure remains a failed observation, not a successful symbol sample.
 No language server or dependency is installed by the fixture.
+
+## Native response replay for projection comparisons
+
+The inventory sample now also uses the in-memory Runtime fixture. For workspace
+symbols, the native lane captures one actual Adaptive MCP response in
+`workspace_symbols.runtime.json` when an installed language server is available.
+`projects.runtime.json` uses the same native capture path. A capture contains the
+canonical tool name, exact response, native binary hashes and transport label;
+it never includes authentication headers or temporary credential configuration.
+
+The ignored test
+`mcp::tests::cli::text_projection::cli_runtime_replay_captured_native_response`
+passes that exact response through the compiled CLI projection. It requires both
+`WEBCODEX_CLI_RUNTIME_CAPTURE` and `WEBCODEX_CLI_RUNTIME_REPLAY_OUTPUT`; missing
+input is a failure, not a successful no-op. It accepts only inventory/workspace
+symbol MCP ToolResults up to 2 MiB, never normalizes identity or clocks, preserves
+failure semantics and requires a new output file. Normal CI reports this test
+as ignored; native replay coverage is reported only after explicit execution.
+
+For a comparison, first compile the replay test before changing production
+projection code and preserve the printed test executable in a dedicated temporary
+path. Rebuild after the projection change, then run the native smoke once:
+
+```bash
+python3 scripts/e2e_cli_runtime_output.py --bin-dir target/dogfood --output-dir /tmp/webcodex-cli-native
+python3 scripts/measure_cli_runtime_projection.py \
+  --before-test-bin /tmp/webcodex-cli-replay-before \
+  --after-test-bin /tmp/webcodex-cli-replay-after \
+  --output-dir /tmp/webcodex-cli-replay-comparison \
+  /tmp/webcodex-cli-native/projects.runtime.json \
+  /tmp/webcodex-cli-native/workspace_symbols.runtime.json
+```
+
+Use the actual preserved executable paths; the replay helper starts neither a
+Server nor a Runner. It verifies unchanged capture/binary hashes and writes exact
+before/after text, Unicode scalar/UTF-8 byte counts and a separate JSON-response
+size. These measurements compare two compiled CLI projections of the same real
+Runtime producer output. They are not two end-to-end executions, Host token
+measurements or remote latency measurements.
+
+If the native lane skips the language server, omit the missing symbol capture
+and report that no successful symbol comparison was measured. If indexing fails,
+keep the actual failed response and identify its numbers as failure diagnostics.
+Do not replace a missing or failed native symbol sample with constructed JSON.
+
+Job batch total counts can be omitted only when an explicit nontruncated batch
+contains exactly the requested and returned number of visible items.
+Classification counts still state successes/failures/terminal changes. Log totals,
+returned log lines and retention cursors describe different facts and remain
+visible, including the unknown values in full observations.

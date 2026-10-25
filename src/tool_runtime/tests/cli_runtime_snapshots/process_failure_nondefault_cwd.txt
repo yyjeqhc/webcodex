@@ -1,0 +1,15 @@
+isError: true
+ERROR: Command exited with status 7.
+Logs: available stdout_tail and stderr_tail are included below.
+
+execution_state: completed; exit_code: 7
+stdout_tail:
+<ROOT>/src
+
+stderr_tail:
+denied
+
+command_ok: false
+failure_kind: command_exit_nonzero
+stderr_lines: 1
+stdout_lines: 1

@@ -55,6 +55,7 @@ impl Fixture {
             RunnerCapabilities {
                 shell: true,
                 explicit_shell_selection: true,
+                structured_process_argv: true,
                 git: true,
                 file_read: true,
                 file_write: true,
@@ -90,9 +91,44 @@ impl Fixture {
                 "{tool}: local Runner fixture deadline"
             );
             if let Some(request) = probe_patch_agent_request(&self.runtime, self.client).await {
-                if request.kind == "start_job" {
+                assert!(
+                    !matches!(request.kind.as_str(), "run_script" | "start_script_job"),
+                    "native script execution belongs in the real Runner smoke fixture"
+                );
+                if request.kind == "run_process" {
+                    // The shared helper executes the actual native argv and
+                    // rejects its own timeout. A nonnegative exit status proves
+                    // a completed child; spawn/capture failures stay fixture errors.
+                    let started = Instant::now();
+                    let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
+                    assert!(
+                        exit_code >= 0,
+                        "native process fixture did not obtain an exit status: {stderr}"
+                    );
+                    complete_patch_agent_execution(
+                        &self.runtime,
+                        self.client,
+                        request.request_id,
+                        ShellCommandExecutionState::Completed,
+                        Some(exit_code),
+                        &stdout,
+                        &stderr,
+                        None,
+                        started.elapsed().as_millis() as u64,
+                    )
+                    .await;
+                    continue;
+                }
+                // V2 registration supplies the structured-Job baseline: a
+                // Process budget above its sync grace arrives as start_process_job.
+                if matches!(request.kind.as_str(), "start_job" | "start_process_job") {
                     update_job(self, &request, "running", false, None).await;
                     let completion = run_runner_shell_request_locally(&request);
+                    assert!(
+                        completion.0 >= 0,
+                        "Job fixture did not obtain an actual child exit status: {}",
+                        completion.2
+                    );
                     let status = if completion.0 == 0 {
                         "completed"
                     } else {
@@ -149,7 +185,11 @@ fn assert_call_parses(call: &Value) {
 /// Raw recovery calls are parsed and followed/asserted before normalization.
 fn normalized_snapshot(body: &Value, root: &Path, job: Option<&str>) -> String {
     let mut rendered = cli_text(body).to_owned();
-    for path in [root.to_path_buf(), root.canonicalize().unwrap()] {
+    // A macOS canonical root may contain the noncanonical root as a suffix.
+    // Replace only these two known fixture paths, longest first.
+    let mut roots = [root.to_path_buf(), root.canonicalize().unwrap()];
+    roots.sort_by_key(|path| std::cmp::Reverse(path.to_str().unwrap().len()));
+    for path in roots {
         rendered = rendered.replace(path.to_str().unwrap(), "<ROOT>");
     }
     if let Some(job) = job {
@@ -206,6 +246,18 @@ fn snapshot(name: &str, body: &Value, root: &Path, job: Option<&str>) {
 #[tokio::test]
 async fn cli_runtime_files_search_and_execution_snapshots() {
     let f = Fixture::new("cli-runtime-files", false).await;
+    let projects = f
+        .call(
+            "list_projects",
+            json!({"client_id":f.client,"summary_only":true}),
+        )
+        .await;
+    assert_eq!(projects["result"]["isError"], false, "{projects}");
+    assert!(cli_text(&projects).contains(&f.project), "{projects}");
+    // Inventory reports the registered Runner's Git evidence; do not infer it
+    // again from the test process's local checkout.
+    assert!(cli_text(&projects).contains("git_available:"), "{projects}");
+    snapshot("projects", &projects, f.root.path(), None);
     let mut directory_texts = Vec::new();
     for (name, tool, extra) in [
         (
@@ -294,7 +346,96 @@ async fn cli_runtime_files_search_and_execution_snapshots() {
         }
         snapshot(name, &body, f.root.path(), None);
     }
-    // Collect every pre-fix sample before reporting the directory regression.
+    std::fs::write(
+        f.root.path().join("src/fixture_failure.py"),
+        "import os, sys\nprint(os.getcwd(), flush=True)\n\
+         print('denied', file=sys.stderr, flush=True)\nraise SystemExit(7)\n",
+    )
+    .unwrap();
+    let mut contexts = Vec::new();
+    for (name, tool, payload, is_error) in [
+        (
+            "shell_nondefault_cwd",
+            "run_shell",
+            json!({"command":"pwd","cwd":"src"}),
+            false,
+        ),
+        (
+            "process_success",
+            "run_process",
+            json!({"executable":"printf","args":["hello\n"]}),
+            false,
+        ),
+        (
+            "process_nondefault_cwd",
+            "run_process",
+            json!({"executable":"pwd","cwd":"src"}),
+            false,
+        ),
+        (
+            "process_failure_nondefault_cwd",
+            "run_process",
+            json!({"executable":"python3","args":["fixture_failure.py"],"cwd":"src"}),
+            true,
+        ),
+    ] {
+        let mut arguments = payload;
+        arguments["project"] = json!(f.project);
+        arguments["timeout_secs"] = json!(30);
+        let body = f.call(tool, arguments).await;
+        assert_eq!(body["result"]["isError"], is_error, "{body}");
+        snapshot(name, &body, f.root.path(), None);
+        contexts.push((name, body));
+    }
+    // Collect every planned observation before reporting presentation defects.
+    // A mismatched execution state or actual cwd is a separate harness/runtime
+    // failure and must not be counted as a compact-rendering improvement.
+    let mut presentation_regressions = Vec::new();
+    if !cli_text(&search).contains(concat!(
+        "src/sample.txt-1-before\n",
+        "src/sample.txt:2:needle 中文\n",
+        "src/sample.txt-3-between\n",
+        "--\n",
+        "src/sample.txt-3-between\n",
+        "src/sample.txt:4:needle again\n",
+        "src/sample.txt-5-after\n"
+    )) {
+        presentation_regressions
+            .push("search context lacks ordered compact match groups".to_owned());
+    }
+    for (name, body) in contexts {
+        let rendered = cli_text(&body);
+        if name == "process_success" {
+            if rendered != "hello\n" {
+                presentation_regressions
+                    .push(format!("{name}: default success retains redundant fields"));
+            }
+            continue;
+        }
+        if name == "process_failure_nondefault_cwd" {
+            assert!(
+                rendered.contains("exit_code: 7") && rendered.contains("denied"),
+                "{name}: command did not demonstrate actual exit/stderr: {rendered}"
+            );
+        }
+        assert!(
+            [
+                f.root.path().to_path_buf(),
+                f.root.path().canonicalize().unwrap()
+            ]
+            .iter()
+            .any(|root| rendered.contains(root.join("src").to_str().unwrap())),
+            "{name}: command did not demonstrate actual cwd: {rendered}"
+        );
+        if !rendered.contains("cwd: src") {
+            presentation_regressions.push(format!("{name}: explicit cwd missing from receipt"));
+        }
+    }
+    assert!(
+        presentation_regressions.is_empty(),
+        "CLI presentation regressions after all snapshots:\n{}",
+        presentation_regressions.join("\n")
+    );
     for rendered in directory_texts {
         assert!(
             rendered.contains("apps/") && rendered.contains("src/"),

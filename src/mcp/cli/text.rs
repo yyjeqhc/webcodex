@@ -130,7 +130,7 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
     // a new truncation cursor or hiding recovery/effect facts.
     let canonical_bytes = crate::json_measurement::serialized_json_len(structured).unwrap_or(0);
     if text.len() > canonical_bytes.saturating_add(1024) {
-        text = serde_json::to_string(structured).expect("JSON value");
+        text = ordered_json(structured);
     }
     result.remove("structuredContent");
     result.insert("isError".into(), json!(!success));
@@ -179,7 +179,7 @@ fn render_manifest(text: &mut String, mut output: Value) {
                 }
                 // Keep selection-relevant authority/effect and any future fields.
                 if !remaining.is_empty() {
-                    let _ = writeln!(text, "  {}", Value::Object(remaining));
+                    let _ = writeln!(text, "  {}", ordered_json(&Value::Object(remaining)));
                 }
             }
             if tools.is_empty() {
@@ -190,7 +190,7 @@ fn render_manifest(text: &mut String, mut output: Value) {
         }
     }
     if let Some(route) = fields.remove("route") {
-        let _ = writeln!(text, "route: {route}");
+        let _ = writeln!(text, "route: {}", ordered_json(&route));
     }
     if let Some(flows) = fields
         .get_mut("recommended_flows")
@@ -198,14 +198,14 @@ fn render_manifest(text: &mut String, mut output: Value) {
     {
         for flow in std::mem::take(flows) {
             // Canonical flow prose and partial/omitted membership stay together.
-            let _ = writeln!(text, "flow: {flow}");
+            let _ = writeln!(text, "flow: {}", ordered_json(&flow));
         }
         fields.remove("recommended_flows");
     }
     render_fields(text, &output);
     if let Some(schema) = schema {
         // Exact lookup keeps the full necessary schema as one parser-ready JSON line.
-        let _ = writeln!(text, "input_schema: {schema}");
+        let _ = writeln!(text, "input_schema: {}", ordered_json(&schema));
     }
 }
 
@@ -274,7 +274,7 @@ fn render_reads(text: &mut String, mut output: Value) {
             let _ = writeln!(
                 text,
                 "==> {path}{range} (read_revision {})",
-                read["read_revision"]
+                ordered_json(&read["read_revision"])
             );
             text.push_str(&source);
             if !source.ends_with('\n') {
@@ -394,7 +394,7 @@ fn execution_error_text(tool: &str, error: &str, output: &Value) -> String {
 fn render_search_batch(text: &mut String, mut output: Value) {
     if let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) {
         for mut item in std::mem::take(items) {
-            let _ = writeln!(text, "==> query {}", item["index"]);
+            let _ = writeln!(text, "==> query {}", ordered_json(&item["index"]));
             if let Some(fields) = item.as_object_mut() {
                 if let Some(search) = fields.remove("output") {
                     render_search(text, search);
@@ -452,6 +452,7 @@ fn render_search(text: &mut String, mut output: Value) {
                 let mut fields = file.as_object().unwrap().clone();
                 let path = fields.remove("path").unwrap();
                 let _ = write!(text, "{}", compact::one_line(&path));
+                fields.sort_keys();
                 for (key, value) in fields {
                     let _ = write!(text, " {key}: {}", scalar(&value));
                 }
@@ -513,10 +514,15 @@ fn render_value(text: &mut String, value: &Value, depth: usize) {
             if fields.get("tool").is_some_and(Value::is_string)
                 && fields.get("arguments").is_some_and(Value::is_object)
             {
-                let _ = writeln!(text, "{indent}{value}");
+                let _ = writeln!(text, "{indent}{}", ordered_json(value));
                 return;
             }
-            for (key, value) in fields {
+            // Tool-specific layouts above own their key order. Unknown fields
+            // use lexical order at the rendering boundary: preserve_order maps
+            // retain insertion order, and remove() may swap remaining entries.
+            let mut entries: Vec<_> = fields.iter().collect();
+            entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+            for (key, value) in entries {
                 // Do not recursively filter arbitrary keys: provider data,
                 // source text and error/recovery payloads retain their meaning.
                 if matches!(value, Value::Object(_) | Value::Array(_)) {
@@ -546,5 +552,13 @@ fn scalar(value: &Value) -> String {
     value
         .as_str()
         .map(str::to_owned)
-        .unwrap_or_else(|| value.to_string())
+        .unwrap_or_else(|| ordered_json(value))
+}
+
+/// Only the CLI text projection sorts objects. Canonical JSON and provider
+/// payloads keep their own serialization; arrays retain their semantic order.
+fn ordered_json(value: &Value) -> String {
+    let mut ordered = value.clone();
+    ordered.sort_all_objects();
+    ordered.to_string()
 }

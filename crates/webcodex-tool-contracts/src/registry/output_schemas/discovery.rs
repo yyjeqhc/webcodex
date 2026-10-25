@@ -200,16 +200,23 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("hint", schema_type("string", "Guidance when no caller-visible Projects match the filters; does not disclose hidden resources.")),
             (
                 "projects",
-                array_schema(open_object_schema("Project summary including canonical id, Server-issued project_ref when a stable Project root identity is available, and capabilities.git_available/supports_cleanup_verification/recommended_for_smoke."), "Runtime projects."),
+                {
+                    let mut schema = array_schema(open_object_schema("Project identity/path/state summary; exact id and optional principal-scoped project_ref remain reusable. Full mode also includes revision, policy, shell and smoke capabilities."), "Bounded page of caller-visible Runtime projects.");
+                    schema["maxItems"] = json!(100);
+                    schema
+                },
             ),
-            ("count", schema_type("integer", "Project count.")),
+            ("count", schema_type("integer", "Projects returned on this page.")),
+            ("offset", schema_type("integer", "Effective live offset after authorization, filtering and stable Runtime ID ordering.")),
+            ("limit", schema_type("integer", "Effective page size; default 30, maximum 100 for canonical tools.")),
+            ("next_offset", nullable_schema("integer", "Next live offset or null when no later page remains. Changes to registry or visibility may repeat/omit rows; restart at zero and deduplicate IDs.")),
             (
                 "matched_count",
                 schema_type("integer", "Caller-visible Project count matching filters before limit."),
             ),
             (
                 "truncated",
-                schema_type("boolean", "Whether limit truncated matching Projects."),
+                schema_type("boolean", "Whether later matching Projects remain after this page."),
             ),
             (
                 "recommended_for_smoke",
@@ -221,11 +228,15 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         ])),
         "list_runners" => Some(wrapped_output_schema(vec![
             ("hint", schema_type("string", "Guidance when no caller-visible Runners match the filters; does not disclose hidden resources.")),
-            ("matched_count", schema_type("integer", "Visible matching Runners before limit.")),
-            ("truncated", schema_type("boolean", "Narrow filters when more Runners matched than were returned.")),
+            ("matched_count", schema_type("integer", "Visible matching Runners before paging.")),
+            ("truncated", schema_type("boolean", "The page omits some currently matching Runners, including earlier pages.")),
+            ("offset", schema_type("integer", "Requested zero-based offset in stable client_id order.")),
+            ("limit", schema_type("integer", "Effective page size, default 30 and at most 100.")),
+            ("has_more", schema_type("boolean", "More matching Runners follow this page in the current authorized inventory.")),
+            ("next_offset", json!({"type":["integer","null"],"minimum":0,"description":"Continue with the same filters and this offset; null at the end. Inventory or authorization changes may repeat/skip entries; restart at zero to reconcile."})),
             (
                 "runners",
-                array_schema(open_object_schema("Runner summary including bounded Runner-configured host_context advisory data, never authority or proof of current state, plus job_concurrency limit/running/queued facts."), "Canonical Runner collection; per-Runner identity uses runner_instance_id and runner_protocol_generation."),
+                json!({"type":"array","maxItems":100,"items":open_object_schema("Compact Runner identity/status and Project/Job counts by default. Explicit detail adds build, capabilities, path-free project_inventory synchronization status and advisory host_context. Explicit projects contains at most 100 enabled entries with projects_offset, projects_returned_count, projects_truncated and nullable projects_next_offset; continue list_runners with exact client_id and projects_offset. projects_count is the full enabled count. Never authority."),"description":"Canonical Runner collection in client_id order; runner_instance_id and runner_protocol_generation remain exact."}),
             ),
             (
                 "summary",

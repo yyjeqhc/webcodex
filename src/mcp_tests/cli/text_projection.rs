@@ -134,6 +134,112 @@ fn samples() -> Vec<(&'static str, Value)> {
     ]
 }
 
+fn reverse_object_order(value: Value) -> Value {
+    match value {
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .rev()
+                .map(|(key, value)| (key, reverse_object_order(value)))
+                .collect(),
+        ),
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(reverse_object_order).collect())
+        }
+        scalar => scalar,
+    }
+}
+
+fn assert_exact_call_line(body: &Value, call: &Value) {
+    let calls: Vec<Value> = text(body)
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    assert_eq!(calls, vec![call.clone()]);
+}
+
+#[test]
+fn cli_text_is_independent_of_object_insertion_order() {
+    let mut cases = samples();
+    cases.extend([
+        (
+            "read_tool_manifest",
+            json!({
+                "name":"example",
+                "route":{"tool":"call_runtime_tool","mode":"gateway"},
+                "tools":[{"name":"example","description":"fixture",
+                    "route":{"via":"call_runtime_tool","mode":"gateway","future":{"z":0,"a":1}},
+                    "authority":{"scopes":["z","a"],"policy":"require"}}],
+                "recommended_flows":[{"title":"fixture","steps":["second","first"]}],
+                "input_schema":{"type":"object","properties":{"z":{"type":"string"},"a":{"type":"integer"}}}
+            }),
+        ),
+        (
+            "search_project_texts",
+            json!({"files":[{"path":"z.rs","zeta":2,"alpha":{"z":0,"a":1}},{"path":"a.rs","count":1}]}),
+        ),
+        (
+            "list_projects",
+            json!({"projects":[{"project_ref":"~p2","id":"agent:r:z","name":"z","path":"/z",
+                "agent_status":"online","future":{"z":0,"a":1}},{"id":"agent:r:a","name":{"z":0,"a":1}}]}),
+        ),
+        (
+            "work_on_project",
+            json!({"session_id":"wc_sess_exact","workspace":{"z":0,"a":1},
+                "context_projection":{"materials":[{"key":"project.instructions",
+                    "projection":{"status":"loaded","sources":[]}}]}}),
+        ),
+        (
+            "unknown_native_tool",
+            json!({"zeta":0,"alpha":{"z":0,"a":1},"recovery":{"tool":"read_files",
+                "arguments":{"project":"agent:r:p","items":[{"path":"z.rs"},{"path":"a.rs"}]}}}),
+        ),
+        (
+            "run_process",
+            json!({"failure_kind":"outcome_unknown","job_id":"wc_job_exact",
+                "unknown_nested_evidence":(0..200).map(|_| json!([[[[{"z":0,"a":1}]]]])).collect::<Vec<_>>()}),
+        ),
+    ]);
+    for (tool, output) in cases {
+        let success = !matches!(tool, "run_shell" | "run_process");
+        let forward = project(tool, success, output.clone());
+        let reversed = project(tool, success, reverse_object_order(output.clone()));
+        assert_eq!(text(&forward), text(&reversed), "{tool}");
+        assert_eq!(forward["result"]["isError"], !success);
+        if tool == "run_process" {
+            assert_eq!(
+                serde_json::from_str::<Value>(text(&forward)).unwrap(),
+                json!({"success":false,"output":output,"error":"failed"})
+            );
+        }
+    }
+}
+
+#[test]
+fn cli_generic_keys_are_lexical_and_sequences_keep_semantic_order() {
+    let body = project(
+        "unknown_native_tool",
+        true,
+        json!({"zeta":0,"alpha":[{"z":2,"a":1},{"z":4,"a":3}],
+            "recovery":{"tool":"read_files","arguments":{"project":"p","items":[{"path":"z.rs"},{"path":"a.rs"}]}}}),
+    );
+    assert_eq!(
+        text(&body),
+        concat!(
+            "alpha:\n",
+            "  [0]\n",
+            "    a: 1\n",
+            "    z: 2\n",
+            "  [1]\n",
+            "    a: 3\n",
+            "    z: 4\n",
+            "recovery:\n",
+            "  {\"arguments\":{\"items\":[{\"path\":\"z.rs\"},{\"path\":\"a.rs\"}],\"project\":\"p\"},\"tool\":\"read_files\"}\n",
+            "zeta: 0\n",
+        )
+    );
+}
+
 #[test]
 fn cli_text_size_samples() {
     for (tool, output) in samples() {
@@ -312,10 +418,10 @@ fn cli_edits_preserve_revision_conflicts_and_bulk_warnings() {
         "expected_read_revision: 7",
         "state_changed: false",
         "not_started",
-        &call.to_string(),
     ] {
         assert!(text(&stale).contains(evidence));
     }
+    assert_exact_call_line(&stale, &call);
     assert_eq!(stale["result"]["isError"], true);
     let edited = project(
         "edit_project_files",
@@ -644,7 +750,6 @@ fn cli_job_receipt_preserves_exact_followup_and_distinct_tokens() {
             "cwd: subdir",
             "shell: bash",
             "unknown_is_meaningful: null",
-            &call.to_string(),
         ] {
             assert!(rendered.contains(evidence), "{rendered}");
         }
@@ -862,6 +967,6 @@ fn cli_job_receipt_does_not_fold_a_different_jobs_continuation() {
         }),
     );
     assert!(text(&body).contains("observation_token: same-looking-token"));
-    assert!(text(&body).contains(&call.to_string()));
+    assert_exact_call_line(&body, &call);
     assert_eq!(text(&body).matches("same-looking-token").count(), 2);
 }

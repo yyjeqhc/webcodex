@@ -44,6 +44,29 @@ and release jobs upload them even on failure. They never contain signing argv or
 environment dumps. Successful preflight does not guarantee later disk space,
 notarization, or signing availability; final checks remain authoritative.
 
+## CLI JSON map configurations
+
+CLI text must be identical with serde_json's default sorted map and its
+`preserve_order` map. Combined Server/Runner builds enable `preserve_order`
+through `agent-client-protocol-schema`; a Server-only test run does not cover
+that production dependency graph. Inspect the resolved graph with
+`cargo tree --locked -p webcodex -p webcodex-runner -e features -i serde_json`.
+
+Run the same CLI snapshots and order regressions in both configurations:
+
+```bash
+cargo test --locked -p webcodex --lib cli
+cargo test --locked -p webcodex --lib --features serde_json/preserve_order cli
+```
+
+The Linux Server CI lane runs the default suite and a second CLI pass with
+`preserve_order`. Both use the same checked-in snapshots. Reversed object
+insertion fixtures also cover inline recovery calls, manifests, generic fields,
+and the lossless JSON fallback. Tool-specific field order remains explicit;
+other object keys are lexical, while arrays, search hits, and log lines retain
+their source order. Canonical API JSON and third-party provider payloads do not
+adopt the CLI text ordering policy.
+
 ## Test Lanes
 
 | Lane | Purpose | Default resources | Typical command |

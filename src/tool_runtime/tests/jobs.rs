@@ -2874,6 +2874,8 @@ async fn runtime_status_and_list_runners_filter_concurrency_counts_by_auth_group
     let agents_a = runtime
         .dispatch_with_auth(
             ToolCall::ListRunners {
+                projects_offset: 0,
+                offset: 0,
                 query: None,
                 status: None,
                 limit: None,

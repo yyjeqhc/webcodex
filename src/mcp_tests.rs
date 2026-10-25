@@ -349,6 +349,8 @@ mod pdf_document_app;
 mod plugin_check;
 #[path = "mcp_tests/plugin_tools.rs"]
 mod plugin_tools;
+#[path = "mcp_tests/project_discovery.rs"]
+mod project_discovery;
 #[path = "mcp_tests/protocol.rs"]
 mod protocol;
 #[path = "mcp_tests/request_policy.rs"]
@@ -359,6 +361,8 @@ mod resource_references;
 mod response_tests;
 #[path = "mcp_tests/result_app.rs"]
 mod result_app;
+#[path = "mcp_tests/runner_discovery.rs"]
+mod runner_discovery;
 #[path = "mcp_tests/runtime_tools.rs"]
 mod runtime_tools;
 #[path = "mcp_tests/ssh_resource.rs"]

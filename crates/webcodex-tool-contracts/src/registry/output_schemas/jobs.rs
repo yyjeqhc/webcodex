@@ -911,15 +911,29 @@ fn observe_jobs_output_schema() -> Value {
         },
         "required": ["items", "wait"]
     });
+    // Reuse the canonical batch and existing sparse observation contracts.
+    // Only the per-item representation changes; counts/wait/recovery stay required.
+    let mut sparse_batch_item = sparse_success_output["properties"]["items"]["items"].clone();
+    sparse_batch_item["properties"]["index"] = json!({
+        "type": "integer", "minimum": 0, "maximum": 7
+    });
+    sparse_batch_item["required"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("index"));
+    let mut projected_batch = batch_output.clone();
+    projected_batch["properties"]["items"]["items"] = json!({
+        "anyOf": [batch_output["properties"]["items"]["items"].clone(), sparse_batch_item]
+    });
     let successful_output = json!({
-        "anyOf": [batch_output.clone(), sparse_success_output.clone()]
+        "anyOf": [batch_output.clone(), sparse_success_output.clone(), projected_batch.clone()]
     });
     json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
             "success": {"type": "boolean"},
-            "output": {"anyOf": [batch_output.clone(), sparse_success_output, {"type": "object", "additionalProperties": true}, {"type": "null"}]},
+            "output": {"anyOf": [batch_output.clone(), sparse_success_output, projected_batch, {"type": "object", "additionalProperties": true}, {"type": "null"}]},
             "error": {"anyOf": [{"type": "string"}, {"type": "null"}]}
         },
         "required": ["success", "output"],

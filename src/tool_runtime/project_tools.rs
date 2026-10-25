@@ -33,6 +33,7 @@ impl ToolRuntime {
                 project,
                 query,
                 limit,
+                offset,
                 summary_only,
                 include_git_summary,
             } => {
@@ -43,6 +44,7 @@ impl ToolRuntime {
                         project,
                         query,
                         limit,
+                        offset,
                         summary_only,
                         include_git_summary,
                     },

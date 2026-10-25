@@ -3841,10 +3841,13 @@ pub enum ToolCall {
         #[schemars(length(min = 1, max = 200))]
         #[serde(default)]
         query: Option<String>,
-        /// Maximum results, clamped to 100. Filtered queries default to 100; unfiltered omission returns all visible Projects.
+        /// Page size, default 30, clamped to 100 after authorization and filters.
         #[schemars(range(min = 1))]
         #[serde(default)]
         limit: Option<usize>,
+        /// Live offset, default 0, in stable Runtime Project ID order. Registry or authorization changes may repeat/omit rows; restart at zero and deduplicate IDs.
+        #[serde(default)]
+        offset: usize,
         /// Include cached Runner-inventory Git branch/HEAD/dirty, not a fresh filesystem read.
         #[serde(default)]
         include_git_summary: bool,
@@ -3949,10 +3952,14 @@ pub enum ToolCall {
         #[schemars(extend("uniqueItems" = true))]
         #[serde(default)]
         client_ids: Option<Vec<String>>,
-        /// When false, omit Project bodies while retaining each Runner project count. Defaults to true for
-        /// compatibility.
+        /// Explicitly include up to 100 enabled Projects per Runner, independently of summary_only.
+        /// Omitted/false keeps counts only. Use projects_offset and each projects_next_offset to continue.
         #[serde(default)]
         include_projects: Option<bool>,
+        /// Zero-based Project-id offset for include_projects=true, default 0. Prefer an exact client_id
+        /// when paging one Runner's Projects. Each page reauthorizes fresh inventory.
+        #[serde(default)]
+        projects_offset: usize,
         /// Literal case-insensitive substring over Runner id, display name and hostname.
         #[serde(default)]
         #[schemars(length(max = 200))]
@@ -3960,11 +3967,16 @@ pub enum ToolCall {
         /// Online=connected; offline=not connected (includes stale); stale=heartbeat-expired inventory.
         #[serde(default)]
         status: Option<RunnerStatusFilter>,
-        /// Matching Runner limit, clamped to 1..100; omission preserves full operator inventory.
+        /// Matching Runner page size, default 30, clamped to 1..100 after authorization and filtering.
         #[serde(default)]
         limit: Option<usize>,
-        /// Return compact Runner identity, health, build, project-count, and shared Job-concurrency facts.
+        /// Zero-based offset in client_id order. Each call reauthorizes a fresh inventory; registration
+        /// or visibility changes can repeat/skip entries. Restart at zero to reconcile.
         #[serde(default)]
+        offset: usize,
+        /// Default true: compact identity, health, Project/Job counts and provider choices.
+        /// Set false for capabilities, build, synchronization status and diagnostic metadata.
+        #[serde(default = "default_true")]
         summary_only: bool,
     },
 

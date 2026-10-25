@@ -446,7 +446,7 @@ impl NativeEnvironment {
                 &record.request.server_url,
                 "/api/tools/call",
                 Some(token.expose()),
-                json!({"tool":"list_projects","params":{}}),
+                json!({"tool":"list_projects","params":{"project":selector,"limit":1,"summary_only":false}}),
             )
             .await?;
         let projects = tool_output(&inventory)?

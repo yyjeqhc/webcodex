@@ -499,6 +499,12 @@ baseline，不代表日志重置；真正的日志代次变化和历史丢失仍
 证据。生命周期或退出码已表达的通用 running activity 和普通命令结果摘要省略；
 验证证据和有用的阶段变化继续保留。
 
+`observe_jobs` 混合批次逐项精简符合条件的成功观察。失败项及 `outcome_unknown`
+观察保留 canonical 证据；混合或截断批次保留整体 success/error、计数、输入索引与
+唯一的共享等待结果。observation token、日志 reset/truncation 恢复信息及被省略后缀
+的精确继续调用保持不变；整体计数不一致时原样返回。Session 与审计事实在模型投影前
+记录。该展示不会重试或派发 Job，也不能证明命令执行成功。
+
 process、script、shell 在受理时同时考虑工具上限和 Runner 最近注册的超时策略。
 仅被截断且仍在后台的交接结果增加一行，例如
 `timeout: 3600s (requested 99999; capped by runner policy)`；快速结束的命令不增加
@@ -556,6 +562,38 @@ backend 失败、Runner 失败、超时、请求丢失及 provider 失败都会�
 失败返回只含项目相对路径的小型结构化错误——绝不包含绝对路径、命令或 Runner
 stderr、provider stderr 或任意 provider prose。
 
+### 项目发现与恢复
+
+`list_projects` 在 MCP 和 canonical Runtime API 中均默认返回 30 个项目，
+显式 `limit` 归一化到 1–100。每次先鉴权，再应用精确 `client_id` /
+`project` 和字面 `query` 筛选，最后按 Runtime Project ID 稳定升序排列，
+再用 `offset` 分页。响应包含 `matched_count`、本页 `count`、实际
+`offset` / `limit` 和 `next_offset`；末页的 `next_offset` 为 null，
+`truncated` 表示后面仍有页。后续请求保持相同筛选，将 `next_offset`
+作为新的 `offset`。
+
+分页没有全局保留状态，每次重新获取当前授权可见的清单。两页之间发生登记、
+删除或权限变化时可能重复或遗漏；需要重新遍历时从零开始并按精确 ID 去重。
+这不是不可变快照。固定的 107 个匹配结果可以完整访问，不受单页 100 上限阻挡。
+
+MCP CLI 与 Adaptive 默认 `summary_only=true`，保留精确身份、路径、名称、
+来源、可用状态与活跃 Job 数。需要 revision、Shell/策略或烟雾测试能力时显式
+设为 false；依赖 revision 的维护操作也应先读取详情。Canonical API 默认仍
+返回详情，但数量同样有界。Console 保留显式完整查询的独立 2,000 行运维上限，
+复用同一鉴权和筛选实现。CLI 运维清单最多遍历 20 个 100 行分页，并明确报告
+截断；已知目标的连接、注销和烟雾检查使用精确 ID。
+
+自动登记项目继续可被发现，也可用权威 `registration_source` / `kind`
+元数据（例如 `auto_registered`、`managed_worktree`）进行查询。不会根据
+路径猜测来源，不会删除登记、worktree 或分支，也不会推断最近使用时间。
+
+项目解析错误最多展示 5 个授权可见候选，依次按精确短 ID/名称、忽略大小写的
+相等、前缀/子串、最多 64 字符上的有阈值编辑距离、连接状态和稳定 ID 排序。
+名称及输入展示有界，过长身份会被省略，不会截成另一个看似可执行的选择器。
+`candidate_count` 表示本次解析范围内授权可见的候选池大小，
+`candidates_truncated` 表示有省略。候选只列一次，并提供有界的
+`list_projects` 恢复调用；模糊建议不会自动选择执行目标或扩大权限。
+
 ## 常见错误
 
 | 错误码 | 含义 | 处理 |
@@ -567,6 +605,35 @@ stderr、provider stderr 或任意 provider prose。
 | `server_unreachable` / `agent_offline` | 项目 Runner/runtime 不可用 | 运行 `webcodex run` / `webcodex doctor` |
 | `required_capability_unavailable` | 当前 Runner/runtime 缺少所需 coding capability | 升级所有二进制 |
 | `project_registry_scope_denied` | Project-scoped credential 尝试扩张或修改其授权可见范围之外的 Project registry | 使用已可见的 Project，或使用 `work_on_project(mode=worktree)` |
+
+## Runner 发现边界
+
+`list_runners` 在 Canonical API、Adaptive MCP 和 CLI MCP 均默认
+`summary_only=true`。每页默认最多 30 个 Runner，`limit` 归一到 1–100。
+先按当前身份授权，再应用 `client_id`/`client_ids`、`query` 和 `status`
+筛选，按 `client_id` 稳定排序后执行 `offset` 分页。结果包含
+`matched_count`、`count`、生效的 `limit`、`offset`、`has_more`、
+`next_offset` 和 `truncated`。保持筛选条件并使用返回的 `next_offset`
+继续；null 表示当前清单已到末尾。
+
+分页每次都是重新授权的最新观察，不是保留的快照或授权租约。两次调用之间发生
+登记、移除或授权变化时，可能重复或跳过条目；此时从 offset 0 重新遍历并按
+精确 `client_id` 核对。复制其他调用者的 offset 不会扩大可见范围。
+
+默认只返回身份、在线状态、项目与活跃 Job 数、共享 Job 并发及 Provider 选择。
+显式 `summary_only=false` 展开能力、构建、策略及诊断资料。
+`include_projects=true` 独立控制项目预览，摘要模式也能返回最多 100 个启用项目，
+按 Project id 排序。每个 Runner 返回完整启用项目数 `projects_count`、
+本页数量 `projects_returned_count`、`projects_offset`、`projects_truncated`
+及可为 null 的 `projects_next_offset`。使用该 Runner 的精确 `client_id`，
+保持 `include_projects=true`，令 `projects_offset=projects_next_offset` 继续。
+这种分页不要求资源链接的 root 身份，也没有项目源总量截断；登记或授权变化
+仍可能重复或跳过项目。`list_projects` 继续提供更丰富的项目筛选与发现。
+
+详细模式中的 `project_inventory` 是不含路径的同步状态，并非第二份项目清单；
+CLI Controller 显式使用 `summary_only=false, include_projects=false` 时仍可读取。
+Console 运维页面显式使用同一授权与筛选查询的完整内部清单，公共工具的分页上限
+不会截断其 Runner 汇总计数。
 
 ## Adaptive Runtime extensions
 

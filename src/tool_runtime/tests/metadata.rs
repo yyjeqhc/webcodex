@@ -92,6 +92,7 @@ async fn runner_observability_has_one_collection_and_preserves_health_across_mod
     for arguments in [
         json!({}),
         json!({"summary_only":true}),
+        json!({"summary_only":false}),
         json!({"include_projects":false}),
     ] {
         let result = runtime
@@ -105,8 +106,10 @@ async fn runner_observability_has_one_collection_and_preserves_health_across_mod
         assert_eq!(runners.len(), 1);
         assert_eq!(runners[0]["runner_instance_id"], "projection-instance");
         assert_eq!(runners[0]["job_concurrency"]["limit"], 4);
-        if arguments.get("summary_only").is_none() {
+        if arguments.get("summary_only") == Some(&json!(false)) {
             assert_eq!(runners[0]["owner"], "projection-owner");
+        } else {
+            assert!(runners[0].get("owner").is_none());
         }
         if arguments.get("include_projects") == Some(&json!(false)) {
             assert!(runners[0].get("projects").is_none());
@@ -185,6 +188,7 @@ fn runtime_status_call() -> ToolCall {
 fn list_projects_call() -> ToolCall {
     ToolCall::ListProjects {
         include_git_summary: false,
+        offset: 0,
         client_id: None,
         project: None,
         query: None,
@@ -195,6 +199,8 @@ fn list_projects_call() -> ToolCall {
 
 fn list_runners_call() -> ToolCall {
     ToolCall::ListRunners {
+        projects_offset: 0,
+        offset: 0,
         query: None,
         status: None,
         limit: None,

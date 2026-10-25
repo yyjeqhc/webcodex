@@ -30,10 +30,12 @@ impl ToolRuntime {
                 client_id,
                 client_ids,
                 include_projects,
+                projects_offset,
                 summary_only,
                 query,
                 status,
                 limit,
+                offset,
             } => {
                 self.list_runners_with_options(
                     auth,
@@ -41,10 +43,12 @@ impl ToolRuntime {
                         client_id,
                         client_ids,
                         include_projects,
+                        projects_offset,
                         summary_only,
                         query,
                         status,
                         limit,
+                        offset,
                     },
                 )
                 .await

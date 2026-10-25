@@ -673,6 +673,14 @@ or a successful observation alone does not. It neither waits nor retries command
 See [Host execution control](experiments/host-execution-control.md) for supported
 tools, gateway placement, unknown outcomes and pending-chain design limits.
 
+Mixed `observe_jobs` batches compact each eligible successful observation independently.
+Failed items and `outcome_unknown` observations retain their canonical evidence; mixed
+or truncated batches preserve the outer success/error, counts, input indexes and single
+shared wait. Observation tokens, log reset/truncation recovery and the exact omitted
+suffix continuation remain unchanged. An inconsistent batch is returned unchanged.
+Canonical Session and audit facts are captured before this model-facing projection.
+This presentation does not retry, dispatch or establish successful command execution.
+
 `observe_jobs(summary_only=true)` is an opt-in presentation mode for proven successful
 structured validation Jobs. It removes routine passed-test and Cargo progress lines,
 while preserving test summaries, unknown text, warnings, validation evidence, lifecycle,
@@ -735,6 +743,45 @@ Failures return small structured errors with project-relative paths only —
 never absolute paths, commands, Runner/provider stderr, or arbitrary provider
 prose.
 
+### Project discovery and recovery
+
+`list_projects` returns 30 Projects by default and clamps explicit `limit` to
+1–100 on both MCP and the canonical Runtime API. Authorization and exact
+`client_id` / `project` or literal `query` filters run before stable ascending
+Runtime Project ID ordering and `offset` pagination. Responses include
+`matched_count`, page `count`, effective `offset` / `limit`, and
+`next_offset` (null at the end); `truncated` means another page remains.
+Keep the same filters and pass `next_offset` as the next request's `offset`.
+
+Offsets use current authorized inventory on every request, without retained
+pagination state. New/deleted registrations or changed permissions can repeat or
+omit rows between pages. Restart at zero and deduplicate exact IDs when that
+matters; pagination is not an immutable inventory snapshot. A fixed set of 107
+matches is fully traversable despite the 100-row page ceiling.
+
+MCP CLI and Adaptive calls default to `summary_only=true`: exact identity, path,
+name, provenance, availability and active-Job counts. Set it to false to retrieve
+revision, shell/policy and smoke-test capabilities, including before maintenance
+that needs a revision. Canonical API calls retain detailed rows by default within
+the same page bounds. Console's explicit inventory query keeps its separate
+2,000-row operator ceiling and the shared authorization/filter implementation.
+CLI operator fleet reports traverse at most twenty 100-row pages and explicitly
+report truncation. Known-target connection/removal/smoke checks use exact IDs.
+
+Automatic registrations remain discoverable, including queries for authoritative
+`registration_source` or `kind` metadata such as `auto_registered` and
+`managed_worktree`. Paths are not used to infer provenance. No registrations,
+worktrees or branches are removed; no recent-use ordering is inferred.
+
+Project-resolution errors expose at most five authorized suggestions, ranked by
+exact short ID/name, case-insensitive equality, prefix/substring, then thresholded
+edit distance over at most 64 characters, connection state and stable ID. Labels
+and input displays are bounded; overlong identities are omitted rather than
+shortened into a different selector. `candidate_count` describes the authorized
+candidate pool for that resolution scope, and `candidates_truncated` reports
+omissions. Candidates appear once, with a bounded `list_projects` recovery call.
+Matching suggestions never authorizes or automatically retargets execution.
+
 ## Common errors
 
 | Code | Meaning | Action |
@@ -746,6 +793,39 @@ prose.
 | `server_unreachable` / `agent_offline` | The project Runner/runtime is unavailable | Run `webcodex run` / `webcodex doctor` |
 | `required_capability_unavailable` | The current Runner/runtime lacks a required coding capability | Upgrade all binaries |
 | `project_registry_scope_denied` | A project-scoped credential tried to expand or mutate the Project registry outside its granted visibility | Use an already-visible Project or `work_on_project(mode=worktree)` |
+
+## Runner discovery bounds
+
+`list_runners` defaults to `summary_only=true` on the canonical API, Adaptive MCP,
+and CLI MCP. Each page contains at most 30 Runners by default; `limit` is clamped
+to 1–100. Authorization and `client_id`/`client_ids`, `query`, and `status`
+filters run before stable `client_id` sorting and `offset` paging. The response
+returns `matched_count`, `count`, effective `limit`, `offset`, `has_more`,
+`next_offset`, and `truncated`. Continue with the same filters and the returned
+`next_offset`; null means the current inventory ends.
+
+Pages are fresh observations, not a retained snapshot or authority lease.
+Registration, removal, or authorization changes between calls can repeat or skip
+entries. Restart at offset zero and reconcile exact `client_id` values when the
+inventory changes. No caller can use another caller's offset to widen visibility.
+
+The default returns identity, online state, Project and active Job counts, shared
+Job concurrency, and provider choices. `summary_only=false` explicitly expands
+capabilities, build information, policy and diagnostic metadata. Independently,
+`include_projects=true` adds at most 100 enabled Projects in Project-id order,
+including in summary mode. Each Runner reports `projects_count` (the full enabled
+total), `projects_returned_count`, `projects_offset`, `projects_truncated` and
+nullable `projects_next_offset`. Continue `list_runners` with that exact `client_id`,
+`include_projects=true`, and `projects_offset=projects_next_offset`. These fresh
+pages require no resource-link root identity and have no total Project source cap;
+registration or visibility changes have the same repeat/skip semantics as Runner
+pages. `list_projects` remains the richer filtered Project discovery tool.
+
+`project_inventory` in detailed mode is path-free synchronization status, not a
+second Project collection. It remains available to the CLI controller's explicit
+`summary_only=false, include_projects=false` query. Console operator pages use the
+same authorization/filtering query with an explicit complete internal inventory;
+the public tool page cap does not truncate their fleet counts.
 
 ## Adaptive Runtime extensions
 

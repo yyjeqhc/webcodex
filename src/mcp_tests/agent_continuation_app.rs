@@ -336,13 +336,15 @@ async fn agent_continuation_direct_presentation_reauthorizes_without_binding_or_
         true,
     )
     .await;
-    assert!(matches!(
-        denied,
-        McpOutcome::Forbidden {
-            required_scope: Some(crate::auth::SCOPE_COMMUNICATION_READ),
-            ..
-        }
-    ));
+    let McpOutcome::Ok(denied) = denied else {
+        panic!("fixed credential scope denial must be a failed MCP result");
+    };
+    super::fixed_scope::assert_fixed_scope_failure(
+        &denied,
+        crate::auth::SCOPE_COMMUNICATION_READ,
+        false,
+        "fixed token",
+    );
     no_communication_read.kind = crate::auth::AuthKind::OAuth2Token;
     let oauth_listed = super::super::tools::mcp_tools_list_payload_with_features_for_auth(
         false,
@@ -1556,9 +1558,14 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
         assert!(!denied_text.contains(&binding_id));
         let unscoped =
             handle_with_app_policy(&runtime, request(), Some(&read_only_owner), true).await;
-        assert!(
-            matches!(unscoped, McpOutcome::Forbidden { .. }),
-            "{name} requires communication:manage even with the exact fence"
+        let McpOutcome::Ok(unscoped) = unscoped else {
+            panic!("{name} requires communication:manage even with the exact fence");
+        };
+        super::fixed_scope::assert_fixed_scope_failure(
+            &unscoped,
+            crate::auth::SCOPE_COMMUNICATION_MANAGE,
+            false,
+            "fixed token",
         );
     }
 

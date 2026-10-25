@@ -37,6 +37,73 @@ struct ParsedCall {
     result_presentation: McpToolResultPresentation,
 }
 
+/// Frame an already-denied tools/call scope check without dispatching or granting authority.
+fn tool_scope_denied(
+    context: &CallContext<'_>,
+    lifecycle: Option<&ToolRequestLifecycle>,
+    required_scope: Option<&'static str>,
+    description: impl Into<String>,
+) -> McpOutcome {
+    let description = description.into();
+    let fixed_credential = context.auth.is_some_and(|auth| !auth.is_oauth_token());
+    if let Some(lifecycle) = lifecycle {
+        lifecycle.dispatch_failed("forbidden");
+        lifecycle.dispatch_finished(
+            fixed_credential,
+            Some(false),
+            if fixed_credential {
+                "tool_error"
+            } else {
+                "forbidden"
+            },
+        );
+    }
+    if !fixed_credential {
+        return scope_forbidden(context.auth, required_scope, description);
+    }
+    let recovery = match context.auth.map(|auth| auth.kind) {
+        Some(crate::auth::AuthKind::ApiToken) =>
+            "Use a token issued with the required scope; this fixed token cannot add scopes through OAuth.",
+        Some(crate::auth::AuthKind::SharedKey) =>
+            "Check the shared-key connection identity and its fixed permission profile; use an authorized credential.",
+        Some(crate::auth::AuthKind::ProjectCredential) =>
+            "Check the project credential grant with its issuer; use an authorized credential.",
+        _ => "Check the current connection identity and permissions; use an authorized credential.",
+    };
+    let mut output = json!({
+        "error_kind": "insufficient_scope",
+        "execution_started": false,
+        "recovery": recovery,
+    });
+    let missing_scope = if let Some(scope) = required_scope {
+        output["missing_scope"] = json!(scope);
+        format!("missing_scope={scope}; ")
+    } else {
+        String::new()
+    };
+    let result = ToolResult::err_with_output(
+        format!(
+            "insufficient_scope: {missing_scope}execution_started=false. {description}. {recovery}"
+        ),
+        output,
+    );
+    // Keep isError=true even for OpenAI structured-failure compatibility.
+    // Hosts that hide structuredContent on errors still receive every failure fact in text.
+    let result = mcp_runtime_tool_result_fallback(
+        result,
+        context.runtime.runtime_info.mcp_text_json_compat_enabled,
+        McpToolResultPresentation::Standard,
+    );
+    McpOutcome::Ok(rpc_result(
+        context.id.clone(),
+        if context.stateless_2026 {
+            mcp_stateless_result(result, false)
+        } else {
+            result
+        },
+    ))
+}
+
 pub(in crate::mcp) async fn handle_call(
     runtime: &ToolRuntime,
     request_params: Value,

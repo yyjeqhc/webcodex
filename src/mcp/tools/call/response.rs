@@ -34,7 +34,6 @@ impl RuntimeResponse {
         let work_result_thread_panel = surface.work_result_thread_context.is_some();
         let work_result_thread_context = surface.work_result_thread_context;
         let runtime = context.runtime;
-        let auth = context.auth;
         let stateless_2026 = context.stateless_2026;
         let app_enabled = context.app_enabled;
         let server_mcp_apps_enabled = context.server_mcp_apps_enabled;
@@ -56,17 +55,18 @@ impl RuntimeResponse {
                 required_scope,
                 description,
             }) => {
-                if let Some(lc) = lifecycle.as_deref() {
-                    lc.dispatch_failed("forbidden");
-                    lc.dispatch_finished(false, Some(false), "forbidden");
-                }
                 if let (Some(slot), Some(completion)) = (
                     model_ergonomics_out.as_deref_mut(),
                     model_ergonomics_completion.as_ref(),
                 ) {
                     *slot = Some(completion.record_for_pre_result_failure("insufficient_scope"));
                 }
-                return scope_forbidden(auth, required_scope, description);
+                return tool_scope_denied(
+                    context,
+                    lifecycle.as_deref(),
+                    required_scope,
+                    description,
+                );
             }
             Some(ToolCallErrorStatus::InvalidArguments { message }) => {
                 if let Some(lc) = lifecycle.as_deref() {

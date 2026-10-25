@@ -611,9 +611,12 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
         )
         .await;
         match outcome {
-            McpOutcome::Forbidden { required_scope, .. } => {
-                assert_eq!(required_scope, Some(required));
-            }
+            McpOutcome::Ok(body) => super::fixed_scope::assert_fixed_scope_failure(
+                &body,
+                required,
+                false,
+                "fixed token",
+            ),
             other => panic!("plugin:inspect must not escalate to {required}: {other:?}"),
         }
     }
@@ -664,9 +667,12 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
         )
         .await;
         match outcome {
-            McpOutcome::Forbidden { required_scope, .. } => {
-                assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_MANAGE));
-            }
+            McpOutcome::Ok(body) => super::fixed_scope::assert_fixed_scope_failure(
+                &body,
+                crate::auth::SCOPE_PLUGIN_MANAGE,
+                false,
+                "fixed token",
+            ),
             other => panic!("plugin:invoke must not manage Plugins: {other:?}"),
         }
     }
@@ -689,9 +695,12 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
     )
     .await;
     match manage_call {
-        McpOutcome::Forbidden { required_scope, .. } => {
-            assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_INVOKE));
-        }
+        McpOutcome::Ok(body) => super::fixed_scope::assert_fixed_scope_failure(
+            &body,
+            crate::auth::SCOPE_PLUGIN_INVOKE,
+            false,
+            "fixed token",
+        ),
         other => panic!("plugin:manage must not imply plugin:invoke: {other:?}"),
     }
 
@@ -2753,7 +2762,15 @@ async fn plugin_binding_rechecks_scope_and_runner_owner_without_invalidating_own
         Some(&plugin_auth_for("alice", false)),
     )
     .await;
-    assert!(matches!(no_scope, McpOutcome::Forbidden { .. }));
+    let McpOutcome::Ok(no_scope) = no_scope else {
+        panic!("missing plugin scope must return a failed MCP result");
+    };
+    super::fixed_scope::assert_fixed_scope_failure(
+        &no_scope,
+        crate::auth::SCOPE_PLUGIN_INVOKE,
+        false,
+        "fixed token",
+    );
 
     let bob = plugin_auth_for("bob", true);
     let bob_result = handle_mcp_request(

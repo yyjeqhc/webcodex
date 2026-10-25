@@ -159,10 +159,13 @@ async fn plugin_check_tool_spec_and_argument_contract_fail_closed_before_dispatc
     )
     .await;
     match no_scope {
-        McpOutcome::Forbidden { required_scope, .. } => {
-            assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_MANAGE));
-        }
-        other => panic!("check without plugin:manage must be forbidden: {other:?}"),
+        McpOutcome::Ok(body) => super::fixed_scope::assert_fixed_scope_failure(
+            &body,
+            crate::auth::SCOPE_PLUGIN_MANAGE,
+            false,
+            "fixed token",
+        ),
+        other => panic!("check without plugin:manage must be denied: {other:?}"),
     }
 
     let auth = plugin_auth(true);

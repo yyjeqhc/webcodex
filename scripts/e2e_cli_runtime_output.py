@@ -359,9 +359,11 @@ class CliRuntimeSmoke(InteractiveSmoke):
 
         restricted = self.pat("input-owner", ["runtime:read"])
         self.extra_secrets.append(restricted)
-        self.sample("pat_scope_denied", "run_shell", {
+        denied = self.sample("pat_scope_denied", "run_shell", {
             "project": self.project, "command": "printf forbidden > scope-effect.txt",
-        }, token=restricted, http_denial=True)
+        }, token=restricted, error=True)
+        for fact in ("insufficient_scope", "job:run", "execution_started=false", "fixed token"):
+            check(fact in denied, f"PAT scope denial lost {fact}")
         check(not (self.project_dir / "scope-effect.txt").exists(),
               "scope denial executed a command")
 

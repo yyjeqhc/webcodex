@@ -16,12 +16,13 @@ pub(super) async fn local_mcp(
         params, invocation, ..
     } = call;
     let ack_session_message_ids = invocation.metadata.ack_session_message_ids;
-    if let Some(outcome) = require_mcp_scope(auth, crate::auth::SCOPE_MCP_LOCAL) {
-        if let Some(lc) = lifecycle.as_deref() {
-            lc.dispatch_failed("forbidden");
-            lc.dispatch_finished(false, Some(false), "forbidden");
-        }
-        return outcome;
+    if require_mcp_scope(auth, crate::auth::SCOPE_MCP_LOCAL).is_some() {
+        return tool_scope_denied(
+            context,
+            lifecycle.as_deref(),
+            Some(crate::auth::SCOPE_MCP_LOCAL),
+            format!("missing required scope: {}", crate::auth::SCOPE_MCP_LOCAL),
+        );
     }
     if let Some(lc) = lifecycle.as_deref() {
         lc.capture_payload("effective_arguments", &params.arguments);
@@ -112,11 +113,12 @@ pub(super) async fn plugin(
             required_scope,
             description,
         }) => {
-            if let Some(lc) = lifecycle.as_deref() {
-                lc.dispatch_failed("forbidden");
-                lc.dispatch_finished(false, Some(false), "forbidden");
-            }
-            return scope_forbidden(auth, Some(required_scope), description);
+            return tool_scope_denied(
+                context,
+                lifecycle.as_deref(),
+                Some(required_scope),
+                description,
+            );
         }
         Err(SpecializedGovernanceDenial::Tool(result)) => {
             if let Some(lc) = lifecycle.as_deref() {
@@ -317,10 +319,13 @@ pub(super) async fn ssh_resource(
         }) => {
             if let Some(lc) = lifecycle.as_deref() {
                 lc.capture_payload_lazy("specialized_governance", || policy.audit_projection());
-                lc.dispatch_failed("forbidden");
-                lc.dispatch_finished(false, Some(false), "forbidden");
             }
-            return scope_forbidden(auth, Some(required_scope), description);
+            return tool_scope_denied(
+                context,
+                lifecycle.as_deref(),
+                Some(required_scope),
+                description,
+            );
         }
         Err(SpecializedGovernanceDenial::Tool(result)) => {
             if let Some(lc) = lifecycle.as_deref() {

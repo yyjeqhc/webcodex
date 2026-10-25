@@ -155,28 +155,31 @@ it("shows active Window work without any Workflow Session and keeps observe call
   fireEvent.click(projectPicker);
   expect(await screen.findByRole("heading", { name: "webcodex-activity-fix" })).toBeTruthy();
   const header = screen.getByRole("heading", { name: "webcodex-activity-fix" }).closest("header");
-  const details = header!.querySelector("details")!;
-  expect(details.querySelector("summary")?.textContent).toBe("Window details");
-  expect(details.open).toBe(false);
-  fireEvent.click(details.querySelector("summary")!);
   expect(header?.textContent).toContain("WebCodex");
-  expect(header?.textContent).toContain("apply_text_edits");
-  expect(header?.textContent).toContain("Runner ID");
-  expect(header?.textContent).toContain("special");
-  expect(header?.textContent).toContain("Directory");
-  expect(header?.textContent).toContain("/root/.webcodex-managed-worktrees/webcodex-activity-fix");
-  expect(header?.textContent).toContain("Project ID");
-  expect(header?.textContent).toContain(worktree.id);
-  expect(header?.textContent).toContain(activeKey);
+  const detailsToggle = within(header!).getByRole("button", { name: "Window details" });
+  expect(detailsToggle.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(detailsToggle);
+  expect(detailsToggle.getAttribute("aria-expanded")).toBe("true");
+  const details = screen.getByRole("dialog", { name: "Window details" });
+  expect(details.textContent).toContain("apply_text_edits");
+  expect(details.textContent).toContain("Runner ID");
+  expect(details.textContent).toContain("special");
+  expect(details.textContent).toContain("Directory");
+  expect(details.textContent).toContain("/root/.webcodex-managed-worktrees/webcodex-activity-fix");
+  expect(details.textContent).toContain("Project ID");
+  expect(details.textContent).toContain(worktree.id);
+  expect(details.textContent).toContain(activeKey);
   for (const [label, value] of [["Window ID", activeKey], ["Runner ID", "special"], ["Directory", worktree.path], ["Project ID", worktree.id]]) {
-    const term = within(header!).getByText(label, { selector: "dt" });
+    const term = within(details).getByText(label, { selector: "dt" });
     expect(term.nextElementSibling?.tagName).toBe("DD");
     expect(term.nextElementSibling?.querySelector("code")?.textContent).toBe(value);
   }
 
   for (const label of ["Window ID", "Runner ID", "Directory", "Project ID"]) {
-    expect(within(header!).getByRole("button", { name: "Copy " + label })).toBeTruthy();
+    expect(within(details).getByRole("button", { name: "Copy " + label })).toBeTruthy();
   }
+  fireEvent.click(detailsToggle);
+  expect(detailsToggle.getAttribute("aria-expanded")).toBe("false");
 
   expect(screen.queryByText("Each call is shown separately, from first to last.")).toBeNull();
   expect(screen.queryByRole("heading", { name: "Tool calls" })).toBeNull();
@@ -681,4 +684,46 @@ it("keeps collaboration history and draft on the same Window across Runner chang
   expect(screen.getByTestId("work-window-row-" + key).closest(".window-current-selection")).toBeTruthy();
   expect(vi.mocked(client.post).mock.calls.filter(([path]) => path === "window-collaboration")
     .every(([, payload]) => (payload as any).client_window_key === key)).toBe(true);
+});
+
+it("keeps the Collaboration view across Windows and shares one Session focus with its composer", async () => {
+  const [source] = projectFamily();
+  const first = "e".repeat(64);
+  const second = "f".repeat(64);
+  const sessionId = "wc_sess_eeeeeeeeeeeeeeee";
+  const summary = (key: string, seen: number) => ({
+    client_window_key: key, last_project: source.id, source: "openai-session", last_seen_at_ms: seen,
+    active_count: 0, linked_session_count: 0, recorder_gap_count: 0,
+  });
+  const client = fakeClient((path, payload) => {
+    if (path === "windows") return ok({ windows: [summary(first, 2_000), summary(second, 1_000)], returned: 2, total: 2, truncated: false, visibility: { scope: "principal" } });
+    if (path === "window") return ok(windowDetail({
+      client_window_key: payload.client_window_key,
+      linked_sessions: payload.client_window_key === first ? [{
+        workflow_session_id: sessionId, project: source.id, first_linked_at_ms: 1_000, last_linked_at_ms: 2_000,
+        relations: ["work_on_project"], relation_count: 1, title: "Fix collaboration",
+      }] : [],
+      sessions_returned: payload.client_window_key === first ? 1 : 0,
+    }));
+    if (path === "window-collaboration") return ok({ available: true, can_send: true, truncated: false, messages: [] });
+    throw new Error("unexpected path " + path);
+  });
+  render(<WindowWorkbench client={client} projects={[source]} language="en" onUnauthorized={vi.fn()} />);
+  await screen.findByTestId("work-window-row-" + second);
+  await waitFor(() => expect(screen.getByTestId("work-window-row-" + first).getAttribute("aria-current")).toBe("true"));
+  fireEvent.click(screen.getByRole("tab", { name: "Collaboration" }));
+  // The composer edits the same Session focus that filters this Window's calls.
+  fireEvent.click(await screen.findByRole("combobox", { name: "Session context" }));
+  fireEvent.click(await screen.findByRole("option", { name: /Fix collaboration/ }));
+  await waitFor(() => expect((screen.getByRole("combobox", { name: "Session filter", hidden: true }) as HTMLInputElement).value).toContain("Fix collaboration"));
+  const detailsToggle = screen.getByRole("button", { name: "Window details" });
+  fireEvent.click(detailsToggle);
+  expect(detailsToggle.getAttribute("aria-expanded")).toBe("true");
+
+  fireEvent.click(screen.getByTestId("work-window-row-" + second));
+  await waitFor(() => expect(vi.mocked(client.post).mock.calls.some(([path, payload]) =>
+    path === "window-collaboration" && (payload as any).client_window_key === second)).toBe(true));
+  expect(screen.getByRole("tab", { name: "Collaboration" }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getByRole("button", { name: "Window details" }).getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByRole("combobox", { name: "Session context" })).toBeNull();
 });

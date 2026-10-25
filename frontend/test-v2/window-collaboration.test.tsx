@@ -142,13 +142,19 @@ describe("Window collaboration", () => {
     const onUnauthorized = vi.fn();
     const view = render(<WindowCollaboration client={client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={onUnauthorized} />);
     await screen.findByText("Review done");
-    expect(screen.getByText("Saved")).toBeTruthy();
+    // A pending ACK request qualifies the single delivery state instead of adding a chip.
+    expect(screen.getByText("Saved · Awaiting ACK")).toBeTruthy();
+    expect(screen.queryByText("ACK requested")).toBeNull();
     expect(screen.getByText("Included in tool result")).toBeTruthy();
     expect(screen.getByText("Messages: 4")).toBeTruthy();
     const windowReply = screen.getByText("Reply from this Window").closest("article");
     expect(windowReply?.textContent).toContain("This Window");
     expect(windowReply?.textContent).not.toMatch(/Saved|Included in tool result|Acknowledged/);
-    expect(screen.getByText("⌘/Ctrl + Enter to send")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Send" }).getAttribute("title")).toBe("⌘/Ctrl + Enter to send");
+    // Only operator rows sit on the outgoing side; this Window's peer message stays opposite.
+    expect(screen.getByText("Check failures", { selector: "p" }).closest("article")?.classList.contains("outgoing")).toBe(true);
+    expect(screen.getByText("Sent to peer").closest("article")?.classList.contains("incoming")).toBe(true);
+    expect([...view.container.querySelectorAll(".window-collaboration-history-note")].every(note => note.childElementCount > 0)).toBe(true);
     const inboundPeer = screen.getByText("Review done").closest("article");
     expect(inboundPeer?.textContent).not.toMatch(/Saved|Included in tool result|Acknowledged/);
     fireEvent.click(screen.getByRole("combobox", { name: "Message type" }));
@@ -258,7 +264,7 @@ describe("Window collaboration", () => {
     await screen.findByText("Review done");
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "Keep context draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await screen.findByText(/Context is no longer available/);
+    await screen.findByText(/Session context is no longer available/);
     expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Keep context draft");
     view.rerender(<WindowCollaboration client={client} windowKey="exact-window" selectedSessionId="wc_sess_new" language="en" onUnauthorized={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -279,7 +285,7 @@ describe("Window collaboration", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "Keep draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByText("Message could not be sent.");
-    expect(screen.queryByText(/Context is no longer available/)).toBeNull();
+    expect(screen.queryByText(/Session context is no longer available/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     view.unmount();
   });
@@ -461,9 +467,41 @@ it("switches every collaboration language while preserving the message draft and
     view.rerender(panel(language));
     expect((screen.getByRole("textbox", { name: translate("Message this Window", language) }) as HTMLTextAreaElement).value).toBe("Keep this draft 原文");
     expect(screen.getByRole("button", { name: translate("Send", language), exact: true })).toBeTruthy();
-    expect(screen.getByText(translate("Saved", language))).toBeTruthy();
+    expect(screen.getByText(translate("Saved", language) + " · " + translate("Awaiting ACK", language))).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: translate("Session context", language) })).toBeTruthy();
     expect(screen.getByText("Check failures", { selector: "p" })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: translate("Message type", language) })).toBeTruthy();
   }
   expect(post.mock.calls).toHaveLength(1);
+});
+
+it("replaces a truncated head page that skipped the cached rows instead of splicing across the gap", async () => {
+  vi.useFakeTimers();
+  const scope = "a".repeat(64);
+  let page: any = { ...transcript, history_scope: scope, truncated: true, next_before: "wc_msg_operator" };
+  const post = vi.fn(async () => ({ ok: true, status: 200, data: page }));
+  const view = render(<WindowCollaboration client={{ post } as unknown as RuntimeV2Client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={vi.fn()} />);
+  try {
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByText("Review done")).toBeTruthy();
+    page = { ...page, next_before: "wc_msg_gap_head", messages: [
+      { ...transcript.messages[0], message_id: "wc_msg_gap_head", message: "After the gap", created_at_ms: 9000 },
+    ] };
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(screen.getByText("After the gap")).toBeTruthy();
+    expect(screen.queryByText("Review done")).toBeNull();
+    expect(screen.getByText("Messages: 1+")).toBeTruthy();
+  } finally { view.unmount(); vi.useRealTimers(); }
+});
+
+it("edits the shared Session focus from the composer", async () => {
+  const post = vi.fn(async () => ({ ok: true, status: 200, data: transcript }));
+  const onSelectSession = vi.fn();
+  const sessions = [{ workflow_session_id: "wc_sess_aaaaaaaaaaaaaaaa", first_linked_at_ms: 1, last_linked_at_ms: 2, relations: ["work_on_project"], relation_count: 1, title: "Review run" }];
+  render(<WindowCollaboration client={{ post } as unknown as RuntimeV2Client} windowKey="exact-window" selectedSessionId="" sessions={sessions}
+    onSelectSession={onSelectSession} language="en" onUnauthorized={vi.fn()} />);
+  await screen.findByText("Review done");
+  fireEvent.click(screen.getByRole("combobox", { name: "Session context" }));
+  fireEvent.click(await screen.findByRole("option", { name: /Review run/ }));
+  expect(onSelectSession).toHaveBeenCalledWith("wc_sess_aaaaaaaaaaaaaaaa");
 });

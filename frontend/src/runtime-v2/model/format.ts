@@ -45,3 +45,12 @@ export function durationText(milliseconds: number | undefined): string {
 export function projectDisplayName(name: string | undefined, id: string, path?: string): string {
   return projectPresentationName({ name, id, path });
 }
+
+/** Time of day for today's timestamps; the full local date and time otherwise. */
+export function dayAwareTime(timestamp: number | undefined, now = Date.now()): string {
+  if (!timestamp) return "—";
+  const milliseconds = timestamp > 10_000_000_000 ? timestamp : timestamp * 1_000;
+  return new Date(milliseconds).toDateString() === new Date(now).toDateString()
+    ? clockTime(milliseconds)
+    : absoluteTime(milliseconds);
+}

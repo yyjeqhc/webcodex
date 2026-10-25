@@ -105,7 +105,13 @@ shows the last successful sync time and a manual refresh action. Independent
 server status and Runner inventory reads run concurrently.
 
 Window headers and Session context expose selectable, complete canonical IDs with
-copy actions and explicit clipboard failure feedback. Window Session filters include
+copy actions and explicit clipboard failure feedback. Window identity opens as a
+floating panel, so inspecting it never resizes the activity or collaboration panes.
+Switching Windows keeps the current Window/Collaboration view and clears Session
+focus. The collaboration composer edits the same single Session focus as the
+activity filter; it is the message's explicit context, never an inferred one.
+A truncated transcript refresh that does not reach cached messages replaces the
+view instead of splicing across the unseen gap. Window Session filters include
 all retained exact relations, even those without retained calls; selecting a Session
 can open its full record using its exact Project relation. Retention limits remain
 visible and never imply a complete history.

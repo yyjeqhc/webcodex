@@ -1,6 +1,7 @@
 import { useFlowingSelection } from "../../ui/useFlowingSelection.js";
 import {
   Box,
+  ChevronDown,
   CircleDot,
   Clock3,
   FolderOpen,
@@ -10,7 +11,7 @@ import {
   Server,
 } from "lucide-react";
 import { CopyIdentity } from "./ui/CopyIdentity.js";
-import { TextInput } from "@mantine/core";
+import { Popover, TextInput } from "@mantine/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   displayProjectPath,
@@ -23,8 +24,9 @@ import { ProjectPicker } from "../../ui/ProjectPicker.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
-import { absoluteTime, clockTime, relativeTime, shortId } from "../model/format.js";
+import { absoluteTime, dayAwareTime, relativeTime, shortId } from "../model/format.js";
 import type { ProjectRow, WindowSummary } from "../model/types.js";
+import { windowSessionCatalog } from "../model/windowSessions.js";
 
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
 import { WindowCollaboration } from "./WindowCollaboration.js";
@@ -128,6 +130,7 @@ export function WindowWorkbench({
   const selectionRef = useRef<HTMLDivElement | null>(null);
   useFlowingSelection(selectionRef, centerTab, { variant: "underline" });
   const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const historicalFamilies = useMemo(() => buildProjectFamilies(projects, projectIndex, windows.historicalWindows), [projects, projectIndex, windows.historicalWindows]);
   const familyById = useMemo(() => new Map(historicalFamilies.map(family => [family.id, family])), [historicalFamilies]);
   const families = useMemo(() => {
@@ -175,10 +178,13 @@ export function WindowWorkbench({
   }, [familyById, projectFamily, projectIndex, search, windows.windows]);
 
   const detail = windows.detail;
+  const linkedSessions = useMemo(() => detail ? windowSessionCatalog(detail) : [], [detail]);
+  // A different Window keeps the operator's current view but never inherits
+  // the previous Window's Session focus or open identity panel.
   useEffect(() => {
     if (!windows.selectedKey) return;
-    setCenterTab("window");
     setSelectedSessionId("");
+    setDetailsOpen(false);
   }, [windows.selectedKey]);
   useEffect(() => {
     if (!requestedWindowKey) return;
@@ -360,50 +366,59 @@ export function WindowWorkbench({
                   ? visibleActiveCount + " " + t("active")
                   : t("Idle") + " · " + relativeTime(lastObservedAt)}
               </span>
-              <details className="window-header-details">
-                <summary>{t("Window details")}</summary>
-                <dl className="window-header-facts" aria-label={t("Window details")}>
-                  <div className="window-header-fact" title={windows.selectedKey} data-testid="current-window-identity">
-                    <dt><Monitor size={14} aria-hidden="true" />{t("Window ID")}</dt>
-                    <dd><CopyIdentity key={windows.selectedKey} value={windows.selectedKey} label={t("Window ID")} language={language} /></dd>
+              {/* Identity is a floating reference so it never shrinks the work panes below. */}
+              <Popover opened={detailsOpen} onChange={setDetailsOpen} position="bottom-start" offset={6} width={560} keepMounted keepMountedMode="display-none">
+                <Popover.Target>
+                  <button type="button" className="text-button window-header-details-toggle"
+                    onClick={() => setDetailsOpen(open => !open)}
+                    onKeyDown={event => { if (event.key === "Escape") setDetailsOpen(false); }}>
+                    {t("Window details")}<ChevronDown size={13} aria-hidden="true" />
+                  </button>
+                </Popover.Target>
+                <Popover.Dropdown className="window-header-details">
+                  <dl className="window-header-facts">
+                    <div className="window-header-fact" title={windows.selectedKey} data-testid="current-window-identity">
+                      <dt><Monitor size={14} aria-hidden="true" />{t("Window ID")}</dt>
+                      <dd><CopyIdentity key={windows.selectedKey} value={windows.selectedKey} label={t("Window ID")} language={language} /></dd>
+                    </div>
+                    {currentRunnerId && (
+                      <div className="window-header-fact" title={currentRunnerId}>
+                        <dt><Server size={14} aria-hidden="true" />{t("Runner ID")}</dt>
+                        <dd><CopyIdentity key={currentRunnerId} value={currentRunnerId} label={t("Runner ID")} language={language} /></dd>
+                      </div>
+                    )}
+                    {currentDirectory && (
+                      <div className="window-header-fact" title={currentDirectory}>
+                        <dt><FolderOpen size={14} aria-hidden="true" />{t("Directory")}</dt>
+                        <dd><CopyIdentity key={currentDirectory} value={currentDirectory} label={t("Directory")} language={language} /></dd>
+                      </div>
+                    )}
+                    {currentProjectId && (
+                      <div className="window-header-fact" title={currentProjectId}>
+                        <dt><Box size={14} aria-hidden="true" />{t("Project ID")}</dt>
+                        <dd><CopyIdentity key={currentProjectId} value={currentProjectId} label={t("Project ID")} language={language} /></dd>
+                      </div>
+                    )}
+                  </dl>
+                  <div className="window-header-timeline">
+                    {firstObservedAt && (
+                      <span className="window-header-event" title={absoluteTime(firstObservedAt)}>
+                        <Clock3 size={14} />
+                        <small>{t("First observed")}</small>
+                        <time>{absoluteTime(firstObservedAt)}</time>
+                      </span>
+                    )}
+                    {currentActivity && (
+                      <span className="window-header-event">
+                        <CircleDot size={12} />
+                        <small>{t("Latest activity")}</small>
+                        <strong>{currentActivity}</strong>
+                        {lastObservedAt && <time title={absoluteTime(lastObservedAt)}>{dayAwareTime(lastObservedAt)}</time>}
+                      </span>
+                    )}
                   </div>
-                  {currentRunnerId && (
-                    <div className="window-header-fact" title={currentRunnerId}>
-                      <dt><Server size={14} aria-hidden="true" />{t("Runner ID")}</dt>
-                      <dd><CopyIdentity key={currentRunnerId} value={currentRunnerId} label={t("Runner ID")} language={language} /></dd>
-                    </div>
-                  )}
-                  {currentDirectory && (
-                    <div className="window-header-fact" title={currentDirectory}>
-                      <dt><FolderOpen size={14} aria-hidden="true" />{t("Directory")}</dt>
-                      <dd><CopyIdentity key={currentDirectory} value={currentDirectory} label={t("Directory")} language={language} /></dd>
-                    </div>
-                  )}
-                  {currentProjectId && (
-                    <div className="window-header-fact" title={currentProjectId}>
-                      <dt><Box size={14} aria-hidden="true" />{t("Project ID")}</dt>
-                      <dd><CopyIdentity key={currentProjectId} value={currentProjectId} label={t("Project ID")} language={language} /></dd>
-                    </div>
-                  )}
-                </dl>
-                <div className="window-header-timeline">
-                  {firstObservedAt && (
-                    <span className="window-header-event" title={absoluteTime(firstObservedAt)}>
-                      <Clock3 size={14} />
-                      <small>{t("First observed")}</small>
-                      <time>{absoluteTime(firstObservedAt)}</time>
-                    </span>
-                  )}
-                  {currentActivity && (
-                    <span className="window-header-event">
-                      <CircleDot size={12} />
-                      <small>{t("Latest activity")}</small>
-                      <strong>{currentActivity}</strong>
-                      {lastObservedAt && <time title={absoluteTime(lastObservedAt)}>{clockTime(lastObservedAt)}</time>}
-                    </span>
-                  )}
-                </div>
-              </details>
+                </Popover.Dropdown>
+              </Popover>
             </header>
 
             <div ref={selectionRef} className="session-view-tabs window-center-tabs equal-view-tabs" role="tablist" aria-label={t("Window views")}>
@@ -481,6 +496,8 @@ export function WindowWorkbench({
                   windowKey={windows.selectedKey}
                   active={centerTab === "collaboration"}
                   selectedSessionId={selectedSessionId}
+                  sessions={linkedSessions}
+                  onSelectSession={setSelectedSessionId}
                   language={language}
                   onUnauthorized={onUnauthorized}
                 />

@@ -1,5 +1,5 @@
-import { Select } from "@mantine/core";
-import { Bot, CheckCircle2, MessageSquare, Send, UserRound } from "lucide-react";
+import { Popover, Select } from "@mantine/core";
+import { Bot, CheckCircle2, Info, MessageSquare, Send, UserRound } from "lucide-react";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RuntimeV2Client } from "../api/client.js";
 import type {
@@ -9,14 +9,16 @@ import type {
 } from "../api/windowCollaboration.js";
 import { translate, type RuntimeLanguage } from "../../runtime_i18n.js";
 import { clockTime, shortId } from "../model/format.js";
+import type { WindowLinkedSession } from "../model/types.js";
 import { useWindowCollaboration } from "../state/useWindowCollaboration.js";
 
+/** One delivery state per message; a pending ACK request qualifies it instead of adding a chip. */
 function deliveryLabel(row: WindowCollaborationMessage, t: (source: string) => string): string | null {
   if (row.source === "peer" && row.direction === "inbound") return null;
   if (row.source === "window") return null;
   if (row.first_ack_observed_at_ms != null) return t("Acknowledged");
-  if (row.first_projected_at_ms != null) return t("Included in tool result");
-  return t("Saved");
+  const delivery = row.first_projected_at_ms != null ? t("Included in tool result") : t("Saved");
+  return row.requires_ack ? delivery + " · " + t("Awaiting ACK") : delivery;
 }
 
 function participantLabel(row: WindowCollaborationMessage, t: (source: string) => string): string {
@@ -49,10 +51,15 @@ function priorityLabel(priority: WindowCollaborationPriority, t: (source: string
       : t("Normal");
 }
 
-export function WindowCollaboration({ client, windowKey, selectedSessionId, language, onUnauthorized, active = true }: {
+export function WindowCollaboration({
+  client, windowKey, selectedSessionId, sessions = [], onSelectSession, language, onUnauthorized, active = true,
+}: {
   client: RuntimeV2Client;
   windowKey: string;
+  /** The Window's single Session focus, shared with the activity filter. */
   selectedSessionId: string;
+  sessions?: WindowLinkedSession[];
+  onSelectSession?: (sessionId: string) => void;
   language: RuntimeLanguage;
   onUnauthorized: () => void;
   active?: boolean;
@@ -72,6 +79,13 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
   const messages = state.transcript?.messages || [];
   const byId = new Map(messages.map(row => [row.message_id, row]));
   const answered = new Set(messages.map(row => row.reply_to_message_id).filter(Boolean));
+  const contextOptions = [
+    { value: "", label: t("No Session context") },
+    ...(selectedSessionId && !sessions.some(session => session.workflow_session_id === selectedSessionId)
+      ? [{ value: selectedSessionId, label: t("Session") + " · " + shortId(selectedSessionId, 14, 6) }] : []),
+    ...sessions.map((session, index) => ({ value: session.workflow_session_id,
+      label: (session.title || t("Work Session") + " " + (index + 1)) + " · " + shortId(session.workflow_session_id, 14, 6) })),
+  ];
   useLayoutEffect(() => {
     const node = threadRef.current, anchor = historyAnchor.current;
     if (node && anchor) {
@@ -85,7 +99,7 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
   const sendError = state.sendError === "conflict"
     ? t("Message could not be sent. Send it again.")
     : state.sendError === "context"
-      ? t("Context is no longer available. Choose a Session or All calls, then send again.")
+      ? t("Session context is no longer available. Choose another Session context or none, then send again.")
       : state.sendError === "unavailable"
         ? t("Collaboration is unavailable for this Window.")
         : state.sendError === "failed"
@@ -122,7 +136,8 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
           <strong>{t("Collaboration")}</strong>
           <small aria-live="polite">
             {messages.length
-              ? t("Messages: {count}").replace("{count}", new Intl.NumberFormat(language).format(messages.length))
+              ? t("Messages: {count}").replace("{count}", new Intl.NumberFormat(language).format(messages.length)
+                + (state.transcript?.truncated ? "+" : ""))
               : t("Leave a message or instruction for this Window")}
           </small>
           {hasNewMessages && <button type="button" className="text-button" onClick={() => {
@@ -132,11 +147,16 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
             setHasNewMessages(false);
           }}>{t("View new messages")}</button>}
         </div>
-        {selectedSessionId && (
-          <span className="window-collaboration-context" title={selectedSessionId}>
-            {t("Context")} · {shortId(selectedSessionId)}
-          </span>
-        )}
+        <Popover position="bottom-end" offset={6} width={300}>
+          <Popover.Target>
+            <button type="button" className="text-button window-collaboration-semantics-toggle">
+              <Info size={13} aria-hidden="true" />{t("Delivery states")}
+            </button>
+          </Popover.Target>
+          <Popover.Dropdown className="window-collaboration-semantics-popover">
+            {t("Saved messages remain in history. ACK confirms model context, not acceptance or completion. A reply is shown separately.")}
+          </Popover.Dropdown>
+        </Popover>
       </header>
 
       <div className="window-collaboration-thread" ref={threadRef} onScroll={() => {
@@ -155,7 +175,7 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
           </div>
         )}
 
-        <div className="window-collaboration-history-note">
+        {(state.transcript?.truncated || state.browsingHistory) && <div className="window-collaboration-history-note">
           {state.transcript?.truncated && <button type="button" className="text-button" disabled={state.loadingHistory} onClick={() => {
             const node = threadRef.current;
             if (node) historyAnchor.current = { height: node.scrollHeight, top: node.scrollTop };
@@ -165,11 +185,11 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
           {state.browsingHistory && <button type="button" className="text-button" onClick={() => {
             historyAnchor.current = null; followLatest.current = true; setHasNewMessages(false); state.latest();
           }}>{t("Return to latest messages")}</button>}
-        </div>
+        </div>}
         {messages.map((row, index) => {
           const status = deliveryLabel(row, t);
-          const outgoing =
-            row.source === "operator" || (row.source === "peer" && row.direction === "outbound");
+          // Only the operator writes from this side; every Window-authored row stays opposite.
+          const outgoing = row.source === "operator";
           const date = new Date(row.created_at_ms);
           const previousDate = index > 0 ? new Date(messages[index - 1].created_at_ms).toDateString() : null;
           const reply = row.reply_to_message_id ? byId.get(row.reply_to_message_id) : null;
@@ -205,11 +225,6 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
                       <CheckCircle2 size={12} /> {status}
                     </span>
                   )}
-                  {row.requires_ack && row.first_ack_observed_at_ms == null && (
-                    <span className="window-collaboration-meta-chip ack">
-                      {t("ACK requested")}
-                    </span>
-                  )}
                   {row.context_session_id && (
                     <span className="window-collaboration-session" title={row.context_session_id}>
                       {t("Session")} · {shortId(row.context_session_id)}
@@ -239,40 +254,7 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
           submit();
         }}
       >
-        <details className="window-collaboration-semantics"><summary>{t("Delivery states")}</summary>
-          <p>{t("Saved messages remain in history. ACK confirms model context, not acceptance or completion. A reply is shown separately.")}</p>
-        </details>
         <div className="window-collaboration-compose-box">
-          <div className="window-collaboration-compose-options">
-            <label>
-              <span>{t("Type")}</span>
-              <Select aria-label={t("Message type")} value={messageKind} disabled={sending || uncertain}
-                allowDeselect={false} size="xs"
-                onChange={value => { if (value !== null) setMessageKind(value as WindowCollaborationKind); }}
-                data={["guidance", "note", "question", "todo"].map(value => ({ value, label: t(value[0].toUpperCase() + value.slice(1)) }))} />
-            </label>
-            <label>
-              <span>{t("Priority")}</span>
-              <Select aria-label={t("Message priority")} value={priority} disabled={sending || uncertain}
-                allowDeselect={false} size="xs"
-                onChange={value => { if (value !== null) setPriority(value as WindowCollaborationPriority); }}
-                data={["normal", "high", "low"].map(value => ({ value, label: t(value[0].toUpperCase() + value.slice(1)) }))} />
-            </label>
-            <label className="window-collaboration-ack-toggle">
-              <input
-                type="checkbox"
-                checked={requiresAck}
-                disabled={sending || uncertain}
-                onChange={event => setRequiresAck(event.currentTarget.checked)}
-              />
-              <span>{t("Require ACK")}</span>
-            </label>
-          </div>
-          {selectedSessionId && (
-            <span className="window-collaboration-compose-context" title={selectedSessionId}>
-              {t("Current Session")} · {shortId(selectedSessionId)}
-            </span>
-          )}
           <textarea
             aria-label={t("Message this Window")}
             placeholder={t("Send a message to this Window…")}
@@ -289,8 +271,42 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
             }}
           />
           <div className="window-collaboration-compose-footer">
-            <small>{t("⌘/Ctrl + Enter to send")}</small>
-            <button type="submit" disabled={sending || !message.trim() || !state.transcript?.can_send}>
+            <div className="window-collaboration-compose-options">
+              <label>
+                <span>{t("Type")}</span>
+                <Select aria-label={t("Message type")} value={messageKind} disabled={sending || uncertain}
+                  allowDeselect={false} size="xs"
+                  onChange={value => { if (value !== null) setMessageKind(value as WindowCollaborationKind); }}
+                  data={["guidance", "note", "question", "todo"].map(value => ({ value, label: t(value[0].toUpperCase() + value.slice(1)) }))} />
+              </label>
+              <label>
+                <span>{t("Priority")}</span>
+                <Select aria-label={t("Message priority")} value={priority} disabled={sending || uncertain}
+                  allowDeselect={false} size="xs"
+                  onChange={value => { if (value !== null) setPriority(value as WindowCollaborationPriority); }}
+                  data={["normal", "high", "low"].map(value => ({ value, label: t(value[0].toUpperCase() + value.slice(1)) }))} />
+              </label>
+              {contextOptions.length > 1 && (
+                <label className="window-collaboration-context">
+                  <span>{t("Session")}</span>
+                  <Select aria-label={t("Session context")} value={selectedSessionId} allowDeselect={false} size="xs"
+                    disabled={sending || uncertain || !onSelectSession} title={selectedSessionId || undefined}
+                    onChange={value => onSelectSession?.(value ?? "")} data={contextOptions} />
+                </label>
+              )}
+              <label className="window-collaboration-ack-toggle">
+                <input
+                  type="checkbox"
+                  checked={requiresAck}
+                  disabled={sending || uncertain}
+                  onChange={event => setRequiresAck(event.currentTarget.checked)}
+                />
+                <span>{t("Require ACK")}</span>
+              </label>
+            </div>
+            <button type="submit" className="window-collaboration-send" title={t("⌘/Ctrl + Enter to send")}
+              aria-keyshortcuts="Control+Enter Meta+Enter"
+              disabled={sending || !message.trim() || !state.transcript?.can_send}>
               <Send size={14} />
               {sending ? t("Sending…") : uncertain ? t("Retry") : t("Send")}
             </button>

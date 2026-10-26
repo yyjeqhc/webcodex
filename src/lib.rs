@@ -88,11 +88,7 @@ pub use config::Config;
 pub use config::OAuth2Config;
 pub use db::{Database, RotateResult};
 
-pub(crate) use runner_http::{
-    runner_job_update, runner_offline, runner_persistent_shell_result, runner_poll,
-    runner_register, runner_result, shell_file_op, shell_job, shell_job_log, shell_job_status,
-    shell_job_stop, shell_jobs_list, shell_run, RunnerRegistry,
-};
+pub(crate) use runner_http::RunnerRegistry;
 pub use startup::{
     is_project_command, run_project_command, run_regular_server_tunnel, CliCommandOutput,
     RegularServerTunnelOptions,
@@ -591,46 +587,7 @@ explicitly allow remote shared-key auth."
             Router::with_path(route_metadata::api_path(RouteId::AgentTokensRevoke))
                 .post(runner_tokens_http::runner_tokens_revoke),
         )
-        .push(Router::with_path(route_metadata::api_path(RouteId::ShellRun)).post(shell_run))
-        .push(Router::with_path(route_metadata::api_path(RouteId::ShellFile)).post(shell_file_op))
-        .push(Router::with_path(route_metadata::api_path(RouteId::ShellJob)).post(shell_job))
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ShellJobsStatus))
-                .post(shell_job_status),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ShellJobsLog)).post(shell_job_log),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ShellJobsStop))
-                .post(shell_job_stop),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ShellJobsList))
-                .post(shell_jobs_list),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::RunnerRegister))
-                .post(runner_register),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::RunnerOffline))
-                .post(runner_offline),
-        )
-        .push(Router::with_path(route_metadata::api_path(RouteId::RunnerPoll)).post(runner_poll))
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::RunnerResult)).post(runner_result),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(
-                RouteId::RunnerPersistentShellResult,
-            ))
-            .post(runner_persistent_shell_result),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::RunnerJobUpdate))
-                .post(runner_job_update),
-        )
+        .push(runner_http::routes())
         // WebSocket Runner transport (preferred long-lived connection).
         // Polling endpoints above remain as fallback. Bearer auth is
         // enforced by the shared AuthMiddleware hoop.

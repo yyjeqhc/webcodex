@@ -57,6 +57,15 @@ Do not replace them with dummy documents, redirects, or compatibility switches.
 Removing those entrypoints does not remove ActionAudit history, credential kinds,
 MCP OAuth, generic Runtime HTTP or Runner wire protocols.
 
+The old `/api/shell/run`, `/api/shell/file`, `/api/shell/job`, and
+`/api/shell/jobs/{status,log,stop,list}` execution routes are also unmounted. Use
+canonical tools through MCP or `/api/tools/call`; no deprecated endpoint or
+forwarding adapter is maintained for these unused internal APIs. This does not
+retire `/api/shell/agent/*`, whose registration, polling, result and Job-update
+handlers remain part of the Runner transport. Shared Registry primitives, existing
+Job recovery/cancellation and negotiated mixed-version capabilities are unchanged.
+See [compatibility policy](../compatibility-policy.md#internal-execution-interfaces).
+
 ## File provenance
 
 Attachment import requires adapter-derived trusted MCP host-file provenance.

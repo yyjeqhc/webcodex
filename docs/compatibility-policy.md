@@ -9,12 +9,14 @@ v0.5 release or claim native upgrade acceptance.
 
 ## Rule and support boundary
 
-Retain compatibility for supported published installations, their persisted data,
-and named active external protocol consumers. Do not retain an adapter, alias,
-translation, or duplicate reader solely because an unreleased main revision
-previously emitted a different representation. Remove the obsolete production
-path and its dedicated fixtures together, preserving coverage of surviving
-authority, recovery, and data-integrity boundaries.
+Retain compatibility for supported installation/data formats, persisted identities,
+credentials, and named active protocol consumers. Publication of an internal API
+does not by itself require indefinite compatibility: a retired execution route,
+tool name, output field, or experimental setting needs a concrete current consumer
+to justify a parallel implementation. Remove obsolete paths and their dedicated
+fixtures together, preserving surviving authority, recovery, and data-integrity
+coverage. State intentional surface changes in upgrade notes; MCP clients refresh
+`tools/list` and their cached schemas instead of relying on compatibility aliases.
 
 This rule does not preserve every old model tool name. v0.5 intentionally changes
 the model/API surface: clients refresh the advertised MCP schema and use the new
@@ -28,6 +30,24 @@ A package version or Git revision is not a protocol generation. Keep declared
 management ranges, Runner capabilities, and dated MCP protocol negotiation.
 A supported older Runner missing a new capability must not receive an unsupported
 operation, nor lose unrelated supported operations merely because its build differs.
+
+## Internal execution interfaces
+
+Ordinary execution enters the ToolRuntime kernel through MCP or authenticated
+`/api/tools/call`. The unused `/api/shell/run`, `/api/shell/file`, `/api/shell/job`,
+and `/api/shell/jobs/{status,log,stop,list}` REST entrypoints are removed, including
+their HTTP-only request/response DTOs. Current repository clients have no production
+caller of these routes. Their presence in v0.4.6 is not a reason to retain a second
+execution path or add redirects. Clients using them must select current canonical
+tools; this is an intentional breaking API change on the v0.5 development line.
+
+This retirement does not change `/api/shell/agent/*`: Runner registration, polling,
+results, Job updates, and persistent-shell results remain supported transport.
+Shared Registry execution primitives and WS/QUIC sessions remain intact. Existing
+Jobs retain their identity, cancellation, recovery, and uncertain-effect semantics;
+clients observe existing Jobs instead of redispatching work. No persisted Job,
+Session, Project ownership, user, credential, or installation data is migrated or
+deleted. Mixed-version Runner admission continues to use negotiated capabilities.
 
 ## The actual stable upgrade sources
 

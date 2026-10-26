@@ -57,42 +57,6 @@ fn default_shell_job_kind() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunnerJobStatusRequest {
-    #[serde(default)]
-    pub client_id: Option<String>,
-    pub job_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunnerJobLogRequest {
-    #[serde(default)]
-    pub client_id: Option<String>,
-    pub job_id: String,
-    #[serde(default)]
-    pub tail_lines: Option<usize>,
-    #[serde(default)]
-    pub since_stdout_line: Option<usize>,
-    #[serde(default)]
-    pub since_stderr_line: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunnerJobStopRequest {
-    #[serde(default)]
-    pub client_id: Option<String>,
-    pub job_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunnerJobsListRequest {
-    pub client_id: String,
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunnerJobUpdateRequest {
     pub client_id: String,
     /// Active Runner process identity. Must match the instance that currently
@@ -171,33 +135,6 @@ pub struct ShellJobCodexMetadata {
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_runtime_secs: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellJobOpRequest {
-    pub op: String,
-    #[serde(default)]
-    pub client_id: Option<String>,
-    #[serde(default)]
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub command: Option<String>,
-    #[serde(default, skip_serializing_if = "super::is_false")]
-    pub login: bool,
-    #[serde(default)]
-    pub timeout_secs: Option<u64>,
-    #[serde(default)]
-    pub job_id: Option<String>,
-    #[serde(default)]
-    pub since_stdout_line: Option<usize>,
-    #[serde(default)]
-    pub since_stderr_line: Option<usize>,
-    #[serde(default)]
-    pub tail_lines: Option<usize>,
-    #[serde(default)]
-    pub limit: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub codex: Option<ShellJobCodexMetadata>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1563,90 +1500,4 @@ pub struct ShellJobInfo {
     pub stdout_log_truncated: bool,
     #[serde(default)]
     pub stderr_log_truncated: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellJobOpResponse {
-    pub success: bool,
-    pub op: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job: Option<ShellJobInfo>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub jobs: Vec<ShellJobInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stdout: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stderr: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_stdout_line: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_stderr_line: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunnerJobStatusResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub elapsed_secs: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<RunnerJobResult>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub job: Option<ShellJobInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunnerJobLogResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stdout_tail: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stderr_tail: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_stdout_line: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_stderr_line: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub job: Option<ShellJobInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunnerJobStopResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub job: Option<ShellJobInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunnerJobsListResponse {
-    pub success: bool,
-    pub client_id: String,
-    pub jobs: Vec<ShellJobInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }

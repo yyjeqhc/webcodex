@@ -29,18 +29,15 @@ mod tests;
 pub use job::{
     normalize_cargo_excluded_packages, normalize_cargo_packages, normalize_cargo_value,
     normalize_go_packages, normalize_go_test_filter, normalize_go_test_packages,
-    normalize_pytest_filter, normalize_rust_test_filter, valid_rust_test_filter,
-    RunnerJobLogRequest, RunnerJobLogResponse, RunnerJobResult, RunnerJobStatusRequest,
-    RunnerJobStatusResponse, RunnerJobStopRequest, RunnerJobStopResponse, RunnerJobUpdateRequest,
-    RunnerJobUpdateResponse, RunnerJobsListRequest, RunnerJobsListResponse, RunnerShellJobResult,
-    ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
-    ShellJobCodexMetadata, ShellJobContext, ShellJobInfo, ShellJobInventory, ShellJobLogSnapshot,
-    ShellJobOpRequest, ShellJobOpResponse, ShellJobSnapshot, ShellJobStreamSnapshot,
-    ShellJobStructuredExecutionMetadata, ShellJobTestCountEvidence, ShellJobValidationMetadata,
-    ShellJobValidationProgress, ShellJobValidationStep, CARGO_PACKAGE_MAX_ITEMS,
-    CARGO_TEST_MIN_TESTS_MAX, CARGO_VALUE_MAX_BYTES, GO_TEST_PACKAGE_MAX_BYTES,
-    GO_TEST_PACKAGE_MAX_ITEMS, JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_JOBS,
-    JOB_INVENTORY_MAX_SERIALIZED_BYTES, JOB_INVENTORY_MAX_TERMINAL_JOBS,
+    normalize_pytest_filter, normalize_rust_test_filter, valid_rust_test_filter, RunnerJobResult,
+    RunnerJobUpdateRequest, RunnerJobUpdateResponse, RunnerShellJobResult, ShellJobActivity,
+    ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState, ShellJobCodexMetadata,
+    ShellJobContext, ShellJobInfo, ShellJobInventory, ShellJobLogSnapshot, ShellJobSnapshot,
+    ShellJobStreamSnapshot, ShellJobStructuredExecutionMetadata, ShellJobTestCountEvidence,
+    ShellJobValidationMetadata, ShellJobValidationProgress, ShellJobValidationStep,
+    CARGO_PACKAGE_MAX_ITEMS, CARGO_TEST_MIN_TESTS_MAX, CARGO_VALUE_MAX_BYTES,
+    GO_TEST_PACKAGE_MAX_BYTES, GO_TEST_PACKAGE_MAX_ITEMS, JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    JOB_INVENTORY_MAX_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES, JOB_INVENTORY_MAX_TERMINAL_JOBS,
     JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS, RUNNER_JOB_CONCURRENCY_MAX,
     RUNNER_JOB_CONCURRENCY_MIN, RUST_TEST_FILTER_MAX_BYTES, VALIDATION_ASSERTION_NAME_MAX_CHARS,
 };
@@ -2580,29 +2577,6 @@ pub struct ShellFileOpRequest {
     pub create_dirs: bool,
     #[serde(default = "default_wait_timeout_secs")]
     pub wait_timeout_secs: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellFileOpResponse {
-    pub success: bool,
-    pub op: String,
-    pub request_id: String,
-    pub client_id: String,
-    pub path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub entries: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sha256: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stderr: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 #[cfg(test)]

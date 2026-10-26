@@ -155,13 +155,6 @@ pub(crate) enum RouteId {
     PairingCreate,
     PairingRunnerCapabilities,
     RunnerCapabilityAuthorization,
-    ShellRun,
-    ShellFile,
-    ShellJob,
-    ShellJobsStatus,
-    ShellJobsLog,
-    ShellJobsStop,
-    ShellJobsList,
     RunnerRegister,
     RunnerOffline,
     RunnerPoll,
@@ -236,7 +229,6 @@ const ROUTE_GROUPS: &[&[RouteSpec]] = &[
     runtime::ROUTES,
     oauth::MANAGEMENT_ROUTES,
     account::ROUTES,
-    runtime::SHELL_ROUTES,
     runner_transport::ROUTES,
     operations::AUDIT_ROUTES,
     operations::PUBLIC_WEB_ROUTES,
@@ -417,9 +409,10 @@ mod tests {
         source.split("#[cfg(test)]").next().unwrap_or(source)
     }
 
-    fn mounted_route_sources() -> [&'static str; 4] {
+    fn mounted_route_sources() -> [&'static str; 5] {
         [
             include_str!("lib.rs"),
+            production_prefix(include_str!("runner_http/mod.rs")),
             production_prefix(include_str!("runtime_console_http.rs")),
             production_prefix(include_str!("admin_http.rs")),
             production_prefix(include_str!("cloudflare_ingress.rs")),
@@ -488,10 +481,21 @@ mod tests {
     }
 
     #[test]
-    fn retired_action_routes_have_no_metadata_admission() {
+    fn retired_execution_routes_have_no_metadata_admission() {
         assert!(lookup("GET", "/openapi.json").is_none());
         assert!(lookup("POST", "/api/actions/read_files").is_none());
         assert!(lookup("POST", "/api/artifacts/import").is_none());
+        for path in [
+            "/api/shell/run",
+            "/api/shell/file",
+            "/api/shell/job",
+            "/api/shell/jobs/status",
+            "/api/shell/jobs/log",
+            "/api/shell/jobs/stop",
+            "/api/shell/jobs/list",
+        ] {
+            assert!(lookup("POST", path).is_none(), "{path}");
+        }
     }
     #[test]
     fn canonical_lookup_normalizes_only_benign_request_path_variants() {

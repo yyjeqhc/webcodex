@@ -610,10 +610,10 @@ impl RunnerRegistry {
         self.enqueue_validated_file_op(body, requested_by).await
     }
 
-    /// Enqueue one Phase-3 read-only Skill filesystem primitive. Generic
-    /// `/api/shell/file` callers cannot reach these ops through
-    /// `enqueue_file_op`; ToolRuntime calls this internal method only after the
-    /// authoritative model-surface/project gates have resolved.
+    /// Enqueue one read-only Skill filesystem primitive. Generic
+    /// `enqueue_file_op` callers cannot reach these operations; ToolRuntime calls
+    /// this method only after the authoritative model-surface/project gates
+    /// have resolved.
     pub async fn enqueue_skill_file_op(
         &self,
         body: ShellFileOpRequest,

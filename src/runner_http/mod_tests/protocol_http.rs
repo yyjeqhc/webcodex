@@ -10,7 +10,7 @@ async fn polling_http_register_requires_generation() {
         Router::new()
             .hoop(affix_state::inject(registry.clone()))
             .hoop(affix_state::inject(auth_context(None, true)))
-            .push(Router::with_path("api/shell/agent/register").post(runner_register)),
+            .push(Router::with_path("api").push(routes())),
     );
     let mut response = TestClient::post("http://localhost/api/shell/agent/register")
         .json(&json!({
@@ -45,7 +45,7 @@ async fn polling_http_register_accepts_generation_two() {
         Router::new()
             .hoop(affix_state::inject(registry.clone()))
             .hoop(affix_state::inject(auth_context(None, true)))
-            .push(Router::with_path("api/shell/agent/register").post(runner_register)),
+            .push(Router::with_path("api").push(routes())),
     );
     let mut response = TestClient::post("http://localhost/api/shell/agent/register")
         .json(&json!({
@@ -98,7 +98,7 @@ async fn polling_http_result_accepts_runner_envelope_above_global_text_limit() {
         Router::new()
             .hoop(affix_state::inject(registry))
             .hoop(affix_state::inject(auth_context(None, true)))
-            .push(Router::with_path("api/shell/agent/result").post(runner_result)),
+            .push(Router::with_path("api").push(routes())),
     );
     let payload = serde_json::to_string(&json!({
         "client_id": "polling-large-result",

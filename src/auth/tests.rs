@@ -286,7 +286,6 @@ fn gate_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router {
                 .push(Router::with_path("tools/call").post(echo_ok))
                 .push(Router::with_path("future/authenticated-route").post(echo_ok))
                 .push(Router::with_path("runtime-console/projects").post(echo_ok))
-                .push(Router::with_path("shell/job").post(echo_ok))
                 .push(Router::with_path("audit/sessions").post(echo_ok))
                 .push(Router::with_path("audit/session").post(echo_ok))
                 .push(Router::with_path("audit/stats").post(echo_ok))
@@ -2054,7 +2053,6 @@ async fn oauth2_scope_gate_matrix() {
     for (scopes, path) in [
         ("runtime:read", "/api/runtime/status"),
         ("project:read", "/api/runtime-console/projects"),
-        ("job:run", "/api/shell/job"),
     ] {
         let (_tmp, service, token) = gate_oauth2_token_with_scopes(scopes).await;
         let (status, body) = gate_send(&service, path, Some(&token)).await;
@@ -2063,7 +2061,7 @@ async fn oauth2_scope_gate_matrix() {
     // …every other surface stays closed with insufficient_scope, including
     // the OAuth authorize page, the Runner transport, and unknown routes
     // (fail closed).
-    let insufficient: [(&str, &str, Option<&str>); 6] = [
+    let insufficient: [(&str, &str, Option<&str>); 5] = [
         (
             "project:read",
             "/api/runtime/status",
@@ -2074,7 +2072,6 @@ async fn oauth2_scope_gate_matrix() {
             "/api/runtime-console/projects",
             Some(SCOPE_PROJECT_READ),
         ),
-        ("project:write", "/api/shell/job", Some(SCOPE_JOB_RUN)),
         ("runtime:read", "/oauth/authorize", None),
         ("runtime:read", "/api/shell/agent/register", None),
         ("runtime:read", "/api/future/authenticated-route", None),
@@ -2123,11 +2120,7 @@ async fn api_token_obeys_declared_scope_and_unknown_route_policy() {
     );
     let service = Service::new(gate_router(config, db));
 
-    for path in [
-        "/api/runtime/status",
-        "/api/runtime-console/projects",
-        "/api/shell/job",
-    ] {
+    for path in ["/api/runtime/status", "/api/runtime-console/projects"] {
         let (status, body) = gate_send(&service, path, Some(&user_token)).await;
         assert_eq!(status, StatusCode::OK, "{} body: {:?}", path, body);
     }

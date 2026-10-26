@@ -1,8 +1,8 @@
 use super::RouteAuth::AuthMiddleware;
 use super::{route, AuditClass::*, RouteId::*, RouteMethod::*, RouteSpec, RouteSurface::*};
 use webcodex_core::authority::{
-    OAuthBodyAwarePolicy, OAuthRouteScopePolicy::*, SCOPE_JOB_RUN, SCOPE_PROJECT_WRITE,
-    SCOPE_RUNNER_MANAGE, SCOPE_RUNTIME_READ,
+    OAuthBodyAwarePolicy, OAuthRouteScopePolicy::*, SCOPE_PROJECT_WRITE, SCOPE_RUNNER_MANAGE,
+    SCOPE_RUNTIME_READ,
 };
 
 pub(super) const ROUTES: &[RouteSpec] = &[
@@ -47,72 +47,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         Post,
         "/api/runtime/upgrade-maintenance",
         Require(SCOPE_RUNNER_MANAGE),
-        RuntimeApi,
-        Other,
-        AuthMiddleware,
-    ),
-];
-
-pub(super) const SHELL_ROUTES: &[RouteSpec] = &[
-    route(
-        ShellRun,
-        Post,
-        "/api/shell/run",
-        Require(SCOPE_JOB_RUN),
-        RuntimeApi,
-        Shell,
-        AuthMiddleware,
-    ),
-    route(
-        ShellFile,
-        Post,
-        "/api/shell/file",
-        Require(SCOPE_PROJECT_WRITE),
-        RuntimeApi,
-        Shell,
-        AuthMiddleware,
-    ),
-    route(
-        ShellJob,
-        Post,
-        "/api/shell/job",
-        Require(SCOPE_JOB_RUN),
-        RuntimeApi,
-        Shell,
-        AuthMiddleware,
-    ),
-    route(
-        ShellJobsStatus,
-        Post,
-        "/api/shell/jobs/status",
-        Require(SCOPE_RUNTIME_READ),
-        RuntimeApi,
-        Other,
-        AuthMiddleware,
-    ),
-    route(
-        ShellJobsLog,
-        Post,
-        "/api/shell/jobs/log",
-        Require(SCOPE_RUNTIME_READ),
-        RuntimeApi,
-        Other,
-        AuthMiddleware,
-    ),
-    route(
-        ShellJobsStop,
-        Post,
-        "/api/shell/jobs/stop",
-        Require(SCOPE_JOB_RUN),
-        RuntimeApi,
-        Other,
-        AuthMiddleware,
-    ),
-    route(
-        ShellJobsList,
-        Post,
-        "/api/shell/jobs/list",
-        Require(SCOPE_RUNTIME_READ),
         RuntimeApi,
         Other,
         AuthMiddleware,

@@ -92,3 +92,91 @@ async fn executing_read_timeout_reports_unavailable_not_an_empty_page() {
         .await
         .is_ok());
 }
+#[test]
+fn history_phase_diagnostics_cover_timeout_cancellation_and_recovery_without_identifiers() {
+    #[derive(Clone)]
+    struct Capture(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let capture = Capture(Arc::new(std::sync::Mutex::new(Vec::new())));
+    let output = capture.0.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(move || capture.clone())
+        .finish();
+    // tracing-core's single-dispatch fast path consults the registering thread's
+    // default. Other parallel tests intentionally have no subscriber and share
+    // these call sites. Retain an inert second Dispatch so registration considers
+    // both contexts; never change the process-global default or serialize tests.
+    let unobserved_dispatch = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+    tracing::subscriber::with_default(subscriber, || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (_tmp, db, lane) = fixture();
+                let permit = lane.clone().acquire_owned().await.unwrap();
+                assert!(
+                    run_bounded(&db, lane.clone(), Duration::from_millis(10), |_| Ok(()))
+                        .await
+                        .is_err()
+                );
+                let (started, observed) = tokio::sync::oneshot::channel();
+                let task = tokio::spawn({
+                    let (db, lane) = (db.clone(), lane.clone());
+                    async move {
+                        let _ = started.send(());
+                        run_bounded(&db, lane, Duration::from_secs(2), |_| Ok(())).await
+                    }
+                });
+                observed.await.unwrap();
+                task.abort();
+                let _ = task.await;
+                drop(permit);
+                run_bounded(&db, lane, Duration::from_secs(2), |db| {
+                    db.list_window_activity_events(
+                        "private-window-marker",
+                        Some(("private-kind", "private-principal")),
+                        10,
+                    )
+                })
+                .await
+                .unwrap();
+            });
+    });
+    drop(unobserved_dispatch);
+    let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    for expected in [
+        "console_history_lane_queue",
+        "budget_exhausted",
+        "cancelled",
+        "console_history_blocking_queue",
+        "console_history_worker",
+        "console_history_store",
+        "sql_statements=3",
+    ] {
+        assert!(logs.contains(expected), "missing {expected}: {logs}");
+    }
+    for sensitive in [
+        "private-window-marker",
+        "private-kind",
+        "private-principal",
+        "SELECT ",
+        "WHERE ",
+    ] {
+        assert!(
+            !logs.contains(sensitive),
+            "history diagnostics exposed identifiers or SQL"
+        );
+    }
+}

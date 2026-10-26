@@ -27,6 +27,7 @@ mod session_collaboration;
 mod sessions;
 mod window_activity;
 mod window_collaboration;
+mod window_history_benchmark;
 mod window_visibility;
 
 fn project(id: &str, private_path: &str) -> RunnerProjectSummary {

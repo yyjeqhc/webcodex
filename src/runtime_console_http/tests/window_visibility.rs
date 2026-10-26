@@ -394,3 +394,104 @@ async fn revoked_project_event_cannot_be_bridged_by_window_gap_projection() {
     let serialized = serde_json::to_string(&detail).unwrap();
     assert!(!serialized.contains(project_b));
 }
+#[tokio::test]
+async fn window_detail_reuses_exact_inventory_summary_without_duplicate_history_scans() {
+    let (_tmp, db, runtime) = test_runtime_with_window_db();
+    let auth = crate::auth::shared_key_context("exact-summary");
+    let project = "agent:exact-summary:repo";
+    register_project(
+        &runtime,
+        "exact-summary",
+        "repo",
+        "/tmp/exact-summary",
+        Some(&auth),
+    )
+    .await;
+    let key = "7".repeat(64);
+    for index in 0..80 {
+        record_window_event(&db, &auth, &key, Some(project), None, 1_000 + index);
+    }
+    let admin = test_bootstrap_auth();
+    for caller in [&auth, &admin] {
+        for (detail_level, expected_history) in [
+            (WindowDetailLevel::Primary, 1),
+            (WindowDetailLevel::Full, 2),
+        ] {
+            let before = db.window_read_counts_for_test();
+            let admissions_before = db.history_budget_reads_for_test();
+            let detail = window_for_auth(
+                &runtime,
+                caller,
+                WindowInput {
+                    client_window_key: key.clone(),
+                    activity_limit: Some(2),
+                    session_limit: Some(2),
+                    detail_level,
+                },
+            )
+            .await
+            .unwrap();
+            let after = db.window_read_counts_for_test();
+            assert_eq!(
+                db.history_budget_reads_for_test() - admissions_before,
+                2,
+                "one anchor admission and one shared content admission"
+            );
+
+            assert_eq!(detail.activity.len(), 2);
+            assert_eq!(detail.first_seen_at_ms, Some(1_001));
+            assert_eq!(after.0 - before.0, expected_history);
+            assert_eq!(
+                after.1 - before.1,
+                2,
+                "exact anchors plus authorized inventory summary"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn historical_summary_rechecks_older_project_anchor_before_visibility() {
+    let (_tmp, db, runtime) = test_runtime_with_window_db();
+    let auth = test_bootstrap_auth();
+    let project_ids = ["agent:history-first:repo", "agent:history-last:repo"];
+    for client in ["history-first", "history-last"] {
+        register_project(
+            &runtime,
+            client,
+            "repo",
+            "/tmp/history-recheck",
+            Some(&auth),
+        )
+        .await;
+    }
+    let key = "6".repeat(64);
+    for (index, project) in project_ids.iter().enumerate() {
+        record_window_event(&db, &auth, &key, Some(project), None, 1_000 + index as i64);
+    }
+    let mut cache = HashMap::new();
+    let summary = visible_window_summary_for_auth(&runtime, &auth, &key, &mut cache, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary.last_project.as_deref(), Some(project_ids[1]));
+    assert_eq!(cache.get(project_ids[0]), Some(&true));
+    assert_eq!(cache.get(project_ids[1]), Some(&true));
+    revalidate_window_projects(&runtime, &auth, &cache)
+        .await
+        .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.runner_registry,
+        "history-first",
+        "inst-history-first",
+        Vec::new(),
+    )
+    .await;
+    assert!(
+        matches!(
+            revalidate_window_projects(&runtime, &auth, &cache).await,
+            Err(RuntimeConsoleError::NotFound)
+        ),
+        "last_project-only revalidation would leak the revoked Project's first-seen timestamp"
+    );
+}

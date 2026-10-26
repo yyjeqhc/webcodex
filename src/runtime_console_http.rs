@@ -1715,7 +1715,6 @@ async fn workflow_session_detail_with_windows(
         let visible_summary = visible_window_summary_for_auth(
             runtime,
             auth,
-            principal_ref,
             &link.client_window_key,
             &mut visibility_cache,
             Some(project),

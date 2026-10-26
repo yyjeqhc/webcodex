@@ -237,3 +237,118 @@ fn append_repairs_only_its_own_dirty_window_and_inventory_repairs_the_rest() {
         0
     );
 }
+#[test]
+fn history_sql_profiles_count_statements_independent_of_window_event_cardinality() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::open(&tmp.path().join("sql-counts.db")).unwrap();
+    seed_session(&db);
+    for index in 0..40 {
+        append(
+            &db,
+            event(&format!("event-{index}"), "target", "alice", "p", index),
+            &[("session", "recording")],
+        );
+    }
+    for limit in [1, 40] {
+        let budget = crate::HistoryReadBudget::until(Instant::now() + Duration::from_secs(5));
+        let page = db
+            .with_history_read_budget(budget.clone(), |db| {
+                db.list_window_activity_events("target", Some(("username", "alice")), limit)
+            })
+            .unwrap();
+        assert_eq!(page.len(), limit);
+        assert!(page.iter().all(|row| row.workflow_links.len() == 1));
+        assert_eq!(
+            budget.diagnostics().sql_statements,
+            4,
+            "one transaction, one event query and one batched link query"
+        );
+        assert_eq!(budget.diagnostics().connection_attempts, 1);
+        assert_eq!(budget.diagnostics().dirty_repair_attempts, 0);
+    }
+}
+
+#[test]
+fn exact_window_inventory_repairs_only_target_and_profiles_fixed_clean_reads() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::open(&tmp.path().join("exact-repair.db")).unwrap();
+    seed_session(&db);
+    append(
+        &db,
+        event("target-event", "target", "alice", "target-project", 1),
+        &[],
+    );
+    append(
+        &db,
+        event("other-event", "other", "bob", "other-project", 2),
+        &[],
+    );
+    db.conn_for_tests()
+        .execute("UPDATE action_events SET status='failed'", [])
+        .unwrap();
+    let budget = crate::HistoryReadBudget::until(Instant::now() + Duration::from_secs(5));
+    let anchors = db
+        .with_history_read_budget(budget.clone(), |db| {
+            db.window_inventory_project_anchors_for_window(Some(("username", "alice")), "target")
+        })
+        .unwrap();
+    assert_eq!(anchors, vec!["target-project"]);
+    assert_eq!(budget.diagnostics().dirty_repair_attempts, 1);
+    assert_eq!(budget.diagnostics().dirty_windows_repaired, 1);
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row("SELECT window_key FROM window_inventory_dirty", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+        "other"
+    );
+
+    let clean = crate::HistoryReadBudget::until(Instant::now() + Duration::from_secs(5));
+    db.with_history_read_budget(clean.clone(), |db| {
+        assert_eq!(
+            db.window_inventory_project_anchors_for_window(None, "target")?,
+            anchors
+        );
+        let page = db.read_window_inventory(crate::WindowInventoryQuery {
+            principal: None,
+            caller: None,
+            managed_oauth_identity: None,
+            management: false,
+            visible_projects: &anchors,
+            projects: None,
+            window_key: Some("target"),
+            query: "",
+            live: &[],
+            offset: 0,
+            limit: 1,
+        })?;
+        assert_eq!(page.total, 1);
+        assert_eq!(page.rows[0].last_activity_status.as_deref(), Some("failed"));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        clean.diagnostics().sql_statements,
+        8,
+        "each clean anchor/inventory read has BEGIN, dirty check, projection, COMMIT"
+    );
+    assert_eq!(clean.diagnostics().dirty_repair_attempts, 0);
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row("SELECT COUNT(*) FROM window_inventory_dirty", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        1,
+        "unrelated dirty Windows must not join an exact detail read"
+    );
+    db.window_inventory_project_anchors(None).unwrap();
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row("SELECT COUNT(*) FROM window_inventory_dirty", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        0,
+        "global inventory still repairs its complete selection"
+    );
+}

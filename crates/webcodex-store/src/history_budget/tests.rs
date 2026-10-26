@@ -164,3 +164,77 @@ fn expired_history_budget_does_not_change_canonical_writer_policy() {
         before
     );
 }
+#[test]
+fn history_diagnostics_do_not_attribute_another_database_repair() {
+    let (_tmp, db) = fixture();
+    let (_other_tmp, other) = fixture();
+    other
+        .conn_for_tests()
+        .execute("INSERT INTO window_inventory_dirty VALUES ('other')", [])
+        .unwrap();
+    let budget = HistoryReadBudget::until(Instant::now() + Duration::from_secs(5));
+    db.with_history_read_budget(budget.clone(), |_| {
+        other.window_inventory_project_anchors(None)
+    })
+    .unwrap();
+    assert_eq!(
+        budget.diagnostics(),
+        HistoryReadDiagnostics::default(),
+        "another Database on the same blocking thread must not contribute diagnostics"
+    );
+    db.conn_for_tests()
+        .execute("INSERT INTO window_inventory_dirty VALUES ('own')", [])
+        .unwrap();
+    db.with_history_read_budget(budget.clone(), |db| {
+        db.window_inventory_project_anchors(None)
+    })
+    .unwrap();
+    assert_eq!(budget.diagnostics().dirty_repair_attempts, 1);
+    assert_eq!(budget.diagnostics().dirty_windows_repaired, 1);
+}
+#[test]
+fn history_sql_profile_can_be_disabled_without_disabling_the_read_budget() {
+    let (_tmp, db) = fixture();
+    for enabled in [true, false, true] {
+        let budget = HistoryReadBudget::until(Instant::now() + Duration::from_secs(5))
+            .with_sql_profile(enabled);
+        assert_eq!(
+            db.with_history_read_budget(budget.clone(), |db| {
+                db.count_window_activity_summaries(None)
+            })
+            .unwrap(),
+            0
+        );
+        assert_eq!(budget.diagnostics().sql_statements, u64::from(enabled));
+        assert_eq!(budget.diagnostics().connection_attempts, 1);
+        if !enabled {
+            assert_eq!(budget.diagnostics().sql_duration, Duration::ZERO);
+        }
+    }
+    let budget = HistoryReadBudget::until(Instant::now() + Duration::from_millis(10))
+        .with_sql_profile(false);
+    assert!(db.with_history_read_budget(budget.clone(), |db| {
+        let conn = db.lock_history_connection(StoreDomain::WindowActivity)?;
+        conn.query_row("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT SUM(x) FROM n", [], |row| row.get::<_,i64>(0))?;
+        Ok(())
+    }).is_err());
+    assert!(
+        budget.exhausted(),
+        "profiling must not control SQL interruption"
+    );
+    assert_eq!(budget.diagnostics().sql_statements, 0);
+    let conn = db
+        .lock_history_connection(StoreDomain::WindowActivity)
+        .unwrap();
+    assert_eq!(
+        conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row("PRAGMA busy_timeout", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        5000
+    );
+    assert!(conn.is_autocommit());
+}

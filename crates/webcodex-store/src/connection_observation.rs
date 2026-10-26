@@ -168,6 +168,14 @@ pub(crate) fn try_lock_connection<'a>(
     })
 }
 
+impl StoreConnectionGuard<'_> {
+    /// Budgeted admission polls try_lock; retain its entire wait, not only the
+    /// final successful try_lock call.
+    pub(crate) fn set_wait_duration(&mut self, wait: Duration) {
+        self.wait = wait;
+    }
+}
+
 impl Deref for StoreConnectionGuard<'_> {
     type Target = Connection;
 

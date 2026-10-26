@@ -10,6 +10,7 @@ src/tool_runtime/tests/cli_runtime_snapshots/*.txt text eol=lf whitespace=-blank
 frontend/dist/** text eol=lf
 src/mcp_pdf_app.html text eol=lf
 src/mcp_work_result_app.html text eol=lf
+src/mcp_docx_app.html text eol=lf
 # Preserve the exact SheetJS distribution bytes used by the SHA-256 check.
 frontend/vendor/sheetjs/xlsx.mini.min.js -text
 # Keep spreadsheet bundle inputs and generated HTML identical across checkouts.

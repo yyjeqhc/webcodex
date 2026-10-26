@@ -253,7 +253,6 @@ impl ToolRuntime {
             "mcp_host": {
                 "profile": self.deployment_mcp_host_policy.profile.as_str(),
                 "host_budget_secs": self.deployment_mcp_host_policy.host_budget_secs,
-                "initial_job_handoff_secs": self.deployment_mcp_host_policy.initial_job_handoff_secs,
                 "max_sync_wait_secs": self.deployment_mcp_host_policy.max_sync_wait_secs,
                 "continuation_wait_secs": self.deployment_mcp_host_policy.continuation_wait_secs,
             },

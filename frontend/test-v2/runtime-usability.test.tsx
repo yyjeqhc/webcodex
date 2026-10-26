@@ -78,13 +78,15 @@ describe("Runtime usability", () => {
 
   it("shows effective configuration with readable labels and units", () => {
     const overview = runtimeOverview();
-    overview.effective_config = { auth: { shared_key_enabled: true, anonymous_enabled: false }, mcp_host: { profile: "default", host_budget_secs: 60, initial_job_handoff_secs: 2, max_sync_wait_secs: 10, continuation_wait_secs: 5 }, tool_request_trace_mode: "off" };
+    overview.effective_config = { auth: { shared_key_enabled: true, anonymous_enabled: false }, mcp_host: { profile: "default", host_budget_secs: 60, max_sync_wait_secs: 10, continuation_wait_secs: 5 }, tool_request_trace_mode: "off" };
     render(<RuntimeView client={{} as RuntimeV2Client} language="en" overview={overview} overviewAvailability="available" onOpenWork={vi.fn()} onUnauthorized={vi.fn()} />);
     expect(screen.getByText("Server configuration")).toBeTruthy();
     expect(screen.getByText("Shared key authentication")).toBeTruthy();
     expect(screen.getByText("60 seconds")).toBeTruthy();
-    expect(screen.getByText("Legacy handoff hint (unused)")).toBeTruthy();
-    expect(screen.queryByText("Initial job handoff wait")).toBeNull();
+    expect(screen.getByText("Maximum synchronous wait")).toBeTruthy();
+    expect(screen.getByText("10 seconds")).toBeTruthy();
+    expect(screen.getByText("Continuation wait")).toBeTruthy();
+    expect(screen.getByText("5 seconds")).toBeTruthy();
     expect(screen.getByText("Disabled")).toBeTruthy();
   });
 });

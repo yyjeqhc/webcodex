@@ -2437,12 +2437,11 @@ async fn runtime_status_preserves_allowlisted_effective_config_across_projection
         .expect("effective MCP Host policy");
     assert_eq!(
         mcp_host.len(),
-        5,
+        4,
         "effective MCP Host facts must stay allowlisted"
     );
     assert_eq!(mcp_host["profile"], "direct");
     assert_eq!(mcp_host["host_budget_secs"], 60);
-    assert_eq!(mcp_host["initial_job_handoff_secs"], 10);
     assert_eq!(mcp_host["max_sync_wait_secs"], 55);
     assert_eq!(mcp_host["continuation_wait_secs"], 55);
 
@@ -2497,7 +2496,6 @@ async fn runtime_status_reports_effective_mcp_host_budget_override() {
     let mcp_host = &result.output["effective_config"]["mcp_host"];
     assert_eq!(mcp_host["profile"], "host_code_mode");
     assert_eq!(mcp_host["host_budget_secs"], 9);
-    assert_eq!(mcp_host["initial_job_handoff_secs"], 4);
     assert_eq!(mcp_host["max_sync_wait_secs"], 4);
     assert_eq!(mcp_host["continuation_wait_secs"], 4);
 }
@@ -2522,7 +2520,6 @@ async fn runtime_status_reports_deployment_timing_overrides_without_exposing_sou
     assert_eq!(host["host_budget_secs"], 55);
     assert_eq!(host["max_sync_wait_secs"], 8);
     assert_eq!(host["continuation_wait_secs"], 12);
-    assert_eq!(host["initial_job_handoff_secs"], 5);
     assert!(host.get("timing_overrides").is_none());
     assert!(result
         .output

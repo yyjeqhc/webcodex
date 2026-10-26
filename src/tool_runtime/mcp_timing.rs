@@ -91,18 +91,15 @@ mod tests {
     }
 
     #[test]
-    fn host_timing_paths_are_separate_and_legacy_handoff_hint_is_not_authority() {
-        // The legacy initial_job_handoff_secs is still serialized for older
-        // runtime_status clients but must not control any execution wait.
-        for legacy_hint in [1, 99] {
+    fn structured_handoff_and_observation_use_independent_caps() {
+        for (sync_cap, continuation_cap) in [(3, 7), (9, 2)] {
             let mut policy = host_code_mode_policy();
-            policy.initial_job_handoff_secs = legacy_hint;
-            policy.max_sync_wait_secs = 3;
-            policy.continuation_wait_secs = 7;
+            policy.max_sync_wait_secs = sync_cap;
+            policy.continuation_wait_secs = continuation_cap;
 
             assert_eq!(
                 return_timing_policy(SessionTransport::Mcp, policy).max_handoff_secs(),
-                Some(3)
+                Some(sync_cap)
             );
 
             let mut run = ToolCall::from_tool_name(
@@ -112,7 +109,9 @@ mod tests {
             .unwrap();
             normalize_structured_for_transport(&mut run, SessionTransport::Mcp, policy);
             match run {
-                ToolCall::RunShell { sync_wait_secs, .. } => assert_eq!(sync_wait_secs, Some(3)),
+                ToolCall::RunShell { sync_wait_secs, .. } => {
+                    assert_eq!(sync_wait_secs, Some(sync_cap))
+                }
                 _ => unreachable!(),
             }
 
@@ -123,7 +122,9 @@ mod tests {
             .unwrap();
             normalize_observation_call_timing(&mut observe, SessionTransport::Mcp, policy);
             match observe {
-                ToolCall::ObserveJobs { wait_secs, .. } => assert_eq!(wait_secs, Some(7)),
+                ToolCall::ObserveJobs { wait_secs, .. } => {
+                    assert_eq!(wait_secs, Some(continuation_cap))
+                }
                 _ => unreachable!(),
             }
 
@@ -145,7 +146,10 @@ mod tests {
                 }
             }));
             normalize_result_timing(&mut result, SessionTransport::Mcp, policy);
-            assert_eq!(result.output["continuation"]["arguments"]["wait_secs"], 7);
+            assert_eq!(
+                result.output["continuation"]["arguments"]["wait_secs"],
+                continuation_cap
+            );
         }
     }
 

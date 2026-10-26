@@ -115,23 +115,20 @@ impl McpHostConfig {
             .saturating_sub(HOST_RETURN_GUARD_SECS)
             .max(1);
 
-        let (initial_job_handoff_secs, max_sync_wait_secs, continuation_wait_secs) =
-            match self.profile {
-                McpHostProfile::Direct => (
-                    10.min(safe_wait_secs),
-                    60.min(safe_wait_secs),
-                    MAX_JOB_OBSERVATION_WAIT_SECS.min(safe_wait_secs),
-                ),
-                McpHostProfile::HostCodeMode => {
-                    let slice_secs = 5.min(safe_wait_secs);
-                    (slice_secs, slice_secs, slice_secs)
-                }
-            };
+        let (max_sync_wait_secs, continuation_wait_secs) = match self.profile {
+            McpHostProfile::Direct => (
+                60.min(safe_wait_secs),
+                MAX_JOB_OBSERVATION_WAIT_SECS.min(safe_wait_secs),
+            ),
+            McpHostProfile::HostCodeMode => {
+                let slice_secs = 5.min(safe_wait_secs);
+                (slice_secs, slice_secs)
+            }
+        };
 
         McpHostRuntimePolicy {
             profile: self.profile,
             host_budget_secs,
-            initial_job_handoff_secs,
             max_sync_wait_secs,
             continuation_wait_secs,
             timing_overrides: McpHostTimingOverrides::default(),
@@ -143,10 +140,6 @@ impl McpHostConfig {
 pub(crate) struct McpHostRuntimePolicy {
     pub(crate) profile: McpHostProfile,
     pub(crate) host_budget_secs: u64,
-    /// Legacy diagnostic-only projection. No execution path reads this field;
-    /// synchronous handoff uses max_sync_wait_secs instead. Retained for
-    /// existing runtime_status consumers, not a new operator tuning knob.
-    pub(crate) initial_job_handoff_secs: u64,
     pub(crate) max_sync_wait_secs: u64,
     pub(crate) continuation_wait_secs: u64,
     /// Internal deployment authority carried through request profile changes.
@@ -238,7 +231,6 @@ mod tests {
             McpHostRuntimePolicy {
                 profile: McpHostProfile::Direct,
                 host_budget_secs: 60,
-                initial_job_handoff_secs: 10,
                 max_sync_wait_secs: 55,
                 continuation_wait_secs: 55,
                 timing_overrides: McpHostTimingOverrides::default(),
@@ -253,7 +245,6 @@ mod tests {
             McpHostRuntimePolicy {
                 profile: McpHostProfile::HostCodeMode,
                 host_budget_secs: 55,
-                initial_job_handoff_secs: 5,
                 max_sync_wait_secs: 5,
                 continuation_wait_secs: 5,
                 timing_overrides: McpHostTimingOverrides::default(),
@@ -323,13 +314,13 @@ mod tests {
                 host_budget_secs: Some(3),
             }
             .runtime_policy()
-            .initial_job_handoff_secs,
+            .max_sync_wait_secs,
             1
         );
     }
 
     #[test]
-    fn explicit_deployment_waits_are_bounded_and_never_modify_legacy_handoff_hint() {
+    fn explicit_deployment_waits_preserve_host_budget_and_protocol_caps() {
         let mut env = crate::test_support::TestEnvGuard::new();
         env.set("WEBCODEX_MCP_HOST_SYNC_WAIT_MAX_SECS", "8");
         env.set("WEBCODEX_MCP_HOST_CONTINUATION_WAIT_MAX_SECS", "12");
@@ -345,10 +336,7 @@ mod tests {
             (host.max_sync_wait_secs, host.continuation_wait_secs),
             (8, 12)
         );
-        assert_eq!(
-            (host.host_budget_secs, host.initial_job_handoff_secs),
-            (55, 5)
-        );
+        assert_eq!(host.host_budget_secs, 55);
         assert_eq!(host.request_timing_overrides(), overrides);
         let serde_value = serde_json::to_value(host).unwrap();
         assert_eq!(serde_value["max_sync_wait_secs"], 8);

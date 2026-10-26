@@ -2,6 +2,10 @@
 
 Source baseline: `main@6f8ed6d8` (2026-10-09). This is an ownership and semantics audit, **not** a proposed change in production defaults or authorization limits. Entries marked *candidate* need separate policy, bounds and measurement review before becoming operator overrides.
 
+The Phase 1 inventory and Phase 2 addendum retain their historical source facts.
+For the current decision about the unused handoff hint, see the
+[2026-10-26 maintenance addendum](#2026-10-26-maintenance-addendum-remove-the-unused-handoff-hint).
+
 ## Host MCP request timings: authoritative consumers
 
 | Value / source | Effective defaults and bounds | Runtime consumer | Apply / observation | Classification |
@@ -70,3 +74,29 @@ This section supersedes the **not separately configurable** classification of th
 - The legacy `initial_job_handoff_secs` projection remains present and does not become a control. Effective values appear in the existing allowlisted `get_runtime_status` deployment configuration, without disclosing environment names/contents or internal cap metadata.
 
 These are controlled tuning **capabilities**, not evidence that an 8-second policy performs better. Collect before/after metrics and final Job outcomes separately; retain the original default values until tested.
+
+## 2026-10-26 maintenance addendum: remove the unused handoff hint
+
+This supersedes Phase 1 decision 1, the legacy-hint part of decision 2, and the
+Phase 2 bullet retaining `initial_job_handoff_secs`. The earlier source date,
+historical defaults, and recorded decisions above are preserved as audit context.
+
+The field had no execution consumer and no identified active external consumer
+requiring compatibility. It is removed from the Host policy, Runtime status and
+request-policy serialization, output schema, and Runtime UI together. This is an
+intentional diagnostic-schema change: clients refresh MCP discovery and cached
+schemas. No alias, replacement setting, migration field, or compatibility-only
+test is introduced.
+
+The two real timing consumers remain independently authoritative:
+
+- `max_sync_wait_secs` bounds MCP structured-execution synchronous handoff.
+- `continuation_wait_secs` bounds ordinary Job observation and generated
+  `observe_jobs` continuations.
+
+Their profile defaults, explicit deployment overrides, protocol maxima, Host
+budget and return guard are unchanged. Readiness joins retain their separate
+Host-budget bound; API transport, Runner configuration, Job execution lifetime,
+recovery and internal Code Mode child controls are unchanged. Regression tests
+exercise different handoff/continuation caps against their actual consumers and
+verify readiness remains independent.

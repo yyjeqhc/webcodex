@@ -3,43 +3,11 @@ import { fetchWindowDetail, fetchWindowPrimaryDetail } from "../api/windows.js";
 import { useWindowInventory } from "./useWindowInventory.js";
 import { useVisibleRefresh } from "./useVisibleRefresh.js";
 import type { RuntimeV2Client } from "../api/client.js";
-import type { Availability, WindowActivity, WindowDetail, WindowSummary } from "../model/types.js";
+import type { Availability, WindowDetail, WindowSummary } from "../model/types.js";
+import { mergeWindowActivity, shareWindowArray, windowActivityIdentity } from "../model/windowActivity.js";
 import { summaryFromWindowDetail } from "../model/windowSummary.js";
 
-const MAX_MERGED_WINDOW_ACTIVITY = 2_000;
 const DEFAULT_FULL_DETAIL_REFRESH_MS = 30_000;
-
-function windowActivityIdentity(row: WindowActivity): string {
-  if (row.server_trace_id) return "trace:" + row.server_trace_id;
-  return [
-    row.started_at_ms,
-    row.ended_at_ms,
-    row.tool_name || row.method,
-    row.project || "",
-    row.status,
-  ].join("|");
-}
-
-function mergeWindowActivity(
-  newer: WindowActivity[],
-  retained: WindowActivity[],
-): { activity: WindowActivity[]; truncated: boolean } {
-  const seen = new Set<string>();
-  const activity: WindowActivity[] = [];
-  for (const row of [...newer, ...retained]) {
-    const identity = windowActivityIdentity(row);
-    if (seen.has(identity)) continue;
-    seen.add(identity);
-    activity.push(row);
-  }
-  activity.sort((left, right) =>
-    right.started_at_ms - left.started_at_ms ||
-    right.ended_at_ms - left.ended_at_ms ||
-    windowActivityIdentity(left).localeCompare(windowActivityIdentity(right)));
-  const truncated = activity.length > MAX_MERGED_WINDOW_ACTIVITY;
-  if (truncated) activity.length = MAX_MERGED_WINDOW_ACTIVITY;
-  return { activity, truncated };
-}
 
 function mergePrimaryWindowDetail(
   current: WindowDetail | null,
@@ -49,9 +17,13 @@ function mergePrimaryWindowDetail(
   if (!current || current.client_window_key !== primary.client_window_key) return primary;
   const currentIsNewer = current.last_seen_at_ms > primary.last_seen_at_ms ||
     (current.last_seen_at_ms === primary.last_seen_at_ms && preserveCurrentLiveness);
-  if (current.detail_level !== "full") return currentIsNewer ? current : primary;
-  const merged = currentIsNewer ? mergeWindowActivity(current.activity, primary.activity)
-    : mergeWindowActivity(primary.activity, current.activity);
+  const merged = mergeWindowActivity(current.activity, primary.activity, !currentIsNewer);
+  if (current.detail_level !== "full") return {
+    ...(currentIsNewer ? current : primary),
+    active_requests: currentIsNewer ? current.active_requests : shareWindowArray(current.active_requests, primary.active_requests),
+    activity: merged.activity, activity_returned: merged.activity.length,
+    activity_truncated: current.activity_truncated || primary.activity_truncated || merged.truncated,
+  };
   return {
     ...current,
     source: currentIsNewer ? current.source || primary.source : primary.source || current.source,
@@ -64,7 +36,7 @@ function mergePrimaryWindowDetail(
         primary.last_meaningful_activity_at_ms || 0,
       ) || undefined,
     active_count: currentIsNewer ? current.active_count : primary.active_count,
-    active_requests: currentIsNewer ? current.active_requests : primary.active_requests,
+    active_requests: currentIsNewer ? current.active_requests : shareWindowArray(current.active_requests, primary.active_requests),
     activity: merged.activity,
     activity_returned: merged.activity.length,
     activity_truncated: current.activity_truncated || merged.truncated,
@@ -83,8 +55,7 @@ function mergeFullWindowDetail(
   }
   const currentIsNewer = current.last_seen_at_ms > full.last_seen_at_ms ||
     (current.last_seen_at_ms === full.last_seen_at_ms && preserveCurrentLiveness);
-  const merged = currentIsNewer ? mergeWindowActivity(current.activity, full.activity)
-    : mergeWindowActivity(full.activity, current.activity);
+  const merged = mergeWindowActivity(current.activity, full.activity, !currentIsNewer);
   return {
     ...full,
     source: currentIsNewer ? current.source || full.source : full.source,
@@ -97,7 +68,9 @@ function mergeFullWindowDetail(
         full.last_meaningful_activity_at_ms || 0,
       ) || undefined,
     active_count: currentIsNewer ? current.active_count : full.active_count,
-    active_requests: currentIsNewer ? current.active_requests : full.active_requests,
+    active_requests: currentIsNewer ? current.active_requests : shareWindowArray(current.active_requests, full.active_requests),
+    linked_sessions: shareWindowArray(current.linked_sessions, full.linked_sessions),
+    jobs: full.jobs ? shareWindowArray(current.jobs || [], full.jobs) : full.jobs,
     activity: merged.activity,
     activity_returned: merged.activity.length,
     activity_truncated:

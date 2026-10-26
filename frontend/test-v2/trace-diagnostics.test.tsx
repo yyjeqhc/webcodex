@@ -29,7 +29,9 @@ it("reads metadata only on expansion, caches it, pages and requires explicit ful
   fireEvent.click(screen.getByRole("button", { name: "More trace events" }));
   await screen.findByText("handler_returned");
   expect(post.mock.calls[1][1]).toEqual({ trace_ref: "exact-trace", offset: 2, limit: 12 });
-  fireEvent.click(screen.getByRole("button", { name: /Read retained full payload/ }));
+  expect(screen.queryByRole("button", { name: /Read retained full payload/ })).toBeNull();
+  fireEvent.click(screen.getByText("tool_trace_payload_captured"));
+  fireEvent.click(await screen.findByRole("button", { name: /Read retained full payload/ }));
   await screen.findByText(/explicit only/);
   expect(post.mock.calls[2][1]).toEqual({ trace_ref: "exact-trace", payload_index: 0 });
 });

@@ -303,6 +303,11 @@
 .window-activity-order input:checked + span { background: var(--web-row-selected); border-color: var(--web-row-border); color: var(--text); }
 .window-activity-order input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 .window-activity-results { flex: 1; min-height: 0; overflow: auto; padding: 0 var(--web-panel-inset) var(--web-panel-inset); }
+.window-call-search { flex: 1 1 200px; min-width: 160px; }
+.window-call-filters { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
+.window-call-filters button { cursor: pointer; }
+.window-call-filters button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-strong); }
+.window-call-more { display: block; margin: 12px auto; }
 .window-collaboration-pane { padding: 0; max-height: none; }
 .window-collaboration { min-width: 0; }
 .window-collaboration-composer { max-height: 45dvh; overflow: auto; padding-block: 8px; }

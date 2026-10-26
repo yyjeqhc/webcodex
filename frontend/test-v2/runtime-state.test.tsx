@@ -355,7 +355,8 @@ it("retains a bounded history catch-up request when a burst arrives during initi
   await waitFor(() => expect(result.current.detailHydrating).toBe(true));
   burst = true;
   act(() => result.current.refresh());
-  await waitFor(() => expect(result.current.detail?.activity).toHaveLength(80));
+  await waitFor(() => expect(result.current.detail?.activity).toHaveLength(81));
+  expect(result.current.detail?.activity).toContainEqual(rows.at(-1));
   expect(fullCalls).toBe(1);
   await act(async () => resolveHistory({ ok: true, status: 200, data: { ...detail, detail_level: "full", activity: rows.slice(-1), activity_returned: 1, activity_truncated: false } }));
   act(() => result.current.refresh());

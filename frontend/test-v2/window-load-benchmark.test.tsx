@@ -61,10 +61,12 @@ it("records synthetic 2000-call DOM and repeat-render measurements", async () =>
   for (let index = 0; index < 10; index++) view.rerender(ui({ ...detail, last_seen_at_ms: time + index }));
   console.info("WINDOW_FEED_BENCH " + JSON.stringify({
     environment: "jsdom", calls: 2_000, projects: 100, referenced_sessions: 40,
-    dom_nodes: nodes, mount_profiler_ms: mountMs, mount_wall_ms: mountWall,
+    dom_nodes: nodes, rendered_calls: view.container.querySelectorAll(".window-call-card").length,
+    mount_profiler_ms: mountMs, mount_wall_ms: mountWall,
     update_samples: durations.length, update_p50_ms: percentile(durations, .5), update_p95_ms: percentile(durations, .95),
   }));
-  expect(view.container.querySelectorAll(".window-call-card").length).toBeGreaterThan(0);
+  expect(view.container.querySelectorAll(".window-call-card")).toHaveLength(80);
+  expect(nodes).toBeLessThan(2_500);
   view.unmount();
 }, 60_000);
 
@@ -109,6 +111,7 @@ it("records two independent page polling and repeated failed history", async () 
       environment: "jsdom", simulated_pages: 2, period_ms: 27_000, ...counts,
       unchanged_history_array_replacements: replacements,
     }));
+    expect(replacements).toBe(0);
     const fullBeforeFailure = counts.full;
     fail = true;
     for (let tick = 0; tick < 10; tick++) await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });

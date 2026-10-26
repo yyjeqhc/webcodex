@@ -361,7 +361,7 @@ describe("Project / Session / Window relationships", () => {
     expect(screen.queryByText(/^connected$/)).toBeNull();
   });
 
-  it("renders all server-returned Window activity, including new tool names, without a client allowlist", async () => {
+  it("keeps all returned Window activity reachable through paging, including new tool names", async () => {
     const overview = runtimeOverview();
     const key = "d".repeat(64);
     const activity = Array.from({ length: 205 }, (_, index) => ({
@@ -399,6 +399,9 @@ describe("Project / Session / Window relationships", () => {
         onUnauthorized={vi.fn()} />,
     );
     expect((await screen.findAllByText("tool-204")).length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId("window-workflow-step")).toHaveLength(80);
+    fireEvent.click(screen.getByRole("button", { name: /Show more calls/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Show more calls/ }));
     expect(screen.getAllByText("tool-0").length).toBeGreaterThan(0);
     expect(screen.getAllByText("wait_for_job_readiness").length).toBeGreaterThan(0);
     const steps = screen.getAllByTestId("window-workflow-step");
@@ -407,7 +410,8 @@ describe("Project / Session / Window relationships", () => {
     expect(steps.at(-1)?.textContent).toContain("tool-0");
     fireEvent.click(screen.getByRole("radio", { name: "Oldest first" }));
     expect(screen.getAllByTestId("window-workflow-step")[0].textContent).toContain("tool-0");
-    expect(screen.queryByRole("button", { name: /Show more activity/ })).toBeNull();
+    expect(screen.getAllByTestId("window-workflow-step")).toHaveLength(80);
+    expect(screen.getByRole("button", { name: /Show more calls/ })).toBeTruthy();
     expect(screen.getByText("Earlier calls are not available in this view. Only retained activity is shown.")).toBeTruthy();
   });
 

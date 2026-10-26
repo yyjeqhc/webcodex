@@ -178,7 +178,7 @@ export function WindowWorkbench({
   }, [familyById, projectFamily, projectIndex, search, windows.windows]);
 
   const detail = windows.detail;
-  const linkedSessions = useMemo(() => detail ? windowSessionCatalog(detail) : [], [detail]);
+  const linkedSessions = useMemo(() => detail ? windowSessionCatalog(detail) : [], [detail?.activity, detail?.linked_sessions]);
   // A different Window keeps the operator's current view but never inherits
   // the previous Window's Session focus or open identity panel.
   useEffect(() => {

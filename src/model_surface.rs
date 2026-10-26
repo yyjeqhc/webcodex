@@ -28,16 +28,10 @@ pub(crate) fn tool_requires_individual_host_review(tool_name: &str) -> bool {
 }
 
 pub(crate) fn tool_requires_direct_app_presentation(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "present_work_result"
-            | "present_pdf"
-            | "present_docx"
-            | "present_spreadsheet"
-            | "present_goal_plan"
-            | "present_agent_continuation"
-            | "present_job_terminal_continuation"
-    )
+    // The read-only workbench deliberately supports a non-App resource fallback.
+    // Other presentation tools need their own Host descriptor to render a card.
+    tool_name != "open_webcodex_workbench"
+        && lookup_tool_definition(tool_name).is_some_and(|definition| definition.presents_app())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -549,23 +543,36 @@ mod tests {
     }
 
     #[test]
-    fn direct_app_presentation_requirement_is_closed_and_explicit() {
-        for tool in [
-            "present_work_result",
-            "present_pdf",
-            "present_spreadsheet",
-            "present_goal_plan",
-            "present_agent_continuation",
-            "present_job_terminal_continuation",
-        ] {
-            assert!(tool_requires_direct_app_presentation(tool), "{tool}");
-        }
-        for ordinary in ["run_shell", "run_script", "read_workspace_changes"] {
-            assert!(
-                !tool_requires_direct_app_presentation(ordinary),
-                "{ordinary}"
+    fn direct_app_presentation_requirement_is_definition_derived_with_workbench_fallback() {
+        for definition in webcodex_tool_contracts::tool_definitions() {
+            let requires_direct =
+                definition.presents_app() && definition.name != "open_webcodex_workbench";
+            assert_eq!(
+                tool_requires_direct_app_presentation(definition.name),
+                requires_direct,
+                "{}",
+                definition.name
             );
+            if definition.presents_app() {
+                let route =
+                    manifest_invocation_route(definition.name, SuggestedToolCallRoute::Direct);
+                assert_eq!(
+                    route["fallback"]["blocked_when_mcp_apps_enabled"], requires_direct,
+                    "{}",
+                    definition.name
+                );
+            }
         }
+        // CLI suppresses every App presentation definition, including the
+        // workbench whose Adaptive surface has a read-only non-App fallback.
+        let workbench = lookup_tool_definition("open_webcodex_workbench").unwrap();
+        assert!(workbench.presents_app());
+        assert!(!tool_requires_direct_app_presentation(workbench.name));
+        let route = manifest_invocation_route(workbench.name, SuggestedToolCallRoute::Direct);
+        assert_eq!(route["fallback"]["mode"], "gateway");
+        assert_eq!(route["fallback"]["target"], workbench.name);
+        assert_eq!(route["fallback"]["blocked_when_mcp_apps_enabled"], false);
+        assert!(!tool_requires_direct_app_presentation("unknown_tool"));
     }
 
     #[test]

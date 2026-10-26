@@ -1,6 +1,58 @@
 use super::*;
 
 #[test]
+fn app_presentation_is_derived_without_granting_execution_or_host_review() {
+    use crate::tool_definition::ToolDirectReason;
+    for definition in tool_definitions() {
+        let expected = matches!(
+            definition.adaptive_runtime_direct_reason(),
+            Some(ToolDirectReason::Presentation | ToolDirectReason::Continuation)
+        );
+        assert_eq!(definition.presents_app(), expected, "{}", definition.name);
+        if definition.presents_app() {
+            assert!(definition.model_spec.is_some(), "{}", definition.name);
+            assert!(definition.execution.is_none(), "{}", definition.name);
+            assert!(
+                !definition.requires_individual_host_review(),
+                "{}",
+                definition.name
+            );
+        }
+    }
+    assert!(lookup_tool_definition("present_pdf")
+        .unwrap()
+        .presents_app());
+    assert!(lookup_tool_definition("present_agent_continuation")
+        .unwrap()
+        .presents_app());
+    assert!(lookup_tool_definition("open_webcodex_workbench")
+        .unwrap()
+        .presents_app());
+    assert!(!lookup_tool_definition("run_process")
+        .unwrap()
+        .presents_app());
+}
+
+#[test]
+fn object_tool_arguments_keep_null_normalization_and_required_fields() {
+    for name in ["list_jobs", "list_projects", "get_runtime_status"] {
+        let null = ToolCall::from_tool_name(name, Value::Null).unwrap();
+        let empty = ToolCall::from_tool_name(name, json!({})).unwrap();
+        assert_eq!(
+            serde_json::to_value(null).unwrap(),
+            serde_json::to_value(empty).unwrap()
+        );
+    }
+    for name in ["run_process", "run_job", "read_files", "edit_project_files"] {
+        assert!(
+            ToolCall::from_tool_name(name, Value::Null).is_err(),
+            "{name}"
+        );
+        assert!(ToolCall::from_tool_name(name, json!({})).is_err(), "{name}");
+    }
+}
+
+#[test]
 fn tool_definitions_are_session_evidence_policy_ssot() {
     use crate::tool_definition::{
         exploration_tool_names, runtime_tool_session_evidence_policy,
@@ -469,12 +521,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
             "close_session_shell"
         ]
     );
-
-    let unit_argument_tools = tool_definitions()
-        .filter(|definition| definition.uses_unit_arguments())
-        .map(|definition| definition.name)
-        .collect::<Vec<_>>();
-    assert!(unit_argument_tools.is_empty());
 
     let artifact_upload_path_binding_tools = tool_definitions()
         .filter(|definition| definition.requires_artifact_upload_path_binding())

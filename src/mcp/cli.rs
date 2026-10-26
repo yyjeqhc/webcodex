@@ -43,8 +43,8 @@ pub(super) fn is_direct(name: &str) -> bool {
 }
 
 pub(super) fn is_app_tool(name: &str) -> bool {
-    crate::model_surface::tool_requires_direct_app_presentation(name)
-        || name == "open_webcodex_workbench"
+    webcodex_tool_contracts::lookup_tool_definition(name)
+        .is_some_and(|definition| definition.presents_app())
 }
 
 pub(super) fn suggested_route(name: &str, stateless: bool) -> SuggestedToolCallRoute {

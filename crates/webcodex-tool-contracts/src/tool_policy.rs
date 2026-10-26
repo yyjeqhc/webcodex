@@ -77,6 +77,18 @@ impl ToolDefinition {
         self.adaptive_runtime_direct.map(|policy| policy.reason)
     }
 
+    /// App presentation is a surface property, independent of permission,
+    /// execution, audit eligibility and individual Host review.
+    pub fn presents_app(self) -> bool {
+        matches!(
+            self.adaptive_runtime_direct_reason(),
+            Some(
+                super::tool_definition::ToolDirectReason::Presentation
+                    | super::tool_definition::ToolDirectReason::Continuation
+            )
+        )
+    }
+
     pub fn requires_individual_host_review(self) -> bool {
         self.adaptive_runtime_direct_reason()
             == Some(super::tool_definition::ToolDirectReason::HostReview)
@@ -146,10 +158,6 @@ impl ToolDefinition {
     #[cfg(any(test, feature = "root-test-support"))]
     pub fn requires_explicit_business_session(self) -> bool {
         self.policy.requires_explicit_business_session
-    }
-
-    pub fn uses_unit_arguments(self) -> bool {
-        self.policy.unit_arguments
     }
 
     pub fn requires_artifact_upload_path_binding(self) -> bool {

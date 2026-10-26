@@ -194,19 +194,38 @@ impl PostRecordResponse<'_> {
 }
 
 fn canonical_audit_output(tool_name: &str, output: &Value) -> Option<Value> {
-    match tool_name {
-        "project_build" | "run_process" | "run_script" | "run_skill_resource" | "run_shell"
-        | "project_validate" | "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test" => Some(
-            crate::tool_runtime::tool_audit::canonical_execution_audit_result_for_tool(
-                tool_name, output,
-            ),
-        ),
-        "edit_project_files"
-        | "read_files"
-        | "search_project_texts"
-        | "observe_jobs"
-        | "wait_for_job_readiness" => Some(session_log_result_for_tool(tool_name, output)),
-        _ => None,
+    use webcodex_tool_contracts::{ToolAuditExecutionDetail, ToolAuditResultPolicy};
+
+    let policy = webcodex_tool_contracts::lookup_tool_definition(tool_name)?.audit_policy();
+    match policy.result {
+        ToolAuditResultPolicy::Fields(_) | ToolAuditResultPolicy::Semantic(_) => {
+            Some(session_log_result_for_tool(tool_name, output))
+        }
+        ToolAuditResultPolicy::CanonicalLedgerEvidence
+            if policy.execution.detail != ToolAuditExecutionDetail::Omit =>
+        {
+            Some(
+                crate::tool_runtime::tool_audit::canonical_execution_audit_result_for_tool(
+                    tool_name, output,
+                ),
+            )
+        }
+        // These domain projections rewrite audit-safe canonical evidence.
+        // Execution eligibility and privacy projections above belong exclusively
+        // to ToolDefinition; this list is only for canonical result compaction.
+        ToolAuditResultPolicy::CanonicalLedgerEvidence
+            if matches!(
+                tool_name,
+                "edit_project_files"
+                    | "read_files"
+                    | "search_project_texts"
+                    | "observe_jobs"
+                    | "wait_for_job_readiness"
+            ) =>
+        {
+            Some(session_log_result_for_tool(tool_name, output))
+        }
+        ToolAuditResultPolicy::CanonicalLedgerEvidence => None,
     }
 }
 

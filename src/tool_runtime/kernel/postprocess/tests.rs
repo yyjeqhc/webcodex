@@ -105,6 +105,98 @@ async fn post_record_store_contention_omits_only_optional_sidecars_without_consu
     eprintln!("POST_RESULT_CONTENTION budget_ms=40 completed_before_writer_release=true elapsed_ms={:.3} next_delivery_count=1",elapsed.as_secs_f64()*1000.);
 }
 
+#[test]
+fn canonical_audit_capture_covers_every_declared_private_or_execution_projection() {
+    use webcodex_tool_contracts::{ToolAuditExecutionDetail, ToolAuditResultPolicy};
+    let output = process_result().output;
+    for definition in webcodex_tool_contracts::tool_definition::tool_definitions() {
+        let policy = definition.audit_policy();
+        if policy.execution.detail != ToolAuditExecutionDetail::Omit
+            || !matches!(
+                policy.result,
+                ToolAuditResultPolicy::CanonicalLedgerEvidence
+            )
+        {
+            assert_eq!(
+                canonical_audit_output(definition.name, &output),
+                Some(
+                    crate::tool_runtime::tool_audit::canonical_execution_audit_result_for_tool(
+                        definition.name,
+                        &output,
+                    )
+                ),
+                "{} must capture its declared evidence before model projection",
+                definition.name,
+            );
+        }
+    }
+    assert!(canonical_audit_output("unknown_tool", &output).is_none());
+}
+
+#[tokio::test]
+async fn run_job_retains_canonical_lifecycle_without_persisting_model_payload() {
+    let runtime = ToolRuntime::new_for_tests();
+    let recorder = ToolCallRecorderMetadata::default();
+    let correlation = ToolCallCorrelation::default();
+    let call = ToolCall::from_tool_name(
+        "run_job",
+        json!({"project":"agent:runner:project","command":"PRIVATE_COMMAND"}),
+    )
+    .unwrap();
+    for transport in [ToolTransport::Api, ToolTransport::Mcp] {
+        for state in ["pending", "not_started", "outcome_unknown"] {
+            let mut result = process_result();
+            result.success = state == "pending";
+            result.error = (!result.success).then(|| "execution not proven".into());
+            result.output["execution_state"] = json!(state);
+            result.output["command_completed"] = json!(false);
+            result.output["command_ok"] = json!(false);
+            result.output["terminal"] = json!(false);
+            result.output["exit_code"] = Value::Null;
+            result.output["promoted_to_job"] = json!(true);
+            result.output["job_id"] = json!("wc_job_existing");
+            result.output["direct_retry_safe"] = json!(false);
+            result.output["failure_kind"] = if result.success {
+                Value::Null
+            } else {
+                json!(state)
+            };
+            let completed = PostRecordResponse {
+                compact_execution: false,
+                tool_name: "run_job",
+                context: context(transport),
+                capabilities: ToolProtocolCapabilities::default(),
+                recorder: &recorder,
+                correlation: &correlation,
+                business_session_id: None,
+                window_reply: None,
+                control: None,
+            }
+            .finish(
+                &runtime,
+                result,
+                ModelFacingProjectionPlan::capture(&call),
+                None,
+            )
+            .await;
+            let audit = completed
+                .canonical_audit_output
+                .expect("run_job declares execution audit");
+            assert_eq!(audit["execution_state"], state);
+            assert_eq!(audit["command_completed"], false);
+            assert!(!audit.to_string().contains("PRIVATE"));
+            assert!(
+                audit.get("job_id").is_none(),
+                "Job identity has its own audit correlation"
+            );
+            assert_eq!(completed.result.success, state == "pending");
+            assert_eq!(completed.result.output["job_id"], "wc_job_existing");
+            assert_eq!(completed.result.output["execution_state"], state);
+            assert_eq!(completed.result.output["direct_retry_safe"], false);
+        }
+    }
+}
+
 fn process_result() -> ToolResult {
     ToolResult::ok(json!({
         "duration_ms":1,"exit_code":0,"stdout_tail":"PRIVATE_OUTPUT","stderr_tail":"",

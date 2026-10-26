@@ -998,7 +998,9 @@ impl ToolHostOrchestrationHint {
 pub enum ToolDirectReason {
     CoreWorkflow,
     HostIntegration,
+    /// Present a Host App resource; adapters retain their explicit fallback policy.
     Presentation,
+    /// Present a Host App for an already selected continuation workflow.
     Continuation,
     /// The Host must receive this operation's own schema/effect descriptor.
     /// Generic execution is not an alternative when it is unloaded or refused.
@@ -1147,7 +1149,6 @@ pub struct ToolDefinitionPolicy {
     pub permission_risk: Option<&'static str>,
     pub requires_artifact_upload_path_binding: bool,
     pub requires_explicit_business_session: bool,
-    pub unit_arguments: bool,
 }
 
 impl ToolDefinitionPolicy {
@@ -1158,7 +1159,6 @@ impl ToolDefinitionPolicy {
         permission_risk: None,
         requires_artifact_upload_path_binding: false,
         requires_explicit_business_session: false,
-        unit_arguments: false,
     };
 }
 

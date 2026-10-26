@@ -381,19 +381,14 @@ impl ToolCall {
                 ));
             }
         }
-        if !definition.uses_unit_arguments() {
-            // Non-unit tools always carry a `params` object so variants whose
-            // fields are all optional (e.g. `list_jobs`) still deserialize when
-            // a caller passes `null` arguments. A null argument is normalized
-            // to an empty object; required-field validation still fires for
-            // tools that need fields.
-            let params = if arguments.is_null() {
-                Value::Object(serde_json::Map::new())
-            } else {
-                arguments
-            };
-            wrapped.push((TOOL_CALL_PARAMS_FIELD, params));
-        }
+        // Every ToolCall has object params. Optional-only variants (such as
+        // list_jobs) accept null as {}; required-field validation still applies.
+        let params = if arguments.is_null() {
+            Value::Object(serde_json::Map::new())
+        } else {
+            arguments
+        };
+        wrapped.push((TOOL_CALL_PARAMS_FIELD, params));
         let input = wrapped
             .iter()
             .find(|(key, _)| *key == TOOL_CALL_PARAMS_FIELD)

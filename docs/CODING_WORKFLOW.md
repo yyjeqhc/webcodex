@@ -75,11 +75,17 @@ Use `work_on_project` for both a new coding task and an explicit continuation. W
 
 For ordinary use you do not need to reason about WebCodex's internal continuity or audit fields. Those are implementation/maintainer contracts.
 
-The built-in default guidance is the ordinary implementation workflow. A normal
-“implement/fix/refactor” task needs no role name: carry authorized work to a
-concrete, reviewable completion, map cross-layer changes end to end, keep the
-design minimal, validate proportionally, and report evidence honestly. Use only
-tools and protocol fields supported by the current exposed schemas.
+The shared `webcodex.workflow` guidance applies to any project task: tool
+selection, permissions, Session/Job identity, retries, recovery and delivery.
+For code implementation or an explicit code review, MCP surfaces that support
+`_wc` context sidecars can request `_wc.context=["webcodex.coding"]`. That
+optional chapter contains `coding` and `independent_review` task roles; select
+only the role applicable to the task. It is model guidance, not Session state or
+authority, and does not change Direct, Host Code Mode or Code Mode tool strategy.
+A CLI presentation choice does not imply a coding task; CLI has no `_wc` route,
+so do not invent a field to request the chapter there. Project instructions own
+language, formatting, testing and Git conventions. Use only the protocol fields
+supported by the current exposed schemas.
 
 For nontrivial coding, locate the owning layer, trace relevant callers and data
 flow, and look for reusable implementations before editing. Read design guidance
@@ -97,7 +103,7 @@ after creating an authorized PR or other external deliverable, communicate its
 actual link and validation status promptly rather than relying entirely on a
 final reply. Guidance cannot prevent a provider quota interruption.
 
-`independent_review` is the only optional named role because it changes behavior.
+`independent_review` is the code review role in the optional chapter.
 Use it only when the task explicitly asks for an independent review pass:
 
 ```text
@@ -155,9 +161,10 @@ wins for guidance only. MCP omission uses the current request's
 See [request-local client policy](MCP.md#request-local-client-policy); HTTP headers
 select transport timing independently from this tool argument. Non-MCP/internal
 omission falls back to `direct`.
-The current workflow contract returns shared `guidance`, `model_protocol` and review `roles`,
-plus only the selected `tool_strategy`, when explicitly requested through
-`context_request=["webcodex.workflow"]`. The selection is request-local: choose again
+The current workflow contract returns shared `guidance` and `model_protocol`,
+plus only the selected `tool_strategy`, when requested through
+`_wc.context=["webcodex.workflow"]`. Coding/review roles are in the separate
+optional chapter. The selection is request-local: choose again
 on exact resume without changing Session identity or business state. It is never
 remembered from a Window, Session or past tool use, and grants no tools, admission,
 authority or execution semantics. Builds without Experimental Code Mode reject

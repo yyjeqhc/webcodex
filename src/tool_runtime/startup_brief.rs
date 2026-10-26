@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
 use super::continuation_feedback::EXPLORATION_CONTINUITY_ACTION;
-use super::guidance::{core_guidance, tool_strategy_guidance};
+use super::guidance::{core_guidance, tool_strategy_guidance, CODING_GUIDANCE_CONTEXT_KEY};
 #[cfg(test)]
 use super::project_instructions::INSTRUCTION_CANDIDATE_PATHS;
 use super::project_instructions::{
@@ -58,12 +58,9 @@ pub(crate) use webcodex_core::runtime_contract::{
     BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEM_CHARS,
 };
 
-/// Stable model-facing coding/review semantics owned by WebCodex itself.
-///
-/// This is intentionally not a project instruction source and is never stored
-/// as Session mode, capability, permission, or execution authority. Ordinary
-/// implementation uses the default guidance; task text may explicitly request
-/// the independent review role, whose name only selects review behavior.
+/// Shared project workflow, separate from project instructions and authority.
+/// Coding and review conventions are an explicitly requested context chapter;
+/// neither its task roles nor the tool strategy are persisted Session modes.
 pub(crate) fn builtin_coding_workflow_projection(profile: CodingGuidanceProfile) -> Value {
     builtin_coding_workflow_projection_with_policy(profile, Default::default())
 }
@@ -78,10 +75,10 @@ pub(crate) fn builtin_coding_workflow_projection_with_policy(
         "contract": BUILTIN_CODING_WORKFLOW_CONTRACT,
         "version": BUILTIN_CODING_WORKFLOW_VERSION,
         "authority": "model_guidance_only",
-        "role_selection": "Ordinary implementation uses default guidance. Use independent_review only for an explicit independent review pass. Roles never grant authority.",
         "guidance": core_guidance(),
         "tool_strategy": tool_strategy_projection(profile),
         "model_protocol": {
+            "coding_guidance": format!("For code implementation or an explicit code review on an MCP surface with _wc context sidecars, request _wc.context=[\"{CODING_GUIDANCE_CONTEXT_KEY}\"] and select the applicable task role. Other project tasks do not need the chapter. Reuse complete guidance; project instructions own language and repository conventions."),
             "goal_workflow": policy.goal_selection_guidance(),
             "handoff_recovery": "Use handoff only after task-context loss/compaction/restart, explicit transfer or user recovery. Never use it for routine progress/baselines; timeout alone is not Session loss. Missing exact session_id: original Window _wc.context=[\"workflow.resume\"]; else list_sessions(project). Choose authorized candidate; read read_session_handoff and check basis completeness/truncation. Snapshot changed: re-read exact handoff for latest instructions/decisions/progress/validation before dependent work. Active: work_on_project(session_id=..., instruction=...) reauthorizes bound Project; reuse project_ref. Closed: history only. Notes are reports; check stale facts. Dirty files alone don't prove external changes.",
             "session_recording": "When work_on_project creates or resumes, prefer its returned session_ref as _wc.record on each ordinary call for that Session's recorder provenance only; canonical wc_sess_* remains valid. business session_id may target another Session but does not select a recorder; _wc.record grants no authority. Recorder is request-scoped, never sticky; omitted calls are not backfilled. Save agreed decisions/progress/remaining work via post_session_message(kind=decision/progress) on explicit business Session at recovery boundaries/before switching; stable delivery_key for uncertain same-payload retries. Chat/private reasoning is not auto-recorded. No credentials in notes. Delegated reports are not native validation proof.",
@@ -96,16 +93,6 @@ pub(crate) fn builtin_coding_workflow_projection_with_policy(
             "persistent_shell": "Local: run_process=literal argv; run_shell=shell grammar/short chains; run_script=program-like scripts; specialize for added semantics. Persistent shell only for repeated named-SSH state or local same-process state.",
             "work_result_presentation": "PDF: present_pdf(project, path) opens a dedicated reader. For substantial coding work in a stable client Window, call present_work_result(project) exactly once immediately after the first successful project-scoped WebCodex action. Do not wait for work_on_project, Session, edits, validation or closeout. Card refreshes the same Window ActionAudit activity as WebUI: observe/diagnostic actions; optional linked Session collaboration and final changes may appear later. Never repeat presentation or model-poll it in this Window. Tiny one-step/read-only lookups may skip it; finish suggests a fallback if no card was presented.",
             "normal_closeout": "Source/validation/open evidence: finish_coding_task(summary_only=true). Artifact tasks: pass outputs after task-appropriate count/content/format checks; read-only tasks without deliverables omit outputs. No established Goal means no Goal closeout. For goal_follow_up, load webcodex.goal_workflow and preserve unresolved obligations; preference changes never complete a Goal. Read/planning/artifact: finalize directly; close established Goals only after verified completion."
-        },
-        "roles": {
-            "independent_review": {
-                "purpose": "Review independently within task scope.",
-                "guidance": [
-                    "Challenge authority, bounds, malformed data, privacy, replay/races, timeouts, fail-closed behavior.",
-                    "Challenge duplicated facts or execution flows, misplaced responsibilities, presentation round-trips and incomplete migrations introduced or worsened by the change. Cite code and concrete correctness, drift or maintenance impact; distinguish required fixes from optional cleanup. Style alone is not a finding.",
-                    "For review-only tasks, report concrete file/line findings and impact; do not edit. Fix only when the task authorizes corrections, with focused regression validation."
-                ]
-            }
         }
     })
 }

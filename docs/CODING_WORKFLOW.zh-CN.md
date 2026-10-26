@@ -81,7 +81,8 @@ Fresh work 仍须明确 `project` 或 `client_id + path`。`mode="worktree"` 始
 
 ## 工具策略 guidance
 
-普通实现无需指定角色。对于非简单代码变更，先定位职责所属层，追踪相关调用方和数据流，
+工程指导通过下文的可选章节按需请求；不能从 CLI presentation 推断任务类型。
+对于非简单代码变更，先定位职责所属层，追踪相关调用方和数据流，
 查找可复用实现，并阅读涉及边界的设计指导；调查范围应与任务规模相称。现有模式是需要
 判断的证据，新增抽象或平行实现必须有具体任务理由。共享展示之前的权威业务事实，
 用结构完整的最小改动解决根因，包括任务范围内必要的局部重构和被替代路径清理。
@@ -103,9 +104,9 @@ Fresh work 仍须明确 `project` 或 `client_id + path`。`mode="worktree"` 始
 使用当次请求的 `X-WebCodex-MCP-Profile`，header 省略才使用部署默认
 `WEBCODEX_MCP_HOST_PROFILE`。HTTP header 独立决定返回/等待策略，见
 [MCP 客户端策略](MCP.zh-CN.md#同一-server-的客户端策略)。非 MCP/internal
-调用省略时仍回退到 `direct`。当前 workflow contract 保持共享的 `guidance`、
-`model_protocol` 和 review `roles`，并在显式 `context_request=["webcodex.workflow"]`
-时通过 `tool_strategy` 返回本次请求选中的 effective 策略。
+调用省略时仍回退到 `direct`。当前 workflow contract 保持共享的 `guidance` 和
+`model_protocol`；请求 `_wc.context=["webcodex.workflow"]` 时，通过 `tool_strategy`
+返回本次请求选中的 effective 策略。coding/review 角色位于独立的可选章节。
 
 - `direct`：简单 observation 直接调用最合适的 primitive；预先确定且独立的
   observations 可以批量执行，模型根据结果顺序决定 adaptive follow-up。
@@ -154,7 +155,8 @@ Fresh work 仍须明确 `project` 或 `client_id + path`。`mode="worktree"` 始
 `work_on_project` startup 与后续普通工具的 `webcodex.workflow` context refresh
 使用同一套 effective profile 规则；不会因为 Session/Window 历史选择发生漂移。
 
-这些策略共用 scope、recovery、validation truth、Job continuation、review 和 closeout。
+这些策略共用 scope、recovery、validation truth、Job continuation 和 closeout。
+coding/review 角色来自独立的可选章节，不影响策略选择。
 默认仍走 canonical edit 和 structured validation；只有多个相关 validation 或
 adaptive read → one guarded edit 确实减少外层往返时，才考虑相应的 effectful/mutating
 Code Mode。Nested canonical authority、effects、evidence 和 retry certainty 不变。
@@ -165,9 +167,15 @@ Code Mode。Nested canonical authority、effects、evidence 和 retry certainty 
 
 普通使用不需要理解 WebCodex 内部的 continuity/audit field；这些属于 implementation/maintainer contract。
 
-内置默认 guidance 本身就是普通 implementation workflow。正常的“implement/fix/refactor”任务不需要知道任何实现角色名：把已授权工作推进到具体、可评审的完成状态，端到端覆盖跨层改动，保持设计最小化，按范围验证，并如实报告证据。只使用当前暴露 schema 支持的工具与协议字段。
+共享的 `webcodex.workflow` 适用于各类项目任务，涵盖工具选择、权限、Session/Job 身份、
+重试、恢复和交付。需要代码实现或显式代码评审指导时，支持 `_wc` context sidecar 的
+MCP surface 可请求 `_wc.context=["webcodex.coding"]`。该可选章节包含 `coding` 和
+`independent_review` 任务角色，只选择适用的角色。它仅提供模型指导，不是 Session 状态
+或权限，也不改变 Direct、Host Code Mode 或 Code Mode 工具策略。选择 CLI presentation
+不代表任务是编码；CLI 没有 `_wc` 路线，不应凭空构造参数请求章节。语言、格式化、测试
+和 Git 规范由项目指令负责。只使用当前暴露 schema 支持的工具与协议字段。
 
-`independent_review` 是唯一保留的可选 named role，因为它确实改变行为。只有任务明确要求独立评审 pass 时才使用：
+`independent_review` 是该可选章节中的代码评审角色。只有任务明确要求独立评审 pass 时才使用：
 
 ```text
 使用 independent_review guidance。独立评审 <改动或 commit>，

@@ -44,7 +44,6 @@ fn builtin_coding_workflow_defaults_are_required_but_soft_budgets_are_not_wire_l
 
     assert_guidance_within_soft_target(&workflow["guidance"]);
     assert_guidance_within_soft_target(&workflow["tool_strategy"]["guidance"]);
-    assert_guidance_within_soft_target(&workflow["roles"]["independent_review"]["guidance"]);
 
     let mut missing = workflow.clone();
     missing.as_object_mut().unwrap().remove("guidance");
@@ -60,94 +59,44 @@ fn builtin_coding_workflow_defaults_are_required_but_soft_budgets_are_not_wire_l
         );
         BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS + 1
     ]);
-    for pointer in [
-        "/guidance",
-        "/tool_strategy/guidance",
-        "/roles/independent_review/guidance",
-    ] {
+    for pointer in ["/guidance", "/tool_strategy/guidance"] {
         let mut relaxed = workflow.clone();
         *relaxed.pointer_mut(pointer).expect("guidance path") = overflow.clone();
         validate_schema_instance_for_test(&relaxed, &schema)
             .unwrap_or_else(|error| panic!("{pointer} retained ergonomic hard bound: {error}"));
     }
 
-    let mut legacy_role = workflow.clone();
-    let review_role = legacy_role["roles"]["independent_review"].clone();
-    legacy_role["roles"]["implementation_owner"] = review_role;
-    assert!(validate_schema_instance_for_test(&legacy_role, &schema).is_err());
+    let mut unexpected = workflow.clone();
+    unexpected["unexpected"] = json!({});
+    assert!(validate_schema_instance_for_test(&unexpected, &schema).is_err());
 }
 
 #[test]
-fn builtin_coding_workflow_defaults_cover_unnamed_tasks_without_granting_authority() {
+fn builtin_workflow_defaults_are_shared_project_guidance_without_task_roles() {
     let workflow = builtin_coding_workflow_projection(Default::default());
     assert_eq!(
         workflow["version"],
         crate::tool_runtime::startup_brief::BUILTIN_CODING_WORKFLOW_VERSION
     );
     assert_eq!(workflow["authority"], "model_guidance_only");
-    let role_selection = workflow["role_selection"].as_str().unwrap();
-    assert!(role_selection.contains("Ordinary implementation uses default guidance"));
-    assert!(role_selection
-        .contains("Use independent_review only for an explicit independent review pass"));
-    assert!(role_selection.contains("Roles never grant authority"));
-    let defaults = workflow["guidance"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item.as_str().unwrap())
-        .collect::<Vec<_>>()
-        .join("\n");
+    assert_eq!(
+        workflow["guidance"],
+        serde_json::to_value(crate::tool_runtime::guidance::core_guidance()).unwrap()
+    );
+    assert!(workflow.get("roles").is_none());
+    assert!(workflow.get("role_selection").is_none());
+    let route = workflow["model_protocol"]["coding_guidance"]
+        .as_str()
+        .unwrap();
+    assert!(route.contains(crate::tool_runtime::guidance::CODING_GUIDANCE_CONTEXT_KEY));
+    // Keep only safety-critical prose checks; contributor membership and task
+    // applicability are tested as structured composition, not editorial phrases.
+    let defaults = workflow["guidance"].to_string();
     for boundary in [
-        "concrete, reviewable completion",
         "guidance grants no authority",
-        "Recovery/compaction/exact Session resume is continuation",
-        "reuse still-current Git/read/validation/Job facts",
-        "explicit action/target",
-        "user answer/Job/validation/result",
-        "continue independent work",
-        "wait only on real dependencies",
-        "For inspection, files/data/artifacts, diagnostics, or coding",
-        "Map cross-layer changes end to end",
-        "compiler/schema/exhaustiveness failures reveal gaps",
-        "tests don't prove architectural fit",
-        "avoid speculative redesign",
-        "Before nontrivial coding",
-        "identify the owning layer",
-        "search for reusable implementations",
-        "Treat existing patterns as evidence",
-        "concrete task need",
-        "Keep exploration proportional",
-        "Fix root causes with the smallest coherent change",
-        "minimize concepts, not touched files",
-        "Share authoritative business facts before presentation",
-        "necessary local refactoring",
-        "remove superseded paths within scope",
-        "Before delivery, review ownership, duplication and cross-layer consistency",
-        "Validation failure is evidence, not queue cleanliness",
-        "Reuse assertion_name",
         "outcome_unknown fails closed",
-        "overlap validation with independent work",
-        "edits invalidate it and require revalidation",
-        "Freeze covered source for final evidence",
-        "edits invalidate it",
-        "require revalidation",
-        "one execution/Job",
-        "exact continuation",
-        "passive Job attention",
-        "observe_jobs is for logs/details/recovery",
-        "list_jobs is identity recovery",
-        "no automatic next turn",
-        "finish ready work",
-        "After Rust stabilizes, format once",
-        "observable completion conditions",
-        "plan briefly and execute",
-        "Visible plans need no Goal",
-        "Replan as evidence/requirements change",
-        "save Session decisions/progress",
-        "Tools/Jobs/checklists do not prove completion",
-        "Report verified deliverables promptly",
     ] {
-        assert!(defaults.contains(boundary), "missing guidance: {boundary}");
+        assert!(defaults.contains(boundary), "{boundary}");
     }
 }
 
@@ -210,12 +159,10 @@ fn builtin_coding_workflow_routes_persistent_shell_to_ssh_state_not_local_comman
 }
 
 #[test]
-fn builtin_coding_workflow_review_does_not_implicitly_authorize_edits() {
-    let workflow = builtin_coding_workflow_projection(Default::default());
-    assert!(workflow["roles"]
-        .as_object()
-        .is_some_and(|roles| !roles.contains_key("implementation_owner")));
-    let review = workflow["roles"]["independent_review"]["guidance"]
+fn coding_chapter_review_does_not_implicitly_authorize_edits() {
+    let chapter = crate::tool_runtime::guidance::coding_guidance_projection();
+    assert_eq!(chapter["authority"], "model_guidance_only");
+    let review = chapter["roles"]["independent_review"]["guidance"]
         .as_array()
         .unwrap();
     assert!(review.iter().any(|item| {
@@ -224,25 +171,6 @@ fn builtin_coding_workflow_review_does_not_implicitly_authorize_edits() {
             && text.contains("do not edit")
             && text.contains("only when the task authorizes corrections")
     }));
-    let review_text = review
-        .iter()
-        .map(|item| item.as_str().unwrap())
-        .collect::<Vec<_>>()
-        .join("\n");
-    for boundary in [
-        "duplicated facts or execution flows",
-        "misplaced responsibilities",
-        "presentation round-trips",
-        "incomplete migrations introduced or worsened by the change",
-        "Cite code and concrete correctness, drift or maintenance impact",
-        "distinguish required fixes from optional cleanup",
-        "Style alone is not a finding",
-    ] {
-        assert!(
-            review_text.contains(boundary),
-            "missing review boundary: {boundary}"
-        );
-    }
 }
 
 fn strategy_text(workflow: &Value) -> String {
@@ -256,73 +184,38 @@ fn strategy_text(workflow: &Value) -> String {
 }
 
 #[test]
-fn direct_strategy_prefers_structured_edits_and_coalesces_known_work() {
-    let workflow = builtin_coding_workflow_projection(Default::default());
+fn direct_strategy_is_isolated_and_preserves_the_source_revision_boundary() {
+    use crate::tool_runtime::tool_inputs::CodingGuidanceProfile;
+    let workflow = builtin_coding_workflow_projection(CodingGuidanceProfile::Direct);
     assert_eq!(workflow["tool_strategy"]["profile"], "direct");
+    assert!(workflow["tool_strategy"]
+        .get("host_orchestration")
+        .is_none());
+    assert_eq!(
+        workflow["tool_strategy"]["guidance"],
+        serde_json::to_value(crate::tool_runtime::guidance::tool_strategy_guidance(
+            CodingGuidanceProfile::Direct
+        ))
+        .unwrap()
+    );
     let strategy = strategy_text(&workflow);
-    for phrase in [
-        "read_files → edit_project_files",
-        "read_revision fence",
-        "replace_range",
-        "list_project_files/read_files",
-        "binary files",
-        "independently verify generated/report outputs",
-        "Never use scripts to bypass edit_project_files revision fences",
-        "read_files(items)",
-        "search_project_texts(queries)",
-        "search_file_context",
-        "project_validate with scope.packages",
-        "one edit_project_files batch",
-        "result-dependent operations sequential",
-        "direct primitive",
-        "predetermined independent observations",
-        "fixed read-only CLI",
-        "run_shell with exit checks",
-        "One literal command: run_process",
-        "never rename or transform binaries via text edits",
-        "bounded targeted reads",
-        "small files/count search",
-        "Avoid ritual",
-    ] {
-        assert!(strategy.contains(phrase), "{phrase}");
-        assert!(
-            !workflow["guidance"].to_string().contains(phrase),
-            "strategy leaked into shared guidance: {phrase}"
-        );
-    }
-    let text = workflow.to_string().to_lowercase();
-    for absent in ["code_mode", "code mode", "promise.all", "text(results)"] {
-        assert!(!text.contains(absent), "{absent}");
-    }
+    assert!(strategy.contains("read_revision fence"));
+    assert!(strategy.contains("Never use scripts to bypass edit_project_files revision fences"));
+    assert_guidance_within_soft_target(&workflow["tool_strategy"]["guidance"]);
 }
 
 #[test]
-fn shared_workflow_guides_general_project_tasks_and_optional_artifact_delivery() {
-    let workflow = builtin_coding_workflow_projection(Default::default());
-    let guidance = workflow["guidance"].to_string();
-    for phrase in [
-        "files/data/artifacts, diagnostics, or coding",
-        "task-fit validation",
-        "Git/Cargo/commit only when needed",
-    ] {
-        assert!(
-            guidance.contains(phrase),
-            "missing general workflow guidance: {phrase}"
-        );
-    }
-    let closeout = workflow["model_protocol"]["normal_closeout"]
-        .as_str()
-        .expect("closeout guidance");
-    for phrase in [
-        "Artifact tasks",
-        "pass outputs",
-        "count/content/format checks",
-        "read-only tasks without deliverables omit outputs",
-    ] {
-        assert!(
-            closeout.contains(phrase),
-            "missing artifact guidance: {phrase}"
-        );
+fn optional_coding_chapter_is_bounded_and_does_not_select_a_tool_strategy() {
+    let chapter = crate::tool_runtime::guidance::coding_guidance_projection();
+    assert!(chapter.get("tool_strategy").is_none());
+    assert!(chapter.get("guidance").is_none());
+    let roles = chapter["roles"].as_object().unwrap();
+    assert_eq!(roles.len(), 2);
+    for name in ["coding", "independent_review"] {
+        assert!(roles[name]["purpose"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty()));
+        assert_guidance_within_soft_target(&roles[name]["guidance"]);
     }
 }
 
@@ -335,64 +228,14 @@ fn host_code_mode_strategy_is_bounded_guidance_only() {
     assert_guidance_within_soft_target(&host["tool_strategy"]["guidance"]);
     assert_eq!(host["tool_strategy"]["profile"], "host_code_mode");
     let strategy = strategy_text(&host);
-    for phrase in [
-        "model guidance only",
-        "read_files(items)",
-        "search_project_texts(queries)",
-        "project_validate with scope.packages",
-        "one edit_project_files batch",
-        "do not Promise.all same-kind micro-calls",
-        "Read-only CLI: one bounded run_shell with exit checks, no effects",
-        "Never per-Job waits, Promise.race",
-        "Independent cross-tool read-only observations",
-        "Promise.allSettled",
-        "partial evidence",
-        "Promise.all for all-or-nothing",
-        "search_file_context",
-        "one Host cell",
-        "Child-call completion alone is not a boundary",
-        "mechanically determined",
-        "Return to the model for",
-        "semantic choice",
-        "ambiguous result",
-        "new user decision",
-        "authority/permission",
-        "effect uncertainty",
+    for boundary in [
         "reread_required=true",
         "direct_retry_safe=false",
         "stops effectful replay",
-        "not mutation retry authority",
         "outcome_unknown",
-        "competing recovery",
-        "unresolved mutation intent",
-        "full ToolResults in the Host cell",
-        "exact pending continuations",
-        "observation_ref",
-        "read_revision",
-        "failure/recovery fields",
-        "emit compact evidence",
-        "execution_state=pending",
-        "retain exact Job identity/continuation as fallback",
-        "Job terminal does not imply mechanically_followable",
-        "currently-ready independent calls",
-        "observe_jobs heartbeat polling",
-        "wait_for_job_readiness join barrier",
-        "entire exact blocked set",
-        "one terminal Job can unlock a useful branch",
-        "all only when every blocked dependency is required",
-        "Never per-Job waits, Promise.race",
-        "largest safe value from the remaining Host activation budget",
-        "45s maximum",
-        "do not prefer fixed 10/15/20s slices",
-        "recompute ready work and the blocked set",
-        "do not mechanically repeat the same-set wait",
-        "Run to quiescence",
-        "freeze covered source",
-        "invalidate evidence",
-        "does not require WebCodex nested Code Mode",
-        "not verified by WebCodex",
+        "fallback_recovery never auto-runs",
     ] {
-        assert!(strategy.contains(phrase), "{phrase}");
+        assert!(strategy.contains(boundary), "{boundary}");
     }
     direct.as_object_mut().unwrap().remove("tool_strategy");
     host.as_object_mut().unwrap().remove("tool_strategy");
@@ -422,18 +265,7 @@ fn host_code_mode_guidance_preserves_attention_when_compacting_model_output() {
             "Host-only output instructions leaked into Direct: {field}"
         );
     }
-    for boundary in [
-        "nonempty",
-        "text(...)",
-        "never drop",
-        "emit compact evidence",
-        "model guidance only",
-    ] {
-        assert!(
-            strategy.contains(boundary),
-            "missing output boundary: {boundary}"
-        );
-    }
+    assert!(strategy.contains("never drop"));
 
     // A Host projection is not a Server receipt. The protocol and Direct
     // workflow remain unchanged; only the Host tool strategy gains guidance.
@@ -504,44 +336,24 @@ fn host_code_mode_catalog_is_derived_from_tool_definition_hints_only() {
 
 #[cfg(feature = "experimental-code-mode")]
 #[test]
-fn code_mode_strategy_changes_only_guidance_and_teaches_compact_composition() {
+fn code_mode_strategy_changes_only_guidance_and_keeps_canonical_effect_semantics() {
     use crate::tool_runtime::tool_inputs::CodingGuidanceProfile;
     let mut direct = builtin_coding_workflow_projection(CodingGuidanceProfile::Direct);
     let mut composed = builtin_coding_workflow_projection(CodingGuidanceProfile::CodeMode);
     validate_schema_instance_for_test(&composed, &workflow_schema()).unwrap();
     assert_eq!(composed["tool_strategy"]["profile"], "code_mode");
+    assert_guidance_within_soft_target(&composed["tool_strategy"]["guidance"]);
     let strategy = strategy_text(&composed);
-    for phrase in [
-        "simple observation use a direct primitive",
-        "prefer direct search_file_context",
-        "multi-step related search/read observations",
-        "read-only execute_code_mode",
-        "soft heuristic",
-        "bounded callable contract",
-        "adaptive follow-up inside one cell",
-        "sequential inside the cell",
-        "small dependency DAG",
-        "Promise.all for independent observations",
-        "native batch shape",
-        "avoidable micro-calls",
-        "before text(...)",
-        "Keep raw child ToolResults inside the cell",
-        "do not batch calls then text(results)",
-        "proactively before hitting",
-        "Canonical mutation is the default",
-        "structured validation is the default",
-        "one guarded edit",
+    for boundary in [
         "grants no capability or nested admission",
+        "canonical Project/Session authority",
         "effect-certainty",
     ] {
-        assert!(strategy.contains(phrase), "{phrase}");
+        assert!(strategy.contains(boundary), "{boundary}");
     }
     direct.as_object_mut().unwrap().remove("tool_strategy");
     composed.as_object_mut().unwrap().remove("tool_strategy");
-    assert_eq!(
-        direct, composed,
-        "one shared workflow, protocol and review role"
-    );
+    assert_eq!(direct, composed);
 }
 
 #[test]
@@ -561,46 +373,25 @@ fn tool_strategy_schema_requires_one_known_profile_and_closed_shape() {
 }
 
 #[test]
-fn sparse_pending_receipts_rely_on_complete_static_scheduling_guidance() {
+fn every_strategy_preserves_job_identity_recovery_and_no_redispatch() {
     use crate::tool_runtime::tool_inputs::CodingGuidanceProfile;
     for profile in [
         CodingGuidanceProfile::Direct,
         CodingGuidanceProfile::HostCodeMode,
+        #[cfg(feature = "experimental-code-mode")]
+        CodingGuidanceProfile::CodeMode,
     ] {
         let workflow = builtin_coding_workflow_projection(profile);
-        let text = workflow.to_string();
-        for rule in [
-            "continue independent work",
-            "finish ready work",
-            "wait_for_job_readiness join",
-            "any may unblock a branch",
-            "all requires every blocker",
-            "never mechanically refill",
+        let shared = workflow["guidance"].to_string();
+        // These are execution-safety instructions; ordinary scheduling prose
+        // and profile selection are covered by composition/catalog tests.
+        for boundary in [
+            "one execution/Job",
             "observe_jobs is for logs/details/recovery",
             "Never retry/redispatch",
-            "no automatic next turn",
             "fallback_recovery",
         ] {
-            assert!(
-                text.contains(rule),
-                "missing static pending guidance: {rule}"
-            );
-        }
-        assert!(!workflow["guidance"]
-            .to_string()
-            .contains("wait_for_job_terminal"));
-        assert!(!workflow["tool_strategy"]
-            .to_string()
-            .contains("wait_for_job_terminal"));
-        if profile == CodingGuidanceProfile::HostCodeMode {
-            for rule in [
-                "join barrier",
-                "Cell return is not turn completion",
-                "do not mechanically repeat the same-set wait",
-                "fallback_recovery never auto-runs",
-            ] {
-                assert!(text.contains(rule), "missing Host guidance: {rule}");
-            }
+            assert!(shared.contains(boundary), "{boundary}");
         }
     }
 }

@@ -62,6 +62,22 @@ pub(super) static WORKFLOW: ContextMaterialProvider = ContextMaterialProvider {
     },
 };
 
+// Task guidance is an explicit optional chapter, not inferred from a Project,
+// Session or tool strategy and not included in every descriptor's key catalog.
+pub(super) static CODING_GUIDANCE: ContextMaterialProvider = ContextMaterialProvider {
+    key: crate::tool_runtime::guidance::CODING_GUIDANCE_CONTEXT_KEY,
+    project_required: false,
+    scope_policy: ScopePolicy::Public,
+    surface: Surface::AnySidecar,
+    advertised: false,
+    scope_unavailable_reason: SCOPE_UNAVAILABLE,
+    provide: |context| {
+        Box::pin(async move {
+            context.available(crate::tool_runtime::guidance::coding_guidance_projection())
+        })
+    },
+};
+
 pub(super) static WORKFLOW_RESUME: ContextMaterialProvider = ContextMaterialProvider {
     key: "workflow.resume",
     project_required: false,

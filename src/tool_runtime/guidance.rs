@@ -5,10 +5,15 @@ mod contributors;
 
 use super::tool_inputs::CodingGuidanceProfile;
 use serde::{Serialize, Serializer};
+use serde_json::{json, Value};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) const CODING_GUIDANCE_CONTEXT_KEY: &str = "webcodex.coding";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GuidanceTarget {
     Core,
+    Coding,
+    IndependentReview,
     Strategy(CodingGuidanceProfile),
 }
 
@@ -52,9 +57,11 @@ impl Serialize for GuidanceProjection<'_> {
 static BUILTIN_GUIDANCE: GuidanceRegistry = GuidanceRegistry {
     contributors: &[
         &contributors::CORE_SAFETY,
-        &contributors::CORE_IMPLEMENTATION,
+        &contributors::CORE_WORKFLOW,
         &contributors::CORE_VALIDATION,
         &contributors::CORE_JOBS,
+        &contributors::CODING_IMPLEMENTATION,
+        &contributors::INDEPENDENT_REVIEW,
         &contributors::DIRECT,
         &contributors::HOST_BATCHING,
         &contributors::HOST_CONTINUATION,
@@ -71,6 +78,25 @@ pub(super) fn tool_strategy_guidance(
     profile: CodingGuidanceProfile,
 ) -> GuidanceProjection<'static> {
     BUILTIN_GUIDANCE.project(GuidanceTarget::Strategy(profile))
+}
+
+/// Optional task guidance, selected explicitly through the existing context
+/// material mechanism. Neither role changes tool strategy or execution authority.
+pub(crate) fn coding_guidance_projection() -> Value {
+    json!({
+        "authority": "model_guidance_only",
+        "role_selection": "Use coding for implementation and independent_review only for an explicitly requested code review. Roles never grant authority; project instructions own language, formatting, testing and Git conventions.",
+        "roles": {
+            "coding": {
+                "purpose": "Implement code within the authorized task and project conventions.",
+                "guidance": BUILTIN_GUIDANCE.project(GuidanceTarget::Coding),
+            },
+            "independent_review": {
+                "purpose": "Review code independently within task scope.",
+                "guidance": BUILTIN_GUIDANCE.project(GuidanceTarget::IndependentReview),
+            },
+        },
+    })
 }
 
 #[cfg(test)]

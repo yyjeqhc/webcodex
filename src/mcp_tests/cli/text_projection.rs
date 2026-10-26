@@ -216,6 +216,68 @@ fn cli_text_is_independent_of_object_insertion_order() {
 }
 
 #[test]
+fn cli_bootstrap_preserves_other_materials_and_context_completeness() {
+    let chapter = json!({"evidence":["fixture chapter evidence"]});
+    for truncated in [false, true] {
+        let output = json!({
+            "session_id": "wc_sess_exact",
+            "instructions": {"status":"body_free_summary"},
+            "context_projection": {
+                "materials": [
+                    {"key":"project.instructions","status":"available",
+                     "projection":{"status":"loaded","sources":[{"content":"unique repository rule"}]}},
+                    {"key":"fixture.chapter",
+                     "status":"available","projection":chapter},
+                    {"key":"future.material","status":"unavailable","reason_code":"fixture_unavailable"}
+                ],
+                "truncated":truncated
+            }
+        });
+        let rendered = project("work_on_project", true, output);
+        let rendered_text = text(&rendered);
+        assert_eq!(rendered_text.matches("unique repository rule").count(), 1);
+        assert!(!rendered_text.contains("body_free_summary"));
+        assert!(rendered_text.contains("fixture.chapter"));
+        assert!(rendered_text.contains("fixture_unavailable"));
+        assert!(rendered_text.contains(if truncated {
+            "truncated: true"
+        } else {
+            "truncated: false"
+        }));
+        for evidence in chapter["evidence"].as_array().unwrap() {
+            assert!(rendered_text.contains(evidence.as_str().unwrap()));
+        }
+        assert_eq!(rendered["result"]["isError"], false);
+    }
+}
+
+#[test]
+fn cli_bootstrap_keeps_context_evidence_when_instructions_are_the_only_material() {
+    for extra in [
+        json!({"truncated":true}),
+        json!({"future_receipt":"retained"}),
+    ] {
+        let mut context = json!({
+            "materials":[{"key":"project.instructions","status":"unavailable","reason_code":"fixture_denied"}]
+        });
+        context
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let rendered = project(
+            "work_on_project",
+            true,
+            json!({"context_projection":context}),
+        );
+        let rendered_text = text(&rendered);
+        assert!(rendered_text.contains("fixture_denied"));
+        for key in extra.as_object().unwrap().keys() {
+            assert!(rendered_text.contains(key));
+        }
+    }
+}
+
+#[test]
 fn cli_generic_keys_are_lexical_and_sequences_keep_semantic_order() {
     let body = project(
         "unknown_native_tool",

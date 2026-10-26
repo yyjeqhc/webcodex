@@ -24,6 +24,12 @@ fn context_registry_keys_are_unique_and_discovery_preserves_optional_chapters() 
     assert!(BUILTIN_CONTEXT_MATERIALS
         .get(crate::model_workflow::GOAL_WORKFLOW_CONTEXT_KEY)
         .is_some());
+    let coding = BUILTIN_CONTEXT_MATERIALS
+        .get(crate::tool_runtime::guidance::CODING_GUIDANCE_CONTEXT_KEY)
+        .unwrap();
+    assert!(!coding.advertised);
+    assert!(!coding.project_required);
+    assert!(matches!(coding.scope_policy, ScopePolicy::Public));
     assert!(BUILTIN_CONTEXT_MATERIALS.get("future.material").is_none());
 }
 

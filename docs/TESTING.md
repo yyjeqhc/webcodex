@@ -210,28 +210,25 @@ change is ready for review.
 
 ## No-build guidance preflight
 
-Before compiling Rust after changing model-facing tool guidance or its literal
-test requirements, run `python3 scripts/check_builtin_guidance_contract.py`
-(Windows: `python`). It reads the canonical Direct and Host guidance
-contributors, the corresponding Rust test phrase arrays, and the Rust-owned
-item-count/character limits. It fails closed on unexpected source layouts or
-missing literal phrases; no Cargo command or network access is involved.
+Before compiling Rust after changing bundled guidance, run
+`python3 scripts/check_builtin_guidance_contract.py` (Windows: `python`).
+It groups contributors by their declared target and checks nonempty content,
+duplicate items and Rust-owned item/character targets. It does not parse Rust
+tests or freeze ordinary wording. Rust composition, schema and behavior tests
+remain the semantic authority.
 
-The ordinary Linux Server CI Rust shard runs this cheap preflight **before**
-the package compile. It catches straightforward guidance drift before the
-expensive Rust suite, but **does not replace** that suite or prove the dynamic
-standard startup payload is below 16 KiB. All existing Server, experimental
-Code Mode, permission, schema, and platform gates still run after a successful
-preflight. Changing a valid Rust guidance representation may require updating
-this intentionally strict static parser and its fixtures together.
+The Linux Server CI Rust shard runs this cheap size/shape preflight before
+compilation. It neither replaces the Rust suite nor proves aggregate startup or
+context payload bounds. A change to the supported Rust literal representation
+may require updating the small source reader; prose edits do not.
 
 Run `python3 -m unittest scripts.tests.test_check_builtin_guidance_contract`
-for focused non-compiling negative cases. They cover over-budget guidance,
-missing text required by Rust tests, malformed literals, and pre-Cargo CI
-ordering. The verifier also reproduced three historical failed PR guidance
-revisions in less than two milliseconds each, while accepting the corrected
-revision; actual CI savings depend on where the failing build would have
-stopped otherwise.
+for no-build negative cases. They cover empty/malformed contributors, combined
+target budgets, oversized items and invalid limits, and prove that rewording
+guidance needs no parallel phrase updates. The Rust tests cover task chapter
+selection, strategy isolation, closed schemas and critical authority/recovery
+semantics. Review meaningful prose changes in the diff; do not add broad golden
+snapshots or arrays of required editorial phrases.
 
 ## CI Mapping
 

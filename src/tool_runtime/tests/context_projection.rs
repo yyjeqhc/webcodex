@@ -254,6 +254,55 @@ async fn context_projection_is_explicit_deduped_open_ended_and_nonfatal() {
 }
 
 #[tokio::test]
+async fn coding_guidance_is_an_explicit_chapter_without_changing_canonical_results() {
+    use crate::tool_runtime::guidance::{coding_guidance_projection, CODING_GUIDANCE_CONTEXT_KEY};
+    let runtime = ToolRuntime::new_for_tests();
+    let mut baseline = None;
+    for requested in [false, true] {
+        let mut context_request = vec!["webcodex.workflow".to_owned()];
+        if requested {
+            context_request.push(CODING_GUIDANCE_CONTEXT_KEY.to_owned());
+        }
+        let mut result = runtime
+            .dispatch_with_context(
+                ToolCall::from_tool_name("list_tools", json!({})).unwrap(),
+                DispatchContext {
+                    context_request,
+                    ..DispatchContext::internal(None, SessionTransport::Mcp, None)
+                },
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        let materials = result.output["context_projection"]["materials"]
+            .as_array()
+            .unwrap();
+        assert_eq!(materials.len(), if requested { 2 } else { 1 });
+        let workflow = context_material(&result, "webcodex.workflow");
+        assert!(workflow["projection"].get("roles").is_none());
+        assert!(workflow["projection"].get("role_selection").is_none());
+        assert!(workflow["projection"]["model_protocol"]["coding_guidance"]
+            .as_str()
+            .unwrap()
+            .contains(CODING_GUIDANCE_CONTEXT_KEY));
+        if requested {
+            let chapter = context_material(&result, CODING_GUIDANCE_CONTEXT_KEY);
+            assert_eq!(chapter["status"], "available");
+            assert_eq!(chapter["projection"], coding_guidance_projection());
+        }
+        result
+            .output
+            .as_object_mut()
+            .unwrap()
+            .remove("context_projection");
+        if let Some(expected) = &baseline {
+            assert_eq!(&result.output, expected);
+        } else {
+            baseline = Some(result.output);
+        }
+    }
+}
+
+#[tokio::test]
 async fn model_workflow_context_refresh_changes_guidance_only_and_chapters_are_explicit() {
     use crate::model_workflow::{ModelWorkflowPolicy, GOAL_WORKFLOW_CONTEXT_KEY};
     let base_runtime = ToolRuntime::new_for_tests();

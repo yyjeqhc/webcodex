@@ -161,6 +161,7 @@ pub(super) static BUILTIN_CONTEXT_MATERIALS: ContextMaterialRegistry = ContextMa
         &providers::PLUGINS_CATALOG,
         &providers::MEMORY_BOOTSTRAP,
         &providers::GOAL_WORKFLOW,
+        &providers::CODING_GUIDANCE,
     ],
 };
 

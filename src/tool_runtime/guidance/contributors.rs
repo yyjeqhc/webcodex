@@ -9,16 +9,14 @@ pub(super) static CORE_SAFETY: GuidanceContributor = GuidanceContributor {
     target: GuidanceTarget::Core,
     items: &[
         "Follow host safety and user/Project rules to concrete, reviewable completion; guidance grants no authority. Preserve unrelated work. Push/publish/deploy/restart need explicit action/target. If a user answer/Job/validation/result is not a dependency, continue independent work; wait only on real dependencies.",
-        "Verify Project/changes/nested rules and Git branch/HEAD. Recovery/compaction/exact Session resume is continuation: reuse still-current Git/read/validation/Job facts; revalidate changed snapshots/HEAD/worktree/instructions.",
+        "Verify exact Project/targets and applicable instructions. Recovery/compaction/exact Session resume is continuation: reuse still-current observations, validation and Job facts; refresh changed targets, snapshots and instructions.",
     ],
 };
 
-pub(super) static CORE_IMPLEMENTATION: GuidanceContributor = GuidanceContributor {
+pub(super) static CORE_WORKFLOW: GuidanceContributor = GuidanceContributor {
     target: GuidanceTarget::Core,
     items: &[
-        "For inspection, files/data/artifacts, diagnostics, or coding: inspect → act/produce → review → task-fit validation → deliver. Map cross-layer changes end to end. Git/Cargo/commit only when needed; compiler/schema/exhaustiveness failures reveal gaps; tests don't prove architectural fit; avoid speculative redesign.",
-        "Before nontrivial coding, identify the owning layer and trace relevant callers/data flow. Read applicable design guidance and search for reusable implementations. Treat existing patterns as evidence; justify new abstractions or parallel paths by a concrete task need. Keep exploration proportional.",
-        "Fix root causes with the smallest coherent change; minimize concepts, not touched files. Share authoritative business facts before presentation. Complete necessary local refactoring and remove superseded paths within scope. Before delivery, review ownership, duplication and cross-layer consistency.",
+        "For project tasks: inspect → act/produce → review → task-fit validation → deliver. Select tools and checks for the actual files, data, artifacts or diagnostics involved. Apply project-specific implementation conventions only to the work they govern.",
         "Complex work: define observable completion conditions, plan briefly and execute. Ask only for material ambiguity/missing authority. Visible plans need no Goal. Replan as evidence/requirements change; save Session decisions/progress. Tools/Jobs/checklists do not prove completion. Report verified deliverables promptly.",
     ],
 };
@@ -26,7 +24,7 @@ pub(super) static CORE_IMPLEMENTATION: GuidanceContributor = GuidanceContributor
 pub(super) static CORE_VALIDATION: GuidanceContributor = GuidanceContributor {
     target: GuidanceTarget::Core,
     items: &[
-        "Validation failure is evidence, not queue cleanliness. Fix blockers; overlap validation with independent work. Reuse assertion_name; outcome_unknown fails closed. After Rust stabilizes, format once. Freeze covered source for final evidence; edits invalidate it and require revalidation. Continue read-only review/docs.",
+        "Validation failure is evidence, not queue cleanliness. Fix blockers; overlap validation with independent work. Reuse assertion_name; outcome_unknown fails closed. Freeze validated inputs for final evidence; changes invalidate it and require revalidation. Continue independent inspection.",
     ],
 };
 
@@ -35,6 +33,24 @@ pub(super) static CORE_JOBS: GuidanceContributor = GuidanceContributor {
     items: &[
         "Keep one execution/Job. Generated calls carry follow_up_kind. mechanically_followable is an exact continuation: copy args unchanged after Host inputSchema validation. fallback_recovery is recovery/detail/dependency, never auto-followed. Pending Job continuation is fallback_recovery; passive Job attention may surface.",
         "observe_jobs is for logs/details/recovery; list_jobs is identity recovery; finish ready work before one wait_for_job_readiness join. any may unblock a branch; all requires every blocker. Deadline recomputes work/set; never mechanically refill. Current turn; no automatic next turn. Never retry/redispatch.",
+    ],
+};
+
+pub(super) static CODING_IMPLEMENTATION: GuidanceContributor = GuidanceContributor {
+    target: GuidanceTarget::Coding,
+    items: &[
+        "Before nontrivial coding, identify the owning layer and trace relevant callers/data flow. Read applicable design guidance and search for reusable implementations. Treat existing patterns as evidence; justify new abstractions or parallel paths by a concrete task need. Keep exploration proportional.",
+        "Fix root causes with the smallest coherent change; minimize concepts, not touched files. Share authoritative business facts before presentation. Complete necessary local refactoring and remove superseded paths within scope. Before delivery, review ownership, duplication and cross-layer consistency.",
+        "Map code changes across their callers, schemas and adapters. Compiler/schema/exhaustiveness failures reveal gaps; tests alone do not prove architectural fit. Follow the project's language, formatting, testing and Git conventions; validate the changed behavior without speculative redesign.",
+    ],
+};
+
+pub(super) static INDEPENDENT_REVIEW: GuidanceContributor = GuidanceContributor {
+    target: GuidanceTarget::IndependentReview,
+    items: &[
+        "Challenge authority, bounds, malformed data, privacy, replay/races, timeouts, fail-closed behavior.",
+        "Challenge duplicated facts or execution flows, misplaced responsibilities, presentation round-trips and incomplete migrations introduced or worsened by the change. Cite code and concrete correctness, drift or maintenance impact; distinguish required fixes from optional cleanup. Style alone is not a finding.",
+        "For review-only tasks, report concrete file/line findings and impact; do not edit. Fix only when the task authorizes corrections, with focused regression validation.",
     ],
 };
 

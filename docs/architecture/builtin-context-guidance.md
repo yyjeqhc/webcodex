@@ -34,45 +34,49 @@ envelope, including any requested public workflow and later omission receipts.
 It never speculatively invokes later providers to estimate their size. Complete
 and incomplete startup instruction snapshots are reused without another load.
 
-The seven advertised keys and their order are unchanged. Optional goal workflow
-chapters remain callable through the stable workflow discovery mechanism without
+The advertised keys and their order are unchanged. Optional goal workflow and
+coding guidance chapters use the existing context request mechanism without
 being added to every tool descriptor. Adding an internal material requires one
 complete provider definition and one registry entry, not a new ToolCall.
 
+`webcodex.coding` is public model guidance with no Project requirement. On MCP
+surfaces that support `_wc` sidecars, code implementation or explicitly requested
+code review tasks may request `_wc.context=["webcodex.coding"]` and select the
+applicable `coding` or `independent_review` role. The chapter is optional and
+grants no authority. CLI presentation does not infer task type and has no `_wc`
+request route; project instructions remain the source of repository conventions.
+
 ## Guidance contributors
 
-`src/tool_runtime/guidance/contributors.rs` owns the ordered advice for core
-safety, implementation, validation, Job lifecycle, Direct, Host Code Mode, and
-feature-gated experimental Code Mode. The registry selects core or the exact
-request-local strategy and serializes contributors in registration order. It
-neither sorts nor silently deduplicates advice, and requires no intermediate
-collection allocation.
+`src/tool_runtime/guidance/contributors.rs` owns ordered advice for core safety,
+task workflow, validation, Job lifecycle, optional coding/review roles, Direct,
+Host Code Mode, and feature-gated experimental Code Mode. The registry projects
+the requested target in registration order without sorting, silent deduplication,
+or an intermediate collection.
 
-`startup_brief` still owns the workflow envelope, model-protocol guidance,
-deployment policy, role selection, and the orchestration catalog derived from
-ToolDefinition. Startup and explicit workflow refresh use the same composition.
-Profile selection remains model guidance only, not admission or Session state.
-The original registry extraction preserved all 31 then-existing core/profile
-guidance strings and their order. Current implementation guidance also requires
-proportional architecture discovery, reuse and necessary local refactoring;
-review includes evidence-backed structural findings. These are default coding
-expectations, not a new role or execution gate. See
-[Coding workflow](../CODING_WORKFLOW.md#start-or-continue-a-task).
+`startup_brief` owns the workflow envelope, model-protocol guidance, deployment
+policy, and the orchestration catalog derived from ToolDefinition. Startup and
+explicit workflow refresh share this composition. Core guidance applies to any
+project task; engineering architecture and refactoring guidance belongs to the
+optional coding chapter. `guidance` owns that chapter's role selection and role
+projections. Direct, Host Code Mode, and Code Mode still select orchestration
+strategy only: task roles do not add a persistent profile or alter execution.
+See [Coding workflow](../CODING_WORKFLOW.md#start-or-continue-a-task).
 
-The core bundle has nine items, within the updated ergonomic item-count target.
-Architecture and review advice adds about 0.9 KiB to the common startup fixture;
-its regression target is 17 KiB, up from 16 KiB. The per-item target, 10 KiB
-instruction-content budget and hard 30 KiB startup / 20 KiB context budgets are
-unchanged; repository instructions must still fit without truncation. The
-workflow version identifies the revised guidance. Existing conversations can
-request `_wc.context=["webcodex.workflow"]` to refresh retained guidance through
-the existing context channel; this does not require a Host tool-schema refresh.
+Guidance count and size limits, the 10 KiB instruction-content budget, and the
+hard 30 KiB startup / 20 KiB context budgets remain unchanged. Optional coding
+material uses the existing request order and trimming receipts; it has no new
+budget priority. Workflow version 32 removes the default review roles and points
+to the optional chapter. Existing conversations can request
+`_wc.context=["webcodex.workflow"]` on supported MCP surfaces to refresh retained
+guidance. The output schema reflects the new envelope; there is no persisted
+data migration or Runner protocol change.
 
 ## Incremental rollout and rollback
 
 This change is independently usable while result projection, UI renderers, and
 all Native Tool Plugins retain their previous implementations. No migration
-flag, dual execution path, registry readiness state, schema refresh, or persisted
+flag, dual execution path, registry readiness state, or persisted
 data conversion is required. Built-in providers are present for the entire
 binary lifetime rather than activated partway through startup.
 
@@ -98,8 +102,10 @@ request order, primary-result preservation, cached instruction observations,
 workflow reservation, independent budgets, and Project-scoped Job attention.
 Registry tests additionally reject duplicate discovery keys and prove that
 ineligible providers are never invoked. Guidance tests cover composition order,
-profile isolation, complete bundles, and deterministic serialization; existing
-workflow/startup suites retain schema, policy, and size-budget checks.
+strategy/task isolation, explicit coding chapter requests, complete bundles, and
+deterministic serialization; workflow/startup suites retain schema, policy, and
+size-budget checks. The Python preflight validates contributor structure and
+bounds directly, without parsing Rust tests or fixing editorial wording.
 
 ```sh
 cargo test --locked -p webcodex --lib context_projection

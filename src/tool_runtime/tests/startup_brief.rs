@@ -114,9 +114,12 @@ fn assert_builtin_workflow(output: &Value) {
         crate::tool_runtime::startup_brief::BUILTIN_CODING_WORKFLOW_VERSION
     );
     assert_eq!(workflow["authority"], "model_guidance_only");
-    assert!(workflow["role_selection"]
+    assert!(workflow.get("roles").is_none());
+    assert!(workflow["model_protocol"]["coding_guidance"]
         .as_str()
-        .is_some_and(|value| !value.is_empty()));
+        .is_some_and(
+            |value| value.contains(crate::tool_runtime::guidance::CODING_GUIDANCE_CONTEXT_KEY)
+        ));
     let recovery = workflow["model_protocol"]["handoff_recovery"]
         .as_str()
         .unwrap();
@@ -192,48 +195,13 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(runner_targeting_guidance.contains("list_projects(client_id=...)"));
     assert!(runner_targeting_guidance.contains("before treating it as absent"));
     assert_eq!(workflow["tool_strategy"]["profile"], "direct");
-    let defaults = workflow["guidance"]
-        .as_array()
-        .expect("default workflow guidance")
-        .iter()
-        .filter_map(Value::as_str)
-        .collect::<Vec<_>>()
-        .join("\n");
-    for phrase in [
-        "concrete, reviewable completion",
-        "Recovery/compaction/exact Session resume is continuation",
-        "reuse still-current Git/read/validation/Job facts",
-        "continue independent work",
-        "For inspection, files/data/artifacts, diagnostics, or coding",
-        "Map cross-layer changes end to end",
-        "compiler/schema/exhaustiveness failures reveal gaps",
-        "tests don't prove architectural fit",
-        "Before nontrivial coding",
-        "necessary local refactoring",
-        "Report verified deliverables promptly",
-        "Validation failure is evidence, not queue cleanliness",
-        "Reuse assertion_name",
-        "outcome_unknown fails closed",
-        "overlap validation with independent work",
-        "edits invalidate it and require revalidation",
-        "Freeze covered source for final evidence",
-        "edits invalidate it",
-        "require revalidation",
-        "exact continuation",
-        "passive Job attention",
-        "observe_jobs is for logs/details/recovery",
-        "list_jobs is identity recovery",
-        "Keep one execution/Job",
-        "finish ready work",
-        "one wait_for_job_readiness join",
-        "any may unblock a branch",
-        "all requires every blocker",
-        "Deadline recomputes work/set",
-        "no automatic next turn",
-        "Never retry/redispatch",
-    ] {
-        assert!(defaults.contains(phrase), "workflow guidance: {phrase}");
-    }
+    // The real startup must carry the complete selected shared guidance.
+    // Contributor applicability and critical safety text have focused tests;
+    // do not duplicate editorial phrase lists in this integration helper.
+    assert_eq!(
+        workflow["guidance"],
+        serde_json::to_value(crate::tool_runtime::guidance::core_guidance()).unwrap()
+    );
     let persistent_shell_guidance = workflow["model_protocol"]["persistent_shell"]
         .as_str()
         .expect("persistent shell guidance");
@@ -336,29 +304,6 @@ fn assert_builtin_workflow(output: &Value) {
         assert!(sidecars.contains(phrase), "{phrase}");
     }
     assert!(sidecars.len() <= 640);
-    let roles = workflow["roles"]
-        .as_object()
-        .expect("workflow roles object");
-    assert!(!roles.contains_key("implementation_owner"));
-    assert_eq!(roles.len(), 1);
-    let review = &roles["independent_review"];
-    assert!(review["purpose"]
-        .as_str()
-        .is_some_and(|value| !value.is_empty()));
-    let review_guidance = review["guidance"]
-        .as_array()
-        .expect("workflow guidance array");
-    assert!(!review_guidance.is_empty());
-    assert!(
-        review_guidance.len()
-            <= crate::tool_runtime::startup_brief::BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS
-    );
-    assert!(review_guidance.iter().all(|item| {
-        item.as_str().is_some_and(|text| {
-            text.chars().count()
-                <= crate::tool_runtime::startup_brief::BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEM_CHARS
-        })
-    }));
     let serialized = workflow.to_string().replace("Stalled is not offline", "");
     for forbidden in ["ChatGPT", "browser", "another window", "online", "offline"] {
         assert!(

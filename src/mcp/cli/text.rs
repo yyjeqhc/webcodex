@@ -104,17 +104,31 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
             // Session identity, workspace, blockers, permission and all receipts.
             if let Some(fields) = output.as_object_mut() {
                 fields.remove("workflow");
-                if let Some(context) = fields.remove("context_projection") {
-                    let instructions = context["materials"].as_array().and_then(|materials| {
-                        materials
+                if let Some(mut context) = fields.remove("context_projection") {
+                    if let Some(materials) =
+                        context.get_mut("materials").and_then(Value::as_array_mut)
+                    {
+                        if let Some(index) = materials
                             .iter()
-                            .find(|material| material["key"] == "project.instructions")
-                    });
-                    if let Some(instructions) = instructions {
-                        // The explicit observation supersedes the body-free startup
-                        // summary, including incomplete-scan/unavailable evidence.
-                        fields.insert("instructions".into(), instructions.clone());
-                    } else {
+                            .position(|material| material["key"] == "project.instructions")
+                        {
+                            // Supersede the body-free startup summary, including
+                            // incomplete/unavailable evidence, without dropping
+                            // other requested chapters or truncation receipts.
+                            fields.insert("instructions".into(), materials.remove(index));
+                        }
+                    }
+                    let empty_projection = context
+                        .get("materials")
+                        .and_then(Value::as_array)
+                        .is_some_and(Vec::is_empty)
+                        && matches!(context.get("truncated"), None | Some(Value::Bool(false)))
+                        && context.as_object().is_some_and(|fields| {
+                            fields
+                                .keys()
+                                .all(|key| matches!(key.as_str(), "materials" | "truncated"))
+                        });
+                    if !empty_projection {
                         fields.insert("context_projection".into(), context);
                     }
                 }

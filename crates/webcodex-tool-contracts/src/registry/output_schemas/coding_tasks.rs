@@ -556,15 +556,14 @@ fn startup_workspace_schema() -> Value {
 fn startup_workflow_schema() -> Value {
     json!({
             "type": "object",
-            "description": "WebCodex-owned shared workflow, selected tool strategy and optional review role. Separate from project instructions and Session authority.",
+            "description": "WebCodex-owned shared project workflow and selected tool strategy. Coding/review guidance is an explicit context chapter; neither grants Session authority.",
             "properties": {
                 "contract": {"type": "string", "const": BUILTIN_CODING_WORKFLOW_CONTRACT},
                 "version": {"type": "integer", "const": BUILTIN_CODING_WORKFLOW_VERSION},
                 "authority": {"type": "string", "const": "model_guidance_only"},
-                "role_selection": {"type": "string", "maxLength": 240},
                 "guidance": {
                     "type": "array",
-                    "description": "Default behavior for every coding/review task, including tasks without a named role. Guidance never grants authority.",
+                    "description": "Shared behavior for project tasks. Task-specific implementation conventions are requested separately; guidance never grants authority.",
                     "minItems": 1,
                     "items": {"type": "string"}
                 },
@@ -600,6 +599,7 @@ fn startup_workflow_schema() -> Value {
                     "type": "object",
                     "description": "Shared model-invocation guidance. It is not Session state, authority, or execution policy.",
                     "properties": {
+                        "coding_guidance": {"type": "string", "maxLength": 480},
                         "handoff_recovery": {"type": "string", "maxLength": 720},
                         "session_recording": {"type": "string", "maxLength": 720},
                         "session_message_ack": {"type": "string", "maxLength": 720},
@@ -616,6 +616,7 @@ fn startup_workflow_schema() -> Value {
                         "normal_closeout": {"type": "string", "maxLength": 480}
                     },
                     "required": [
+                        "coding_guidance",
                         "handoff_recovery",
                         "session_recording",
                         "session_message_ack",
@@ -632,37 +633,11 @@ fn startup_workflow_schema() -> Value {
                         "normal_closeout"
                     ],
                     "additionalProperties": false
-                },
-                "roles": {
-                    "type": "object",
-                    "description": "Optional named review behavior. Ordinary implementation uses shared guidance and the selected tool strategy.",
-                    "properties": {
-                        "independent_review": startup_workflow_role_schema()
-                    },
-                    "required": ["independent_review"],
-                    "additionalProperties": false
                 }
             },
-            "required": ["contract", "version", "authority", "role_selection", "guidance", "tool_strategy", "model_protocol", "roles"],
+            "required": ["contract", "version", "authority", "guidance", "tool_strategy", "model_protocol"],
             "additionalProperties": false
         })
-}
-
-#[cfg(any(test, feature = "root-test-support"))]
-fn startup_workflow_role_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "purpose": {"type": "string", "maxLength": 240},
-            "guidance": {
-                "type": "array",
-                "minItems": 1,
-                "items": {"type": "string"}
-            }
-        },
-        "required": ["purpose", "guidance"],
-        "additionalProperties": false
-    })
 }
 
 #[cfg(any(test, feature = "root-test-support"))]

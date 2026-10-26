@@ -89,7 +89,11 @@ fn model_workflow_preferences_fit_workflow_schema_and_keep_goal_rules_optional()
                 validate_schema_instance_for_test(&projection, &schema).unwrap();
                 assert_eq!(projection["authority"], "model_guidance_only");
                 assert_eq!(projection["guidance"], base["guidance"]);
-                assert_eq!(projection["roles"], base["roles"]);
+                assert!(projection.get("roles").is_none());
+                assert_eq!(
+                    projection["model_protocol"]["coding_guidance"],
+                    base["model_protocol"]["coding_guidance"]
+                );
                 for key in ["goal_continuation", "goal_checkpoint"] {
                     assert!(projection["model_protocol"].get(key).is_none());
                 }

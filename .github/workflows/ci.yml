@@ -216,6 +216,9 @@ jobs:
       - name: Check Debian package lifecycle harness
         # Fake package steps and local child processes; no native matrix acceptance.
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.tests.test_deb_lifecycle_acceptance
+      - name: Check Claude window header helper
+        # Synthetic process fixtures and explicit test IDs; no Claude credentials.
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.tests.test_claude_window_headers
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Ensure test inventory dependency

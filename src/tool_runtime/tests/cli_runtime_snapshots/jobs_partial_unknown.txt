@@ -7,7 +7,7 @@ success: false
 suggested_call:
   {"arguments":{"arguments":{},"tool":"list_jobs"},"follow_up_kind":"fallback_recovery","tool":"call_runtime_tool"}
 updates: none
-job_id: wc_job_FIXTURE; status: completed; exit_code: 0
+job_id: wc_job_FIXTURE; status: completed; command_execution_state: completed; exit_code: 0
 stdout_tail:
 last
 
@@ -16,6 +16,7 @@ cursor:
   stdout: 4
 index: 1
 last_update_seq: 0
+log_delta_status: baseline
 observation_token: wj3_EPOCH.3.4.1
 stderr_lines: 0
 stderr_retained_from_line: 1
@@ -24,6 +25,7 @@ stdout_lines: 3
 stdout_retained_from_line: 1
 stdout_returned_lines: 1
 stdout_truncated: true
+terminal: true
 changed_count: 0
 failed_count: 1
 output_truncated: false

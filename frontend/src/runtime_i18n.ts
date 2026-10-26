@@ -5,6 +5,8 @@ export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
   "First observed": "首次记录",
+  "Last request activity": "最近请求活动",
+  "Last meaningful activity": "最近有效活动",
   "Window ID": "窗口 ID",
   "Runner ID": "机器 ID",
   "Project ID": "项目 ID",

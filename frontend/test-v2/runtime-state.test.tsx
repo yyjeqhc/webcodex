@@ -295,7 +295,9 @@ it("does not retarget an explicit Window when its detail is unavailable or inven
   expect(vi.mocked(client.post).mock.calls.filter(([path]) => path === "window").every(([, payload]) => (payload as any).client_window_key === key)).toBe(true);
 });
 
-it.each([0, 1])("immediately catches up a burst after %i previously observed calls", async (previousCount) => {
+it.each([0, 1])("catches up a burst within the full-history cadence after %i previously observed calls", async (previousCount) => {
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
   const activity = Array.from({ length: 161 }, (_, i) => ({
     started_at_ms: 1000 + i, ended_at_ms: 1001 + i, duration_ms: 1,
     method: "tools/call", tool_name: "read_files", status: "success", meaningful: true,
@@ -317,6 +319,10 @@ it.each([0, 1])("immediately catches up a burst after %i previously observed cal
   expect(fullCalls).toBe(1);
   burst = true;
   act(() => result.current.refresh());
+  await waitFor(() => expect(result.current.detail?.activity).toHaveLength(80 + previousCount));
+  expect(fullCalls).toBe(1);
+  now += 30_000;
+  act(() => result.current.refresh());
   await waitFor(() => expect(result.current.detail?.activity).toHaveLength(161));
   expect(fullCalls).toBe(2);
   act(() => result.current.refresh());
@@ -324,7 +330,9 @@ it.each([0, 1])("immediately catches up a burst after %i previously observed cal
   expect(fullCalls).toBe(2);
 });
 
-it("retains a history catch-up request when a burst arrives during initial hydration", async () => {
+it("retains a bounded history catch-up request when a burst arrives during initial hydration", async () => {
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
   let resolveHistory!: (response: ResponseShape) => void;
   const pendingHistory = new Promise<ResponseShape>(resolve => { resolveHistory = resolve; });
   const detail = windowDetail();
@@ -350,6 +358,10 @@ it("retains a history catch-up request when a burst arrives during initial hydra
   await waitFor(() => expect(result.current.detail?.activity).toHaveLength(80));
   expect(fullCalls).toBe(1);
   await act(async () => resolveHistory({ ok: true, status: 200, data: { ...detail, detail_level: "full", activity: rows.slice(-1), activity_returned: 1, activity_truncated: false } }));
+  act(() => result.current.refresh());
+  await waitFor(() => expect(result.current.detail?.activity).toHaveLength(81));
+  expect(fullCalls).toBe(1);
+  now += 30_000;
   act(() => result.current.refresh());
   await waitFor(() => expect(result.current.detail?.activity).toHaveLength(161));
   expect(fullCalls).toBe(2);

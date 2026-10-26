@@ -60,7 +60,7 @@ type ProjectFamily = {
 };
 
 function windowObservedAt(window: WindowSummary): number {
-  return window.last_seen_at_ms || window.last_tool_call_at_ms || window.last_meaningful_activity_at_ms || 0;
+  return window.last_seen_at_ms || 0;
 }
 
 function projectFor(index: ReadonlyMap<string, ProjectRow>, id?: string): ProjectRow | undefined {
@@ -207,9 +207,10 @@ export function WindowWorkbench({
     selectedSummary?.last_activity_name ||
     detail?.activity[0]?.tool_name ||
     detail?.activity[0]?.method;
-  const lastObservedAt = detail?.last_seen_at_ms || selectedSummary?.last_seen_at_ms;
+  const lastObservedAt = Math.max(detail?.last_seen_at_ms || 0, selectedSummary?.last_seen_at_ms || 0) || undefined;
+  const lastMeaningfulAt = Math.max(detail?.last_meaningful_activity_at_ms || 0, selectedSummary?.last_meaningful_activity_at_ms || 0) || undefined;
   const firstObservedAt = detail?.first_seen_at_ms || selectedSummary?.first_seen_at_ms;
-  const isActive = (detail?.active_count ?? selectedSummary?.active_count ?? 0) > 0;
+  const isActive = (selectedSummary?.active_count ?? detail?.active_count ?? 0) > 0;
   const currentProjectName = currentProject
     ? projectFamilyName(sourceProject || currentProject, projectIndex)
     : undefined;
@@ -219,7 +220,7 @@ export function WindowWorkbench({
   const currentRunnerId = currentProject?.client_id;
   const currentDirectory = displayProjectPath(currentProject?.path);
   const hasSelectedWindow = Boolean(selectedSummary || detail);
-  const visibleActiveCount = detail?.active_count ?? selectedSummary?.active_count ?? 0;
+  const visibleActiveCount = selectedSummary?.active_count ?? detail?.active_count ?? 0;
   const visibleActivityCount = (detail?.activity_returned || 0) + visibleActiveCount;
 
   // Keep the exact selected resource represented even when a bounded inventory
@@ -229,10 +230,10 @@ export function WindowWorkbench({
     client_window_key: detail.client_window_key,
     source: detail.source,
     last_project: currentProjectId,
-    last_seen_at_ms: detail.last_seen_at_ms,
-    last_meaningful_activity_at_ms: detail.last_meaningful_activity_at_ms,
+    last_seen_at_ms: lastObservedAt || 0,
+    last_meaningful_activity_at_ms: lastMeaningfulAt,
     last_activity_name: currentActivity,
-    active_count: detail.active_count,
+    active_count: visibleActiveCount,
   } : selectedSummary;
   const selectedIsPinned = Boolean(windows.selectedKey && !filtered.some(row => row.client_window_key === windows.selectedKey));
   useEffect(() => {
@@ -249,7 +250,7 @@ export function WindowWorkbench({
     const project = projectFor(projectIndex, window.last_project);
     const source = project ? projectFor(projectIndex, sourceProjectRuntimeId(project)) : undefined;
     const activity = window.last_activity_name || t("Observed Window");
-    const observedAt = window.last_meaningful_activity_at_ms || window.last_seen_at_ms;
+    const observedAt = window.last_seen_at_ms;
     const projectLabel = project
       ? projectFamilyName(source || project, projectIndex)
       : window.last_project || t("Project information unavailable");
@@ -406,6 +407,20 @@ export function WindowWorkbench({
                         <Clock3 size={14} />
                         <small>{t("First observed")}</small>
                         <time>{absoluteTime(firstObservedAt)}</time>
+                      </span>
+                    )}
+                    {lastObservedAt && (
+                      <span className="window-header-event" title={absoluteTime(lastObservedAt)}>
+                        <Clock3 size={14} />
+                        <small>{t("Last request activity")}</small>
+                        <time>{absoluteTime(lastObservedAt)}</time>
+                      </span>
+                    )}
+                    {lastMeaningfulAt && (
+                      <span className="window-header-event" title={absoluteTime(lastMeaningfulAt)}>
+                        <Clock3 size={14} />
+                        <small>{t("Last meaningful activity")}</small>
+                        <time>{absoluteTime(lastMeaningfulAt)}</time>
                       </span>
                     )}
                     {currentActivity && (

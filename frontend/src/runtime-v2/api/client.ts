@@ -4,12 +4,20 @@ export type ApiResponse<T> = RuntimeApiResponse<T>;
 
 export class RuntimeV2Client {
   private readonly client = new RuntimeApiClient();
+  private credentialRevision = 0;
+
+  /** Opaque local fence; credential values never enter component state. */
+  get authorityRevision(): number {
+    return this.credentialRevision;
+  }
 
   setToken(token: string): void {
+    if (this.client.getToken() !== token) this.credentialRevision++;
     this.client.setToken(token);
   }
 
   clearToken(): void {
+    if (this.client.getToken()) this.credentialRevision++;
     this.client.clearToken();
   }
 

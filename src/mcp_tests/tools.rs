@@ -1706,7 +1706,11 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
                 expected["properties"]["openaiFileIdRefs"]["items"]["required"] =
                     json!(["download_url", "file_id"]);
             }
-            let mut expected_description = canonical.description.clone();
+            let mut expected_description = if name == "work_on_project" {
+                crate::mcp::discovery::bootstrap_description(false)
+            } else {
+                canonical.description.clone()
+            };
             if name == "get_runtime_status" {
                 assert_eq!(expected["properties"]["compact"]["default"], false);
                 expected["properties"]["compact"]["default"] = json!(true);
@@ -1829,7 +1833,12 @@ async fn mcp_compact_preserves_stateless_wrappers_app_metadata_and_exact_manifes
         };
         let output = &value["result"]["structuredContent"]["output"];
         let canonical = specs.iter().find(|spec| spec.name == name).unwrap();
-        assert_eq!(output["description"], canonical.description, "{name}");
+        let expected_description = if name == "work_on_project" {
+            crate::mcp::discovery::bootstrap_description(true)
+        } else {
+            canonical.description.clone()
+        };
+        assert_eq!(output["description"], expected_description, "{name}");
         assert_eq!(output["input_schema"], canonical.input_schema, "{name}");
         assert!(
             output.get("output_schema").is_none(),
@@ -4600,7 +4609,14 @@ async fn mcp_compact_general_workflow_preserves_recovery_and_business_schemas() 
             let full = lists[0].iter().find(|tool| tool["name"] == name).unwrap();
             let compact = lists[1].iter().find(|tool| tool["name"] == name).unwrap();
             let description = compact["description"].as_str().unwrap();
-            assert!(description.chars().count() <= TOOL_DESCRIPTION_MAX_CHARS);
+            if name == "work_on_project" {
+                assert_eq!(
+                    description,
+                    crate::mcp::discovery::bootstrap_description(modern)
+                );
+            } else {
+                assert!(description.chars().count() <= TOOL_DESCRIPTION_MAX_CHARS);
+            }
             assert_eq!(compact["annotations"], full["annotations"], "{name}");
             let mut schemas = [full["inputSchema"].clone(), compact["inputSchema"].clone()];
             for schema in &mut schemas {

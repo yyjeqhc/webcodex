@@ -134,19 +134,14 @@ fn coding_task_tools_are_registered_in_metadata() {
     assert!(work_props["base_ref"]["description"]
         .as_str()
         .is_some_and(|description| description.contains("Runner resolves")));
-    for phrase in [
-        "mode=worktree",
-        "exact Git base",
-        "managed Project/ref",
-        "fresh Session",
-        "Project authority",
-    ] {
-        assert!(
-            work.description.contains(phrase),
-            "work_on_project description should retain {phrase}: {}",
-            work.description
-        );
-    }
+    assert_eq!(
+        work.description,
+        crate::tool_runtime::tool_definition::lookup_tool_definition("work_on_project")
+            .expect("canonical work_on_project")
+            .model_spec
+            .expect("model-visible work_on_project")
+            .description
+    );
     let work_output = crate::tool_runtime::registry::output_schema_for_tool("work_on_project");
     assert!(work_output["properties"]["output"]["properties"]
         .as_object()

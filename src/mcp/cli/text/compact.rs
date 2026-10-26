@@ -265,48 +265,6 @@ pub(super) fn files(text: &mut String, mut output: Value) {
     render_fields(text, &output);
 }
 
-pub(super) fn job_started(text: &mut String, mut output: Value) {
-    use webcodex_core::runtime_contract::{
-        ContinuationCarrier, ContinuationKind, ContinuationSemantics,
-    };
-
-    // Only an exact same-Job continuation can replace the standalone token.
-    // Keep the full callable arguments and follow-up posture without rewriting.
-    let exact_observation = output["job_id"].is_string()
-        && output["continuation"]["tool"] == "observe_jobs"
-        && output["continuation"]["arguments"]["items"]
-            .as_array()
-            .is_some_and(|items| items.len() == 1 && items[0]["job_id"] == output["job_id"]);
-    if exact_observation {
-        if output["observation_token"].is_string()
-            && output["observation_token"]
-                == output["continuation"]["arguments"]["items"][0]["after_observation_token"]
-        {
-            remove(&mut output, &["observation_token"]);
-        }
-        omit_equal(
-            &mut output,
-            "continuation_semantics",
-            ContinuationSemantics::new(
-                ContinuationKind::Observe,
-                ContinuationCarrier::ObservationToken,
-            )
-            .to_value(),
-        );
-    }
-    for stream in ["stdout", "stderr"] {
-        if output[format!("{stream}_tail")].as_str() == Some("") {
-            omit_equal(&mut output, &format!("{stream}_lines"), json!(0));
-        }
-    }
-    omit_equal(&mut output, "ssh_resource", Value::Null);
-    omit_equal(&mut output, "execution_source", json!("run_job"));
-    omit_equal(&mut output, "purpose", json!("other"));
-    // execution keeps status, command_started, timeout/ownership facts,
-    // nondefault configuration, unknown fields and every loss/recovery marker.
-    execution(text, output);
-}
-
 pub(super) fn execution(text: &mut String, mut output: Value) {
     if output.as_object().is_some_and(|fields| {
         fields.keys().all(|key| {
@@ -347,41 +305,6 @@ pub(super) fn execution(text: &mut String, mut output: Value) {
     }
     // Present lifecycle literally, including outcome_unknown and pending. This
     // renderer never decides whether an execution may be retried.
-    // Drop lifecycle echoes only when the producer's facts agree. Uncertain,
-    // pending, malformed and contradictory receipts retain their evidence.
-    if output["execution_state"] == "completed"
-        && output["command_started"] == true
-        && output["command_completed"] == true
-        && output.get("terminal").is_none_or(|v| v == true)
-        && output["promoted_to_job"] == false
-        && output["job_id"].is_null()
-        && matches!(
-            output["failure_kind"].as_str(),
-            Some("command_exit_nonzero") | None
-        )
-        && output["exit_code"].is_i64()
-    {
-        remove(
-            &mut output,
-            &[
-                "command_started",
-                "command_completed",
-                "terminal",
-                "promoted_to_job",
-            ],
-        );
-        for key in ["job_id", "job_status", "observation_token"] {
-            omit_equal(&mut output, key, Value::Null);
-        }
-        omit_equal(&mut output, "tool_failure", json!(false));
-        omit_equal(&mut output, "stdout_lines", json!(0));
-    }
-    if let Some(lifecycle) = output["status"]
-        .as_str()
-        .and_then(|s| webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::from_wire(s).ok())
-    {
-        omit_equal(&mut output, "terminal", json!(lifecycle.is_terminal()));
-    }
     if let (Some(changed), Some(meaningful), Some(heartbeat)) = (
         output["changed"].as_bool(),
         output["meaningful_changed"].as_bool(),
@@ -403,15 +326,6 @@ pub(super) fn execution(text: &mut String, mut output: Value) {
                 &["changed", "meaningful_changed", "heartbeat_changed"],
             );
         }
-    }
-    if output["status"] == "completed" {
-        omit_equal(&mut output, "command_execution_state", json!("completed"));
-    }
-    if matches!(
-        output["log_delta_status"].as_str(),
-        Some("baseline" | "delta" | "unchanged")
-    ) {
-        remove(&mut output, &["log_delta_status"]);
     }
     let mut header = Vec::new();
     for key in [
@@ -440,17 +354,6 @@ pub(super) fn execution(text: &mut String, mut output: Value) {
             }
             remove(&mut output, &[key]);
         }
-    }
-    // These flags describe log loss; only a known false is redundant.
-    for key in [
-        "stdout_truncated",
-        "stderr_truncated",
-        "stdout_delta_reset",
-        "stderr_delta_reset",
-        "earlier_stdout_unavailable",
-        "earlier_stderr_unavailable",
-    ] {
-        omit_equal(&mut output, key, json!(false));
     }
     render_fields(text, &output);
 }
@@ -692,8 +595,11 @@ pub(super) fn edits(text: &mut String, mut output: Value) {
         render_fields(text, &output);
         return;
     }
+    // The dry-run header and each file's would-change label render these
+    // facts directly. Actual effect projection belongs to the Runtime.
     let aggregates: Vec<_> = ["changed", "would_change"]
         .into_iter()
+        .filter(|_| dry_run)
         .filter_map(|key| {
             files
                 .iter()
@@ -753,8 +659,6 @@ pub(super) fn edits(text: &mut String, mut output: Value) {
             );
             if dry_run {
                 omit_equal(&mut file, "changed", json!(false));
-            } else {
-                omit_equal(&mut file, "would_change", json!(changed));
             }
         }
         text.push('\n');

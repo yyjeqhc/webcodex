@@ -2,4 +2,7 @@ isError: false
 ==> src/sample.txt:2-3 (read_revision 101)
 2 | needle 中文
 3 | between
+has_more: true
+limit: 2
+returned_lines: 2
 total_lines: 5

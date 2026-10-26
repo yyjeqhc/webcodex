@@ -399,14 +399,92 @@ fn ordinary_shell_failure_omits_timing_but_keeps_outcome_and_schema() {
     ] {
         assert!(result.output.get(omitted).is_none(), "{omitted}");
     }
+    // MCP's failure-log projection consumes the explicit tool-failure flag and
+    // both stream strings before the CLI renderer formats this model result.
     for retained in [
         "execution_state",
         "command_started",
         "command_completed",
         "exit_code",
         "failure_kind",
+        "tool_failure",
+        "stdout_tail",
+        "stderr_tail",
     ] {
         assert_eq!(result.output[retained], canonical[retained], "{retained}");
     }
     assert_shell_schema(&result);
+}
+
+#[test]
+fn started_job_projection_keeps_ownership_and_exact_recovery_without_sync_handoff() {
+    let call =
+        ToolCall::from_tool_name("run_job", json!({"project":"p","command":"worker"})).unwrap();
+    assert!(
+        execution::capture(&call).is_none(),
+        "Job start must not use synchronous handoff projection"
+    );
+    for (target, token, cursor) in [
+        ("job-exact", "token-exact", "token-exact"),
+        ("job-other", "token-exact", "token-exact"),
+        ("job-exact", "token-other", "token-exact"),
+        ("job-exact", "token-exact", ""),
+    ] {
+        let continuation = json!({"tool":"observe_jobs","arguments":{
+            "items":[{"job_id":target,"after_observation_token":cursor}],
+            "wait_secs":37,"wake_on":"terminal"},"follow_up_kind":"fallback_recovery"});
+        let mut result = ToolResult::ok(json!({
+            "job_id":"job-exact","status":"queued","execution_state":"queued",
+            "command_started":false,"execution_lifetime":"runner",
+            "requested_timeout_secs":7200,"effective_timeout_secs":null,
+            "timeout_limit_source":"runner_policy_unknown", "cwd":"subdir", "shell":"bash",
+            "observation_token":token, "continuation":continuation,
+            "continuation_semantics":webcodex_core::runtime_contract::ContinuationSemantics::new(
+                webcodex_core::runtime_contract::ContinuationKind::Observe,
+                webcodex_core::runtime_contract::ContinuationCarrier::ObservationToken,
+            ).to_value(),
+            "stdout_tail":"","stdout_lines":0,"ssh_resource":null,
+            "execution_source":"run_job","purpose":"other","future_evidence":{"unknown":null}
+        }));
+        let canonical = result.output.clone();
+        ModelFacingProjectionPlan::capture(&call).project(&mut result);
+        sparsify_success_model_result_metadata("run_job", &mut result);
+        assert_eq!(result.output["continuation"], continuation);
+        assert_eq!(
+            result.output.get("observation_token").is_none(),
+            target == "job-exact" && token == cursor
+        );
+        assert_eq!(
+            result.output.get("continuation_semantics").is_none(),
+            target == "job-exact" && !cursor.is_empty()
+        );
+        for key in [
+            "job_id",
+            "status",
+            "execution_state",
+            "command_started",
+            "execution_lifetime",
+            "requested_timeout_secs",
+            "effective_timeout_secs",
+            "timeout_limit_source",
+            "cwd",
+            "shell",
+            "future_evidence",
+        ] {
+            assert_eq!(result.output[key], canonical[key], "{key}");
+        }
+        for omitted in [
+            "stdout_lines",
+            "ssh_resource",
+            "execution_source",
+            "purpose",
+        ] {
+            assert!(result.output.get(omitted).is_none(), "{omitted}");
+        }
+        let mut failed = ToolResult::err_with_output("uncertain", canonical.clone());
+        failed.output["execution_state"] = json!("outcome_unknown");
+        let expected = failed.output.clone();
+        sparsify_success_model_result_metadata("run_job", &mut failed);
+        assert_eq!(failed.output, expected);
+    }
 }

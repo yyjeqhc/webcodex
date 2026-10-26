@@ -9,9 +9,15 @@ captured
 stderr_tail:
 denied
 
+command_completed: true
 command_ok: false
+command_started: true
 cwd: .
 failure_kind: command_exit_nonzero
+promoted_to_job: false
 shell: configured
 stderr_lines: 1
+stderr_truncated: false
 stdout_lines: 1
+stdout_truncated: false
+tool_failure: false

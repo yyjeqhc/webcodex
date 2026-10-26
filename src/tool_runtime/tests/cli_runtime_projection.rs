@@ -77,8 +77,15 @@ impl Fixture {
     fn start(&self, tool: &'static str, arguments: Value) -> tokio::task::JoinHandle<Value> {
         let runtime = self.runtime.clone();
         tokio::spawn(async move {
-            crate::mcp::cli_call_for_test(&runtime, tool, arguments, &auth_context(None, true))
-                .await
+            let (model, rendered) = crate::mcp::cli_call_with_model_for_test(
+                &runtime,
+                tool,
+                arguments,
+                &auth_context(None, true),
+            )
+            .await;
+            assert_model_evidence_survives_cli(tool, &model, &rendered);
+            rendered
         })
     }
 
@@ -164,6 +171,119 @@ fn recovery_calls(body: &Value) -> Vec<Value> {
         .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
         .filter(|value| value["tool"].is_string() && value["arguments"].is_object())
         .collect()
+}
+
+/// Compare the very same Runtime response across the adapter boundary. Text
+/// layout may change; identities, ranges, uncertainty and callable recovery may not.
+fn assert_model_evidence_survives_cli(tool: &str, model: &Value, body: &Value) {
+    if !matches!(
+        tool,
+        "run_job"
+            | "observe_jobs"
+            | "run_process"
+            | "run_shell"
+            | "run_script"
+            | "read_files"
+            | "edit_project_files"
+    ) {
+        return;
+    }
+    assert_eq!(
+        body["result"]["isError"].as_bool(),
+        model["success"].as_bool().map(|success| !success)
+    );
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+        model,
+        &crate::mcp::cli_model_output_schema_for_test(tool),
+    )
+    .unwrap_or_else(|error| {
+        panic!("{tool}: projected output violates its Schema: {error:?}\n{model}")
+    });
+    let rendered = cli_text(body);
+    if serde_json::from_str::<Value>(rendered).ok().as_ref() == Some(model) {
+        return; // The bounded formatting fallback retains the entire model result.
+    }
+    let calls = recovery_calls(body);
+    fn check(value: &Value, rendered: &str, calls: &[Value]) {
+        if value["tool"].is_string() && value["arguments"].is_object() {
+            assert!(
+                calls.contains(value),
+                "recovery changed: {value}\n{rendered}"
+            );
+            assert_call_parses(value);
+            return;
+        }
+        match value {
+            Value::Object(fields) => {
+                for (key, value) in fields {
+                    match key.as_str() {
+                        "job_id"
+                        | "observation_token"
+                        | "execution_state"
+                        | "command_execution_state"
+                        | "status"
+                        | "failure_kind"
+                        | "error_kind"
+                        | "recovery_reason_code"
+                        | "stdout_tail"
+                        | "stderr_tail"
+                        | "text" => {
+                            if let Some(evidence) = value.as_str().filter(|value| !value.is_empty())
+                            {
+                                assert!(
+                                    rendered.contains(evidence),
+                                    "{key}: {evidence}\n{rendered}"
+                                );
+                            }
+                        }
+                        "read_revision" | "expected_read_revision" => {
+                            if let Some(revision) = value.as_u64() {
+                                assert!(
+                                    rendered.contains(&format!("{key} {revision}"))
+                                        || rendered.contains(&format!("{key}: {revision}")),
+                                    "{key}: {revision}\n{rendered}"
+                                );
+                            }
+                        }
+                        "terminal"
+                        | "command_started"
+                        | "command_completed"
+                        | "promoted_to_job"
+                        | "tool_failure"
+                        | "direct_retry_safe"
+                        | "has_more"
+                        | "limit"
+                        | "returned_lines"
+                        | "stdout_truncated"
+                        | "stderr_truncated"
+                        | "stdout_delta_reset"
+                        | "stderr_delta_reset"
+                        | "earlier_stdout_unavailable"
+                        | "earlier_stderr_unavailable" => {
+                            if !value.is_object() && !value.is_array() {
+                                assert!(
+                                    rendered.contains(&format!("{key}: {value}")),
+                                    "{key}: {value}\n{rendered}"
+                                );
+                            }
+                        }
+                        "output_truncated" if value == true => {
+                            assert!(rendered.contains("output_truncated: true"), "{rendered}");
+                        }
+                        _ => {}
+                    }
+                    check(value, rendered, calls);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    check(item, rendered, calls);
+                }
+            }
+            _ => {}
+        }
+    }
+    check(&model["output"], rendered, &calls);
 }
 
 fn assert_call_parses(call: &Value) {
@@ -584,13 +704,14 @@ async fn update_job(
 #[tokio::test]
 async fn cli_runtime_job_start_observation_and_partial_failure_snapshots() {
     let f = Fixture::new("cli-runtime-jobs", true).await;
-    let started = crate::mcp::cli_call_for_test(
+    let (model, started) = crate::mcp::cli_call_with_model_for_test(
         &f.runtime,
         "run_job",
         json!({"project":f.project,"command":"printf 'first\\n中文\\nlast\\n'","timeout_secs":30}),
         &auth_context(None, true),
     )
     .await;
+    assert_model_evidence_survives_cli("run_job", &model, &started);
     assert_eq!(started["result"]["isError"], false, "{started}");
     let request = wait_for_patch_agent_request(&f.runtime, f.client).await;
     assert_eq!(request.kind, "start_job");

@@ -15,6 +15,8 @@ last_update_seq: 0
 project: agent:cli-runtime-jobs:demo
 requested_timeout_secs: 30
 shell: configured
+stderr_truncated: false
+stdout_truncated: false
 timeout_limit_source: runner_policy_unknown
 timeout_notice: Runner policy unavailable; actual execution budget may be lower.
 timeout_policy_basis: runner_policy_unavailable

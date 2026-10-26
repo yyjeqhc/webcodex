@@ -9,6 +9,9 @@ pattern_mode: literal
 3 | between
 4 | needle again
 5 | after
+has_more: false
+limit: 5
+returned_lines: 5
 total_lines: 5
 coalesced_read_count: 1
 project: agent:cli-runtime-files:demo

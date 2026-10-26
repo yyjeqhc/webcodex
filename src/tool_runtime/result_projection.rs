@@ -273,6 +273,9 @@ pub(super) fn sparsify_success_model_result_metadata(tool_name: &str, result: &m
         return;
     }
     super::git::sparsify_complete_git_review_success(tool_name, result);
+    if tool_name == "run_job" {
+        execution::sparsify_started_job_output(&mut result.output);
+    }
     let Some(output) = result.output.as_object_mut() else {
         return;
     };

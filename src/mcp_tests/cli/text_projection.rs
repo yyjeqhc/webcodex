@@ -305,22 +305,13 @@ fn cli_generic_keys_are_lexical_and_sequences_keep_semantic_order() {
 #[test]
 fn cli_text_size_samples() {
     for (tool, output) in samples() {
+        let model_bytes = serde_json::to_vec(&output).unwrap().len();
         let response = project(tool, tool != "run_shell", output);
         let rendered = text(&response);
         assert_snapshot(tool, &response);
-        let ceiling = match tool {
-            "find_definition" => 60,
-            "list_project_files" => 330,
-            "observe_jobs" => 300,
-            "run_shell" => 350,
-            "read_workspace_changes" => 150,
-            "edit_project_files" => 250,
-            "read_files" => 350,
-            _ => unreachable!(),
-        };
         assert!(
-            rendered.len() <= ceiling,
-            "{tool}: {} > {ceiling}",
+            rendered.len() < model_bytes,
+            "{tool}: text {} bytes did not reduce model JSON {model_bytes} bytes",
             rendered.len()
         );
         eprintln!(
@@ -674,10 +665,19 @@ fn cli_compact_inventories_search_and_explicit_reads_keep_useful_evidence() {
         "output":{"text":"two","start_line":2,"end_line":2,"read_revision":9,"total_lines":20,
         "returned_lines":1,"limit":1,"has_more":true,"next_start_line":3,"truncated":false}}]}),
     );
-    assert_eq!(
-        text(&read),
-        "==> a.rs:2-2 (read_revision 9)\ntwo\ntotal_lines: 20\n"
-    );
+    assert!(text(&read).starts_with("==> a.rs:2-2 (read_revision 9)\ntwo\n"));
+    // Missing follow-up is not proof of a complete read. The renderer must
+    // retain the Runtime's range/loss facts, including a contradictory has_more.
+    for field in [
+        "total_lines: 20",
+        "returned_lines: 1",
+        "limit: 1",
+        "has_more: true",
+        "next_start_line: 3",
+        "truncated: false",
+    ] {
+        assert!(text(&read).contains(field), "{}", text(&read));
+    }
     let clean = project(
         "read_workspace_changes",
         true,
@@ -777,7 +777,9 @@ fn cli_job_receipt_preserves_exact_followup_and_distinct_tokens() {
     let call = json!({"tool":"observe_jobs","arguments":{
         "items":[{"job_id":"wc_job_exact","after_observation_token":"opaque:/+="}],
         "wait_secs":37,"wake_on":"terminal"},"follow_up_kind":"fallback_recovery"});
-    for (token, expected_count) in [("opaque:/+=", 1), ("distinct-token", 1)] {
+    // Runtime chooses whether a standalone token is redundant. When it is
+    // present in the model result the renderer must not classify it again.
+    for (token, expected_count) in [("opaque:/+=", 2), ("distinct-token", 1)] {
         let body = project(
             "run_job",
             true,
@@ -826,6 +828,47 @@ fn cli_job_receipt_preserves_exact_followup_and_distinct_tokens() {
             .collect();
         assert_eq!(calls, vec![call.clone()]);
     }
+}
+
+#[test]
+fn cli_renders_runtime_selected_execution_and_job_evidence_without_reclassification() {
+    for tool in ["run_shell", "run_process", "observe_jobs"] {
+        let output = json!({
+            "status":"completed","execution_state":"completed","command_execution_state":"completed",
+            "exit_code":9,"failure_kind":"command_exit_nonzero","command_started":true,
+            "command_completed":true,"terminal":true,"promoted_to_job":false,"tool_failure":false,
+            "log_delta_status":"delta","stdout_truncated":false,"stderr_delta_reset":false
+        });
+        let body = project(
+            tool,
+            false,
+            if tool == "observe_jobs" {
+                json!({"items":[output]})
+            } else {
+                output
+            },
+        );
+        for field in [
+            "command_started: true",
+            "command_completed: true",
+            "terminal: true",
+            "promoted_to_job: false",
+            "tool_failure: false",
+            "command_execution_state: completed",
+            "log_delta_status: delta",
+            "stdout_truncated: false",
+            "stderr_delta_reset: false",
+        ] {
+            assert!(text(&body).contains(field), "{tool}: {}", text(&body));
+        }
+    }
+    let edited = project(
+        "edit_project_files",
+        true,
+        json!({"changed":true,"files":[{"path":"a.rs","kind":"edit","changed":true,"would_change":true}]}),
+    );
+    assert!(text(&edited).contains("would_change: true"));
+    assert!(text(&edited).contains("changed: true"));
 }
 
 #[test]

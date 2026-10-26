@@ -18,5 +18,7 @@ cwd: .
 failure_kind: timeout
 shell: configured
 stderr_lines: 1
+stderr_truncated: false
 stdout_lines: 1
+stdout_truncated: false
 tool_failure: false

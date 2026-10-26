@@ -1,5 +1,5 @@
-//! Render already-bounded canonical observations without escaping source text.
-//! Only known presentation redundancy is removed. Unknown fields, failures,
+//! Render the Runtime's model-facing projection without escaping source text.
+//! Fields represented in text need not be repeated. Unknown fields, failures,
 //! revision fences, incomplete coverage and exact recovery calls survive.
 mod compact;
 
@@ -71,7 +71,7 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
         "list_projects" if success => compact::inventory(&mut text, output, "projects"),
         "list_document_symbols" if success => compact::symbols(&mut text, output),
         "list_workspace_symbols" if success => compact::workspace_symbols(&mut text, output),
-        "run_job" if success => compact::job_started(&mut text, output),
+        "run_job" if success => compact::execution(&mut text, output),
         "observe_jobs" | "wait_for_job_readiness" => compact::jobs(&mut text, output),
         "run_shell" | "run_process" | "run_script" | "run_detached_process" => {
             compact::execution(&mut text, output)
@@ -245,7 +245,6 @@ fn ordinary_read_failure(item: &Value) -> bool {
 }
 
 fn render_reads(text: &mut String, mut output: Value) {
-    let has_followup = output.get("suggested_call").is_some();
     let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) else {
         render_fields(text, &output);
         return;
@@ -304,14 +303,6 @@ fn render_reads(text: &mut String, mut output: Value) {
                     "format",
                 ] {
                     fields.remove(key);
-                }
-                if fields.get("truncated").is_none_or(|v| v == false) && !has_followup {
-                    for key in ["limit", "returned_lines", "has_more", "next_start_line"] {
-                        fields.remove(key);
-                    }
-                }
-                if fields.get("truncated") == Some(&json!(false)) {
-                    fields.remove("truncated");
                 }
             }
             render_fields(text, read);

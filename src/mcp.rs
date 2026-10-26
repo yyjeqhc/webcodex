@@ -1596,6 +1596,31 @@ pub(crate) async fn cli_call_for_test(
     arguments: Value,
     auth: &AuthContext,
 ) -> Value {
+    cli_call_with_model_for_test(runtime, tool, arguments, auth)
+        .await
+        .1
+}
+
+/// Legacy CLI model results already use this surface's recovery routes before
+/// text rendering. Validate them with the same existing Schema route projection.
+#[cfg(test)]
+pub(crate) fn cli_model_output_schema_for_test(tool: &str) -> Value {
+    let mut schema = crate::tool_runtime::registry::output_schema_for_tool(tool);
+    crate::model_surface::project_suggested_tool_call_schema(&mut schema, &|name| {
+        cli::suggested_route(name, false)
+    });
+    schema
+}
+
+/// Observe one actual invocation immediately before and after CLI rendering.
+/// This does not replay effects or construct a replacement Runtime result.
+#[cfg(test)]
+pub(crate) async fn cli_call_with_model_for_test(
+    runtime: &ToolRuntime,
+    tool: &str,
+    arguments: Value,
+    auth: &AuthContext,
+) -> (Value, Value) {
     let params = if cli::is_direct(tool) {
         json!({"name":tool,"arguments":arguments})
     } else {
@@ -1626,6 +1651,7 @@ pub(crate) async fn cli_call_for_test(
     let McpOutcome::Ok(mut body) = outcome else {
         panic!("{outcome:?}")
     };
+    let model = body["result"]["structuredContent"].clone();
     cli::project_response(Some(tool), &mut body);
-    body
+    (model, body)
 }

@@ -2,13 +2,24 @@ ERROR: failed
 execution_state: completed; exit_code: 1
 stderr_tail:
 permission denied
+command_completed: true
+command_started: true
 cwd: .
 duration_ms: 17
 execution_source: run_shell
 executor: agent
 failure_kind: command_exit_nonzero
+job_id: null
+job_status: null
+observation_token: null
 project: agent:mini:webcodex
+promoted_to_job: false
 purpose: diagnostic
 shell: sh
 state_changed: true
 stderr_lines: 1
+stderr_truncated: false
+stdout_lines: 0
+stdout_truncated: false
+terminal: true
+tool_failure: false

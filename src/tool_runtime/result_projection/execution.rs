@@ -7,6 +7,70 @@ use super::{
     sparsify_structured_validation_success_evidence, sparsify_terminal_shell_success,
     sparsify_terminal_structured_execution_success, ToolCall, ToolResult, ValidationSuccessPolicy,
 };
+use serde_json::{json, Value};
+
+/// A started Job keeps its identity, ownership, timeout and execution receipts.
+/// This projection is deliberately separate from synchronous execution/handoff:
+/// the latter may replace an entire pending output with an observation call.
+pub(super) fn sparsify_started_job_output(output: &mut Value) {
+    use webcodex_core::runtime_contract::{
+        ContinuationCarrier, ContinuationKind, ContinuationSemantics,
+    };
+
+    let exact_observation = output["job_id"].as_str().is_some_and(|id| !id.is_empty())
+        && output["continuation"]["tool"] == "observe_jobs"
+        && output["continuation"]["arguments"]["items"]
+            .as_array()
+            .is_some_and(|items| {
+                items.len() == 1
+                    && items[0]["job_id"] == output["job_id"]
+                    && items[0]["after_observation_token"]
+                        .as_str()
+                        .is_some_and(|token| !token.is_empty())
+            });
+    let repeated_token = exact_observation
+        && output["observation_token"].is_string()
+        && output["observation_token"]
+            == output["continuation"]["arguments"]["items"][0]["after_observation_token"];
+    let repeated_semantics = exact_observation
+        && output["continuation_semantics"]
+            == ContinuationSemantics::new(
+                ContinuationKind::Observe,
+                ContinuationCarrier::ObservationToken,
+            )
+            .to_value();
+    let Some(fields) = output.as_object_mut() else {
+        return;
+    };
+    if repeated_token {
+        fields.remove("observation_token");
+    }
+    if repeated_semantics {
+        fields.remove("continuation_semantics");
+    }
+    for stream in ["stdout", "stderr"] {
+        if fields
+            .get(&format!("{stream}_tail"))
+            .and_then(Value::as_str)
+            == Some("")
+            && fields
+                .get(&format!("{stream}_lines"))
+                .and_then(Value::as_u64)
+                == Some(0)
+        {
+            fields.remove(&format!("{stream}_lines"));
+        }
+    }
+    for (key, redundant) in [
+        ("ssh_resource", Value::Null),
+        ("execution_source", json!("run_job")),
+        ("purpose", json!("other")),
+    ] {
+        if fields.get(key) == Some(&redundant) {
+            fields.remove(key);
+        }
+    }
+}
 
 pub(super) struct ExecutionProjection {
     pub(super) tool_name: &'static str,

@@ -1,4 +1,6 @@
 isError: false
 updates: none
 job_id: wc_job_FIXTURE; status: running
+log_delta_status: baseline
 observation_token: wj3_EPOCH.2.1.1
+terminal: false

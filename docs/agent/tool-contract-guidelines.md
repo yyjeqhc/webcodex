@@ -706,9 +706,19 @@ avoidable contract friction.
 After canonical validation, revision/fence handling, Session recording and capture
 of audit/telemetry evidence, successful actual `edit_project_files` results omit
 `dry_run=false`, completed execution state, the two top-level effect echoes and
-applied/planned counts. `changed`, paths, summaries and per-file kind, destination,
-changed/no-op facts and final `read_revision` remain. Dry-run and exceptional
-results retain their existing detail.
+applied/planned counts. Top-level `changed` remains a programmatic effect receipt
+used by guarded-edit Code Mode before dependent validation. Paths, summaries and
+per-file kind, destination, changed/no-op facts, `would_change` and final
+`read_revision` remain. Dry-run and exceptional results retain their existing detail.
+
+The CLI renders this same model projection. It may fold fields already represented
+by a row or label, but does not reclassify execution or Job lifecycles, log loss,
+or read completeness from an absent follow-up. In particular, explicit partial
+read ranges and model-selected lifecycle evidence remain visible. `run_job`
+keeps its Job identity, ownership, start and timeout facts; an identical token
+and known observation-carrier metadata may be omitted only when an exact same-Job
+continuation carries a nonempty observation token. This start receipt never uses
+the synchronous execution projection that replaces a pending result with a handoff.
 
 Complete all-success `read_files` and `search_project_texts` batches omit each
 item's `success=true` and `error=null`. Item indices still map to request order;

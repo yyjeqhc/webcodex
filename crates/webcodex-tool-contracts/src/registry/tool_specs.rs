@@ -631,14 +631,6 @@ mod tests {
             register.input_schema["properties"]["path"]["description"].as_str(),
             Some("Existing absolute directory path on the Runner. Git is not required.")
         );
-        let work_on_project = &find("work_on_project").description;
-        assert!(work_on_project.contains("project or client_id+path"));
-        assert!(work_on_project.contains("does not require Git"));
-        assert!(work_on_project.contains("mode=worktree"));
-        assert!(work_on_project.contains("exact Git base"));
-        assert!(work_on_project.contains("Project authority"));
-        assert!(work_on_project.contains("session_id alone"));
-        assert!(work_on_project.contains("An explicit Project must match"));
         let status = &find("get_runtime_status").description;
         for hint in [
             "Job concurrency",

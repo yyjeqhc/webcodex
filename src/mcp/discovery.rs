@@ -10,6 +10,22 @@ use super::tools::RECORDING_SESSION_SELECTOR_SCHEMA_PATTERN;
 pub(super) const TOOL_DESCRIPTION_MAX_CHARS: usize = 420;
 pub(super) const INPUT_DESCRIPTION_MAX_CHARS: usize = 180;
 
+/// Keep the operational bootstrap facts in ToolDefinition. Only the route for
+/// obtaining model context changes with the advertised MCP envelope.
+pub(super) fn bootstrap_description(context_sidecars: bool) -> String {
+    let canonical = webcodex_tool_contracts::lookup_tool_definition("work_on_project")
+        .expect("registered bootstrap")
+        .model_spec
+        .expect("model-visible bootstrap")
+        .description;
+    let context = if context_sidecars {
+        "Fresh/uncertain context: request _wc.context=[\"project.instructions\",\"webcodex.workflow\"]. project.instructions includes AGENTS.md/CLAUDE.md; reuse complete current context."
+    } else {
+        "Read applicable AGENTS.md/CLAUDE.md with read_files and follow this surface's workflow instructions."
+    };
+    format!("{canonical} {context}")
+}
+
 pub(super) fn compact_tool(tool: &mut Value) {
     let name = tool["name"].as_str().unwrap_or_default().to_string();
     let workbench_app_only = tool.pointer("/_meta/ui/visibility")
@@ -28,8 +44,6 @@ pub(super) fn compact_tool(tool: &mut Value) {
             "get_session_assignment" if workbench_app_only => "Read an authorized exact Session todo and current assignment fence; no implicit Session selection.",
             "complete_session_message" if workbench_app_only => "Complete an exact authorized todo with the current assignment fence. Reuse the same completion key and answer after uncertainty; stale fences fail closed.",
             "reconcile_agent_task_coding_run" if workbench_app_only => "Reconcile an owned exact Task/Attempt with its original coding run. Never starts or retries execution.",
-            "work_on_project" if tool.pointer("/inputSchema/properties/_wc").is_none() => "Start file, data, diagnostic or coding work in a Project; Git optional. Omit session_id for a fresh Session; supply exact session_id to resume. Read applicable AGENTS.md/CLAUDE.md with read_files. Reuse workspace branch/HEAD/status and sufficient catalogs; refresh stale/incomplete facts before dependent work.",
-            "work_on_project" => "File/data/diagnostic/coding work; Git optional. Fresh: omit session_id; exact resumes. Fresh/uncertain: _wc.context=[\"project.instructions\",\"webcodex.workflow\"]; project.instructions includes AGENTS.md/CLAUDE.md. Reuse complete instructions, branch/HEAD/status, semantic navigation, sufficient catalogs; refresh stale/incomplete.",
             "present_pdf" => "View one authorized project PDF in a dedicated reader. Use for PDF viewing, present_work_result for coding progress. Supply project and relative path; unchanged/untracked files supported, no Git/Session required. Pins size/SHA (20 MiB max); private App reads fail on version changes. Explicitly reopen to select a new version. Requires MCP Apps Host.",
             "get_work_result_state" => "App-only Work Result read; reauthorizes exact Project/Session; no attention, Session recording or snapshot mutation. files: advertised immutable paths; diff, UTF-8 (32 KiB/page, 256 KiB/file), or PDF (128 KiB/page, 20 MiB/file). PDF bytes use private App metadata.",
             "plugin_tool" => "Use Runner-owned Plugins via opaque bindings. Catalog selects; describe when schema/binding is missing. Reuse retained exact binding for the same Project; reconcile unknown outcomes.",
@@ -54,8 +68,14 @@ pub(super) fn compact_tool(tool: &mut Value) {
             "start_agent_task_endpoint_continuation" => "Select the Endpoint continuation for one exact live AgentTaskAttempt. Pass attempt_ref or task, attempt, assignee, fence, and controller generation. Does not choose an Endpoint or grant CodingAgent authority. A stale ref fails closed and is not rewritten onto a later attempt or generation.",
             _ => description,
         };
-        tool["description"] =
-            Value::String(bound_description(selection, TOOL_DESCRIPTION_MAX_CHARS));
+        // Bootstrap carries Project/Session authority and uncertain-startup
+        // recovery. Keep its canonical operational contract intact on discovery;
+        // surface-specific context/defaults are projected separately.
+        tool["description"] = Value::String(if name == "work_on_project" {
+            selection.to_owned()
+        } else {
+            bound_description(selection, TOOL_DESCRIPTION_MAX_CHARS)
+        });
     }
     if let Some(schema) = tool.get_mut("inputSchema") {
         compact_input_descriptions(schema);

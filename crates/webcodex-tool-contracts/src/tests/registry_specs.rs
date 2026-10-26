@@ -8,51 +8,19 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     let desc = |name: &str| spec_named(&specs, name).description.to_lowercase();
     let specialist_desc = |name: &str| spec_named(&specialists, name).description.to_lowercase();
 
+    // Keep one small safety-copy check at the authority source. Surface tests
+    // verify they reuse this contract instead of freezing another prose version.
     let work_on_project_desc = desc("work_on_project");
-    for phrase in [
-        "canonical bootstrap",
-        "ordinary coding/review",
-        "project_ref",
-        "omit session_id",
-        "fresh session",
-        "not fresh model context",
-        "fresh/uncertain model context",
-        "re-observes instructions",
-        "exact checkout resume",
-        "session_id alone",
-        "an explicit project must match",
-        "requires an explicit source",
-        "never retargets",
-        "active accessible session",
-        "never guess",
-        "_wc.context",
-        "include_extension_catalog=true/default",
-        "first entry to another project: request its instructions",
-        "omit those context keys",
-        "reuse current workflow across projects",
-        "include_extension_catalog=false only with its complete/sufficient retained skills/plugins",
-        "refresh changed/incomplete/lost context or on user request",
-        "clientwindow does not prove retention",
-        "project.instructions",
-        "webcodex.workflow",
-        "guidance_profile",
-        "no authority",
-        "principal-scoped",
+    for semantic in [
+        "session_id",
         "reauthorizes",
-        "include_extension_catalog",
-        "skills/plugins",
-        "mode=worktree",
-        "exact git base",
+        "must match",
         "project authority",
-        "read_more",
+        "uncertainty",
+        "never replay effects",
     ] {
-        assert!(
-            work_on_project_desc.contains(phrase),
-            "work_on_project description should mention {phrase}: {work_on_project_desc}"
-        );
+        assert!(work_on_project_desc.contains(semantic), "{semantic}");
     }
-
-    assert!(!work_on_project_desc.contains("context_request"));
 
     let read_files_desc = desc("read_files");
     for phrase in [
@@ -989,17 +957,8 @@ fn session_tool_specs_describe_explicit_targeting() {
         .as_str()
         .expect("work_on_project session_id description")
         .to_lowercase();
-    for phrase in [
-        "does not prove",
-        "fresh model context",
-        "_wc.context",
-        "_wc.record",
-    ] {
-        assert!(
-            session_id_description.contains(phrase),
-            "work_on_project session_id description should mention {phrase}: {session_id_description}"
-        );
-    }
+    assert!(session_id_description.contains("does not prove"));
+    assert!(session_id_description.contains("does not select a recorder"));
     let work_schema_text = serde_json::to_string(&work.input_schema).unwrap();
     for legacy in ["context_request", "recording_session_id"] {
         assert!(
@@ -1007,7 +966,6 @@ fn session_tool_specs_describe_explicit_targeting() {
             "work_on_project model-facing schema prose leaked legacy wrapper {legacy}: {work_schema_text}"
         );
     }
-    assert!(work.description.contains("_wc.context"));
     assert!(!work.description.contains("context_request"));
     let update_desc = update.description.to_lowercase();
     for phrase in [

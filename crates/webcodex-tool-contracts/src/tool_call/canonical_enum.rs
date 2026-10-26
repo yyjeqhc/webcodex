@@ -119,9 +119,9 @@ pub enum ToolCall {
         /// and its Session. A source Session is never retargeted to the new Project. The legacy client_id +
         /// path worktree form may re-observe an already registered managed Project on exact resume. Failure
         /// never guesses or creates a replacement Session. Supplying session_id does not prove this
-        /// model context still retains project instructions, workflow guidance, or extension metadata. On
-        /// MCP, a fresh model context should request missing static guidance through `_wc.context`. This
-        /// business input is distinct from recorder provenance supplied through `_wc.record`.
+        /// model context still retains project instructions, workflow guidance, or extension metadata.
+        /// Obtain missing context through this surface's advertised route. This business input is
+        /// distinct from invocation recorder provenance and does not select a recorder.
         #[schemars(regex(
             pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
         ))]

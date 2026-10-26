@@ -71,32 +71,10 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
         "retired start_coding_task must stay out of MCP tools/list"
     );
     let description = tool("work_on_project")["description"].as_str().unwrap();
-    let normalized_description = description.to_ascii_lowercase();
-    for phrase in [
-        "canonical bootstrap",
-        "ordinary coding/review",
-        "mode=worktree",
-        "exact git base",
-        "fresh session",
-        "exact checkout resume",
-        "session_id alone",
-        "an explicit project must match",
-        "requires an explicit source",
-        "do not immediately reread",
-        "reuse workspace state",
-        "_wc.context",
-        "project.instructions",
-        "webcodex.workflow",
-        "skills",
-        "plugin",
-        "project authority",
-        "reauthorizes the bound project",
-    ] {
-        assert!(
-            normalized_description.contains(phrase),
-            "work_on_project description should mention {phrase}: {description}"
-        );
-    }
+    assert_eq!(
+        description,
+        crate::mcp::discovery::bootstrap_description(false)
+    );
 
     let work_schema = &tool("work_on_project")["inputSchema"];
     assert!(

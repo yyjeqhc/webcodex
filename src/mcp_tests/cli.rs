@@ -78,6 +78,56 @@ fn cli_discovery_uses_canonical_inputs_and_has_no_apps_or_sidecars() {
     assert!(cli_bytes < default_bytes);
 }
 
+#[tokio::test]
+async fn cli_bootstrap_discovery_and_manifest_share_canonical_core_and_defaults() {
+    let (_tmp, db) = test_db();
+    let service = Service::new(build_test_router(
+        test_config(Some("secret")),
+        db,
+        Arc::new(test_runtime()),
+    ));
+    let (_, listed) = post_cli(&service, "tools/list", json!({}), true).await;
+    let descriptor = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "work_on_project")
+        .unwrap();
+    let (_, manifest) = post_cli(
+        &service,
+        "tools/call",
+        json!({"name":"read_tool_manifest","arguments":{"tool_name":"work_on_project"}}),
+        true,
+    )
+    .await;
+    let rendered = text(&manifest);
+    let description = rendered
+        .lines()
+        .find_map(|line| line.strip_prefix("description: "))
+        .expect("exact Manifest description");
+    assert_eq!(descriptor["description"], description);
+    let canonical = webcodex_tool_contracts::lookup_tool_definition("work_on_project")
+        .unwrap()
+        .model_spec
+        .unwrap()
+        .description;
+    assert!(description.starts_with(canonical));
+    let schema: Value = serde_json::from_str(
+        rendered
+            .lines()
+            .find_map(|line| line.strip_prefix("input_schema: "))
+            .expect("exact Manifest schema"),
+    )
+    .unwrap();
+    for schema in [&descriptor["inputSchema"], &schema] {
+        assert_eq!(
+            schema["properties"]["include_extension_catalog"]["default"],
+            false
+        );
+        assert!(schema["properties"].get("_wc").is_none());
+    }
+}
+
 #[test]
 fn cli_reads_keep_raw_source_revision_partial_failures_and_fenced_continuation() {
     let source = "1 | let text = \"你好\";\n2 | // \\n is literal";

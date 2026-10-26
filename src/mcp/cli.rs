@@ -83,16 +83,7 @@ pub(super) fn tools_list_with_exposure(
     tools.push(super::tools::adaptive_runtime_gateway_tool_json(true));
     for tool in &mut tools {
         super::discovery::compact_tool(tool);
-        if tool["name"] == "work_on_project" {
-            if let Some(field) =
-                tool.pointer_mut("/inputSchema/properties/include_extension_catalog")
-            {
-                field["default"] = json!(false);
-                field["description"] =
-                    json!("Include extension catalog; CLI defaults false. Set true when needed.");
-            }
-            tool["description"] = json!("Start work in a Project (Git optional), returning workspace status and repository instructions. Omit session_id for a fresh Workflow Session; supply the exact id to resume. Read missing/truncated instructions before dependent work. Session creation is stateful: after uncertainty, observe Sessions before starting another.");
-        }
+        project_work_on_project(tool, "inputSchema");
         let name = tool["name"].as_str().unwrap().to_owned();
         project_manifest_limit_schema(&name, &mut tool["inputSchema"]);
         if tool["name"] == "call_runtime_tool" {
@@ -116,6 +107,28 @@ pub(super) fn tools_list_with_exposure(
         }
     }
     json!({"tools": tools})
+}
+
+/// CLI keeps the canonical bootstrap contract and adds only adapter behavior.
+/// The same projection serves tools/list and exact Manifest discovery. Broad
+/// Manifest entries keep their canonical selection summary.
+fn project_work_on_project(value: &mut Value, schema_key: &str) {
+    if value["name"] != "work_on_project" || !value[schema_key].is_object() {
+        return;
+    }
+    let canonical = webcodex_tool_contracts::lookup_tool_definition("work_on_project")
+        .expect("registered bootstrap")
+        .model_spec
+        .expect("model-visible bootstrap")
+        .description;
+    value["description"] = json!(format!(
+        "{canonical} CLI returns bounded project instructions automatically. include_extension_catalog defaults false; set true for extension discovery. _wc sidecars and MCP Apps are unavailable."
+    ));
+    if let Some(field) = value[schema_key].pointer_mut("/properties/include_extension_catalog") {
+        field["default"] = json!(false);
+        field["description"] =
+            json!("Include extension catalog; CLI defaults false. Set true when needed.");
+    }
 }
 
 pub(super) const MANIFEST_DEFAULT_LIMIT: usize = 20;
@@ -198,14 +211,7 @@ pub(super) fn project_manifest(
         if let Some(schema) = value.get_mut("input_schema") {
             project_manifest_limit_schema(&name, schema);
         }
-        if name == "work_on_project" {
-            value["description"] = json!("Start/resume work in a Project. Fresh Session: omit session_id; exact resume: supply session_id, with an optional matching project. An explicit client_id+path resolves/registers an authorized directory; mode=worktree requires an explicit source Project and exact base. CLI automatically returns bounded project instructions and workspace status; follow read_more before dependent work. include_extension_catalog defaults false on CLI; set true for extension discovery. Startup creates/resumes Session state, never implies permission to replay effects. After uncertainty, observe Sessions before creating another. Project authority, worktree fences and permissions still apply; _wc is unavailable.");
-            if let Some(field) =
-                value.pointer_mut("/input_schema/properties/include_extension_catalog")
-            {
-                field["default"] = json!(false);
-            }
-        }
+        project_work_on_project(value, "input_schema");
     }
     entry(&mut result.output, default_project);
     if let Some(contract) = result

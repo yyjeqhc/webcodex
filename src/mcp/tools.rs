@@ -895,6 +895,9 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
                 }
             }
         }
+        if name == "work_on_project" {
+            tool["description"] = json!(super::discovery::bootstrap_description(true));
+        }
         add_stateless_context_projection_output_schema(tool);
         add_stateless_session_attention_output_schema(tool);
         if stateless_window_reply_supported(tool_name) {
@@ -1430,7 +1433,7 @@ fn project_mcp_model_default_input_schema(tool_name: &str, input_schema: &mut Va
     }
 }
 
-fn project_mcp_model_manifest_defaults(result: &mut ToolResult) {
+fn project_mcp_model_manifest_defaults(result: &mut ToolResult, context_sidecars: bool) {
     if !result.success {
         return;
     }
@@ -1440,6 +1443,10 @@ fn project_mcp_model_manifest_defaults(result: &mut ToolResult) {
         .to_string();
     if let Some(input_schema) = result.output.get_mut("input_schema") {
         project_mcp_model_default_input_schema(&tool_name, input_schema);
+    }
+    if tool_name == "work_on_project" {
+        result.output["description"] =
+            json!(super::discovery::bootstrap_description(context_sidecars));
     }
 }
 
@@ -1506,6 +1513,9 @@ fn mcp_tool_parts_json(
 ) -> Value {
     let compact = output_schema.is_none();
     let tool_name = name.clone();
+    if tool_name == "work_on_project" {
+        description = super::discovery::bootstrap_description(false);
+    }
     project_mcp_model_default_input_schema(&tool_name, &mut input_schema);
     if tool_name == "get_runtime_status" {
         description

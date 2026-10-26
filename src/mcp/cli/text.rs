@@ -35,7 +35,8 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
         );
     }
     if let Some(fields) = output.as_object_mut() {
-        fields.remove("peer_awareness");
+        // Collaboration hints are already bounded and deduplicated by their
+        // owning Runtime. Keep them visible on text surfaces as on Adaptive.
         // Native LSP failures already name the exact code and message in the
         // error header. Keep the code and all state/recovery fields.
         if !success

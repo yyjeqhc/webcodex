@@ -112,14 +112,24 @@ CLI 客户端直连本地或 hosted Server 时，在**每次请求**（包括 di
 记忆 Project/Session。修改连接 header 后重新连接或刷新工具。空值、未知值和重复的
 偏好 header 在 dispatch 前拒绝，不回显原文。
 
+CLI 与旧版 Adaptive MCP 都接受有界的 `_wc.ack` 和 `_wc.reply`。将消息保留到模型上下文后，
+在后续调用的 `_wc.ack` 中回传 `requires_ack` 消息 ID。回复 Operator 消息使用
+`_wc.reply: {"reply_to": "wc_msg_…", "message": "…"}`。经 `call_runtime_tool` 调用时，
+`_wc` 与 `tool`、`arguments` 同级，不放入目标工具的 `arguments` 内。
+这些字段不选择 Workflow Session，也不授予权限；原有 principal、Window、Project 可见性、
+消息投递与 scope 检查继续生效。展示消息不等于 ACK；ACK 仅表示客户端显式回传了模型上下文
+留存证据，不代表人工接受或完成工作。peer 提示描述同一 principal 在已授权共同 Project 中的
+近期活动，不保证对方实时在线。
+
 CLI 投影提供：
 
 - 小型常用编码工具列表，直接暴露目录枚举、tracked-file glob、`find_definition` 和
   `find_references`。构建、验证、专项编辑等已准入工具仍通过 `read_tool_manifest` 与
   `call_runtime_tool` 调用，manifest 会反映当前路由。MCP App 工具不能经 direct 或
-  gateway 调用；不接受 `_wc` 附带参数。
+  gateway 调用；仅接受 `_wc.ack` 与 `_wc.reply` 通信附带字段，其他 `_wc` 字段仍不可用。
 - WebCodex 结果使用文本：源码不转义，保留文件/行号、read revision。搜索匹配省略
-  `read_hint`，被动 `peer_awareness` 也省略；部分失败、未知效果、Job 身份、覆盖范围
+  `read_hint`；保留有界的 `peer_awareness`、`operator_messages`、`peer_messages` 和
+  `session_attention`，失败或 pending 时也保留。部分失败、未知效果、Job 身份、覆盖范围
   限制和带版本保护的恢复/续读参数仍保留。原生 image/resource block 与第三方 provider
   passthrough 保持各自协议。CLI 下 WebCodex 结果覆盖 text-JSON 和 OpenAI structured
   failure 兼容投影：不返回 `structuredContent`，使用标准 `isError`。
@@ -314,7 +324,7 @@ CLI surface。客户端未提供的 surface 继承部署默认；提供的 surfa
 
 三个开关独立。Goal 驱动的自动续跑需要同时启用 `goals` 和 `agent_continuation`。
 启用后，需要独立审核的操作在两种 surface 都得到 canonical standalone descriptor；
-CLI 仍使用文本结果，没有 Apps 或 `_wc`。关闭分组会移除模型 descriptor 及对应
+CLI 仍使用文本结果，没有 Apps，仅接受 `_wc.ack` / `_wc.reply` 通信附带字段。关闭分组会移除模型 descriptor 及对应
 可选 App resource/bridge helper；exact manifest 报告 unavailable route，生成的
 follow-up 不再指向不可用目标，direct/gateway 调用也不能启用该分组。工作台独立
 保留既有 App-only Goal 读取/创建/更新控件：这些 descriptor 仍为

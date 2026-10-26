@@ -87,7 +87,10 @@ impl RuntimeResponse {
         };
         debug_assert_eq!(outcome.success, result.success);
         if tool_name == "read_tool_manifest" {
-            project_mcp_model_manifest_defaults(&mut result, stateless_2026);
+            project_mcp_model_manifest_defaults(
+                &mut result,
+                stateless_2026 && context.surface != crate::mcp::request_policy::McpSurface::Cli,
+            );
             if context.surface == crate::mcp::request_policy::McpSurface::Cli {
                 crate::mcp::cli::project_manifest(&mut result, context.default_project.is_some());
             }

@@ -236,7 +236,14 @@ async fn host_review_public_descriptors_and_manifest_routes_are_exact() {
                     assert_eq!(output["route"]["primary"]["mode"], "direct", "{manifest}");
                     assert_eq!(output["route"]["primary"]["tool"], name, "{manifest}");
                     assert!(output["route"]["fallback"].is_null(), "{manifest}");
-                    assert_eq!(output["input_schema"], canonical.input_schema, "{name}");
+                    let business_schema = if modern {
+                        output["input_schema"].clone()
+                    } else {
+                        super::cli::business_schema_with_collaboration_checked(
+                            &output["input_schema"],
+                        )
+                    };
+                    assert_eq!(business_schema, canonical.input_schema, "{name}");
                     assert_eq!(output["annotations"], canonical.annotations, "{name}");
                 }
             }
@@ -497,7 +504,7 @@ async fn host_review_retained_session_message_sidecar_executes_and_replays_throu
             assert!(body["error"]["message"]
                 .as_str()
                 .unwrap()
-                .contains("'_wc' is unavailable on this MCP protocol surface"));
+                .contains("unsupported _wc field 'control'"));
             assert!(runtime
                 .sessions
                 .list_messages(&session.session_id, Default::default())

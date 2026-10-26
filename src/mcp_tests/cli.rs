@@ -2,6 +2,11 @@ use super::*;
 use crate::mcp::request_policy::{resolve_surface, McpSurface, SURFACE_HEADER};
 use salvo::http::{HeaderMap, HeaderValue};
 
+#[path = "cli/collaboration.rs"]
+mod collaboration;
+#[path = "cli/peer_clients.rs"]
+mod peer_clients;
+
 fn project(tool: &str, success: bool, output: Value) -> Value {
     let mut body = json!({"result": {
         "structuredContent": {"success":success, "output":output, "error": if success {Value::Null} else {json!("failed")}},
@@ -33,8 +38,37 @@ fn cli_surface_is_request_local_and_rejects_ambiguous_headers() {
     assert_eq!(resolve_surface(&headers).unwrap(), McpSurface::Adaptive);
 }
 
+fn assert_collaboration_only_schema(schema: &Value) {
+    let envelope = &schema["properties"]["_wc"];
+    assert_eq!(envelope["additionalProperties"], false);
+    let fields = envelope["properties"]
+        .as_object()
+        .expect("collaboration schema");
+    assert!(fields.contains_key("ack"), "{envelope}");
+    assert!(
+        fields
+            .keys()
+            .all(|field| matches!(field.as_str(), "ack" | "reply")),
+        "{envelope}"
+    );
+}
+
+pub(super) fn business_schema_with_collaboration_checked(schema: &Value) -> Value {
+    assert_collaboration_only_schema(schema);
+    assert_eq!(
+        schema["properties"]["_wc"]["properties"]["ack"]["maxItems"],
+        8
+    );
+    let mut business = schema.clone();
+    business["properties"]
+        .as_object_mut()
+        .unwrap()
+        .remove("_wc");
+    business
+}
+
 #[test]
-fn cli_discovery_uses_canonical_inputs_and_has_no_apps_or_sidecars() {
+fn cli_discovery_uses_canonical_inputs_and_only_collaboration_sidecars() {
     let listed = crate::mcp::cli::tools_list(None, false);
     let tools = listed["tools"].as_array().unwrap();
     for name in crate::mcp::cli::DIRECT_TOOLS {
@@ -42,7 +76,7 @@ fn cli_discovery_uses_canonical_inputs_and_has_no_apps_or_sidecars() {
         assert!(crate::tool_runtime::tool_definition::is_model_visible_tool_name(name));
         assert!(tool.get("outputSchema").is_none());
         assert!(tool.get("_meta").is_none());
-        assert!(tool.pointer("/inputSchema/properties/_wc").is_none());
+        assert_collaboration_only_schema(&tool["inputSchema"]);
         assert_eq!(tool["inputSchema"]["additionalProperties"], false, "{name}");
     }
     assert!(tools
@@ -124,7 +158,7 @@ async fn cli_bootstrap_discovery_and_manifest_share_canonical_core_and_defaults(
             schema["properties"]["include_extension_catalog"]["default"],
             false
         );
-        assert!(schema["properties"].get("_wc").is_none());
+        assert_collaboration_only_schema(schema);
     }
 }
 
@@ -155,8 +189,60 @@ fn cli_reads_keep_raw_source_revision_partial_failures_and_fenced_continuation()
     ] {
         assert!(rendered.contains(expected), "{rendered}");
     }
-    assert!(!rendered.contains("unused-peer"));
+    assert!(rendered.contains("unused-peer"));
     assert_eq!(body["result"]["isError"], false);
+}
+
+#[test]
+fn cli_collaboration_preserves_execution_facts_on_every_outcome() {
+    for tool in [
+        "run_job",
+        "run_process",
+        "run_shell",
+        "run_script",
+        "observe_jobs",
+    ] {
+        for outcome in [
+            "completed",
+            "pending",
+            "failed",
+            "timeout",
+            "outcome_unknown",
+        ] {
+            let success = matches!(outcome, "completed" | "pending");
+            let output = json!({
+                "execution_state": outcome,
+                "job_id": "wc_job_0123456789abcdef",
+                "stdout_tail": "execution-output-marker",
+                "error_kind": if success { Value::Null } else { json!(outcome) },
+                "continuation": {"tool": "observe_jobs", "arguments": {"items": [{"job_id":"wc_job_0123456789abcdef"}]}},
+                "operator_messages": {"messages":[{"message_id":"wc_msg_operator00000000","message":"operator-message-marker","requires_ack":true}]},
+                "peer_messages": {"messages":[{"message_id":"wc_msg_peer000000000000","message":"peer-message-marker","requires_ack":true}]},
+                "session_attention": {"messages":[{"message_id":"wc_msg_session000000000","message":"session-message-marker","requires_ack":true}]},
+                "peer_awareness": {"new_peers":[{"peer_id":"wc_peer_0123456789abcdef0123456789abcdef","source":"codex-thread"}],"semantics":"recent_same_project_activity_not_liveness"}
+            });
+            let body = project(tool, success, output);
+            let rendered = text(&body);
+            for marker in [
+                "execution-output-marker",
+                "wc_job_0123456789abcdef",
+                "observe_jobs",
+                "operator-message-marker",
+                "peer-message-marker",
+                "session-message-marker",
+                "wc_peer_0123456789abcdef0123456789abcdef",
+                "recent_same_project_activity_not_liveness",
+            ] {
+                assert!(
+                    rendered.contains(marker),
+                    "{tool}/{outcome}: missing {marker}: {rendered}"
+                );
+            }
+            assert!(rendered.contains(outcome), "{tool}/{outcome}: {rendered}");
+            assert_eq!(body["result"]["isError"], !success);
+            assert!(body["result"].get("structuredContent").is_none());
+        }
+    }
 }
 
 #[test]
@@ -345,8 +431,8 @@ async fn cli_stateless_ignores_app_capabilities_and_host_failure_compatibility()
         .unwrap()
         .iter()
         .all(|tool| {
+            assert_collaboration_only_schema(&tool["inputSchema"]);
             !crate::mcp::cli::is_app_tool(tool["name"].as_str().unwrap())
-                && tool.pointer("/inputSchema/properties/_wc").is_none()
         }));
     let mut params = mcp_2026_ui_params(
         json!({"name":"list_project_files","arguments":{"project":"agent:missing:p"}}),

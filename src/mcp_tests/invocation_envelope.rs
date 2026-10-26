@@ -24,6 +24,48 @@ fn parse(envelope: Value) -> Result<crate::mcp::tools::McpInvocationEnvelope, St
 }
 
 #[test]
+fn restricted_invocation_accepts_only_bounded_ack_and_reply_without_session_selection() {
+    let business = json!({"project":"proj", "items":[{"path":"src/lib.rs"}]});
+    let mut arguments = business.clone();
+    arguments["_wc"] = json!({
+        "ack": [MESSAGE_ID, MESSAGE_ID],
+        "reply": {"reply_to": MESSAGE_ID, "message":"Received"}
+    });
+    let parsed = parse_mcp_invocation_envelope("read_files", &mut arguments, false).unwrap();
+    assert_eq!(arguments, business);
+    assert!(parsed.recording_session_selector.is_none());
+    assert!(parsed.metadata.control.is_none());
+    assert!(parsed.metadata.context_request.is_empty());
+    assert_eq!(parsed.metadata.ack_session_message_ids, [MESSAGE_ID]);
+    assert_eq!(parsed.metadata.window_reply.unwrap().message, "Received");
+    crate::tool_runtime::ToolCall::from_tool_name("read_files", arguments).unwrap();
+
+    for field in [
+        "record",
+        "ack_ref",
+        "resolve",
+        "context",
+        "control",
+        "compact_execution",
+    ] {
+        let mut arguments = business.clone();
+        arguments["_wc"] = json!({field: null});
+        let error = parse_mcp_invocation_envelope("read_files", &mut arguments, false).unwrap_err();
+        assert!(error.contains("unsupported _wc field"), "{field}: {error}");
+    }
+    for envelope in [
+        json!({"ack": ["not-a-message-id"]}),
+        json!({"ack": vec![MESSAGE_ID; MAX_TOOL_CALL_ACK_MESSAGE_IDS + 1]}),
+        json!({"reply": {"reply_to": MESSAGE_ID, "message": "x".repeat(MAX_WINDOW_REPLY_CHARS + 1)}}),
+        json!({"reply": {"reply_to": MESSAGE_ID, "message": "ok", "project": "foreign"}}),
+    ] {
+        let mut arguments = business.clone();
+        arguments["_wc"] = envelope;
+        assert!(parse_mcp_invocation_envelope("read_files", &mut arguments, false).is_err());
+    }
+}
+
+#[test]
 fn invocation_envelope_normalizes_metadata_without_changing_business_arguments() {
     let invocation = parse(json!({
         "record": "  session-selector  ",

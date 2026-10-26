@@ -357,7 +357,7 @@ async fn tool_experience_exact_discovery_constructs_callable_arguments() {
         let arguments =
             json!({"project":"agent:fixture:repo","language":"python","script":"print('ready')"});
         assert_eq!(
-            schema,
+            super::cli::business_schema_with_collaboration_checked(&schema),
             webcodex_tool_contracts::input_schema_for_tool("run_script")
         );
         validate_schema_instance_for_test(&arguments, &schema).unwrap();

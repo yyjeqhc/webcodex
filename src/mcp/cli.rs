@@ -29,7 +29,7 @@ pub(super) const DIRECT_TOOLS: &[&str] = &[
     "read_tool_manifest",
 ];
 
-pub(super) const INSTRUCTIONS: &str = "WebCodex operates on registered Projects on their owning Runner, which may be a different machine from your local shell. Use WebCodex tools for that Project. Select an exact project id from list_projects or user configuration; never infer a Project or Session from the connection. work_on_project starts/resumes a Workflow Session and returns workspace status and bounded repository instructions; follow any read_more before dependent work. Use list_project_tracked_files for filename/glob discovery, list_project_files for one directory, and find_definition/find_references for semantic navigation when available. Batch independent reads/searches; use search_file_context when matches need source context. Keep read_revision for edit_project_files and expected_read_revision for continued reads. A pending command is the same Job: do independent work, then wait_for_job_readiness and observe_jobs; never redispatch after timeout or outcome_unknown. Unknown effects require observation. Other tools: read_tool_manifest, then call_runtime_tool with exact arguments. Results are text; failures retain isError and recovery facts. No MCP App presentation or _wc sidecars are available on this surface.";
+pub(super) const INSTRUCTIONS: &str = "WebCodex operates on registered Projects on their owning Runner, which may be a different machine from your local shell. Use WebCodex tools for that Project. Select an exact project id from list_projects or user configuration; never infer a Project or Session from the connection. work_on_project starts/resumes a Workflow Session and returns workspace status and bounded repository instructions; follow any read_more before dependent work. Use list_project_tracked_files for filename/glob discovery, list_project_files for one directory, and find_definition/find_references for semantic navigation when available. Batch independent reads/searches; use search_file_context when matches need source context. Keep read_revision for edit_project_files and expected_read_revision for continued reads. A pending command is the same Job: do independent work, then wait_for_job_readiness and observe_jobs; never redispatch after timeout or outcome_unknown. Unknown effects require observation. Other tools: read_tool_manifest, then call_runtime_tool with exact arguments. Results are text; failures retain isError and recovery facts. MCP Apps are unavailable. Recent peer_awareness identifies same-principal Project collaborators, not liveness. Retain operator_messages, peer_messages and session_attention even on failures or pending Jobs. On the next call, echo requires_ack message IDs in _wc.ack; reply to an Operator message with _wc.reply={reply_to,message}. ACK is model-context retention evidence, not acceptance or execution. Only ack and reply are supported _wc fields; on call_runtime_tool place _wc beside tool/arguments, never inside arguments.";
 
 pub(super) fn initialize_instructions(default_project: Option<&str>) -> Value {
     json!(match default_project {
@@ -82,12 +82,22 @@ pub(super) fn tools_list_with_exposure(
         .collect();
     tools.push(super::tools::adaptive_runtime_gateway_tool_json(true));
     for tool in &mut tools {
+        let name = tool["name"].as_str().unwrap().to_owned();
+        super::tools::add_invocation_envelope_input_schema(&name, &mut tool["inputSchema"], false);
         super::discovery::compact_tool(tool);
+        // Shared ACK/reply guidance is in initialize.instructions. Do not repeat
+        // the same envelope prose on every small CLI descriptor.
+        if let Some(envelope) = tool
+            .pointer_mut("/inputSchema/properties/_wc")
+            .and_then(Value::as_object_mut)
+        {
+            envelope.remove("description");
+        }
         project_work_on_project(tool, "inputSchema");
         let name = tool["name"].as_str().unwrap().to_owned();
         project_manifest_limit_schema(&name, &mut tool["inputSchema"]);
         if tool["name"] == "call_runtime_tool" {
-            tool["description"] = json!("Call one admitted runtime tool using its exact read_tool_manifest contract. Prefer a direct callable when listed. Normal authorization, permissions, capability and effect checks apply. MCP App tools and _wc sidecars are unavailable. Never replay uncertain effects.");
+            tool["description"] = json!("Call one admitted runtime tool using its exact read_tool_manifest contract. Prefer a direct callable when listed. Normal authorization, permissions, capability and effect checks apply. MCP App tools are unavailable. Optional _wc.ack/reply belongs beside tool/arguments, never inside arguments. No other sidecars. Never replay uncertain effects.");
         }
         if default_project {
             let name = tool["name"].as_str().unwrap().to_string();
@@ -122,7 +132,7 @@ fn project_work_on_project(value: &mut Value, schema_key: &str) {
         .expect("model-visible bootstrap")
         .description;
     value["description"] = json!(format!(
-        "{canonical} CLI returns bounded project instructions automatically. include_extension_catalog defaults false; set true for extension discovery. _wc sidecars and MCP Apps are unavailable."
+        "{canonical} CLI returns bounded project instructions automatically. include_extension_catalog defaults false; set true for extension discovery. Only _wc.ack/reply communication sidecars are available; they grant no Session or execution authority. MCP Apps are unavailable."
     ));
     if let Some(field) = value[schema_key].pointer_mut("/properties/include_extension_catalog") {
         field["default"] = json!(false);

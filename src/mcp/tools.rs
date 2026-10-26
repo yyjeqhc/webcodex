@@ -34,7 +34,7 @@ mod call;
 pub(super) use call::handle_call;
 mod invocation;
 use invocation::{
-    mcp_invocation_envelope_supported_fields, validate_mcp_invocation_envelope_for_target,
+    mcp_invocation_fields_for_surface, validate_mcp_invocation_envelope_for_target,
     MCP_INVOCATION_ENVELOPE_FIELD,
 };
 pub(super) use invocation::{parse_mcp_invocation_envelope, McpInvocationEnvelope};
@@ -755,8 +755,8 @@ fn add_stateless_window_reply_output_schema(tool: &mut Value) {
 pub(super) const RECORDING_SESSION_SELECTOR_SCHEMA_PATTERN: &str =
     "^(~s[1-9][0-9]{0,19}|wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32}))$";
 
-fn stateless_invocation_envelope_schema(tool_name: &str) -> Value {
-    let allowed = mcp_invocation_envelope_supported_fields(tool_name);
+fn invocation_envelope_schema(tool_name: &str, full: bool) -> Value {
+    let allowed = mcp_invocation_fields_for_surface(tool_name, full);
     let mut properties = serde_json::Map::new();
     if allowed.contains(&"compact_execution") {
         properties.insert("compact_execution".to_string(), json!({
@@ -834,6 +834,45 @@ fn stateless_invocation_envelope_schema(tool_name: &str) -> Value {
     })
 }
 
+pub(super) fn add_invocation_envelope_input_schema(
+    tool_name: &str,
+    input_schema: &mut Value,
+    full: bool,
+) {
+    let envelope = invocation_envelope_schema(tool_name, full);
+    if envelope["properties"]
+        .as_object()
+        .is_none_or(|fields| fields.is_empty())
+    {
+        return;
+    }
+    if let Some(properties) = input_schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+    {
+        properties.insert(MCP_INVOCATION_ENVELOPE_FIELD.to_string(), envelope);
+    }
+}
+
+fn add_collaboration_invocation_metadata(payload: &mut Value) {
+    let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for tool in tools {
+        // App-only calls keep their own exact input contracts.
+        if tool.pointer("/_meta/ui/visibility") == Some(&json!(["app"])) {
+            continue;
+        }
+        let Some(name) = tool["name"].as_str().map(str::to_owned) else {
+            continue;
+        };
+        add_invocation_envelope_input_schema(&name, &mut tool["inputSchema"], false);
+        if stateless_window_reply_supported(Some(&name)) {
+            add_stateless_window_reply_output_schema(tool);
+        }
+    }
+}
+
 pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
     let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) else {
         return;
@@ -870,7 +909,7 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
         };
         properties.insert(
             MCP_INVOCATION_ENVELOPE_FIELD.to_string(),
-            stateless_invocation_envelope_schema(name),
+            invocation_envelope_schema(name, true),
         );
 
         if name == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
@@ -1443,6 +1482,9 @@ fn project_mcp_model_manifest_defaults(result: &mut ToolResult, context_sidecars
         .to_string();
     if let Some(input_schema) = result.output.get_mut("input_schema") {
         project_mcp_model_default_input_schema(&tool_name, input_schema);
+        if !context_sidecars {
+            add_invocation_envelope_input_schema(&tool_name, input_schema, false);
+        }
     }
     if tool_name == "work_on_project" {
         result.output["description"] =
@@ -1690,21 +1732,17 @@ async fn handle_list_inner(
     }
     if stateless_2026 {
         add_stateless_workflow_recorder_metadata(&mut result);
+    } else {
+        add_collaboration_invocation_metadata(&mut result);
     }
     if crate::mcp_gateway::authorized(auth) {
         if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
             let mut spec = crate::mcp_gateway::tool_spec();
-            if stateless_2026 {
-                if let Some(properties) = spec
-                    .pointer_mut("/inputSchema/properties")
-                    .and_then(Value::as_object_mut)
-                {
-                    properties.insert(
-                        MCP_INVOCATION_ENVELOPE_FIELD.to_string(),
-                        stateless_invocation_envelope_schema(crate::mcp_gateway::MCP_TOOL_NAME),
-                    );
-                }
-            }
+            add_invocation_envelope_input_schema(
+                crate::mcp_gateway::MCP_TOOL_NAME,
+                &mut spec["inputSchema"],
+                stateless_2026,
+            );
             tools.push(spec);
         }
     }

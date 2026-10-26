@@ -83,6 +83,16 @@ pub(super) fn mcp_invocation_envelope_supported_fields(tool: &str) -> Vec<&'stat
     fields
 }
 
+pub(super) fn mcp_invocation_fields_for_surface(tool: &str, full: bool) -> Vec<&'static str> {
+    let mut fields = mcp_invocation_envelope_supported_fields(tool);
+    if !full {
+        // CLI and older MCP retain only communication acknowledgements/replies.
+        // Neither field selects a Workflow Session or dispatches control work.
+        fields.retain(|field| matches!(*field, "ack" | "reply"));
+    }
+    fields
+}
+
 fn unsupported_invocation_field(field: &str, tool: &str, allowed: &[&'static str]) -> String {
     // Unknown envelope keys are untrusted caller text. Reflect only short,
     // ASCII identifier-like typos; never echo long, multiline or opaque keys.
@@ -130,15 +140,12 @@ pub(super) fn validate_mcp_invocation_envelope_for_target(
 pub(in crate::mcp) fn parse_mcp_invocation_envelope(
     tool_name: &str,
     arguments: &mut Value,
-    stateless_2026: bool,
+    full_invocation: bool,
 ) -> Result<McpInvocationEnvelope, String> {
     let Some(object) = arguments.as_object_mut() else {
         return Ok(McpInvocationEnvelope::default());
     };
-    if !stateless_2026 {
-        if object.contains_key(MCP_INVOCATION_ENVELOPE_FIELD) {
-            return Err("field '_wc' is unavailable on this MCP protocol surface".to_string());
-        }
+    if !full_invocation && !object.contains_key(MCP_INVOCATION_ENVELOPE_FIELD) {
         return Ok(McpInvocationEnvelope::default());
     }
 
@@ -165,7 +172,7 @@ pub(in crate::mcp) fn parse_mcp_invocation_envelope(
     let Value::Object(mut envelope) = value else {
         return Err("field '_wc' must be a closed invocation metadata object".to_string());
     };
-    let allowed = mcp_invocation_envelope_supported_fields(tool_name);
+    let allowed = mcp_invocation_fields_for_surface(tool_name, full_invocation);
     if let Some(key) = envelope.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(unsupported_invocation_field(key, tool_name, &allowed));
     }

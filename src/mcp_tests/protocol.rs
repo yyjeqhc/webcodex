@@ -270,11 +270,11 @@ async fn mcp_legacy_tools_list_omits_2026_only_result_fields() {
             assert!(value["result"].get("resultType").is_none());
             assert!(value["result"].get("ttlMs").is_none());
             assert!(value["result"].get("cacheScope").is_none());
-            assert!(value["result"]["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|tool| tool["inputSchema"]["properties"].get("_wc").is_none()));
+            for tool in value["result"]["tools"].as_array().unwrap() {
+                if tool["inputSchema"]["properties"].get("_wc").is_some() {
+                    super::cli::business_schema_with_collaboration_checked(&tool["inputSchema"]);
+                }
+            }
             for legacy in [
                 "recording_session_id",
                 "ack_session_message_ids",

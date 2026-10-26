@@ -275,7 +275,7 @@ a complete replacement, with omitted booleans defaulting to false. Client names,
 The switches are independent. Enable both `goals` and `agent_continuation` for
 Goal-driven automatic continuation. Enabled individually reviewed operations
 receive canonical standalone descriptors on both surfaces; CLI still has text
-results, no Apps and no `_wc`. Disabling a group removes its model descriptors
+results, no Apps, and only `_wc.ack` / `_wc.reply` communication metadata. Disabling a group removes its model descriptors
 and optional App resources/bridge helpers. Exact manifests report unavailable
 routes, generated follow-ups omit unavailable targets, and direct/gateway calls
 cannot enable the omitted group. The Workbench independently retains its existing
@@ -364,17 +364,29 @@ change authentication, or remember a Project/Session between calls. Reconnect or
 refresh tools after changing connection headers. Empty, unknown or repeated
 preference headers fail before dispatch without echoing their values.
 
+CLI and legacy Adaptive MCP accept the same bounded `_wc.ack` and `_wc.reply`
+communication fields. Echo `requires_ack` message IDs in `_wc.ack` on a subsequent
+call after retaining them in model context. Reply to an Operator message with
+`_wc.reply: {"reply_to": "wc_msg_…", "message": "…"}`. With `call_runtime_tool`,
+place `_wc` beside `tool` and `arguments`, not inside the target arguments.
+These fields neither select a Workflow Session nor grant authority. The existing
+principal, Window, Project visibility, delivery, and scope checks still apply.
+Projection is not ACK; ACK records explicit client retention evidence, not human
+acceptance or completed work. Peer discovery describes recent same-principal
+activity in an authorized shared Project; it is not an online-presence guarantee.
+
 The CLI surface provides:
 
 - A small coding tool list, with directory listing, tracked-file glob discovery,
   and `find_definition` / `find_references` directly callable. Build, validation,
   specialized edits and other admitted tools remain available through
   `read_tool_manifest` and `call_runtime_tool`; the manifest describes the current
-  route. MCP App tools are unavailable through either route, and `_wc` sidecars
-  are not accepted.
+  route. MCP App tools are unavailable through either route. `_wc.ack` and
+  `_wc.reply` are accepted for communication; other `_wc` fields remain unavailable.
 - Text-only WebCodex results, with unescaped source, file/line headers and read
-  revisions. Search previews omit per-match `read_hint`; passive `peer_awareness`
-  is omitted. Partial failures, unknown effects, Job identities, coverage limits,
+  revisions. Search previews omit per-match `read_hint`. Bounded `peer_awareness`,
+  `operator_messages`, `peer_messages`, and `session_attention` remain visible,
+  including on failed or pending calls. Partial failures, unknown effects, Job identities, coverage limits,
   and revision-fenced recovery/continuation arguments remain visible. Native
   image/resource blocks and third-party provider passthrough retain their own
   contracts. CLI framing overrides text-JSON and OpenAI structured-failure

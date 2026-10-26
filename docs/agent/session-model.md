@@ -31,7 +31,63 @@ statement is true for only one kind, name that kind explicitly.
 
 ## ClientWindow is not a third session type
 
-Adapters may derive a bounded, domain-separated `ClientWindow` from host-owned window metadata such as `_meta["openai/session"]`. The raw host value is never persisted or exposed. A principal-scoped `wc_peer_*` id may be derived from the hashed Window for lightweight collaboration routing, but neither identity is a Workflow Session selector, Project authority, credential, model-context-retention proof, implicit recorder, model-turn id, or liveness proof. Stateless MCP still never treats caller-supplied `Mcp-Session-Id` as hidden continuity.
+Adapters derive a bounded, domain-separated `ClientWindow` only from explicit
+supported host/transport identity. Raw values are hashed immediately and never
+persisted or exposed as Window identity. A principal-scoped `wc_peer_*` id may be
+derived from the hashed Window for lightweight collaboration routing. Neither
+identity selects a Workflow Session or Project, grants credential authority,
+proves model-context retention or a model turn, or supplies an implicit recorder.
+
+### MCP identity selection
+
+The HTTP adapter uses one resolver for both protocol eras, before tool audit,
+live Window activity and tool dispatch. The first present supported source wins:
+
+| Priority | Source | Validation and identity |
+|---|---|---|
+| 1 | `params._meta["openai/session"]` | Preserve the existing ChatGPT v1 hash and historical trimming; the trimmed value must contain 1–256 printable ASCII bytes without spaces. |
+| 2 | `params._meta.threadId` | Exact 1–256 printable ASCII bytes without spaces or trimming; scoped to the verified authentication identity below. |
+| 3 | `X-WebCodex-Client-Window` | Exactly one header matching ASCII `[A-Za-z0-9._:-]{1,256}`, without trimming; scoped as below. |
+| 4 | Legacy `Mcp-Session-Id` | Legacy protocol only, using the existing format validation and v1 transport hash. This is not an issued-session registry check. |
+| 5 | No supported source | No Window affinity; ordinary tools remain available under their normal authority. |
+
+All supplied supported host metadata and the custom header are validated, even
+when a higher-priority source would win. An invalid/non-string supported
+metadata value or invalid/duplicate custom header rejects the request before
+tool effects, with a bounded error that does not echo the raw value. Unknown
+`_meta.windowId` and `_meta.sessionId` are not identity hints. Stateless MCP 2026
+ignores caller-supplied legacy `Mcp-Session-Id`; it never creates transport
+continuity from that header.
+
+New Codex/header keys use a separate hash domain and length-prefixed source,
+scope components and raw identity. They cannot collide with legacy ChatGPT
+keys or with each other through ambiguous component concatenation.
+
+| Verified authentication context | Scope for a new Codex/header key |
+|---|---|
+| Managed OAuth | Authenticated user ID plus OAuth client ID; access-token rotation preserves the Window key. |
+| API token | API-key ID; different credentials remain separate, including credentials of one user. |
+| Project credential or project-share OAuth | Exact ProjectGrant ID. |
+| Direct shared key or its OAuth bridge | The existing shared-key hash under one fixed shared-key scope kind. This identifies the credential, not individual holders of the same key. |
+| Anonymous, bootstrap, missing or incomplete supported identity | No Window is created; valid metadata does not reject otherwise authorized tools and does not fall back to guessed authority or a lower-priority Window source. |
+
+This stable Window scope does not change `runtime_observation_principal`.
+Peer and observation authorization retains its existing principal boundary,
+including token-scoped managed OAuth attribution. Project and Session access
+still pass their ordinary independent authorization checks.
+
+Legacy `initialize` still issues a protocol session ID when needed even if a
+higher-priority host Window wins; the issued header and the selected Window are
+separate facts. A legacy transport-only `tools/list` retains its ActionAudit
+entry without Window binding or live Window activity, avoiding discovery-only
+ghost windows. Explicit ChatGPT, Codex or custom-header `tools/list` remains
+Window liveness evidence. True legacy `tools/call` retains the transport fallback.
+
+Claude Code can supply the custom header through the optional
+`scripts/claude_window_headers.py` helper. Its Linux automatic identity describes
+a native Claude process, not an individual conversation; other platforms use an
+explicit ID. The helper integration and limits are documented separately in
+`docs/CLAUDE_WINDOW_IDENTITY.md` when that optional helper is installed.
 
 Window correlation supports ActionAudit, agent-loop observations, bounded Peer awareness/messaging, and other explicitly designed non-authority features, while ordinary coding continuity remains the canonical Workflow Session lifecycle. `work_on_project(session_id=...)` resumes only that exact authorized Session; omission creates a fresh Session. Credentials, Project ids, windows, connections, Peer ids, and prior requests never select a Workflow Session implicitly.
 

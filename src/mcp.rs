@@ -769,26 +769,44 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 .with_request_mcp_host_policy(policy_selection),
         )
     };
-    let window = match protocol_era {
-        McpProtocolEra::Legacy => {
-            crate::client_window::mcp_window(req, request.method == "initialize")
-        }
-        McpProtocolEra::Stateless2026 => {
-            crate::client_window::stateless_mcp_window(&request.params)
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let window = match crate::client_window::mcp_window(
+        req,
+        &request.params,
+        auth.as_ref(),
+        protocol_era == McpProtocolEra::Legacy,
+        request.method == "initialize",
+    ) {
+        Ok(window) => window,
+        Err(message) => {
+            guard.parsed("client_window_error");
+            let body = rpc_error(request.id.clone(), -32600, message);
+            let estimated = estimate_json_bytes(&body);
+            guard.response_serialized(400, estimated, Some(false), None, "client_window_error");
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(body));
+            guard.handler_returned(400, estimated, Some(false), None, "client_window_error");
+            return;
         }
     };
-    guard.set_client_window(window.identity.as_ref());
+    // A host may list tools on throwaway legacy connections. Preserve the
+    // audit, but do not turn transport-session discovery into a ghost Window.
+    // Explicit ChatGPT/Codex/header Window discovery remains liveness evidence.
+    let observed_window = window
+        .identity
+        .as_ref()
+        .filter(|identity| request.method != "tools/list" || identity.source() != "mcp");
+    guard.set_client_window(observed_window);
     guard.capture_mcp_host_policy(&policy_selection);
     guard.parsed("ok");
     let server_trace_id = guard.correlation_trace_id();
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let window_registry = runtime.window_activity_registry();
     let window_activity_visible = !work_result_app_internal_tool(tool_name.as_deref());
     let mut live_window_request = if window_activity_visible
         && request.id.is_some()
         && matches!(request.method.as_str(), "tools/call" | "tools/list")
     {
-        window.identity.as_ref().map(|identity| {
+        observed_window.map(|identity| {
             window_registry.start_authenticated(
                 identity,
                 &server_trace_id,
@@ -893,7 +911,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     let tools_list_audit = if request.method == "tools/list" && request.id.is_some() {
         Some(
             ActionAudit::start(req, depot, "/mcp", "toolsList")
-                .with_window(window.identity.as_ref(), Some(&server_trace_id)),
+                .with_window(observed_window, Some(&server_trace_id)),
         )
     } else {
         None

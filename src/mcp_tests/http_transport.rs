@@ -1,4 +1,6 @@
 use super::*;
+#[path = "http_transport/client_window.rs"]
+mod client_window;
 #[path = "http_transport/metadata_trace.rs"]
 mod metadata_trace;
 #[path = "http_transport/work_result_thread.rs"]

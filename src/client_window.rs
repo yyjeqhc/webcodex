@@ -10,6 +10,7 @@ use salvo::prelude::{Request, Response};
 use sha2::{Digest, Sha256};
 
 pub(crate) const MCP_SESSION_HEADER: &str = "mcp-session-id";
+pub(crate) const CLIENT_WINDOW_HEADER: &str = "x-webcodex-client-window";
 const OPENAI_CONVERSATION_HEADER: &str = "openai-conversation-id";
 const WINDOW_COOKIE: &str = "webcodex_window";
 const WINDOW_COOKIE_MAX_AGE_SECS: i64 = 60 * 60 * 24 * 90;
@@ -35,6 +36,25 @@ impl ClientWindow {
             key: format!("{:x}", hasher.finalize()),
             source,
         })
+    }
+
+    fn from_scoped(source: &'static str, scope: &[&str], value: &str) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(b"webcodex.client-window.scoped.v1\0");
+        let mut part = |bytes: &[u8]| {
+            hasher.update((bytes.len() as u64).to_be_bytes());
+            hasher.update(bytes);
+        };
+        part(source.as_bytes());
+        part(&(scope.len() as u64).to_be_bytes());
+        for component in scope {
+            part(component.as_bytes());
+        }
+        part(value.as_bytes());
+        Self {
+            key: format!("{:x}", hasher.finalize()),
+            source,
+        }
     }
 
     pub(crate) fn key(&self) -> &str {
@@ -63,47 +83,127 @@ pub(crate) struct McpWindow {
     pub(crate) issued_session_id: Option<String>,
 }
 
-/// Resolve an MCP window. Protocol version 2025-06-18 lets the server mint a
-/// session id during initialize; subsequent requests echo it in the header.
-/// A tools/call without that header deliberately gets no continuity identity
-/// instead of falling back to a credential-wide key.
-pub(crate) fn mcp_window(req: &Request, initialize: bool) -> McpWindow {
-    if let Some(raw) = request_header(req, MCP_SESSION_HEADER) {
-        return McpWindow {
-            identity: ClientWindow::from_opaque("mcp", raw),
-            issued_session_id: None,
-        };
-    }
-    if !initialize {
-        return McpWindow {
-            identity: None,
-            issued_session_id: None,
-        };
-    }
-    let raw = format!("wc_mcp_{}", uuid::Uuid::new_v4().simple());
-    McpWindow {
-        identity: ClientWindow::from_opaque("mcp", &raw),
-        issued_session_id: Some(raw),
-    }
-}
+/// Resolve supported MCP Window sources before audit, liveness or dispatch.
+/// Legacy protocol session issuance is independent from the chosen Window.
+/// A format-valid legacy header is not checked against an issuance registry.
+pub(crate) fn mcp_window(
+    req: &Request,
+    params: &serde_json::Value,
+    auth: Option<&crate::auth::AuthContext>,
+    legacy_protocol: bool,
+    initialize: bool,
+) -> Result<McpWindow, &'static str> {
+    // Validate every supplied supported source, including lower-priority ones:
+    // malformed metadata must never silently select a different identity.
+    let openai = metadata_window_id(params, "openai/session", true)?;
+    let codex = metadata_window_id(params, "threadId", false)?;
+    let header = explicit_window_header(req)?;
 
-/// Resolve stateless ChatGPT MCP conversation identity from host-provided
-/// request metadata. The opaque OpenAI value is domain-separated and hashed
-/// immediately; it is never persisted or returned raw. Missing or malformed
-/// metadata deliberately yields no continuity identity instead of falling back
-/// to auth-wide or transport-wide inference.
-pub(crate) fn stateless_mcp_window(params: &serde_json::Value) -> McpWindow {
-    let identity = params
-        .get("_meta")
-        .and_then(|meta| meta.get("openai/session"))
-        .and_then(serde_json::Value::as_str)
-        .and_then(|raw| ClientWindow::from_opaque("openai-session", raw));
-    McpWindow {
+    let legacy = legacy_protocol
+        .then(|| request_header(req, MCP_SESSION_HEADER))
+        .flatten();
+    let issued_session_id = (legacy_protocol && initialize && legacy.is_none())
+        .then(|| format!("wc_mcp_{}", uuid::Uuid::new_v4().simple()));
+    let identity = if let Some(raw) = openai {
+        // Keep the existing ChatGPT v1 key exactly, including its historical
+        // trimming rule, so existing conversation bindings continue to work.
+        ClientWindow::from_opaque("openai-session", raw)
+    } else if let Some(raw) = codex {
+        scoped_mcp_window("codex-thread", raw, auth)
+    } else if let Some(raw) = header {
+        scoped_mcp_window("client-window-header", raw, auth)
+    } else {
+        legacy
+            .or(issued_session_id.as_deref())
+            .and_then(|raw| ClientWindow::from_opaque("mcp", raw))
+    };
+    Ok(McpWindow {
         identity,
-        issued_session_id: None,
-    }
+        issued_session_id,
+    })
 }
 
+const INVALID_MCP_WINDOW: &str = "invalid_client_window: malformed or ambiguous window identity";
+
+fn metadata_window_id<'a>(
+    params: &'a serde_json::Value,
+    name: &str,
+    legacy_trim: bool,
+) -> Result<Option<&'a str>, &'static str> {
+    let Some(value) = params.get("_meta").and_then(|meta| meta.get(name)) else {
+        return Ok(None);
+    };
+    let raw = value.as_str().ok_or(INVALID_MCP_WINDOW)?;
+    let valid = if legacy_trim {
+        valid_opaque_id(raw)
+    } else {
+        valid_exact_opaque_id(raw)
+    };
+    valid.map(Some).ok_or(INVALID_MCP_WINDOW)
+}
+
+fn explicit_window_header(req: &Request) -> Result<Option<&str>, &'static str> {
+    let mut values = req.headers().get_all(CLIENT_WINDOW_HEADER).iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(INVALID_MCP_WINDOW);
+    }
+    let raw = value.to_str().map_err(|_| INVALID_MCP_WINDOW)?;
+    if valid_exact_opaque_id(raw).is_none()
+        || !raw
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+    {
+        return Err(INVALID_MCP_WINDOW);
+    }
+    Ok(Some(raw))
+}
+
+fn scoped_mcp_window(
+    source: &'static str,
+    raw: &str,
+    auth: Option<&crate::auth::AuthContext>,
+) -> Option<ClientWindow> {
+    use crate::auth::AuthKind;
+
+    let auth = auth.filter(|auth| !auth.is_bootstrap())?;
+    if let Some((user, client)) = auth.managed_oauth_window_identity() {
+        return Some(ClientWindow::from_scoped(
+            source,
+            &["managed-oauth", user, client],
+            raw,
+        ));
+    }
+    let (scope_kind, scope_id) = if auth.is_project_scoped_model_subject() {
+        ("project-grant", auth.project_grant_id.as_deref())
+    } else if auth.is_shared_key() || auth.is_oauth_shared_key_subject() {
+        // Direct shared-key and its OAuth bridge identify the same credential,
+        // not individual holders. Never use an access-token id for this scope.
+        ("shared-key", auth.shared_key_hash.as_deref())
+    } else if auth.kind == AuthKind::ApiToken {
+        ("api-token", auth.api_key_id.as_deref())
+    } else {
+        // Anonymous, bootstrap, incomplete managed OAuth and unsupported
+        // credential kinds can still execute normally without Window affinity.
+        return None;
+    };
+    let scope_id = scope_id.filter(|id| !id.trim().is_empty())?;
+    Some(ClientWindow::from_scoped(
+        source,
+        &[scope_kind, scope_id],
+        raw,
+    ))
+}
+
+// Existing protocol-independent App/trace fixtures need only the ChatGPT
+// adapter. Keep this delegate test-only; HTTP has exactly one resolver above.
+#[cfg(test)]
+pub(crate) fn stateless_mcp_window(params: &serde_json::Value) -> McpWindow {
+    mcp_window(&Request::new(), params, None, false, false)
+        .expect("fixture contains valid Window metadata")
+}
 pub(crate) fn peer_id_from_window_key(window_key: &str) -> Option<String> {
     if window_key.len() != 64
         || !window_key
@@ -190,6 +290,13 @@ fn valid_opaque_id(value: &str) -> Option<&str> {
     .then_some(value)
 }
 
+fn valid_exact_opaque_id(value: &str) -> Option<&str> {
+    (!value.is_empty()
+        && value.len() <= MAX_OPAQUE_ID_BYTES
+        && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte)))
+    .then_some(value)
+}
+
 fn request_is_https(req: &Request) -> bool {
     request_header(req, "x-forwarded-proto")
         .is_some_and(|value| value.eq_ignore_ascii_case("https"))
@@ -217,43 +324,110 @@ mod tests {
     }
 
     #[test]
-    fn stateless_mcp_window_uses_openai_session_metadata() {
+    fn openai_window_preserves_v1_hash_and_trimming() {
         let params = serde_json::json!({
-            "name": "get_runtime_status",
-            "arguments": {},
-            "_meta": {"openai/session": "chat-session-opaque-value"}
+            "_meta": {"openai/session": "  chat-session-opaque-value  "}
         });
-
         let first = stateless_mcp_window(&params);
-        let second = stateless_mcp_window(&params);
-        let identity = first
-            .identity
-            .expect("OpenAI session should yield window identity");
-        let repeated = second
-            .identity
-            .expect("same OpenAI session should yield identity");
-
-        assert_eq!(identity.key(), repeated.key());
+        let identity = first.identity.unwrap();
+        let mut hash = Sha256::new();
+        hash.update(b"webcodex.client-window.v1\0openai-session\0chat-session-opaque-value");
+        assert_eq!(identity.key(), format!("{:x}", hash.finalize()));
         assert_eq!(identity.source(), "openai-session");
-        assert!(!identity.key().contains("chat-session-opaque-value"));
         assert!(first.issued_session_id.is_none());
     }
 
     #[test]
-    fn stateless_mcp_window_without_valid_openai_session_stays_unidentified() {
-        for params in [
-            serde_json::json!({"name": "get_runtime_status", "arguments": {}}),
-            serde_json::json!({"_meta": {}}),
-            serde_json::json!({"_meta": {"openai/session": ""}}),
-            serde_json::json!({"_meta": {"openai/session": 42}}),
-            serde_json::json!({"_meta": {"openai/session": "contains space"}}),
+    fn supported_metadata_is_exact_and_invalid_presence_rejects() {
+        let request = Request::new();
+        for value in [
+            serde_json::json!(""),
+            serde_json::json!("a".repeat(257)),
+            serde_json::json!(" padded "),
+            serde_json::json!("contains space"),
+            serde_json::json!("non-ascii-界"),
+            serde_json::json!("control\n"),
+            serde_json::json!(42),
+            serde_json::Value::Null,
         ] {
-            let window = stateless_mcp_window(&params);
-            assert!(
-                window.identity.is_none(),
-                "unexpected identity for {params}"
-            );
-            assert!(window.issued_session_id.is_none());
+            let params = serde_json::json!({"_meta": {"threadId": value}});
+            assert!(mcp_window(&request, &params, None, false, false).is_err());
         }
+        for value in [serde_json::json!(42), serde_json::json!("contains space")] {
+            let params = serde_json::json!({"_meta": {"openai/session": value}});
+            assert!(mcp_window(&request, &params, None, false, false).is_err());
+        }
+        for params in [
+            serde_json::json!({}),
+            serde_json::json!({"_meta": {}}),
+            serde_json::json!({"_meta": {"windowId": "ignored", "sessionId": "ignored"}}),
+        ] {
+            let result = mcp_window(&request, &params, None, false, false).unwrap();
+            assert!(result.identity.is_none());
+        }
+    }
+
+    #[test]
+    fn scoped_hash_separates_source_and_component_boundaries() {
+        let first = ClientWindow::from_scoped("codex-thread", &["managed-oauth", "ab", "c"], "raw");
+        let second =
+            ClientWindow::from_scoped("codex-thread", &["managed-oauth", "a", "bc"], "raw");
+        let header =
+            ClientWindow::from_scoped("client-window-header", &["managed-oauth", "ab", "c"], "raw");
+        let legacy = ClientWindow::from_opaque("codex-thread", "raw").unwrap();
+        assert_ne!(first.key(), second.key());
+        assert_ne!(first.key(), header.key());
+        assert_ne!(first.key(), legacy.key());
+    }
+
+    #[test]
+    fn header_validation_rejects_ambiguous_or_noncanonical_values() {
+        for raw in ["", " padded ", "a,b", "a/b", "a=b", "tab\t", "control\n"] {
+            let mut request = Request::new();
+            if let Ok(value) = HeaderValue::from_bytes(raw.as_bytes()) {
+                request.headers_mut().append(CLIENT_WINDOW_HEADER, value);
+                assert!(explicit_window_header(&request).is_err());
+            }
+        }
+        let mut request = Request::new();
+        request
+            .headers_mut()
+            .append(CLIENT_WINDOW_HEADER, HeaderValue::from_static("same"));
+        request
+            .headers_mut()
+            .append(CLIENT_WINDOW_HEADER, HeaderValue::from_static("same"));
+        assert!(explicit_window_header(&request).is_err());
+        let mut request = Request::new();
+        request.headers_mut().append(
+            CLIENT_WINDOW_HEADER,
+            HeaderValue::from_bytes(&[0xff]).unwrap(),
+        );
+        assert!(explicit_window_header(&request).is_err());
+    }
+
+    #[test]
+    fn missing_verified_scope_never_infers_one_from_other_auth_fields() {
+        use crate::auth::{AuthContext, AuthKind};
+        for kind in [
+            AuthKind::OpenAnonymous,
+            AuthKind::Bootstrap,
+            AuthKind::OAuth2Token,
+            AuthKind::AgentToken,
+            AuthKind::AccountCredential,
+            AuthKind::ApiToken,
+            AuthKind::SharedKey,
+            AuthKind::ProjectCredential,
+        ] {
+            let mut auth = AuthContext::new(kind);
+            auth.user_id = Some("same-user".into());
+            auth.username = Some("same-name".into());
+            auth.allowed_client_id = Some("same-client".into());
+            assert!(scoped_mcp_window("codex-thread", "thread", Some(&auth)).is_none());
+        }
+        let mut oauth = AuthContext::new(AuthKind::OAuth2Token);
+        oauth.token_kind = Some("oauth2".into());
+        oauth.user_id = Some("user".into());
+        oauth.api_key_id = Some("access-token-must-not-substitute-for-client".into());
+        assert!(scoped_mcp_window("codex-thread", "thread", Some(&oauth)).is_none());
     }
 }

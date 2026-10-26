@@ -107,8 +107,9 @@ impl AuthContext {
         matches!(self.kind, AuthKind::OAuth2Token)
     }
 
-    /// Authenticated managed-user identity for Window Operator continuity only.
+    /// Authenticated managed-user identity for Window continuity only.
     /// OAuth bridge/project-share subjects and incomplete identities stay apart.
+    /// This does not change observation or Peer authorization principals.
     pub(crate) fn managed_oauth_window_identity(&self) -> Option<(&str, &str)> {
         if self.kind != AuthKind::OAuth2Token || self.token_kind.as_deref() != Some("oauth2") {
             return None;

@@ -82,6 +82,7 @@ export function App() {
   const [token, setToken] = useState(initialToken);
   const [view, setViewState] = useState<PrimaryView>(initialView);
   const [selected, setSelected] = useState<SessionLocation | null>(null);
+  const [mobileWindowDetail, setMobileWindowDetail] = useState(false);
   const [workSurface, setWorkSurface] = useState<WorkSurface>("windows");
   const [workWindowTarget, setWorkWindowTarget] = useState<{ windowKey: string; sessionId: string } | null>(null);
   const [sessionNavigation, setSessionNavigation] = useState<SessionLocation | null>(null);
@@ -282,7 +283,7 @@ export function App() {
   }
 
   return (
-    <div className={"app-shell ui-canvas" + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
+    <div data-window-detail={mobileWindowDetail || undefined} className={"app-shell ui-canvas" + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
       <aside className="app-nav ui-glass">
         <div className="nav-brand-row">
           <div className="brand">
@@ -357,6 +358,7 @@ export function App() {
             requestedWindowKey={workWindowTarget?.windowKey}
             requestedSessionId={workWindowTarget?.sessionId}
             onRequestedWindowConsumed={() => setWorkWindowTarget(null)}
+            onMobileDetailChange={setMobileWindowDetail}
             onUnauthorized={handleUnauthorized}
           />
         )}
@@ -379,6 +381,7 @@ export function App() {
             onRefresh={overviewState.refresh}
             updatedAt={overviewState.updatedAt}
             refreshing={overviewState.refreshing}
+            onOpenWindow={openWindow}
             onOpenWork={() => { setWorkSurface("windows"); setView("work"); }}
             onUnauthorized={handleUnauthorized}
             target={runtimeTarget}

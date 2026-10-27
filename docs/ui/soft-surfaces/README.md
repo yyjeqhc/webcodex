@@ -118,3 +118,13 @@ coordinates to distinguish ordinary scrolling from reflow. `--baseline` records
 pre-fix defects separately and is not a passing regression.
 
 ![Window identity groups and equal view buttons](window-metadata-1440-light-zh-CN.png)
+
+## Window board
+
+After building `frontend`, run `node scripts/ui-smoke/window-board.mjs` for the
+Activity overview, wide split, medium drawer and mobile list/detail navigation.
+The fixture-only report and screenshots are regenerated under ignored
+`artifacts/window-board/`, including 1440px light overview/split and 390px light
+list/dark detail. It checks overflow, focus/navigation, the mobile history marker,
+primary navigation restoration and absence of inner mobile activity scrolling.
+The older detail-popover checks describe the superseded Window layout.

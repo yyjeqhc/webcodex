@@ -12,6 +12,19 @@ export type RuntimeLanguage = typeof RUNTIME_LANGUAGES[number]["value"];
 const TRANSLATED_LANGUAGES = ["zh-TW", "ja-JP", "ko-KR", "de-DE", "fr-FR"] as const;
 type Translations = readonly [string, string, string, string, string];
 export const WORK_TEXT: Record<string, Translations> = {
+  "Within 10 minutes": ["10 分鐘內", "10分以内", "10분 이내", "Innerhalb von 10 Minuten", "Dans les 10 minutes"],
+  "Today": ["今天", "今日", "오늘", "Heute", "Aujourd’hui"],
+  "Earlier": ["更早", "以前", "이전", "Früher", "Auparavant"],
+  "All": ["全部", "すべて", "전체", "Alle", "Tout"],
+  "Filter": ["篩選", "フィルター", "필터", "Filter", "Filtrer"],
+  "Synced": ["已同步", "同期済み", "동기화됨", "Synchronisiert", "Synchronisé"],
+  "Resize window list": ["調整視窗清單寬度", "ウィンドウ一覧の幅を変更", "창 목록 너비 조절", "Fensterliste skalieren", "Redimensionner la liste"],
+  "Name": ["名稱", "名前", "이름", "Name", "Nom"],
+  "Source": ["來源", "ソース", "출처", "Quelle", "Source"],
+  "Last active": ["最近活躍", "最終活動", "최근 활동", "Letzte Aktivität", "Dernière activité"],
+  "IDs": ["識別碼", "ID", "ID", "IDs", "Identifiants"],
+  "Back": ["返回", "戻る", "뒤로", "Zurück", "Retour"],
+  "Call diagnostics": ["呼叫診斷", "呼び出し診断", "호출 진단", "Aufrufdiagnose", "Diagnostic des appels"],
   "First observed": ["首次記錄", "初回観測", "최초 관측", "Erstmals beobachtet", "Première observation"],
   "Window ID": ["視窗 ID", "ウィンドウ ID", "창 ID", "Fenster-ID", "ID de fenêtre"],
   "Runner ID": ["執行端 ID", "Runner ID", "Runner ID", "Runner-ID", "ID du Runner"],

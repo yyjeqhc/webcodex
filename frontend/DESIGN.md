@@ -42,7 +42,7 @@ Project Git and Session Window counts are bounded enrichments. They are independ
 
 ## Runtime
 
-Runtime contains Overview, Window Activity and Agents.
+Runtime contains Overview and Agents. Call diagnostics is a collapsed section at the bottom of Overview; its exact Window links open Work › Activity.
 
 Overview shows only authoritative infrastructure facts already available from the Runtime Console APIs: Runner fleet, source/build alignment, active Jobs, visible Workflow Session counts, observed Windows and durable Agent inventory when communication:read is authorized.
 
@@ -105,8 +105,7 @@ shows the last successful sync time and a manual refresh action. Independent
 server status and Runner inventory reads run concurrently.
 
 Window headers and Session context expose selectable, complete canonical IDs with
-copy actions and explicit clipboard failure feedback. Window identity opens as a
-floating panel, so inspecting it never resizes the activity or collaboration panes.
+copy actions and explicit clipboard failure feedback. Window identity is always inspectable in the detail field strip; mobile groups canonical IDs in a disclosure.
 Switching Windows keeps the current Window/Collaboration view and clears Session
 focus. The collaboration composer edits the same single Session focus as the
 activity filter; it is the message's explicit context, never an inferred one.
@@ -160,11 +159,33 @@ Runtime reserves its page scrollbar gutter so switching between the long Overvie
 and short, denied or available Agent content does not recenter the heading and
 tab strip. Runtime Overview/Agents and Window/Collaboration each use two equal
 120px tracks, shrinking together when constrained, independent of the selected
-label or activity count. Expanding Window details can move the tabs vertically;
-switching their content preserves the expanded header geometry.
+label or activity count. Window/Collaboration counts stay inside the activity feed, including bounded-history warnings.
 
-Window details use a semantic definition list with labels above their values:
-Window ID, Runner ID, Directory and Project ID. Full values wrap within each
-field, with an exact-value copy action. First observed reflects the Window's
-first-seen timestamp. Desktop/embedded styles and backend authority remain
+## Work › Activity window board
+
+Activity starts with a full-width board. Rows group retained request facts as
+Running (an active request), Within 10 minutes, Today (local calendar date), or
+Earlier. Recency uses meaningful activity, falling back to last request activity;
+these tiers do not assert host presence or whether a conversation is closed.
+Rows expose source, linked Session count, machine, Project/path, first activity,
+last activity and the current/latest tool. Default titles use the workspace name
+and the first four Window-key characters. Search matches visible context and exact
+Window keys. Project filtering remains server-side and selected Windows omitted
+by a filter or bounded inventory remain pinned. A successful sync timestamp belongs
+to the inventory hook, independently from Server activity timestamps.
+
+At 1280px and wider, selection opens a split detail pane. The 400px list can be
+resized between 320px and 60% of its container; its width is a non-secret browser
+preference. Close or Escape returns to the full board, except while editing or
+using an overlay. At 701–1279px the four-column board opens a right drawer and
+restores row focus on close. At 700px and below, three-line cards and details are
+separate pages sharing the shell's content scroller. A state-only browser-history
+marker supports Back; identifiers never enter the URL. The detail header and tabs
+stay visible, the collaboration composer stays at the bottom, and primary mobile
+navigation returns when details close. Safe-area insets apply to sticky controls.
+Machine/source/time/path facts remain visible; IDs use an expandable section on
+mobile. Window and Collaboration keep the existing evidence and authority behavior.
+
+Board layout lives in `src/runtime-v2/styles-window-board.css`, imported after the
+shared Runtime styles. Desktop/embedded styles and backend authority remain
 independent of these Web presentation rules.

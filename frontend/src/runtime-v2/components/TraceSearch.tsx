@@ -12,7 +12,8 @@ function localDate(value: number): string {
   return new Date(value - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 19);
 }
 
-export function TraceSearch({ client, language, onSelectWindow }: {
+export function TraceSearch({ client, language, onSelectWindow, title = "Find calls by time or Project" }: {
+  title?: string;
   client: RuntimeV2Client; language: RuntimeLanguage; onSelectWindow: (key: string) => void;
 }) {
   const t = (value: string) => translate(value, language);
@@ -39,7 +40,7 @@ export function TraceSearch({ client, language, onSelectWindow }: {
     if (value) setPage(value);
   };
   return <details className="trace-search">
-    <summary>{t("Find calls by time or Project")}</summary>
+    <summary>{t(title)}</summary>
     <p className="inventory-note">{t("Administrator diagnostics. No Window hash is required. Queries run only on request.")}</p>
     <form onSubmit={event => { event.preventDefault(); void search(); }}>
       <label>{t("Exact Project ID")}<input value={project} onChange={event => setProject(event.target.value)} placeholder="agent:special:project" /></label>

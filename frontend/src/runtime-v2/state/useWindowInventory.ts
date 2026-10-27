@@ -19,6 +19,7 @@ export function useWindowInventory(client: RuntimeV2Client, enabled: boolean, on
   }, [key]);
   const authorityRevision = client.authorityRevision ?? 0;
   const owner = useRef({ client, key, authorityRevision });
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [history, setHistory] = useState<WindowSummary[]>([]);
   const [recent, setRecent] = useState<WindowSummary[]>([]);
   const [live, setLive] = useState<WindowSummary[] | null>(null);
@@ -39,7 +40,7 @@ export function useWindowInventory(client: RuntimeV2Client, enabled: boolean, on
   const liveRequest = useRef<AbortController | null>(null);
   const snapshot = useRef({ history, next }); snapshot.current = { history, next };
   const clear = useCallback(() => {
-    setHistory([]); setRecent([]); setLive(null); setTotal(0); setNext(undefined); setLiveUnavailable(false);
+    setUpdatedAt(null); setHistory([]); setRecent([]); setLive(null); setTotal(0); setNext(undefined); setLiveUnavailable(false);
     lastLive.current = []; liveSequence.current = 0; observedByKey.current.clear();
     completionRequest.current?.abort(); completionRequest.current = null;
   }, []);
@@ -120,6 +121,7 @@ export function useWindowInventory(client: RuntimeV2Client, enabled: boolean, on
       setTotal(data.total || 0);
       setNext(data.next_offset ?? (data.truncated && rows.length ? offset + rows.length : undefined));
       setScope(data.visibility?.scope === "global" ? "global" : "principal");
+      setUpdatedAt(Date.now());
       setAvailability("available");
     }).catch(() => {
       if (controller.signal.aborted || inventoryRequest.current !== controller) return;
@@ -166,7 +168,7 @@ export function useWindowInventory(client: RuntimeV2Client, enabled: boolean, on
       if (!response) { setLiveUnavailable(true); return; }
       if (denied(response.status)) return;
       if (!response.ok || !response.data) { setLiveUnavailable(true); return; }
-      setLiveUnavailable(false);
+      setLiveUnavailable(false); setUpdatedAt(Date.now());
       const rows = response.data.windows || [];
       const activeKeys = new Set(rows.filter(row => row.active_count > 0).map(row => row.client_window_key));
       const completed = lastLive.current.filter(row => row.active_count > 0 && !activeKeys.has(row.client_window_key) && row.client_window_key !== options.detailWindowKey).map(row => row.client_window_key);
@@ -231,5 +233,6 @@ export function useWindowInventory(client: RuntimeV2Client, enabled: boolean, on
   const current = enabled && owner.current.client === client && owner.current.key === key && owner.current.authorityRevision === authorityRevision;
   return { availability: current ? (liveUnavailable && availability === "available" ? "stale" as const : availability) : enabled ? "loading" as const : "idle" as const, windows: current ? windows : [], historicalWindows: current ? historicalWindows : [],
     liveByKey: current ? liveByKey : new Map<string, WindowSummary>(), total: current ? total : 0, truncated: current && next !== undefined,
+    updatedAt: current ? updatedAt : null,
     scope: current ? scope : "principal" as const, refresh, loadMore, loadingMore: current && loadingMore, removeWindow, updateWindow, beginObservation };
 }

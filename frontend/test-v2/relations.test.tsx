@@ -398,6 +398,7 @@ describe("Project / Session / Window relationships", () => {
       <WindowWorkbench client={client} language="en" projects={overview.projects}
         onUnauthorized={vi.fn()} />,
     );
+    fireEvent.click(await screen.findByTestId("work-window-row-" + key));
     expect((await screen.findAllByText("tool-204")).length).toBeGreaterThan(0);
     expect(screen.getAllByTestId("window-workflow-step")).toHaveLength(80);
     fireEvent.click(screen.getByRole("button", { name: /Show more calls/ }));

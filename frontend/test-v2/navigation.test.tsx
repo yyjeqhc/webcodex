@@ -239,6 +239,7 @@ describe("Runtime v2 navigation", () => {
     installFetch(undefined, () => pendingWindow);
     render(<App />);
     expect(await screen.findByRole("searchbox", { name: "Search Windows" })).toBeTruthy();
+    fireEvent.click(await screen.findByTestId("work-window-row-" + "a".repeat(64)));
     await waitFor(() => expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => String(url).endsWith("/api/runtime-console/window"))).toBe(true));
 
     fireEvent.click(screen.getByRole("button", { name: "Lock" }));

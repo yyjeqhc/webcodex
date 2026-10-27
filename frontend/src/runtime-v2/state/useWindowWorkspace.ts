@@ -82,6 +82,7 @@ function mergeFullWindowDetail(
 }
 
 export type WindowWorkspaceState = {
+  updatedAt: number | null;
   availability: Availability;
   detailAvailability: Availability;
   detailHydrating: boolean;
@@ -107,6 +108,7 @@ export function useWindowWorkspace(
     backgroundRefreshMs?: number;
     fullDetailRefreshMs?: number;
     loadDetail?: boolean;
+    autoSelect?: boolean;
     initialWindowKey?: string;
     projects?: string[];
   } = {},
@@ -143,8 +145,8 @@ export function useWindowWorkspace(
   }, [inventory.refresh]);
 
   useEffect(() => {
-    setSelectedKey(current => current || String(windows[0]?.client_window_key || ""));
-  }, [windows]);
+    if (options.autoSelect !== false) setSelectedKey(current => current || String(windows[0]?.client_window_key || ""));
+  }, [windows, options.autoSelect]);
 
   useEffect(() => {
     if (availability === "denied") {
@@ -319,6 +321,7 @@ export function useWindowWorkspace(
     owner.selectedKey === selectedKey && owner.enabled === enabled && owner.loadDetail === loadDetail;
 
   return {
+    updatedAt: inventory.updatedAt,
     availability,
     detailAvailability: availability === "denied" ? "denied" : currentDetail ? detailAvailability : enabled && loadDetail ? "loading" : "idle",
     detailHydrating: currentDetail && detailHydrating,

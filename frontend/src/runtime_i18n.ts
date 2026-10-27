@@ -4,6 +4,17 @@ export { RUNTIME_LANGUAGES, type RuntimeLanguage } from "./runtime_locales.js";
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Within 10 minutes": "10 分钟内",
+  "Today": "今天",
+  "Earlier": "更早",
+  "All": "全部",
+  "Filter": "筛选",
+  "Synced": "已同步",
+  "Resize window list": "调整窗口列表宽度",
+  "Name": "名称",
+  "Last active": "最近活跃",
+  "IDs": "标识符",
+  "Back": "返回",
   "First observed": "首次记录",
   "Last request activity": "最近请求活动",
   "Last meaningful activity": "最近有效活动",

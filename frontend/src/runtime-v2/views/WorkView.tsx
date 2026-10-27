@@ -32,6 +32,7 @@ type Props = {
   requestedWindowKey?: string;
   requestedSessionId?: string;
   onRequestedWindowConsumed?: () => void;
+  onMobileDetailChange?: (open: boolean) => void;
 };
 
 export function WorkView({
@@ -53,6 +54,7 @@ export function WorkView({
   requestedWindowKey,
   requestedSessionId,
   onRequestedWindowConsumed,
+  onMobileDetailChange,
 }: Props) {
   const t = (value: string) => translate(value, language);
   const [search, setSearch] = useState("");
@@ -62,7 +64,7 @@ export function WorkView({
   const git = useProjectGit(client, Boolean(selected && surface === "session"), selected?.projectId || "");
 
   // Keep one selector mounted when the underlying workbench changes.
-  const withNavigation = (body: ReactNode) => <div className="work-view-shell">
+  const withNavigation = (body: ReactNode) => <div className={"work-view-shell" + (surface === "windows" ? " window-board-shell" : "")}>
     <div className="work-view-navigation"><WorkSurfaceSwitch surface={surface} onSurfaceChange={onSurfaceChange} language={language} /></div>
     <div className="work-view-body">{body}</div>
   </div>;
@@ -95,6 +97,7 @@ export function WorkView({
         requestedWindowKey={requestedWindowKey}
         requestedSessionId={requestedSessionId}
         onRequestedWindowConsumed={onRequestedWindowConsumed}
+        onMobileDetailChange={onMobileDetailChange}
       />
     );
   }

@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 import { expect, it, vi } from "vitest";
 import type { RuntimeV2Client } from "../src/runtime-v2/api/client.js";
 import { TraceCallDetails } from "../src/runtime-v2/components/TraceCallDetails.js";
+import { RuntimeView } from "../src/runtime-v2/views/RuntimeView.js";
 import { TraceSearch } from "../src/runtime-v2/components/TraceSearch.js";
 import { UiProvider } from "../src/ui/UiProvider.js";
 
@@ -95,4 +96,16 @@ it("queries without a Window hash and pages with the returned effective time ran
   fireEvent.click(screen.getByRole("button", { name: "Next call page" }));
   await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
   expect(post.mock.calls[1][1]).toEqual({ query, offset: 20, limit: 20 });
+});
+
+it("places collapsed call diagnostics under Runtime Overview and opens the exact Window", async () => {
+  const post = vi.fn(async () => ok({ status: "available", calls: [{ trace_ref: "trace", window_key: "target", observed_at_ms: 100 }] }));
+  const open = vi.fn();
+  render(<RuntimeView client={client(post)} language="en" overview={null} overviewAvailability="available" onOpenWork={vi.fn()} onOpenWindow={open} onUnauthorized={vi.fn()} />);
+  const summary = screen.getByText("Call diagnostics");
+  expect(summary.closest("details")?.open).toBe(false);
+  fireEvent.click(summary);
+  fireEvent.click(screen.getByRole("button", { name: "Search retained calls" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Open Window/ }));
+  expect(open).toHaveBeenCalledWith("target");
 });

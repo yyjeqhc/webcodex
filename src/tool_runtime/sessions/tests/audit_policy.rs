@@ -72,7 +72,7 @@ fn canonical_audit_policies_keep_private_payloads_out_of_durable_session_ledger(
         store.record_tool_call_finished(start, true, &projected, None, None);
     }
     store.flush_persistence();
-    let persisted = std::fs::read_to_string(&ledger).unwrap();
+    let persisted = webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap();
     assert!(
         !persisted.contains("PRIVATE_"),
         "private sentinel in persisted audit ledger near {:?}",
@@ -127,7 +127,7 @@ fn canonical_audit_evidence_preserves_only_existing_bounded_execution_excerpts()
         );
         store.record_tool_call_finished(start, true, &projected, None, None);
         store.flush_persistence();
-        let persisted = std::fs::read_to_string(&ledger).unwrap();
+        let persisted = webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap();
         assert!(!persisted.contains("PRIVATE_"), "{name}");
         assert_eq!(
             persisted.contains("allowed stdout witness"),

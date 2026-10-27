@@ -916,7 +916,7 @@ async fn restart_restored_coding_task_session_reloads_rules_without_persisting_b
     .await;
     assert!(read.success, "{:?}", read.error);
     runtime1.sessions.flush_persistence();
-    let persisted = fs::read_to_string(&ledger).unwrap();
+    let persisted = runtime1.sessions.persisted_json_for_test();
     assert!(!persisted.contains(marker));
     assert!(!persisted.contains(source_marker));
     assert!(!persisted.contains("Repository rules"));

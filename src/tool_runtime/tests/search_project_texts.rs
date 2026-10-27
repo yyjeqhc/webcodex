@@ -2286,7 +2286,7 @@ async fn search_project_texts_records_one_event_without_patterns_and_aggregates_
     assert!(!memory_ledger.contains(&root.path().to_string_lossy().to_string()));
 
     runtime.sessions.flush_persistence();
-    let persisted = std::fs::read_to_string(&ledger).unwrap();
+    let persisted = webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap();
     assert!(!persisted.contains("RAW_BATCH_PATTERN_ALPHA"));
     assert!(!persisted.contains("RAW_BATCH_PATTERN_BETA"));
     assert!(!persisted.contains(&root.path().to_string_lossy().to_string()));

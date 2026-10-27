@@ -133,7 +133,7 @@ Workflow Session lifecycle is independent from the durable `wc_goal_*` Goal doma
 
 ### Storage and ownership
 
-A `session_ref` is only a short model selector. The Server owns a durable mapping scoped to the authenticated principal and pins the ref to one exact canonical Workflow Session incarnation. Resolving it produces the canonical `wc_sess_*` before business authorization/dispatch; the ordinary Project visibility, Session authority, lifecycle, and guard checks then run unchanged. The ref is not a credential, bearer capability, recorder identity, or "current/recent Session" inference. If the pinned Session disappears or its exact incarnation cannot be proven, the old ref fails closed and is never recycled or silently retargeted. When the caller's own ref still pins that exact incarnation and a retention tombstone for that canonical id is still present, resolution returns `session_retention_expired` for that canonical id and does not continue the call. A foreign, malformed, missing, incarnation-mismatched, or already-aged-out ref remains `unknown_session_ref` and is never rewritten. Canonical Session ids remain authoritative for persistence, audit, diagnostics, internal joins, and explicit API/CLI consumers.
+A `session_ref` is only a short model selector. The Server owns a durable mapping scoped to the authenticated principal and pins the ref to one exact canonical Workflow Session incarnation. Resolving it produces the canonical `wc_sess_*` before business authorization/dispatch; the ordinary Project visibility, Session authority, lifecycle, and guard checks then run unchanged. The ref is not a credential, bearer capability, recorder identity, or "current/recent Session" inference. If the pinned Session disappears or its exact incarnation cannot be proven, the old ref fails closed and is never recycled or silently retargeted. When the caller's own ref still pins that exact incarnation and a retention tombstone for that canonical id is still present, resolution returns `session_retention_expired` for that canonical id and does not continue the call. A foreign, malformed, missing, or incarnation-mismatched ref remains `unknown_session_ref` and is never rewritten. Canonical Session ids remain authoritative for persistence, audit, diagnostics, internal joins, and explicit API/CLI consumers.
 
 For exact `work_on_project` checkout resume, `session_id + instruction` is sufficient: the shared startup engine authorizes the selected Session, obtains its bound canonical Project, and runs ordinary current Project resolution/authorization and the same Session/Project, lifecycle, capability and recorder fences. An explicit Project must still match. Fresh work and managed-worktree mode require an explicit Project source. An unscoped Session cannot supply one. Neither missing/Closed/inaccessible Session state nor recorder/Window identity selects a replacement. Session refs continue to pin Session incarnation; Project refs separately pin canonical Project/root identity. This convenience does not add a historical filesystem snapshot or change either identity contract.
 
@@ -141,32 +141,37 @@ The original Window's `workflow.resume` discovery emits an optional `project_ref
 
 Model-facing `session_id` input schemas must admit `~sN` wherever the kernel accepts a Session selector, including exact resume and card presentation. Canonical-id-only input regexes would let a strict Host reject the ref before resolution. This does not widen output `session_id`, persisted IDs, or other identity domains: outputs retain canonical identity, and the separate `session_ref` field carries the selector. Unknown, malformed, foreign, or stale refs still fail in the existing resolver and authorization path. A retained Closed Session follows the same lifecycle rules as its canonical id: historical reads may succeed, but a selector never reopens it or permits a mutation denied to the canonical id.
 
-Canonical Session identity/retention is separate from in-memory residency. `Active` and `Closed` are business lifecycle states; hot/cold residency and LRU ordering never transition or delete an Active identity. The `hot_session_capacity_target` bounds expanded records using the existing access order; zero permits one mutation target. Overflow compacts older records into canonical JSON **retained in RAM**, not disk-backed paging. Exact mutations hydrate the selected Active record under the store lock. Queries materialize temporary snapshots without promoting history scans. Startup sanitizes one disk row at a time and retains Active and Closed rows Cold. Live round trips preserve instruction snapshots and replay metadata without rerunning disk-restore sanitization. This is a count-based working-set target, not a hard heap-byte limit; Cold bytes, metadata, in-flight snapshots and live instruction bodies remain allocated. See [Active Session residency](../implementation/session-active-residency.md).
+Canonical Session identity and history are separate from in-memory residency.
+Active and Closed Sessions, events and messages persist in domain tables in the
+configured SQLite `webcodex.db`, with no automatic count or idle expiry. Closing,
+cache eviction and restart never recycle a canonical id or `~sN`. Imported legacy
+tombstones preserve owner-scoped `session_retention_expired` evidence; no new
+count-based tombstones are created. Storage failures remain unavailable/uncertain,
+not permission to infer another Session.
 
-Closed historical rows use an independent bounded retention policy. Closed Sessions are coldified to compact durable JSON and remain queryable while retained; mutation remains denied and retention never reopens them. `historical_session_retention_limit` bounds retained Closed history only. When that explicit historical policy removes an old Closed row, the v2 ledger keeps a row-local `retention_tombstone` for that exact canonical id, owning principal, and incarnation fingerprint, together with an `expiry_ordinal` that stores only relative expiration order. A restored ordinal with no greater successor is compacted, before the next allocation, into a dense increasing range over the retained tombstones; canonical id, owner, and incarnation stay the same, and the oldest tombstone remains the eviction victim. Tombstones share `historical_session_retention_limit` as a separate ceiling and do not count as retained, closed, hot, or cold Sessions. A later lookup by the owning principal returns `session_retention_expired` and does not reopen the Session. Any other principal receives `unknown_session_id`, the same result as an id that was never present. After a tombstone ages out, that id is no longer distinguishable from one that was never present. Active Sessions are never removed or tombstoned to satisfy hot capacity. An older v2 reader ignores tombstone rows and keeps Session rows. The compatibility `max_sessions` status field now aliases the hot capacity target and must not be interpreted as permission to delete durable Active Sessions.
+Current state and history use separate rows. A mutation writes only dirty Session
+state and event/message deltas in one SQLite WAL transaction. The dedicated writer
+coalesces ordinary changes for 20 ms. Explicit generation barriers await successful
+commits asynchronously; already committed observations do not write. New Session
+success, restart-safe message delivery, completion/assignment evidence and
+observation tokens retain their durability boundaries. Cancellation does not
+rollback an accepted mutation or grant permission to replay an effect.
 
-Access recency is maintained by a store-owned ordered index with separate Closed
-eligibility; it is not business lifecycle or activity. Exact reads update that
-index without appending ledger events or scheduling a write. The background
-whole-ledger writer coalesces ordinary asynchronous dirty marks for at most a
-fixed 20 ms scheduling window from the first pending mark. Progress never resets
-that deadline. Explicit generation flushes and shutdown bypass coalescing, while
-preserving existing write ordering and persistence-error reporting. I/O can take
-longer; this is neither a fsync nor a power-loss guarantee. Ledger version 2 and
-its per-cycle full snapshot format are unchanged. Implementation evidence and
-tradeoffs: [SessionStore access and writes](../implementation/session-store-access-and-write-scheduling.md).
+Startup retains compact current-state metadata and committed revision locators.
+Reads materialize temporary records; clean expanded records use an estimated
+16 MiB cache target. Dirty state cannot be evicted to an older disk image. The
+2,000-event recent window and Console's default 100 activities are working-set
+and response limits; older event rows remain on disk. The latest task instruction
+remains current state independently of the event window. New runtime requests
+apply async backpressure when deferred changes accumulate or persistence fails.
+This is not a hard RSS ceiling: the identity index, instructions, dirty/in-flight
+state and one selected Session's full message board can add memory.
 
-Restart-safe message delivery, assignment/completion fences, message replacement
-and withdrawal, and observation-token issuance await their exact persistence
-generation without blocking a Tokio worker on the writer's condition variable.
-An accepted in-memory mutation schedules persistence and notifies message observers
-before waiting, so canceling the request cannot discard that mutation or its wakeup.
-Success still requires persistence confirmation; cancellation is neither rollback
-nor permission to replay an effect. Existing delivery/completion keys and failure
-responses remain the authority for safe recovery. Full-ledger snapshot and write
-costs remain separate from this asynchronous acknowledgement boundary.
-
-Per-Session event and message tails remain independently bounded (`DEFAULT_MAX_EVENTS_PER_SESSION` and `DEFAULT_MAX_MESSAGES_PER_SESSION`); preserving a canonical Active identity does not turn its event/message history into an unbounded archive. The persistence wire shape remains ledger version 2. A retention tombstone is an additional row-local object in the same `sessions` array, not a Session row and not a new ledger version. Existing Session rows already deleted by an older Server cannot be reconstructed by upgrading: tombstones apply only to Closed rows removed after this behavior is present.
+Existing JSON-v2 history imports once with an atomic marker, preserving the source
+file and previous loss evidence. Unsupported or structurally corrupt input fails
+startup rather than publishing a partial/empty store. The original JSON stops
+receiving updates after cutover. Current storage, recovery, metrics and operational
+limits: [Session storage and residency](../implementation/session-active-residency.md).
 
 `recording_session_id` remains a separate provenance contract. It may explicitly carry the same principal-scoped `session_ref` returned for that exact Session; Runtime canonicalizes the ref before recorder authorization and durable provenance recording. This does not make recorder provenance a business Session target, and omission never selects a recorder implicitly or creates sticky recorder context.
 
@@ -319,7 +324,7 @@ A no-token call establishes the current baseline and returns no historical messa
 
 Retention correctness does not infer continuity from deque length or position. Retained messages keep their latest internal observation revisions and the Session persists a low-watermark for removed observation history, including non-FIFO completion retention holes. `history_lost=true` tells callers when a cursor predates state that can no longer be reconstructed. With pagination, a token advances only through the last returned change while `has_more=true`. Observation-token issuance fences the ledger generation containing the cursor revision, so tokens issued by the current implementation remain valid across Server restart when the Session itself restores.
 
-`delivery_key` replay is likewise durable but bounded by message retention rather than an unbounded global idempotency ledger. While the keyed Session or Peer message remains retained, exact same-payload retries return the original `message_id` across Server restart and conflicting key reuse fails closed. Once the corresponding retained message/replay metadata is evicted by the existing bounded retention policy, that old key is no longer promised as replay authority.
+Session `delivery_key` replay persists with the message and has no automatic count expiry. Exact same-payload retries return the original `message_id` across Server restart; conflicting key reuse fails closed. Peer messages remain a distinct domain with their existing bounded retention policy; changing Session storage does not extend Peer replay authority.
 
 Waiting uses process-local notification only as a wake signal; durable revision state remains the truth. No Session-store or persistence-writer mutex is held across the bounded await, unrelated Session mutation can only cause a spurious recheck, and timeout is a successful unchanged result rather than a tool failure.
 
@@ -690,11 +695,12 @@ a `finish_coding_task` verdict.
   A fresh session reports
   `status = not_applicable`, `reason_code = fresh_session`.
 - **Attempt boundary:** the attempt window is segmented by the most recent
-  `task_instruction` retained in the ledger window. When that instruction has
-  been evicted by the bounded event limit, the boundary is reported as
-  `source = unavailable`, `reason_code = attempt_boundary_evicted`, and
-  `event_range.complete = false` — the projection never masquerades a truncated
-  retained window as `session_start` with `complete = true`.
+  `task_instruction`. Its current-state projection survives leaving the recent
+  event window. If intervening events are outside that window, the boundary
+  remains known but `reason_code = attempt_history_outside_window` and
+  `event_range.complete = false`. Previously imported history with no recoverable
+  instruction retains `attempt_boundary_evicted`; a partial window never becomes
+  `session_start` with `complete = true`.
 - **Exploration workset:** `attempt.exploration` projects only successful,
   structured evidence from focused `read_files`, `search_project_texts`, and
   typed LSP navigation calls. The existing ledger retains only a bounded set

@@ -98,13 +98,10 @@ fn session_store_bounds_event_limit() {
 fn default_session_retention_exceeds_model_summary_window_and_persists() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");
-    let store = SessionStore::with_persistence(
-        &ledger,
-        DEFAULT_MAX_SESSIONS,
-        DEFAULT_MAX_EVENTS_PER_SESSION,
-    );
-    assert_eq!(store.status().max_events_per_session, 2000);
-    assert!(DEFAULT_MAX_EVENTS_PER_SESSION > MAX_SUMMARY_LIMIT);
+    let store =
+        SessionStore::with_persistence(&ledger, DEFAULT_MAX_SESSIONS, DEFAULT_RECENT_EVENT_LIMIT);
+    assert_eq!(store.status().recent_event_limit, 2000);
+    assert!(DEFAULT_RECENT_EVENT_LIMIT > MAX_SUMMARY_LIMIT);
 
     let session = store.start_session(Some("agent:test:long-session".to_string()), None);
     for index in 0..160 {
@@ -119,7 +116,8 @@ fn default_session_retention_exceeds_model_summary_window_and_persists() {
     }
     store.flush_persistence();
 
-    let raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let raw: Value =
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger).unwrap()).unwrap();
     let persisted = raw["sessions"]
         .as_array()
         .unwrap()
@@ -128,7 +126,7 @@ fn default_session_retention_exceeds_model_summary_window_and_persists() {
         .unwrap();
     let persisted_events = persisted["events"].as_array().unwrap().len();
     assert!(persisted_events > MAX_SUMMARY_LIMIT, "{persisted_events}");
-    assert!(persisted_events <= DEFAULT_MAX_EVENTS_PER_SESSION);
+    assert!(persisted_events <= DEFAULT_RECENT_EVENT_LIMIT);
 
     let summary = store
         .summary(&session.session_id, Some(usize::MAX))
@@ -147,22 +145,19 @@ fn default_session_retention_exceeds_model_summary_window_and_persists() {
     );
 
     drop(store);
-    let restored = SessionStore::with_persistence(
-        &ledger,
-        DEFAULT_MAX_SESSIONS,
-        DEFAULT_MAX_EVENTS_PER_SESSION,
-    );
+    let restored =
+        SessionStore::with_persistence(&ledger, DEFAULT_MAX_SESSIONS, DEFAULT_RECENT_EVENT_LIMIT);
     let restored_summary = restored
         .summary(&session.session_id, Some(usize::MAX))
         .unwrap();
     assert_eq!(restored_summary.events_total, persisted_events);
     assert_eq!(restored_summary.events_returned, MAX_SUMMARY_LIMIT);
-    assert_eq!(restored.status().max_events_per_session, 2000);
+    assert_eq!(restored.status().recent_event_limit, 2000);
 }
 
 #[test]
 fn retained_task_instruction_identity_survives_summary_tail_and_fences_later_attempt() {
-    let store = SessionStore::new(10, DEFAULT_MAX_EVENTS_PER_SESSION);
+    let store = SessionStore::new(10, DEFAULT_RECENT_EVENT_LIMIT);
     let request = |resume_session_id: Option<String>, instruction: &str| CodingSessionRequest {
         project: "agent:test:attempt-fence".to_string(),
         authority_fingerprint: TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.to_string(),
@@ -285,14 +280,22 @@ fn coding_instruction_redacts_reusable_credentials_without_truncating_normal_goa
 }
 
 fn persistent_store(path: PathBuf) -> SessionStore {
-    SessionStore::with_persistence(path, 10, 10)
+    if path.exists() {
+        crate::test_storage::import_ledger(path, 10, 10)
+    } else {
+        SessionStore::with_persistence(path, 10, 10)
+    }
 }
 
 /// Flush deferred ledger writes, then open a fresh store from the same path.
 /// Required because persistent stores write on a background thread.
 fn flush_and_restore(store: &SessionStore, path: PathBuf) -> SessionStore {
     store.flush_persistence();
-    SessionStore::with_persistence(path, 10, 10)
+    if path.exists() {
+        crate::test_storage::import_ledger(path, 10, 10)
+    } else {
+        SessionStore::with_persistence(path, 10, 10)
+    }
 }
 
 #[test]
@@ -306,7 +309,7 @@ fn session_store_persists_and_restores_basic_session() {
     );
 
     store.flush_persistence();
-    let raw = std::fs::read_to_string(&ledger).unwrap();
+    let raw = crate::test_storage::read_ledger(&ledger).unwrap();
     assert!(
         !raw.contains('\n'),
         "production ledger should use compact JSON"
@@ -406,13 +409,14 @@ fn coding_git_baseline_and_repository_edit_fact_persist_resume_and_default_legac
     assert!(resumed.summary.repository_edit_observed);
 
     restored.flush_persistence();
-    let mut legacy: Value = serde_json::from_slice(&std::fs::read(&ledger).unwrap()).unwrap();
+    let mut legacy: Value =
+        serde_json::from_slice(&crate::test_storage::read_ledger_bytes(&ledger).unwrap()).unwrap();
     let row = legacy["sessions"][0].as_object_mut().unwrap();
     row.remove("git_baseline_tree");
     row.remove("repository_edit_observed");
     std::fs::write(&ledger, serde_json::to_vec(&legacy).unwrap()).unwrap();
 
-    let legacy_restored = SessionStore::with_persistence(ledger, 10, 10);
+    let legacy_restored = crate::test_storage::import_ledger(ledger, 10, 10);
     let legacy_summary = legacy_restored.summary(&session_id, Some(20)).unwrap();
     assert_eq!(legacy_summary.git_baseline_tree, None);
     assert!(!legacy_summary.repository_edit_observed);
@@ -469,7 +473,9 @@ fn session_execution_context_persistence_matrix() {
         assert_eq!(session.execution_context, expected, "{label}");
 
         store.flush_persistence();
-        let value: Value = serde_json::from_slice(&std::fs::read(&ledger).unwrap()).unwrap();
+        let value: Value =
+            serde_json::from_slice(&crate::test_storage::read_ledger_bytes(&ledger).unwrap())
+                .unwrap();
         assert_eq!(
             value["sessions"][0]["execution_context"], persisted_context,
             "{label}"
@@ -696,7 +702,7 @@ fn persistent_shell_evidence_survives_restore_without_command_or_output() {
         None,
     );
     store.flush_persistence();
-    let persisted = std::fs::read_to_string(&ledger).unwrap();
+    let persisted = crate::test_storage::read_ledger(&ledger).unwrap();
     assert!(!persisted.contains("PRIVATE_LEDGER_VALUE"));
     assert!(!persisted.contains("\"stdout\""));
     assert!(!persisted.contains("\"stderr\""));
@@ -800,7 +806,7 @@ fn malicious_persisted_validation_output_summary_is_resanitized_on_restore() {
 
     store.flush_persistence();
     let mut ledger_value: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger).unwrap()).unwrap();
     let events = ledger_value["sessions"][0]["events"]
         .as_array_mut()
         .unwrap();
@@ -960,7 +966,7 @@ fn legacy_session_events_without_observed_paths_restore_with_empty_evidence() {
     store.flush_persistence();
 
     let mut ledger_value: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger).unwrap()).unwrap();
     for event in ledger_value["sessions"][0]["events"]
         .as_array_mut()
         .unwrap()
@@ -994,7 +1000,7 @@ fn legacy_session_events_without_validation_output_summary_restore() {
     store.record_tool_call_finished(start, true, &json!({"exit_code": 0}), None, None);
 
     store.flush_persistence();
-    let ledger_text = std::fs::read_to_string(&ledger).unwrap();
+    let ledger_text = crate::test_storage::read_ledger(&ledger).unwrap();
     assert!(
         !ledger_text.contains("validation_output_summary"),
         "legacy fixture should omit validation_output_summary: {ledger_text}"
@@ -1052,21 +1058,12 @@ fn resolved_message_survives_restore() {
 }
 
 #[test]
-fn corrupted_ledger_does_not_panic() {
+fn corrupt_migration_fails_startup_without_publishing_an_empty_store() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");
     std::fs::write(&ledger, "{not valid json").unwrap();
 
-    let store = persistent_store(ledger);
-    let status = store.status();
-    assert_eq!(status.persistence, "enabled");
-    assert_eq!(status.restored_sessions, 0);
-    assert!(status
-        .last_persist_error
-        .as_deref()
-        .unwrap()
-        .contains("restore_failed"));
-    assert!(store.summary("wc_sess_missing", None).is_none());
+    crate::test_storage::assert_import_rejected(&ledger);
 }
 
 #[test]
@@ -1351,10 +1348,8 @@ fn active_session_survives_capacity_churn_and_keeps_exact_identity_and_fences() 
     ));
 
     let status = store.status();
-    assert_eq!(status.hot_session_capacity_target, 1);
-    assert!(status.retained_sessions > status.hot_session_capacity_target);
+    assert!(status.retained_sessions > 1);
     assert_eq!(status.active_sessions, status.retained_sessions);
-    assert_eq!(status.capacity_evictions, 0);
 }
 
 #[test]
@@ -1466,15 +1461,13 @@ fn restore_boundary_preserves_older_active_sessions_beyond_hot_target() {
         Some(SessionLifecycle::Active)
     );
     let status = restored.status();
-    assert_eq!(status.hot_session_capacity_target, 1);
     assert_eq!(status.retained_sessions, 3);
     assert_eq!(status.active_sessions, 3);
     assert_eq!(status.closed_sessions, 0);
-    assert_eq!(status.capacity_evictions, 0);
 }
 
 #[test]
-fn restore_prunes_only_old_closed_history_and_keeps_active_identity() {
+fn restore_preserves_all_closed_and_active_identities() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");
     let store = SessionStore::with_persistence_limits(&ledger, 10, 10, 10);
@@ -1502,8 +1495,8 @@ fn restore_prunes_only_old_closed_history_and_keeps_active_identity() {
         Some(SessionLifecycle::Active)
     );
     assert!(
-        !restored.contains_session(&old_closed.session_id),
-        "restore-time historical retention should prune the oldest Closed row"
+        restored.contains_session(&old_closed.session_id),
+        "restart must retain the oldest Closed identity"
     );
     assert!(restored.contains_session(&new_closed.session_id));
     assert_eq!(
@@ -1511,16 +1504,13 @@ fn restore_prunes_only_old_closed_history_and_keeps_active_identity() {
         Some(SessionLifecycle::Closed)
     );
     let status = restored.status();
-    assert_eq!(status.retained_sessions, 2);
-    assert_eq!(status.restored_sessions, 2);
+    assert_eq!(status.retained_sessions, 3);
+    assert_eq!(status.restored_sessions, 3);
     assert_eq!(status.active_sessions, 1);
-    assert_eq!(status.closed_sessions, 1);
+    assert_eq!(status.closed_sessions, 2);
     assert_eq!(status.hot_sessions, 0);
-    assert_eq!(status.cold_sessions, 2);
+    assert_eq!(status.cold_sessions, 3);
     assert_eq!(status.active_cold_sessions, 1);
-    assert_eq!(status.hot_session_capacity_target, 1);
-    assert_eq!(status.historical_session_retention_limit, 1);
-    assert_eq!(status.capacity_evictions, 1);
 }
 
 #[test]
@@ -2013,7 +2003,7 @@ fn instruction_scopes_refresh_and_remove_independently_without_persisting_bodies
         "global newest body"
     );
     store.flush_persistence();
-    let serialized = std::fs::read_to_string(&ledger).unwrap();
+    let serialized = crate::test_storage::read_ledger(&ledger).unwrap();
     for body in [
         "global private body",
         "local private body",
@@ -2499,7 +2489,7 @@ fn retained_project_selection_preserves_global_edit_and_only_persists_metadata()
     let public = serde_json::to_string(&expanded).unwrap();
     assert!(!public.contains("edited global private"));
     store.flush_persistence();
-    let durable = std::fs::read_to_string(&ledger).unwrap();
+    let durable = crate::test_storage::read_ledger(&ledger).unwrap();
     for hidden in [
         "private",
         "project_instructions",

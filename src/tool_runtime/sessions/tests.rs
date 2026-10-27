@@ -4,8 +4,7 @@ use super::events::{
     changed_paths_for_tool, normalize_observed_project_path, observed_paths_for_successful_result,
     session_input_summary_for_tool, SessionToolClassification,
 };
-use super::model::{PersistedSessionLedger, MAX_OBSERVED_PATHS_PER_EVENT, SESSION_LEDGER_VERSION};
-use super::persistence::write_ledger_atomic;
+use super::model::MAX_OBSERVED_PATHS_PER_EVENT;
 use super::*;
 use crate::tool_runtime::tool_audit::ToolCallAuditProjection;
 use serde_json::{json, Value};
@@ -14,12 +13,20 @@ use std::path::PathBuf;
 mod audit_policy;
 
 fn persistent_store(path: PathBuf) -> SessionStore {
-    SessionStore::with_persistence(path, 10, 10)
+    if path.exists() {
+        webcodex_workflow_session::root_test_support::import_ledger(path, 10, 10)
+    } else {
+        SessionStore::with_persistence(path, 10, 10)
+    }
 }
 
 fn flush_and_restore(store: &SessionStore, path: PathBuf) -> SessionStore {
     store.flush_persistence();
-    SessionStore::with_persistence(path, 10, 10)
+    if path.exists() {
+        webcodex_workflow_session::root_test_support::import_ledger(path, 10, 10)
+    } else {
+        SessionStore::with_persistence(path, 10, 10)
+    }
 }
 
 fn read_files_input(project: &str, path: &str) -> Value {
@@ -641,7 +648,7 @@ fn coding_agent_lifecycle_evidence_is_project_scoped_body_free_and_durable() {
     assert!(kinds.contains(&"coding_agent_started"));
     assert!(kinds.contains(&"coding_agent_waiting_permission"));
     assert!(kinds.contains(&"coding_agent_terminal"));
-    let serialized = std::fs::read_to_string(&ledger).unwrap();
+    let serialized = webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap();
     assert!(!serialized.contains(private_prompt));
     assert!(!serialized.contains(private_reasoning));
     assert!(!serialized.contains("idempotency_key"));
@@ -721,7 +728,7 @@ fn skill_read_body_and_catalog_descriptions_never_enter_durable_session_ledger()
     );
 
     let restored = flush_and_restore(&store, ledger.clone());
-    let raw = std::fs::read_to_string(&ledger).unwrap();
+    let raw = webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap();
     assert!(!raw.contains(private_body));
     assert!(!raw.contains(private_description));
     assert!(!raw.contains("\"skills\""));
@@ -949,7 +956,7 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
     );
 
     let restored = flush_and_restore(&store, ledger.clone());
-    let raw = std::fs::read_to_string(&ledger).unwrap();
+    let raw = webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap();
     for private in [
         private_query,
         private_summary,
@@ -988,35 +995,6 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
 }
 
 #[test]
-fn write_ledger_atomic_cleans_up_temp_file_when_rename_fails() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger_path = tmp.path().join("sessions.json");
-    std::fs::create_dir(&ledger_path).unwrap();
-    let ledger = PersistedSessionLedger {
-        version: SESSION_LEDGER_VERSION,
-        sessions: Vec::new(),
-    };
-
-    let err = write_ledger_atomic(&ledger_path, &ledger).unwrap_err();
-    assert_ne!(err.kind(), std::io::ErrorKind::NotFound);
-
-    let temp_files: Vec<_> = std::fs::read_dir(tmp.path())
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".sessions.json.tmp-")
-        })
-        .collect();
-    assert!(
-        temp_files.is_empty(),
-        "failed write left a temporary ledger"
-    );
-}
-
-#[test]
 fn legacy_session_events_without_call_id_restore() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");
@@ -1035,8 +1013,10 @@ fn legacy_session_events_without_call_id_restore() {
     store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
     store.flush_persistence();
 
-    let mut ledger_value: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let mut ledger_value: Value = serde_json::from_str(
+        &webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap(),
+    )
+    .unwrap();
     for event in ledger_value["sessions"][0]["events"]
         .as_array_mut()
         .unwrap()
@@ -1046,7 +1026,7 @@ fn legacy_session_events_without_call_id_restore() {
     std::fs::write(&ledger, serde_json::to_vec_pretty(&ledger_value).unwrap()).unwrap();
     drop(store);
 
-    let restored = SessionStore::with_persistence(ledger, 10, 20);
+    let restored = webcodex_workflow_session::root_test_support::import_ledger(ledger, 10, 20);
     let summary = restored.summary(&session.session_id, Some(20)).unwrap();
     assert_eq!(summary.counts.tool_calls, 1);
     assert!(summary.events.iter().all(|event| event.call_id.is_none()));
@@ -1616,7 +1596,10 @@ fn console_list_orders_recent_activity_first_with_deterministic_session_id_ties(
     seed.flush_persistence();
     drop(seed);
 
-    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let mut raw: Value = serde_json::from_str(
+        &webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap(),
+    )
+    .unwrap();
     for (seed_id, session_id, created_at, updated_at) in [
         (seed_older.session_id.as_str(), older, 1, 10),
         (seed_tie_a.session_id.as_str(), tie_a, 2, 20),
@@ -2401,8 +2384,10 @@ fn failure_history_legacy_event_without_effect_evidence_restores_conservatively(
     );
     store.flush_persistence();
 
-    let mut ledger_value: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let mut ledger_value: Value = serde_json::from_str(
+        &webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap(),
+    )
+    .unwrap();
     let events = ledger_value["sessions"][0]["events"]
         .as_array_mut()
         .unwrap();
@@ -2415,7 +2400,7 @@ fn failure_history_legacy_event_without_effect_evidence_restores_conservatively(
     std::fs::write(&ledger, serde_json::to_vec_pretty(&ledger_value).unwrap()).unwrap();
     drop(store);
 
-    let restored = SessionStore::with_persistence(ledger, 10, 10);
+    let restored = webcodex_workflow_session::root_test_support::import_ledger(ledger, 10, 10);
     let summary = restored.summary(&session.session_id, Some(10)).unwrap();
     let finished = summary
         .events
@@ -2605,7 +2590,7 @@ fn exploration_ledger_persists_only_bounded_relative_paths_and_safe_metadata() {
     }
 
     store.flush_persistence();
-    let serialized = std::fs::read_to_string(&ledger).unwrap();
+    let serialized = webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap();
     for forbidden in [
         "RAW_SEARCH_PATTERN",
         "wc_pat_PRIVATE_TOKEN",
@@ -2688,150 +2673,6 @@ fn search_project_texts_nested_patterns_are_removed_from_session_input_summary()
 }
 
 #[test]
-fn persistence_snapshot_shares_payload_and_stays_stable_across_message_cow() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger.clone());
-    let session = store.start_session(None, Some("shared snapshot".to_string()));
-    assert!(store
-        .record_tool_call_started(
-            Some(&session.session_id),
-            SessionTransport::Api,
-            "read_files",
-            &json!({
-                "project": "demo",
-                "path": "src/lib.rs",
-                "query": "snapshot payload"
-            }),
-            crate::tool_runtime::sessions::session_tool_contract("read_files"),
-        )
-        .is_some());
-    let message = post_message(
-        &store,
-        &session.session_id,
-        SessionMessageKind::Todo,
-        "snapshot message payload",
-    );
-    store.flush_persistence();
-
-    let (snapshot_ready_tx, snapshot_ready_rx) = std::sync::mpsc::channel();
-    let (allow_old_write_tx, allow_old_write_rx) = std::sync::mpsc::channel();
-    let snapshot_session_id = session.session_id.clone();
-    let delayed_store = store.clone();
-    let delayed_write = std::thread::spawn(move || {
-        delayed_store.persist_after_mutation_with_for_test(|path, ledger| {
-            let snapshot = ledger
-                .sessions
-                .iter()
-                .filter_map(|snapshot| snapshot.hot())
-                .find(|record| record.session_id == snapshot_session_id)
-                .unwrap();
-            let event = snapshot.events.last().unwrap();
-            let message = snapshot.messages.last().unwrap();
-            assert_eq!(std::sync::Arc::strong_count(event), 2);
-            assert_eq!(std::sync::Arc::strong_count(message), 2);
-            assert_eq!(message.status, SessionMessageStatus::Open);
-
-            snapshot_ready_tx.send(()).unwrap();
-            allow_old_write_rx.recv().unwrap();
-
-            assert_eq!(std::sync::Arc::strong_count(message), 1);
-            assert_eq!(message.status, SessionMessageStatus::Open);
-            assert_eq!(message.resolution, None);
-            write_ledger_atomic(path, ledger)
-        });
-    });
-    snapshot_ready_rx.recv().unwrap();
-
-    let resolved = store
-        .resolve_message(
-            &session.session_id,
-            &message.message_id,
-            Some("resolved after snapshot".to_string()),
-        )
-        .unwrap();
-    assert_eq!(resolved.status, SessionMessageStatus::Resolved);
-    assert_eq!(
-        resolved.resolution.as_deref(),
-        Some("resolved after snapshot")
-    );
-
-    allow_old_write_tx.send(()).unwrap();
-    delayed_write.join().unwrap();
-
-    let restored = flush_and_restore(&store, ledger);
-    let messages = restored
-        .list_messages(&session.session_id, ListSessionMessagesFilter::default())
-        .unwrap();
-    assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].status, SessionMessageStatus::Resolved);
-    assert_eq!(
-        messages[0].resolution.as_deref(),
-        Some("resolved after snapshot")
-    );
-}
-
-#[test]
-fn concurrent_persistence_reloads_current_snapshot_before_write() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ledger = tmp.path().join("sessions.json");
-    let store = persistent_store(ledger.clone());
-    let session = store.start_session(None, Some("ordered writes".to_string()));
-    let (old_snapshot_ready_tx, old_snapshot_ready_rx) = std::sync::mpsc::channel();
-    let (allow_old_write_tx, allow_old_write_rx) = std::sync::mpsc::channel();
-
-    let delayed_store = store.clone();
-    let delayed_write = std::thread::spawn(move || {
-        delayed_store.persist_after_mutation_with_for_test(|path, ledger| {
-            old_snapshot_ready_tx.send(()).unwrap();
-            allow_old_write_rx.recv().unwrap();
-            write_ledger_atomic(path, ledger)
-        });
-    });
-    old_snapshot_ready_rx.recv().unwrap();
-
-    let newer_store = store.clone();
-    let newer_session_id = session.session_id.clone();
-    let newer_mutation = std::thread::spawn(move || {
-        post_message(
-            &newer_store,
-            &newer_session_id,
-            SessionMessageKind::Progress,
-            "newer mutation",
-        );
-    });
-
-    let visibility_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        let messages = store
-            .list_messages(&session.session_id, ListSessionMessagesFilter::default())
-            .unwrap();
-        if messages
-            .iter()
-            .any(|message| message.message == "newer mutation")
-        {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < visibility_deadline,
-            "newer persistence mutation did not become visible within 5 seconds"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-
-    allow_old_write_tx.send(()).unwrap();
-    delayed_write.join().unwrap();
-    newer_mutation.join().unwrap();
-
-    let restored = flush_and_restore(&store, ledger);
-    let messages = restored
-        .list_messages(&session.session_id, ListSessionMessagesFilter::default())
-        .unwrap();
-    assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].message, "newer mutation");
-}
-
-#[test]
 fn project_instructions_content_not_persisted_or_leaked_after_restore() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");
@@ -2862,7 +2703,7 @@ fn project_instructions_content_not_persisted_or_leaked_after_restore() {
         .unwrap();
 
     store.flush_persistence();
-    let serialized = std::fs::read_to_string(&ledger).unwrap();
+    let serialized = webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap();
     assert!(!serialized.contains(secret_body));
     assert!(!serialized.contains("project_instructions"));
     let restored = flush_and_restore(&store, ledger);

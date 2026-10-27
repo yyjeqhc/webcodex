@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use std::time::Instant;
 
 fn eager_reference(path: &std::path::Path) -> Vec<StoredSession> {
-    let content = std::fs::read_to_string(path).unwrap();
+    let content = crate::test_storage::read_ledger(path).unwrap();
     let value: Value = serde_json::from_str(&content).unwrap();
     let Value::Object(mut object) = value else {
         unreachable!()

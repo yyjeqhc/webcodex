@@ -622,8 +622,7 @@ async fn browser_message_mutation_persistence_uncertain_is_503_and_retains_live_
         })
         .unwrap();
     runtime.sessions.flush_persistence();
-    std::fs::remove_dir_all(&ledger_dir).unwrap();
-    std::fs::write(&ledger_dir, b"block durable ledger recreation").unwrap();
+    runtime.sessions.set_persistence_failure_for_test(true);
     let (_tmp, service) = hosted_service_with_shared_key(runtime.clone(), token);
 
     let mut response =
@@ -778,7 +777,7 @@ async fn collaboration_observation_route_preserves_baseline_update_timeout_and_p
 }
 
 #[tokio::test]
-async fn collaboration_observation_route_surfaces_history_loss_from_authoritative_retention() {
+async fn collaboration_observation_route_keeps_history_after_message_churn() {
     let runtime = test_runtime();
     let auth = crate::auth::shared_key_context("runtime-console-history-loss");
     let project_id = "agent:client-a:proj-a";
@@ -798,7 +797,7 @@ async fn collaboration_observation_route_surfaces_history_loss_from_authoritativ
     .await
     .unwrap();
 
-    let retention_limit = runtime.sessions.status().max_messages_per_session;
+    let retention_limit = 500;
     for index in 0..=retention_limit {
         runtime
             .sessions
@@ -827,7 +826,7 @@ async fn collaboration_observation_route_surfaces_history_loss_from_authoritativ
     .await
     .unwrap();
     assert!(observed.changed);
-    assert!(observed.history_lost);
+    assert!(!observed.history_lost);
     assert!(observed.has_more);
     assert_eq!(observed.messages.len(), 100);
 }

@@ -173,6 +173,8 @@ pub fn current_attempt_event_view(summary: &SessionSummary) -> CurrentAttemptEve
         .rposition(|event| event.kind == "task_instruction");
     let (boundary_source, boundary_reason_code) = if boundary_event_index.is_some() {
         ("task_instruction", None)
+    } else if summary.current_instruction.is_some() {
+        ("task_instruction", Some("attempt_history_outside_window"))
     } else if summary.events_truncated {
         ("unavailable", Some("attempt_boundary_evicted"))
     } else {

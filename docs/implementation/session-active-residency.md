@@ -1,75 +1,144 @@
-# Active Session residency
+# Workflow Session SQLite storage and residency
 
-## Problem and scope
+## Business contract
 
-Active Workflow Session identity is durable, but that does not require keeping its
-expanded event/message graph resident indefinitely. The previous count target did
-not compact any Active record, and streamed restore kept every Active row Hot.
-This change preserves the non-destructive identity/retention contract from #693.
+A Workflow Session is a durable task identity with lifecycle, current instructions,
+execution defaults, collaboration state and evidence. Its identity is independent
+of how much recent activity the Console displays or the server keeps expanded.
+Active and Closed Sessions, events and messages have no automatic count/idle
+expiry. Closing a Session denies ordinary business mutations; it does not delete
+history or recycle its canonical id or principal-scoped `~sN` selector.
 
-The store now bounds expanded records by `hot_session_capacity_target` (minimum
-one working mutation target). It uses its existing access order on admission,
-not a second CLOCK/SLRU index or a periodic full-history scan. An older record is
-serialized into one immutable `Arc<RawValue>` without removing its canonical id.
-Ordinary history queries use an ephemeral materialization and do not promote rows.
-The streaming loader still validates/sanitizes every row; it now retains each
-validated row Cold rather than accumulating all Active expanded trees.
+This domain uses the configured Server `webcodex.db`. It does not introduce a
+new database service or a generic storage abstraction. Job, Agent, Conversation,
+Wake, audit and transport identities retain their existing ownership contracts.
+Durable history never grants permission to replay execution.
 
-## Boundaries and exact round trips
+## Why the JSON design reached its limit
 
-Cold here means **serialized payload in RAM**, not SQLite or disk demand paging.
-Consequently pending/dirty changes are preserved independently of persistence
-success, and no Job, Agent, lease, or controller has to pin an expanded ledger.
-The store mutex prevents a transition during any record borrow; in-flight callers
-own identities/evidence, not an evictable raw pointer. Their later completion,
-permission, ACK and validation events hydrate the same exact Active identity.
-The existing generation barriers and atomic JSON-v2 full-ledger writer stay intact.
+The original bounded task ledger made a full JSON snapshot a simple consistency
+boundary: serialize one complete state, replace one file, restore the same graph.
+A small corpus made that tradeoff reasonable. Later changes retained long-lived
+Active identities, enlarged history and added replay/completion evidence. Moving
+Cold Sessions to immutable serialized JSON reduced object expansion, but still
+kept all encoded history in RAM. A mutation still rewrote the entire corpus.
 
-Disk restore is a trust boundary: it sanitizes untrusted/legacy fields and may
-shorten historical metadata. Live residency is not a second restore boundary.
-Active materialization therefore exhaustively transfers the already-canonical
-persisted fields without another sanitize pass. Process-local instruction bodies
-and historical no-fence completion entries (neither belongs in durable payloads)
-are retained separately and restored losslessly. Cached metadata must match the
-payload's identity, owner, Project, lifecycle, guards, mode and update timestamp.
-A parse/mismatch failure rejects materialization without inventing a replacement.
-Closed history keeps its previous query/rewrite/retention behavior.
+The October 2026 sf audit reported roughly 382 MB per snapshot, repeated every
+few seconds, with almost all sampled writes in the Session writer and heavy
+swap pressure. This is consistent with the source-level cost: O(all retained
+history) serialization/write for a small mutation, plus history-sized resident
+memory. It does not establish that every byte of kernel I/O came from snapshots.
+Increasing coalescing can reduce ordinary writes, but required durability barriers
+still trigger full snapshots in that design.
 
-Normal message, exact resume, execution-context, event, permission and validation
-mutation paths prepare an Active target before accessing mutable records. Query,
-lifecycle, authority, Closed retention and persistent-shell teardown semantics do
-not infer a new Session or broaden access. A failed compaction retains Hot data;
-a memory target never authorizes data loss.
+The prior implementation and measurements are historical evidence in
+[SessionStore access and write scheduling](session-store-access-and-write-scheduling.md).
 
-## Observability and cost
+## Tables and commit boundary
 
-`SessionStoreStatus.active_cold_sessions` separates durable Active identities from
-materialized ones. `cold_payload_bytes` counts only encoded Cold JSON, not heap
-live bytes, metadata, instructions, allocator overhead or concurrent snapshots.
-`capacity_evictions` continues to count Closed retention deletions, not compaction.
+`persistence/database.rs` owns domain schema version 1:
 
-Compaction/admission does serialize or deserialize one record under the store
-mutex and can add latency on a cold mutation. Workload-sized cost must be measured;
-no performance speedup is claimed. Repeated history reads intentionally trade CPU
-for not retaining a scan's full working set. Existing per-record history caps,
-JSON schemas, durable identity and event retention are unchanged.
+| Table | Stored fact |
+| --- | --- |
+| `workflow_sessions` | Exact identity/owner/Project, lifecycle, latest instruction, current state and committed revision; no embedded event/message history |
+| `workflow_session_events` | Individually indexed redacted events with stable ids and per-Session ordinals |
+| `workflow_session_messages` | Message current state, observation revision, assignment history floor and completion fence fingerprint |
+| `workflow_session_deliveries` | Session-scoped keyed delivery identity and payload fingerprint |
+| `workflow_session_tombstones` | Imported proofs of deletions by the retired JSON policy |
+| `workflow_session_storage` | Domain version and atomic legacy-import marker |
 
-## Validation and next decision
+A mutation registers its generation under the same mutex as live state. One
+background writer snapshots only dirty Sessions, pending event deltas and changed
+messages. Events already on disk are untouched unless that exact event is updated
+(for example, retained permission evidence). It releases the store mutex before
+SQLite I/O. One transaction commits all rows in that batch with WAL and
+`synchronous=FULL`; identity checks and expected previous revisions prevent stale
+writers from overwriting a newer committed Session.
 
-Tests cover bounded Hot counts without Active deletion, non-promoting queries,
-lossless live state, explicit restart and keyed replay/ACK, in-flight completion,
-parallel writes with churn, zero target, failed persistence and corrupt payloads.
-Existing lifecycle, assignment, tombstone, sanitation and writer suites are kept;
-only tests which asserted the old Active-implies-Hot policy change residency counts.
+Ordinary notifications coalesce for 20 ms from the first pending notification.
+A durability barrier bypasses that delay and asynchronously awaits its exact
+successful commit generation. Observing an already committed generation does
+not write. Later concurrent mutations remain dirty after an older snapshot is
+acknowledged. Failed commits do not advance the watermark or evict dirty data;
+the next request/barrier can retry. Cancellation is neither rollback nor replay
+authority. Final owner drop makes a bounded final drain attempt.
 
-A manual Linux benchmark compares the previous **streaming** Active/Hot restore,
-Cold restore, and Cold plus 100 materialized records in separate child processes
-using the same generated 512-row/128-event ledger. It reports RSS/HWM and isolated
-materialization cost, not production heap profiling or end-to-end tool latency.
+Creation/resume responses confirm persistence before exposing successful new
+Session state. Message delivery, completion, replacement/withdrawal and observation
+tokens retain their explicit commit fences. A failure after mutation reports
+uncertainty and preserves the exact identity for recovery. SQLite commit durability
+still depends on the filesystem/storage honoring synchronization; tests cannot
+promise survival of defective hardware.
 
-Remaining total memory is still proportional to encoded retained history. A true
-byte-weighted/disk-backed cache requires a separate design for dirty generations,
-atomic per-row commits, migration, recovery and corruption. Do not silently replace
-this RAM backing with a stale `sessions.json` offset. Do not shrink the canonical
-2,000-event tail to 128, introduce a permanent interner, or switch allocators merely
-to fit a target; first measure actual working-set bytes and read/write costs.
+## Memory and recent activity
+
+Startup loads current-state metadata and committed revision locators, not event
+or message histories. SQLite Cold entries hold that metadata. Exact reads load an
+ephemeral record; mutations hydrate the selected identity. Only clean committed
+records can leave the expanded cache. Closed clean records become Cold; Active
+records use the existing access order and a default 16 MiB estimated byte target.
+`open_database` accepts the cache byte target explicitly.
+
+The recent event window is 2,000 by default; old event rows stay in SQLite. The
+latest instruction is also current state, so a long task does not lose its task
+boundary when that instruction leaves the window. Recovery projections label an
+incomplete attempt `attempt_history_outside_window`; they do not treat missing
+intervening evidence as a complete attempt. Console detail defaults to 100 recent
+activities, at most 2,000; model summary limits remain unchanged. These are response
+and working-set limits, not destructive history retention. This change does not
+add a full-history browsing/export API.
+
+The cache target is **not a hard process RSS ceiling**. The identity/current-state
+index is proportional to Session count; process-local instructions, dirty batches,
+in-flight snapshots and SQLite/allocator overhead are additional. A selected
+Session's collaboration messages are still materialized together for the existing
+atomic assignment/ACK/completion logic. A large message board can therefore cost
+transient memory and query CPU, even though commits write changed messages only.
+
+Runtime admission awaits a commit when 512 pending change units accumulate or a
+prior persistence failure is outstanding. Already running work can still append
+terminal evidence. This is backpressure on new runtime work, not a hard bound on
+all concurrent effects or on direct synchronous library callers. Serialized bodies,
+model responses, ACK references, assignment replies and wait durations retain their
+own limits. A full disk produces an explicit failure, never silent history deletion.
+
+## Identity, restore and import
+
+Reference lookup uses identity metadata; it does not load historical payloads.
+Principal, Project and incarnation checks still apply after selector resolution.
+A known owned identity whose backing storage cannot be loaded is unavailable,
+not newly unknown/expired. Failed storage never creates a replacement Session.
+
+An existing JSON-v2 `sessions.json` is imported once in one transaction with its
+completion marker. Structural corruption, unsupported formats and identity
+conflicts abort the import; startup fails closed rather than starting an empty
+store. Existing privacy sanitization applies to imported evidence. The source
+file remains untouched and is never a second live persistence target. Imported
+loss floors and tombstones describe already missing history; upgrading cannot
+recover previously deleted evidence. No new count-based tombstones are generated
+and imported proofs do not expire through cache churn.
+
+Subsequent starts use SQLite and do not re-import even if the source JSON changes.
+The retained JSON is a pre-cutover copy, **not** an up-to-date rollback database.
+Returning to a JSON-only binary requires an explicit data recovery plan; otherwise
+post-cutover changes would be absent. Normal backups must include a consistent
+SQLite snapshot (including committed WAL state), not merely copy a live main file.
+
+## Diagnostics and validation
+
+`session_store` reports cache target, recent event limit and Hot/Cold counts,
+without misleading Session/history/message count limits. Persistence diagnostics
+separate ordinary notifications, durability barriers, successful/failed attempts,
+pending generations, and snapshot-lock/write duration. `logical_payload_bytes`
+counts changed JSON payload only; it is not physical I/O. `database_bytes` and
+`wal_bytes` describe the shared database files, not Session-only attribution.
+
+Focused regressions cover more than 10,000 events without rewriting old rows,
+non-promoting reads, latest instruction retention, 500-message keyed replay,
+exact references after 250 Closed Sessions and restart, interleaved snapshot
+acknowledgement, multi-Session transaction rollback, failed-write retry,
+nonblocking backpressure and cancellation, strict one-time import, indexed
+identity mismatch and abrupt process exit with committed WAL state. Existing
+privacy, assignment, completion, validation and authorization suites remain
+applicable. These tests establish correctness and changed-payload scaling, not
+production RSS, p95 latency or physical write throughput on sf.

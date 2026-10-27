@@ -166,6 +166,9 @@ impl ToolCallOutcome {
 
 fn session_selector_failure(error: super::SessionSelectorError) -> ToolCallOutcome {
     match error {
+        super::SessionSelectorError::StorageUnavailable => ToolCallOutcome::rejected_result(
+            super::session_tools::session_storage_unavailable_result(),
+        ),
         super::SessionSelectorError::UnknownRef(message) => {
             ToolCallOutcome::rejected(ToolCallErrorStatus::InvalidArguments { message })
         }

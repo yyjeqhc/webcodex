@@ -135,7 +135,6 @@ fn borrowed_hot_cold_summary_and_path_evidence_are_identical_and_non_promoting()
     );
     assert_eq!(store.status().hot_sessions, before.hot_sessions);
     assert_eq!(store.status().cold_sessions, before.cold_sessions);
-    assert_eq!(store.status().capacity_evictions, 0);
 }
 
 #[test]

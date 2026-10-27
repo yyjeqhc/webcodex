@@ -77,7 +77,7 @@ pub use model::{
     SessionMessageKind, SessionMessageObservationError, SessionMessagePriority,
     SessionMessageStatus, SessionRetentionTombstone, SessionSummary, SessionTransport,
     ToolCallExpectation, ToolCallRecorderMetadata, ToolCallSessionMessageResolution, ToolCallStart,
-    DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_RETAINED_CLOSED_SESSIONS, DEFAULT_MAX_SESSIONS,
+    DEFAULT_MAX_SESSIONS, DEFAULT_RECENT_EVENT_LIMIT, DEFAULT_SESSION_CACHE_BYTES,
     MAX_CODING_INSTRUCTION_CHARS, MAX_MESSAGE_CHARS, MAX_MESSAGE_COMPLETION_KEY_CHARS,
     MAX_MESSAGE_DELIVERY_KEY_CHARS, MAX_MESSAGE_LIST_LIMIT, MAX_MESSAGE_RESOLUTION_CHARS,
     MAX_MESSAGE_TAGS, MAX_MESSAGE_TAG_CHARS, MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS,
@@ -111,9 +111,12 @@ pub mod root_test_support {
         PersistedSessionLedger, MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS,
         MESSAGE_ID_PREFIX, SESSION_LEDGER_VERSION,
     };
-    pub use crate::persistence::write_ledger_atomic;
+    pub use crate::test_storage::{import_ledger, read_ledger, read_ledger_bytes};
     pub use webcodex_core::workflow_session_contract::TOOL_CALL_EXPECTATION_METADATA_FIELDS;
 }
 
 #[cfg(test)]
 mod discovery_tests;
+
+#[cfg(any(test, feature = "root-test-support"))]
+mod test_storage;

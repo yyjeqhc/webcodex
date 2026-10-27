@@ -1,5 +1,10 @@
 # SessionStore access order and bounded write coalescing
 
+> Historical implementation report for the JSON snapshot writer. Current main
+> uses SQLite deltas and non-expiring identities; see
+> [Session storage and residency](session-active-residency.md). The scheduling and
+> retention statements below describe the measured version, not the current contract.
+
 ## Scope
 
 Follow-up to the #771 scale experiment, based on

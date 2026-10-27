@@ -503,7 +503,8 @@ impl ContinuationFeedback {
         let semantic_attempt_events = attempt_view.semantic_events;
         let boundary_event = attempt_view
             .boundary_event_index
-            .map(|index| &events[index]);
+            .map(|index| &events[index])
+            .or(input.session_summary.current_instruction.as_ref());
 
         let attempt = build_attempt_summary(
             attempt_events,
@@ -661,7 +662,7 @@ fn build_attempt_summary(
     // before that boundary is not fully represented by the retained tail.
     // Otherwise the boundary event and everything after it is retained, so the
     // attempt tail is complete relative to the durable ledger.
-    let complete = boundary_reason_code != Some("attempt_boundary_evicted");
+    let complete = boundary_reason_code.is_none();
     // Sequences are absolute within the retained ledger: the returned window
     // starts at `first_retained_sequence`, so the attempt's first event has
     // sequence `first_retained_sequence + attempt_start`.

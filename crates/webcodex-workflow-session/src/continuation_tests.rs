@@ -296,7 +296,7 @@ fn attempt_without_task_instruction_falls_back_to_session_start() {
 }
 
 #[test]
-fn evicted_task_instruction_reports_unavailable_boundary_not_session_start() {
+fn instruction_survives_outside_activity_window_without_claiming_complete_history() {
     let store = store(20);
     let session = create_session(&store, "evicted instruction");
     add_instruction(&store, &session, "do the work");
@@ -306,10 +306,13 @@ fn evicted_task_instruction_reports_unavailable_boundary_not_session_start() {
     record_read(&store, &session, "src/retained-tail.rs", json!({}));
     assert!(store.summary(&session, Some(200)).unwrap().events_truncated);
     let feedback = feedback_for(&store, &session);
-    assert_eq!(feedback["attempt"]["boundary"]["source"], "unavailable");
+    assert_eq!(
+        feedback["attempt"]["boundary"]["source"],
+        "task_instruction"
+    );
     assert_eq!(
         feedback["attempt"]["boundary"]["reason_code"],
-        "attempt_boundary_evicted"
+        "attempt_history_outside_window"
     );
     assert_eq!(feedback["attempt"]["event_range"]["complete"], false);
     assert_eq!(

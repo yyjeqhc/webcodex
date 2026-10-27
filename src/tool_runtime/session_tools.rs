@@ -371,12 +371,24 @@ impl ToolRuntime {
         .with_owner_authority_fingerprint(Some(owner_authority_fingerprint))
         .with_project_instructions(project_instructions.clone())
         .with_execution_context(execution_context.unwrap_or_default());
+        if self.sessions.prepare_request().await.is_err() {
+            return session_storage_unavailable_result();
+        }
         let summary = match self.sessions.start_session_with_options(options) {
             Ok(summary) => summary,
             Err(error) => {
                 return invalid_execution_context_result(error);
             }
         };
+        if self.sessions.flush().await.is_err() {
+            return ToolResult::err_with_output(
+                "Session persistence could not be confirmed",
+                json!({
+                    "error_kind": "session_persistence_uncertain", "session_id": summary.session_id,
+                    "state_changed": true, "recovery": "resume this exact session_id after storage recovers"
+                }),
+            );
+        }
         let session_ref = self.session_reference_for_id(&summary.session_id, auth);
         let mut output = json!({
             "success": true,
@@ -593,12 +605,20 @@ impl ToolRuntime {
             if !synthetic_test_fixture && owner_authority_fingerprint != caller_fingerprint {
                 return Err(session_authority_denied_result(session_id, tool_name));
             }
+            self.sessions
+                .prepare_request()
+                .await
+                .map_err(|_| session_storage_unavailable_result())?;
             return Ok(resolved);
         }
 
         #[cfg(test)]
         if owner_authority_fingerprint == sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT
         {
+            self.sessions
+                .prepare_request()
+                .await
+                .map_err(|_| session_storage_unavailable_result())?;
             return Ok(None);
         }
 
@@ -610,6 +630,10 @@ impl ToolRuntime {
         if owner_authority_fingerprint != caller_fingerprint {
             return Err(session_authority_denied_result(session_id, tool_name));
         }
+        self.sessions
+            .prepare_request()
+            .await
+            .map_err(|_| session_storage_unavailable_result())?;
         Ok(None)
     }
 
@@ -1047,6 +1071,16 @@ fn invalid_execution_context_result(error: String) -> ToolResult {
             "failure_kind": "invalid_arguments",
             "field": "execution_context",
             "state_changed": false,
+        }),
+    )
+}
+
+/// No Session mutation or tool execution has been admitted for this request.
+pub(super) fn session_storage_unavailable_result() -> ToolResult {
+    ToolResult::err_with_output(
+        "Workflow Session storage is temporarily unavailable",
+        json!({
+            "error_kind": "session_storage_unavailable", "execution_state": "not_started", "state_changed": false
         }),
     )
 }

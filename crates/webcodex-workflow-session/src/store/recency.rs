@@ -46,10 +46,12 @@ impl SessionRecency {
         self.ordered.values()
     }
 
+    #[cfg(test)]
     pub(super) fn closed_count(&self) -> usize {
         self.closed.len()
     }
 
+    #[cfg(test)]
     pub(super) fn oldest_closed(&self) -> Option<&str> {
         self.closed
             .first()

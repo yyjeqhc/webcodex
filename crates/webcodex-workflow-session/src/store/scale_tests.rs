@@ -29,14 +29,14 @@ fn scale_case(count: usize) -> Value {
     let path = temporary.path().join("sessions.json");
     let ((store, ids), create_ms) = timed(|| fixture(count));
     let (ledger, snapshot_lock_ms) = timed(|| store.inner.lock().unwrap().to_persisted_ledger());
-    let (_, serialize_replace_ms) = timed(|| write_ledger_atomic(&path, &ledger).unwrap());
+    let (_, serialize_replace_ms) =
+        timed(|| std::fs::write(&path, serde_json::to_vec(&ledger).unwrap()).unwrap());
     let ledger_bytes = std::fs::metadata(&path).unwrap().len();
     drop(ledger);
     drop(store);
     // Active identities are not evicted to meet a small hot-capacity target.
     let (restored, restore_ms) = timed(|| SessionStore::with_persistence_limits(&path, 16, 16, 20));
     assert_eq!(restored.status().active_sessions, count);
-    assert_eq!(restored.status().capacity_evictions, 0);
     assert!(restored.status().last_persist_error.is_none());
     let (_, query_200_ms) = timed(|| {
         for index in 0..200 {
@@ -48,7 +48,14 @@ fn scale_case(count: usize) -> Value {
         restored.flush_persistence();
     });
     assert!(restored.status().last_persist_error.is_none());
-    let after_transition_bytes = std::fs::metadata(&path).unwrap().len();
+    let commit = restored.persistence_observation();
+    let after_transition_bytes = commit
+        .writer
+        .unwrap()
+        .last_attempt
+        .unwrap()
+        .logical_payload_bytes
+        .unwrap();
     let hot_sessions = restored.status().hot_sessions;
     let cold_sessions = restored.status().cold_sessions;
     drop(restored);
@@ -68,7 +75,7 @@ fn scale_case(count: usize) -> Value {
         "serialize_replace_ms": serialize_replace_ms, "restore_ms": restore_ms,
         "query_200_ms": query_200_ms, "one_close_flush_ms": one_close_flush_ms,
         "recovery_ms": recovery_ms, "ledger_bytes": ledger_bytes,
-        "full_ledger_bytes_after_one_close": after_transition_bytes,
+        "logical_payload_bytes_for_one_close": after_transition_bytes,
         "hot_sessions_after_close": hot_sessions, "cold_sessions_after_close": cold_sessions,
         "recovery": "exact_identities_and_closed_state_preserved",
         "scope": "synthetic_minimal_sessions_not_production_load_or_power_loss"
@@ -95,13 +102,14 @@ fn session_store_scale_and_recovery() {
 fn session_store_scale_corrupt_copy_is_explicitly_unavailable() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("truncated.json");
-    let (store, ids) = fixture(4);
+    let (store, _ids) = fixture(4);
     let ledger = store.inner.lock().unwrap().to_persisted_ledger();
     let bytes = serde_json::to_vec(&ledger).unwrap();
     std::fs::write(&path, &bytes[..bytes.len() / 2]).unwrap();
-    let recovered = SessionStore::with_persistence_limits(&path, 16, 16, 20);
-    assert!(recovered.status().last_persist_error.is_some());
-    assert!(ids.iter().all(|id| !recovered.contains_session(id)));
+    crate::test_storage::assert_import_rejected(&path);
     // An unsuccessful load does not replace the damaged file during observation.
-    assert_eq!(std::fs::read(&path).unwrap(), &bytes[..bytes.len() / 2]);
+    assert_eq!(
+        crate::test_storage::read_ledger_bytes(&path).unwrap(),
+        &bytes[..bytes.len() / 2]
+    );
 }

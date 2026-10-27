@@ -99,6 +99,7 @@ pub fn build_handoff_brief(input: HandoffBriefInput<'_>) -> Value {
         .iter()
         .rev()
         .find(|event| event.kind == "task_instruction")
+        .or(input.session_summary.current_instruction.as_ref())
         .and_then(|event| event.instruction.as_deref());
     let latest_instruction = instruction_projection(latest_instruction);
 
@@ -266,6 +267,7 @@ pub fn build_handoff_brief(input: HandoffBriefInput<'_>) -> Value {
         .iter()
         .rev()
         .find(|event| event.kind == "task_instruction")
+        .or(input.session_summary.current_instruction.as_ref())
         .map(|event| event.event_id.as_str());
     let projected_context = continuation.pointer("/attempt/task_context");
     let mut task_context = projected_context

@@ -391,7 +391,7 @@ explicitly allow remote shared-key auth."
             .with_project_reference_database(db.clone())
             .with_communication_database(db.clone())
             .with_job_terminal_attention(db.clone(), job_terminal_continuations)
-            .with_session_ledger(config.session_ledger_path())
+            .with_session_database(config.db_path(), &config.session_ledger_path())?
             .with_persistent_coding_agent_observation_state(&runtime_state_dir)
             .map_err(std::io::Error::other)?;
     #[cfg(feature = "workspace-checkpoints")]

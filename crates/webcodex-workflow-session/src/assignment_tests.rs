@@ -1,4 +1,4 @@
-use super::model::{DEFAULT_MAX_MESSAGES_PER_SESSION, MAX_SESSION_ASSIGNMENT_DIRECT_REPLIES};
+use super::model::{LEGACY_MESSAGE_RETENTION_LIMIT, MAX_SESSION_ASSIGNMENT_DIRECT_REPLIES};
 use super::*;
 use serde_json::Value;
 use std::sync::Arc;
@@ -633,7 +633,7 @@ async fn sanitized_relevant_history_and_corrupt_observation_metadata_fail_closed
         drop(store);
 
         let mut raw: Value =
-            serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+            serde_json::from_str(&crate::test_storage::read_ledger(&ledger).unwrap()).unwrap();
         let record = raw["sessions"]
             .as_array_mut()
             .unwrap()
@@ -653,7 +653,7 @@ async fn sanitized_relevant_history_and_corrupt_observation_metadata_fail_closed
         }
         std::fs::write(&ledger, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
 
-        let restored = SessionStore::with_persistence(&ledger, 10, 50);
+        let restored = crate::test_storage::import_ledger(&ledger, 10, 50);
         assert!(matches!(
             restored
                 .get_assignment(&session.session_id, &todo.message_id)
@@ -686,7 +686,8 @@ async fn relevant_change_then_sanitization_cannot_look_safe_again() {
     store.flush_persistence();
     drop(store);
 
-    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let mut raw: Value =
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger).unwrap()).unwrap();
     let record = raw["sessions"]
         .as_array_mut()
         .unwrap()
@@ -701,7 +702,7 @@ async fn relevant_change_then_sanitization_cannot_look_safe_again() {
         .unwrap()["session_id"] = Value::String("wc_sess_wrong".to_string());
     std::fs::write(&ledger, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
 
-    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let restored = crate::test_storage::import_ledger(&ledger, 10, 50);
     assert!(matches!(
         restored
             .complete_message(fenced_completion(
@@ -774,7 +775,7 @@ async fn fenced_completion_retains_direct_replies_for_idempotent_replay_at_messa
         .get_assignment(&session.session_id, &todo.message_id)
         .await
         .unwrap();
-    for index in 0..(DEFAULT_MAX_MESSAGES_PER_SESSION - 2) {
+    for index in 0..(LEGACY_MESSAGE_RETENTION_LIMIT - 2) {
         post_message(
             &store,
             &session.session_id,
@@ -805,6 +806,6 @@ async fn fenced_completion_retains_direct_replies_for_idempotent_replay_at_messa
 
 #[test]
 fn assignment_test_message_budget_assumption_matches_store_cap() {
-    assert!(150 + 2 + 75 > DEFAULT_MAX_MESSAGES_PER_SESSION);
-    assert!(150 + 2 < DEFAULT_MAX_MESSAGES_PER_SESSION);
+    assert!(150 + 2 + 75 > LEGACY_MESSAGE_RETENTION_LIMIT);
+    assert!(150 + 2 < LEGACY_MESSAGE_RETENTION_LIMIT);
 }

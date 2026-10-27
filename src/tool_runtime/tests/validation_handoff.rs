@@ -18,7 +18,7 @@ use crate::runner_protocol::{
     JOB_INVENTORY_MAX_TERMINAL_JOBS, VALIDATION_STEP_SPAWN_FAILED_CODE,
     VALIDATION_STEP_WAIT_FAILED_CODE, VALIDATION_TOOL_UNAVAILABLE_CODE,
 };
-use crate::tool_runtime::sessions::{SessionTransport, DEFAULT_MAX_EVENTS_PER_SESSION};
+use crate::tool_runtime::sessions::{SessionTransport, DEFAULT_RECENT_EVENT_LIMIT};
 use crate::tool_runtime::validation_events::validation_summary_for_session;
 use crate::tool_runtime::{ObserveJobsItem, ObserveJobsWakeOn, ToolCall, ToolRuntime};
 use serde_json::json;
@@ -2154,7 +2154,7 @@ async fn stale_validation_terminal_snapshot_cannot_evict_newer_materialization_m
 
     let materialized = runtime
         .sessions
-        .summary(&session_id, Some(DEFAULT_MAX_EVENTS_PER_SESSION))
+        .summary(&session_id, Some(DEFAULT_RECENT_EVENT_LIMIT))
         .unwrap();
     for job in [&jold, &jnew] {
         assert_eq!(
@@ -2187,7 +2187,7 @@ async fn stale_validation_terminal_snapshot_cannot_evict_newer_materialization_m
         .await;
     let after_repeat = runtime
         .sessions
-        .summary(&session_id, Some(DEFAULT_MAX_EVENTS_PER_SESSION))
+        .summary(&session_id, Some(DEFAULT_RECENT_EVENT_LIMIT))
         .unwrap();
     assert_eq!(after_repeat.events_total, events_total_before_repeat);
     assert_eq!(
@@ -2364,7 +2364,7 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
     // the authoritative Job registry. The retained Job must remain a candidate,
     // but reconciliation must not resurrect its terminal evidence or refresh
     // Session activity merely because a read path ran later.
-    for index in 0..=DEFAULT_MAX_EVENTS_PER_SESSION {
+    for index in 0..=DEFAULT_RECENT_EVENT_LIMIT {
         let started = runtime.sessions.record_tool_call_started(
             Some(&session_id),
             SessionTransport::Api,

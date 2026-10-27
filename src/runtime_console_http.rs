@@ -1663,7 +1663,19 @@ async fn workflow_session_for_auth(
     }
     let mut detail = runtime
         .workflow_session_console_detail(project, session_id, limit)
-        .ok_or(RuntimeConsoleError::NotFound)?;
+        .ok_or_else(|| {
+            if runtime
+                .sessions
+                .session_project(session_id)
+                .flatten()
+                .as_deref()
+                == Some(project)
+            {
+                RuntimeConsoleError::Internal
+            } else {
+                RuntimeConsoleError::NotFound
+            }
+        })?;
     if auth.has_scope(SCOPE_RUNTIME_READ) {
         let jobs = running_jobs_for_auth(runtime, auth, Some(project)).await?;
         detail.running_jobs = jobs.count(project, session_id);

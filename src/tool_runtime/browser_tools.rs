@@ -69,6 +69,9 @@ fn browser_diagnostics_payload(
 
 fn browser_session_selector_error(error: super::SessionSelectorError) -> ToolResult {
     match error {
+        super::SessionSelectorError::StorageUnavailable => {
+            super::session_tools::session_storage_unavailable_result()
+        }
         super::SessionSelectorError::UnknownRef(message) => {
             browser_error("unknown_session_ref", &message, "not_started", false, None)
         }

@@ -49,6 +49,12 @@ pub(crate) fn absent_workflow_session_result(
 ) -> ToolResult {
     if let Ok(owner) = workflow_session_authority_fingerprint(auth) {
         if sessions
+            .session_target_authority(session_id)
+            .is_some_and(|(_, stored)| stored == owner)
+        {
+            return super::session_tools::session_storage_unavailable_result();
+        }
+        if sessions
             .owned_retention_incarnation(session_id, &owner)
             .is_some()
         {

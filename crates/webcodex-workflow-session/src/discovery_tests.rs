@@ -97,7 +97,8 @@ fn discovery_preserves_closed_cold_history_and_restart_order() {
     let active = create(&store, "project", &owner, "active");
     let closed = create(&store, "project", &owner, "closed");
     store.close_session(&closed).unwrap();
-    assert_eq!(store.status().cold_sessions, 2);
+    store.flush_persistence();
+    assert_eq!(store.status().cold_sessions, 1);
     let before = store.discover_sessions("project", &owner, None, 0, 10);
     let closed_page =
         store.discover_sessions("project", &owner, Some(SessionLifecycle::Closed), 0, 10);
@@ -105,7 +106,7 @@ fn discovery_preserves_closed_cold_history_and_restart_order() {
     assert_eq!(closed_page.sessions[0].session_id, closed);
     assert_eq!(
         store.status().cold_sessions,
-        2,
+        1,
         "discovery must not warm Active or Closed identities"
     );
     let active_page =

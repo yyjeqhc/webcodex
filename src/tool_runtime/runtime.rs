@@ -394,13 +394,38 @@ impl ToolRuntime {
         Self::new(runner_registry, Arc::new(RuntimeInfo::default()))
     }
 
-    pub fn with_session_ledger(mut self, path: impl Into<PathBuf>) -> Self {
-        self.sessions = sessions::SessionStore::with_persistence_limits(
+    pub fn with_session_database(
+        mut self,
+        path: impl Into<PathBuf>,
+        legacy: &std::path::Path,
+    ) -> std::io::Result<Self> {
+        self.sessions = sessions::SessionStore::open_database(
             path,
-            sessions::DEFAULT_MAX_SESSIONS,
-            sessions::DEFAULT_MAX_RETAINED_CLOSED_SESSIONS,
-            sessions::DEFAULT_MAX_EVENTS_PER_SESSION,
-        );
+            Some(legacy),
+            webcodex_workflow_session::DEFAULT_SESSION_CACHE_BYTES,
+            sessions::DEFAULT_RECENT_EVENT_LIMIT,
+        )?;
+        Ok(self)
+    }
+
+    #[cfg(test)]
+    pub fn with_session_ledger(mut self, path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        // This is a test fixture adapter. Production always opens the configured
+        // SQLite database and imports a legacy source at most once.
+        self.sessions = if path.exists() {
+            webcodex_workflow_session::root_test_support::import_ledger(
+                &path,
+                sessions::DEFAULT_MAX_SESSIONS,
+                sessions::DEFAULT_RECENT_EVENT_LIMIT,
+            )
+        } else {
+            sessions::SessionStore::with_persistence(
+                &path,
+                sessions::DEFAULT_MAX_SESSIONS,
+                sessions::DEFAULT_RECENT_EVENT_LIMIT,
+            )
+        };
         self
     }
 

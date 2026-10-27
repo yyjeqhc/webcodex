@@ -21,8 +21,8 @@ pub(crate) use webcodex_workflow_session::{
     SessionToolContract, SessionTransport, ToolCallExpectation, ToolCallRecorderMetadata,
     ToolCallSessionMessageResolution, ToolCallStart, WorkflowSessionConsoleAggregate,
     WorkflowSessionConsoleAttentionOverview, WorkflowSessionConsoleDetail,
-    WorkflowSessionConsoleList, WorkflowSessionConsoleListItem, DEFAULT_MAX_EVENTS_PER_SESSION,
-    DEFAULT_MAX_RETAINED_CLOSED_SESSIONS, DEFAULT_MAX_SESSIONS, MAX_CODING_INSTRUCTION_CHARS,
+    WorkflowSessionConsoleList, WorkflowSessionConsoleListItem, DEFAULT_MAX_SESSIONS,
+    DEFAULT_RECENT_EVENT_LIMIT, DEFAULT_SESSION_CACHE_BYTES, MAX_CODING_INSTRUCTION_CHARS,
     MAX_MESSAGE_CHARS, MAX_MESSAGE_COMPLETION_KEY_CHARS, MAX_MESSAGE_DELIVERY_KEY_CHARS,
     MAX_MESSAGE_LIST_LIMIT, MAX_MESSAGE_RESOLUTION_CHARS, MAX_MESSAGE_TAGS, MAX_MESSAGE_TAG_CHARS,
     MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, MAX_TOOL_CALL_ACK_MESSAGE_IDS,
@@ -110,14 +110,7 @@ pub(crate) mod events {
 
 #[cfg(test)]
 pub(crate) mod model {
-    pub(crate) use webcodex_workflow_session::root_test_support::{
-        PersistedSessionLedger, MAX_OBSERVED_PATHS_PER_EVENT, SESSION_LEDGER_VERSION,
-    };
-}
-
-#[cfg(test)]
-pub(crate) mod persistence {
-    pub(crate) use webcodex_workflow_session::root_test_support::write_ledger_atomic;
+    pub(crate) use webcodex_workflow_session::root_test_support::MAX_OBSERVED_PATHS_PER_EVENT;
 }
 
 #[cfg(test)]

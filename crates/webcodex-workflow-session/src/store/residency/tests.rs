@@ -138,7 +138,6 @@ fn active_residency_capacity_keeps_identity_and_queries_do_not_promote() {
     assert!(store.hot_payload_entry_count_for_test(&ids[0]).is_some());
     assert_eq!(store.status().hot_sessions, 2);
     assert_eq!(store.status().retained_sessions, 12);
-    assert_eq!(store.status().capacity_evictions, 0);
 }
 
 #[test]
@@ -231,7 +230,7 @@ async fn active_residency_restart_restores_cold_and_keyed_replay_ack_survive() {
     );
     store.flush_persistence();
     drop(store);
-    let bytes = std::fs::read(&path).unwrap();
+    let bytes = crate::test_storage::read_ledger_bytes(&path).unwrap();
     let reopened = SessionStore::with_persistence(&path, 1, 20);
     assert_eq!(reopened.status().hot_sessions, 0);
     assert_eq!(reopened.status().active_sessions, 3);
@@ -239,7 +238,7 @@ async fn active_residency_restart_restores_cold_and_keyed_replay_ack_survive() {
     reopened.summary(&id, None).unwrap();
     assert_eq!(reopened.status().hot_sessions, 0);
     assert_eq!(
-        std::fs::read(&path).unwrap(),
+        crate::test_storage::read_ledger_bytes(&path).unwrap(),
         bytes,
         "restore/query cannot rewrite the ledger"
     );
@@ -304,16 +303,18 @@ fn active_residency_inflight_call_keeps_terminal_and_sticky_edit_evidence() {
 #[test]
 fn active_residency_zero_target_and_failed_persistence_never_discard_dirty_state() {
     let dir = tempfile::tempdir().unwrap();
-    let blocker = dir.path().join("not-a-directory");
-    std::fs::write(&blocker, "block").unwrap();
-    let store = SessionStore::with_persistence(blocker.join("sessions.json"), 0, 20);
+    let store = SessionStore::with_persistence(dir.path().join("sessions.json"), 0, 20);
+    crate::test_storage::fail_writes(&store, true);
     let id = store.start_session(None, Some("dirty".into())).session_id;
     let first = store.post_message(message(&id)).unwrap();
     churn(&store);
     store.flush_persistence();
     assert!(store.status().last_persist_error.is_some());
-    assert_eq!(store.status().hot_sessions, 1);
-    assert_eq!(store.status().capacity_evictions, 0);
+    assert_eq!(
+        store.status().hot_sessions,
+        2,
+        "dirty records cannot be evicted to an older disk image"
+    );
     assert_eq!(
         encoded(&store, &id)["messages"][0]["message_id"],
         first.message_id
@@ -385,7 +386,6 @@ fn active_residency_parallel_mutation_and_churn_preserve_every_message() {
     assert_eq!(texts.len(), 32);
     assert_eq!(store.status().active_sessions, 33);
     assert_eq!(store.status().hot_sessions, 1);
-    assert_eq!(store.status().capacity_evictions, 0);
 }
 
 #[test]
@@ -404,7 +404,6 @@ fn active_residency_corrupt_payload_fails_closed_without_replacing_identity() {
     assert!(store.post_message(message(&id)).is_err());
     assert!(store.contains_session(&id));
     assert_eq!(store.lifecycle_state(&id), Some(SessionLifecycle::Active));
-    assert_eq!(store.status().capacity_evictions, 0);
 }
 
 #[test]

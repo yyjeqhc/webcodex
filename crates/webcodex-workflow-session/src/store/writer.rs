@@ -1,216 +1,146 @@
-//! Background full-ledger persistence. Ordinary dirty notifications coalesce
-//! behind one cost-aware fixed deadline; explicit flush and shutdown bypass it.
-//! This changes write scheduling only, not ledger format or durable identity.
-use super::{bound_summary_string, SessionStoreInner};
-use crate::persistence::write_ledger_atomic_measured;
+//! One SQLite writer with bounded batching and exact successful commit fences.
+use super::{SessionStoreInner, SessionWrite};
 use serde::Serialize;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 const ORDINARY_COALESCE: Duration = Duration::from_millis(20);
-const LARGE_LEDGER_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_COST_COALESCE: Duration = Duration::from_secs(1);
-
-fn cost_coalesce(bytes: u64, duration: Duration) -> Duration {
-    if bytes < LARGE_LEDGER_BYTES {
-        return ORDINARY_COALESCE;
-    }
-    duration
-        .saturating_mul(4)
-        .max(Duration::from_millis(250))
-        .min(MAX_COST_COALESCE)
-}
 
 pub(super) struct LedgerWriterGuard {
     shared: Arc<LedgerWriterShared>,
     join: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
-
 struct LedgerWriterShared {
     state: Mutex<LedgerWriterState>,
     cvar: Condvar,
     completed: tokio::sync::Notify,
 }
-
 #[derive(Default)]
 struct LedgerWriterState {
-    // First pending mark owns the deadline; later progress never extends it.
     dirty_since: Option<Instant>,
-    // Captured by the first mark; later work and cost updates cannot extend it.
-    dirty_cost: Duration,
-    next_cost: Duration,
-
     dirty_generation: u64,
-    // A completed cycle is an attempted write, not necessarily a successful one.
-    // SessionPersistence.last_persist_error remains the success/error authority.
     writes_completed: u64,
+    attempted_generation: u64,
     flush_generation: u64,
     shutdown: bool,
     write_attempts: u64,
     failed_attempts: u64,
+    ordinary_notifications: u64,
+    durability_barriers: u64,
     last_attempt: Option<WriteAttemptObservation>,
-    #[cfg(test)]
-    write_cycles: usize,
 }
-
-impl LedgerWriterState {
-    fn mark_dirty(&mut self, now: Instant) -> u64 {
-        if self.dirty_since.is_none() {
-            self.dirty_since = Some(now);
-            self.dirty_cost = self.next_cost;
-        }
-        self.dirty_generation = self.dirty_generation.saturating_add(1);
-        self.dirty_generation
-    }
-
-    fn coalescing_wait(&self, now: Instant, window: Duration) -> Option<Duration> {
-        if self.shutdown || self.flush_generation > self.writes_completed {
-            return None;
-        }
-        self.dirty_since.and_then(|since| {
-            window
-                .max(self.dirty_cost)
-                .checked_sub(now.saturating_duration_since(since))
-                .filter(|remaining| !remaining.is_zero())
-        })
-    }
-}
-
 impl std::fmt::Debug for LedgerWriterGuard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LedgerWriterGuard").finish_non_exhaustive()
+        f.debug_struct("SessionDatabaseWriter")
+            .finish_non_exhaustive()
     }
 }
-
 impl LedgerWriterGuard {
     pub(super) fn spawn(
-        store_inner: Arc<Mutex<SessionStoreInner>>,
+        inner: Arc<Mutex<SessionStoreInner>>,
         write_mutex: Arc<Mutex<()>>,
     ) -> Option<Arc<Self>> {
-        Self::spawn_with_window(store_inner, write_mutex, ORDINARY_COALESCE)
+        Self::spawn_with_window(inner, write_mutex, ORDINARY_COALESCE)
     }
-
-    // The window is private policy, not a deployment knob. Tests inject a long
-    // window to prove flush/drop bypass without short timing assertions.
     fn spawn_with_window(
-        store_inner: Arc<Mutex<SessionStoreInner>>,
+        inner: Arc<Mutex<SessionStoreInner>>,
         write_mutex: Arc<Mutex<()>>,
         window: Duration,
     ) -> Option<Arc<Self>> {
-        Self::spawn_with_policy(store_inner, write_mutex, window, true)
-    }
-
-    // Private comparison seam: production always enables cost-aware scheduling.
-    fn spawn_with_policy(
-        store_inner: Arc<Mutex<SessionStoreInner>>,
-        write_mutex: Arc<Mutex<()>>,
-        window: Duration,
-        cost_aware: bool,
-    ) -> Option<Arc<Self>> {
-        let path = store_inner
-            .lock()
-            .ok()
-            .and_then(|inner| inner.persistence.as_ref().map(|p| p.path.clone()));
-        let bytes = path
-            .and_then(|path| std::fs::metadata(path).ok())
-            .map_or(0, |meta| meta.len());
+        let generation = inner.lock().ok()?.sessions.generation;
         let shared = Arc::new(LedgerWriterShared {
             state: Mutex::new(LedgerWriterState {
-                next_cost: if cost_aware {
-                    cost_coalesce(bytes, Duration::ZERO)
-                } else {
-                    Duration::ZERO
-                },
+                dirty_generation: generation,
+                writes_completed: generation,
                 ..Default::default()
             }),
             cvar: Condvar::new(),
             completed: tokio::sync::Notify::new(),
         });
-        let shared_thread = Arc::clone(&shared);
+        let thread_shared = Arc::clone(&shared);
         let join = std::thread::Builder::new()
-            .name("session-ledger-writer".to_string())
-            .spawn(move || {
-                ledger_writer_loop(shared_thread, store_inner, write_mutex, window, cost_aware)
-            })
+            .name("session-sqlite-writer".into())
+            .spawn(move || writer_loop(thread_shared, inner, write_mutex, window))
             .ok()?;
         Some(Arc::new(Self {
             shared,
             join: Mutex::new(Some(join)),
         }))
     }
-
-    pub(super) fn mark_dirty(&self) -> u64 {
-        let generation = self
+    #[cfg(test)]
+    fn write_cycles(&self) -> u64 {
+        self.shared.state.lock().unwrap().write_attempts
+    }
+    pub(super) fn notify_generation(&self, generation: u64) {
+        let mut state = self
             .shared
             .state
             .lock()
-            .expect("session ledger writer state poisoned")
-            .mark_dirty(Instant::now());
-        // Wake the writer and synchronous test flush waiters.
+            .expect("Session writer state poisoned");
+        state.ordinary_notifications = state.ordinary_notifications.saturating_add(1);
+        state.dirty_generation = state.dirty_generation.max(generation);
+        if generation > state.writes_completed {
+            state.dirty_since.get_or_insert_with(Instant::now);
+        }
         self.shared.cvar.notify_all();
-        generation
     }
-
-    /// Wait for the exact requested generation, not later concurrent mutations.
-    /// Errors also release the barrier; the caller checks last_persist_error.
-    pub(super) async fn flush_through(&self, generation: u64) {
+    pub(super) async fn flush_through(&self, generation: u64) -> Result<(), ()> {
+        let first_attempt = {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .expect("Session writer state poisoned");
+            state.durability_barriers = state.durability_barriers.saturating_add(1);
+            state.write_attempts
+        };
+        let mut requested = false;
         loop {
             let completed = self.shared.completed.notified();
             tokio::pin!(completed);
-            // Register before checking the generation so completion cannot fall
-            // between the state check and installing this waiter's wakeup.
             completed.as_mut().enable();
             {
                 let mut state = self
                     .shared
                     .state
                     .lock()
-                    .expect("session ledger writer state poisoned");
-                state.flush_generation = state.flush_generation.max(generation);
+                    .expect("Session writer state poisoned");
                 if state.writes_completed >= generation {
-                    return;
+                    return Ok(());
+                }
+                if state.write_attempts > first_attempt && state.attempted_generation >= generation
+                {
+                    return Err(());
+                }
+                if !requested {
+                    state.dirty_generation = state.dirty_generation.max(generation);
+                    state.flush_generation = state.flush_generation.max(generation);
+                    state.dirty_since.get_or_insert_with(Instant::now);
+                    requested = true;
+                    self.shared.cvar.notify_all();
                 }
             }
-            self.shared.cvar.notify_all();
             completed.await;
         }
     }
-
-    #[cfg(any(test, feature = "root-test-support"))]
-    fn flush_through_blocking(&self, generation: u64) {
-        let mut state = self
-            .shared
-            .state
-            .lock()
-            .expect("session ledger writer state poisoned");
-        state.flush_generation = state.flush_generation.max(generation);
-        self.shared.cvar.notify_all();
-        while state.writes_completed < generation {
-            state = self
-                .shared
-                .cvar
-                .wait(state)
-                .expect("session ledger writer state poisoned");
-        }
-    }
-
     #[cfg(any(test, feature = "root-test-support"))]
     pub(super) fn flush(&self) {
-        let generation = self
-            .shared
-            .state
-            .lock()
-            .expect("session ledger writer state poisoned")
-            .dirty_generation;
-        self.flush_through_blocking(generation);
-    }
-
-    #[cfg(test)]
-    pub(super) fn write_cycles(&self) -> usize {
-        self.shared.state.lock().unwrap().write_cycles
+        let mut state = self.shared.state.lock().unwrap();
+        let generation = state.dirty_generation;
+        let attempts = state.write_attempts;
+        if state.writes_completed >= generation {
+            return;
+        }
+        state.flush_generation = generation;
+        state.dirty_since.get_or_insert_with(Instant::now);
+        self.shared.cvar.notify_all();
+        while state.writes_completed < generation
+            && (state.write_attempts == attempts || state.attempted_generation < generation)
+        {
+            state = self.shared.cvar.wait(state).unwrap();
+        }
     }
 }
-
 impl Drop for LedgerWriterGuard {
     fn drop(&mut self) {
         {
@@ -218,14 +148,17 @@ impl Drop for LedgerWriterGuard {
                 .shared
                 .state
                 .lock()
-                .expect("session ledger writer state poisoned");
+                .expect("Session writer state poisoned");
             state.shutdown = true;
+            if state.dirty_generation > state.writes_completed {
+                state.dirty_since.get_or_insert_with(Instant::now);
+            }
             self.shared.cvar.notify_all();
         }
         if let Some(join) = self
             .join
             .lock()
-            .expect("session ledger writer join mutex poisoned")
+            .expect("Session writer join poisoned")
             .take()
         {
             let _ = join.join();
@@ -233,176 +166,235 @@ impl Drop for LedgerWriterGuard {
     }
 }
 
-fn ledger_writer_loop(
+pub(super) fn persist_batch(
+    inner: &Arc<Mutex<SessionStoreInner>>,
+    write_mutex: &Arc<Mutex<()>>,
+) -> (u64, Result<u64, String>, f64, f64) {
+    persist_batch_observed(inner, write_mutex, |_| {})
+}
+
+fn persist_batch_observed(
+    inner: &Arc<Mutex<SessionStoreInner>>,
+    write_mutex: &Arc<Mutex<()>>,
+    after_snapshot: impl FnOnce(&[SessionWrite]),
+) -> (u64, Result<u64, String>, f64, f64) {
+    let _write = write_mutex.lock().expect("Session writer mutex poisoned");
+    {
+        let mut inner = inner.lock().expect("Session store mutex poisoned");
+        if inner.persistence.is_none() {
+            // The memory-only fixture/embedder has no deferred durability queue.
+            for record in inner
+                .sessions
+                .records
+                .values_mut()
+                .filter_map(super::StoredSession::hot_mut)
+            {
+                record.pending_events.clear();
+            }
+            inner.sessions.dirty.clear();
+            return (inner.sessions.generation, Ok(0), 0.0, 0.0);
+        }
+    }
+    let waiting = Instant::now();
+    let (database, generation, writes, wait_ms, hold_ms) = {
+        let inner = inner.lock().expect("Session store mutex poisoned");
+        let acquired = Instant::now();
+        let writes = inner
+            .sessions
+            .dirty
+            .iter()
+            .map(|(id, revision)| {
+                let record = inner
+                    .sessions
+                    .get(id)
+                    .and_then(super::StoredSession::hot)
+                    .ok_or_else(|| "dirty Session has no mutable state".to_owned())?;
+                Ok(SessionWrite {
+                    revision: *revision,
+                    expected_revision: record.durable.as_ref().map(|cold| cold.database_revision),
+                    previous_message_revision: record
+                        .durable
+                        .as_ref()
+                        .map_or(0, |cold| cold.retained_message_revision),
+                    record: super::PersistedSessionRecord::database_delta(
+                        record,
+                        record
+                            .durable
+                            .as_ref()
+                            .map_or(0, |cold| cold.retained_message_revision),
+                    ),
+                    events: record.pending_events.iter().cloned().collect(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>();
+        (
+            inner
+                .persistence
+                .as_ref()
+                .map(|state| Arc::clone(&state.database)),
+            inner.sessions.generation,
+            writes,
+            acquired.duration_since(waiting).as_secs_f64() * 1000.0,
+            acquired.elapsed().as_secs_f64() * 1000.0,
+        )
+    };
+    if let Ok(writes) = &writes {
+        after_snapshot(writes);
+    }
+    let committed = writes.and_then(|writes| {
+        let database = database.as_ref().expect("persistent batch has database");
+        let cold = writes
+            .iter()
+            .map(|write| database.cold(write))
+            .collect::<std::io::Result<Vec<_>>>()
+            .map_err(|error| error.to_string())?;
+        let bytes = if writes.is_empty() {
+            0
+        } else {
+            database.write(&writes).map_err(|error| {
+                super::bound_summary_string(&format!("Session persistence failed: {error}"))
+            })?
+        };
+        Ok((bytes, writes, cold))
+    });
+    let result = committed
+        .as_ref()
+        .map(|(bytes, _, _)| *bytes)
+        .map_err(Clone::clone);
+    let mut inner = inner.lock().expect("Session store mutex poisoned");
+    if let Some(state) = inner.persistence.as_mut() {
+        state.last_persist_error = result.as_ref().err().cloned();
+    }
+    if let Ok((_, writes, cold)) = committed {
+        for (write, mut cold) in writes.iter().zip(cold) {
+            if let Some(record) = inner
+                .sessions
+                .get(&write.record.session_id)
+                .and_then(super::StoredSession::hot)
+            {
+                cold.resident_instructions = record.project_instructions.clone().map(Arc::new);
+                cold.project_instructions = record
+                    .project_instructions
+                    .as_ref()
+                    .map(|instructions| instructions.to_summary());
+                cold.unfenced_completion_ids = record
+                    .completion_assignment_fence_fingerprints
+                    .iter()
+                    .filter(|(_, f)| f.is_none())
+                    .map(|(id, _)| id.clone())
+                    .collect();
+            }
+            inner.sessions.acknowledge(
+                &write.record.session_id,
+                write.revision,
+                &write.events,
+                cold,
+            );
+        }
+        inner.compact_hot_sessions("");
+    }
+    (generation, result, wait_ms, hold_ms)
+}
+
+fn writer_loop(
     shared: Arc<LedgerWriterShared>,
-    store_inner: Arc<Mutex<SessionStoreInner>>,
+    inner: Arc<Mutex<SessionStoreInner>>,
     write_mutex: Arc<Mutex<()>>,
     window: Duration,
-    cost_aware: bool,
 ) {
     loop {
-        let generation = {
-            let mut state = shared
-                .state
-                .lock()
-                .expect("session ledger writer state poisoned");
+        {
+            let mut state = shared.state.lock().expect("Session writer state poisoned");
             while state.dirty_since.is_none() && !state.shutdown {
-                state = shared
-                    .cvar
-                    .wait(state)
-                    .expect("session ledger writer state poisoned");
+                state = shared.cvar.wait(state).unwrap();
             }
             if state.dirty_since.is_none() {
                 break;
             }
-            while let Some(remaining) = state.coalescing_wait(Instant::now(), window) {
-                (state, _) = shared
-                    .cvar
-                    .wait_timeout(state, remaining)
-                    .expect("session ledger writer state poisoned");
+            while !state.shutdown && state.flush_generation <= state.writes_completed {
+                let Some(remaining) = state
+                    .dirty_since
+                    .and_then(|since| window.checked_sub(since.elapsed()))
+                    .filter(|d| !d.is_zero())
+                else {
+                    break;
+                };
+                state = shared.cvar.wait_timeout(state, remaining).unwrap().0;
             }
-            let generation = state.dirty_generation;
             state.dirty_since = None;
-            generation
-        };
-
-        // Preserve the shared write lock and snapshot order: no old background
-        // write may race past a synchronous write or durable commit barrier.
-        let _write_guard = write_mutex
-            .lock()
-            .expect("session persistence mutex poisoned");
-        let waiting = Instant::now();
-        let (snapshot, lock_wait, lock_hold) = {
-            let inner = store_inner.lock().expect("session store mutex poisoned");
-            let acquired = Instant::now();
-            let snapshot = inner
-                .persistence
-                .as_ref()
-                .map(|persistence| (persistence.path.clone(), inner.to_persisted_ledger()));
-            (
-                snapshot,
-                acquired.duration_since(waiting),
-                acquired.elapsed(),
-            )
-        };
-        tracing::debug!(target: "webcodex::session_cost", phase="snapshot",
-            wait_ms=lock_wait.as_secs_f64()*1000.0, hold_ms=lock_hold.as_secs_f64()*1000.0,
-            rows=snapshot.as_ref().map_or(0, |(_, ledger)| ledger.sessions.len()),
-            "session snapshot lock cost");
-        let write_started = Instant::now();
-        let result = match snapshot {
-            Some((path, ledger)) => write_ledger_atomic_measured(&path, &ledger).map_err(|err| {
-                bound_summary_string(&format!("persist_failed: {}: {err}", path.display()))
-            }),
-            None => Ok(0),
-        };
-        let write_duration = write_started.elapsed();
-        {
-            let mut inner = store_inner.lock().expect("session store mutex poisoned");
-            if let Some(persistence) = inner.persistence.as_mut() {
-                match &result {
-                    Ok(_) => persistence.last_persist_error = None,
-                    Err(error) => {
-                        tracing::warn!("session ledger persistence failed: {}", error);
-                        persistence.last_persist_error = Some(error.clone());
-                    }
+        }
+        let started = Instant::now();
+        let (generation, result, wait_ms, hold_ms) = persist_batch(&inner, &write_mutex);
+        let mut state = shared.state.lock().expect("Session writer state poisoned");
+        state.write_attempts = state.write_attempts.saturating_add(1);
+        state.attempted_generation = generation;
+        let notifications = generation.saturating_sub(state.writes_completed);
+        match &result {
+            Ok(_) => {
+                state.writes_completed = generation;
+                if state.dirty_generation <= generation {
+                    state.dirty_since = None;
                 }
             }
+            Err(_) => state.failed_attempts = state.failed_attempts.saturating_add(1),
         }
-        {
-            let mut state = shared
-                .state
-                .lock()
-                .expect("session ledger writer state poisoned");
-            state.write_attempts = state.write_attempts.saturating_add(1);
-            if result.is_err() {
-                state.failed_attempts = state.failed_attempts.saturating_add(1);
-            }
-            state.last_attempt = Some(WriteAttemptObservation {
-                success: result.is_ok(),
-                written_bytes: result.as_ref().ok().copied(),
-                write_ms: write_duration.as_secs_f64() * 1000.0,
-                snapshot_lock_wait_ms: lock_wait.as_secs_f64() * 1000.0,
-                snapshot_lock_hold_ms: lock_hold.as_secs_f64() * 1000.0,
-                dirty_notifications: generation.saturating_sub(state.writes_completed),
-            });
-            state.writes_completed = generation;
-            if cost_aware {
-                if let Ok(bytes) = &result {
-                    state.next_cost = cost_coalesce(*bytes, write_duration);
-                }
-            }
-
-            #[cfg(test)]
-            {
-                state.write_cycles += 1;
-            }
-            shared.cvar.notify_all();
-            shared.completed.notify_waiters();
-            if state.shutdown && state.dirty_since.is_none() {
-                break;
-            }
-        }
-        drop(_write_guard);
+        state.last_attempt = Some(WriteAttemptObservation {
+            success: result.is_ok(),
+            logical_payload_bytes: result.ok(),
+            write_ms: started.elapsed().as_secs_f64() * 1000.0,
+            snapshot_lock_wait_ms: wait_ms,
+            snapshot_lock_hold_ms: hold_ms,
+            dirty_notifications: notifications,
+        });
+        shared.cvar.notify_all();
+        shared.completed.notify_waiters();
     }
 }
 
-/// Bounded diagnostics only; never consulted by write admission, flush or retry.
 #[derive(Debug, Clone, Serialize)]
 pub struct WriteAttemptObservation {
     pub success: bool,
-    /// None on failure: an unsuccessful attempt cannot claim committed bytes.
-    pub written_bytes: Option<u64>,
+    /// Changed JSON payload only; excludes SQLite pages, indexes and checkpoints.
+    pub logical_payload_bytes: Option<u64>,
     pub write_ms: f64,
     pub snapshot_lock_wait_ms: f64,
     pub snapshot_lock_hold_ms: f64,
-    /// Coalesced dirty marks, not distinct Sessions or a business-mutation count.
     pub dirty_notifications: u64,
 }
-
 #[derive(Debug, Serialize)]
 pub struct WriterObservation {
     pub write_attempts: u64,
     pub failed_attempts: u64,
-    /// Dirty marks not yet attempted. Zero does not imply successful durability.
+    pub ordinary_notifications: u64,
+    pub durability_barriers: u64,
     pub pending_notifications: u64,
     pub last_attempt: Option<WriteAttemptObservation>,
 }
-
 #[derive(Debug, Serialize)]
 pub struct PersistenceObservation {
     pub mode: &'static str,
-    pub ledger_observation: &'static str,
-    pub ledger_bytes: Option<u64>,
+    pub storage_observation: &'static str,
+    /// Sizes of the shared database and WAL, not Session-only disk attribution.
+    pub database_bytes: Option<u64>,
+    pub wal_bytes: Option<u64>,
     pub writer: Option<WriterObservation>,
 }
-
 impl super::SessionStore {
-    /// Explicit detailed-status observation. Clone only the configured path under
-    /// the store lock, then stat outside it. No payload read, flush or dirty mark.
-    /// Counters/path metadata are sequential observations, not a commit receipt.
     pub fn persistence_observation(&self) -> PersistenceObservation {
-        let path = match self.inner.lock() {
-            Ok(inner) => inner.persistence.as_ref().map(|state| state.path.clone()),
-            Err(_) => {
-                return PersistenceObservation {
-                    mode: "unavailable",
-                    ledger_observation: "unavailable",
-                    ledger_bytes: None,
-                    writer: None,
-                }
-            }
-        };
-        let mode = match (&path, &self.writer) {
-            (None, _) => "memory",
-            (Some(_), Some(_)) => "background",
-            (Some(_), None) => "synchronous_fallback",
-        };
-        let ledger_bytes = path
+        let path = self
+            .inner
+            .lock()
+            .ok()
+            .and_then(|inner| inner.persistence.as_ref().map(|state| state.path.clone()));
+        let bytes = path
             .as_ref()
             .and_then(|path| std::fs::metadata(path).ok())
-            .filter(|metadata| metadata.is_file())
-            .map(|metadata| metadata.len());
+            .map(|m| m.len());
+        let wal_bytes = path.as_ref().and_then(|path| {
+            let mut wal = path.as_os_str().to_os_string();
+            wal.push("-wal");
+            std::fs::metadata(wal).ok().map(|m| m.len())
+        });
         let writer = self.writer.as_ref().and_then(|writer| {
             writer
                 .shared
@@ -412,6 +404,8 @@ impl super::SessionStore {
                 .map(|state| WriterObservation {
                     write_attempts: state.write_attempts,
                     failed_attempts: state.failed_attempts,
+                    ordinary_notifications: state.ordinary_notifications,
+                    durability_barriers: state.durability_barriers,
                     pending_notifications: state
                         .dirty_generation
                         .saturating_sub(state.writes_completed),
@@ -419,15 +413,16 @@ impl super::SessionStore {
                 })
         });
         PersistenceObservation {
-            mode,
-            ledger_observation: if path.is_none() {
-                "disabled"
-            } else if ledger_bytes.is_some() {
+            mode: if path.is_some() { "sqlite" } else { "memory" },
+            storage_observation: if bytes.is_some() {
                 "available"
-            } else {
+            } else if path.is_some() {
                 "unavailable"
+            } else {
+                "disabled"
             },
-            ledger_bytes,
+            database_bytes: bytes,
+            wal_bytes,
             writer,
         }
     }
@@ -436,7 +431,8 @@ impl super::SessionStore {
 #[cfg(test)]
 mod async_tests;
 #[cfg(test)]
-mod tests;
-
-#[cfg(test)]
 mod observation_tests;
+#[cfg(test)]
+mod sqlite_tests;
+#[cfg(test)]
+mod tests;

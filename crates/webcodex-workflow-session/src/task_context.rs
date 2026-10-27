@@ -36,7 +36,13 @@ pub(crate) fn task_context_value(
     });
     let boundary = view
         .boundary_event_index
-        .map(|index| summary.events[index].event_id.as_str());
+        .map(|index| summary.events[index].event_id.as_str())
+        .or_else(|| {
+            summary
+                .current_instruction
+                .as_ref()
+                .map(|event| event.event_id.as_str())
+        });
     let safe_boundary = boundary.filter(|id| safe_ref(id));
     let scope_valid = session_id.is_some() && project.is_some() && boundary == safe_boundary;
     let mut files = Vec::new();

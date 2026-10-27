@@ -334,6 +334,9 @@ impl ToolRuntime {
         let session_id = match self.canonicalize_explicit_session_selector(context_session_id, auth)
         {
             Ok(session_id) => session_id,
+            Err(SessionSelectorError::StorageUnavailable) => {
+                return Err(super::session_tools::session_storage_unavailable_result())
+            }
             Err(SessionSelectorError::RetentionExpired { session_id }) => {
                 return Err(session_retention_expired_result(&session_id));
             }

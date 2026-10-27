@@ -1,4 +1,4 @@
-use super::model::{SessionMessageClosureKind, DEFAULT_MAX_MESSAGES_PER_SESSION};
+use super::model::{SessionMessageClosureKind, LEGACY_MESSAGE_RETENTION_LIMIT};
 use super::*;
 use serde_json::Value;
 
@@ -436,7 +436,7 @@ async fn replace_retention_keeps_old_and_new_transactionally() {
         "protected source",
         SessionMessagePriority::Normal,
     );
-    for index in 0..(DEFAULT_MAX_MESSAGES_PER_SESSION - 1) {
+    for index in 0..(LEGACY_MESSAGE_RETENTION_LIMIT - 1) {
         post(
             &store,
             &session.session_id,
@@ -860,7 +860,8 @@ async fn withdraw_and_replace_observation_revisions_are_durable_and_consecutive(
         SessionMessagePriority::Normal,
     );
     store.flush_persistence();
-    let before: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let before: Value =
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger).unwrap()).unwrap();
     let before_revision = persisted_session(&before, &session.session_id)
         ["message_observation_revision"]
         .as_u64()
@@ -870,7 +871,7 @@ async fn withdraw_and_replace_observation_revisions_are_durable_and_consecutive(
         .await
         .unwrap();
     let after_withdraw: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger).unwrap()).unwrap();
     let record = persisted_session(&after_withdraw, &session.session_id);
     assert_eq!(
         record["message_observation_revision"].as_u64(),
@@ -890,7 +891,7 @@ async fn withdraw_and_replace_observation_revisions_are_durable_and_consecutive(
     );
     store.flush_persistence();
     let before_replace: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger).unwrap()).unwrap();
     let base = persisted_session(&before_replace, &session.session_id)
         ["message_observation_revision"]
         .as_u64()
@@ -904,7 +905,7 @@ async fn withdraw_and_replace_observation_revisions_are_durable_and_consecutive(
         .await
         .unwrap();
     let after_replace: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger).unwrap()).unwrap();
     let record = persisted_session(&after_replace, &session.session_id);
     assert_eq!(
         record["message_observation_revision"].as_u64(),
@@ -1011,8 +1012,7 @@ async fn withdraw_persistence_failure_is_uncertain_then_exact_replay_recovers() 
         SessionMessagePriority::Normal,
     );
     store.flush_persistence();
-    std::fs::remove_dir_all(&ledger_dir).unwrap();
-    std::fs::write(&ledger_dir, b"block directory recreation").unwrap();
+    crate::test_storage::fail_writes(&store, true);
 
     assert!(matches!(
         store
@@ -1025,8 +1025,7 @@ async fn withdraw_persistence_failure_is_uncertain_then_exact_replay_recovers() 
         Some(SessionMessageClosureKind::Withdrawn)
     );
 
-    std::fs::remove_file(&ledger_dir).unwrap();
-    std::fs::create_dir_all(&ledger_dir).unwrap();
+    crate::test_storage::fail_writes(&store, false);
     let replay = store
         .withdraw_message(&session.session_id, &message.message_id)
         .await
@@ -1056,8 +1055,7 @@ async fn replace_persistence_failure_replays_same_id_and_conflicts_on_different_
         SessionMessagePriority::Normal,
     );
     store.flush_persistence();
-    std::fs::remove_dir_all(&ledger_dir).unwrap();
-    std::fs::write(&ledger_dir, b"block directory recreation").unwrap();
+    crate::test_storage::fail_writes(&store, true);
 
     assert!(matches!(
         store
@@ -1085,8 +1083,7 @@ async fn replace_persistence_failure_replays_same_id_and_conflicts_on_different_
         Err(SessionMessageError::IdempotencyConflict)
     ));
 
-    std::fs::remove_file(&ledger_dir).unwrap();
-    std::fs::create_dir_all(&ledger_dir).unwrap();
+    crate::test_storage::fail_writes(&store, false);
     let replay = store
         .replace_message(replace_input(
             &session.session_id,
@@ -1121,7 +1118,8 @@ fn malformed_persisted_closure_metadata_is_not_replay_authority() {
     store.flush_persistence();
     drop(store);
 
-    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let mut raw: Value =
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger).unwrap()).unwrap();
     let persisted = raw["sessions"]
         .as_array_mut()
         .unwrap()
@@ -1149,7 +1147,7 @@ fn malformed_persisted_closure_metadata_is_not_replay_authority() {
     );
     std::fs::write(&ledger, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
 
-    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let restored = crate::test_storage::import_ledger(&ledger, 10, 50);
     let retained = exact(&restored, &session.session_id, &message.message_id);
     assert!(retained.closure_kind.is_none());
     assert!(retained.superseded_by_message_id.is_none());

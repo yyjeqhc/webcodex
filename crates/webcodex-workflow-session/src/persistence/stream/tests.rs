@@ -15,7 +15,7 @@ fn ledger() -> String {
     let closed = store.start_session(None, None).session_id;
     store.close_session(&closed).unwrap();
     store.flush_persistence();
-    let text = std::fs::read_to_string(path).unwrap();
+    let text = crate::test_storage::read_ledger(path).unwrap();
     drop(store);
     text
 }

@@ -11,6 +11,7 @@ use webcodex_core::model_reference::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionSelectorError {
     UnknownRef(String),
+    StorageUnavailable,
     RetentionExpired { session_id: String },
 }
 
@@ -18,6 +19,7 @@ impl std::fmt::Display for SessionSelectorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownRef(message) => f.write_str(message),
+            Self::StorageUnavailable => f.write_str("session_storage_unavailable"),
             Self::RetentionExpired { session_id } => {
                 write!(f, "session_retention_expired: {session_id}")
             }
@@ -44,10 +46,10 @@ impl ToolRuntime {
         if owner_authority_fingerprint != principal_key {
             return None;
         }
-        let summary = self.sessions.summary(session_id, Some(1))?;
+        let created_at = self.sessions.session_created_at(session_id)?;
         let incarnation_fingerprint = workflow_session_incarnation_fingerprint(
             session_id,
-            summary.created_at,
+            created_at,
             project.as_deref(),
             &owner_authority_fingerprint,
         );
@@ -83,14 +85,13 @@ impl ToolRuntime {
             Ok(principal_key) => principal_key,
             Err(_) => return Some(Err(unknown_session_ref(raw))),
         };
-        let record = match db
-            .lookup_model_reference(&principal_key, ModelReferenceKind::Session, ref_index)
-            .ok()
-            .flatten()
-        {
-            Some(record) => record,
-            None => return Some(Err(unknown_session_ref(raw))),
-        };
+        let record =
+            match db.lookup_model_reference(&principal_key, ModelReferenceKind::Session, ref_index)
+            {
+                Ok(Some(record)) => record,
+                Ok(None) => return Some(Err(unknown_session_ref(raw))),
+                Err(_) => return Some(Err(SessionSelectorError::StorageUnavailable)),
+            };
         let (project, owner_authority_fingerprint) =
             match self.sessions.session_target_authority(&record.canonical_id) {
                 Some(target) => target,
@@ -111,13 +112,13 @@ impl ToolRuntime {
         if owner_authority_fingerprint != principal_key {
             return Some(Err(unknown_session_ref(raw)));
         }
-        let summary = match self.sessions.summary(&record.canonical_id, Some(1)) {
-            Some(summary) => summary,
+        let created_at = match self.sessions.session_created_at(&record.canonical_id) {
+            Some(created_at) => created_at,
             None => return Some(Err(unknown_session_ref(raw))),
         };
         let current_incarnation = workflow_session_incarnation_fingerprint(
             &record.canonical_id,
-            summary.created_at,
+            created_at,
             project.as_deref(),
             &owner_authority_fingerprint,
         );

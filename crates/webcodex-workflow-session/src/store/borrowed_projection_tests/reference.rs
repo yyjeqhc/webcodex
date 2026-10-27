@@ -76,6 +76,7 @@ pub(super) fn reference_summary(
         created_at: record.created_at,
         updated_at: record.updated_at,
         counts,
+        current_instruction: record.current_instruction.as_deref().cloned(),
         events,
         events_total: observed_total,
         events_retained: retained_total,

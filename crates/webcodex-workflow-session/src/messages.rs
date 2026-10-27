@@ -10,8 +10,8 @@ use super::model::{
     SessionDiscussionSummary, SessionInboxHint, SessionMessage, SessionMessageDelivery,
     SessionMessageDeliveryOutcome, SessionMessageError, SessionMessageObservationError,
     SessionMessageObservationOutcome, SessionMessageStatus, WithdrawSessionMessageOutcome,
-    DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MESSAGE_LIST_LIMIT, MAX_MESSAGE_LIST_LIMIT,
-    MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN, MAX_TOOL_CALL_ACK_REF_CHARS,
+    DEFAULT_MESSAGE_LIST_LIMIT, MAX_MESSAGE_LIST_LIMIT, MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN,
+    MAX_TOOL_CALL_ACK_REF_CHARS,
 };
 use super::query::{build_discussion_summary, build_inbox_hint};
 use super::store::SessionStore;
@@ -186,7 +186,7 @@ impl SessionStore {
             while membership.last().is_some_and(|byte| *byte == 0) {
                 membership.pop();
             }
-            if membership.is_empty() {
+            if membership.is_empty() || membership.len() > ACK_REF_MAX_MEMBERSHIP_BYTES {
                 return None;
             }
 
@@ -609,7 +609,10 @@ fn observation_outcome(
 
 const ACK_REF_PREFIX: &str = "wc_ack1_";
 const ACK_REF_TAG_BYTES: usize = 16;
-const ACK_REF_MAX_MEMBERSHIP_BYTES: usize = DEFAULT_MAX_MESSAGES_PER_SESSION.div_ceil(8);
+// A wire-size budget, independent of the number of durable messages. Large
+// open sets can use explicit ACK ids when a compact selector does not fit.
+const ACK_REF_MAX_MEMBERSHIP_BYTES: usize =
+    (MAX_TOOL_CALL_ACK_REF_CHARS - ACK_REF_PREFIX.len()) * 3 / 4 - ACK_REF_TAG_BYTES;
 
 fn sorted_open_ack_message_ids(record: &super::model::SessionRecord) -> Vec<String> {
     let mut messages = record

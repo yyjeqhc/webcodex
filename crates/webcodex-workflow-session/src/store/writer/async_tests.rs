@@ -107,7 +107,7 @@ async fn cancelled_delivery_keeps_notification_and_restart_safe_replay() {
         // dirty generation that could hide cancellation losing the first write.
         if let Some(writer) = &store.writer {
             let generation = writer.shared.state.lock().unwrap().dirty_generation;
-            writer.flush_through(generation).await;
+            writer.flush_through(generation).await.unwrap();
         } else {
             drop(
                 Arc::clone(&store.persistence_fallback)
@@ -146,20 +146,22 @@ async fn async_flush_waits_only_for_its_generation_and_handles_precompleted_writ
         shared: Arc::clone(&shared),
         join: Mutex::new(None),
     };
-    let first = writer.mark_dirty();
+    let first = 1;
+    writer.notify_generation(first);
     let mut first_wait = Box::pin(writer.flush_through(first));
     assert_pending(first_wait.as_mut()).await;
     let mut same_generation_wait = Box::pin(writer.flush_through(first));
     assert_pending(same_generation_wait.as_mut()).await;
-    let second = writer.mark_dirty();
+    let second = 2;
+    writer.notify_generation(second);
     let mut second_wait = Box::pin(writer.flush_through(second));
     assert_pending(second_wait.as_mut()).await;
 
     shared.state.lock().unwrap().writes_completed = first;
     shared.completed.notify_waiters();
     tokio::time::timeout(Duration::from_secs(10), async {
-        first_wait.await;
-        same_generation_wait.await;
+        first_wait.await.unwrap();
+        same_generation_wait.await.unwrap();
     })
     .await
     .expect("all waiters for the completed generation must wake");
@@ -169,8 +171,34 @@ async fn async_flush_waits_only_for_its_generation_and_handles_precompleted_writ
     shared.completed.notify_waiters();
     tokio::time::timeout(Duration::from_secs(10), second_wait)
         .await
-        .expect("later generation must wake when its write finishes");
+        .expect("later generation must wake when its write finishes")
+        .unwrap();
     // No retained notification is necessary once the predicate already holds.
-    writer.flush_through(first).await;
-    writer.flush_through(second).await;
+    writer.flush_through(first).await.unwrap();
+    writer.flush_through(second).await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_admission_applies_async_backpressure_and_preserves_failed_evidence() {
+    let (_temporary, store) = persistent_fixture(Duration::from_secs(60));
+    let id = store.start_session(None, None).session_id;
+    store.flush().await.unwrap();
+    let (release, gate) = block_writes(&store);
+    for n in 0..260 {
+        super::tests::append_read_fixture(&store, &id, n);
+    }
+    let mut admission = Box::pin(store.prepare_request());
+    assert_pending(admission.as_mut()).await;
+    assert_eq!(tokio::spawn(async { 42 }).await.unwrap(), 42);
+    release.send(()).unwrap();
+    gate.join().unwrap();
+    admission.await.unwrap();
+    store.set_persistence_failure_for_test(true);
+    super::tests::append_read_fixture(&store, &id, 999);
+    assert!(store.flush().await.is_err());
+    assert!(store.prepare_request().await.is_err());
+    assert_eq!(store.summary(&id, Some(1)).unwrap().events_total, 522);
+    store.set_persistence_failure_for_test(false);
+    store.prepare_request().await.unwrap();
+    assert!(store.status().last_persist_error.is_none());
 }

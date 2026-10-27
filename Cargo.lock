@@ -5918,6 +5918,7 @@ version = "0.5.0"
 dependencies = [
  "base64",
  "chrono",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",

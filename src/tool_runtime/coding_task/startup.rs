@@ -423,6 +423,12 @@ impl ToolRuntime {
                 );
             }
         };
+        if self.sessions.prepare_request().await.is_err() {
+            return attach_project_resolution(
+                crate::tool_runtime::session_tools::session_storage_unavailable_result(),
+                &project_resolution,
+            );
+        }
         let session_outcome = match self.sessions.ensure_coding_session_with_git_baseline(
             sessions::CodingSessionRequest {
                 project: resolved.resolved_id.clone(),
@@ -452,6 +458,18 @@ impl ToolRuntime {
                 );
             }
         };
+        if self.sessions.flush().await.is_err() {
+            return attach_project_resolution(
+                ToolResult::err_with_output(
+                    "Session persistence could not be confirmed",
+                    json!({
+                        "error_kind": "session_persistence_uncertain", "session_id": session_outcome.summary.session_id,
+                        "state_changed": true, "recovery": "resume this exact session_id after storage recovers"
+                    }),
+                ),
+                &project_resolution,
+            );
+        }
         let project_instructions = session_outcome
             .project_instructions
             .as_ref()

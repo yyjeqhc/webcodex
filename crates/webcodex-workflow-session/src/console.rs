@@ -1,6 +1,6 @@
 //! Human-facing, read-only Workflow Session projection for the host Console.
 //!
-//! This is deliberately a projection of the existing bounded Session ledger.
+//! This is deliberately a bounded recent-activity projection of durable Session history.
 //! It does not create observation truth, infer execution outcomes, or expose raw
 //! arguments/output. Correlation is presentation-only via `call_id`.
 
@@ -9,8 +9,8 @@ use std::collections::{HashMap, HashSet};
 
 use super::events::normalize_observed_project_path;
 use super::model::{
-    SessionEvent, SessionMessageKind, SessionRecord, DEFAULT_MAX_EVENTS_PER_SESSION,
-    DEFAULT_MAX_SESSIONS,
+    SessionEvent, SessionMessageKind, SessionRecord, DEFAULT_MAX_SESSIONS,
+    DEFAULT_RECENT_EVENT_LIMIT,
 };
 use super::query::build_messages_summary;
 use super::util::{bound_chars, looks_like_secret_string};
@@ -51,8 +51,8 @@ pub(super) struct CachedConsoleList {
 // Do not hide retained Sessions/events behind a second, much smaller presentation cap.
 pub const DEFAULT_CONSOLE_SESSION_LIST_LIMIT: usize = DEFAULT_MAX_SESSIONS;
 pub const MAX_CONSOLE_SESSION_LIST_LIMIT: usize = DEFAULT_MAX_SESSIONS;
-pub const DEFAULT_CONSOLE_ACTIVITY_LIMIT: usize = DEFAULT_MAX_EVENTS_PER_SESSION;
-pub const MAX_CONSOLE_ACTIVITY_LIMIT: usize = DEFAULT_MAX_EVENTS_PER_SESSION;
+pub const DEFAULT_CONSOLE_ACTIVITY_LIMIT: usize = 100;
+pub const MAX_CONSOLE_ACTIVITY_LIMIT: usize = DEFAULT_RECENT_EVENT_LIMIT;
 const MAX_CONSOLE_TEXT_CHARS: usize = 240;
 const MAX_CONSOLE_PATHS_PER_ITEM: usize = 8;
 const MAX_CONSOLE_LIST_TEXT_CHARS: usize = 120;

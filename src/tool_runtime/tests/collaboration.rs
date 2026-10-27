@@ -1698,7 +1698,7 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
         .unwrap()
         .assignment_fence;
     runtime.sessions.flush_persistence();
-    let persisted = std::fs::read_to_string(&ledger).unwrap();
+    let persisted = webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap();
     assert!(persisted.contains("owner_authority_fingerprint"));
     assert!(!persisted.contains("recycled-authority-a"));
 
@@ -1994,7 +1994,7 @@ async fn projectless_owner_fingerprint_survives_restart_without_raw_principal_ma
     assert!(started.success, "{:?}", started.error);
     let session_id = started.output["session_id"].as_str().unwrap().to_string();
     runtime.sessions.flush_persistence();
-    let persisted = std::fs::read_to_string(&ledger).unwrap();
+    let persisted = webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap();
     assert!(persisted.contains("owner_authority_fingerprint"));
     assert!(!persisted.contains(alice_identity));
     drop(runtime);
@@ -2055,8 +2055,10 @@ async fn legacy_projectless_owner_hash_is_not_accepted_after_restart() {
             .unwrap();
     assert_ne!(legacy_fingerprint, canonical_fingerprint);
 
-    let mut persisted: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let mut persisted: Value = serde_json::from_str(
+        &webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap(),
+    )
+    .unwrap();
     let row = persisted["sessions"]
         .as_array_mut()
         .unwrap()

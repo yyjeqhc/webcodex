@@ -61,7 +61,7 @@ fn recency_counter_rollover_keeps_order_and_lifecycle_partition() {
 }
 
 #[test]
-fn session_retention_uses_access_order_only_among_closed_identities() {
+fn access_order_does_not_delete_closed_identities() {
     use super::super::{SessionLifecycle, SessionStore};
     let store = SessionStore::new_in_memory_with_limits(1, 2, 8);
     let active = store.start_session(None, None).session_id;
@@ -79,7 +79,7 @@ fn session_retention_uses_access_order_only_among_closed_identities() {
     let third = store.start_session(None, None).session_id;
     store.close_session(&third).unwrap();
     assert!(store.contains_session(&first));
-    assert!(!store.contains_session(&second));
+    assert!(store.contains_session(&second));
     assert_eq!(
         store.lifecycle_state(&active),
         Some(SessionLifecycle::Active)
@@ -89,7 +89,7 @@ fn session_retention_uses_access_order_only_among_closed_identities() {
         Some(SessionLifecycle::Closed)
     );
     let inner = store.inner.lock().unwrap();
-    assert_eq!(inner.lru.closed_count(), 2);
+    assert_eq!(inner.lru.closed_count(), 3);
     assert_eq!(inner.lru.iter().count(), inner.sessions.len());
 }
 

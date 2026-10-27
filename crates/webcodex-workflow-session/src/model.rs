@@ -27,16 +27,12 @@ pub const CALL_ID_PREFIX: &str = "wc_call_";
 pub const LOGICAL_INVOCATION_ID_PREFIX: &str = "wc_inv_";
 pub const LOGICAL_INVOCATION_ROLE_RECORDER: &str = "recorder";
 pub const LOGICAL_INVOCATION_ROLE_BUSINESS: &str = "business";
-/// Backward-compatible default for the hot/materialized Session capacity target.
-/// Active canonical Workflow Sessions are authoritative durable identities and are never
-/// deleted merely because this advisory target is exceeded.
+/// Default response/in-memory fixture working-set size; never a durable Session count limit.
 pub const DEFAULT_MAX_SESSIONS: usize = 100;
-/// Independent retained Closed-Session history limit. Active Sessions do not count toward it.
-pub const DEFAULT_MAX_RETAINED_CLOSED_SESSIONS: usize = 100;
-/// Durable per-Session event retention. This is intentionally larger than the
-/// model-facing summary ceiling: long-running coding Sessions keep forensic and
-/// recovery evidence without forcing that history into one model response.
-pub const DEFAULT_MAX_EVENTS_PER_SESSION: usize = 2000;
+pub const DEFAULT_SESSION_CACHE_BYTES: usize = 16 * 1024 * 1024;
+/// Recent activity loaded for one working Session. SQLite retains older events;
+/// this is a read/cache window, not a durable history limit.
+pub const DEFAULT_RECENT_EVENT_LIMIT: usize = 2000;
 /// Exact terminal-validation Job identities retained per Workflow Session. This
 /// matches the Runner's authoritative terminal Job inventory bound: while a
 /// terminal Job can still be a reconciliation candidate, one of these bounded
@@ -49,8 +45,7 @@ pub const MAX_MATERIALIZED_VALIDATION_JOB_IDS: usize =
 /// while keeping every event independently bounded.
 pub const MAX_OBSERVED_PATHS_PER_EVENT: usize = 201;
 pub const DEFAULT_SUMMARY_LIMIT: usize = 50;
-/// Maximum event tail projected by one model-facing Session summary. Durable
-/// retention is independently bounded by `DEFAULT_MAX_EVENTS_PER_SESSION`.
+/// Maximum event tail projected by one model-facing Session summary.
 pub const MAX_SUMMARY_LIMIT: usize = 200;
 pub const MAX_SUMMARY_STRING_CHARS: usize = 240;
 pub const MAX_INPUT_STRING_CHARS: usize = 120;
@@ -59,7 +54,9 @@ pub const MAX_INPUT_ARRAY_ITEMS: usize = 8;
 pub const MAX_VALIDATION_EXCERPT_CHARS: usize = 800;
 pub const SESSION_LEDGER_VERSION: u32 = 2;
 pub const MESSAGE_ID_PREFIX: &str = "wc_msg_";
-pub const DEFAULT_MAX_MESSAGES_PER_SESSION: usize = 200;
+/// Prior JSON retention threshold, used only to prove it no longer deletes history.
+#[cfg(test)]
+pub const LEGACY_MESSAGE_RETENTION_LIMIT: usize = 200;
 pub const MAX_CODING_INSTRUCTION_CHARS: usize = 4000;
 pub const DEFAULT_MESSAGE_LIST_LIMIT: usize = 50;
 pub const MAX_MESSAGE_LIST_LIMIT: usize = 100;
@@ -137,6 +134,11 @@ pub struct SessionLifecycleDenial {
 
 #[derive(Debug, Clone)]
 pub struct SessionRecord {
+    /// Uncommitted event deltas, including events outside the recent read window.
+    /// Cleared only after their exact values commit successfully.
+    pub(crate) pending_events: VecDeque<Arc<SessionEvent>>,
+    /// Last committed disk projection; cache eviction never manufactures one.
+    pub(crate) durable: Option<ColdSessionRecord>,
     pub session_id: String,
     pub project: Option<String>,
     /// Domain-separated SHA-256 of the canonical creation-time authority group.
@@ -152,9 +154,13 @@ pub struct SessionRecord {
     pub lifecycle: SessionLifecycle,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Latest accepted instruction is current state, independent of the activity tail.
+    pub current_instruction: Option<Arc<SessionEvent>>,
+    pub(crate) history_is_durable: bool,
+    pub(crate) event_history_start: u64,
     pub events: VecDeque<Arc<SessionEvent>>,
-    /// Cumulative number of events ever appended to this session ledger,
-    /// including events the per-session event cap has since evicted. This is
+    /// Cumulative events appended, including history lost before SQLite import.
+    /// This is
     /// the source of truth for "did the durable ledger ever hold more events
     /// than are retained now". The persisted counterpart carries the additive
     /// serde default; the in-memory record is always constructed explicitly.
@@ -204,11 +210,9 @@ pub struct SessionRecord {
     pub project_instructions: Option<ProjectInstructionsSnapshot>,
 }
 
-/// Internal residency state is deliberately orthogonal to business lifecycle.
-/// Active identity is retained independently of the materialized working set. Cold
-/// records retain canonical JSON in memory, not a disk pointer: compaction neither
-/// deletes history nor depends on an unflushed disk generation. Only explicit Closed
-/// history retention may remove an identity.
+/// Cache residency is independent of lifecycle and durable identity. SQLite Cold
+/// entries own compact current-state metadata and a committed revision locator,
+/// not event/message history. Memory-only fixtures keep their bounded raw body.
 #[derive(Debug)]
 pub enum StoredSession {
     Hot(SessionRecord),
@@ -217,6 +221,9 @@ pub enum StoredSession {
 
 #[derive(Debug, Clone)]
 pub struct ColdSessionRecord {
+    /// SQLite-backed entries keep compact current state in `raw`, not history.
+    pub(crate) database: Option<Arc<super::persistence::database::SessionDatabase>>,
+    pub(crate) database_revision: u64,
     pub session_id: String,
     pub project: Option<String>,
     pub owner_authority_fingerprint: String,
@@ -224,6 +231,7 @@ pub struct ColdSessionRecord {
     pub guards: SessionGuards,
     pub lifecycle: SessionLifecycle,
     pub updated_at: i64,
+    pub created_at: i64,
     pub project_instructions: Option<ProjectInstructionsSummarySnapshot>,
     pub raw: Arc<RawValue>,
     /// A single bounded, lazy Console projection for immutable Closed history.
@@ -422,9 +430,8 @@ pub enum CodingSessionError {
     UnknownResumeSession {
         session_id: String,
     },
-    /// The caller selected an exact canonical Session whose Closed history was
-    /// removed by `historical_session_retention_limit` and whose tombstone is
-    /// still retained for this owner. This must not create a replacement Session.
+    /// An imported tombstone proves this exact identity was removed by an older
+    /// retention policy. It must never create a replacement Session.
     ResumeRetentionExpired {
         session_id: String,
     },
@@ -464,9 +471,6 @@ pub enum SessionExecutionContextUpdateError {
 pub struct SessionStoreStatus {
     pub persistence: String,
     pub restored_sessions: usize,
-    /// Backward-compatible alias for `hot_session_capacity_target`. This is not a durable
-    /// Session deletion bound.
-    pub max_sessions: usize,
     pub retained_sessions: usize,
     pub active_sessions: usize,
     pub closed_sessions: usize,
@@ -477,31 +481,25 @@ pub struct SessionStoreStatus {
     /// Encoded Cold JSON resident in RAM; excludes metadata, instructions and allocator costs.
     pub cold_payload_bytes: usize,
 
-    /// Materialized working-set target, with one mutation target allowed when zero.
-    /// It limits expanded records, not total heap bytes or retained identities.
-    pub hot_session_capacity_target: usize,
-    /// Independent bound for retained Closed historical records. Active Sessions do not count
-    /// toward this limit.
-    pub historical_session_retention_limit: usize,
-    /// Process-local count of Closed historical records dropped by the explicit retention policy,
-    /// including restore-time pruning. Dropping a retention tombstone does not increment this.
-    pub capacity_evictions: u64,
+    /// Target weight of clean expanded records. Dirty/in-flight state and the
+    /// compact identity index are additional costs; this is not an RSS limit.
+    pub cache_target_bytes: Option<usize>,
     /// Closed Sessions removed by historical retention whose exact identity is still
     /// distinguishable for the owning principal. Tombstones are not retained Sessions.
     pub retention_tombstones: usize,
-    pub max_events_per_session: usize,
-    pub max_messages_per_session: usize,
+    pub recent_event_limit: usize,
     pub last_persist_error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg(any(test, feature = "root-test-support"))]
 pub struct PersistedSessionLedger {
     pub version: u32,
     pub sessions: Vec<PersistedSessionSnapshot>,
 }
 
 /// Compact proof that one exact Closed Workflow Session was removed because
-/// `historical_session_retention_limit` was exceeded. This is not a Session body.
+/// the retired JSON retention policy removed it. No new tombstones are generated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionRetentionTombstone {
@@ -521,12 +519,14 @@ pub struct PersistedRetentionTombstoneRow {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg(any(test, feature = "root-test-support"))]
 pub enum PersistedSessionSnapshot {
     Hot(PersistedSessionRecord),
     Tombstone(PersistedRetentionTombstoneRow),
     Cold(Arc<RawValue>),
 }
 
+#[cfg(any(test, feature = "root-test-support"))]
 impl PersistedSessionSnapshot {
     #[cfg(any(test, feature = "root-test-support"))]
     #[allow(dead_code)]
@@ -538,7 +538,7 @@ impl PersistedSessionSnapshot {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PersistedSessionRecord {
     pub session_id: String,
@@ -560,6 +560,10 @@ pub struct PersistedSessionRecord {
     pub lifecycle: SessionLifecycle,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_instruction: Option<Arc<SessionEvent>>,
+    #[serde(default)]
+    pub event_history_start: u64,
     pub events: Vec<Arc<SessionEvent>>,
     pub messages: Vec<Arc<SessionMessage>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1186,16 +1190,17 @@ pub struct SessionSummary {
     pub created_at: i64,
     pub updated_at: i64,
     pub counts: SessionCounts,
+    #[serde(default, skip_serializing)]
+    pub current_instruction: Option<SessionEvent>,
     pub events: Vec<SessionEvent>,
-    /// Total events ever observed for this Session, including events already
-    /// evicted by the bounded durable ledger.
+    /// Total events ever observed, including history lost before SQLite import.
     #[serde(default)]
     pub events_total: usize,
     /// Events currently retained in the durable ledger before model-facing tail
     /// slicing is applied.
     #[serde(default)]
     pub events_retained: usize,
-    /// Events already evicted by the durable per-Session retention bound.
+    /// Events lost before SQLite import (or by a memory-only fixture's tail).
     #[serde(default)]
     pub events_evicted: usize,
     /// True only when durable Session history has actually been evicted. This is

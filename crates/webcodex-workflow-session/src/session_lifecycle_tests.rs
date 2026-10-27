@@ -138,7 +138,7 @@ fn persisted_ledger_writes_and_reads_lifecycle_active() {
     assert_eq!(session.lifecycle, SessionLifecycle::Active);
 
     store.flush_persistence();
-    let raw = std::fs::read_to_string(&ledger).unwrap();
+    let raw = crate::test_storage::read_ledger(&ledger).unwrap();
     let ledger_value: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(ledger_value["version"], SESSION_LEDGER_VERSION);
     assert_eq!(ledger_value["sessions"][0]["lifecycle"], "active");
@@ -157,39 +157,31 @@ fn pre_current_ledger_version_is_rejected_without_rewrite() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("sessions.json");
     let store = persistent_store(ledger_path.clone());
-    let session = store.start_session(Some("proj".to_string()), Some("current".to_string()));
+    let _session = store.start_session(Some("proj".to_string()), Some("current".to_string()));
     store.flush_persistence();
     drop(store);
 
     let mut ledger: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger_path).unwrap()).unwrap();
     ledger["version"] = json!(1);
     std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
-    let before = std::fs::read(&ledger_path).unwrap();
+    let _before = crate::test_storage::read_ledger_bytes(&ledger_path).unwrap();
 
-    let restored = persistent_store(ledger_path.clone());
-    assert_eq!(restored.status().restored_sessions, 0);
-    assert!(restored.summary(&session.session_id, None).is_none());
-    assert!(restored
-        .status()
-        .last_persist_error
-        .as_deref()
-        .is_some_and(|error| error.contains("unsupported session ledger version 1")));
-    assert_eq!(std::fs::read(&ledger_path).unwrap(), before);
+    crate::test_storage::assert_import_rejected(&ledger_path);
 }
 
 #[test]
-fn legacy_inspect_v2_row_is_discarded_without_affecting_valid_rows() {
+fn legacy_inspect_v2_row_rejects_atomic_import() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("sessions.json");
     let store = persistent_store(ledger_path.clone());
     let retired = store.start_session(Some("proj".to_string()), Some("legacy inspect".to_string()));
-    let valid = store.start_session(Some("proj".to_string()), Some("normal".to_string()));
+    let _valid = store.start_session(Some("proj".to_string()), Some("normal".to_string()));
     store.flush_persistence();
     drop(store);
 
     let mut ledger: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger_path).unwrap()).unwrap();
     let retired_record = ledger["sessions"]
         .as_array_mut()
         .unwrap()
@@ -199,26 +191,21 @@ fn legacy_inspect_v2_row_is_discarded_without_affecting_valid_rows() {
     retired_record["mode"] = json!("inspect");
     std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
 
-    let restored = persistent_store(ledger_path);
-    assert_eq!(restored.status().restored_sessions, 1);
-    assert!(restored.summary(&retired.session_id, None).is_none());
-    let valid_summary = restored.summary(&valid.session_id, None).unwrap();
-    assert_eq!(valid_summary.mode, SessionMode::Normal);
-    assert_eq!(restored.status().last_persist_error, None);
+    crate::test_storage::assert_import_rejected(&ledger_path);
 }
 
 #[test]
-fn v2_missing_assignment_metadata_discards_only_that_row() {
+fn v2_missing_assignment_metadata_rejects_atomic_import() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("sessions.json");
     let store = persistent_store(ledger_path.clone());
     let bad = store.start_session(Some("proj".to_string()), Some("bad".to_string()));
-    let good = store.start_session(Some("proj".to_string()), Some("good".to_string()));
+    let _good = store.start_session(Some("proj".to_string()), Some("good".to_string()));
     store.flush_persistence();
     drop(store);
 
     let mut ledger: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger_path).unwrap()).unwrap();
     let bad_record = ledger["sessions"]
         .as_array_mut()
         .unwrap()
@@ -230,15 +217,11 @@ fn v2_missing_assignment_metadata_discards_only_that_row() {
     bad_record.remove("assignment_history_tracking_complete");
     std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
 
-    let restored = persistent_store(ledger_path);
-    assert_eq!(restored.status().restored_sessions, 1);
-    assert!(restored.summary(&bad.session_id, None).is_none());
-    assert!(restored.summary(&good.session_id, None).is_some());
-    assert_eq!(restored.status().last_persist_error, None);
+    crate::test_storage::assert_import_rejected(&ledger_path);
 }
 
 #[test]
-fn v2_event_and_message_shape_corruption_discards_only_affected_rows() {
+fn v2_event_and_message_shape_corruption_rejects_atomic_import() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("sessions.json");
     let store = persistent_store(ledger_path.clone());
@@ -258,7 +241,7 @@ fn v2_event_and_message_shape_corruption_discards_only_affected_rows() {
         Some("proj".to_string()),
         Some("unknown message field".to_string()),
     );
-    let good = store.start_session(Some("proj".to_string()), Some("good".to_string()));
+    let _good = store.start_session(Some("proj".to_string()), Some("good".to_string()));
 
     for session_id in [
         &bad_missing.session_id,
@@ -292,7 +275,7 @@ fn v2_event_and_message_shape_corruption_discards_only_affected_rows() {
     drop(store);
 
     let mut ledger: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger_path).unwrap()).unwrap();
     let records = ledger["sessions"].as_array_mut().unwrap();
     let missing_record = records
         .iter_mut()
@@ -333,16 +316,7 @@ fn v2_event_and_message_shape_corruption_discards_only_affected_rows() {
         );
 
     std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
-    let restored = persistent_store(ledger_path);
-    assert_eq!(restored.status().restored_sessions, 1);
-    assert!(restored.summary(&bad_missing.session_id, None).is_none());
-    assert!(restored.summary(&bad_retired.session_id, None).is_none());
-    assert!(restored
-        .summary(&bad_noncanonical_correlation.session_id, None)
-        .is_none());
-    assert!(restored.summary(&bad_message.session_id, None).is_none());
-    assert!(restored.summary(&good.session_id, None).is_some());
-    assert_eq!(restored.status().last_persist_error, None);
+    crate::test_storage::assert_import_rejected(&ledger_path);
 }
 
 #[test]
@@ -350,39 +324,32 @@ fn current_ledger_rejects_retired_top_level_binding_member() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger_path = tmp.path().join("sessions.json");
     let store = persistent_store(ledger_path.clone());
-    let session = store.start_session(Some("proj".to_string()), Some("canonical".to_string()));
+    let _session = store.start_session(Some("proj".to_string()), Some("canonical".to_string()));
     store.flush_persistence();
     drop(store);
 
     let mut ledger: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+        serde_json::from_str(&crate::test_storage::read_ledger(&ledger_path).unwrap()).unwrap();
     ledger["durable_current_bindings"] = json!([]);
     std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
 
-    let restored = persistent_store(ledger_path);
-    assert_eq!(restored.status().restored_sessions, 0);
-    assert!(restored.summary(&session.session_id, None).is_none());
-    assert!(restored
-        .status()
-        .last_persist_error
-        .as_deref()
-        .is_some_and(|error| error.contains("invalid v2 session ledger")));
+    crate::test_storage::assert_import_rejected(&ledger_path);
 }
 
 #[test]
-fn v2_missing_or_removed_lifecycle_discards_only_that_row() {
+fn v2_missing_or_removed_lifecycle_aborts_import() {
     for lifecycle in [None, Some(json!("archived"))] {
         let tmp = tempfile::tempdir().unwrap();
         let ledger_path = tmp.path().join("sessions.json");
         let store = persistent_store(ledger_path.clone());
         let bad = store.start_session(Some("proj".to_string()), Some("bad lifecycle".to_string()));
-        let good =
+        let _good =
             store.start_session(Some("proj".to_string()), Some("good lifecycle".to_string()));
         store.flush_persistence();
         drop(store);
 
         let mut ledger: Value =
-            serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+            serde_json::from_str(&crate::test_storage::read_ledger(&ledger_path).unwrap()).unwrap();
         let bad_record = ledger["sessions"]
             .as_array_mut()
             .unwrap()
@@ -401,10 +368,7 @@ fn v2_missing_or_removed_lifecycle_discards_only_that_row() {
         }
         std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
 
-        let restored = persistent_store(ledger_path);
-        assert_eq!(restored.status().restored_sessions, 1);
-        assert!(restored.summary(&bad.session_id, None).is_none());
-        assert!(restored.summary(&good.session_id, None).is_some());
+        crate::test_storage::assert_import_rejected(&ledger_path);
     }
 }
 
@@ -537,12 +501,13 @@ fn closed_session_coldifies_payload_and_queries_without_reheating() {
 }
 
 #[test]
-fn close_cleanup_evidence_rewrites_cold_payload_without_reheating() {
+fn close_cleanup_evidence_commits_before_returning_to_cold_residency() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");
     let store = persistent_store(ledger.clone());
     let session = store.start_session(None, Some("cold close evidence".to_string()));
     store.close_session(&session.session_id).unwrap();
+    store.flush_persistence();
     assert!(store
         .cold_payload_bytes_for_test(&session.session_id)
         .is_some());
@@ -555,6 +520,7 @@ fn close_cleanup_evidence_rewrites_cold_payload_without_reheating() {
         None,
         false,
     );
+    store.flush_persistence();
     assert_eq!(
         store.hot_payload_entry_count_for_test(&session.session_id),
         None
@@ -611,6 +577,7 @@ fn cold_round_trip_preserves_evidence_and_active_identity_without_hot_residency(
         SessionMessageKind::Progress,
         "active message",
     );
+    store.flush_persistence();
     assert_eq!(
         store.hot_payload_entry_count_for_test(&closed.session_id),
         None
@@ -625,7 +592,7 @@ fn cold_round_trip_preserves_evidence_and_active_identity_without_hot_residency(
         .list_messages(&closed.session_id, ListSessionMessagesFilter::default())
         .unwrap();
     store.flush_persistence();
-    let raw = std::fs::read_to_string(&ledger).unwrap();
+    let raw = crate::test_storage::read_ledger(&ledger).unwrap();
     let ledger_value: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(ledger_value["version"], SESSION_LEDGER_VERSION);
     let closed_json = ledger_value["sessions"]
@@ -685,7 +652,7 @@ fn cold_round_trip_preserves_evidence_and_active_identity_without_hot_residency(
 }
 
 #[test]
-fn cold_session_query_touch_preserves_closed_retention_order_without_evicting_active_sessions() {
+fn query_touch_and_cache_pressure_do_not_delete_closed_or_active_identities() {
     let store = SessionStore::new(2, 10);
     let active = store.start_session(None, Some("active survivor".to_string()));
     let first = store.start_session(None, Some("first closed".to_string()));
@@ -703,7 +670,7 @@ fn cold_session_query_touch_preserves_closed_retention_order_without_evicting_ac
 
     assert!(store.contains_session(&active.session_id));
     assert!(store.contains_session(&first.session_id));
-    assert!(!store.contains_session(&second.session_id));
+    assert!(store.contains_session(&second.session_id));
     assert!(store.contains_session(&third.session_id));
     assert_eq!(
         store.lifecycle_state(&active.session_id),
@@ -722,7 +689,7 @@ fn cold_session_query_touch_preserves_closed_retention_order_without_evicting_ac
 }
 
 #[test]
-fn closed_history_retention_is_separate_from_active_identity_retention() {
+fn closed_and_active_identities_survive_cache_pressure() {
     let store = SessionStore::new(1, 10);
     let active = store.start_session(None, Some("active survivor".to_string()));
     let old_closed = store.start_session(None, Some("old closed".to_string()));
@@ -735,7 +702,7 @@ fn closed_history_retention_is_separate_from_active_identity_retention() {
         store.lifecycle_state(&active.session_id),
         Some(SessionLifecycle::Active)
     );
-    assert!(!store.contains_session(&old_closed.session_id));
+    assert!(store.contains_session(&old_closed.session_id));
     assert!(store.contains_session(&new_closed.session_id));
     assert_eq!(
         store.lifecycle_state(&new_closed.session_id),
@@ -746,9 +713,7 @@ fn closed_history_retention_is_separate_from_active_identity_retention() {
         .is_some());
     let status = store.status();
     assert_eq!(status.active_sessions, 1);
-    assert_eq!(status.closed_sessions, 1);
-    assert_eq!(status.historical_session_retention_limit, 1);
-    assert_eq!(status.capacity_evictions, 1);
+    assert_eq!(status.closed_sessions, 2);
 }
 
 #[test]
@@ -760,7 +725,7 @@ fn closed_lifecycle_persists_round_trip() {
     store.close_session(&session.session_id).unwrap();
 
     store.flush_persistence();
-    let raw = std::fs::read_to_string(&ledger).unwrap();
+    let raw = crate::test_storage::read_ledger(&ledger).unwrap();
     let ledger_value: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(ledger_value["version"], SESSION_LEDGER_VERSION);
     assert_eq!(ledger_value["sessions"][0]["lifecycle"], "closed");

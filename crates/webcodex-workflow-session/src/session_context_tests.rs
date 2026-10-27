@@ -339,7 +339,8 @@ fn persistence_restore_revalidates_bounded_context_result_summary() {
 
     store.flush_persistence();
     drop(store);
-    let mut persisted: Value = serde_json::from_slice(&std::fs::read(&ledger).unwrap()).unwrap();
+    let mut persisted: Value =
+        serde_json::from_slice(&crate::test_storage::read_ledger_bytes(&ledger).unwrap()).unwrap();
     let events = persisted["sessions"][0]["events"].as_array_mut().unwrap();
     let finished = events
         .iter_mut()
@@ -358,7 +359,7 @@ fn persistence_restore_revalidates_bounded_context_result_summary() {
     });
     std::fs::write(&ledger, serde_json::to_vec(&persisted).unwrap()).unwrap();
 
-    let restored = SessionStore::with_persistence(&ledger, 10, 100);
+    let restored = crate::test_storage::import_ledger(&ledger, 10, 100);
     let restored_summary = restored.summary(&session.session_id, Some(20)).unwrap();
     let context = restored_summary
         .events
@@ -395,7 +396,7 @@ fn retired_context_revision_fields_restore_but_are_never_reemitted() {
     store.flush_persistence();
     drop(store);
 
-    let fresh = std::fs::read_to_string(&ledger).unwrap();
+    let fresh = crate::test_storage::read_ledger(&ledger).unwrap();
     assert!(
         !fresh.contains("\"context_revision\""),
         "current writers must omit the retired field: {fresh}"
@@ -412,7 +413,7 @@ fn retired_context_revision_fields_restore_but_are_never_reemitted() {
     finished["context_revision"] = json!(120);
     std::fs::write(&ledger, serde_json::to_vec(&persisted).unwrap()).unwrap();
 
-    let restored = SessionStore::with_persistence(&ledger, 10, 100);
+    let restored = crate::test_storage::import_ledger(&ledger, 10, 100);
     assert!(restored.summary(&session.session_id, Some(20)).is_some());
     assert_eq!(
         restored.handoff_revision(&session.session_id),
@@ -427,7 +428,7 @@ fn retired_context_revision_fields_restore_but_are_never_reemitted() {
         json!({"head": "after-restore"}),
     );
     restored.flush_persistence();
-    let rewritten = std::fs::read_to_string(&ledger).unwrap();
+    let rewritten = restored.persisted_json_for_test();
     assert!(
         !rewritten.contains("\"context_revision\""),
         "restored legacy fields must stay read-only: {rewritten}"
@@ -453,7 +454,7 @@ fn current_v2_without_retired_context_revision_restores() {
     store.flush_persistence();
     drop(store);
 
-    let raw = std::fs::read_to_string(&ledger).unwrap();
+    let raw = crate::test_storage::read_ledger(&ledger).unwrap();
     assert!(!raw.contains("\"context_revision\""));
     let restored = SessionStore::with_persistence(&ledger, 10, 100);
     assert!(restored.summary(&session.session_id, Some(20)).is_some());
@@ -478,7 +479,8 @@ fn unknown_current_v2_event_fields_still_fail_closed() {
     store.flush_persistence();
     drop(store);
 
-    let mut persisted: Value = serde_json::from_slice(&std::fs::read(&ledger).unwrap()).unwrap();
+    let mut persisted: Value =
+        serde_json::from_slice(&crate::test_storage::read_ledger_bytes(&ledger).unwrap()).unwrap();
     let finished = persisted["sessions"][0]["events"]
         .as_array_mut()
         .unwrap()
@@ -488,7 +490,5 @@ fn unknown_current_v2_event_fields_still_fail_closed() {
     finished["definitely_unknown_v2_member"] = json!(true);
     std::fs::write(&ledger, serde_json::to_vec(&persisted).unwrap()).unwrap();
 
-    let restored = SessionStore::with_persistence(&ledger, 10, 100);
-    assert_eq!(restored.status().restored_sessions, 0);
-    assert!(restored.summary(&session.session_id, None).is_none());
+    crate::test_storage::assert_import_rejected(&ledger);
 }

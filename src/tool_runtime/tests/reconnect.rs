@@ -23,7 +23,10 @@ fn persisted_session_authority_fingerprint(
     ledger: &std::path::Path,
     session_id: &str,
 ) -> Option<String> {
-    let value: Value = serde_json::from_str(&std::fs::read_to_string(ledger).unwrap()).unwrap();
+    let value: Value = serde_json::from_str(
+        &webcodex_workflow_session::root_test_support::read_ledger(ledger).unwrap(),
+    )
+    .unwrap();
     value["sessions"]
         .as_array()
         .unwrap()
@@ -34,7 +37,10 @@ fn persisted_session_authority_fingerprint(
 }
 
 fn rewrite_persisted_session_with_malformed_authority(ledger: &std::path::Path, session_id: &str) {
-    let mut value: Value = serde_json::from_str(&std::fs::read_to_string(ledger).unwrap()).unwrap();
+    let mut value: Value = serde_json::from_str(
+        &webcodex_workflow_session::root_test_support::read_ledger(ledger).unwrap(),
+    )
+    .unwrap();
     let session = value["sessions"]
         .as_array_mut()
         .unwrap()
@@ -458,7 +464,7 @@ async fn canonical_project_session_explicit_resume_survives_restart() {
     );
 }
 #[tokio::test]
-async fn malformed_persisted_authority_is_discarded_fail_closed() {
+async fn malformed_persisted_authority_aborts_session_import_fail_closed() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = dir.path().join("sessions.json");
     let project_root = dir.path().join("proj");
@@ -489,13 +495,27 @@ async fn malformed_persisted_authority_is_discarded_fail_closed() {
     drop(runtime1);
     rewrite_persisted_session_with_malformed_authority(&ledger, &session_id);
 
-    let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    assert_eq!(runtime2.sessions.status().restored_sessions, 0);
-    assert!(runtime2.sessions.summary(&session_id, None).is_none());
-    assert!(runtime2
-        .sessions
-        .session_target_authority(&session_id)
-        .is_none());
+    let original = std::fs::read(&ledger).unwrap();
+    let database = dir.path().join("rejected-import.db");
+    assert!(ToolRuntime::new_for_tests()
+        .with_session_database(&database, &ledger)
+        .is_err());
+    assert_eq!(std::fs::read(&ledger).unwrap(), original);
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    let published: i64 = connection
+        .query_row("SELECT count(*) FROM workflow_sessions", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let imported: bool = connection
+        .query_row(
+            "SELECT imported FROM workflow_session_storage WHERE singleton=1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(published, 0);
+    assert!(!imported);
 }
 #[tokio::test]
 async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {

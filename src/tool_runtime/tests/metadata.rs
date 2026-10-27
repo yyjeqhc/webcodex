@@ -2255,17 +2255,13 @@ async fn runtime_status_with_no_projects_returns_configured_false() {
     assert_eq!(out["authority"]["mode"], "trusted_agent");
     assert_eq!(out["authority"]["human_approval_required"], false);
     let session_store = &out["session_store"];
-    assert_eq!(
-        session_store["max_sessions"],
-        session_store["hot_session_capacity_target"]
-    );
-    assert_eq!(session_store["retained_sessions"], 0);
-    assert_eq!(session_store["active_sessions"], 0);
-    assert_eq!(session_store["closed_sessions"], 0);
-    assert_eq!(session_store["hot_sessions"], 0);
-    assert_eq!(session_store["cold_sessions"], 0);
-    assert_eq!(session_store["historical_session_retention_limit"], 100);
-    assert_eq!(session_store["capacity_evictions"], 0);
+    assert!(session_store.get("max_sessions").is_none());
+    assert!(session_store
+        .get("historical_session_retention_limit")
+        .is_none());
+    assert!(session_store.get("max_messages_per_session").is_none());
+    assert!(session_store.get("capacity_evictions").is_none());
+    assert_eq!(session_store["recent_event_limit"], 2000);
     assert_eq!(session_store["retention_tombstones"], 0);
 
     assert_eq!(out["projects"]["mode"], "runner_registered");

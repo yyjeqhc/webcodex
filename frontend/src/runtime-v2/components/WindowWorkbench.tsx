@@ -264,7 +264,7 @@ export function WindowWorkbench({
           {t("Window")} · {windows.selectedKey.slice(0, 4)}<small>{t(windows.detailAvailability === "error" || windows.detailAvailability === "denied" ? "Window activity unavailable" : "Loading recent activity…")}</small></button>}</section>}
         {WINDOW_TIERS.map(tier => {
           const group = filtered.filter(row => row.tier === tier);
-          return group.length > 0 && <section key={tier}><h3>{t(WINDOW_TIER_TEXT[tier])} <span>{group.length}</span></h3>{group.map(row => renderWindow(row.window.client_window_key === windows.selectedKey && selectedRow ? selectedRow : row))}</section>;
+          return group.length > 0 && <section key={tier}><h3><span className={"window-board-dot " + tier} aria-hidden="true" />{t(WINDOW_TIER_TEXT[tier])} <span>{group.length}</span></h3>{group.map(row => renderWindow(row.window.client_window_key === windows.selectedKey && selectedRow ? selectedRow : row))}</section>;
         })}
           {windows.availability === "loading" && <div className="empty-inline">{t("Loading Window activity…")}</div>}
           {windows.availability === "stale" && <div className="inventory-note">{t("Window activity refresh failed; showing previous observations.")}</div>}
@@ -284,7 +284,7 @@ export function WindowWorkbench({
                 label={selectedNavigationRow?.label} mobile={navigation.mobile} language={language} editing={editingKey === windows.selectedKey}
                 saving={windows.labelSaving || !selectedNavigationRow} error={windows.labelError} onEditingChange={editing => setEditingKey(editing ? windows.selectedKey : "")}
                 onSave={label => windows.saveLabel(windows.selectedKey, label)} />
-                <span className={"window-board-status " + (isActive ? "running" : "")}>{isActive ? t("Running") + (currentActivity ? " · " + currentActivity : "") : selectedRow ? t(WINDOW_TIER_TEXT[selectedRow.tier]) + " · " + relativeTime(selectedRow.lastActiveAt) : t("Loading…")}</span></div>
+                <span className={"window-board-status" + (isActive ? " running" : "")}>{selectedRow && <span className={"window-board-dot " + (isActive ? "running" : selectedRow.tier)} aria-hidden="true" />}{isActive ? t("Running") + (currentActivity ? " · " + currentActivity : "") : selectedRow ? t(WINDOW_TIER_TEXT[selectedRow.tier]) + " · " + relativeTime(selectedRow.lastActiveAt) : t("Loading…")}</span></div>
               {!navigation.mobile && <button type="button" aria-label={t("Close")} onClick={navigation.close}><X size={18} /></button>}
             </header>
             <div className="window-board-context">

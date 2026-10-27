@@ -10,6 +10,7 @@ export const RUNTIME_ZH_TEXT: Record<string, string> = {
   "Clear name": "清除名称",
   "You do not have permission to rename this Window.": "你没有权限重命名这个窗口。",
   "This Window is no longer visible.": "这个窗口已不可见。",
+  "This Window has no recorded activity yet. Retry after its next call.": "这个窗口还没有已记录的调用，请在它下一次调用完成后再试。",
   "Could not save the name. Please retry.": "无法保存名称，请重试。",
   "Within 10 minutes": "10 分钟内",
   "Today": "今天",

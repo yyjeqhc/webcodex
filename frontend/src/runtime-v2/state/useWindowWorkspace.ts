@@ -171,7 +171,8 @@ export function useWindowWorkspace(
       }
       applyLabel(key, previous); setLabelMutation(null);
       setLabelFailure({ key, message: response?.status === 403 ? "You do not have permission to rename this Window."
-        : response?.status === 404 ? "This Window is no longer visible." : "Could not save the name. Please retry." });
+        : response?.status === 404 ? "This Window is no longer visible."
+        : response?.status === 409 ? "This Window has no recorded activity yet. Retry after its next call." : "Could not save the name. Please retry." });
       if (response?.status === 401) onUnauthorized();
       return false;
     } catch {

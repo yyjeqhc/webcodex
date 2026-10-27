@@ -151,6 +151,7 @@ pub(super) fn summary(
     RuntimeConsoleWindowSummary {
         client_window_key: row.client_window_key,
         label: (projection == WindowInventoryProjection::Inventory).then_some(row.label),
+        label_owner: row.label_owner,
         source: row.source,
         last_project: row.last_project,
         first_seen_at_ms: Some(row.first_seen_at_ms),
@@ -208,6 +209,7 @@ pub(super) async fn live_for_auth(
             }
             let entry = row.get_or_insert_with(|| WindowInventoryRow {
                 label: None,
+                label_owner: None,
                 client_window_key: window.client_window_key.clone(),
                 source: request.client_window_source.clone(),
                 last_project: None,

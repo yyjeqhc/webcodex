@@ -10488,6 +10488,13 @@ var Sl = Ie(O1), xR = P2(), op = [
     "Sie dürfen dieses Fenster nicht umbenennen.",
     "Vous n’avez pas l’autorisation de renommer cette fenêtre."
   ],
+  "This Window has no recorded activity yet. Retry after its next call.": [
+    "此視窗尚無已記錄的呼叫，請在下一次呼叫完成後再試。",
+    "このウィンドウにはまだ記録された呼び出しがありません。次の呼び出しの完了後に再試行してください。",
+    "이 창에는 아직 기록된 호출이 없습니다. 다음 호출이 끝난 후 다시 시도하세요.",
+    "Für dieses Fenster ist noch keine Aktivität aufgezeichnet. Versuchen Sie es nach dem nächsten Aufruf erneut.",
+    "Aucune activité n’est encore enregistrée pour cette fenêtre. Réessayez après son prochain appel."
+  ],
   "This Window is no longer visible.": [
     "此視窗已不可見。",
     "このウィンドウは表示できなくなりました。",
@@ -11520,6 +11527,7 @@ var z1 = "webcodex.runtime.language.v1", Sn = {
   "Clear name": "清除名称",
   "You do not have permission to rename this Window.": "你没有权限重命名这个窗口。",
   "This Window is no longer visible.": "这个窗口已不可见。",
+  "This Window has no recorded activity yet. Retry after its next call.": "这个窗口还没有已记录的调用，请在它下一次调用完成后再试。",
   "Could not save the name. Please retry.": "无法保存名称，请重试。",
   "Within 10 minutes": "10 分钟内",
   Today: "今天",
@@ -27380,7 +27388,7 @@ function $j(n, a, o, l = {}) {
       const oe = await HM(n, be, Ce, le.controller.signal);
       return le.controller.signal.aborted || ce.current !== le ? !1 : oe?.ok && oe.data?.client_window_key === be && Object.hasOwn(oe.data, "label") ? (F(be, oe.data.label), I(null), !0) : (F(be, De), I(null), Y({
         key: be,
-        message: oe?.status === 403 ? "You do not have permission to rename this Window." : oe?.status === 404 ? "This Window is no longer visible." : "Could not save the name. Please retry."
+        message: oe?.status === 403 ? "You do not have permission to rename this Window." : oe?.status === 404 ? "This Window is no longer visible." : oe?.status === 409 ? "This Window has no recorded activity yet. Retry after its next call." : "Could not save the name. Please retry."
       }), oe?.status === 401 && o(), !1);
     } catch {
       return le.controller.signal.aborted || ce.current !== le || (F(be, De), I(null), Y({

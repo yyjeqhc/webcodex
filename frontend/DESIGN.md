@@ -193,8 +193,9 @@ Board layout lives in `src/runtime-v2/styles-window-board.css`, imported after t
 shared Runtime styles. Desktop/embedded styles and backend authority remain
 independent of these Web presentation rules.
 
-Window labels are server-owned operator display annotations, scoped to the exact
-recipient principal authorized by the Window collaboration boundary. They never
+Window labels are server-owned operator display annotations, owned by the principal
+of the newest historical cell visible to the caller, the same principal whose
+label the board and detail read. They never
 select a Session, route a Peer message or enter model-facing output. Inventory and
 detail carry explicit nullable labels; liveness omits the field and retains its
 SQLite-free contract. Local merges preserve omitted labels and use observation

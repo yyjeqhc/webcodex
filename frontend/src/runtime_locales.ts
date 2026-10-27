@@ -18,6 +18,7 @@ export const WORK_TEXT: Record<string, Translations> = {
   "Clear name": ["清除名稱", "名前をクリア", "이름 지우기", "Namen löschen", "Effacer le nom"],
   "Save": ["儲存", "保存", "저장", "Speichern", "Enregistrer"],
   "You do not have permission to rename this Window.": ["你沒有權限重新命名此視窗。", "このウィンドウの名前を変更する権限がありません。", "이 창의 이름을 바꿀 권한이 없습니다.", "Sie dürfen dieses Fenster nicht umbenennen.", "Vous n’avez pas l’autorisation de renommer cette fenêtre."],
+  "This Window has no recorded activity yet. Retry after its next call.": ["此視窗尚無已記錄的呼叫，請在下一次呼叫完成後再試。", "このウィンドウにはまだ記録された呼び出しがありません。次の呼び出しの完了後に再試行してください。", "이 창에는 아직 기록된 호출이 없습니다. 다음 호출이 끝난 후 다시 시도하세요.", "Für dieses Fenster ist noch keine Aktivität aufgezeichnet. Versuchen Sie es nach dem nächsten Aufruf erneut.", "Aucune activité n’est encore enregistrée pour cette fenêtre. Réessayez après son prochain appel."],
   "This Window is no longer visible.": ["此視窗已不可見。", "このウィンドウは表示できなくなりました。", "이 창은 더 이상 볼 수 없습니다.", "Dieses Fenster ist nicht mehr sichtbar.", "Cette fenêtre n’est plus visible."],
   "Could not save the name. Please retry.": ["無法儲存名稱，請重試。", "名前を保存できませんでした。再試行してください。", "이름을 저장하지 못했습니다. 다시 시도하세요.", "Der Name konnte nicht gespeichert werden. Bitte erneut versuchen.", "Impossible d’enregistrer le nom. Réessayez."],
   "Within 10 minutes": ["10 分鐘內", "10分以内", "10분 이내", "Innerhalb von 10 Minuten", "Dans les 10 minutes"],

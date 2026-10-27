@@ -45,7 +45,6 @@ mod window_queries;
 use window_queries::*;
 mod window_collaboration;
 mod window_labels;
-mod window_target;
 mod workspace;
 
 use communication::{
@@ -495,6 +494,9 @@ struct RuntimeConsoleWindowSummary {
     // None: liveness omits the field; Some(None): inventory explicitly clears it.
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<Option<String>>,
+    // The principal whose label this row shows; a rename targets only it.
+    #[serde(skip)]
+    label_owner: Option<(String, String)>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_project: Option<String>,
     source: String,

@@ -230,12 +230,17 @@ The collaboration panel establishes an observation baseline before reading the r
 
 `POST /api/runtime-console/window-label` accepts `{ "client_window_key": string,
 "label": string | null }` and returns the same shape with the stored value. It
-requires `runtime:read` and `session:collaborate` and reuses the exact recipient
-principal authorization of Window collaboration. Administrator writes belong to
-the Window's authorized recipient principal, not the administrator. Principal-scoped
-credentials cannot rename another principal's Window. The stored key includes
-principal kind, principal ID and Window key, including for legacy ChatGPT Window
-keys that do not themselves include principal scope.
+requires `runtime:read` and `session:collaborate`. The owner is resolved by the
+same freshly authorized exact inventory read that projects the label: the
+principal of the newest historical activity cell visible to the caller. A saved
+name is therefore always the name that caller's board and detail display.
+Collaboration's latest-recipient rule is deliberately not reused: a newest
+projectless event can be invisible to a non-admin operator while an older
+Project cell still shows the Window, and an in-flight request may belong to a
+different cell. Administrator writes belong to that owner, not the administrator.
+Principal-scoped credentials cannot rename another principal's Window. The stored
+key includes principal kind, principal ID and Window key, including for legacy
+ChatGPT Window keys that do not themselves include principal scope.
 
 A label is an operator display annotation, never identity, authority, Session
 selection or Peer routing. It appears only in Runtime Console label writes and inventory/detail;
@@ -246,8 +251,8 @@ historical recipient cell. Live-only Windows have no historical label projection
 
 Names are trimmed, limited to 80 Unicode characters and reject remaining control
 characters. Empty strings or null clear the name. Unknown fields are rejected;
-invalid input returns 400, missing collaboration scope 403, and unknown/invisible
-Windows 404. Repeating a value preserves its update timestamp. When retained
+invalid input returns 400, missing collaboration scope 403, unknown/invisible
+Windows 404, and a visible Window with only live, not yet recorded activity 409. Repeating a value preserves its update timestamp. When retained
 history is deleted, repair of each affected Window removes labels only for
 principals with no remaining cell on that Window. Other principals' labels remain.
 

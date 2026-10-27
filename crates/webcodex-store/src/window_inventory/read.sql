@@ -58,11 +58,12 @@ visible AS (
         COALESCE(l.activity_name,s.activity_name) AS last_activity_name,
         COALESCE(l.activity_status,s.activity_status) AS last_activity_status,
         COALESCE(l.activity_meaningful,s.activity_meaningful) AS last_activity_meaningful,
-        COALESCE(l.active_count,0) AS active_count,COALESCE(c.linked,0) AS linked_session_count,s.gap_count AS recorder_gap_count,labels.label AS label
+        COALESCE(l.active_count,0) AS active_count,COALESCE(c.linked,0) AS linked_session_count,s.gap_count AS recorder_gap_count,labels.label AS label,
+        s.principal_kind AS label_owner_kind,s.principal_id AS label_owner_id
     FROM summaries s LEFT JOIN live l ON l.window_key=s.window_key LEFT JOIN counts c ON c.window_key=s.window_key
     LEFT JOIN window_labels labels ON labels.principal_kind=s.principal_kind AND labels.principal_id=s.principal_id AND labels.window_key=s.window_key
     UNION ALL SELECT l.window_key,l.source,l.last_project,l.first_seen,l.last_seen,NULL,NULL,
-        l.activity_name,l.activity_status,l.activity_meaningful,l.active_count,0,0,NULL
+        l.activity_name,l.activity_status,l.activity_meaningful,l.active_count,0,0,NULL,NULL,NULL
     -- A live-only Window has no historical recipient cell yet; its label is NULL.
     FROM live l WHERE NOT EXISTS(SELECT 1 FROM summaries s WHERE s.window_key=l.window_key)
 ), filtered AS (

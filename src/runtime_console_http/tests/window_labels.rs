@@ -195,6 +195,14 @@ async fn window_labels_admin_targets_window_principal_and_projections_stay_consi
         Some(&auth),
         2_000,
     );
+    // A live-only Window has no recorded owner cell to attach a name to yet.
+    let (status, _) = post(
+        &caller,
+        "window-label",
+        json!({"client_window_key":target.key(),"label":"Too early"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
     db.conn_for_tests()
         .authorizer(Some(|_: rusqlite::hooks::AuthContext<'_>| {
             rusqlite::hooks::Authorization::Deny
@@ -204,4 +212,67 @@ async fn window_labels_admin_targets_window_principal_and_projections_stay_consi
     assert_eq!(live.0, StatusCode::OK);
     assert_eq!(live.1["windows"].as_array().unwrap().len(), 1);
     assert!(live.1["windows"][0].get("label").is_none());
+}
+
+#[tokio::test]
+async fn window_labels_follow_the_board_row_when_latest_activity_is_projectless() {
+    // A ChatGPT Window did Project work, then made a projectless call. A
+    // non-admin WebUI credential with a different OAuth client sees the
+    // Window through its Project cell and must be able to name that row.
+    let (_tmp, db, runtime) = test_runtime_with_goal_db();
+    let mut model = writer();
+    model.api_key_id = Some("chatgpt-window-token".into());
+    model.allowed_client_id = Some("chatgpt-client".into());
+    let mut operator = model.clone();
+    operator.api_key_id = Some("webui-operator-token".into());
+    operator.allowed_client_id = Some("webui-client".into());
+    assert!(!operator.is_admin_caller());
+    let owner = crate::tool_runtime::runtime_observation_principal(Some(&model)).unwrap();
+    assert_ne!(
+        owner,
+        crate::tool_runtime::runtime_observation_principal(Some(&operator)).unwrap()
+    );
+    let project = "agent:window-label:research";
+    register_project(
+        &runtime,
+        "window-label",
+        "research",
+        "/private/window-label",
+        Some(&model),
+    )
+    .await;
+    let key = crate::client_window::ClientWindow::for_test("projectless-latest")
+        .key()
+        .to_string();
+    record_window_event(&db, &model, &key, Some(project), None, 5_000);
+    record_window_event(&db, &model, &key, None, None, 6_000);
+
+    let operator_service = service(runtime.clone(), operator);
+    let board = post(&operator_service, "windows", json!({})).await.1;
+    assert_eq!(board["windows"][0]["client_window_key"], key);
+    let (status, body) = post(
+        &operator_service,
+        "window-label",
+        json!({"client_window_key":key,"label":"Research"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        db.get_window_label((&owner.0, &owner.1), &key)
+            .unwrap()
+            .as_deref(),
+        Some("Research")
+    );
+    let board = post(&operator_service, "windows", json!({})).await.1;
+    assert_eq!(board["windows"][0]["label"], "Research");
+    let detail = post(
+        &operator_service,
+        "window",
+        json!({"client_window_key":key}),
+    )
+    .await
+    .1;
+    assert_eq!(detail["label"], "Research");
+    let model_board = post(&service(runtime, model), "windows", json!({})).await.1;
+    assert_eq!(model_board["windows"][0]["label"], "Research");
 }

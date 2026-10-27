@@ -72,7 +72,7 @@ it("fences a pre-write first inventory response when the selected Window only ha
   expect(result.current.windows[0].label).toBe("After");
   expect(result.current.detail?.label).toBe("After");
 });
-it.each([[403, "You do not have permission"], [404, "no longer visible"], [503, "Please retry"]])("rolls back a failed %i write and exposes a specific error", async (status, message) => {
+it.each([[403, "You do not have permission"], [404, "no longer visible"], [409, "no recorded activity yet"], [503, "Please retry"]])("rolls back a failed %i write and exposes a specific error", async (status, message) => {
   const { client, post } = fixture(); const unauthorized = vi.fn();
   const { result } = renderHook(() => useWindowWorkspace(client, true, unauthorized, { initialWindowKey: key }));
   await waitFor(() => expect(result.current.detail?.label).toBe("Before"));

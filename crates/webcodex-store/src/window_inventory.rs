@@ -32,6 +32,11 @@ pub struct WindowInventoryRow {
     pub client_window_key: String,
     #[serde(default)]
     pub label: Option<String>,
+    /// Principal of the newest visible historical cell: the owner whose label
+    /// this row projects and the only principal a Console rename may target.
+    /// Server-internal; never serialized into live rows or API responses.
+    #[serde(skip)]
+    pub label_owner: Option<(String, String)>,
     pub source: String,
     pub last_project: Option<String>,
     pub first_seen_at_ms: i64,
@@ -291,10 +296,13 @@ impl Database {
             let mut stmt = tx.prepare_cached(sql)?;
             let mut rows = stmt.query(params)?;
             while let Some(r) = rows.next()? {
-                page.total = usize::try_from(r.get::<_, i64>(14)?).unwrap_or(usize::MAX);
+                page.total = usize::try_from(r.get::<_, i64>(16)?).unwrap_or(usize::MAX);
+                let owner_kind: Option<String> = r.get(14)?;
+                let owner_id: Option<String> = r.get(15)?;
                 page.rows.push(WindowInventoryRow {
                     client_window_key: r.get(0)?,
                     label: r.get(13)?,
+                    label_owner: owner_kind.zip(owner_id),
                     source: r.get(1)?,
                     last_project: r.get(2)?,
                     first_seen_at_ms: r.get(3)?,

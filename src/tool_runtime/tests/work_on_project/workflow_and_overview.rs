@@ -735,7 +735,7 @@ async fn work_on_project_guidance_profile_is_request_local_and_not_durable() {
         1
     );
     runtime.sessions.flush_persistence();
-    let persisted = fs::read_to_string(&ledger).unwrap();
+    let persisted = webcodex_workflow_session::root_test_support::read_ledger(&ledger).unwrap();
     for absent in [
         "guidance_profile",
         "tool_strategy",

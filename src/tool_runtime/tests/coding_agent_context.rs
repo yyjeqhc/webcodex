@@ -278,7 +278,7 @@ async fn coding_agent_context_is_frozen_in_dispatched_intent_and_changed_retry_c
 }
 
 #[tokio::test]
-async fn coding_agent_context_expired_selectors_stop_before_dispatch() {
+async fn coding_agent_context_closed_selectors_survive_cache_capacity_without_dispatch() {
     let root = tempfile::tempdir().unwrap();
     let mut runtime = ToolRuntime::new_for_tests().with_project_reference_database(Arc::new(
         crate::Database::open(&root.path().join("refs.db")).unwrap(),
@@ -297,64 +297,52 @@ async fn coding_agent_context_expired_selectors_stop_before_dispatch() {
     )
     .await;
     let auth = bootstrap_auth_context();
-    let expired = seed(&runtime, Some(&project), &auth);
+    let closed = seed(&runtime, Some(&project), &auth);
     let session_ref = runtime
-        .session_reference_for_id(&expired, Some(&auth))
+        .session_reference_for_id(&closed, Some(&auth))
         .expect("live session issues a ref");
-    runtime.sessions.close_session(&expired).unwrap();
+    runtime.sessions.close_session(&closed).unwrap();
     let retained = seed(&runtime, Some(&project), &auth);
     runtime.sessions.close_session(&retained).unwrap();
+    assert!(runtime.sessions.contains_session(&closed));
+    assert!(runtime.sessions.contains_session(&retained));
     assert!(runtime
         .sessions
-        .retention_tombstone_for_test(&expired)
-        .is_some());
+        .retention_tombstone_for_test(&closed)
+        .is_none());
+    assert_eq!(runtime.sessions.status().retained_sessions, 2);
     let runs_before = runtime.sessions.status().active_sessions;
 
-    for (key, selector) in [
-        ("expired-canonical", expired.as_str()),
-        ("expired-ref", session_ref.as_str()),
-    ] {
-        let started = runtime
-            .dispatch_with_auth(
-                ToolCall::CodingAgentStart {
-                    project: project.clone(),
-                    provider_id: "review".into(),
-                    idempotency_key: key.into(),
-                    instruction: "Review accessibility".into(),
-                    context_session_id: Some(selector.to_string()),
-                    config: None,
-                    timeout_secs: Some(60),
-                    recording_session_id: None,
-                },
+    for selector in [closed.as_str(), session_ref.as_str()] {
+        let prompt = runtime
+            .coding_agent_context_instruction(
+                &project,
+                selector,
+                "Review accessibility",
                 Some(&auth),
             )
-            .await;
-        assert!(!started.success, "{key}: {:?}", started.error);
-        assert_eq!(started.output["error_kind"], "session_retention_expired");
-        assert_eq!(started.output["recovery_kind"], "none");
-        assert_eq!(started.output["state_changed"], false);
-        assert_eq!(started.output["session_id"], expired);
-        assert_eq!(started.output["execution_state"], "not_started");
-        let encoded = started.output.to_string();
-        assert!(!encoded.contains("Keep the existing database schema"));
-        assert!(!encoded.contains("fingerprint"));
-        assert!(!encoded.contains("expiry_ordinal"));
-        assert!(
-            probe_agent_request_for_instance(&runtime, "retention-context", "inst")
-                .await
-                .is_none(),
-            "{key} must not dispatch a CodingAgentRun"
-        );
+            .await
+            .expect("owned Closed Session history must remain addressable");
+        assert!(prompt.starts_with("Review accessibility\n"));
+        assert!(prompt.contains("Keep the existing database schema"));
+        assert!(!prompt.contains("private-test-secret"));
     }
     assert_eq!(runtime.sessions.status().active_sessions, runs_before);
-    assert!(!runtime.sessions.contains_session(&expired));
+    assert!(runtime.sessions.contains_session(&closed));
+    assert!(
+        probe_agent_request_for_instance(&runtime, "retention-context", "inst")
+            .await
+            .is_none(),
+        "a context read must not dispatch a CodingAgentRun"
+    );
 
     let foreign = shared_key_auth_context("different-owner");
     let foreign_canonical = runtime
-        .coding_agent_context_instruction(&project, &expired, "Review", Some(&foreign))
+        .coding_agent_context_instruction(&project, &closed, "Review", Some(&foreign))
         .await
         .unwrap_err();
-    assert_eq!(foreign_canonical.output["error_kind"], "unknown_session_id");
+    // A foreign principal has no project visibility; do not disclose the retained Session.
+    assert_eq!(foreign_canonical.output["error_kind"], "unknown_project");
     let foreign_ref = runtime
         .coding_agent_context_instruction(&project, &session_ref, "Review", Some(&foreign))
         .await

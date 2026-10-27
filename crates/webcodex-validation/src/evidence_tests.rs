@@ -704,7 +704,7 @@ fn legacy_persisted_cargo_test_metadata_absence_uses_diagnostics_fallback() {
     drop(store);
 
     let mut ledger_json: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+        serde_json::from_str(&sessions::root_test_support::read_ledger(&ledger).unwrap()).unwrap();
     let events = ledger_json["sessions"][0]["events"].as_array_mut().unwrap();
     let finished = events
         .iter_mut()
@@ -717,7 +717,8 @@ fn legacy_persisted_cargo_test_metadata_absence_uses_diagnostics_fallback() {
     output_summary.remove("zero_tests_run");
     std::fs::write(&ledger, serde_json::to_vec(&ledger_json).unwrap()).unwrap();
 
-    let restored = SessionStore::with_persistence(&ledger, 10, 10);
+    // This fixture deliberately imports a modified pre-cutover JSON ledger.
+    let restored = sessions::root_test_support::import_ledger(&ledger, 10, 10);
     let session = restored.summary(&session.session_id, Some(50)).unwrap();
     let validation = validation_summary_for_session(&session);
     let event = &validation["latest"];
@@ -2116,12 +2117,12 @@ fn persisted_validation_job_materialization_ids_are_additive_sanitized_and_bound
     drop(store);
 
     let mut ledger_json: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+        serde_json::from_str(&sessions::root_test_support::read_ledger(&ledger).unwrap()).unwrap();
     let record = ledger_json["sessions"][0].as_object_mut().unwrap();
     // Missing field remains valid for pre-feature ledgers.
     record.remove("materialized_validation_job_ids");
     std::fs::write(&ledger, serde_json::to_vec(&ledger_json).unwrap()).unwrap();
-    let legacy = SessionStore::with_persistence(&ledger, 10, 10);
+    let legacy = sessions::root_test_support::import_ledger(&ledger, 10, 10);
     assert!(legacy.summary(&session.session_id, None).is_some());
     legacy.flush_persistence();
     drop(legacy);
@@ -2144,7 +2145,14 @@ fn persisted_validation_job_materialization_ids_are_additive_sanitized_and_bound
     );
     std::fs::write(&ledger, serde_json::to_vec(&ledger_json).unwrap()).unwrap();
 
-    let restored = SessionStore::with_persistence(&ledger, 10, 10);
+    let restored_database = dir.path().join("sanitized.sqlite3");
+    let restored = SessionStore::open_database(
+        &restored_database,
+        Some(&ledger),
+        sessions::DEFAULT_SESSION_CACHE_BYTES,
+        10,
+    )
+    .unwrap();
     record_finished_tool(
         &restored,
         &session.session_id,
@@ -2155,8 +2163,11 @@ fn persisted_validation_job_materialization_ids_are_additive_sanitized_and_bound
     );
     restored.flush_persistence();
     drop(restored);
-    let canonical: Value =
-        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    // Verify the committed SQLite result, not the unchanged JSON import source.
+    let canonical: Value = serde_json::from_str(
+        &sessions::root_test_support::read_ledger(dir.path().join("sanitized.json")).unwrap(),
+    )
+    .unwrap();
     let ids = canonical["sessions"][0]["materialized_validation_job_ids"]
         .as_array()
         .unwrap();

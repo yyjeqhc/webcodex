@@ -4,12 +4,14 @@ WebCodex uses the word **session** for two independent systems. They share
 casual vocabulary only. They must not be merged, cross-wired, or inferred from
 each other.
 
-The default durable event tail retains up to 2,000 events per Session, while
-one model-facing summary remains capped at 200 events (50 by default). These are
-independent bounds: longer forensic/recovery retention does not enlarge one model
-response, and the ledger remains a bounded tail rather than an archive. If
-`retention_truncated` is true, event-derived summary counts describe the retained
-ledger rather than claiming lifetime-complete history.
+Workflow Session events and messages are stored incrementally in SQLite, with
+no automatic count-based history expiry. A Session materialization loads at
+most 2,000 recent events, while a model-facing summary remains capped at 200
+events (50 by default). These limits bound reads and working memory, not durable
+history. `events_truncated` indicates a partial projection; `retention_truncated`
+identifies actual missing history, including truncation before migration. Neither
+flag authorizes replay of effects.
+
 Executable constraints that agents must obey live in
 [`AGENTS.md`](../../AGENTS.md); this document is the Workflow Sessions domain
 source linked from §6. Standing architecture summary:
@@ -703,7 +705,7 @@ a `finish_coding_task` verdict.
   `session_start` with `complete = true`.
 - **Exploration workset:** `attempt.exploration` projects only successful,
   structured evidence from focused `read_files`, `search_project_texts`, and
-  typed LSP navigation calls. The existing ledger retains only a bounded set
+  typed LSP navigation calls. Each event retains only a bounded set
   of validated project-relative paths; it never retains search patterns or
   previews, file contents, symbol/hover/diagnostic bodies, arbitrary result
   JSON, shell commands/output, or the absolute repository root for this
@@ -711,8 +713,8 @@ a `finish_coding_task` verdict.
   Enumeration tools such as `read_project_overview`, `list_project_files`, and
   `list_project_tracked_files`, Git diff lists, failed calls, error text, and
   shell output are not exploration evidence. The workset is segmented by the
-  same attempt boundary; when that boundary was evicted,
-  `exploration.complete = false` as well.
+  same attempt boundary; when that boundary falls outside the loaded
+  window or was lost before migration, `exploration.complete = false` as well.
 - **Continuation reuse, not execution:** automatic continuation, explicit
   resume, read-only to normal mode upgrades, and ledger restoration reuse the
   prior attempt's workset. Startup returns at most 3 paths in
@@ -737,7 +739,7 @@ a `finish_coding_task` verdict.
   `insufficient_scope_identity`, `validation_not_requested`). Count deltas are
   signed integers (a decrease in passed tests yields a negative `passed_delta`);
   zero-test success never resolves a prior test failure.
-- **Async terminal validation evidence:** structured validation Job metadata carries the same opaque `validation_target_id` as the originating validation attempt. When an authorized validation-summary or Runtime Console Session read observes a retained terminal Job, WebCodex idempotently materializes one bounded `validation_job_terminal` event in that exact Workflow Session before projecting validation state. Idempotence does not depend on that event remaining in the 200-event Session FIFO: the version-1 ledger also persists a serde-defaulted exact Job-id marker set bounded to the Runner authoritative terminal inventory limit (64), and a new materialization evicts only markers absent from the current terminal-candidate snapshot. The marker check, marker insertion, and event append commit under one Session-store mutation, so concurrent reconcilers append at most once and restart restoration keeps the same suppression identity. Terminal reconciliation also serializes authoritative candidate-snapshot acquisition through marker/event materialization within one runtime: a later snapshot cannot commit first, so an older snapshot never gains eviction authority over a marker established from newer inventory. Synthetic evidence uses the authoritative Job `finished_at`; reconciliation never advances Session activity to the wall-clock read time. This is recovery/materialization only: it never re-runs validation, never treats acceptance/handoff as terminal success, and never exposes raw Job output. A later terminal success for the same structured target can therefore resolve an older retained failure even after the acceptance event is gone; the materialized terminal evidence then follows normal Session persistence/retention across Server restart.
+- **Async terminal validation evidence:** structured validation Job metadata carries the same opaque `validation_target_id` as the originating validation attempt. When an authorized validation-summary or Runtime Console Session read observes a retained terminal Job, WebCodex idempotently materializes one bounded `validation_job_terminal` event in that exact Workflow Session before projecting validation state. Idempotence does not depend on that event remaining in the 200-event Session FIFO: the SQLite Session current-state row also persists a serde-defaulted exact Job-id marker set bounded to the Runner authoritative terminal inventory limit (64), and a new materialization evicts only markers absent from the current terminal-candidate snapshot. The marker check, marker insertion, and event append commit under one Session-store mutation, so concurrent reconcilers append at most once and restart restoration keeps the same suppression identity. Terminal reconciliation also serializes authoritative candidate-snapshot acquisition through marker/event materialization within one runtime: a later snapshot cannot commit first, so an older snapshot never gains eviction authority over a marker established from newer inventory. Synthetic evidence uses the authoritative Job `finished_at`; reconciliation never advances Session activity to the wall-clock read time. This is recovery/materialization only: it never re-runs validation, never treats acceptance/handoff as terminal success, and never exposes raw Job output. A later terminal success for the same structured target can therefore resolve an older retained failure even after the acceptance event is gone; the materialized terminal evidence then follows normal Session persistence/retention across Server restart.
 - **Cargo test-count postconditions:** a `cargo_test` caller may require a
   bounded minimum count with `require_tests` / `min_tests`. These are
   request-scoped evidence assertions: they are persisted with local and Runner
@@ -801,11 +803,11 @@ normalized to 1–20; titles are redacted and capped at 240 Unicode characters a
 the JSON output at 32 KiB. Offset pagination is not a frozen snapshot. Short refs
 remain principal-scoped selectors. The caller must explicitly choose a returned
 identity; discovery never starts, resumes, or selects recent work. Closed history
-can be read, while mutation still requires an Active Session. A retention
-tombstone is not a retained Session: `list_sessions` omits it from rows and
-totals, does not mint a `session_ref` for it, and has no expired lifecycle
-filter. Exact expired identity is visible only to a later lookup that already
-holds that canonical id or the matching principal-scoped ref.
+can be read, while mutation still requires an Active Session. An imported
+legacy-retention tombstone is not a retained Session: `list_sessions` omits it
+from rows and totals and does not mint a new `session_ref`. No new count-based
+tombstones are created. An already-expired legacy identity is visible only to
+an authorized lookup holding its canonical id or owner-scoped ref.
 
 Built-in workflow guidance instructs models to save agreed decisions and current
 progress/remaining work through explicit `post_session_message` calls at recovery

@@ -28,11 +28,14 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("environment");
+        // macOS temp_dir() may be reached through /var -> /private/var.
+        // This fixture must use a physical path; production rejects symlink ancestors.
+        let physical_temp_root = dir.path().canonicalize().unwrap();
+        let root = physical_temp_root.join("environment");
         let store = EnvironmentStore::open(root.clone()).unwrap();
         let environment = json!({"schema_version":1,"environment_id":"fixture","username":"owner","runner_client_id":"runner","projects":[],"configured":true,
             "request":{"service_scope":"user","mode":{"kind":"user_create","listen":"127.0.0.1:8888"},"server_url":"http://127.0.0.1:8888","project":null,"runner":true,
-            "account":{"name":"fixture","identity":"1000","home":dir.path()},"binaries":{"cli":"/fixture/cli","server":"/fixture/server","runner":"/fixture/runner"}}});
+            "account":{"name":"fixture","identity":"1000","home":physical_temp_root},"binaries":{"cli":"/fixture/cli","server":"/fixture/server","runner":"/fixture/runner"}}});
         store
             .save_environment(&serde_json::from_value(environment).unwrap())
             .unwrap();

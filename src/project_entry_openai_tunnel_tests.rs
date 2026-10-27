@@ -83,7 +83,7 @@ fn clean_durable_history_cannot_be_rebound_or_downgraded_for_a_share() {
 #[tokio::test]
 async fn cancelled_stop_retains_the_owned_task_for_drop_cleanup() {
     let temp = tempfile::tempdir().unwrap();
-    let guard = acquire_guard(temp.path(), "cancelled-stop").unwrap();
+    let guard = acquire_guard(&temp.path().canonicalize().unwrap(), "cancelled-stop").unwrap();
     let (stop, _rx) = oneshot::channel();
     // A task that cannot complete before this owner observes it or aborts it.
     let task = tokio::spawn(std::future::pending::<Result<(), Error>>());
@@ -134,7 +134,7 @@ fn tunnel_id_is_a_fixed_validated_binding() {
 #[test]
 fn restart_guard_blocks_concurrent_owner_and_unclean_restart() {
     let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().join("runs");
+    let root = temp.path().canonicalize().unwrap().join("runs");
     let marker = acquire_guard(&root, "tunnel_fixture").unwrap();
     assert_eq!(
         acquire_guard(&root, "tunnel_fixture").unwrap_err().code,
@@ -259,7 +259,7 @@ async fn parent_shutdown_during_initial_poll_settles_startup_owner() {
     let temp = tempfile::tempdir().unwrap();
     // Hold the first real control-plane request without a response. No command
     // has been admitted, and readiness cannot win this cancellation race.
-    let (tunnel, _socket) = pending_tunnel(temp.path()).await;
+    let (tunnel, _socket) = pending_tunnel(&temp.path().canonicalize().unwrap()).await;
     let marker = tunnel.guard.path().to_path_buf();
     let abort = tunnel.task.as_ref().unwrap().abort_handle();
     let (polled_tx, polled_rx) = oneshot::channel();
@@ -285,13 +285,13 @@ async fn parent_shutdown_during_initial_poll_settles_startup_owner() {
         !marker.exists(),
         "clean startup shutdown must retire its fence"
     );
-    assert!(acquire_guard(temp.path(), "fixture").is_ok());
+    assert!(acquire_guard(&temp.path().canonicalize().unwrap(), "fixture").is_ok());
 }
 
 #[tokio::test]
 async fn startup_shutdown_retains_fence_when_task_cannot_settle_cleanly() {
     let temp = tempfile::tempdir().unwrap();
-    let guard = acquire_guard(temp.path(), "uncertain-startup").unwrap();
+    let guard = acquire_guard(&temp.path().canonicalize().unwrap(), "uncertain-startup").unwrap();
     let (stop, rx) = oneshot::channel();
     let task = tokio::spawn(async {
         let _ = rx.await;
@@ -318,7 +318,7 @@ async fn startup_shutdown_retains_fence_when_task_cannot_settle_cleanly() {
 #[tokio::test]
 async fn startup_readiness_transfers_owner_until_observed_shutdown() {
     let temp = tempfile::tempdir().unwrap();
-    let tunnel = idle_tunnel(temp.path()).await;
+    let tunnel = idle_tunnel(&temp.path().canonicalize().unwrap()).await;
     let marker = tunnel.guard.path().to_path_buf();
     let mut tunnel = finish_openai_tunnel_startup(
         tunnel,
@@ -336,7 +336,7 @@ async fn startup_readiness_transfers_owner_until_observed_shutdown() {
 #[tokio::test]
 async fn startup_timeout_settles_idle_owner_before_reporting_failure() {
     let temp = tempfile::tempdir().unwrap();
-    let (tunnel, _socket) = pending_tunnel(temp.path()).await;
+    let (tunnel, _socket) = pending_tunnel(&temp.path().canonicalize().unwrap()).await;
     let marker = tunnel.guard.path().to_path_buf();
     let result = finish_openai_tunnel_startup(tunnel, Instant::now(), std::future::pending()).await;
     assert_eq!(
@@ -349,7 +349,7 @@ async fn startup_timeout_settles_idle_owner_before_reporting_failure() {
 #[tokio::test]
 async fn observed_idle_shutdown_clears_restart_marker() {
     let temp = tempfile::tempdir().unwrap();
-    let mut tunnel = idle_tunnel(temp.path()).await;
+    let mut tunnel = idle_tunnel(&temp.path().canonicalize().unwrap()).await;
     let marker = tunnel.guard.path().to_path_buf();
     tunnel.stop().await;
     assert!(!marker.exists());
@@ -358,7 +358,7 @@ async fn observed_idle_shutdown_clears_restart_marker() {
 #[tokio::test]
 async fn observed_task_error_is_not_a_clean_join_and_keeps_restart_fence() {
     let temp = tempfile::tempdir().unwrap();
-    let guard = acquire_guard(temp.path(), "failed-fixture").unwrap();
+    let guard = acquire_guard(&temp.path().canonicalize().unwrap(), "failed-fixture").unwrap();
     let task = tokio::spawn(async { Err(Error::Protocol) });
     let marker_path = guard.path().to_path_buf();
     let mut tunnel = OpenAiTunnel {
@@ -379,21 +379,23 @@ async fn observed_task_error_is_not_a_clean_join_and_keeps_restart_fence() {
 #[tokio::test]
 async fn clean_owner_stop_allows_reacquiring_the_same_identity() {
     let temp = tempfile::tempdir().unwrap();
-    let mut tunnel = idle_tunnel(temp.path()).await;
+    let mut tunnel = idle_tunnel(&temp.path().canonicalize().unwrap()).await;
     assert!(tunnel.stop_with_outcome().await.is_ok());
     assert!(tunnel.stop_with_outcome().await.is_ok());
-    assert!(acquire_guard(temp.path(), "fixture").is_ok());
+    assert!(acquire_guard(&temp.path().canonicalize().unwrap(), "fixture").is_ok());
 }
 
 #[tokio::test]
 async fn dropping_owner_retains_restart_marker() {
     let temp = tempfile::tempdir().unwrap();
-    let tunnel = idle_tunnel(temp.path()).await;
+    let tunnel = idle_tunnel(&temp.path().canonicalize().unwrap()).await;
     let marker = tunnel.guard.path().to_path_buf();
     drop(tunnel);
     assert!(marker.exists());
     assert_eq!(
-        acquire_guard(temp.path(), "fixture").unwrap_err().code,
+        acquire_guard(&temp.path().canonicalize().unwrap(), "fixture")
+            .unwrap_err()
+            .code,
         "tunnel_restart_uncertain"
     );
 }

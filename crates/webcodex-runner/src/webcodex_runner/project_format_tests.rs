@@ -523,6 +523,8 @@ fn project_format_candidates_fails_on_nonzero_exit_syntax_error() {
     let planned = fixture.plan();
     let shell = ShellConfig::default();
     let cache = PreparedShellProfileCache::default();
+    // Exercise the formatter failure, not an incidental rustup cold-start
+    // timeout on oversubscribed Windows CI; deadline behavior has its own tests.
     let result = format_candidates(
         &fixture.policy,
         &shell,
@@ -530,7 +532,7 @@ fn project_format_candidates_fails_on_nonzero_exit_syntax_error() {
         &planned,
         &cache,
         1,
-        10,
+        60,
         None,
     );
     assert_eq!(result, Err("format_process_failed"));
@@ -545,6 +547,7 @@ fn project_format_candidates_fails_on_truncated_output() {
     policy.max_output_bytes = 4;
     let shell = ShellConfig::default();
     let cache = PreparedShellProfileCache::default();
+    // Keep the test focused on output truncation under loaded CI runners.
     let result = format_candidates(
         &policy,
         &shell,
@@ -552,7 +555,7 @@ fn project_format_candidates_fails_on_truncated_output() {
         &planned,
         &cache,
         1,
-        10,
+        60,
         None,
     );
     assert_eq!(result, Err("format_output_truncated"));

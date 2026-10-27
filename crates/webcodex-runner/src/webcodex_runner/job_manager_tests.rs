@@ -2195,49 +2195,49 @@ fn assert_gated_job_started_once(job: &GatedStructuredJob) {
 }
 
 #[test]
-fn phase_e2_default_four_gates_fifth_and_promotes_same_job_once() {
+fn phase_e2_default_32_gates_33rd_and_promotes_same_job_once() {
     let temp = tempfile::tempdir().unwrap();
     let helper = structured_process_helper();
     let (sink, _rx) = structured_test_sink("structured-agent", "structured-instance");
     let manager = JobManager::new(DEFAULT_MAX_CONCURRENT_JOBS);
-    let jobs = (1..=5)
+    let jobs = (1..=33)
         .map(|index| GatedStructuredJob::new(temp.path(), &format!("default-{index}")))
         .collect::<Vec<_>>();
 
     for job in &jobs {
         enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, job);
     }
-    wait_for_all_started(&jobs[..4]);
+    wait_for_all_started(&jobs[..32]);
     // The started marker is written just before the active marker, so the
     // child can still be in that window when wait_for_all_started returns;
     // poll for the active set instead of asserting it synchronously.
     assert!(
         wait_until(Duration::from_secs(10), || active_gated_children(&jobs)
-            == 4),
-        "simultaneously started children failed to reach the default of 4"
+            == 32),
+        "simultaneously started children failed to reach the default of 32"
     );
     assert!(
-        !jobs[4].started.exists(),
-        "the fifth child started before a Job slot opened"
+        !jobs[32].started.exists(),
+        "the 33rd child started before a Job slot opened"
     );
     let queued = manager
         .inventory()
         .jobs
         .into_iter()
-        .find(|snapshot| snapshot.job_id == jobs[4].job_id)
-        .expect("original fifth Job remains queryable");
+        .find(|snapshot| snapshot.job_id == jobs[32].job_id)
+        .expect("original 33rd Job remains queryable");
     assert_eq!(queued.status, "agent_queued");
-    assert_eq!(queued.request_id, "request-default-5");
+    assert_eq!(queued.request_id, "request-default-33");
 
     jobs[0].release();
     assert!(
-        wait_until(Duration::from_secs(10), || jobs[4].active.exists()),
-        "the original fifth Job was not promoted"
+        wait_until(Duration::from_secs(10), || jobs[32].active.exists()),
+        "the original 33rd Job was not promoted"
     );
     assert!(!jobs[0].active.exists());
     assert_eq!(
         active_gated_children(&jobs),
-        4,
+        32,
         "simultaneously started children exceeded or failed to reach the default"
     );
     assert!(
@@ -2246,18 +2246,18 @@ fn phase_e2_default_four_gates_fifth_and_promotes_same_job_once() {
             .jobs
             .iter()
             .any(
-                |snapshot| snapshot.job_id == jobs[4].job_id && snapshot.status == "running"
+                |snapshot| snapshot.job_id == jobs[32].job_id && snapshot.status == "running"
             )),
-        "promoted fifth child became active before its Runner running state was published"
+        "promoted 33rd child became active before its Runner running state was published"
     );
     let promoted = manager
         .inventory()
         .jobs
         .into_iter()
-        .find(|snapshot| snapshot.job_id == jobs[4].job_id)
-        .expect("promoted fifth Job retains its record");
+        .find(|snapshot| snapshot.job_id == jobs[32].job_id)
+        .expect("promoted 33rd Job retains its record");
     assert_eq!(promoted.status, "running");
-    assert_eq!(promoted.request_id, "request-default-5");
+    assert_eq!(promoted.request_id, "request-default-33");
     assert_eq!(promoted.activity, Some(process_running_activity()));
 
     for job in &jobs[1..] {

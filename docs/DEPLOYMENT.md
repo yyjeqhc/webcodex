@@ -426,7 +426,7 @@ writes the file. Invalid candidates preserve the active snapshot/generation, and
 `restart_required_fields` names startup-only changes that are not claimed live
 until restart. Unix service reload/SIGHUP remains a compatibility trigger for the
 same reload primitive, but is not required for first-class config control. Identity,
-server/auth, project source, concurrency, capabilities, and transport changes
+server/auth, project source, capabilities, and transport changes
 remain restart-only where reported.
 
 `[instructions].files` is explicitly hot-reloadable: after check/reload, new

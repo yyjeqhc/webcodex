@@ -1709,7 +1709,7 @@ pub struct RunnerRegisterRequest {
     /// for mixed-version diagnostics; never carries paths or environment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<RunnerBuildInfo>,
-    /// Effective static Job execution concurrency configured for this Runner
+    /// Effective Job execution concurrency configured for this Runner
     /// process. Older Runners omit it, so the Server must preserve `None`
     /// rather than infer a value from capabilities or observed Jobs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1917,7 +1917,7 @@ pub struct RunnerView {
     /// Runner-reported build identity, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<RunnerBuildInfo>,
-    /// Runner-reported effective static Job execution concurrency. `None` for
+    /// Runner-reported effective Job execution concurrency. `None` for
     /// older Runners; the Server never infers this value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_concurrency_limit: Option<usize>,
@@ -2267,8 +2267,17 @@ pub struct RunnerPollRequest {
 
 /// Polling transport wrapper. Current Runners may attach changed-only sanitized
 /// runtime metadata and one bounded project-inventory page.
+/// Applied scheduler capacity, fenced by the process-local config generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerJobCapacity {
+    pub generation: u64,
+    pub limit: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunnerPollPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_capacity: Option<RunnerJobCapacity>,
     #[serde(flatten)]
     pub request: RunnerPollRequest,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4194,6 +4203,7 @@ mod envelope_tests {
     #[test]
     fn runtime_metadata_and_legacy_poll_payloads_round_trip() {
         let env = RunnerEnvelope::RuntimeMetadata {
+            job_capacity: None,
             tool_providers: sample_tool_providers(),
             computer_session_availability: None,
             mcp_gateway_providers: Some(vec![crate::mcp_gateway::McpGatewayProvider {
@@ -4213,8 +4223,63 @@ mod envelope_tests {
         let legacy = r#"{"client_id":"oe","agent_instance_id":"inst","projects":null}"#;
         let payload: RunnerPollPayload = serde_json::from_str(legacy).unwrap();
         assert_eq!(payload.request.client_id, "oe");
+        assert!(payload.job_capacity.is_none());
         assert!(payload.tool_providers.is_none());
         assert!(payload.mcp_gateway_providers.is_none());
+    }
+
+    #[test]
+    fn capacity_metadata_is_optional_and_legacy_decoders_ignore_it() {
+        #[derive(Deserialize)]
+        struct LegacyMetadata {
+            tool_providers: ToolProvidersStatus,
+        }
+        let envelope = RunnerEnvelope::RuntimeMetadata {
+            job_capacity: Some(RunnerJobCapacity {
+                generation: 7,
+                limit: 32,
+            }),
+            tool_providers: sample_tool_providers(),
+            mcp_gateway_providers: None,
+            computer_session_availability: None,
+        };
+        let mut json = serde_json::to_value(&envelope).unwrap();
+        let old: LegacyMetadata = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(
+            old.tool_providers.config_reload.generation,
+            sample_tool_providers().config_reload.generation
+        );
+        json.as_object_mut().unwrap().remove("job_capacity");
+        assert!(matches!(
+            serde_json::from_value::<RunnerEnvelope>(json).unwrap(),
+            RunnerEnvelope::RuntimeMetadata {
+                job_capacity: None,
+                ..
+            }
+        ));
+        let poll = RunnerPollPayload {
+            job_capacity: Some(RunnerJobCapacity {
+                generation: 7,
+                limit: 32,
+            }),
+            request: RunnerPollRequest {
+                client_id: "runner".into(),
+                runner_instance_id: "instance".into(),
+            },
+            tool_providers: None,
+            mcp_gateway_providers: None,
+            computer_session_availability: None,
+            project_inventory_page: None,
+        };
+        let json = serde_json::to_value(&poll).unwrap();
+        let old: RunnerPollRequest = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(old.client_id, "runner");
+        assert_eq!(
+            serde_json::from_value::<RunnerPollPayload>(json)
+                .unwrap()
+                .job_capacity,
+            poll.job_capacity
+        );
     }
 
     #[test]

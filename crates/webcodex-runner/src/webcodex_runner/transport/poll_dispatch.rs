@@ -525,6 +525,10 @@ pub(crate) fn handle_one_poll(
             });
     let computer_session_update = webcodex_runner::computer_session::changed_availability();
     let poll = RunnerPollPayload {
+        job_capacity: Some(webcodex_core::runner_protocol::RunnerJobCapacity {
+            generation: metadata_config.generation,
+            limit: metadata_config.max_concurrent_jobs,
+        }),
         request: RunnerPollRequest {
             client_id: cfg.client_id.clone(),
             runner_instance_id: runner_instance_id.to_string(),

@@ -345,12 +345,12 @@ fn configured_job_concurrency(doc: &DocumentMut) -> DesktopResult<Option<usize>>
         .transpose()
 }
 
-/// Startup-only setting: saving does not reload or restart the active Runner.
+/// Stage capacity through the same checked reload transaction as other hot settings.
 /// Preserve unrelated TOML and fence both the displayed value and full-file write.
-pub fn save_job_concurrency(
+pub fn stage_job_concurrency(
     runtime: &StoredRuntime,
     request: JobConcurrencyUpdate,
-) -> DesktopResult<()> {
+) -> DesktopResult<PendingSettingsEdit> {
     verify_target(runtime, &request.target)?;
     if !valid_job_concurrency(request.limit) {
         return Err(job_concurrency_error());
@@ -362,7 +362,13 @@ pub fn save_job_concurrency(
         return Err(job_concurrency_error());
     }
     doc["max_concurrent_jobs"] = toml_edit::value(request.limit as i64);
-    persist(path, &original, &doc)
+    let candidate = doc.to_string();
+    persist_text(path, &original, &candidate)?;
+    Ok(PendingSettingsEdit {
+        path: path.clone(),
+        original,
+        candidate,
+    })
 }
 
 pub fn stage_allowed_roots_update(

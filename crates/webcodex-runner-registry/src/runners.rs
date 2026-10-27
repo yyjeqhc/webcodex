@@ -298,6 +298,11 @@ impl RunnerRegistry {
         // exclusively through the bounded paged inventory protocol.
         let projects = Vec::new();
         let project_inventory = pending_inventory_state(0);
+        let job_capacity_generation = policy
+            .as_ref()
+            .and_then(|p| p.tool_providers.as_ref())
+            .map(|p| p.config_reload.generation)
+            .unwrap_or(0);
         let record = RunnerRecord {
             client_id: client_id.clone(),
             runner_instance_id: runner_instance_id.clone(),
@@ -327,6 +332,7 @@ impl RunnerRegistry {
             process_started_at: body.process_started_at,
             build: body.build,
             job_concurrency_limit: body.job_concurrency_limit,
+            job_capacity_generation,
             coding_agent_providers: coding_agent_providers.clone(),
             coding_agent_inventory,
             projected_structured_terminal_suppressions: VecDeque::new(),
@@ -407,6 +413,15 @@ impl RunnerRegistry {
                 "runner {} instance was replaced and cannot reclaim the lease",
                 client_id
             ));
+        }
+        if let Some(existing) = inner.runners.get(&client_id) {
+            if existing.runner_instance_id == runner_instance_id
+                && (record.job_capacity_generation < existing.job_capacity_generation
+                    || (record.job_capacity_generation == existing.job_capacity_generation
+                        && record.job_concurrency_limit != existing.job_concurrency_limit))
+            {
+                return Err("stale or conflicting Runner capacity generation".into());
+            }
         }
         reject_same_instance_feature_downgrade(
             inner.runners.get(&client_id),
@@ -795,6 +810,43 @@ impl RunnerRegistry {
             }
         }
         runner.last_seen = now_ts();
+        Ok(())
+    }
+
+    /// Capacity is observational metadata, accepted only for the active instance
+    /// and stream lease. A delayed same-instance poll cannot regress generation.
+    pub async fn update_job_capacity(
+        &self,
+        client_id: &str,
+        runner_instance_id: &str,
+        connection_id: Option<&str>,
+        capacity: Option<webcodex_core::runner_protocol::RunnerJobCapacity>,
+    ) -> Result<(), String> {
+        let Some(capacity) = capacity else {
+            return Ok(());
+        };
+        if capacity.generation == 0
+            || !(RUNNER_JOB_CONCURRENCY_MIN..=RUNNER_JOB_CONCURRENCY_MAX).contains(&capacity.limit)
+        {
+            return Err("invalid Runner capacity".into());
+        }
+        let mut inner = self.inner.lock().await;
+        let runner = inner.runners.get_mut(client_id).ok_or("unknown Runner")?;
+        if runner.runner_instance_id != runner_instance_id
+            || connection_id.is_some_and(|id| runner.connection_id.as_deref() != Some(id))
+        {
+            return Err("stale Runner capacity lease".into());
+        }
+        if capacity.generation < runner.job_capacity_generation
+            || (capacity.generation == runner.job_capacity_generation
+                && runner
+                    .job_concurrency_limit
+                    .is_some_and(|limit| limit != capacity.limit))
+        {
+            return Err("stale or conflicting Runner capacity generation".into());
+        }
+        runner.job_concurrency_limit = Some(capacity.limit);
+        runner.job_capacity_generation = capacity.generation;
         Ok(())
     }
 

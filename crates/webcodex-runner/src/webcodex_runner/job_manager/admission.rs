@@ -371,7 +371,9 @@ impl JobManager {
             } else {
                 None
             };
-            let queue_locally = immediate_failure.is_none() && reserved >= self.max_concurrent;
+            let queue_locally = immediate_failure.is_none()
+                && (reserved >= self.concurrency_limit()
+                    || !lock_unpoison(&self.queued).is_empty());
             let slot_reserved = immediate_failure.is_none() && !queue_locally;
             let now = chrono::Utc::now()
                 .timestamp()
@@ -435,6 +437,7 @@ impl JobManager {
             },
         );
         if queue_locally {
+            self.start_available_queued();
             return;
         }
         self.start_now(start);
@@ -462,16 +465,15 @@ impl JobManager {
         }
     }
 
-    pub(super) fn start_available_queued(&self) {
+    pub(crate) fn start_available_queued(&self) {
         loop {
             if self.shutting_down.load(Ordering::SeqCst) {
-                lock_unpoison(&self.queued).clear();
+                // Shutdown owns cancellation and terminalization of these entries.
                 return;
             }
             let next = {
                 let _lifecycle = lock_unpoison(&self.lifecycle);
                 if self.shutting_down.load(Ordering::SeqCst) {
-                    lock_unpoison(&self.queued).clear();
                     return;
                 }
                 let mut jobs = lock_unpoison(&self.jobs);
@@ -486,7 +488,7 @@ impl JobManager {
                                 && runner_job_is_active(&job.snapshot.status)
                         })
                         .count();
-                    if reserved < self.max_concurrent {
+                    if reserved < self.concurrency_limit() {
                         selected = Some(idx);
                         break;
                     }

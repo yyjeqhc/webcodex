@@ -5,8 +5,7 @@ use super::http_client::{
 };
 use crate::webcodex_runner;
 use crate::webcodex_runner::config::{
-    hostname, max_concurrent_jobs, HotRunnerConfig, ReloadableRunnerConfig, RunnerConfig,
-    ShellConfig,
+    hostname, HotRunnerConfig, ReloadableRunnerConfig, RunnerConfig, ShellConfig,
 };
 use crate::webcodex_runner::job_manager::JobManager;
 use crate::webcodex_runner::projects::RunnerProjectCache;
@@ -547,7 +546,7 @@ pub(crate) fn build_register_request_with_provider_status(
             )),
             process_started_at: Some(process_started_at()),
             build: Some(runner_build_info()),
-            job_concurrency_limit: Some(max_concurrent_jobs(cfg)),
+            job_concurrency_limit: Some(hot.max_concurrent_jobs),
             // A Runner with reconciliation disabled for E2E must not send a job
             // inventory: the server rejects inventory without the capability and
             // vice-versa.

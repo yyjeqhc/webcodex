@@ -396,6 +396,13 @@ final drain and durable commit of the final retained tails.
 range 1..64; out-of-range configuration is rejected). It is not allocated per
 ChatGPT window, Workflow Session, or Project.
 
+Capacity reload commits under the existing config-generation transaction and
+JobManager lifecycle lock. Clone handles share the limit; reservation and dequeue
+use that same lock. Growth drains the original FIFO after releasing config locks.
+Shrink leaves reservations and running processes intact, so running can exceed
+limit until natural completion. Runtime metadata is fenced by instance, connection
+and generation, and reconnect registration uses the active config snapshot.
+
 Opening multiple model windows consumes no Job slot by itself. A slot is consumed
 while a Job-backed execution owns Runner execution capacity. Therefore several
 windows using different Projects on the same Runner can contend for the same

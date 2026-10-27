@@ -33,7 +33,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
@@ -149,7 +149,7 @@ impl PendingJobStart {
 
 #[derive(Debug, Clone)]
 pub(crate) struct JobManager {
-    max_concurrent: usize,
+    max_concurrent: Arc<AtomicUsize>,
     jobs: Arc<Mutex<HashMap<String, RunningJob>>>,
     detached_jobs: Arc<Mutex<HashMap<String, DetachedJobRef>>>,
     queued: Arc<Mutex<VecDeque<PendingJobStart>>>,
@@ -202,7 +202,7 @@ impl JobManager {
             delivery_signal: Arc::clone(&delivery_signal),
         });
         Self {
-            max_concurrent: max_concurrent.max(1),
+            max_concurrent: Arc::new(AtomicUsize::new(max_concurrent.max(1))),
             jobs,
             detached_jobs,
             queued: Arc::new(Mutex::new(VecDeque::new())),
@@ -227,6 +227,17 @@ impl JobManager {
     pub(super) fn with_detached_profile_identity(mut self, server_url: &str) -> Self {
         self.detached_profile_server_url = server_url.to_string();
         self
+    }
+
+    // All reservations and capacity changes serialize on lifecycle. The atomic
+    // only permits cheap observations; it does not authorize admission alone.
+    pub(crate) fn concurrency_limit(&self) -> usize {
+        self.max_concurrent.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn commit_concurrency_limit(&self, limit: usize) {
+        let _lifecycle = lock_unpoison(&self.lifecycle);
+        self.max_concurrent.store(limit, Ordering::Relaxed);
     }
 
     pub(crate) fn prepared_profiles(&self) -> &PreparedShellProfileCache {

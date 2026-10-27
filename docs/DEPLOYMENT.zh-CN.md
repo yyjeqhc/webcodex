@@ -377,7 +377,7 @@ max_output_bytes = 262144
 无效 candidate 保留旧 active snapshot/generation，`restart_required_fields` 明确列出仍需
 重启、且不会假装已经在线生效的 startup-only 变更。Unix service reload/SIGHUP 仍保留为
 调用同一 reload primitive 的兼容 trigger，但 first-class config control 不依赖它。身份、
-server/auth、项目来源、并发、能力与传输等字段在被报告为 restart-only 时仍需要重启。
+server/auth、项目来源、能力与传输等字段在被报告为 restart-only 时仍需要重启。
 
 `[instructions].files` 明确属于 hot-reloadable 字段：完成 check/reload 后，新 Project
 bootstrap 会立即使用新的路径列表，不需要重启 Runner。已配置 instruction 文件的内容

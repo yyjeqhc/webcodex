@@ -1,8 +1,8 @@
 //! Runner transport bootstrap, supervision, and shared resource ownership.
 
 use super::config::{
-    max_concurrent_jobs, project_registry_dir, validate_quic_config, QuicClientConfig,
-    ReloadableRunnerConfig, RunnerConfig,
+    project_registry_dir, validate_quic_config, QuicClientConfig, ReloadableRunnerConfig,
+    RunnerConfig,
 };
 use super::contains_any;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]

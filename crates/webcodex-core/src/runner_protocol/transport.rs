@@ -79,6 +79,8 @@ pub enum RunnerEnvelope {
     /// Runner -> server changed-only sanitized runtime metadata. It reuses the
     /// active transport and never requires an acknowledgement round trip.
     RuntimeMetadata {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        job_capacity: Option<super::RunnerJobCapacity>,
         tool_providers: ToolProvidersStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mcp_gateway_providers: Option<Vec<crate::mcp_gateway::McpGatewayProvider>>,

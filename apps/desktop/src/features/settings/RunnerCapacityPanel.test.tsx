@@ -30,11 +30,33 @@ describe("local Runner concurrency settings", () => {
     expect(input).toHaveValue(32); expect(screen.getByText("4 running · 2 queued · limit 4")).toBeInTheDocument();
     expect(screen.getByText("Saved limit: — · Default: 32")).toBeInTheDocument();
     expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
-    fireEvent.change(input, { target: { value: "12" } }); fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
+    fireEvent.change(input, { target: { value: "12" } }); fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
     await waitFor(() => expect(api.saveRunnerJobConcurrency).toHaveBeenCalledExactlyOnceWith(target, null, 12));
     expect(api.restartOwnedRunner).not.toHaveBeenCalled();
-    expect(await screen.findByText("Restart required to apply the saved limit.")).toBeInTheDocument();
+    expect(await screen.findByText("Saved limit is not yet reported as active.")).toBeInTheDocument();
     expect(screen.getByText("4 running · 2 queued · limit 4")).toBeInTheDocument();
+  });
+  it("shows applied capacity from the server even while running exceeds a shrunken limit", async () => {
+    settings.max_concurrent_jobs = 6;
+    runner = { ...runner, jobs_running: 6, jobs_queued: 2, job_concurrency_limit: 6 };
+    api.saveRunnerJobConcurrency.mockImplementationOnce(async () => {
+      settings.max_concurrent_jobs = 2;
+      runner = { ...runner, job_concurrency_limit: 2 };
+      return state;
+    });
+    render(view());
+    fireEvent.change(await screen.findByRole("spinbutton"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
+    expect(await screen.findByText("6 running · 2 queued · limit 2")).toBeInTheDocument();
+    expect(screen.getByText("Saved limit is in effect.")).toBeInTheDocument();
+    expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+  });
+  it("allows an explicit apply of a saved limit awaiting activation", async () => {
+    settings.max_concurrent_jobs = 6;
+    render(view());
+    fireEvent.click(await screen.findByRole("button", { name: "Save and apply" }));
+    await waitFor(() => expect(api.saveRunnerJobConcurrency).toHaveBeenCalledExactlyOnceWith(target, 6, 6));
+    expect(api.restartOwnedRunner).not.toHaveBeenCalled();
   });
   it("requires an interruption warning and supports Cancel", async () => {
     settings.max_concurrent_jobs = 12; render(view());
@@ -44,13 +66,13 @@ describe("local Runner concurrency settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restart Runner…" })); dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Restart Runner now" }));
     await waitFor(() => expect(api.restartOwnedRunner).toHaveBeenCalledExactlyOnceWith(target));
-    expect(await screen.findByText("Restart required to apply the saved limit.")).toBeInTheDocument();
+    expect(await screen.findByText("Saved limit is not yet reported as active.")).toBeInTheDocument();
   });
   it("rejects invalid input and does not replay a failed save", async () => {
     render(view()); const input = await screen.findByRole("spinbutton");
-    for (const value of ["", "0", "65", "1.5"]) { fireEvent.change(input, { target: { value } }); expect(screen.getByRole("button", { name: "Save for next restart" })).toBeDisabled(); }
+    for (const value of ["", "0", "65", "1.5"]) { fireEvent.change(input, { target: { value } }); expect(screen.getByRole("button", { name: "Save and apply" })).toBeDisabled(); }
     api.saveRunnerJobConcurrency.mockRejectedValue({ code: "runner_job_concurrency_invalid", message: "Saved value changed", next_action: "Reload settings" });
-    fireEvent.change(input, { target: { value: "12" } }); fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
+    fireEvent.change(input, { target: { value: "12" } }); fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Saved value changed");
     expect(api.saveRunnerJobConcurrency).toHaveBeenCalledTimes(1); expect(api.restartOwnedRunner).not.toHaveBeenCalled();
   });
@@ -93,7 +115,7 @@ describe("local Runner concurrency settings", () => {
     api.saveRunnerJobConcurrency.mockReturnValue(new Promise(done => { resolve = done; }));
     render(view()); const input = await screen.findByRole("spinbutton");
     fireEvent.change(input, { target: { value: "12" } });
-    const save = screen.getByRole("button", { name: "Save for next restart" });
+    const save = screen.getByRole("button", { name: "Save and apply" });
     fireEvent.click(save); fireEvent.click(save);
     expect(api.saveRunnerJobConcurrency).toHaveBeenCalledTimes(1);
     await act(async () => resolve(state));
@@ -105,7 +127,7 @@ describe("local Runner concurrency settings", () => {
     settings.max_concurrent_jobs = 8;
     fireEvent(document, new Event("visibilitychange"));
     await screen.findByText("Saved limit: 8 · Default: 32");
-    fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Saved value changed");
     expect(api.saveRunnerJobConcurrency).toHaveBeenCalledExactlyOnceWith(target, null, 12);
   });
@@ -113,14 +135,14 @@ describe("local Runner concurrency settings", () => {
     render(view()); const input = await screen.findByRole("spinbutton");
     fireEvent.change(input, { target: { value: "12" } });
     settings.max_concurrent_jobs = 8;
-    fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Saved value changed");
     await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(input).toHaveValue(8));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "12" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save and apply" }));
     await waitFor(() => expect(api.saveRunnerJobConcurrency).toHaveBeenLastCalledWith(target, 8, 12));
     expect(api.saveRunnerJobConcurrency).toHaveBeenCalledTimes(2);
   });

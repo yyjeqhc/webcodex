@@ -187,3 +187,62 @@ async fn job_concurrency_save_rejects_unowned_runner_without_changing_the_file()
         before
     );
 }
+
+#[tokio::test]
+async fn job_capacity_uses_the_shared_staged_transaction_for_all_outcomes() {
+    for (responses, restored, applied) in [
+        (vec![Ok(check(4)), Ok(reload(5))], false, true),
+        (vec![Err(desktop_state_unavailable("offline"))], true, false),
+        (
+            vec![
+                Ok(check(4)),
+                Ok(
+                    serde_json::json!({"success":false,"output":{"execution_state":"not_started","error_code":"config_generation_conflict"}}),
+                ),
+                Ok(check(5)),
+            ],
+            false,
+            false,
+        ),
+        (
+            vec![
+                Ok(check(4)),
+                Err(desktop_state_unavailable("response lost")),
+                Ok(check(5)),
+            ],
+            false,
+            false,
+        ),
+    ] {
+        let (_root, runtime, previous_edit, _original) = fixture();
+        let baseline = std::fs::read_to_string(runtime.runner_config.as_ref().unwrap()).unwrap();
+        assert!(previous_edit.candidate_unchanged().unwrap());
+        let edit = settings::stage_job_concurrency(
+            &runtime,
+            settings::JobConcurrencyUpdate {
+                target: settings::target(&runtime).unwrap(),
+                expected: None,
+                limit: 6,
+            },
+        )
+        .unwrap();
+        let mut responses = VecDeque::from(responses);
+        let mut reloads = 0;
+        let result = apply_with_control("local", &edit, |tool, params| {
+            if tool == "reload_runner_config" {
+                reloads += 1;
+                assert_eq!(params["expected_generation"], 4);
+            }
+            ready(responses.pop_front().unwrap())
+        })
+        .await;
+        assert_eq!(result.is_ok(), applied);
+        assert!(reloads <= 1);
+        assert!(responses.is_empty());
+        let current = std::fs::read_to_string(runtime.runner_config.as_ref().unwrap()).unwrap();
+        assert_eq!(current == baseline, restored);
+        if !restored {
+            assert!(edit.candidate_unchanged().unwrap());
+        }
+    }
+}

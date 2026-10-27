@@ -548,12 +548,18 @@ restarted.
 
 The Runner executes up to `max_concurrent_jobs` Jobs at once (default 32, valid
 range 1..64). Values outside that range are rejected as configuration errors.
-This is an operational tuning control, not a security boundary, and requires a
-Runner restart to change:
+This operational tuning control supports `check_runner_config` followed by
+`reload_runner_config` (or Unix SIGHUP), without restarting:
 
 ```toml
 max_concurrent_jobs = 32
 ```
+
+Increasing the limit immediately schedules existing queued Jobs. Decreasing it
+leaves running Jobs intact; new starts wait until occupied slots fall below the
+new limit. Running may temporarily exceed the limit. Registration and runtime
+metadata report the applied capacity with a config-generation fence, including
+after reconnect. Older Servers retain startup-only capacity observations.
 
 When all slots are occupied, an accepted Job remains the same queryable Job
 with the same `job_id` and reports `agent_queued`.
@@ -862,7 +868,7 @@ of finding its PID or sending signals manually:
 
 `reload_runner_config` never writes `runner.toml`; it only activates the candidate
 already on disk. Hot-reloadable policy, shell, configured Skill roots, configured
-instruction files, Native Plugin, and static SSH-resource changes can become active
+instruction files, Job capacity, Native Plugin, and static SSH-resource changes can become active
 immediately, while fields reported in `restart_required_fields`
 remain startup-only until the Runner restarts. Invalid candidates leave the active
 snapshot and generation unchanged. Managed `manage_ssh_resource` mutations are different:

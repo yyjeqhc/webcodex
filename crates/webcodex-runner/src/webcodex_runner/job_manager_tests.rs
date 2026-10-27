@@ -19,6 +19,8 @@ use std::sync::OnceLock;
 use tempfile::TempDir;
 use webcodex_core::runner_protocol::{RunnerEnvelope, VALIDATION_STEP_WAIT_FAILED_CODE};
 
+#[path = "job_manager_tests/capacity.rs"]
+mod capacity;
 #[path = "job_manager_tests/heartbeat.rs"]
 mod heartbeat;
 #[path = "job_manager_tests/node_json.rs"]

@@ -109,3 +109,7 @@ This supersedes historical Job-default facts without changing the audit baseline
 Polling ordinary-request dispatch remains independently bounded at 4; WebSocket
 and QUIC dispatch share the same JobManager execution pool for Job-backed work.
 ACP run admission and persistent-shell population retain their own bounds.
+
+Job capacity also supports the existing generation-fenced config reload transaction.
+Growth schedules the original queue; shrink leaves active Jobs running. Server and
+Desktop observations use applied metadata, never an unactivated on-disk candidate.

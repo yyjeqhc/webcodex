@@ -20,13 +20,13 @@ const zh: Record<string, string> = {
 
   "Saved limit: {saved} · Default: {default}": "已保存的上限：{saved} · 默认值：{default}",
 
-  "Saved for the next Runner start; the effective limit is unknown.": "已保存，将在 Runner 下次启动时使用；当前生效上限未知。",
-  "Restart required to apply the saved limit.": "需要重启 Runner，已保存的上限才会生效。",
+  "The effective limit is unknown. Reconnect and refresh before applying.": "当前生效上限未知。请重新连接并刷新后再应用。",
+  "Saved limit is not yet reported as active.": "服务端尚未报告已保存的上限生效。",
   "Saved limit is in effect.": "已保存的上限正在生效。",
   "Maximum concurrent jobs": "最大并发任务数",
-  "Choose a whole number from 1 to 64. Saving does not restart the Runner.": "请输入 1–64 的整数。保存不会重启 Runner。",
-  "Read-only. Change and restart this Runner through its actual process owner.": "此处只读。请通过实际管理此 Runner 的程序修改配置并重启。",
-  "Save for next restart": "保存，下次重启时生效",
+  "Choose a whole number from 1 to 64. Apply without restarting; running jobs continue.": "请输入 1–64 的整数。热应用无需重启，正在运行的任务会继续执行。",
+  "Read-only. Change this Runner through its actual process owner.": "此处只读。请通过实际管理此 Runner 的程序修改配置。",
+  "Save and apply": "保存并热应用",
   "Restart Runner…": "重启 Runner…",
   "Restart Runner?": "确定重启 Runner？",
   "Restart Runner now": "立即重启 Runner",

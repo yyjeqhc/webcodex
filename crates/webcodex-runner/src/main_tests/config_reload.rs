@@ -70,6 +70,7 @@ fn reload_fixture() -> (tempfile::TempDir, PathBuf, ReloadableRunnerConfig) {
 fn reload_field_classification_is_exhaustive_and_allowlisted() {
     let startup = test_config(PathBuf::from("projects-a"));
     let mut hot_only = startup.clone();
+    hot_only.max_concurrent_jobs = Some(6);
     hot_only.policy.max_timeout_secs += 1;
     hot_only.shell.program = "bash".to_string();
     hot_only.skills.roots.push(PathBuf::from("live-skill-root"));
@@ -104,7 +105,7 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
     changed.quic = Some(quic_client_config());
     assert_eq!(
             webcodex_runner::config::restart_required_fields(&startup, &changed).join(" "),
-            "capabilities client_id display_name hostname host_context max_concurrent_jobs owner poll_interval_ms project_registry_dir quic server_url token transport websocket_connect_timeout_secs"
+            "capabilities client_id display_name hostname host_context owner poll_interval_ms project_registry_dir quic server_url token transport websocket_connect_timeout_secs"
         );
 }
 
@@ -608,10 +609,7 @@ fn mixed_reload_applies_hot_fields_and_reports_static_restart_fields() {
     let active = runtime.snapshot();
     assert_eq!(status.last_reload_result, "partial");
     assert!(status.restart_required);
-    assert_eq!(
-        status.restart_required_fields,
-        ["client_id", "max_concurrent_jobs"]
-    );
+    assert_eq!(status.restart_required_fields, ["client_id"]);
     assert_eq!(
         (
             active.policy.max_timeout_secs,
@@ -653,7 +651,7 @@ fn first_class_check_validates_candidate_without_mutating_active_config() {
     assert!(checked.restart_required);
     assert_eq!(
         checked.restart_required_fields,
-        vec!["client_id".to_string(), "max_concurrent_jobs".to_string()]
+        vec!["client_id".to_string()]
     );
 
     let after = runtime.snapshot();
@@ -830,7 +828,7 @@ fn first_class_partial_reload_reports_exact_restart_only_fields() {
     assert!(result.restart_required);
     assert_eq!(
         result.restart_required_fields,
-        vec!["client_id".to_string(), "max_concurrent_jobs".to_string()]
+        vec!["client_id".to_string()]
     );
     let active = runtime.snapshot();
     assert_eq!(active.policy.max_timeout_secs, 180);
@@ -912,4 +910,101 @@ fn unix_sighup_listener_still_triggers_authoritative_reload() {
     assert_eq!(runtime.snapshot().policy.max_timeout_secs, 150);
     runtime.begin_shutdown();
     listener.join().unwrap();
+}
+
+#[test]
+fn capacity_reload_applies_to_shared_scheduler_and_keeps_failed_generations() {
+    let (_tmp, path, runtime) = reload_fixture();
+    let worker = runtime.jobs.clone();
+    assert_eq!(worker.concurrency_limit(), 32);
+    for (generation, limit) in [(1, 2), (2, 6), (3, 2)] {
+        std::fs::write(
+            &path,
+            reload_toml(
+                "oe",
+                Some(limit),
+                60,
+                1024,
+                "sh",
+                "native",
+                false,
+                "claude",
+                "search",
+            ),
+        )
+        .unwrap();
+        let checked = runtime.check_config();
+        assert_eq!(checked.valid, Some(true));
+        assert!(!checked.restart_required);
+        let applied = runtime.reload_config(generation);
+        assert_eq!(applied.valid, Some(true));
+        assert_eq!(worker.concurrency_limit(), limit);
+        assert_eq!(runtime.snapshot().max_concurrent_jobs, limit);
+        assert_eq!(
+            runtime.reload_config(generation).error_code,
+            Some(runner_protocol::RunnerConfigErrorCode::ConfigGenerationConflict)
+        );
+        assert_eq!(worker.concurrency_limit(), limit);
+    }
+    std::fs::write(&path, "invalid toml").unwrap();
+    assert_eq!(runtime.reload_config(4).valid, Some(false));
+    assert_eq!(worker.concurrency_limit(), 2);
+    runtime.begin_shutdown();
+    assert_eq!(
+        runtime.reload_config(4).error_code,
+        Some(runner_protocol::RunnerConfigErrorCode::RunnerUnavailable)
+    );
+    assert_eq!(worker.concurrency_limit(), 2);
+}
+
+#[test]
+fn concurrent_capacity_reloads_commit_one_generation_and_shutdown_fences_activation() {
+    let (_tmp, path, runtime) = reload_fixture();
+    std::fs::write(
+        &path,
+        reload_toml(
+            "oe",
+            Some(6),
+            60,
+            1024,
+            "sh",
+            "native",
+            false,
+            "claude",
+            "search",
+        ),
+    )
+    .unwrap();
+    let barrier = std::sync::Barrier::new(3);
+    let responses = std::thread::scope(|scope| {
+        let one = scope.spawn(|| {
+            barrier.wait();
+            runtime.reload_config(1)
+        });
+        let two = scope.spawn(|| {
+            barrier.wait();
+            runtime.reload_config(1)
+        });
+        barrier.wait();
+        [one.join().unwrap(), two.join().unwrap()]
+    });
+    assert_eq!(
+        responses.iter().filter(|r| r.valid == Some(true)).count(),
+        1
+    );
+    assert_eq!(
+        responses
+            .iter()
+            .filter(|r| r.error_code
+                == Some(runner_protocol::RunnerConfigErrorCode::ConfigGenerationConflict))
+            .count(),
+        1
+    );
+    assert_eq!(runtime.jobs.concurrency_limit(), 6);
+    runtime.begin_shutdown();
+    assert_eq!(
+        runtime.reload_config(2).error_code,
+        Some(runner_protocol::RunnerConfigErrorCode::RunnerUnavailable)
+    );
+    assert_eq!(runtime.snapshot().generation, 2);
 }

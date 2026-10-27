@@ -480,3 +480,28 @@ fn wait_for_path(path: &Path, deadline: Instant, context: &str) {
         thread::sleep(Duration::from_millis(5));
     }
 }
+
+#[test]
+fn hot_capacity_metadata_retries_backpressure_and_registration_uses_active_generation() {
+    for transport in [StreamTransport::WebSocket, StreamTransport::Quic] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("runner.toml");
+        let cfg = test_runner_config("http://127.0.0.1:1".into());
+        let runtime = ReloadableRunnerConfig::new(cfg.clone(), path.clone());
+        std::fs::write(&path, "server_url='http://127.0.0.1:1'\ntoken='test-token'\nclient_id='oe'\nmax_concurrent_jobs=6\n").unwrap();
+        assert_eq!(runtime.reload_config(1).valid, Some(true));
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.try_send(RunnerEnvelope::Pong { ts: 1 }).unwrap();
+        send_provider_metadata(transport, &tx, &runtime, Some(1));
+        assert!(matches!(rx.try_recv(), Ok(RunnerEnvelope::Pong { .. })));
+        send_provider_metadata(transport, &tx, &runtime, Some(1));
+        let RunnerEnvelope::RuntimeMetadata { job_capacity: Some(capacity), .. } = rx.try_recv().unwrap() else { panic!("missing capacity"); };
+        assert_eq!(capacity.generation, 2);
+        assert_eq!(capacity.limit, 6);
+        assert_eq!(runtime.jobs.concurrency_limit(), 6);
+        // Reconnect reconstructs registration from active state even though cfg
+        // remains the immutable startup/transport identity.
+        let (registered, _, _) = build_register_request_with_provider_status(&cfg, &runtime, "instance", 0, runtime.jobs.inventory());
+        assert_eq!(registered.job_concurrency_limit, Some(6));
+    }
+}

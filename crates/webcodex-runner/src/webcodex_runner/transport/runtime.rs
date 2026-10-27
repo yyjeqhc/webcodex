@@ -12,8 +12,8 @@ impl RunnerRuntimeState {
         path: PathBuf,
         budget: Duration,
     ) -> Self {
-        let jobs = JobManager::new(max_concurrent_jobs(cfg))
-            .with_detached_profile_identity(&cfg.server_url);
+        let config = Arc::new(ReloadableRunnerConfig::new(cfg.clone(), path));
+        let jobs = config.jobs.clone();
         // Persistent shells reuse the same authenticated OpenSSH multiplex pool
         // as async jobs: one transport per (session, resource, generation),
         // never a second SSH configuration or connection pool.
@@ -30,7 +30,7 @@ impl RunnerRuntimeState {
                     BrowserSupervisor::new_with_extension_bridge()
                 }
             },
-            config: Arc::new(ReloadableRunnerConfig::new(cfg.clone(), path)),
+            config,
             jobs,
             persistent_shells,
             coordinator: Arc::new(ShutdownCoordinator::new(budget)),

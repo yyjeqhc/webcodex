@@ -112,11 +112,13 @@ impl AppState {
                 .runtime
                 .clone()
                 .ok_or_else(|| desktop_state_unavailable("Configure a Runner first"))?;
-            tokio::task::spawn_blocking(move || {
-                crate::webcodex::settings::save_job_concurrency(&runtime, request)
+            let edit = tokio::task::spawn_blocking({
+                let runtime = runtime.clone();
+                move || crate::webcodex::settings::stage_job_concurrency(&runtime, request)
             })
             .await
             .map_err(|_| desktop_state_unavailable("Settings worker stopped"))??;
+            apply_staged_settings(&runtime, &edit).await?;
             core.get_state().await
         }
         .await;

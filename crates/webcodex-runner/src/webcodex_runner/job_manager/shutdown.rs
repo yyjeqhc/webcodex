@@ -120,12 +120,17 @@ impl JobManager {
     }
 
     pub(in crate::webcodex_runner) fn cancel_queued_for_shutdown(&self) -> usize {
-        let _lifecycle = lock_unpoison(&self.lifecycle);
-        self.shutting_down.store(true, Ordering::SeqCst);
-        let mut queued = lock_unpoison(&self.queued);
-        let cancelled = queued.len();
-        queued.clear();
-        cancelled
+        let pending = {
+            let _lifecycle = lock_unpoison(&self.lifecycle);
+            self.shutting_down.store(true, Ordering::SeqCst);
+            lock_unpoison(&self.queued).drain(..).collect::<Vec<_>>()
+        };
+        // Preserve terminal evidence for every accepted queued identity. Delivery
+        // and cleanup happen outside admission locks, just as for an explicit stop.
+        for start in &pending {
+            self.shutdown_rejection(&start.operation);
+        }
+        pending.len()
     }
 
     pub(in crate::webcodex_runner) fn signal_all_for_shutdown(&self) -> JobShutdownBatch {

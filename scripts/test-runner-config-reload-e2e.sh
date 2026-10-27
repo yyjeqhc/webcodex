@@ -122,7 +122,7 @@ display_name = "${display}"
 project_registry_dir = "${PROJECTS_DIR}"
 poll_interval_ms = 100
 max_concurrent_jobs = ${max_jobs}
-transport = "polling"
+transport = "${WEBCODEX_E2E_TRANSPORT:-polling}"
 [policy]
 allow_raw_shell = true
 allow_cwd_anywhere = false
@@ -162,6 +162,7 @@ r = p["config_reload"]
 expected_error = None if sys.argv[6] == "null" else sys.argv[6]
 expected_fields = [] if sys.argv[8] == "-" else sys.argv[8].split(",")
 assert r["generation"] == int(sys.argv[4]) and r["last_reload_result"] == sys.argv[5]
+assert c["job_concurrency"]["limit"] == (2 if int(sys.argv[4]) == 3 else 1)
 assert r.get("last_reload_error_code") == expected_error
 assert r["restart_required"] is (sys.argv[7] == "true")
 assert r["restart_required_fields"] == expected_fields == sorted(set(expected_fields))
@@ -201,7 +202,7 @@ run_shell_request() {
 }
 assert_marker() {
     run_shell_request 'printf %s "$WEBCODEX_RELOAD_MARKER"'
-    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["success"] and d["output"]["stdout_tail"]==sys.argv[2] and d["output"]["stderr_tail"]=="" and d["output"]["exit_code"]==0' \
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["success"] and d["output"]["stdout_tail"]==sys.argv[2] and d["output"].get("stderr_tail", "")=="" and d["output"].get("exit_code", 0)==0 and not d["output"].get("job_id")' \
         "$RESPONSE_FILE" "$1" || fail "shell marker was not $1"
 }
 start_job() {
@@ -212,14 +213,14 @@ job_status() {
     runtime_tool_call "observe_jobs" "{\"items\":[{\"job_id\":\"$1\"}],\"tail_lines\":1}" | python3 -c \
         'import json,sys; d=json.load(sys.stdin); assert d["success"]; item=d["output"]["items"][0]; assert item["job_id"]==sys.argv[1]; print(item["status"])' "$1"
 }
-for command in awk curl git mv python3 setsid tail "$CARGO_BIN"; do require_command "$command"; done
+for command in awk curl git mv python3 tail "$CARGO_BIN"; do require_command "$command"; done
 cd "$ROOT"
 REPO_STATUS_BEFORE="$(git status --short)"
 if [ "${WEBCODEX_E2E_SKIP_BUILD:-0}" != "1" ]; then
-    "$CARGO_BIN" build --quiet -p webcodex -p webcodex-runner --bins
+    "$CARGO_BIN" build --profile dogfood --quiet -p webcodex -p webcodex-runner --bins
 fi
-[ -x target/debug/webcodex-server ] && [ -x target/debug/webcodex-runner ] \
-    || fail "debug server/agent binaries are unavailable"
+[ -x target/dogfood/webcodex-server ] && [ -x target/dogfood/webcodex-runner ] \
+    || fail "dogfood server/agent binaries are unavailable"
 TMP_ROOT="$(mktemp -d -t webcodex-runner-reload-e2e-XXXXXX)"
 DATA_DIR="$TMP_ROOT/data"
 PROJECTS_DIR="$TMP_ROOT/project-registry"
@@ -254,19 +255,19 @@ EOF
 PORT="$(find_port)"
 write_runner_config generation-1 5 65536 native false 30 "$STARTUP_DISPLAY" 1 \
     project_search_generation_1
-setsid env -i PATH="$PATH" LANG=C HOME="$ISOLATED_HOME" \
+python3 -c 'import os,sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' env -i PATH="$PATH" LANG=C HOME="$ISOLATED_HOME" \
     XDG_CONFIG_HOME="$ISOLATED_HOME/.config" XDG_DATA_HOME="$ISOLATED_HOME/.local/share" \
     XDG_STATE_HOME="$ISOLATED_HOME/.local/state" XDG_CACHE_HOME="$ISOLATED_HOME/.cache" \
     TMPDIR="$RUNTIME_TMP" WEBCODEX_ENV_FILE="$TMP_ROOT/empty.env" \
     WEBCODEX_ADDR="127.0.0.1:${PORT}" WEBCODEX_DATA="$DATA_DIR" WEBCODEX_TOKEN="$TOKEN" \
-    RUST_LOG=warn target/debug/webcodex-server >"$SERVER_LOG" 2>&1 &
+    RUST_LOG=warn target/dogfood/webcodex-server < /dev/null >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 wait_for_port open || fail "isolated server port did not open"
-setsid env -i PATH="$PATH" LANG=C HOME="$ISOLATED_HOME" \
+python3 -c 'import os,sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' env -i PATH="$PATH" LANG=C HOME="$ISOLATED_HOME" \
     XDG_CONFIG_HOME="$ISOLATED_HOME/.config" XDG_DATA_HOME="$ISOLATED_HOME/.local/share" \
     XDG_STATE_HOME="$ISOLATED_HOME/.local/state" XDG_CACHE_HOME="$ISOLATED_HOME/.cache" \
     TMPDIR="$RUNTIME_TMP" WEBCODEX_ENV_FILE="$TMP_ROOT/empty.env" RUST_LOG=warn \
-    target/debug/webcodex-runner --config "$RUNNER_CONFIG" >"$RUNNER_LOG" 2>&1 &
+    target/dogfood/webcodex-runner --config "$RUNNER_CONFIG" < /dev/null >"$RUNNER_LOG" 2>&1 &
 RUNNER_PID=$!
 START_RUNNER_PID="$RUNNER_PID"
 STAGE="generation 1 baseline"
@@ -305,7 +306,7 @@ STAGE="generation 3 mixed reload"
 write_runner_config generation-3 5 24576 native false 11 'Restart-Only Display' 2 \
     project_search_generation_3
 kill -HUP "$RUNNER_PID"
-wait_for_status 3 partial null true display_name,max_concurrent_jobs native false \
+wait_for_status 3 partial null true display_name native false \
     || fail "mixed reload status did not arrive"
 assert_runner_pid
 command='sleep 3; printf %s "$WEBCODEX_RELOAD_MARKER"'
@@ -318,11 +319,11 @@ queued_seen=false
 for _ in $(seq 1 50); do
     one="$(job_status "$JOB_ONE" 2>/dev/null || true)"
     two="$(job_status "$JOB_TWO" 2>/dev/null || true)"
-    if [ "$one" = running ] && [ "$two" = agent_queued ]; then queued_seen=true; break; fi
+    if [ "$one" = running ] && [ "$two" = completed ]; then queued_seen=true; break; fi
     [ "$two" != completed ] || break
     sleep 0.1
 done
-[ "$queued_seen" = true ] || fail "startup max_concurrent_jobs=1 was not retained"
+[ "$queued_seen" = true ] || fail "hot max_concurrent_jobs=2 did not execute the second Job while the first remained gated"
 touch "$GATE"
 for _ in $(seq 1 80); do
     [ "$(job_status "$JOB_ONE" 2>/dev/null || true)" = completed ] && \
@@ -331,7 +332,7 @@ for _ in $(seq 1 80); do
 done
 [ "$(job_status "$JOB_ONE")" = completed ] && [ "$(job_status "$JOB_TWO")" = completed ] \
     || fail "mixed-reload concurrency probe jobs did not complete"
-ok "generation 3 applied hot fields and retained startup identity/concurrency"
+ok "generation 3 applied hot fields and retained startup identity and applied concurrency"
 
 STAGE="generation 4 recovery"
 write_runner_config generation-4 3 16384 claude_code_then_native true 13 "$STARTUP_DISPLAY" 1 \
@@ -347,6 +348,55 @@ STAGE="shutdown and cleanup"
 [ -z "$(git -C "$FIXTURE" status --porcelain)" ] || fail "fixture worktree is dirty"
 status_matches 4 success null false - claude_code_then_native true \
     || fail "final status changed or Claude was started"
+STAGE="live capacity growth and shrink"
+python3 - "$PORT" "$TOKEN" "$CLIENT_ID" "$RUNTIME_PROJECT" "$RUNNER_CONFIG" "$TMP_ROOT" <<'CAPACITY_PY'
+import json, pathlib, re, sys, time, urllib.request
+port, token, client, project, config, root = sys.argv[1:]
+def post(path, body):
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", json.dumps(body).encode(), {"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=15) as response: return json.load(response)
+def tool(name, **params):
+    value = post("/api/tools/call", {"tool": name, "params": params})
+    assert value["success"], (name, value)
+    return value["output"]
+def capacity():
+    clients = post("/api/runtime/status", {})["output"]["runners"]["clients"]
+    return next(c for c in clients if c["client_id"] == client)["job_concurrency"]
+def until(predicate):
+    deadline = time.monotonic() + 15
+    while not predicate():
+        assert time.monotonic() < deadline, capacity()
+        time.sleep(.05)
+def resize(limit):
+    path = pathlib.Path(config)
+    text = re.sub(r"max_concurrent_jobs = \d+", f"max_concurrent_jobs = {limit}", path.read_text())
+    text = re.sub(r"max_timeout_secs = \d+", "max_timeout_secs = 120", text)
+    path.write_text(text)
+    checked = tool("check_runner_config", client_id=client)
+    assert checked["valid"] and not checked["restart_required"]
+    applied = tool("reload_runner_config", client_id=client, expected_generation=checked["current_generation"])
+    assert applied["current_generation"] == checked["current_generation"] + 1
+    until(lambda: capacity()["limit"] == limit)
+resize(2)
+gates = [pathlib.Path(root) / f"capacity-gate-{i}" for i in range(8)]
+ids = [tool("run_job", project=project, command=f"while [ ! -e '{gate}' ]; do sleep 0.05; done", timeout_secs=120)["job_id"] for gate in gates]
+until(lambda: capacity()["running"] == 2 and capacity()["queued"] == 6)
+resize(6)
+until(lambda: capacity()["running"] == 6 and capacity()["queued"] == 2)
+resize(2)
+assert capacity()["running"] == 6 and capacity()["queued"] == 2
+for gate in gates[:4]: gate.touch()
+until(lambda: capacity()["running"] == 2 and capacity()["queued"] == 2)
+gates[4].touch()
+until(lambda: capacity()["running"] == 2 and capacity()["queued"] == 1)
+for gate in gates[5:]: gate.touch()
+until(lambda: capacity()["running"] == 0 and capacity()["queued"] == 0)
+observed = tool("observe_jobs", items=[{"job_id": jid} for jid in ids], tail_lines=1)["items"]
+assert {j["job_id"] for j in observed} == set(ids)
+assert all(j["status"] == "completed" for j in observed)
+CAPACITY_PY
+assert_runner_pid
+ok "real Runner 2 -> 6 -> 2 preserves eight Job identities and drains without restart"
 stop_group "$RUNNER_PID"
 kill -0 -- "-$RUNNER_PID" 2>/dev/null && fail "agent process group remained" || true
 RUNNER_PID=""

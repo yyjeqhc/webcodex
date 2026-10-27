@@ -72,3 +72,73 @@ async fn registry_registers_and_lists_client() {
     assert!(runners[0].connected);
     assert_eq!(runners[0].pending_requests, 0);
 }
+
+#[tokio::test]
+async fn hot_job_capacity_is_bounded_and_fenced_by_instance_connection_and_generation() {
+    use webcodex_core::runner_protocol::RunnerJobCapacity;
+    for transport in [
+        RunnerTransport::WebSocket,
+        RunnerTransport::Quic,
+        RunnerTransport::Polling,
+    ] {
+        let registry = RunnerRegistry::default();
+        let mut request = runner_registration("capacity", "instance", Vec::new());
+        request.job_concurrency_limit = Some(2);
+        let connection = if transport == RunnerTransport::Polling {
+            registry.register(request.clone()).await.unwrap();
+            None
+        } else {
+            registry
+                .register_streaming_session(
+                    request.clone(),
+                    None,
+                    "current",
+                    transport,
+                    Arc::new(Notify::new()),
+                )
+                .await
+                .unwrap();
+            Some("current")
+        };
+        let capacity = |generation, limit| Some(RunnerJobCapacity { generation, limit });
+        registry
+            .update_job_capacity("capacity", "instance", connection, capacity(2, 6))
+            .await
+            .unwrap();
+        for (instance, conn, generation, limit) in [
+            ("old", connection, 3, 32),
+            ("instance", Some("old"), 3, 32),
+            ("instance", connection, 1, 32),
+            ("instance", connection, 2, 32),
+            ("instance", connection, 3, 0),
+            ("instance", connection, 3, 65),
+        ] {
+            assert!(registry
+                .update_job_capacity("capacity", instance, conn, capacity(generation, limit))
+                .await
+                .is_err());
+            assert_eq!(
+                registry
+                    .get_runner_view("capacity")
+                    .await
+                    .unwrap()
+                    .job_concurrency_limit,
+                Some(6)
+            );
+        }
+        // An obsolete registration from this same process must not regress capacity.
+        assert!(registry.register(request).await.is_err());
+        registry
+            .update_job_capacity("capacity", "instance", connection, None)
+            .await
+            .unwrap();
+        registry
+            .update_job_capacity("capacity", "instance", connection, capacity(3, 2))
+            .await
+            .unwrap();
+        assert_eq!(
+            registry.list_runners().await[0].job_concurrency_limit,
+            Some(2)
+        );
+    }
+}

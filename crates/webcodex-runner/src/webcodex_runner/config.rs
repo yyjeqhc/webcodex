@@ -26,7 +26,7 @@ use webcodex_runner_config::{
 const DEFAULT_SYSTEM_CONFIG_DIR: &str = "/etc/webcodex";
 pub(crate) const CLIENT_PROFILE_ERROR: &str =
     "--profile must be a safe path component using only ASCII letters, digits, '.', '_' or '-'";
-pub(crate) const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
+pub(crate) const DEFAULT_MAX_CONCURRENT_JOBS: usize = 32;
 pub(crate) const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_SECS: u64 = 5;
 
 const DEFAULT_ACP_MAX_CONCURRENT_RUNS: usize = 1;

@@ -27,8 +27,8 @@ afterEach(() => vi.restoreAllMocks());
 describe("local Runner concurrency settings", () => {
   it("separates saved and effective limits without restarting while saving", async () => {
     render(view()); const input = await screen.findByRole("spinbutton", { name: "Maximum concurrent jobs" });
-    expect(input).toHaveValue(4); expect(screen.getByText("4 running · 2 queued · limit 4")).toBeInTheDocument();
-    expect(screen.getByText("Saved limit: — · Default: 4")).toBeInTheDocument();
+    expect(input).toHaveValue(32); expect(screen.getByText("4 running · 2 queued · limit 4")).toBeInTheDocument();
+    expect(screen.getByText("Saved limit: — · Default: 32")).toBeInTheDocument();
     expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "12" } }); fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
     await waitFor(() => expect(api.saveRunnerJobConcurrency).toHaveBeenCalledExactlyOnceWith(target, null, 12));
@@ -104,7 +104,7 @@ describe("local Runner concurrency settings", () => {
     fireEvent.change(input, { target: { value: "12" } });
     settings.max_concurrent_jobs = 8;
     fireEvent(document, new Event("visibilitychange"));
-    await screen.findByText("Saved limit: 8 · Default: 4");
+    await screen.findByText("Saved limit: 8 · Default: 32");
     fireEvent.click(screen.getByRole("button", { name: "Save for next restart" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Saved value changed");
     expect(api.saveRunnerJobConcurrency).toHaveBeenCalledExactlyOnceWith(target, null, 12);
@@ -132,7 +132,7 @@ describe("local Runner concurrency settings", () => {
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
     api.runnerSettings.mockResolvedValue(settings);
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(await screen.findByRole("spinbutton")).toHaveValue(4);
+    expect(await screen.findByRole("spinbutton")).toHaveValue(32);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
   it("rechecks the saved value before restarting", async () => {
@@ -160,7 +160,7 @@ describe("local Runner concurrency settings", () => {
     render(view({ ...state, readiness: { ...state.readiness, server: "stopped" } }));
     expect(await screen.findByRole("spinbutton")).toHaveValue(12);
     expect(screen.getByRole("spinbutton")).toBeEnabled();
-    expect(screen.getByText("Saved limit: 12 · Default: 4")).toBeInTheDocument();
+    expect(screen.getByText("Saved limit: 12 · Default: 32")).toBeInTheDocument();
     expect(screen.queryByText("Saved limit is in effect.")).not.toBeInTheDocument();
   });
   it.each(["restart", "server offline"])("keeps capacity stale after %s until a fresh observation arrives", async boundary => {

@@ -53,7 +53,7 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
       // Only an explicit, successful reload discards the draft and its old
       // compare-and-save fence. Background reads must not overwrite an edit.
       if (reloadDraft) { editBase.current = undefined; setError(null); }
-      setDraft(current => editBase.current === undefined ? String(next.max_concurrent_jobs ?? 4) : current);
+      setDraft(current => editBase.current === undefined ? String(next.max_concurrent_jobs ?? 32) : current);
     }
     const runner = live.status === "fulfilled" && selected && live.value?.client_id === selected.client_id ? live.value : null;
     setObservation(runner ? { runner, at: Date.now() } : null);
@@ -80,7 +80,7 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
   const stale = !active || !serverReady || operationBusy || observation?.at == null || Math.max(now, Date.now()) - observation.at > 30000;
   const capacity = runnerCapacity(observation?.runner, stale);
   const saved = settings?.max_concurrent_jobs;
-  const savedLimit = saved === undefined ? null : saved ?? 4;
+  const savedLimit = saved === undefined ? null : saved ?? 32;
   const savedDisplay = saved == null ? "—" : saved;
   const limit = parseJobConcurrency(draft ?? "");
   const canEdit = state.topology?.runner?.kind === "local" && Boolean(settings?.can_restart) && saved !== undefined;
@@ -137,7 +137,7 @@ function RunnerCapacitySettings({ state, onState, active }: Props) {
       {observation.runner.jobs_truncated && <p className="field-help">{s("Inventory incomplete; some jobs are not shown.")}</p>}
     </section>}
     {loading ? <p role="status">{s("Loading…")}</p> : <>
-      <p>{s("Saved limit: {saved} · Default: {default}").replace("{saved}", String(savedDisplay)).replace("{default}", "4")}</p>
+      <p>{s("Saved limit: {saved} · Default: {default}").replace("{saved}", String(savedDisplay)).replace("{default}", "32")}</p>
       {saved != null && savedLimit !== null && <p role="status">{s(capacity.state !== "available" ? "Saved for the next Runner start; the effective limit is unknown." : capacity.limit !== savedLimit ? "Restart required to apply the saved limit." : "Saved limit is in effect.")}</p>}
       {saved !== undefined && <div className="field-group"><label htmlFor="runner-job-concurrency">{s("Maximum concurrent jobs")}</label>
         <input id="runner-job-concurrency" type="number" min={1} max={64} step={1} value={draft ?? ""} onChange={event => {

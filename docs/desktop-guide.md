@@ -43,7 +43,7 @@ never mean zero usage; ordinary request-dispatch queues are separate.
 
 In **Settings → Runtime & services → Runner job capacity**, Desktop-managed local
 Runners can save **Maximum concurrent jobs** as a whole number from **1 to 64**.
-The default remains **4**. The saved value and current effective limit are shown
+The default for an omitted setting is **32**; explicit saved values are preserved. The saved value and current effective limit are shown
 separately. **Save for next restart** only writes the exact local Runner's
 configuration, preserves unrelated settings, and rejects a conflicting edit.
 It does not hot-reload or restart services.

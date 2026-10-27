@@ -297,7 +297,13 @@ fn computer_register_request_announces_platform_capabilities_and_generation() {
 fn phase_e2_register_request_reports_effective_job_concurrency_limit() {
     let tmp = tempfile::tempdir().unwrap();
     let mut cfg = test_config(tmp.path().join("config/project-registry"));
-    for (configured, expected) in [(None, 4), (Some(1), 1), (Some(8), 8), (Some(64), 64)] {
+    for (configured, expected) in [
+        (None, 32),
+        (Some(1), 1),
+        (Some(4), 4),
+        (Some(32), 32),
+        (Some(64), 64),
+    ] {
         cfg.max_concurrent_jobs = configured;
         let body = build_register_request(&cfg, "inst-limit", 0);
         assert_eq!(

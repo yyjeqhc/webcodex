@@ -546,13 +546,13 @@ tails, and can be stopped. Structured execution (`run_process`,
 outlives the synchronous grace period; the same process continues — it is never
 restarted.
 
-The Runner executes up to `max_concurrent_jobs` Jobs at once (default 4, valid
+The Runner executes up to `max_concurrent_jobs` Jobs at once (default 32, valid
 range 1..64). Values outside that range are rejected as configuration errors.
 This is an operational tuning control, not a security boundary, and requires a
 Runner restart to change:
 
 ```toml
-max_concurrent_jobs = 4
+max_concurrent_jobs = 32
 ```
 
 When all slots are occupied, an accepted Job remains the same queryable Job

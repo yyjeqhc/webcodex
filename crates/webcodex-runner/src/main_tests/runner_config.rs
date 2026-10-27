@@ -1142,10 +1142,10 @@ fn missing_project_registry_dir_returns_empty_list() {
 fn phase_e2_max_concurrent_jobs_uses_valid_configured_value() {
     let tmp = tempfile::tempdir().unwrap();
     let mut cfg = test_config(tmp.path().join("config/project-registry"));
-    assert_eq!(DEFAULT_MAX_CONCURRENT_JOBS, 4);
+    assert_eq!(DEFAULT_MAX_CONCURRENT_JOBS, 32);
     assert_eq!(max_concurrent_jobs(&cfg), DEFAULT_MAX_CONCURRENT_JOBS);
 
-    for value in [1, 4, 8, 64] {
+    for value in [1, 4, 32, 64] {
         cfg.max_concurrent_jobs = Some(value);
         assert_eq!(max_concurrent_jobs(&cfg), value);
     }
@@ -1180,10 +1180,32 @@ allow_cwd_anywhere = true
 }
 
 #[test]
+fn runner_config_job_capacity_parses_defaults_overrides_and_rejects_types() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("runner.toml");
+    let base =
+        "server_url = \"http://127.0.0.1:8000\"\ntoken = \"test\"\nclient_id = \"capacity-test\"\n";
+    for (field, expected) in [
+        ("", 32),
+        ("max_concurrent_jobs = 1", 1),
+        ("max_concurrent_jobs = 4", 4),
+        ("max_concurrent_jobs = 32", 32),
+        ("max_concurrent_jobs = 64", 64),
+    ] {
+        std::fs::write(&path, format!("{base}{field}\n")).unwrap();
+        assert_eq!(max_concurrent_jobs(&load_config(&path).unwrap()), expected);
+    }
+    for value in ["0", "65", "-1", "1.5", "true", "\"32\""] {
+        std::fs::write(&path, format!("{base}max_concurrent_jobs = {value}\n")).unwrap();
+        assert!(load_config(&path).is_err(), "accepted {value}");
+    }
+}
+
+#[test]
 fn polling_dispatch_and_job_execution_concurrency_have_independent_contracts() {
     assert_eq!(POLLING_DISPATCH_MAX_IN_FLIGHT, 4);
-    assert_eq!(DEFAULT_MAX_CONCURRENT_JOBS, 4);
-    // These happen to share a numeric default today, but polling capacity is
+    assert_eq!(DEFAULT_MAX_CONCURRENT_JOBS, 32);
+    // Polling capacity remains independent of the Job default: it bounds
     // ordinary request admission while max_concurrent_jobs is a configured,
     // queue-aware JobManager limit advertised by Runner registration.
 }

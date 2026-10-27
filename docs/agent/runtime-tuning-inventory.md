@@ -100,3 +100,12 @@ Host-budget bound; API transport, Runner configuration, Job execution lifetime,
 recovery and internal Code Mode child controls are unchanged. Regression tests
 exercise different handoff/continuation caps against their actual consumers and
 verify readiness remains independent.
+
+## 2026-10-27 addendum: Runner Job default capacity
+
+The current default for omitted `max_concurrent_jobs` is 32 (valid range 1–64).
+Explicit settings, including 4, remain unchanged; upgrades do not rewrite them.
+This supersedes historical Job-default facts without changing the audit baseline.
+Polling ordinary-request dispatch remains independently bounded at 4; WebSocket
+and QUIC dispatch share the same JobManager execution pool for Job-backed work.
+ACP run admission and persistent-shell population retain their own bounds.

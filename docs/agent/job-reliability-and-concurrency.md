@@ -392,7 +392,7 @@ final drain and durable commit of the final retained tails.
 
 ## 4. Runner Job capacity is shared across windows and projects
 
-`max_concurrent_jobs` is a Runner-process execution limit (default 4, valid
+`max_concurrent_jobs` is a Runner-process execution limit (default 32, valid
 range 1..64; out-of-range configuration is rejected). It is not allocated per
 ChatGPT window, Workflow Session, or Project.
 

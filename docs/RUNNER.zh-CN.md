@@ -445,11 +445,11 @@ stdout/stderr 尾部，并且可以停止。结构化执行（`run_process`、`r
 校验 Job 会在单个执行超过同步宽限期时把同一执行交给 Job 延续；同一个进程继续
 运行——绝不会被重启。
 
-Runner 同时最多执行 `max_concurrent_jobs` 个 Job（默认 4，合法范围 1..64）。超出范围
+Runner 同时最多执行 `max_concurrent_jobs` 个 Job（默认 32，合法范围 1..64）。超出范围
 的值会作为配置错误被拒绝。这个参数用于运维调优，不是安全边界，修改需要重启 Runner：
 
 ```toml
-max_concurrent_jobs = 4
+max_concurrent_jobs = 32
 ```
 
 当所有槽位都被占用时，已接受的 Job 仍是同一个可查询 Job（同一 `job_id`），并

@@ -127,3 +127,96 @@ fn capacity_changes_race_enqueue_completion_stop_and_shutdown_without_replay() {
         }
     }
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn hot_capacity_preserves_interactive_detached_and_structured_job_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let (sink, _rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    *lock_unpoison(&manager.detached_store_root_override) =
+        Some(temp.path().join("detached-state"));
+    let jobs = (0..5)
+        .map(|i| GatedStructuredJob::new(temp.path(), &format!("mixed-{i}")))
+        .collect::<Vec<_>>();
+    for (i, job) in jobs.iter().enumerate() {
+        match i {
+            0 | 3 => {
+                let mut context = structured_process_context(temp.path(), job.args().len(), false);
+                context
+                    .structured_execution
+                    .as_mut()
+                    .unwrap()
+                    .execution_source = "run_process_interactive".into();
+                manager.enqueue(sink.clone(), PendingJobStart::from_wire(
+                    1, RunnerPolicy { allow_cwd_anywhere: true, ..RunnerPolicy::default() },
+                    ShellConfig::default(), SshConfig::default(), temp.path().join("project-registry"),
+                    serde_json::from_value(json!({
+                        "request_id": format!("request-{}", job.job_id), "client_id":"structured-agent",
+                        "kind":"start_interactive_process_job", "job_id":job.job_id, "cwd":temp.path(),
+                        "command":"", "process":{"executable":helper.path,"args":job.args()},
+                        "timeout_secs":20,"requested_by":"test","created_at":chrono::Utc::now().timestamp(),
+                        "job_context":context,
+                    })).unwrap(),
+                ));
+            }
+            1 => enqueue_detached_process_job(
+                &manager,
+                sink.clone(),
+                temp.path(),
+                &job.job_id,
+                &helper.path,
+                job.args(),
+                None,
+                20,
+            ),
+            _ => enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, job),
+        }
+    }
+    wait_for_all_started(&jobs[..1]);
+    let before = manager.inventory();
+    manager.commit_concurrency_limit(4);
+    manager.start_available_queued();
+    wait_for_all_started(&jobs[..4]);
+    assert!(wait_until(Duration::from_secs(5), || manager
+        .inventory()
+        .jobs
+        .iter()
+        .filter(|job| job.status == "running")
+        .count()
+        == 4));
+    manager.clone().commit_concurrency_limit(1);
+    manager.start_available_queued();
+    assert_eq!(active_gated_children(&jobs), 4);
+    assert!(!jobs[4].started.exists());
+    for job in &jobs[..3] {
+        job.release();
+    }
+    assert!(wait_until(Duration::from_secs(10), || manager
+        .inventory()
+        .jobs
+        .iter()
+        .filter(|job| job.status == "completed")
+        .count()
+        == 3));
+    assert!(!jobs[4].started.exists());
+    jobs[3].release();
+    wait_for_all_started(&jobs[4..]);
+    jobs[4].release();
+    wait_for_job_workers(&manager);
+    let after = manager.inventory();
+    for original in before.jobs {
+        let current = after
+            .jobs
+            .iter()
+            .find(|job| job.job_id == original.job_id)
+            .unwrap();
+        assert_eq!(current.status, "completed");
+        assert_eq!(current.request_id, original.request_id);
+        assert_eq!(current.context, original.context);
+    }
+    for job in &jobs {
+        assert_gated_job_started_once(job);
+    }
+}

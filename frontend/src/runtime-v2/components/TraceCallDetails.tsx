@@ -68,6 +68,8 @@ function TraceCallPanel({ client, traceRef, language, open }: Props & { open: bo
     {request.error && <p role="alert">{t(request.error)}</p>}
     {page?.status === "unavailable" && <p className="inventory-note">{t("Capture is not retained; it may be disabled, dropped, expired or evicted.")}</p>}
     {page?.status === "available" && <p className="inventory-note">{t("Captured mode")}: {page.trace_mode} · {t("Current capture")}: {page.capture_mode}</p>}
+    {page?.coverage === "incomplete" && <p role="alert">{t("Trace is incomplete; captured loss markers report missing events.")} · {page.known_dropped_events}</p>}
+    {page?.status === "available" && <p className="inventory-note">{t("Capture completeness is unverified, even when a Handler finish is present.")}</p>}
     {page?.capture_health && <TraceJson title={t("Capture health (process-wide)")} value={page.capture_health} />}
     {events.map((event, index) => <TraceJson key={index} title={event.phase || event.event || t("Event")}
       initiallyOpen={Boolean(event.diagnostic)} value={event.diagnostic ?? event}>

@@ -126,3 +126,92 @@ async fn registry_cancellation_paths_record_terminal_state_and_finalize_exact_tr
         assert_eq!(event["reason"], reason);
     }
 }
+
+#[tokio::test]
+async fn runner_disconnect_returns_failure_and_finishes_the_original_handler_trace() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "metadata");
+    env.set(
+        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+        temp.path().to_str().unwrap(),
+    );
+    let registry =
+        RunnerRegistry::with_telemetry(crate::runner_http::tool_request_trace_telemetry());
+    let access = RunnerAccess {
+        global_visibility: false,
+        owner_bypass: false,
+        username: Some("alice".into()),
+        group: None,
+    };
+    for dispatched in [false, true] {
+        // Reconnect the same instance for the next independently traced request.
+        let mut registration = crate::test_support::runner_registration(
+            "computer",
+            "inst",
+            RunnerCapabilities {
+                computer_observe: true,
+                ..Default::default()
+            },
+        );
+        registration.owner = Some("alice".into());
+        registry.register(registration).await.unwrap();
+        let id = new_trace_id();
+        let guard = ToolRequestLifecycle::new(
+            "mcp",
+            id.clone(),
+            "1",
+            "tools/call",
+            Some("observe_computer".into()),
+        );
+        let (request_id, receiver) = scope_active_trace(
+            guard.active_trace_id(),
+            registry.enqueue_computer(
+                "computer".into(),
+                "computer_list_windows",
+                "{}".into(),
+                "alice".into(),
+                Some(&access),
+                5,
+            ),
+        )
+        .await
+        .unwrap();
+        if dispatched {
+            assert_eq!(
+                registry
+                    .poll(RunnerPollRequest {
+                        client_id: "computer".into(),
+                        runner_instance_id: "inst".into()
+                    })
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .request_id,
+                request_id
+            );
+        }
+        registry.reconcile_disconnect("computer", "inst").await;
+        let result = receiver.await.unwrap();
+        assert!(!result.success);
+        assert_eq!(result.request_dispatched, Some(dispatched));
+        guard.dispatch_finished(true, Some(result.success), "runner_offline");
+        guard.response_serialized(200, None, Some(true), Some(false), "runner_offline");
+        guard.handler_returned(200, None, Some(true), Some(false), "runner_offline");
+        drop(guard);
+        flush_full_trace_writer();
+        let page = read_trace(&id, None, None, None).unwrap();
+        assert_eq!(page["handler_finished_observed"], true);
+        assert!(page["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["event"] == "mcp_tool_dispatch_finished"
+                && event["tool_success"] == false));
+        assert!(page["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|event| event["server_trace_id"] == id));
+    }
+}

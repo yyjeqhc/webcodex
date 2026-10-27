@@ -22,6 +22,7 @@ mod trace_query;
 pub use trace_query::{ToolTraceCallRecord, ToolTraceQueryFilter};
 mod communication;
 mod connection_observation;
+pub use connection_observation::with_connection_trace;
 mod history_budget;
 pub use history_budget::{HistoryReadBudget, HistoryReadDiagnostics};
 

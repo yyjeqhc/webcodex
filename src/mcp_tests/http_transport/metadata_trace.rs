@@ -78,6 +78,29 @@ async fn exercise() {
                 "body or ingress credential escaped metadata projection"
             );
         }
+        let events: Vec<Value> = bytes
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let position = |name: &str| {
+            events
+                .iter()
+                .position(|event| event["event"] == name)
+                .unwrap()
+        };
+        let handed = position("mcp_tool_handler_returned");
+        let finished = position("mcp_tool_handler_finished");
+        assert!(position("mcp_tool_response_serialized") < handed && handed < finished);
+        if let Some(audit) = events
+            .iter()
+            .position(|event| event["phase"] == "audit_finalize")
+        {
+            let finalize = events
+                .iter()
+                .position(|event| event["phase"] == "request_finalize")
+                .unwrap();
+            assert!(handed < audit && audit < finalize && finalize < finished);
+        }
         for line in bytes.lines() {
             let event: Value = serde_json::from_str(line).unwrap();
             if let Some(phase) = event["phase"].as_str() {
@@ -115,4 +138,65 @@ async fn exercise() {
     );
     assert!(phases.contains("kernel_arguments"));
     assert!(phases.contains("response_summary"));
+}
+
+#[test]
+fn saturated_metadata_writer_does_not_change_mcp_success() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let root = tempfile::tempdir().unwrap();
+                    let mut env = crate::test_support::TestEnvGuard::new();
+                    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "metadata");
+                    env.set(
+                        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+                        root.path().to_str().unwrap(),
+                    );
+                    let (_tmp, db) = test_db();
+                    let service = Service::new(build_test_router(
+                        test_config(Some("fixture")),
+                        db,
+                        Arc::new(test_runtime()),
+                    ));
+                    let held = crate::tool_request_trace::hold_trace_writer_for_test();
+                    let trace = crate::tool_request_trace::new_trace_id();
+                    for _ in 0..256 {
+                        crate::tool_request_trace::record_phase_latency_for(
+                            Some(&trace),
+                            "test_saturation",
+                            std::time::Instant::now(),
+                            "completed",
+                        );
+                    }
+                    let (status, body) = stateless_2026_tool_call(
+                        &service,
+                        "fixture",
+                        1,
+                        "get_runtime_status",
+                        json!({}),
+                        None,
+                    )
+                    .await;
+                    assert_eq!(status, StatusCode::OK);
+                    assert_ne!(body["result"]["isError"], true, "{body}");
+                    assert_eq!(
+                        body["result"]["structuredContent"]["success"], true,
+                        "{body}"
+                    );
+                    drop(held);
+                    crate::tool_request_trace::flush_full_trace_writer();
+                    let page =
+                        crate::tool_request_trace::read_trace(&trace, None, None, None).unwrap();
+                    assert_eq!(page["coverage"], "incomplete");
+                    assert!(page["capture_health"]["queue_drops"].as_u64().unwrap() > 0);
+                });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

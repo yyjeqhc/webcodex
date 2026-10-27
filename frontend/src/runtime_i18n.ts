@@ -67,6 +67,8 @@ export const RUNTIME_ZH_TEXT: Record<string, string> = {
   "Machines visible with your current access": "当前权限下可见的执行机器",
   "Not synced yet": "尚未同步",
   "Monitor connected machines, current work, and server settings.": "查看已连接的机器、当前工作与服务器配置。",
+  "Trace is incomplete; captured loss markers report missing events.": "Trace 不完整；丢失标记已确认存在遗漏事件。",
+  "Capture completeness is unverified, even when a Handler finish is present.": "即使存在 Handler 收尾完成记录，也不能证明捕获完整。",
   "Capture health (process-wide)": "捕获状态（本进程累计，不代表单次调用完整性）",
   "Inspect call diagnostics": "查看调用诊断",
   "Hide call diagnostics": "收起调用诊断",

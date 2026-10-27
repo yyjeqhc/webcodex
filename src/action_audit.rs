@@ -126,63 +126,83 @@ impl ActionAudit {
             bool,
         )>,
     ) -> bool {
+        let started = Instant::now();
         let Some(db) = self.db.as_ref() else {
+            crate::tool_request_trace::record_phase_latency_for(
+                self.server_trace_id.as_deref(),
+                "audit_finalize",
+                started,
+                "unavailable",
+            );
             return false;
         };
-        let started = Instant::now();
-        let recorded = record_action_event(
-            db,
-            ActionAuditEventInput {
-                explicit_session_id: self.explicit_session_id.clone(),
-                session_title: None,
-                endpoint: self.endpoint.to_string(),
-                action_name: self.action_name.to_string(),
-                operation: event.operation,
-                project: event.project,
-                principal_kind: self.principal_kind.clone(),
-                principal_user_id: self.principal_user_id.clone(),
-                oauth_client_id: self.oauth_client_id.clone(),
-                status: event.status,
-                http_status: Some(event.http_status.as_u16() as i64),
-                started_at: self.started_at,
-                ended_at: audit_timing.ended_at,
-                duration_ms: audit_timing.duration_ms,
-                error_summary: event.error_summary,
-                warning_summary: event.warning_summary,
-                changed_files: event.changed_files,
-                ids: event.ids,
-                summary: event.summary,
-                request_bytes: None,
-                response_bytes: None,
-                client_window_key: self.client_window_key.clone(),
-                client_window_source: self.client_window_source.clone(),
-                server_trace_id: self.server_trace_id.clone(),
-                principal_correlation_kind: self.principal_correlation_kind.clone(),
-                principal_correlation_id: self.principal_correlation_id.clone(),
-                window_started_at_ms: self.client_window_key.as_ref().map(|_| self.started_at_ms),
-                window_ended_at_ms: self
-                    .client_window_key
-                    .as_ref()
-                    .map(|_| audit_timing.ended_at_ms),
-                request_observed_at_ms: completion
-                    .as_ref()
-                    .map(|(timing, _, _, _)| timing.request_observed_at_ms),
-                response_handed_at_ms: completion
-                    .as_ref()
-                    .map(|(timing, _, _, _)| timing.response_handed_at_ms),
-                window_transition_kind: completion.as_ref().and_then(|(_, transition, _, _)| {
-                    transition.map(|transition| transition.as_str().to_string())
-                }),
-                response_streaming: completion.as_ref().map(|(_, _, streaming, _)| *streaming),
-                window_continuity_eligible: completion
-                    .as_ref()
-                    .map(|(_, _, _, eligible)| *eligible && event.window_meaningful),
-                window_meaningful: event.window_meaningful,
-                recorder_gap_session_id: event.recorder_gap_session_id,
-                workflow_links: event.workflow_links,
+        let recorded = webcodex_store::with_connection_trace(
+            self.server_trace_id.as_deref(),
+            crate::tool_request_trace::record_slow_store_connection,
+            || {
+                record_action_event(
+                    db,
+                    ActionAuditEventInput {
+                        explicit_session_id: self.explicit_session_id.clone(),
+                        session_title: None,
+                        endpoint: self.endpoint.to_string(),
+                        action_name: self.action_name.to_string(),
+                        operation: event.operation,
+                        project: event.project,
+                        principal_kind: self.principal_kind.clone(),
+                        principal_user_id: self.principal_user_id.clone(),
+                        oauth_client_id: self.oauth_client_id.clone(),
+                        status: event.status,
+                        http_status: Some(event.http_status.as_u16() as i64),
+                        started_at: self.started_at,
+                        ended_at: audit_timing.ended_at,
+                        duration_ms: audit_timing.duration_ms,
+                        error_summary: event.error_summary,
+                        warning_summary: event.warning_summary,
+                        changed_files: event.changed_files,
+                        ids: event.ids,
+                        summary: event.summary,
+                        request_bytes: None,
+                        response_bytes: None,
+                        client_window_key: self.client_window_key.clone(),
+                        client_window_source: self.client_window_source.clone(),
+                        server_trace_id: self.server_trace_id.clone(),
+                        principal_correlation_kind: self.principal_correlation_kind.clone(),
+                        principal_correlation_id: self.principal_correlation_id.clone(),
+                        window_started_at_ms: self
+                            .client_window_key
+                            .as_ref()
+                            .map(|_| self.started_at_ms),
+                        window_ended_at_ms: self
+                            .client_window_key
+                            .as_ref()
+                            .map(|_| audit_timing.ended_at_ms),
+                        request_observed_at_ms: completion
+                            .as_ref()
+                            .map(|(timing, _, _, _)| timing.request_observed_at_ms),
+                        response_handed_at_ms: completion
+                            .as_ref()
+                            .map(|(timing, _, _, _)| timing.response_handed_at_ms),
+                        window_transition_kind: completion.as_ref().and_then(
+                            |(_, transition, _, _)| {
+                                transition.map(|transition| transition.as_str().to_string())
+                            },
+                        ),
+                        response_streaming: completion
+                            .as_ref()
+                            .map(|(_, _, streaming, _)| *streaming),
+                        window_continuity_eligible: completion
+                            .as_ref()
+                            .map(|(_, _, _, eligible)| *eligible && event.window_meaningful),
+                        window_meaningful: event.window_meaningful,
+                        recorder_gap_session_id: event.recorder_gap_session_id,
+                        workflow_links: event.workflow_links,
+                    },
+                )
             },
         );
-        crate::tool_request_trace::record_phase_latency(
+        crate::tool_request_trace::record_phase_latency_for(
+            self.server_trace_id.as_deref(),
             "audit_finalize",
             started,
             if recorded { "completed" } else { "failed" },
@@ -343,3 +363,7 @@ mod tests {
         assert_eq!(oauth_client_id, None);
     }
 }
+
+#[cfg(test)]
+#[path = "action_audit_tests/finalization.rs"]
+mod finalization_tests;

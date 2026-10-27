@@ -2,6 +2,48 @@
 use super::*;
 
 pub(super) const TRACE_WRITER_QUEUE_CAPACITY: usize = 64;
+const TRACE_PENDING_LOSS_LIMIT: usize = 128;
+
+#[derive(Debug, Default)]
+struct PendingTraceLosses(Mutex<HashMap<String, (TraceStoreConfig, u64)>>);
+impl PendingTraceLosses {
+    fn record(&self, trace_id: &str, config: &TraceStoreConfig) {
+        // Never replace business backpressure with a telemetry mutex wait.
+        let Ok(mut losses) = self.0.try_lock() else {
+            TRACE_LOSS_MARKER_DROPS.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        if trace_id.len() > 64
+            || (!losses.contains_key(trace_id) && losses.len() >= TRACE_PENDING_LOSS_LIMIT)
+        {
+            TRACE_LOSS_MARKER_DROPS.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        let (_, count) = losses
+            .entry(trace_id.to_owned())
+            .or_insert_with(|| (config.clone(), 0));
+        *count = count.saturating_add(1);
+    }
+
+    fn persist(&self) {
+        let pending = { std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner())) };
+        for (trace_id, (config, count)) in pending {
+            let mut event = base_event(&trace_id, "tool_trace_capture_gap");
+            merge_event_fields(
+                &mut event,
+                json!({"known_dropped_events":count,"coverage":"incomplete"}),
+            );
+            // Best effort even for this marker: disk failures cannot be made
+            // durable by another write. Never recurse or claim completeness.
+            if !matches!(
+                persist_metadata_event_with_config(&trace_id, event, &config),
+                Ok(true)
+            ) {
+                TRACE_LOSS_MARKER_DROPS.fetch_add(count, Ordering::Relaxed);
+            }
+        }
+    }
+}
 
 pub(super) static TRACE_WRITER: OnceLock<Option<TraceWriter>> = OnceLock::new();
 
@@ -26,15 +68,18 @@ pub(super) enum TraceWrite {
 #[derive(Debug)]
 pub(super) struct TraceWriter {
     pub(super) sender: mpsc::SyncSender<TraceWrite>,
+    losses: Arc<PendingTraceLosses>,
 }
 
 impl TraceWriter {
     pub(super) fn start() -> io::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel(TRACE_WRITER_QUEUE_CAPACITY);
+        let losses = Arc::new(PendingTraceLosses::default());
+        let worker_losses = Arc::clone(&losses);
         thread::Builder::new()
             .name("webcodex-tool-trace-writer".to_string())
-            .spawn(move || trace_writer_loop(receiver))?;
-        Ok(Self { sender })
+            .spawn(move || trace_writer_loop(receiver, worker_losses))?;
+        Ok(Self { sender, losses })
     }
 }
 
@@ -54,7 +99,7 @@ pub(super) fn trace_writer() -> Option<&'static TraceWriter> {
         .as_ref()
 }
 
-pub(super) fn trace_writer_loop(receiver: mpsc::Receiver<TraceWrite>) {
+fn trace_writer_loop(receiver: mpsc::Receiver<TraceWrite>, losses: Arc<PendingTraceLosses>) {
     while let Ok(write) = receiver.recv() {
         match write {
             TraceWrite::Metadata {
@@ -66,10 +111,12 @@ pub(super) fn trace_writer_loop(receiver: mpsc::Receiver<TraceWrite>) {
                 .inspect(|accepted| {
                     if !accepted {
                         TRACE_BUDGET_DROPS.fetch_add(1, Ordering::Relaxed);
+                        losses.record(&trace_id, &config);
                     }
                 })
                 .inspect_err(|_| {
                     TRACE_WRITE_FAILURES.fetch_add(1, Ordering::Relaxed);
+                    losses.record(&trace_id, &config);
                 }) {
                 Ok(true) => {}
                 Ok(false) => tracing::warn!(
@@ -97,10 +144,12 @@ pub(super) fn trace_writer_loop(receiver: mpsc::Receiver<TraceWrite>) {
                 .inspect(|accepted| {
                     if accepted.is_none() {
                         TRACE_BUDGET_DROPS.fetch_add(1, Ordering::Relaxed);
+                        losses.record(&trace_id, &config);
                     }
                 })
                 .inspect_err(|_| {
                     TRACE_WRITE_FAILURES.fetch_add(1, Ordering::Relaxed);
+                    losses.record(&trace_id, &config);
                 }) {
                 Ok(Some((payload_bytes, compressed_bytes, digest, path))) => tracing::info!(
                     event = "tool_trace_payload_persisted",
@@ -128,10 +177,13 @@ pub(super) fn trace_writer_loop(receiver: mpsc::Receiver<TraceWrite>) {
                 ),
             },
             TraceWrite::Flush(done) => {
+                losses.persist();
                 let _ = done.send(());
             }
         }
+        losses.persist();
     }
+    losses.persist();
 }
 
 pub(super) fn flush_trace_writer_for_read() -> Result<(), TraceReadError> {
@@ -169,32 +221,29 @@ pub(super) fn enqueue_trace_write(write: TraceWrite, trace_id: &str, phase: &str
         );
         return;
     };
-    match writer
-        .sender
-        .try_send(write)
-        .inspect_err(|error| match error {
-            mpsc::TrySendError::Full(_) => {
-                TRACE_QUEUE_DROPS.fetch_add(1, Ordering::Relaxed);
-            }
-            mpsc::TrySendError::Disconnected(_) => {
-                TRACE_WRITE_FAILURES.fetch_add(1, Ordering::Relaxed);
-            }
-        }) {
+    enqueue_to_writer(writer, write, trace_id, phase);
+}
+
+fn enqueue_to_writer(writer: &TraceWriter, write: TraceWrite, trace_id: &str, phase: &str) {
+    match writer.sender.try_send(write) {
         Ok(()) => {}
-        Err(mpsc::TrySendError::Full(_)) => tracing::warn!(
-            event = "tool_trace_capture_omitted",
-            server_trace_id = %trace_id,
-            phase = phase,
-            reason = "trace_writer_queue_full",
-            "tool_trace_capture_omitted"
-        ),
-        Err(mpsc::TrySendError::Disconnected(_)) => tracing::warn!(
-            event = "tool_trace_capture_failed",
-            server_trace_id = %trace_id,
-            phase = phase,
-            error = "trace writer disconnected",
-            "tool_trace_capture_failed"
-        ),
+        Err(error) => {
+            let (write, reason) = match error {
+                mpsc::TrySendError::Full(write) => {
+                    TRACE_QUEUE_DROPS.fetch_add(1, Ordering::Relaxed);
+                    (write, "trace_writer_queue_full")
+                }
+                mpsc::TrySendError::Disconnected(write) => {
+                    TRACE_WRITE_FAILURES.fetch_add(1, Ordering::Relaxed);
+                    (write, "trace_writer_disconnected")
+                }
+            };
+            if let TraceWrite::Metadata { config, .. } | TraceWrite::Payload { config, .. } = &write
+            {
+                writer.losses.record(trace_id, config);
+            }
+            tracing::warn!(event="tool_trace_capture_omitted", server_trace_id=%trace_id, phase, reason, "tool_trace_capture_omitted");
+        }
     }
 }
 
@@ -249,3 +298,7 @@ pub(super) fn capture_payload_for_trace(trace_id: &str, phase: &str, value: &Val
     }
     capture_owned_payload_for_trace(trace_id, phase, value.clone());
 }
+
+#[cfg(test)]
+#[path = "tests/writer_saturation.rs"]
+mod saturation_tests;

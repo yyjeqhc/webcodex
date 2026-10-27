@@ -65,20 +65,57 @@ pub(crate) fn capture_execution_evidence(tool: &str, output: &Value) {
 /// Closed call-site phase/outcome labels only; no arguments or payloads.
 /// The existing bounded trace writer never backpressures requests.
 pub(crate) fn record_phase_latency(phase: &'static str, started: Instant, outcome: &'static str) {
+    record_phase_latency_for(
+        current_active_trace_id().as_deref(),
+        phase,
+        started,
+        outcome,
+    );
+}
+
+/// Explicit identity survives the async dispatch scope, including synchronous
+/// audit persistence and request-tail cleanup. Labels are closed call-site atoms.
+pub(crate) fn record_phase_latency_for(
+    trace_id: Option<&str>,
+    phase: &'static str,
+    started: Instant,
+    outcome: &'static str,
+) {
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    tracing::debug!(target: "webcodex::phase", phase, outcome, elapsed_ms, "runtime phase completed");
+    if elapsed_ms >= 100.0 {
+        tracing::info!(target: "webcodex::phase", server_trace_id=trace_id.unwrap_or("-"), phase, outcome, elapsed_ms, "slow runtime phase completed");
+    } else {
+        tracing::debug!(target: "webcodex::phase", phase, outcome, elapsed_ms, "runtime phase completed");
+    }
     if !tool_request_trace_enabled() {
         return;
     }
-    let Some(trace_id) = current_active_trace_id() else {
+    let Some(trace_id) = trace_id else {
         return;
     };
-    let mut event = base_event(&trace_id, "tool_phase_latency");
+    let mut event = base_event(trace_id, "tool_phase_latency");
     merge_event_fields(
         &mut event,
-        json!({"phase": phase, "outcome": outcome, "elapsed_ms": elapsed_ms}),
+        json!({"phase":phase,"outcome":outcome,"elapsed_ms":elapsed_ms}),
     );
-    enqueue_metadata_event(&trace_id, phase, event);
+    enqueue_metadata_event(trace_id, phase, event);
+}
+
+pub(crate) fn record_slow_store_connection(
+    trace_id: &str,
+    domain: &'static str,
+    wait: Duration,
+    hold: Duration,
+) {
+    if !tool_request_trace_enabled() {
+        return;
+    }
+    let mut event = base_event(trace_id, "tool_store_connection_slow");
+    merge_event_fields(
+        &mut event,
+        json!({"domain":domain,"wait_ms":wait.as_secs_f64()*1000.0,"hold_ms":hold.as_secs_f64()*1000.0}),
+    );
+    enqueue_metadata_event(trace_id, "store_connection", event);
 }
 
 /// Canonical HTTP-adapter completion timing for one request. The absolute
@@ -463,17 +500,34 @@ impl ToolRequestLifecycle {
 
 impl Drop for ToolRequestLifecycle {
     fn drop(&mut self) {
-        if !self.enabled() || self.completed.load(Ordering::SeqCst) {
+        if !self.enabled() {
             return;
         }
-        self.log(
-            "tool_handler_incomplete_drop",
-            None,
-            None,
-            None,
-            None,
-            "handler_dropped_before_response",
-        );
+        if self.completed.load(Ordering::SeqCst) && !std::thread::panicking() {
+            // The guard lives until the HTTP adapter leaves, after synchronous
+            // finalizers. This is still not socket delivery or streamed-body EOF.
+            self.log(
+                "tool_handler_finished",
+                None,
+                None,
+                None,
+                None,
+                "handler_scope_finished",
+            );
+        } else {
+            self.log(
+                "tool_handler_incomplete_drop",
+                None,
+                None,
+                None,
+                None,
+                if self.completed.load(Ordering::SeqCst) {
+                    "handler_dropped_after_response"
+                } else {
+                    "handler_dropped_before_response"
+                },
+            );
+        }
     }
 }
 

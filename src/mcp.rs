@@ -127,6 +127,7 @@ fn work_result_app_internal_tool(tool_name: Option<&str>) -> bool {
 }
 
 fn finalize_mcp_tool_observability(
+    trace: &ToolRequestLifecycle,
     runtime: &ToolRuntime,
     audit: Option<&ActionAudit>,
     audit_event: Option<(
@@ -140,6 +141,7 @@ fn finalize_mcp_tool_observability(
     continuity_eligible: bool,
     outcome_class: &'static str,
 ) {
+    let finalize_started = std::time::Instant::now();
     let transition = live_window_request
         .as_ref()
         .map(crate::tool_runtime::WindowActivityGuard::transition);
@@ -203,6 +205,12 @@ fn finalize_mcp_tool_observability(
     if let Some(active) = live_window_request.take() {
         active.complete(timing, continuity_eligible, evidence_recorded);
     }
+    crate::tool_request_trace::record_phase_latency_for(
+        Some(&trace.correlation_trace_id()),
+        "request_finalize",
+        finalize_started,
+        "completed",
+    );
 }
 
 #[cfg(test)]
@@ -1021,6 +1029,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             let timing =
                 guard.handler_returned(500, estimated, Some(false), None, "dispatch_hard_timeout");
             finalize_mcp_tool_observability(
+                &guard,
                 &runtime,
                 audit.as_ref().map(|(audit, _, _)| audit),
                 audit_event,
@@ -1159,6 +1168,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             res.render(Json(body));
             let timing = guard.handler_returned(200, estimated, Some(true), tool_success, "ok");
             finalize_mcp_tool_observability(
+                &guard,
                 &runtime,
                 audit.as_ref().map(|(audit, _, _)| audit),
                 audit_event,
@@ -1185,6 +1195,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             let timing =
                 guard.handler_returned(200, None, Some(true), None, "artifact_export_stream");
             finalize_mcp_tool_observability(
+                &guard,
                 &runtime,
                 audit.as_ref().map(|(audit, _, _)| audit),
                 audit_event,
@@ -1212,6 +1223,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             res.render(Json(body));
             let timing = guard.handler_returned(400, estimated, Some(false), None, "bad_request");
             finalize_mcp_tool_observability(
+                &guard,
                 &runtime,
                 audit.as_ref().map(|(audit, _, _)| audit),
                 audit_event,
@@ -1239,6 +1251,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             res.render(Json(body));
             let timing = guard.handler_returned(404, estimated, Some(false), None, "not_found");
             finalize_mcp_tool_observability(
+                &guard,
                 &runtime,
                 audit.as_ref().map(|(audit, _, _)| audit),
                 audit_event,
@@ -1280,6 +1293,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             res.render(Json(body));
             let timing = guard.handler_returned(403, estimated, Some(false), None, "forbidden");
             finalize_mcp_tool_observability(
+                &guard,
                 &runtime,
                 audit.as_ref().map(|(audit, _, _)| audit),
                 audit_event,

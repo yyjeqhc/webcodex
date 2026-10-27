@@ -223,6 +223,8 @@ WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES=2147483648
 
 `full` tracing can contain source text, patches, command/script input and output, user messages, and secrets that were themselves present inside captured tool payloads. Protect the trace directory like other sensitive diagnostic data and keep retention/budget bounded. Trace capture is diagnostic only; trace-write failure does not change tool execution.
 
+Slow Store connection waits/holds (100 ms or more) are reported at INFO with bounded diagnostic labels. Metadata traces distinguish response handoff from Handler completion after audit persistence. Trace capture is best effort: the diagnostic view marks known gaps, and a completion event alone does not prove a complete trace.
+
 The exact trace file layout, correlation ids, model-facing forensic reader, queueing, compression, and payload-validation rules are implementation/maintainer details and are intentionally omitted here.
 
 ### Public HTTPS

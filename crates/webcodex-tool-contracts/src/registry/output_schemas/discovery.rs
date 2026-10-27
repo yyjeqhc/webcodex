@@ -164,6 +164,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("trace_mode", schema_type("string", "Observed captured mode: metadata, full, or unknown.")),
             ("capture_mode", schema_type("string", "Current capture switch; separate from retained data.")),
             ("capture_health", open_object_schema("Process-since-start queue/budget/write failure counters; not per-trace completeness or prior-process history.")),
+            ("handler_finished_observed", schema_type("boolean", "The HTTP adapter scope finished after synchronous finalizers. Does not prove client receipt or streamed-body EOF.")),
+            ("known_dropped_events", schema_type("integer", "Lower bound from retained per-trace loss markers. Zero is not proof of complete capture.")),
             ("response_handoff_observed", schema_type("boolean", "A handler-return event exists in the retained index; absence is inconclusive and presence does not prove remote delivery.")),
             ("status", schema_type("string", "available or unavailable; missing capture does not prove absent execution.")),
             ("coverage", schema_type("string", "Coverage boundary; observed events are not a completeness guarantee.")),

@@ -1,8 +1,69 @@
 use rusqlite::Connection;
+use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+const SLOW_CONNECTION: Duration = Duration::from_millis(100);
+type SlowConnectionCallback = fn(&str, &'static str, Duration, Duration);
+#[derive(Clone)]
+struct ConnectionTrace {
+    trace_id: String,
+    on_slow: SlowConnectionCallback,
+}
+thread_local! { static CONNECTION_TRACE: RefCell<Option<ConnectionTrace>> = const { RefCell::new(None) }; }
+
+/// Correlate synchronous Store work without depending on a Tokio task-local.
+/// Never hold this scope across an await. Only bounded opaque IDs are admitted;
+/// callbacks run after unlocking, only for slow operations, and fail open.
+pub fn with_connection_trace<T>(
+    trace_id: Option<&str>,
+    on_slow: SlowConnectionCallback,
+    work: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Option<ConnectionTrace>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CONNECTION_TRACE.with(|slot| {
+                *slot.borrow_mut() = self.0.take();
+            });
+        }
+    }
+    let context = trace_id
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 64
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+        .map(|id| ConnectionTrace {
+            trace_id: id.to_owned(),
+            on_slow,
+        });
+    let _restore = Restore(CONNECTION_TRACE.with(|slot| slot.replace(context)));
+    work()
+}
+
+fn observe_slow_connection(domain: StoreDomain, wait: Duration, hold: Duration) {
+    if wait < SLOW_CONNECTION && hold < SLOW_CONNECTION {
+        return;
+    }
+    // Clone only on the slow path; never invoke a callback while borrowing the
+    // thread-local slot. A subscriber may itself perform nested Store work.
+    let context = CONNECTION_TRACE.with(|slot| slot.borrow().clone());
+    let trace_id = context
+        .as_ref()
+        .map(|ctx| ctx.trace_id.as_str())
+        .unwrap_or("-");
+    tracing::info!(target: "webcodex_store::connection", event="store_connection_slow", server_trace_id=trace_id,
+            domain=domain.as_str(), wait_ms=wait.as_secs_f64()*1000.0, hold_ms=hold.as_secs_f64()*1000.0,
+            "slow store connection");
+    if let Some(context) = context.as_ref() {
+        (context.on_slow)(&context.trace_id, domain.as_str(), wait, hold);
+    }
+}
 
 pub(crate) const STORE_CONNECTION_ACQUISITIONS_TOTAL: &str = "store_connection_acquisitions_total";
 pub(crate) const STORE_CONNECTION_LOCK_WAIT_SECONDS: &str = "store_connection_lock_wait_seconds";
@@ -201,6 +262,7 @@ impl Drop for StoreConnectionGuard<'_> {
         // therefore cannot inflate the measured critical section or serialize
         // another store caller behind a slow subscriber.
         drop(self.guard.take());
+        observe_fail_open(|| observe_slow_connection(self.domain, self.wait, hold));
         observe_fail_open(|| self.observer.record_acquisition(self.domain, self.wait));
         observe_fail_open(|| self.observer.record_hold(self.domain, hold));
         tracing::debug!(target: "webcodex_store::connection", domain=self.domain.as_str(),
@@ -212,3 +274,7 @@ impl Drop for StoreConnectionGuard<'_> {
 fn observe_fail_open(observe: impl FnOnce()) {
     let _ = catch_unwind(AssertUnwindSafe(observe));
 }
+
+#[cfg(test)]
+#[path = "connection_observation_tests.rs"]
+mod tests;

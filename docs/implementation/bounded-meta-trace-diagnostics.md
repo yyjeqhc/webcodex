@@ -154,3 +154,66 @@ OpenTelemetry pipeline, new Direct tool, alternate trace database or snapshot
 report subsystem is added. Per-Window/time/tool-scoped full arming is a separate
 operator-control feature. This patch solves persistent metadata evidence and
 on-demand discovery/inspection first; it cannot reconstruct unrecorded bodies.
+
+
+## 2026-10-27: request finalization and capture loss
+
+The preceding sections record the original delivery. The current implementation
+adds explicit request-tail evidence without changing ActionAudit's response
+handoff clock or Window continuity semantics.
+
+The MCP adapter owns the lifecycle. `request_received` starts when that adapter
+is entered (after upstream middleware), `request_parsed` follows ingress JSON and
+protocol validation, and `dispatch_finished` ends tool dispatch, not a detached
+Job's lifetime. `response_serialized` describes the constructed response and
+`handler_returned` retains its existing framework-response handoff boundary.
+The synchronous finalizer then persists ActionAudit and completes Window evidence;
+`audit_finalize` reports completed/failed/unavailable and `request_finalize`
+covers the whole finalizer. The lifecycle guard's final `handler_finished` records
+leaving the adapter after these synchronous operations. Cancelled or unwinding
+handlers instead retain `handler_incomplete_drop`. These are observations inside
+the adapter, not client receipt, body-stream EOF, network flush, or model reading.
+No await is permitted between response handoff and synchronous tail completion
+without revisiting this guard contract.
+
+Audit owns its explicit original `server_trace_id`; it does not consult the exited
+Tokio dispatch task-local. A bounded synchronous Store observation context carries
+that identity through audit persistence and restores nested/thread-local state on
+exit or unwind. Store still owns its connection Mutex and wait/hold measurement.
+After releasing the connection, a wait **or** hold of at least 100 ms emits an INFO
+`store_connection_slow` event, plus metadata when capture is enabled. Slow phase
+summaries also work at INFO. Fast calls retain the existing lightweight
+observations. The new fields contain only fixed domain/phase/outcome labels,
+durations and a bounded opaque trace ID; no SQL, parameters, tokens or bodies.
+Other Store callers without explicit context report the domain and timings with
+no invented request identity.
+
+Long historical Window/ActionAudit reads could occupy a shared SQLite connection
+Mutex, so even a cheap tool's required audit write waited behind unrelated history
+work. Separating and bounding those readers in #861/#862 reduced that contention;
+it did not make the remaining audit persistence instantaneous. The new tail span
+makes such residual waits visible while preserving the response boundary used by
+existing continuity consumers.
+
+The writer queue remains **64**, with nonblocking `try_send`. A single background
+writer serializes filesystem writes, compression, retention/budget maintenance
+and occasional accounting reconciliation. Sustained producer traffic or slow disk
+can exceed its service rate; increasing queue capacity alone only postpones loss.
+This change diagnoses loss, not a throughput guarantee: queue/budget/write failure
+counters remain process-wide, and a separate try-lock map coalesces known losses
+for at most **128** bounded trace IDs. The writer drains those markers outside the
+business request and before acknowledging a diagnostic flush. Its map and drained
+batch are bounded, with no recursive retries if marker persistence fails.
+
+Retained `tool_trace_capture_gap` events set reader/UI `coverage` to `incomplete`
+and expose a lower bound `known_dropped_events`. `capture_health.loss_marker_drops`
+also counts losses that could not be indexed or persisted. A missing marker,
+including after crash, disk failure or map overflow, never proves completeness:
+the alternative stays `observed_events_only`, even with `handler_finished` present.
+Missing whole traces remain `trace_not_retained`. Capture is not a durable journal.
+Queue saturation, bounded marker overflow and a blocked writer are tested without
+blocking an actual successful MCP request. Deterministic channels and the actual
+Store Mutex prove two concurrent audit waits keep separate trace identities,
+response handoff precedes audit, and Handler finish includes the wait. Additional
+regressions cover failed audits, cancellation, timeout, Runner disconnect and
+normal fast responses.

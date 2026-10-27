@@ -109,3 +109,13 @@ it("places collapsed call diagnostics under Runtime Overview and opens the exact
   fireEvent.click(await screen.findByRole("button", { name: /Open Window/ }));
   expect(open).toHaveBeenCalledWith("target");
 });
+
+it("shows incomplete capture even when response and handler finish were observed", async () => {
+  const post = vi.fn(async () => ok({ status: "available", coverage: "incomplete", known_dropped_events: 71,
+    response_handoff_observed: true, handler_finished_observed: true,
+    events: [{ event: "mcp_tool_handler_finished" }] }));
+  render(<TraceCallDetails client={client(post)} traceRef="lossy" language="en" expanded />);
+  expect((await screen.findByRole("alert")).textContent).toContain("Trace is incomplete");
+  expect(screen.getByRole("alert").textContent).toContain("71");
+  expect(screen.getByText("Capture completeness is unverified, even when a Handler finish is present.")).toBeTruthy();
+});

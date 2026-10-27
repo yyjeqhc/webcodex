@@ -34,7 +34,7 @@ use std::future::Future;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 #[cfg(unix)]
@@ -52,13 +52,15 @@ tokio::task_local! {
 // Bounded process-wide counters, not per-trace completeness or durable history.
 static TRACE_QUEUE_DROPS: AtomicU64 = AtomicU64::new(0);
 static TRACE_BUDGET_DROPS: AtomicU64 = AtomicU64::new(0);
+static TRACE_LOSS_MARKER_DROPS: AtomicU64 = AtomicU64::new(0);
 static TRACE_WRITE_FAILURES: AtomicU64 = AtomicU64::new(0);
 
 fn capture_health() -> Value {
     json!({"scope":"server_process_since_start_not_per_trace",
         "queue_drops":TRACE_QUEUE_DROPS.load(Ordering::Relaxed),
         "budget_drops":TRACE_BUDGET_DROPS.load(Ordering::Relaxed),
-        "write_failures":TRACE_WRITE_FAILURES.load(Ordering::Relaxed)})
+        "write_failures":TRACE_WRITE_FAILURES.load(Ordering::Relaxed),
+        "loss_marker_drops":TRACE_LOSS_MARKER_DROPS.load(Ordering::Relaxed)})
 }
 
 const MAX_MODEL_TRACE_PAYLOAD_BYTES: usize = 256 * 1024;
@@ -257,9 +259,16 @@ pub(crate) use lifecycle::capture_effective_arguments;
 pub(crate) use lifecycle::capture_execution_evidence;
 pub(crate) use lifecycle::record_continuation_ids;
 pub(crate) use lifecycle::record_goal_timing;
-pub(crate) use lifecycle::record_phase_latency;
 pub(crate) use lifecycle::RequestCompletionTiming;
 pub use lifecycle::ToolRequestLifecycle;
+pub(crate) use lifecycle::{
+    record_phase_latency, record_phase_latency_for, record_slow_store_connection,
+};
 pub(crate) use payload::read_full_trace;
 #[cfg(test)]
 pub(crate) use writer::flush_full_trace_writer;
+
+#[cfg(test)]
+pub(crate) fn hold_trace_writer_for_test() -> impl Drop {
+    trace_io_state().lock().unwrap()
+}

@@ -1326,14 +1326,66 @@ fn incomplete_drop_is_safe_when_disabled() {
 }
 
 #[test]
-fn completed_drop_is_silent() {
+fn completed_drop_records_distinct_handler_finish() {
+    let root = tempfile::tempdir().unwrap();
     let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "true");
-    let guard =
-        ToolRequestLifecycle::new("api", "trace-ok".into(), "-", "POST /api/tools/call", None);
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "metadata");
+    env.set(
+        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+        root.path().to_str().unwrap(),
+    );
+    let id = new_trace_id();
+    let guard = ToolRequestLifecycle::new("api", id.clone(), "-", "POST /api/tools/call", None);
     guard.handler_returned(200, Some(12), Some(true), Some(true), "ok");
     drop(guard);
-    env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
+    flush_full_trace_writer();
+    let events = read_trace(&id, None, None, None).unwrap();
+    assert_eq!(events["response_handoff_observed"], true);
+    assert_eq!(events["handler_finished_observed"], true);
+    assert_eq!(events["coverage"], "observed_events_only");
+}
+
+#[tokio::test]
+async fn cancelled_and_timed_out_trace_scopes_never_claim_handler_finish() {
+    let root = tempfile::tempdir().unwrap();
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "metadata");
+    env.set(
+        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+        root.path().to_str().unwrap(),
+    );
+    for timed_out in [false, true] {
+        let id = new_trace_id();
+        let mut request = Box::pin(async {
+            let guard = ToolRequestLifecycle::new(
+                "mcp",
+                id.clone(),
+                "1",
+                "tools/call",
+                Some("read_files".into()),
+            );
+            guard.received();
+            std::future::pending::<()>().await;
+            guard.handler_returned(200, None, Some(true), Some(true), "ok");
+        });
+        assert!(futures_util::poll!(&mut request).is_pending());
+        if timed_out {
+            assert!(tokio::time::timeout(Duration::from_millis(1), request)
+                .await
+                .is_err());
+        } else {
+            drop(request);
+        }
+        flush_full_trace_writer();
+        let page = read_trace(&id, None, None, None).unwrap();
+        assert_eq!(page["response_handoff_observed"], false);
+        assert_eq!(page["handler_finished_observed"], false);
+        assert!(page["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["event"] == "mcp_tool_handler_incomplete_drop"));
+    }
 }
 
 #[test]

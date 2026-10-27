@@ -94,6 +94,11 @@ pub(crate) fn read_trace(
         }
         Err(error) => return Err(error),
     };
+    let known_dropped_events: u64 = events
+        .iter()
+        .filter(|event| event["event"] == "tool_trace_capture_gap")
+        .filter_map(|event| event.get("known_dropped_events").and_then(Value::as_u64))
+        .fold(0, u64::saturating_add);
     let mode = events
         .iter()
         .filter_map(|event| event.get("trace_mode").and_then(Value::as_str))
@@ -140,7 +145,9 @@ pub(crate) fn read_trace(
         json!({"trace_ref":trace_ref,"status":"available","trace_mode":mode,"capture_mode":capture_mode(),
         "entry_count":events.len(),"payload_count":events.iter().filter(|e| e["event"]=="tool_trace_payload_captured").count(),
         "offset":offset,"returned_count":page.len(),"next_offset":next_offset,"events":page,
-        "coverage":"observed_events_only", "max_page_bytes":PAGE_BYTES, "capture_health":capture_health(),
+        "coverage":if known_dropped_events > 0 { "incomplete" } else { "observed_events_only" }, "known_dropped_events":known_dropped_events,
+        "handler_finished_observed":events.iter().any(|event| event["event"].as_str().is_some_and(|name| name.ends_with("_tool_handler_finished"))),
+        "max_page_bytes":PAGE_BYTES, "capture_health":capture_health(),
         "response_handoff_observed":events.iter().any(|event| event["event"].as_str().is_some_and(|name| name.ends_with("_tool_handler_returned"))),
         "delivery_boundary":"handler_returned_is_not_client_receipt_or_model_reading"}),
     )

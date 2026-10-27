@@ -66,6 +66,10 @@ mod schema;
 mod server_instance;
 mod window_activity;
 mod window_inventory;
+mod window_labels;
+pub use window_labels::normalize_window_label;
+#[cfg(test)]
+mod window_labels_tests;
 mod workbench_preferences;
 pub use window_inventory::{WindowInventoryPage, WindowInventoryQuery, WindowInventoryRow};
 

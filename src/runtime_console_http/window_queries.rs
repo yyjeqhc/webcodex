@@ -541,6 +541,7 @@ pub(super) async fn window_for_auth_inner(
         .map(|summary| summary.source.clone())
         .unwrap_or_else(|| "openai-session".to_string());
     let result = RuntimeConsoleWindowDetail {
+        label: summary.as_ref().and_then(|row| row.label.clone()).flatten(),
         client_window_key: input.client_window_key,
         detail_level,
         source,

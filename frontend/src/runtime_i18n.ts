@@ -4,6 +4,13 @@ export { RUNTIME_LANGUAGES, type RuntimeLanguage } from "./runtime_locales.js";
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Named": "已命名",
+  "Window name": "窗口名称",
+  "Rename Window": "重命名窗口",
+  "Clear name": "清除名称",
+  "You do not have permission to rename this Window.": "你没有权限重命名这个窗口。",
+  "This Window is no longer visible.": "这个窗口已不可见。",
+  "Could not save the name. Please retry.": "无法保存名称，请重试。",
   "Within 10 minutes": "10 分钟内",
   "Today": "今天",
   "Earlier": "更早",

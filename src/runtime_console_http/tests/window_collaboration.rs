@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime_console_http::window_collaboration;
+use crate::runtime_console_http::window_target;
 
 #[tokio::test]
 async fn operator_continuity_rotated_projectless_window_remains_discoverable() {
@@ -11,7 +11,7 @@ async fn operator_continuity_rotated_projectless_window_remains_discoverable() {
     let target_window_key = "a".repeat(64);
     record_window_event(&db, &old, &target_window_key, None, None, 5_000);
     assert!(
-        window_collaboration::authorize(&runtime, &renewed, &target_window_key)
+        window_target::authorize(&runtime, &renewed, &target_window_key)
             .await
             .is_ok()
     );
@@ -48,7 +48,7 @@ async fn operator_continuity_rotated_projectless_window_remains_discoverable() {
     assert_eq!(inventory.windows[0].client_window_key, target_window_key);
     for denied in [foreign, foreign_user] {
         assert!(
-            window_collaboration::authorize(&runtime, &denied, &target_window_key)
+            window_target::authorize(&runtime, &denied, &target_window_key)
                 .await
                 .is_err()
         );
@@ -171,7 +171,7 @@ async fn operator_continuity_missing_attribution_does_not_create_an_unreadable_m
     let key = "e".repeat(64);
     record_window_event(&db, &historical, &key, None, None, 5_000);
     let operator = test_bootstrap_auth();
-    let target = window_collaboration::authorize(&runtime, &operator, &key)
+    let target = window_target::authorize(&runtime, &operator, &key)
         .await
         .unwrap();
     let result = runtime
@@ -225,7 +225,7 @@ async fn operator_continuity_ambiguous_operator_recipient_does_not_report_delive
     contradictory.allowed_client_id = Some("review-different-client".into());
     record_window_event(&db, &contradictory, &target_window_key, None, None, 6_000);
     let operator = test_bootstrap_auth();
-    let target = window_collaboration::authorize(&runtime, &operator, &target_window_key)
+    let target = window_target::authorize(&runtime, &operator, &target_window_key)
         .await
         .unwrap();
     assert!(db
@@ -398,7 +398,7 @@ async fn window_collaboration_survives_operator_token_rotation_for_visible_proje
     let key = client_window.key().to_string();
     record_window_event(&db, &window_auth, &key, Some(project), None, 5_000);
 
-    let routed = window_collaboration::authorize(&runtime, &operator_auth, &key)
+    let routed = window_target::authorize(&runtime, &operator_auth, &key)
         .await
         .unwrap();
     assert_eq!(routed, recipient);
@@ -825,7 +825,7 @@ async fn window_collaboration_does_not_fall_back_to_older_visible_history() {
         "older visible history still keeps the Window discoverable"
     );
     assert!(
-        window_collaboration::authorize(&runtime, &operator, &key)
+        window_target::authorize(&runtime, &operator, &key)
             .await
             .is_err(),
         "collaboration must fail closed when the latest recipient is not visible"
@@ -847,28 +847,24 @@ async fn window_collaboration_unscoped_target_remains_exact_principal_bound() {
     rotated.api_key_id = Some("new-access-token-same-oauth-client".into());
     let key = "a".repeat(64);
     record_window_event(&db, &writer, &key, None, None, 5000);
-    assert!(window_collaboration::authorize(&runtime, &writer, &key)
+    assert!(window_target::authorize(&runtime, &writer, &key)
         .await
         .is_ok());
     assert!(
-        window_collaboration::authorize(&runtime, &rotated, &key)
+        window_target::authorize(&runtime, &rotated, &key)
             .await
             .is_ok(),
         "unscoped Window authorization must survive managed OAuth access-token renewal"
     );
-    assert!(window_collaboration::authorize(&runtime, &other, &key)
+    assert!(window_target::authorize(&runtime, &other, &key)
         .await
         .is_err());
-    assert!(
-        window_collaboration::authorize(&runtime, &writer, &"b".repeat(64))
-            .await
-            .is_err()
-    );
-    assert!(
-        window_collaboration::authorize(&runtime, &writer, "bad-window")
-            .await
-            .is_err()
-    );
+    assert!(window_target::authorize(&runtime, &writer, &"b".repeat(64))
+        .await
+        .is_err());
+    assert!(window_target::authorize(&runtime, &writer, "bad-window")
+        .await
+        .is_err());
     let sent = runtime
         .post_window_operator_message(
             &key,

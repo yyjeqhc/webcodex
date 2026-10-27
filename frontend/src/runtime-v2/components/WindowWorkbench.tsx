@@ -9,7 +9,7 @@ import {
   Search,
 } from "lucide-react";
 import { CopyIdentity } from "./ui/CopyIdentity.js";
-import { Popover, TextInput } from "@mantine/core";
+import { FocusTrap, Popover, TextInput } from "@mantine/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   displayProjectPath,
@@ -29,6 +29,7 @@ import { windowSessionCatalog } from "../model/windowSessions.js";
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
 import { WindowCollaboration } from "./WindowCollaboration.js";
 import { WindowActivityFeed } from "./WindowActivityFeed.js";
+import { WindowLabelEditor } from "./WindowLabelEditor.js";
 import { WindowBoardRow } from "./WindowBoardRow.js";
 import { WindowBoardSplit } from "./WindowBoardSplit.js";
 import { compareWindowRows, matchesWindowRow, windowBoardRow, WINDOW_TIERS, WINDOW_TIER_TEXT, type WindowTier } from "../model/windowBoard.js";
@@ -119,7 +120,8 @@ export function WindowWorkbench({
   const selectedProjects = useMemo(() => projectFamily ? projects.filter(project => projectFamilyId(project) === projectFamily).map(project => project.id) : undefined, [projects, projectFamily]);
   const windows = useWindowWorkspace(client, !selectedProjects || selectedProjects.length > 0, onUnauthorized, { refreshMs: 3_000, loadDetail: true, autoSelect: false, initialWindowKey: requestedWindowKey, projects: selectedProjects });
   const navigation = useWindowBoardNavigation(windows.selectedKey, windows.select, onMobileDetailChange);
-  const [tierFilter, setTierFilter] = useState<"all" | WindowTier>("all");
+  const [tierFilter, setTierFilter] = useState<"all" | "named" | WindowTier>("all");
+  const [editingKey, setEditingKey] = useState("");
   const [search, setSearch] = useState("");
   const [centerTab, setCenterTab] = useState<"window" | "collaboration">("window");
   const selectionRef = useRef<HTMLDivElement | null>(null);
@@ -146,12 +148,12 @@ export function WindowWorkbench({
     const family = familyById.get(projectFamily);
     return (!family || (row.window.last_project && family.projectIds.has(row.window.last_project))) && matchesWindowRow(row, search);
   });
-  const filtered = matching.filter(row => tierFilter === "all" || row.tier === tierFilter);
+  const filtered = matching.filter(row => tierFilter === "all" || (tierFilter === "named" ? row.named : row.tier === tierFilter));
 
   const detail = windows.detail;
   const linkedSessions = useMemo(() => detail ? windowSessionCatalog(detail) : [], [detail?.activity, detail?.linked_sessions]);
   // A different Window keeps the operator's current view but never inherits
-  // the previous Window's Session focus or open identity panel.
+  // the previous Window's Session focus.
   useEffect(() => {
     if (!windows.selectedKey) return;
     setSelectedSessionId("");
@@ -193,6 +195,7 @@ export function WindowWorkbench({
   const visibleActiveCount = selectedSummary?.active_count ?? detail?.active_count ?? 0;
   const selectedNavigationRow: WindowSummary | undefined = detail ? {
     ...selectedSummary,
+    label: selectedSummary && Object.hasOwn(selectedSummary, "label") ? selectedSummary.label : detail.label,
     client_window_key: detail.client_window_key, source: detail.source,
     last_project: currentProjectId, last_seen_at_ms: lastObservedAt || 0,
     first_seen_at_ms: firstObservedAt, last_meaningful_activity_at_ms: lastMeaningfulAt,
@@ -203,7 +206,7 @@ export function WindowWorkbench({
   const selectedRow = selectedNavigationRow && windowBoardRow(selectedNavigationRow, projectIndex, now, t("Window"));
   const selectedIsPinned = Boolean(windows.selectedKey && !filtered.some(row => row.window.client_window_key === windows.selectedKey));
   const renderWindow = (row: ReturnType<typeof windowBoardRow>) => <WindowBoardRow key={row.window.client_window_key}
-    row={row} selected={windows.selectedKey === row.window.client_window_key} language={language} onSelect={navigation.open} />;
+    row={row} selected={windows.selectedKey === row.window.client_window_key} language={language} onSelect={navigation.open} onRename={key => { navigation.open(key); setEditingKey(key); }} />;
   const fact = (name: string, value: string | undefined) => <div><dt>{t(name)}</dt><dd>{value || "—"}</dd></div>;
   const identity = <dl className="window-board-facts">
     <div data-testid="current-window-identity" title={windows.selectedKey}><dt>{t("Window ID")}</dt><dd><CopyIdentity value={windows.selectedKey} label={t("Window ID")} language={language} /></dd></div>
@@ -217,8 +220,8 @@ export function WindowWorkbench({
         <TextInput type="search" aria-label={t("Search Windows")} leftSection={<Search size={14} />} value={search}
           onChange={event => setSearch(event.currentTarget.value)} placeholder={t("Search windows or projects…")} />
         <div className="window-board-chips">
-          {(["all", "running", "recent"] as const).map(tier => <button key={tier} type="button" aria-pressed={tierFilter === tier}
-            onClick={() => setTierFilter(tier)}>{t(tier === "all" ? "All" : WINDOW_TIER_TEXT[tier])} <span>{matching.filter(row => tier === "all" || row.tier === tier).length}</span></button>)}
+          {(["all", "running", "recent", "named"] as const).map(tier => <button key={tier} type="button" aria-pressed={tierFilter === tier}
+            onClick={() => setTierFilter(tier)}>{t(tier === "all" ? "All" : tier === "named" ? "Named" : WINDOW_TIER_TEXT[tier])} <span>{matching.filter(row => tier === "all" || (tier === "named" ? row.named : row.tier === tier)).length}</span></button>)}
           <Popover position="bottom-start" width={320}>
             <Popover.Target><button type="button"><Filter size={14} />{t("Filter")}</button></Popover.Target>
             <Popover.Dropdown>
@@ -267,19 +270,23 @@ export function WindowWorkbench({
 
       {hasSelectedWindow && <>
       {navigation.drawer && <button className="window-board-backdrop" type="button" aria-label={t("Close")} onClick={navigation.close} />}
-      <section className="window-board-detail" ref={navigation.detailRef} tabIndex={-1} aria-label={t("Window details")}
+      <FocusTrap active={navigation.drawer} innerRef={navigation.detailRef}>
+      <section role={navigation.drawer ? "dialog" : undefined} aria-modal={navigation.drawer || undefined} className="window-board-detail" tabIndex={-1} aria-label={t("Window details")}
         data-layout={navigation.mobile ? "page" : navigation.drawer ? "drawer" : "split"}>
             <header className="window-board-detail-header">
               {navigation.mobile && <button type="button" aria-label={t("Back")} onClick={navigation.close}><ArrowLeft size={18} /></button>}
-              <div><h2>{selectedRow?.displayName || t("Window") + " · " + windows.selectedKey.slice(0, 4)}</h2>
+              <div><WindowLabelEditor key={windows.selectedKey} name={selectedRow?.displayName || t("Window") + " · " + windows.selectedKey.slice(0, 4)}
+                label={selectedNavigationRow?.label} mobile={navigation.mobile} language={language} editing={editingKey === windows.selectedKey}
+                saving={windows.labelSaving || !selectedNavigationRow} error={windows.labelError} onEditingChange={editing => setEditingKey(editing ? windows.selectedKey : "")}
+                onSave={label => windows.saveLabel(windows.selectedKey, label)} />
                 <span className={"window-board-status " + (isActive ? "running" : "")}>{isActive ? t("Running") + (currentActivity ? " · " + currentActivity : "") : selectedRow ? t(WINDOW_TIER_TEXT[selectedRow.tier]) + " · " + relativeTime(selectedRow.lastActiveAt) : t("Loading…")}</span></div>
               {!navigation.mobile && <button type="button" aria-label={t("Close")} onClick={navigation.close}><X size={18} /></button>}
             </header>
             <div className="window-board-context">
               <dl className="window-board-facts">
                 {fact("Machine", currentRunnerId)}{fact("Source", selectedRow?.sourceLabel)}{fact("Project", currentWorkspaceName)}
-                {fact("First active", absoluteTime(firstObservedAt))}{fact("Last meaningful activity", absoluteTime(lastMeaningfulAt))}
-                {fact("Last active", absoluteTime(lastMeaningfulAt ?? lastObservedAt))}
+                {fact("First active", absoluteTime(firstObservedAt))}
+                {fact(navigation.mobile ? "Last active" : "Last meaningful activity", absoluteTime(navigation.mobile ? lastMeaningfulAt ?? lastObservedAt : lastMeaningfulAt))}
                 <div className="window-board-path"><dt>{t("Directory")}</dt><dd><code>{currentDirectory || "—"}</code></dd></div>
               </dl>
               {navigation.mobile ? <details><summary>{t("IDs")}</summary>{identity}</details> : identity}
@@ -366,6 +373,7 @@ export function WindowWorkbench({
               )}
             </div>
       </section>
+      </FocusTrap>
       </>}
       </WindowBoardSplit>
     </div>

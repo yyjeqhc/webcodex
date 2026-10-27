@@ -66,7 +66,7 @@ it("starts at overview, opens split detail, ignores Escape in inputs, and return
 it("opens a medium-width drawer and moves focus into it", async () => {
   width(1024); const { key } = board(); fireEvent.click(await screen.findByTestId("work-window-row-" + key));
   const detail = screen.getByLabelText("Window details"); expect(detail.getAttribute("data-layout")).toBe("drawer");
-  expect(document.activeElement).toBe(detail);
+  expect(detail.contains(document.activeElement)).toBe(true);
   fireEvent.keyDown(detail, { key: "Escape" }); expect(screen.queryByLabelText("Window details")).toBeNull();
 });
 it("pushes only a mobile detail marker, restores navigation on popstate, and uses history back", async () => {

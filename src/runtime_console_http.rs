@@ -44,6 +44,8 @@ mod window_inventory;
 mod window_queries;
 use window_queries::*;
 mod window_collaboration;
+mod window_labels;
+mod window_target;
 mod workspace;
 
 use communication::{
@@ -106,6 +108,10 @@ pub(crate) fn routes() -> Router {
         .push(
             Router::with_path(api_path(RouteId::RuntimeConsoleWindowCollaborationPost))
                 .post(window_collaboration::post),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleWindowLabel))
+                .post(window_labels::set),
         )
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleProjects)).post(projects))
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleGoals)).post(goals_handler))
@@ -486,6 +492,9 @@ struct RuntimeConsoleWindows {
 #[derive(Debug, Clone, Serialize)]
 struct RuntimeConsoleWindowSummary {
     client_window_key: String,
+    // None: liveness omits the field; Some(None): inventory explicitly clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_project: Option<String>,
     source: String,
@@ -510,6 +519,7 @@ struct RuntimeConsoleWindowSummary {
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleWindowDetail {
     client_window_key: String,
+    label: Option<String>,
     detail_level: WindowDetailLevel,
     source: String,
     last_seen_at_ms: i64,

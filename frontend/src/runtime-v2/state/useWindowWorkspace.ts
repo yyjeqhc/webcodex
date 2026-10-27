@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchWindowDetail, fetchWindowPrimaryDetail } from "../api/windows.js";
+import { fetchWindowDetail, fetchWindowPrimaryDetail, setWindowLabel } from "../api/windows.js";
 import { useWindowInventory } from "./useWindowInventory.js";
 import { useVisibleRefresh } from "./useVisibleRefresh.js";
 import type { RuntimeV2Client } from "../api/client.js";
@@ -20,12 +20,14 @@ function mergePrimaryWindowDetail(
   const merged = mergeWindowActivity(current.activity, primary.activity, !currentIsNewer);
   if (current.detail_level !== "full") return {
     ...(currentIsNewer ? current : primary),
+    label: preserveCurrentLiveness || !Object.hasOwn(primary, "label") ? current.label : primary.label,
     active_requests: currentIsNewer ? current.active_requests : shareWindowArray(current.active_requests, primary.active_requests),
     activity: merged.activity, activity_returned: merged.activity.length,
     activity_truncated: current.activity_truncated || primary.activity_truncated || merged.truncated,
   };
   return {
     ...current,
+    label: preserveCurrentLiveness || !Object.hasOwn(primary, "label") ? current.label : primary.label,
     source: currentIsNewer ? current.source || primary.source : primary.source || current.source,
     last_seen_at_ms: Math.max(current.last_seen_at_ms, primary.last_seen_at_ms),
     last_tool_call_at_ms:
@@ -58,6 +60,7 @@ function mergeFullWindowDetail(
   const merged = mergeWindowActivity(current.activity, full.activity, !currentIsNewer);
   return {
     ...full,
+    label: preserveCurrentLiveness || !Object.hasOwn(full, "label") ? current.label : full.label,
     source: currentIsNewer ? current.source || full.source : full.source,
     last_seen_at_ms: Math.max(current.last_seen_at_ms, full.last_seen_at_ms),
     last_tool_call_at_ms:
@@ -83,6 +86,9 @@ function mergeFullWindowDetail(
 
 export type WindowWorkspaceState = {
   updatedAt: number | null;
+  labelSaving: boolean;
+  labelError: string | null;
+  saveLabel: (key: string, label: string | null) => Promise<boolean>;
   availability: Availability;
   detailAvailability: Availability;
   detailHydrating: boolean;
@@ -139,6 +145,48 @@ export function useWindowWorkspace(
   const historyStale = useRef(false);
   const acceptedDetailSequence = useRef(0);
 
+  const [labelMutation, setLabelMutation] = useState<{ key: string; label: string | null } | null>(null);
+  const [labelFailure, setLabelFailure] = useState<{ key: string; message: string } | null>(null);
+  const labelRequest = useRef<{ controller: AbortController; key: string; previous: string | null } | null>(null);
+  const latest = useRef({ windows, detail, selectedKey }); latest.current = { windows, detail, selectedKey };
+  const applyLabel = useCallback((key: string, label: string | null) => {
+    const sequence = inventory.updateLabel(key, label);
+    if (latest.current.selectedKey === key) acceptedDetailSequence.current = Math.max(sequence, acceptedDetailSequence.current);
+    setDetail(current => current?.client_window_key === key ? { ...current, label } : current);
+  }, [inventory.updateLabel]);
+  const saveLabel = useCallback(async (key: string, label: string | null) => {
+    const pending = labelRequest.current;
+    const previous = pending?.key === key ? pending.previous
+      : latest.current.windows.find(row => row.client_window_key === key)?.label ??
+        (latest.current.detail?.client_window_key === key ? latest.current.detail.label ?? null : null);
+    pending?.controller.abort();
+    const request = { controller: new AbortController(), key, previous };
+    labelRequest.current = request;
+    setLabelFailure(null); setLabelMutation({ key, label });
+    try {
+      const response = await setWindowLabel(client, key, label, request.controller.signal);
+      if (request.controller.signal.aborted || labelRequest.current !== request) return false;
+      if (response?.ok && response.data?.client_window_key === key && Object.hasOwn(response.data, "label")) {
+        applyLabel(key, response.data.label); setLabelMutation(null); return true;
+      }
+      applyLabel(key, previous); setLabelMutation(null);
+      setLabelFailure({ key, message: response?.status === 403 ? "You do not have permission to rename this Window."
+        : response?.status === 404 ? "This Window is no longer visible." : "Could not save the name. Please retry." });
+      if (response?.status === 401) onUnauthorized();
+      return false;
+    } catch {
+      if (request.controller.signal.aborted || labelRequest.current !== request) return false;
+      applyLabel(key, previous); setLabelMutation(null);
+      setLabelFailure({ key, message: "Could not save the name. Please retry." }); return false;
+    } finally { if (labelRequest.current === request) labelRequest.current = null; }
+  }, [client, authorityRevision, applyLabel, onUnauthorized]);
+  useEffect(() => {
+    setLabelMutation(null); setLabelFailure(null);
+    return () => { labelRequest.current?.controller.abort(); labelRequest.current = null; };
+  }, [client, authorityRevision]);
+
+  const fenceDetailLabel = inventory.fenceLabel;
+
   const refresh = useCallback(() => {
     inventory.refresh();
     if (!detailRequest.current) setDetailRevision(value => value + 1);
@@ -190,14 +238,15 @@ export function useWindowWorkspace(
       fullDetailLoadedKey.current = key;
       fullDetailLoadedAt.current = Date.now();
       historyStale.current = false;
-      setDetail((current) => mergeFullWindowDetail(current, response.data!, preserveCurrentLiveness));
-      updateWindow(summaryFromWindowDetail({ ...response.data, detail_level: "full" }), sequence);
+      const incoming = fenceDetailLabel(response.data, sequence);
+      setDetail((current) => mergeFullWindowDetail(current, incoming, preserveCurrentLiveness));
+      updateWindow(summaryFromWindowDetail({ ...incoming, detail_level: "full" }), sequence);
       setDetailAvailability("available");
     }).catch(() => {
       if (fullDetailRequest.current?.controller !== controller || controller.signal.aborted) return;
       fullDetailRequest.current = null; setDetailHydrating(false); failed();
     });
-  }, [client, authorityRevision, selectionKey, enabled, loadDetail, onUnauthorized, removeWindow, updateWindow, beginObservation, fullDetailRefreshMs]);
+  }, [client, authorityRevision, selectionKey, enabled, loadDetail, onUnauthorized, removeWindow, updateWindow, beginObservation, fullDetailRefreshMs, fenceDetailLabel]);
 
   useEffect(() => {
     detailOwner.current = { client, authorityRevision, selectionKey, selectedKey, enabled, loadDetail };
@@ -270,8 +319,9 @@ export function useWindowWorkspace(
       lastPrimaryActivity.current = recent[0] ? windowActivityIdentity(recent[0]) : "";
       const preserveCurrentLiveness = sequence < acceptedDetailSequence.current;
       acceptedDetailSequence.current = Math.max(sequence, acceptedDetailSequence.current);
-      setDetail((current) => mergePrimaryWindowDetail(current, response.data!, preserveCurrentLiveness));
-      updateWindow(summaryFromWindowDetail(response.data), sequence);
+      const incoming = fenceDetailLabel(response.data, sequence);
+      setDetail((current) => mergePrimaryWindowDetail(current, incoming, preserveCurrentLiveness));
+      updateWindow(summaryFromWindowDetail(incoming), sequence);
       setDetailAvailability(historyStale.current ? "stale" : "available");
       const fullDetailDue =
         fullDetailNeedsCatchup.current || fullDetailLoadedKey.current !== selectedKey ||
@@ -299,6 +349,7 @@ export function useWindowWorkspace(
     removeWindow,
     updateWindow,
     beginObservation,
+    fenceDetailLabel,
     selectedKey,
   ]);
 
@@ -325,7 +376,10 @@ export function useWindowWorkspace(
     availability,
     detailAvailability: availability === "denied" ? "denied" : currentDetail ? detailAvailability : enabled && loadDetail ? "loading" : "idle",
     detailHydrating: currentDetail && detailHydrating,
-    windows,
+    windows: labelMutation ? windows.map(row => row.client_window_key === labelMutation.key ? { ...row, label: labelMutation.label } : row) : windows,
+    labelSaving: labelMutation?.key === selectedKey,
+    labelError: labelFailure?.key === selectedKey ? labelFailure.message : null,
+    saveLabel,
     historicalWindows: inventory.historicalWindows,
     loadMore: inventory.loadMore,
     loadingMore: inventory.loadingMore,
@@ -333,7 +387,7 @@ export function useWindowWorkspace(
     truncated,
     scope,
     selectedKey,
-    detail: currentDetail && detail?.client_window_key === selectedKey ? detail : null,
+    detail: currentDetail && detail?.client_window_key === selectedKey ? labelMutation?.key === selectedKey ? { ...detail, label: labelMutation.label } : detail : null,
     select,
     refresh,
   };

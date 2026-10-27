@@ -42,3 +42,7 @@ export function fetchWindowDetail(
     signal,
   );
 }
+
+export function setWindowLabel(client: RuntimeV2Client, key: string, label: string | null, signal?: AbortSignal) {
+  return client.post<{ client_window_key: string; label: string | null }>("window-label", { client_window_key: key, label }, signal);
+}

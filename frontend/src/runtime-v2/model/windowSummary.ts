@@ -11,6 +11,9 @@ export function mergeWindowSummary(current: WindowSummary, incoming: WindowObser
   const first = [current.first_seen_at_ms, incoming.first_seen_at_ms].filter((value): value is number => value !== undefined);
   const merged: WindowSummary = {
     ...(incomingIsNewer ? { ...current, ...incoming } : { ...incoming, ...current }),
+    // Labels are observations of an independent operator write, not activity time.
+    // An absent liveness field preserves the value; explicit null clears it.
+    ...(Object.hasOwn(incoming, "label") && preferIncoming ? { label: incoming.label } : Object.hasOwn(current, "label") ? { label: current.label } : {}),
     last_seen_at_ms: Math.max(current.last_seen_at_ms || 0, incoming.last_seen_at_ms || 0),
     ...(first.length ? { first_seen_at_ms: Math.min(...first) } : {}),
     last_tool_call_at_ms: Math.max(current.last_tool_call_at_ms || 0, incoming.last_tool_call_at_ms || 0) || undefined,
@@ -27,6 +30,7 @@ export function summaryFromWindowDetail(detail: WindowDetail): WindowObservation
   return {
     client_window_key: detail.client_window_key,
     source: detail.source,
+    ...(Object.hasOwn(detail, "label") ? { label: detail.label } : {}),
     last_seen_at_ms: detail.last_seen_at_ms,
     first_seen_at_ms: detail.first_seen_at_ms,
     last_tool_call_at_ms: detail.last_tool_call_at_ms,

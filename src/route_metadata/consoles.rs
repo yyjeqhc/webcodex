@@ -175,6 +175,15 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         AuthMiddleware,
     ),
     route(
+        RuntimeConsoleWindowLabel,
+        Post,
+        "/api/runtime-console/window-label",
+        Require(SCOPE_SESSION_COLLABORATE),
+        RuntimeConsole,
+        Other,
+        AuthMiddleware,
+    ),
+    route(
         RuntimeConsoleProjects,
         Post,
         "/api/runtime-console/projects",

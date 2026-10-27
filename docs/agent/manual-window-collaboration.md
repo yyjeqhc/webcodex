@@ -226,6 +226,31 @@ The Server-hosted `/runtime` page presents the same authoritative runtime and Wo
 
 The collaboration panel establishes an observation baseline before reading the retained snapshot, then uses bounded long-polls and merges deltas by `message_id`. `has_more` is drained before the next wait, while `history_lost` causes a retained-board reload and a new baseline rather than claiming complete history. Manual Refresh reports visible refreshing/success/failure state and preserves prior usable data; a healthy live collaboration loop is not restarted merely because Refresh was clicked, while a paused/failed loop performs a retained reload, new baseline, and bounded reconnect. Session liveness is derived only from WebCodex facts such as a running call, owned running Job, or recent retained activity; it never claims to know whether the host/model is processing, frozen, or present. All aggregate counts remain bounded/truncation-aware. Browser observation remains UI refresh only: it is not a model wake-up, subscription, participant-presence mechanism, scheduler, worker claim, or execution lease.
 
+### Human Window labels
+
+`POST /api/runtime-console/window-label` accepts `{ "client_window_key": string,
+"label": string | null }` and returns the same shape with the stored value. It
+requires `runtime:read` and `session:collaborate` and reuses the exact recipient
+principal authorization of Window collaboration. Administrator writes belong to
+the Window's authorized recipient principal, not the administrator. Principal-scoped
+credentials cannot rename another principal's Window. The stored key includes
+principal kind, principal ID and Window key, including for legacy ChatGPT Window
+keys that do not themselves include principal scope.
+
+A label is an operator display annotation, never identity, authority, Session
+selection or Peer routing. It appears only in Runtime Console label writes and inventory/detail;
+it is excluded from liveness, tool results, Peer awareness, MCP/Work Result App
+responses, telemetry and log bodies. Reads retain the existing Project/principal
+visibility rules. Inventory search can match the label of the latest visible
+historical recipient cell. Live-only Windows have no historical label projection.
+
+Names are trimmed, limited to 80 Unicode characters and reject remaining control
+characters. Empty strings or null clear the name. Unknown fields are rejected;
+invalid input returns 400, missing collaboration scope 403, and unknown/invisible
+Windows 404. Repeating a value preserves its update timestamp. When retained
+history is deleted, repair of each affected Window removes labels only for
+principals with no remaining cell on that Window. Other principals' labels remain.
+
 ## Provenance is metadata, not authority
 
 A completed answer can identify the independent worker with `author_session_id` only when the completion carries an already-authorized explicit recorder; without that recorder, no author Session is inferred from caller auth, client window, or other ambient state. It is not a caller-authored claim. In Stateless MCP 2026, that recorder is `_wc.record`: explicit invocation provenance metadata, not a transport Session and not an authority grant; the legacy `mcp-session-id` header remains irrelevant.

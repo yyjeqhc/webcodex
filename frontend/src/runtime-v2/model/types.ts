@@ -254,6 +254,7 @@ export type RuntimeOverview = {
 };
 
 export type WindowSummary = {
+  label?: string | null;
   client_window_key: string;
   last_project?: string;
   source: string;
@@ -322,6 +323,7 @@ export type WindowJob = {
 };
 
 export type WindowDetail = {
+  label?: string | null;
   client_window_key: string;
   detail_level?: "primary" | "full";
   source: string;

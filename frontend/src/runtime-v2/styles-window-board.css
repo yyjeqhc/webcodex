@@ -3,6 +3,7 @@
 .window-board-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .window-board-toolbar > .mantine-TextInput-root { flex: 1 1 220px; }
 .window-board-chips { display: flex; gap: 6px; align-items: center; }
+.window-board-chips > button { flex: 0 0 auto; }
 .window-board-chips button, .window-board-sync button, .window-board-detail-header > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; min-width: 40px; padding: 8px 12px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); background: var(--ui-content); color: var(--ui-text-secondary); cursor: pointer; white-space: nowrap; }
 .window-board-chips button[aria-pressed=true] { background: var(--web-row-selected); border-color: var(--web-row-border); color: var(--ui-text-primary); }
 .window-board-sync { display: flex; align-items: center; gap: 8px; color: var(--ui-text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -99,3 +100,12 @@
   .window-board-shell .window-board-toolbar > .mantine-TextInput-root { flex-basis: 180px; }
   .window-board-shell .window-board-content { grid-row: 2; grid-column: 1 / -1; }
 }
+
+.window-board-default-name { color: var(--ui-text-secondary); font-style: italic; }
+.window-board-title { display: flex; align-items: start; gap: 8px; }
+.window-board-title h2, .window-board-title .mantine-TextInput-root { flex: 1; min-width: 0; }
+.window-board-rename, .window-label-actions button { min-width: 40px; min-height: 40px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); background: var(--ui-content); color: var(--ui-text-secondary); cursor: pointer; }
+.window-board-rename { display: grid; place-items: center; flex: 0 0 40px; }
+.window-label-sheet { padding-bottom: env(safe-area-inset-bottom); }
+.window-label-actions { display: flex; justify-content: end; gap: 12px; margin-top: 16px; }
+.window-label-actions button { padding: 8px 16px; }

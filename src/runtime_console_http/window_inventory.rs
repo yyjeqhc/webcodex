@@ -124,7 +124,7 @@ pub(super) async fn query_for_auth(
                 .unwrap_or(MAX_WINDOW_LIMIT)
                 .clamp(1, MAX_WINDOW_LIMIT),
         )
-        .map(summary)
+        .map(|row| summary(row, WindowInventoryProjection::Liveness))
         .collect();
     let next = input.offset.saturating_add(rows.len());
     let principal = window_principal_filter(auth)?;
@@ -144,9 +144,13 @@ pub(super) async fn query_for_auth(
     })
 }
 
-pub(super) fn summary(row: WindowInventoryRow) -> RuntimeConsoleWindowSummary {
+pub(super) fn summary(
+    row: WindowInventoryRow,
+    projection: WindowInventoryProjection,
+) -> RuntimeConsoleWindowSummary {
     RuntimeConsoleWindowSummary {
         client_window_key: row.client_window_key,
+        label: (projection == WindowInventoryProjection::Inventory).then_some(row.label),
         source: row.source,
         last_project: row.last_project,
         first_seen_at_ms: Some(row.first_seen_at_ms),
@@ -203,6 +207,7 @@ pub(super) async fn live_for_auth(
                 continue;
             }
             let entry = row.get_or_insert_with(|| WindowInventoryRow {
+                label: None,
                 client_window_key: window.client_window_key.clone(),
                 source: request.client_window_source.clone(),
                 last_project: None,
@@ -372,7 +377,11 @@ pub(super) async fn inventory_and_read_for_auth<T: Send + 'static>(
     let result = RuntimeConsoleWindows {
         next_offset: (offset.saturating_add(returned) < page.total)
             .then_some(offset.saturating_add(returned)),
-        windows: page.rows.into_iter().map(summary).collect(),
+        windows: page
+            .rows
+            .into_iter()
+            .map(|row| summary(row, WindowInventoryProjection::Inventory))
+            .collect(),
         returned,
         total: page.total,
         truncated: offset.saturating_add(returned) < page.total,

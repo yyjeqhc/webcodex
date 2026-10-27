@@ -16,8 +16,9 @@ export function useWindowBoardNavigation(selectedKey: string, select: (key: stri
   }, [select]);
   const open = useCallback((key: string) => {
     returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (mobile) onMobileDetailChange?.(true);
     select(key);
-  }, [select]);
+  }, [select, mobile, onMobileDetailChange]);
   useEffect(() => {
     if (!mobile || !selectedKey || ownsHistory.current) return;
     window.history.pushState({ webcodexWindowDetail: true }, "");
@@ -33,13 +34,12 @@ export function useWindowBoardNavigation(selectedKey: string, select: (key: stri
       if (ownsHistory.current && window.history.state?.webcodexWindowDetail) window.history.replaceState(null, "");
     };
   }, [select]);
-  useEffect(() => {
-    onMobileDetailChange?.(mobile && Boolean(selectedKey));
-    return () => onMobileDetailChange?.(false);
-  }, [mobile, selectedKey, onMobileDetailChange]);
+  const mobileDetail = mobile && Boolean(selectedKey);
+  useEffect(() => { onMobileDetailChange?.(mobileDetail); }, [mobileDetail, onMobileDetailChange]);
+  useEffect(() => () => onMobileDetailChange?.(false), [onMobileDetailChange]);
   useEffect(() => {
     if (selectedKey && narrow) detailRef.current?.focus();
-    if (!selectedKey && returnFocus.current?.isConnected) returnFocus.current.focus();
+    if (!selectedKey && returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true });
   }, [selectedKey, narrow]);
   useEffect(() => {
     const detail = detailRef.current;
@@ -53,7 +53,8 @@ export function useWindowBoardNavigation(selectedKey: string, select: (key: stri
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || !selected.current) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
-      if (target?.closest("input, textarea, select, [contenteditable=true], [role=dialog], [data-portal]")) return;
+      if (target?.closest("input, textarea, select, [contenteditable=true], [data-portal]")) return;
+      if (target?.closest("[role=dialog]") && target.closest("[role=dialog]") !== detailRef.current) return;
       // Portalled menus/popovers own Escape even when focus stays on their trigger.
       const overlays = document.querySelectorAll<HTMLElement>('[data-portal] [role=dialog], [data-portal] [role=menu], [data-portal] .mantine-Popover-dropdown');
       if ([...overlays].some(element => {

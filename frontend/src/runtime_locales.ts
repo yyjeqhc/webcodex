@@ -12,6 +12,14 @@ export type RuntimeLanguage = typeof RUNTIME_LANGUAGES[number]["value"];
 const TRANSLATED_LANGUAGES = ["zh-TW", "ja-JP", "ko-KR", "de-DE", "fr-FR"] as const;
 type Translations = readonly [string, string, string, string, string];
 export const WORK_TEXT: Record<string, Translations> = {
+  "Named": ["已命名", "名前付き", "이름 있음", "Benannt", "Nommées"],
+  "Window name": ["視窗名稱", "ウィンドウ名", "창 이름", "Fenstername", "Nom de fenêtre"],
+  "Rename Window": ["重新命名視窗", "ウィンドウの名前を変更", "창 이름 바꾸기", "Fenster umbenennen", "Renommer la fenêtre"],
+  "Clear name": ["清除名稱", "名前をクリア", "이름 지우기", "Namen löschen", "Effacer le nom"],
+  "Save": ["儲存", "保存", "저장", "Speichern", "Enregistrer"],
+  "You do not have permission to rename this Window.": ["你沒有權限重新命名此視窗。", "このウィンドウの名前を変更する権限がありません。", "이 창의 이름을 바꿀 권한이 없습니다.", "Sie dürfen dieses Fenster nicht umbenennen.", "Vous n’avez pas l’autorisation de renommer cette fenêtre."],
+  "This Window is no longer visible.": ["此視窗已不可見。", "このウィンドウは表示できなくなりました。", "이 창은 더 이상 볼 수 없습니다.", "Dieses Fenster ist nicht mehr sichtbar.", "Cette fenêtre n’est plus visible."],
+  "Could not save the name. Please retry.": ["無法儲存名稱，請重試。", "名前を保存できませんでした。再試行してください。", "이름을 저장하지 못했습니다. 다시 시도하세요.", "Der Name konnte nicht gespeichert werden. Bitte erneut versuchen.", "Impossible d’enregistrer le nom. Réessayez."],
   "Within 10 minutes": ["10 分鐘內", "10分以内", "10분 이내", "Innerhalb von 10 Minuten", "Dans les 10 minutes"],
   "Today": ["今天", "今日", "오늘", "Heute", "Aujourd’hui"],
   "Earlier": ["更早", "以前", "이전", "Früher", "Auparavant"],

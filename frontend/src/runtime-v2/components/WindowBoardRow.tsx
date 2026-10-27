@@ -3,15 +3,16 @@ import { translate } from "../../runtime_i18n.js";
 import { absoluteTime, dayAwareTime, relativeTime } from "../model/format.js";
 import { WINDOW_TIER_TEXT, type WindowBoardRow as Row } from "../model/windowBoard.js";
 
-export function WindowBoardRow({ row, selected, language, onSelect }: {
-  row: Row; selected: boolean; language: RuntimeLanguage; onSelect: (key: string) => void;
+export function WindowBoardRow({ row, selected, language, onSelect, onRename }: {
+  row: Row; selected: boolean; language: RuntimeLanguage; onSelect: (key: string) => void; onRename?: (key: string) => void;
 }) {
   const t = (text: string) => translate(text, language);
   return <button type="button" className={"window-board-row" + (selected ? " selected" : "")}
     aria-current={selected ? "true" : undefined} onClick={() => onSelect(row.window.client_window_key)}
+    onKeyDown={event => { if (event.key === "F2" && selected) { event.preventDefault(); onRename?.(row.window.client_window_key); } }}
     data-testid={"work-window-row-" + row.window.client_window_key}>
     <span className={"window-board-dot " + row.tier} aria-label={t(WINDOW_TIER_TEXT[row.tier])} />
-    <span className="window-board-name"><strong>{row.displayName}</strong>
+    <span className="window-board-name"><strong className={row.named ? undefined : "window-board-default-name"} onDoubleClick={() => onRename?.(row.window.client_window_key)}>{row.displayName}</strong>
       <small className="window-board-full-context">{row.sourceLabel} · {row.linkedSessions} {t("Sessions")}</small>
       <small className="window-board-compact-context">{[row.workspaceName, row.machine, row.sourceLabel].filter(Boolean).join(" · ")}</small>
     </span>

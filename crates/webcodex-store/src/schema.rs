@@ -557,6 +557,16 @@ impl Database {
                     project, window_ended_at_ms DESC, client_window_key, client_window_source)
                 WHERE window_meaningful = 1 AND client_window_key IS NOT NULL;
 
+            CREATE TABLE IF NOT EXISTS window_labels (
+                principal_kind TEXT NOT NULL,
+                principal_id TEXT NOT NULL,
+                window_key TEXT NOT NULL,
+                label TEXT NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (principal_kind, principal_id, window_key)
+            ) WITHOUT ROWID;
+            CREATE INDEX IF NOT EXISTS idx_window_labels_window ON window_labels(window_key);
+
             CREATE TABLE IF NOT EXISTS window_operator_messages (
                 message_id TEXT PRIMARY KEY,
                 principal_kind TEXT NOT NULL,

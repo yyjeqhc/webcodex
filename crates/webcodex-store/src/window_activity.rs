@@ -717,7 +717,7 @@ fn collect_session_window_rows(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     mod inventory;
     mod peer_query;
     mod queries;
@@ -726,7 +726,13 @@ mod tests {
     use super::*;
     use crate::models::{ActionEventRecord, ActionEventWorkflowLinkRecord, ActionSessionRecord};
 
-    fn event(id: &str, window: &str, principal: &str, project: &str, at: i64) -> ActionEventRecord {
+    pub(crate) fn event(
+        id: &str,
+        window: &str,
+        principal: &str,
+        project: &str,
+        at: i64,
+    ) -> ActionEventRecord {
         ActionEventRecord {
             event_id: id.to_string(),
             session_id: "audit-session".to_string(),
@@ -766,7 +772,7 @@ mod tests {
         }
     }
 
-    fn seed_session(db: &Database) {
+    pub(crate) fn seed_session(db: &Database) {
         db.insert_action_session(&ActionSessionRecord {
             session_id: "audit-session".to_string(),
             title: None,
@@ -789,7 +795,7 @@ mod tests {
         .unwrap();
     }
 
-    fn append(db: &Database, event: ActionEventRecord, links: &[(&str, &str)]) {
+    pub(crate) fn append(db: &Database, event: ActionEventRecord, links: &[(&str, &str)]) {
         let records = links
             .iter()
             .map(|(session, relation)| ActionEventWorkflowLinkRecord {

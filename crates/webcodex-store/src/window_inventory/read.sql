@@ -20,6 +20,8 @@ visible AS (
     FROM visible
 ), summaries AS (
     SELECT window_key, MAX(CASE WHEN newest=1 THEN source END) AS source,
+        MAX(CASE WHEN newest=1 THEN principal_kind END) AS principal_kind,
+        MAX(CASE WHEN newest=1 THEN principal_id END) AS principal_id,
         MAX(CASE WHEN newest_project=1 THEN project END) AS last_project,
         MIN(first_seen) AS first_seen,MAX(last_seen) AS last_seen,
         MAX(last_tool) AS last_tool,MAX(last_meaningful) AS last_meaningful,
@@ -56,14 +58,17 @@ visible AS (
         COALESCE(l.activity_name,s.activity_name) AS last_activity_name,
         COALESCE(l.activity_status,s.activity_status) AS last_activity_status,
         COALESCE(l.activity_meaningful,s.activity_meaningful) AS last_activity_meaningful,
-        COALESCE(l.active_count,0) AS active_count,COALESCE(c.linked,0) AS linked_session_count,s.gap_count AS recorder_gap_count
+        COALESCE(l.active_count,0) AS active_count,COALESCE(c.linked,0) AS linked_session_count,s.gap_count AS recorder_gap_count,labels.label AS label
     FROM summaries s LEFT JOIN live l ON l.window_key=s.window_key LEFT JOIN counts c ON c.window_key=s.window_key
+    LEFT JOIN window_labels labels ON labels.principal_kind=s.principal_kind AND labels.principal_id=s.principal_id AND labels.window_key=s.window_key
     UNION ALL SELECT l.window_key,l.source,l.last_project,l.first_seen,l.last_seen,NULL,NULL,
-        l.activity_name,l.activity_status,l.activity_meaningful,l.active_count,0,0
+        l.activity_name,l.activity_status,l.activity_meaningful,l.active_count,0,0,NULL
+    -- A live-only Window has no historical recipient cell yet; its label is NULL.
     FROM live l WHERE NOT EXISTS(SELECT 1 FROM summaries s WHERE s.window_key=l.window_key)
 ), filtered AS (
     SELECT * FROM merged WHERE (:key IS NULL OR client_window_key=:key)
         AND (:query='' OR instr(lower(client_window_key),lower(:query))>0
+            OR instr(lower(COALESCE(label,'')),lower(:query))>0
             OR instr(lower(COALESCE(last_project,'')),lower(:query))>0
             OR instr(lower(COALESCE(last_activity_name,'')),lower(:query))>0)
 )

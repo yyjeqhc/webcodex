@@ -8,7 +8,7 @@ import {
   Server,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   LANGUAGE_STORAGE_KEY,
   loadLanguagePreference,
@@ -96,6 +96,20 @@ export function App() {
   const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
   const sessionLocator = useRef<AbortController | null>(null);
   const navigationRef = useRef<HTMLElement | null>(null);
+  const contentRef = useRef<HTMLElement | null>(null);
+  const windowListScroll = useRef(0);
+  const mobileDetailActive = useRef(false);
+  const showMobileWindowDetail = useCallback((open: boolean) => {
+    if (mobileDetailActive.current === open) return;
+    mobileDetailActive.current = open;
+    if (open && contentRef.current) windowListScroll.current = contentRef.current.scrollTop;
+    setMobileWindowDetail(open);
+  }, []);
+  useLayoutEffect(() => {
+    // Restore after the shell navigation has returned, avoiding scroll anchoring
+    // against the shorter detail layout during the same React commit.
+    if (contentRef.current) contentRef.current.scrollTop = mobileWindowDetail ? 0 : windowListScroll.current;
+  }, [mobileWindowDetail]);
   const mobileNavigationRef = useRef<HTMLElement | null>(null);
   const navigationSelection = { variant: "filled", itemSelector: "button", selectedSelector: "button[aria-current]" } as const;
   useFlowingSelection(navigationRef, view, navigationSelection);
@@ -337,7 +351,7 @@ export function App() {
       </div>
       {mobileSettingsOpen && <div id="mobile-preferences" className="mobile-preferences ui-glass" role="group" aria-label={translate("Preferences", language)}>{preferenceControls()}<div className="mobile-lock-action">{lockControl()}</div></div>}
 
-      <section className="app-content">
+      <section ref={contentRef} className="app-content">
         {notice && <div className="global-notice" role="status">{notice}<IconButton label={translate("Close", language)} onClick={() => setNotice("")}><X size={16} /></IconButton></div>}
         {view === "work" && (
           <WorkView
@@ -358,7 +372,7 @@ export function App() {
             requestedWindowKey={workWindowTarget?.windowKey}
             requestedSessionId={workWindowTarget?.sessionId}
             onRequestedWindowConsumed={() => setWorkWindowTarget(null)}
-            onMobileDetailChange={setMobileWindowDetail}
+            onMobileDetailChange={showMobileWindowDetail}
             onUnauthorized={handleUnauthorized}
           />
         )}

@@ -125,6 +125,7 @@ After building `frontend`, run `node scripts/ui-smoke/window-board.mjs` for the
 Activity overview, wide split, medium drawer and mobile list/detail navigation.
 The fixture-only report and screenshots are regenerated under ignored
 `artifacts/window-board/`, including 1440px light overview/split and 390px light
-list/dark detail. It checks overflow, focus/navigation, the mobile history marker,
-primary navigation restoration and absence of inner mobile activity scrolling.
+list/dark detail. It checks overflow, drawer focus, name save/clear, the mobile
+history marker, primary navigation and list-scroll restoration, and absence of
+inner mobile activity scrolling.
 The older detail-popover checks describe the superseded Window layout.

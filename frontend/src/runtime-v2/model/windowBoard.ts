@@ -21,11 +21,11 @@ export function windowBoardRow(window: WindowSummary, projects: ReadonlyMap<stri
     : new Date(now).toDateString() === new Date(lastActiveAt).toDateString() ? "today" : "earlier";
   const defaultName = `${workspaceName || windowText} · ${window.client_window_key.slice(0, 4)}`;
   return {
-    window, tier, defaultName, displayName: defaultName, projectName, workspaceName,
+    window, tier, defaultName, displayName: window.label ?? defaultName, named: window.label != null, projectName, workspaceName,
     sourceLabel: ({ "openai-session": "ChatGPT", "openai-conversation": "ChatGPT", "codex-thread": "Codex", "client-window-header": "Header" } as Record<string, string>)[window.source] || window.source,
     machine: project?.client_id || "", path: displayProjectPath(project?.path),
     firstSeenAt: window.first_seen_at_ms, lastActiveAt,
-    action: window.last_activity_name || "", linkedSessions: window.linked_session_count,
+    action: window.last_activity_name || "", linkedSessions: window.linked_session_count || 0,
   };
 }
 

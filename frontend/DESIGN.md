@@ -189,3 +189,19 @@ mobile. Window and Collaboration keep the existing evidence and authority behavi
 Board layout lives in `src/runtime-v2/styles-window-board.css`, imported after the
 shared Runtime styles. Desktop/embedded styles and backend authority remain
 independent of these Web presentation rules.
+
+Window labels are server-owned operator display annotations, scoped to the exact
+recipient principal authorized by the Window collaboration boundary. They never
+select a Session, route a Peer message or enter model-facing output. Inventory and
+detail carry explicit nullable labels; liveness omits the field and retains its
+SQLite-free contract. Local merges preserve omitted labels and use observation
+sequence fences so pre-save reads cannot overwrite an acknowledged rename.
+
+Named rows use regular text; default titles remain muted and italic. Named is a
+local filter. Desktop renaming uses the pencil, name double-click or selected-row
+F2, then Enter/blur to save and Escape to cancel. Mobile uses a bottom drawer with
+Save and Clear name. Editing is optimistic, duplicate submissions are disabled,
+and failures restore the previous name with permission/visibility/retry feedback.
+Superseded requests are aborted and their responses ignored. Names are trimmed,
+limited to 80 Unicode characters and cannot contain control characters. Empty
+names clear the annotation. Retention follows the Window's retained principal cells.

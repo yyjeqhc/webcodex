@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { UiProvider } from "../src/ui/UiProvider.js";
 import { WindowWorkbench } from "../src/runtime-v2/components/WindowWorkbench.js";
@@ -78,4 +78,15 @@ it("pushes only a mobile detail marker, restores navigation on popstate, and use
   fireEvent.click(screen.getByRole("button", { name: "Back" })); expect(back).toHaveBeenCalledOnce();
   await act(async () => window.dispatchEvent(new PopStateEvent("popstate")));
   await waitFor(() => expect(screen.queryByLabelText("Window details")).toBeNull()); expect(signal).toHaveBeenLastCalledWith(false);
+});
+it("names an active server-side Project filter on the Filter control", async () => {
+  width(1440); const { key, client } = board();
+  await screen.findByTestId("work-window-row-" + key);
+  fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Projects: All projects" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Projects" })).getByRole("button", { name: /WebCodex/ }));
+  // Every count below now describes one Project, so the control must say which.
+  expect((await screen.findByRole("button", { name: "Filter: WebCodex" })).className).toBe("active");
+  await waitFor(() => expect(vi.mocked(client.post).mock.calls.some(([path, body]) =>
+    path === "windows" && Array.isArray((body as { projects?: string[] }).projects))).toBe(true));
 });

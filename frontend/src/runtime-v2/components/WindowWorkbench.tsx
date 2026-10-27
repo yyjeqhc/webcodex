@@ -140,6 +140,7 @@ export function WindowWorkbench({
     }
     return historicalFamilies.map(family => ({ ...family, activeWindowCount: active.get(family.id) || 0 }));
   }, [historicalFamilies, projectIndex, windows.windows]);
+  const activeFamily = families.find(family => family.id === projectFamily);
   const windowIndex = useMemo(() => new Map(windows.windows.map(window => [window.client_window_key, window])), [windows.windows]);
 
   const now = Date.now();
@@ -208,7 +209,7 @@ export function WindowWorkbench({
   const renderWindow = (row: ReturnType<typeof windowBoardRow>) => <WindowBoardRow key={row.window.client_window_key}
     row={row} selected={windows.selectedKey === row.window.client_window_key} language={language} onSelect={navigation.open} onRename={key => { navigation.open(key); setEditingKey(key); }} />;
   const fact = (name: string, value: string | undefined) => <div><dt>{t(name)}</dt><dd>{value || "—"}</dd></div>;
-  const identity = <dl className="window-board-facts">
+  const identity = <dl className="window-board-facts window-board-id-facts">
     <div data-testid="current-window-identity" title={windows.selectedKey}><dt>{t("Window ID")}</dt><dd><CopyIdentity value={windows.selectedKey} label={t("Window ID")} language={language} /></dd></div>
     {currentProjectId && <div><dt>{t("Project ID")}</dt><dd><CopyIdentity value={currentProjectId} label={t("Project ID")} language={language} /></dd></div>}
     {fact("Last request activity", absoluteTime(lastObservedAt))}
@@ -223,7 +224,11 @@ export function WindowWorkbench({
           {(["all", "running", "recent", "named"] as const).map(tier => <button key={tier} type="button" aria-pressed={tierFilter === tier}
             onClick={() => setTierFilter(tier)}>{t(tier === "all" ? "All" : tier === "named" ? "Named" : WINDOW_TIER_TEXT[tier])} <span>{matching.filter(row => tier === "all" || (tier === "named" ? row.named : row.tier === tier)).length}</span></button>)}
           <Popover position="bottom-start" width={320}>
-            <Popover.Target><button type="button"><Filter size={14} />{t("Filter")}</button></Popover.Target>
+            {/* A server-side Project filter changes every count, so it stays visible while active. */}
+            <Popover.Target><button type="button" className={activeFamily ? "active" : undefined}
+              aria-label={activeFamily ? t("Filter") + ": " + activeFamily.label : undefined}>
+              <Filter size={14} />{activeFamily ? <span className="window-board-filter-label">{activeFamily.label}</span> : t("Filter")}
+            </button></Popover.Target>
             <Popover.Dropdown>
           <ProjectPicker
             label={t("Projects")}
@@ -286,10 +291,11 @@ export function WindowWorkbench({
               <dl className="window-board-facts">
                 {fact("Machine", currentRunnerId)}{fact("Source", selectedRow?.sourceLabel)}{fact("Project", currentWorkspaceName)}
                 {fact("First active", absoluteTime(firstObservedAt))}
-                {fact(navigation.mobile ? "Last active" : "Last meaningful activity", absoluteTime(navigation.mobile ? lastMeaningfulAt ?? lastObservedAt : lastMeaningfulAt))}
+                {fact("Last active", absoluteTime(lastMeaningfulAt ?? lastObservedAt))}
                 <div className="window-board-path"><dt>{t("Directory")}</dt><dd><code>{currentDirectory || "—"}</code></dd></div>
               </dl>
-              {navigation.mobile ? <details><summary>{t("IDs")}</summary>{identity}</details> : identity}
+              {/* Canonical IDs stay one disclosure away so activity keeps the detail height. */}
+              <details><summary>{t("IDs")}</summary>{identity}</details>
             </div>
             <div ref={selectionRef} className="session-view-tabs window-center-tabs equal-view-tabs" role="tablist" aria-label={t("Window views")}>
               <button

@@ -1,5 +1,5 @@
-use crate::window_activity::tests::{append, event, seed_session};
-use crate::{Database, WindowInventoryQuery};
+use super::*;
+use crate::WindowInventoryQuery;
 
 #[test]
 fn window_labels_normalize_bound_unicode_and_preserve_noop_timestamp() {

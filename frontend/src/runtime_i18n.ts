@@ -22,11 +22,8 @@ export const RUNTIME_ZH_TEXT: Record<string, string> = {
   "Last active": "最近活跃",
   "IDs": "标识符",
   "Back": "返回",
-  "First observed": "首次记录",
   "Last request activity": "最近请求活动",
-  "Last meaningful activity": "最近有效活动",
   "Window ID": "窗口 ID",
-  "Runner ID": "机器 ID",
   "Project ID": "项目 ID",
   "Loading Agents…": "正在加载 Agent…",
   "Agents could not be loaded. Refresh to retry.": "Agent 加载失败，请刷新重试。",
@@ -1132,7 +1129,6 @@ Object.assign(RUNTIME_ZH_TEXT, {
 
 Object.assign(RUNTIME_ZH_TEXT, {
   "Activity": "活动",
-  "Live work": "实时工作",
   "Project filter": "项目筛选",
   "All project workspaces": "全部项目",
   "Search Windows": "搜索窗口",
@@ -1205,7 +1201,6 @@ Object.assign(RUNTIME_ZH_TEXT, {
 });
 
 Object.assign(RUNTIME_ZH_TEXT, {
-  "Project information unavailable": "暂无项目信息",
   "Completed": "已完成",
   "Runner unavailable": "执行端信息暂不可用",
   "Search windows or projects…": "搜索窗口或项目…",

@@ -105,7 +105,9 @@ shows the last successful sync time and a manual refresh action. Independent
 server status and Runner inventory reads run concurrently.
 
 Window headers and Session context expose selectable, complete canonical IDs with
-copy actions and explicit clipboard failure feedback. Window identity is always inspectable in the detail field strip; mobile groups canonical IDs in a disclosure.
+copy actions and explicit clipboard failure feedback. Window detail groups canonical
+Window/Project IDs and the last request time in one expandable IDs section at every
+width, so identity never pushes the activity feed below the fold.
 Switching Windows keeps the current Window/Collaboration view and clears Session
 focus. The collaboration composer edits the same single Session focus as the
 activity filter; it is the message's explicit context, never an inferred one.
@@ -183,8 +185,9 @@ separate pages sharing the shell's content scroller. A state-only browser-histor
 marker supports Back; identifiers never enter the URL. The detail header and tabs
 stay visible, the collaboration composer stays at the bottom, and primary mobile
 navigation returns when details close. Safe-area insets apply to sticky controls.
-Machine/source/time/path facts remain visible; IDs use an expandable section on
-mobile. Window and Collaboration keep the existing evidence and authority behavior.
+Machine/source/first/last-active/path facts remain visible as a compact grid; IDs
+use the expandable section. An active server-side Project filter names its Project
+on the Filter control, because it changes every board count. Window and Collaboration keep the existing evidence and authority behavior.
 
 Board layout lives in `src/runtime-v2/styles-window-board.css`, imported after the
 shared Runtime styles. Desktop/embedded styles and backend authority remain

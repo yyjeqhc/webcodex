@@ -833,7 +833,11 @@ impl RunnerRegistry {
         let mut inner = self.inner.lock().await;
         let runner = inner.runners.get_mut(client_id).ok_or("unknown Runner")?;
         if runner.runner_instance_id != runner_instance_id
-            || connection_id.is_some_and(|id| runner.connection_id.as_deref() != Some(id))
+            || runner.disconnected_at.is_some()
+            || match connection_id {
+                Some(id) => runner.connection_id.as_deref() != Some(id),
+                None => runner.transport != RunnerTransport::Polling,
+            }
         {
             return Err("stale Runner capacity lease".into());
         }

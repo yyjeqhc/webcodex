@@ -126,6 +126,22 @@ async fn hot_job_capacity_is_bounded_and_fenced_by_instance_connection_and_gener
                 Some(6)
             );
         }
+        // A delayed poll cannot mutate a same-instance stream lease, even if
+        // it claims a higher generation than the current stream has reported.
+        if connection.is_some() {
+            assert!(registry
+                .update_job_capacity("capacity", "instance", None, capacity(3, 32))
+                .await
+                .is_err());
+            assert_eq!(
+                registry
+                    .get_runner_view("capacity")
+                    .await
+                    .unwrap()
+                    .job_concurrency_limit,
+                Some(6)
+            );
+        }
         // An obsolete registration from this same process must not regress capacity.
         assert!(registry.register(request).await.is_err());
         registry
@@ -138,6 +154,19 @@ async fn hot_job_capacity_is_bounded_and_fenced_by_instance_connection_and_gener
             .unwrap();
         assert_eq!(
             registry.list_runners().await[0].job_concurrency_limit,
+            Some(2)
+        );
+        registry.reconcile_disconnect("capacity", "instance").await;
+        assert!(registry
+            .update_job_capacity("capacity", "instance", connection, capacity(4, 32))
+            .await
+            .is_err());
+        assert_eq!(
+            registry
+                .get_runner_view("capacity")
+                .await
+                .unwrap()
+                .job_concurrency_limit,
             Some(2)
         );
     }

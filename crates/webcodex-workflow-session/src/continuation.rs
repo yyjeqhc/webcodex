@@ -631,6 +631,53 @@ fn empty_attempt() -> AttemptSummary {
     }
 }
 
+/// Read-only, bounded projection over the retained Session ledger.
+///
+/// A successful Job acceptance has its own matching terminal tool event;
+/// its subsequent running/recovering state belongs to the Job lifecycle,
+/// not to this unfinished-call check. Never correlate by wall time or args.
+fn has_unconfirmed_mutating_call(summary: &SessionSummary) -> bool {
+    let Some(project) = summary.project.as_deref() else {
+        return false;
+    };
+    summary.events.iter().enumerate().any(|(index, start)| {
+        if start.kind != "tool_call_started"
+            || !(start.write_like || start.shell_like)
+            || start.session_id != summary.session_id
+            || start
+                .resolved_project
+                .as_deref()
+                .or(start.project.as_deref())
+                != Some(project)
+        {
+            return false;
+        }
+        let Some(call_id) = start.call_id.as_deref().filter(|id| !id.is_empty()) else {
+            // Legacy starts cannot be proven to have a matching finish.
+            return true;
+        };
+        // Duplicated/corrupted finishes are not authoritative confirmation.
+        let matching_finishes = summary.events[index + 1..]
+            .iter()
+            .filter(|finish| {
+                finish.kind == "tool_call_finished"
+                    && finish.session_id == start.session_id
+                    && finish
+                        .resolved_project
+                        .as_deref()
+                        .or(finish.project.as_deref())
+                        == Some(project)
+                    && finish.tool_name == start.tool_name
+                    && finish.call_id.as_deref() == Some(call_id)
+                    && finish.logical_invocation_id == start.logical_invocation_id
+                    && finish.logical_invocation_role == start.logical_invocation_role
+            })
+            .take(2)
+            .count();
+        matching_finishes != 1
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_attempt_summary(
     attempt_events: &[SessionEvent],
@@ -679,6 +726,11 @@ fn build_attempt_summary(
     };
 
     // --- activity (meaningful tool calls only) ---
+    // An attempt boundary is not confirmation that a prior mutating request
+    // finished. Only exact retained call identity can resolve such a start.
+    let unconfirmed_mutating_call = has_unconfirmed_mutating_call(session_summary);
+    let incomplete_call_history =
+        session_summary.events_truncated || session_summary.retention_truncated;
     let canonical_finished = canonical_tool_call_finished_events(semantic_attempt_events);
     let meaningful: Vec<&SessionEvent> = canonical_finished
         .iter()
@@ -746,7 +798,7 @@ fn build_attempt_summary(
     let guidance_block = build_attempt_guidance(discussion);
 
     // --- outcome ---
-    let (outcome_status, reason_codes) = build_attempt_outcome(
+    let (mut outcome_status, mut reason_codes) = build_attempt_outcome(
         &meaningful,
         actionable_failed_tool_calls,
         unresolved_failures,
@@ -754,6 +806,15 @@ fn build_attempt_summary(
         &guidance_block,
         &validation_block,
     );
+    if unconfirmed_mutating_call {
+        outcome_status = "blocked".to_string();
+        push_unique(&mut reason_codes, "unconfirmed_tool_execution");
+    }
+    // The bounded tail cannot prove that no older effect remains unresolved.
+    // This is uncertainty about evidence coverage, not permission to replay.
+    if incomplete_call_history {
+        push_unique(&mut reason_codes, "mutating_call_history_incomplete");
+    }
 
     let mut suggested_next_actions = build_suggested_next_actions(
         &outcome_status,
@@ -785,6 +846,17 @@ fn build_attempt_summary(
             // An uncertain execution cannot authorize replay or a fresh validation run.
             suggested_next_actions.clear();
         }
+        suggested_next_actions.insert(0, action.to_string());
+        suggested_next_actions.truncate(MAX_SUGGESTED_ACTIONS);
+    }
+    if unconfirmed_mutating_call {
+        let action = crate::task_context::RECONCILE_ACTION.to_string();
+        suggested_next_actions.retain(|suggestion| suggestion != &action);
+        suggested_next_actions.insert(0, action);
+        suggested_next_actions.truncate(MAX_SUGGESTED_ACTIONS);
+    } else if incomplete_call_history {
+        let action = "inspect missing Session history before inferring prior tool outcomes";
+        suggested_next_actions.retain(|suggestion| suggestion != action);
         suggested_next_actions.insert(0, action.to_string());
         suggested_next_actions.truncate(MAX_SUGGESTED_ACTIONS);
     }

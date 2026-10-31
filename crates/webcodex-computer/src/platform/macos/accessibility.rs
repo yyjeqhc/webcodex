@@ -723,6 +723,7 @@ pub(crate) fn element_state(
     surface: &SurfaceRecord,
     element: &ElementRecord,
     _include_selection: bool,
+    _include_scroll: bool,
 ) -> Result<Value, String> {
     if !unsafe { AXIsProcessTrusted() } {
         return Err("permission_denied: macOS Accessibility permission is not granted".to_string());

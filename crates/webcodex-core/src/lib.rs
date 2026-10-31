@@ -11,6 +11,7 @@ pub mod cargo_test_count;
 pub mod coding_agent;
 pub mod compact;
 pub mod computer_input_contract;
+pub mod computer_scroll_contract;
 pub mod desktop_runtime_contract;
 pub mod job_input;
 pub mod job_observation;

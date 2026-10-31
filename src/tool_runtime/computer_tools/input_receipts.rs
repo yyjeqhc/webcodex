@@ -196,6 +196,47 @@ pub(super) fn validate_computer_control(
     ToolResult::ok(output)
 }
 
+pub(super) fn validate_computer_scroll(
+    output: Value,
+    expected: &webcodex_core::computer_scroll_contract::ComputerScrollPayload,
+) -> ToolResult {
+    use webcodex_core::computer_scroll_contract::valid_scroll_percent;
+    let allowed = [
+        "platform",
+        "surface_id",
+        "element_id",
+        "direction",
+        "amount",
+        "position_before",
+        "position_after",
+        "success",
+    ];
+    let valid = output.as_object().is_some_and(|object| {
+        object.len() == allowed.len() && object.keys().all(|key| allowed.contains(&key.as_str()))
+    }) && output.get("platform").and_then(Value::as_str) == Some("windows")
+        && output.get("surface_id").and_then(Value::as_str) == Some(expected.surface_id.as_str())
+        && output.get("element_id").and_then(Value::as_str) == Some(expected.element_id.as_str())
+        && output.get("direction") == Some(&json!(expected.direction))
+        && output.get("amount") == Some(&json!(expected.amount))
+        && output
+            .get("position_before")
+            .and_then(Value::as_f64)
+            .is_some_and(valid_scroll_percent)
+        && output
+            .get("position_after")
+            .and_then(Value::as_f64)
+            .is_some_and(valid_scroll_percent)
+        && output.get("success").and_then(Value::as_bool) == Some(true);
+    if valid {
+        ToolResult::ok(output)
+    } else {
+        computer_error(
+            "invalid_runner_response",
+            "container scroll receipt is inconsistent",
+        )
+    }
+}
+
 pub(super) fn validate_computer_scroll_to_element(
     output: Value,
     expected_surface_id: &str,

@@ -77,6 +77,7 @@ pub(super) fn computer_control_policy(
         | Select { .. }
         | Focus { .. }
         | ScrollToElement { .. }
+        | Scroll { .. }
         | Key { .. }
         | InputText { .. } => SpecializedOperationPolicy::consequential(
             SpecializedSource::Computer,

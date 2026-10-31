@@ -26,6 +26,7 @@ pub(super) fn computer_request_is_effect(kind: &str) -> bool {
         "computer_activate_window"
             | "computer_control"
             | "computer_scroll_to_element"
+            | "computer_scroll"
             | "computer_key_input"
             | "computer_input_text"
             | "computer_pointer_move"

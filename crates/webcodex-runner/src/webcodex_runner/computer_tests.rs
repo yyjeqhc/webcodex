@@ -78,6 +78,7 @@ fn computer_request_kinds_remain_closed() {
         "computer_activate_window",
         "computer_control",
         "computer_scroll_to_element",
+        "computer_scroll",
         "computer_key_input",
         "computer_input_text",
     ] {
@@ -200,21 +201,30 @@ fn computer_selection_uses_existing_control_wire_and_rejects_extra_effects() {
 }
 
 #[test]
-fn computer_selection_state_extension_is_explicit_and_legacy_requests_stay_legacy() {
+fn computer_state_extensions_are_explicit_and_legacy_requests_stay_legacy() {
     let legacy = serde_json::json!({"surface_id":"surface_test", "element_id":"element_test"});
-    assert!(!element_state_selection_requested(&legacy).unwrap());
-    for value in [
-        serde_json::json!(true),
-        serde_json::json!(false),
-        serde_json::json!(null),
-        serde_json::json!("true"),
-    ] {
-        let mut payload = legacy.clone();
-        payload["include_selection"] = value.clone();
-        let result = element_state_selection_requested(&payload);
-        match value.as_bool() {
-            Some(expected) => assert_eq!(result.unwrap(), expected),
-            None => assert!(result.is_err()),
+    assert_eq!(element_state_options(&legacy).unwrap(), (false, false));
+    for name in ["include_selection", "include_scroll"] {
+        for value in [
+            serde_json::json!(true),
+            serde_json::json!(false),
+            serde_json::json!(null),
+            serde_json::json!("true"),
+        ] {
+            let mut payload = legacy.clone();
+            payload[name] = value.clone();
+            let result = element_state_options(&payload);
+            match value.as_bool() {
+                Some(expected) => assert_eq!(
+                    result.unwrap(),
+                    if name == "include_selection" {
+                        (expected, false)
+                    } else {
+                        (false, expected)
+                    }
+                ),
+                None => assert!(result.is_err()),
+            }
         }
     }
 }

@@ -2542,6 +2542,15 @@ impl RunnerRegistry {
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
         let is_selection = control_action == "select";
+        let is_scroll = kind == "computer_scroll";
+        if is_scroll {
+            serde_json::from_str::<webcodex_core::computer_scroll_contract::ComputerScrollPayload>(
+                &payload,
+            )
+            .map_err(|_| "invalid computer scroll payload".to_string())?
+            .validate()
+            .map_err(str::to_string)?;
+        }
         let key_input = if kind == "computer_key_input" {
             let input = serde_json::from_str::<
                 webcodex_core::computer_input_contract::ComputerKeyInputPayload,
@@ -2585,6 +2594,9 @@ impl RunnerRegistry {
                     control_action,
                 )
             }
+            "computer_scroll" => {
+                webcodex_core::computer_scroll_contract::COMPUTER_SCROLL_CAPABILITIES
+            }
             "computer_scroll_to_element" => &[RunnerFeature::ComputerScrollToElement],
             "computer_key_input" => &[RunnerFeature::ComputerKeyInput],
             "computer_pointer_move" | "computer_pointer_click" => {
@@ -2625,7 +2637,8 @@ impl RunnerRegistry {
         let key_instance = key_input
             .as_ref()
             .map(|_| current.runner_instance_id.clone());
-        let selection_instance = is_selection.then(|| current.runner_instance_id.clone());
+        let selection_instance =
+            (is_selection || is_scroll).then(|| current.runner_instance_id.clone());
         let expected_runner_instance_id = expected_runner_instance_id
             .or(key_instance.as_deref())
             .or(selection_instance.as_deref());
@@ -2637,6 +2650,7 @@ impl RunnerRegistry {
             }
             if kind != "computer_key_input"
                 && !is_selection
+                && !is_scroll
                 && !current.supports(RunnerFeature::ComputerAccessibilityObserve)
             {
                 return Err("capability_unavailable: post-observation requires computer_accessibility_observe".into());

@@ -526,6 +526,7 @@ pub enum RunnerComputerOperationKind {
     ActivateWindow,
     Control,
     ScrollToElement,
+    Scroll,
     KeyInput,
     InputText,
 }
@@ -550,6 +551,7 @@ impl RunnerComputerOperationKind {
             Self::ActivateWindow => "computer_activate_window",
             Self::Control => "computer_control",
             Self::ScrollToElement => "computer_scroll_to_element",
+            Self::Scroll => "computer_scroll",
             Self::KeyInput => "computer_key_input",
             Self::InputText => "computer_input_text",
         }
@@ -574,6 +576,7 @@ impl RunnerComputerOperationKind {
             "computer_activate_window" => Self::ActivateWindow,
             "computer_control" => Self::Control,
             "computer_scroll_to_element" => Self::ScrollToElement,
+            "computer_scroll" => Self::Scroll,
             "computer_key_input" => Self::KeyInput,
             "computer_input_text" => Self::InputText,
             _ => return None,
@@ -3386,6 +3389,7 @@ mod tests {
             RunnerComputerOperationKind::ActivateWindow,
             RunnerComputerOperationKind::Control,
             RunnerComputerOperationKind::ScrollToElement,
+            RunnerComputerOperationKind::Scroll,
             RunnerComputerOperationKind::KeyInput,
             RunnerComputerOperationKind::InputText,
         ] {
@@ -3455,6 +3459,7 @@ mod tests {
             "computer_activate_window",
             "computer_control",
             "computer_scroll_to_element",
+            "computer_scroll",
             "computer_key_input",
             "computer_input_text",
             crate::validation_bridge::AGENT_VALIDATION_REQUEST_KIND,

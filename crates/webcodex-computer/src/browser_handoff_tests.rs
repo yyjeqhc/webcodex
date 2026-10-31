@@ -87,6 +87,12 @@ fn browser_handoff_blocks_every_native_effect_without_native_dispatch() {
         runtime.activate_window("surface_test"),
         runtime.control("surface_test", "element_missing", ComputerAction::Press),
         runtime.scroll_to_element("surface_test", "element_missing"),
+        runtime.scroll(
+            "surface_test",
+            "element_missing",
+            ComputerScrollDirection::Down,
+            ComputerScrollAmount::Small,
+        ),
         runtime.key_input("surface_test", "enter", &[]),
         runtime.input_text("surface_test", "element_missing", "text"),
         runtime.pointer_effect(PointerAction::Move, "display_missing", 1, 0, 0),
@@ -99,7 +105,7 @@ fn browser_handoff_blocks_every_native_effect_without_native_dispatch() {
     }
     // Read paths still reach their normal validation/platform boundary.
     assert!(!runtime
-        .element_state("surface_test", "element_missing", false)
+        .element_state("surface_test", "element_missing", false, false)
         .unwrap_err()
         .starts_with("browser_user_handoff_active:"));
 }

@@ -87,10 +87,14 @@ fn computer_windows_selection_live() {
     );
     let tree = runtime.accessibility_tree(&surface, 8, 256).unwrap();
     let selected = selection_node(&tree, "Selection A");
-    let legacy = runtime.element_state(&surface, &selected, false).unwrap();
+    let legacy = runtime
+        .element_state(&surface, &selected, false, false)
+        .unwrap();
     assert!(legacy.get("can_select").is_none());
     assert!(legacy.get("selected").is_none());
-    let state = runtime.element_state(&surface, &selected, true).unwrap();
+    let state = runtime
+        .element_state(&surface, &selected, true, false)
+        .unwrap();
     assert_eq!(state["can_select"], true);
     assert_eq!(state["selected"], true);
     assert_eq!(state["can_press"], false);
@@ -114,7 +118,9 @@ fn computer_windows_selection_live() {
     let tree = runtime.accessibility_tree(&surface, 8, 256).unwrap();
     let disabled = selection_node(&tree, "Selection disabled");
     assert_eq!(
-        runtime.element_state(&surface, &disabled, true).unwrap()["can_select"],
+        runtime
+            .element_state(&surface, &disabled, true, false)
+            .unwrap()["can_select"],
         false
     );
     assert!(runtime
@@ -123,7 +129,7 @@ fn computer_windows_selection_live() {
         .contains("disabled"));
     let tab = selection_node(&tree, "Selection second tab");
     assert_eq!(
-        runtime.element_state(&surface, &tab, true).unwrap()["selected"],
+        runtime.element_state(&surface, &tab, true, false).unwrap()["selected"],
         false
     );
     runtime
@@ -137,7 +143,7 @@ fn computer_windows_selection_live() {
     let tree = runtime.accessibility_tree(&surface, 8, 256).unwrap();
     let tab = selection_node(&tree, "Selection second tab");
     assert_eq!(
-        runtime.element_state(&surface, &tab, true).unwrap()["selected"],
+        runtime.element_state(&surface, &tab, true, false).unwrap()["selected"],
         true
     );
     runtime

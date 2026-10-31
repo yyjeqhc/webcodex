@@ -41,18 +41,20 @@ fn ensure_exact_payload_fields(payload: &Value, expected: &[&str]) -> Result<(),
     Ok(())
 }
 
-fn element_state_selection_requested(payload: &Value) -> Result<bool, String> {
-    let fields: &[&str] = if payload.get("include_selection").is_some() {
-        &["surface_id", "element_id", "include_selection"]
-    } else {
-        &["surface_id", "element_id"]
-    };
-    ensure_exact_payload_fields(payload, fields)?;
-    match payload.get("include_selection") {
+fn element_state_options(payload: &Value) -> Result<(bool, bool), String> {
+    let mut fields = vec!["surface_id", "element_id"];
+    for name in ["include_selection", "include_scroll"] {
+        if payload.get(name).is_some() {
+            fields.push(name);
+        }
+    }
+    ensure_exact_payload_fields(payload, &fields)?;
+    let flag = |name: &str| match payload.get(name) {
         None => Ok(false),
         Some(Value::Bool(value)) => Ok(*value),
-        _ => Err("invalid_request: include_selection must be boolean".into()),
-    }
+        _ => Err(format!("invalid_request: {name} must be boolean")),
+    };
+    Ok((flag("include_selection")?, flag("include_scroll")?))
 }
 
 fn optional_snapshot_region(payload: &Value) -> Result<Option<SnapshotRegion>, String> {
@@ -166,8 +168,8 @@ pub(crate) fn handle_computer_operation_with_runtime(
                 runtime.accessibility_tree_scoped(surface_id, root, max_depth, max_nodes)
             })
         }
-        RunnerComputerOperationKind::ElementState => element_state_selection_requested(&payload)
-            .and_then(|include_selection| {
+        RunnerComputerOperationKind::ElementState => {
+            element_state_options(&payload).and_then(|(include_selection, include_scroll)| {
                 let surface_id = payload
                     .get("surface_id")
                     .and_then(Value::as_str)
@@ -176,8 +178,9 @@ pub(crate) fn handle_computer_operation_with_runtime(
                     .get("element_id")
                     .and_then(Value::as_str)
                     .ok_or_else(|| "invalid_request: element_id is required".to_string())?;
-                runtime.element_state(surface_id, element_id, include_selection)
-            }),
+                runtime.element_state(surface_id, element_id, include_selection, include_scroll)
+            })
+        }
         RunnerComputerOperationKind::ActivateWindow => {
             ensure_exact_payload_fields(&payload, &["surface_id"])
                 .and_then(|()| {
@@ -211,6 +214,18 @@ pub(crate) fn handle_computer_operation_with_runtime(
                     action.and_then(|action| runtime.control(surface_id, element_id, action))
                 })
             })
+        }),
+        RunnerComputerOperationKind::Scroll => serde_json::from_value::<
+            webcodex_core::computer_scroll_contract::ComputerScrollPayload,
+        >(payload)
+        .map_err(|_| "invalid_request: invalid computer scroll payload".to_string())
+        .and_then(|input| {
+            runtime.scroll(
+                &input.surface_id,
+                &input.element_id,
+                input.direction,
+                input.amount,
+            )
         }),
         RunnerComputerOperationKind::ScrollToElement => {
             ensure_exact_payload_fields(&payload, &["surface_id", "element_id"]).and_then(|()| {

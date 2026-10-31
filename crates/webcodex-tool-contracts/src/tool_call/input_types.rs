@@ -1408,6 +1408,20 @@ pub enum ComputerControlToolCall {
         #[schemars(length(min = 1, max = 128))]
         element_id: String,
     },
+    /// Scroll one exact observed Windows UIA container by one native increment.
+    Scroll {
+        #[schemars(length(min = 1, max = 128))]
+        client_id: String,
+        #[schemars(length(min = 1, max = 128))]
+        surface_id: String,
+        #[schemars(length(min = 1, max = 128))]
+        element_id: String,
+        direction: webcodex_core::computer_scroll_contract::ComputerScrollDirection,
+        /// Omission/null selects one small increment. Native distance is provider-defined.
+        #[schemars(schema_with = "webcodex_core::computer_scroll_contract::computer_scroll_amount_schema")]
+        #[serde(default)]
+        amount: Option<webcodex_core::computer_scroll_contract::ComputerScrollAmount>,
+    },
     ScrollToElement {
         #[schemars(length(min = 1, max = 128))]
         client_id: String,
@@ -1494,6 +1508,7 @@ impl ComputerControlToolCall {
             Self::Select { .. } => "select",
             Self::Focus { .. } => "focus",
             Self::ScrollToElement { .. } => "scroll_to_element",
+            Self::Scroll { .. } => "scroll",
             Self::Key { .. } => "key",
             Self::InputText { .. } => "input_text",
             Self::PointerMove { .. } => "pointer_move",

@@ -391,6 +391,7 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // implementation and is never inferred from computer_control.
             computer_key_input: false,
             computer_selection: false,
+            computer_scroll: false,
             computer_letter_shortcuts: false,
             computer_key_chords: false,
             // Exact window activation is independently advertised only by the

@@ -606,7 +606,16 @@ async fn dispatch_inbound(
             tool_providers,
             mcp_gateway_providers,
             computer_session_availability,
+            computer_control_epoch,
         } => {
+            let _ = registry
+                .update_computer_control_epoch(
+                    client_id,
+                    runner_instance_id,
+                    Some(connection_id),
+                    computer_control_epoch,
+                )
+                .await;
             let _ = registry
                 .update_job_capacity(
                     client_id,

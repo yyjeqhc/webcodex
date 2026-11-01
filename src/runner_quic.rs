@@ -965,6 +965,7 @@ mod tests {
                         tool_providers: status(update_generation),
                         mcp_gateway_providers: None,
                         computer_session_availability: None,
+                        computer_control_epoch: None,
                     },
                 )
                 .await

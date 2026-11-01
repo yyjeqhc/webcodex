@@ -46,6 +46,7 @@ async fn registry_registers_and_lists_client() {
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

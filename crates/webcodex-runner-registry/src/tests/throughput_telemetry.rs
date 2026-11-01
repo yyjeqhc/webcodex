@@ -64,6 +64,7 @@ async fn registered_metric_runner(registry: &RunnerRegistry, client_id: &str) {
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

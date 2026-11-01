@@ -1,6 +1,216 @@
 use super::*;
 
 #[tokio::test]
+async fn computer_local_control_metadata_requires_its_current_transport_lease() {
+    let registry = RunnerRegistry::default();
+    let mut registration = runner_registration("stream-control", "instance", Vec::new());
+    registration.capabilities.computer_local_control = true;
+    registration.computer_control_epoch = Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".into());
+    let registration = current_runner_registration(registration);
+    for connection in ["old", "current"] {
+        registry
+            .register_streaming_session(
+                registration.clone(),
+                None,
+                connection,
+                RunnerTransport::WebSocket,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .unwrap();
+    }
+    for stale in [None, Some("old")] {
+        assert!(registry
+            .update_computer_control_epoch(
+                "stream-control",
+                "instance",
+                stale,
+                Some("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb".into()),
+            )
+            .await
+            .is_err());
+    }
+    assert_eq!(
+        registry.inner.lock().await.runners["stream-control"]
+            .computer_control_epoch
+            .as_deref(),
+        Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    );
+    registry
+        .update_computer_control_epoch(
+            "stream-control",
+            "instance",
+            Some("current"),
+            Some("cccccccc-cccc-cccc-cccc-cccccccccccc".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        registry.inner.lock().await.runners["stream-control"]
+            .computer_control_epoch
+            .as_deref(),
+        Some("cccccccc-cccc-cccc-cccc-cccccccccccc")
+    );
+}
+
+#[tokio::test]
+async fn computer_local_control_helper_can_publish_its_first_epoch_after_registration() {
+    let registry = RunnerRegistry::default();
+    let mut registration = runner_registration("starting-helper", "instance", Vec::new());
+    registration.owner = Some("user".into());
+    registration.capabilities.computer_local_control = true;
+    registration.capabilities.computer_clipboard_write = true;
+    registry
+        .register(current_runner_registration(registration))
+        .await
+        .unwrap();
+    let access = auth_context(Some("user"), false);
+    let payload = r#"{"text":"fixture"}"#;
+    let error = registry
+        .enqueue_computer(
+            "starting-helper".into(),
+            "computer_write_clipboard",
+            payload.into(),
+            "user".into(),
+            Some(&access),
+            5,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.starts_with("computer_control_unavailable:"));
+    registry
+        .update_computer_control_epoch(
+            "starting-helper",
+            "instance",
+            None,
+            Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".into()),
+        )
+        .await
+        .unwrap();
+    let (_, pending) = registry
+        .enqueue_computer(
+            "starting-helper".into(),
+            "computer_write_clipboard",
+            payload.into(),
+            "user".into(),
+            Some(&access),
+            5,
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(RunnerPollRequest {
+            client_id: "starting-helper".into(),
+            runner_instance_id: "instance".into(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        request.computer_control_epoch.as_deref(),
+        Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    );
+    drop(pending);
+}
+
+#[tokio::test]
+async fn computer_local_control_revision_fences_queued_effects_but_not_observation() {
+    let registry = RunnerRegistry::default();
+    let mut registration = runner_registration("local-control", "instance", Vec::new());
+    registration.owner = Some("user".into());
+    registration.capabilities.computer_local_control = true;
+    let access = auth_context(Some("user"), false);
+    registration.capabilities.computer_clipboard_write = true;
+    registration.capabilities.computer_observe = true;
+    registration.computer_control_epoch = Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".into());
+    registry
+        .register(current_runner_registration(registration))
+        .await
+        .unwrap();
+    let (_, effect) = registry
+        .enqueue_computer(
+            "local-control".into(),
+            "computer_write_clipboard",
+            r#"{"text":"fixture"}"#.into(),
+            "user".into(),
+            Some(&access),
+            5,
+        )
+        .await
+        .unwrap();
+    let (_, observation) = registry
+        .enqueue_computer(
+            "local-control".into(),
+            "computer_list_windows",
+            r#"{"limit":1}"#.into(),
+            "user".into(),
+            Some(&access),
+            5,
+        )
+        .await
+        .unwrap();
+    assert!(registry
+        .update_computer_control_epoch(
+            "local-control",
+            "stale-instance",
+            None,
+            Some("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb".into())
+        )
+        .await
+        .is_err());
+    registry
+        .update_computer_control_epoch(
+            "local-control",
+            "instance",
+            None,
+            Some("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb".into()),
+        )
+        .await
+        .unwrap();
+    let delivered = registry
+        .poll(RunnerPollRequest {
+            client_id: "local-control".into(),
+            runner_instance_id: "instance".into(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(delivered.kind, "computer_list_windows");
+    assert!(delivered.computer_control_epoch.is_none());
+    let rejected = effect.await.unwrap();
+    assert_eq!(rejected.request_dispatched, Some(false));
+    assert!(rejected
+        .error
+        .unwrap()
+        .starts_with("computer_control_changed:"));
+    drop(observation);
+    let (_, pending) = registry
+        .enqueue_computer(
+            "local-control".into(),
+            "computer_write_clipboard",
+            r#"{"text":"new request"}"#.into(),
+            "user".into(),
+            Some(&access),
+            5,
+        )
+        .await
+        .unwrap();
+    let delivered = registry
+        .poll(RunnerPollRequest {
+            client_id: "local-control".into(),
+            runner_instance_id: "instance".into(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        delivered.computer_control_epoch.as_deref(),
+        Some("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    );
+    drop(pending);
+}
+
+#[tokio::test]
 async fn computer_selection_and_key_chords_have_independent_admission() {
     for selection in [false, true] {
         for chords in [false, true] {

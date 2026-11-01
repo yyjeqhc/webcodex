@@ -11,6 +11,8 @@ mod mcp_providers;
 mod operation_completion;
 mod path_inventory;
 pub use path_inventory::{ExportInventoryRequest, OpenInventoryRequest};
+#[cfg(all(test, windows, desktop_native_smoke))]
+pub(crate) mod computer_native_smoke;
 #[cfg(test)]
 mod projectless_tests;
 #[cfg(test)]

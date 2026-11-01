@@ -24,6 +24,7 @@ fn registration(supported: bool) -> RunnerRegisterRequest {
     capabilities.project_dependency_policy_v1 = supported;
     current_runner_registration(RunnerRegisterRequest {
         computer_session_availability: None,
+        computer_control_epoch: None,
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,

@@ -302,5 +302,18 @@
   "completion.copied": "読み取り依頼をコピーしました",
   "completion.identityPending": "Runner ID はまだ取得できません。読み取り前に環境を更新してください。",
   "completion.runnerId": "Runner ID",
-  "completion.projectId": "プロジェクト ID"
+  "completion.projectId": "プロジェクト ID",
+  "tray.computerUnavailable": "Computer：状態を取得できません",
+  "tray.computerPausing": "Computer：一時停止中、操作の完了待ち",
+  "tray.computerPausedObserving": "Computer：操作は一時停止、観察中",
+  "tray.computerPaused": "Computer：操作は一時停止中",
+  "tray.computerControlling": "Computer：操作要求を処理中",
+  "tray.computerObserving": "Computer：観察中",
+  "tray.computerIdle": "Computer：待機中",
+  "tray.computerResume": "Computer Control を再開",
+  "tray.computerPause": "Computer Control を一時停止",
+  "tray.computerRecentControl": "Computer：直前に操作要求を処理",
+  "tray.computerRecentObservation": "Computer：直前にデスクトップを観察",
+  "tray.computerPauseNotSaved": "Computer：以後の入力は停止しましたが、一時停止を保存できませんでした。再起動後に操作が再開する可能性があります",
+  "tray.computerRetryPause": "Computer Control の一時停止を再保存"
 }

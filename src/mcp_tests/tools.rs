@@ -416,6 +416,7 @@ async fn hidden_extensions_keep_exact_manifest_and_gateway_execution() {
         .register_with_auth(
             crate::test_support::current_runner_registration(RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 client_id: "hidden-extension-runner".to_string(),
                 runner_instance_id: "inst".to_string(),
                 runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
@@ -1241,6 +1242,7 @@ async fn project_artifact_image_call_returns_native_image_for_remote_agent_proje
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 client_id: client_id.to_string(),
                 runner_instance_id: runner_instance_id.to_string(),
                 runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
@@ -3436,6 +3438,7 @@ async fn mcp_read_files_ignores_inapplicable_context_ack_without_consuming_it() 
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -3856,6 +3859,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -4035,6 +4039,7 @@ async fn managed_worktree_project_grant_admission_preserves_exact_and_root_autho
         .register_with_auth(
             crate::test_support::current_runner_registration(RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -4394,6 +4399,7 @@ async fn project_share_root_scope_admits_new_directories_without_weakening_other
         .register_with_auth(
             crate::test_support::current_runner_registration(RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -4500,6 +4506,7 @@ async fn project_grant_authority_is_identical_for_project_credential_and_share_o
     let registration = |client_id: &str, instance_id: &str| {
         crate::test_support::current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

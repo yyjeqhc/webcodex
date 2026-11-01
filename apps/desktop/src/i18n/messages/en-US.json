@@ -302,5 +302,18 @@
   "completion.copied": "Read request copied",
   "completion.identityPending": "Runner identity is not available yet. Refresh the environment before trying the read.",
   "completion.runnerId": "Runner ID",
-  "completion.projectId": "Project ID"
+  "completion.projectId": "Project ID",
+  "tray.computerUnavailable": "Computer: status unavailable",
+  "tray.computerPausing": "Computer: pausing; control still in flight",
+  "tray.computerPausedObserving": "Computer: control paused; observing",
+  "tray.computerPaused": "Computer: control paused",
+  "tray.computerControlling": "Computer: processing a control request",
+  "tray.computerObserving": "Computer: observing",
+  "tray.computerIdle": "Computer: idle",
+  "tray.computerResume": "Resume Computer Control",
+  "tray.computerPause": "Pause Computer Control",
+  "tray.computerRecentControl": "Computer: recent control request",
+  "tray.computerRecentObservation": "Computer: recent observation",
+  "tray.computerPauseNotSaved": "Computer: further input blocked; pause not saved; restart may enable control",
+  "tray.computerRetryPause": "Retry saving Computer Control pause"
 }

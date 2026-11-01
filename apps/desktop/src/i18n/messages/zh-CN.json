@@ -302,5 +302,18 @@
   "completion.copied": "已复制读取请求",
   "completion.identityPending": "Runner 标识尚不可用。尝试读取前请刷新环境。",
   "completion.runnerId": "Runner ID",
-  "completion.projectId": "项目 ID"
+  "completion.projectId": "项目 ID",
+  "tray.computerUnavailable": "Computer：状态不可用",
+  "tray.computerPausing": "Computer：正在暂停，仍有在途控制",
+  "tray.computerPausedObserving": "Computer：控制已暂停，仍在观察",
+  "tray.computerPaused": "Computer：控制已暂停",
+  "tray.computerControlling": "Computer：正在处理控制请求",
+  "tray.computerObserving": "Computer：正在观察",
+  "tray.computerIdle": "Computer：空闲",
+  "tray.computerResume": "恢复 Computer Control",
+  "tray.computerPause": "暂停 Computer Control",
+  "tray.computerRecentControl": "Computer：刚刚处理了控制请求",
+  "tray.computerRecentObservation": "Computer：刚刚观察过桌面",
+  "tray.computerPauseNotSaved": "Computer：后续输入已阻断，但暂停状态保存失败；重启后可能恢复控制",
+  "tray.computerRetryPause": "重试保存暂停 Computer Control"
 }

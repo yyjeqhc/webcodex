@@ -24,6 +24,7 @@ fn apply_text_edits_request(
         });
     }
     RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: "req-apply-text-edits".to_string(),

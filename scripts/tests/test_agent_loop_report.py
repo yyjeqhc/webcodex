@@ -1395,6 +1395,33 @@ class AgentLoopReportTests(unittest.TestCase):
             with self.assertRaisesRegex(report.ReportError, "bounded JSON"):
                 report.load_case_manifest(huge_int)
 
+    def test_manifest_loader_has_parser_independent_depth_limit(self) -> None:
+        manifest = report.load_case_manifest(report.DEFAULT_CASE_MANIFEST)
+        nested: object = 0
+        # The root object plus these arrays reaches the supported depth of 128.
+        for _ in range(127):
+            nested = [nested]
+        manifest["metadata"] = nested
+        path = self.root / "depth.json"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertEqual(report.load_case_manifest(path)["metadata"], nested)
+        manifest["metadata"] = [nested]
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaisesRegex(report.ReportError, "bounded JSON"):
+            report.load_case_manifest(path)
+
+    def test_manifest_loader_bounds_bytes_and_preserves_escaped_string_content(self) -> None:
+        manifest = report.load_case_manifest(report.DEFAULT_CASE_MANIFEST)
+        manifest["metadata"] = '\\"' + "[{}]" * 200 + '\\"'
+        encoded = json.dumps(manifest, ensure_ascii=False).encode("utf-8")
+        path = self.root / "size.json"
+        at_limit = encoded + b" " * (1024 * 1024 - len(encoded))
+        path.write_bytes(at_limit)
+        self.assertEqual(report.load_case_manifest(path), manifest)
+        path.write_bytes(at_limit + b" ")
+        with self.assertRaisesRegex(report.ReportError, "bounded JSON"):
+            report.load_case_manifest(path)
+
     def test_manifest_requires_fields_and_stable_serialization(self) -> None:
         manifest = report.load_case_manifest(report.DEFAULT_CASE_MANIFEST)
         serialized_once = report._stable_json(manifest)

@@ -23,6 +23,7 @@ async fn register_bridge_runner(registry: &RunnerRegistry) {
     registry
         .register(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             client_id: "bridge-runner".to_string(),
             runner_instance_id: "bridge-instance".to_string(),
             runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
@@ -62,6 +63,7 @@ fn bridge_registration(
 ) -> RunnerRegisterRequest {
     current_runner_registration(RunnerRegisterRequest {
         computer_session_availability: None,
+        computer_control_epoch: None,
         client_id: client_id.to_string(),
         runner_instance_id: runner_instance_id.to_string(),
         runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,

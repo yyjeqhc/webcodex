@@ -325,6 +325,7 @@ mod tests {
                         ..Default::default()
                     },
                     computer_session_availability: None,
+                    computer_control_epoch: None,
                     host_context: None,
                     policy: None,
                     process_started_at: Some(100),

@@ -231,7 +231,10 @@ pub(crate) fn read_clipboard() -> Result<Value, String> {
 }
 
 #[cfg(windows)]
-pub(crate) fn write_clipboard(text: &str) -> Result<Value, String> {
+pub(crate) fn write_clipboard(
+    text: &str,
+    control: &local_control::ActivityGuard,
+) -> Result<Value, String> {
     // Everything below through owner creation is pre-effect preparation.
     let prepared = prepare_clipboard_write_text(text)?;
     let mut global = OwnedClipboardGlobal::allocate(&prepared)?;
@@ -241,22 +244,24 @@ pub(crate) fn write_clipboard(text: &str) -> Result<Value, String> {
         "not_started: OpenClipboard failed before clipboard state changed",
     )?;
 
-    let effect = run_clipboard_write_effect_steps(
-        || unsafe { EmptyClipboard() }.is_ok(),
-        || {
-            let result = unsafe {
-                SetClipboardData(u32::from(CF_UNICODETEXT.0), Some(global.data_handle()))
-            };
-            if result.is_ok() {
-                // SetClipboardData success transfers HGLOBAL ownership to Windows.
-                global.transfer_to_windows();
-                true
-            } else {
-                false
-            }
-        },
-        || clipboard.close_once(),
-    );
+    let effect = control.commit(|| {
+        run_clipboard_write_effect_steps(
+            || unsafe { EmptyClipboard() }.is_ok(),
+            || {
+                let result = unsafe {
+                    SetClipboardData(u32::from(CF_UNICODETEXT.0), Some(global.data_handle()))
+                };
+                if result.is_ok() {
+                    // SetClipboardData success transfers HGLOBAL ownership to Windows.
+                    global.transfer_to_windows();
+                    true
+                } else {
+                    false
+                }
+            },
+            || clipboard.close_once(),
+        )
+    })?;
 
     match effect {
         ClipboardWriteEffectState::NotStarted => Err(

@@ -461,6 +461,7 @@ fn wait_for_macos_application_launch(
 pub(crate) fn launch_application(
     application_id: &str,
     application: &ApplicationRecord,
+    control: &local_control::ActivityGuard,
 ) -> Result<Value, String> {
     // Prepare every launch object that does not depend on the current target identity
     // before the final filesystem/bundle proof. This keeps same-path replacement
@@ -484,13 +485,15 @@ pub(crate) fn launch_application(
             // This asynchronous call is the native effect boundary. It is submitted
             // exactly once; every timeout, callback loss, or non-success completion is
             // unknown and never causes a second launch request.
-            workspace.openApplicationAtURL_configuration_completionHandler(
-                &application_url,
-                &configuration,
-                Some(&completion),
-            );
+            control.commit(|| {
+                workspace.openApplicationAtURL_configuration_completionHandler(
+                    &application_url,
+                    &configuration,
+                    Some(&completion),
+                )
+            })
         },
-    )?;
+    )??;
     wait_for_macos_application_launch(receiver, MACOS_APPLICATION_LAUNCH_WAIT)?;
     Ok(json!({
         "platform": "macos",

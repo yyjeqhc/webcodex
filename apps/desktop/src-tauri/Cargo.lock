@@ -5041,6 +5041,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "webcodex-computer-control"
+version = "0.5.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "webcodex-core"
 version = "0.5.0"
 dependencies = [
@@ -5077,6 +5088,7 @@ dependencies = [
  "url",
  "uuid",
  "webcodex-build-info",
+ "webcodex-computer-control",
  "webcodex-core",
  "webcodex-environment",
  "webcodex-process",

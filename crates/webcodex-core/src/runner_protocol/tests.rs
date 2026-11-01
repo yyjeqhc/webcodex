@@ -69,6 +69,7 @@ fn runner_capabilities_mixed_wire_golden() {
         structured_cargo_test_lib: true,
         browser_observe: true,
         computer_control: false,
+        computer_local_control: false,
         ..Default::default()
     };
     let expected = r#"{"shell":false,"file_read":true,"file_write":false,"git":false,"jobs":false,"async_jobs":false,"async_shell_jobs":false,"ssh_shell":false,"persistent_shell":false,"ssh_persistent_shell":false,"structured_validation_argv":false,"structured_cargo_test_lib":true,"project_validation_v1":true,"structured_process_argv":false,"structured_script_payload":false,"structured_execution_jobs":false,"lsp_read_only_navigation":false,"lsp_call_hierarchy":false,"project_lifecycle":false,"project_path_registration":false,"browser_observe":true}"#;

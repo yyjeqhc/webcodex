@@ -16,7 +16,10 @@ pub(crate) fn read_clipboard() -> Result<Value, String> {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn write_clipboard(text: &str) -> Result<Value, String> {
+pub(crate) fn write_clipboard(
+    text: &str,
+    control: &local_control::ActivityGuard,
+) -> Result<Value, String> {
     // Complete caller validation and native string/object construction before
     // clearContents crosses the pasteboard mutation boundary.
     let prepared = prepare_clipboard_write_text(text)?;
@@ -24,11 +27,13 @@ pub(crate) fn write_clipboard(text: &str) -> Result<Value, String> {
     let pasteboard = NSPasteboard::generalPasteboard();
     let string_type = unsafe { NSPasteboardTypeString };
 
-    let effect = run_macos_clipboard_write_effect_steps(
-        || pasteboard.clearContents(),
-        || pasteboard.setString_forType(&native_text, string_type),
-        || pasteboard.changeCount(),
-    );
+    let effect = control.commit(|| {
+        run_macos_clipboard_write_effect_steps(
+            || pasteboard.clearContents(),
+            || pasteboard.setString_forType(&native_text, string_type),
+            || pasteboard.changeCount(),
+        )
+    })?;
     match effect {
         ClipboardWriteEffectState::Success => Ok(json!({
             "platform": "macos",

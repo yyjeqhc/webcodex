@@ -384,6 +384,7 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // Control authority is runtime/platform-specific and is never
             // implied by either observation capability in generated config.
             computer_control: false,
+            computer_local_control: false,
             // Semantic scroll-to-element is an independently advertised native
             // capability and is never inferred from computer_control.
             computer_scroll_to_element: false,

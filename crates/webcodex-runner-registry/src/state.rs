@@ -70,6 +70,7 @@ pub(super) struct RunnerRecord {
     /// None preserves legacy direct-session behavior; brokered persistent
     /// Runners report current helper eligibility separately from support.
     pub(super) computer_session_availability: Option<bool>,
+    pub(super) computer_control_epoch: Option<String>,
     pub(super) projects: Vec<RunnerProjectSummary>,
     /// Authoritative project snapshot plus bounded in-progress staging. A
     /// staging failure never changes liveness or partially publishes projects.

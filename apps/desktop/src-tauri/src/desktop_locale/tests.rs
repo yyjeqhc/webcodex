@@ -17,7 +17,7 @@ fn every_locale_has_all_native_tray_translations() {
         .keys()
         .filter(|key| key.starts_with("tray."))
         .collect();
-    assert_eq!(keys.len(), 19);
+    assert_eq!(keys.len(), 32);
     assert!(keys.iter().any(|key| key.as_str() == "tray.lightweight"));
     for locale in LOCALES {
         for key in &keys {

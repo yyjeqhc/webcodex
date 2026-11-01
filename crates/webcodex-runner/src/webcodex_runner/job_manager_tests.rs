@@ -5623,6 +5623,7 @@ fn runner_real_process_job_timeout_terminates_the_whole_tree() {
 
 pub(crate) fn shell_job_request(cwd: &Path, command: &str) -> RunnerRequest {
     RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: "req-job".to_string(),
@@ -5969,6 +5970,7 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
     );
     let (sink, mut rx) = ws_sink("ws-client");
     let request = RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: "req-queued".to_string(),

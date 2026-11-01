@@ -161,3 +161,10 @@ A Full Runtime consists of the Server, Runner, and the Runner's observed Project
 Desktop restart resumes the saved Server/Runner identity and Connections without registering a Project. Concrete Runtime Projects appear when model-driven work resolves a workspace path. A complete online Runner inventory is authoritative for those registrations; Desktop may reconcile stale display history, but the normal Desktop UI does not mutate Project registration state.
 
 Project directories, Git files, and Runner policy remain separate concerns: lazy Project registration creates or reuses runtime identity for an already-authorized path and does not broaden `allowed_roots`.
+
+## Local Computer activity and pause
+
+On Windows, the native tray shows Computer observation/control activity and offers
+**Pause Computer Control** for the saved local Runner. Observation remains available
+while control is paused. See [Local Computer Control](agent/computer-local-control.md)
+for resume, optional edge hints, shortcuts, and execution boundaries.

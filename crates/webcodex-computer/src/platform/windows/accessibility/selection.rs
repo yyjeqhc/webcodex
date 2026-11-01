@@ -108,6 +108,7 @@ pub(super) fn select(
     current: &IUIAutomationElement,
     surface: &SurfaceRecord,
     element: &ElementRecord,
+    control: &local_control::ActivityGuard,
 ) -> Result<(), String> {
     let selection = target(context, current, surface, element)?.ok_or_else(|| {
         "control_failed: select requires a ListItem or TabItem with SelectionItemPattern"
@@ -128,12 +129,14 @@ pub(super) fn select(
         return Err("control_failed: UI Automation element is disabled".into());
     }
     context.deadline.ensure_remaining()?;
-    unsafe { selection.pattern.Select() }.map_err(|e| {
-        windows_control_attempt_error(&format!(
-            "IUIAutomationSelectionItemPattern::Select HRESULT(0x{:08X})",
-            e.code().0 as u32
-        ))
-    })?;
+    control
+        .commit(|| unsafe { selection.pattern.Select() })?
+        .map_err(|e| {
+            windows_control_attempt_error(&format!(
+                "IUIAutomationSelectionItemPattern::Select HRESULT(0x{:08X})",
+                e.code().0 as u32
+            ))
+        })?;
     confirm_selection(
         context
             .deadline

@@ -199,6 +199,7 @@ fn shell_execute_info_for_application(pidl: *const ITEMIDLIST) -> SHELLEXECUTEIN
 pub(crate) fn launch_application(
     application_id: &str,
     application: &ApplicationRecord,
+    control: &local_control::ActivityGuard,
 ) -> Result<Value, String> {
     // Hold a dedicated Shell-compatible STA COM apartment through exact
     // revalidation and native dispatch. An incompatible pre-existing apartment
@@ -208,7 +209,7 @@ pub(crate) fn launch_application(
     // exact fresh PIDL returned by revalidation may reach native dispatch.
     let pidl = revalidate_application_identity(&application.native_identity)?;
     let mut info = shell_execute_info_for_application(pidl.as_ptr());
-    unsafe { ShellExecuteExW(&mut info) }.map_err(|_| {
+    control.commit(|| unsafe { ShellExecuteExW(&mut info) })?.map_err(|_| {
         "outcome_unknown: Windows application launch result was ambiguous after native dispatch attempt"
             .to_string()
     })?;

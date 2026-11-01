@@ -4,6 +4,7 @@ members = [
     "crates/webcodex-build-info",
     "crates/webcodex-browser",
     "crates/webcodex-computer",
+    "crates/webcodex-computer-control",
     "crates/webcodex-code-mode",
     "crates/webcodex-runner-config",
     "crates/webcodex-cli",

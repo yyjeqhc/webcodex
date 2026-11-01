@@ -140,15 +140,53 @@ fn exercise(app: &AppHandle) {
 #[test]
 #[ignore = "real Windows WebView2 and dev server; separate isolated child; run explicitly"]
 fn desktop_real_process_windows_lightweight_smoke() {
+    run_native_smoke(TEST_NAME, exercise);
+}
+
+#[test]
+#[ignore = "real Windows WebView2, native input and dev server; isolated child; run explicitly"]
+fn desktop_real_process_windows_computer_control_smoke() {
+    run_native_smoke(
+        "desktop_native_smoke::desktop_real_process_windows_computer_control_smoke",
+        |app| {
+            wait_until("initial renderer bootstrap complete", || {
+                app.state::<desktop_shell::DesktopShellState>()
+                    .can_enter_lightweight()
+            });
+            menu(app, "tray.lightweight");
+            wait_until("main unloaded before Computer smoke", || unloaded(app));
+            crate::state::computer_native_smoke::exercise(app);
+        },
+    );
+}
+
+fn run_native_smoke(test_name: &'static str, exercise: fn(&AppHandle)) {
     let Some(root) = std::env::var_os(CHILD_ROOT) else {
         let root = tempfile::tempdir().unwrap();
+        // Fixture storage must inherit owner full control even when the chosen
+        // TEMP volume grants newly created files only Authenticated Users Modify.
+        // Production EnvironmentStore still installs and validates its own ACL.
+        let sid = webcodex_environment::current_account().unwrap().identity;
+        let acl = Command::new("icacls.exe")
+            .arg(root.path())
+            .args([
+                "/inheritance:r",
+                "/grant:r",
+                &format!("*{sid}:(OI)(CI)F"),
+                "*S-1-5-18:(OI)(CI)F",
+                "*S-1-5-32-544:(OI)(CI)F",
+            ])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(acl.status.success(), "private native smoke root ACL");
         for directory in ["roaming", "local", "desktop", "webview"] {
             std::fs::create_dir_all(root.path().join(directory)).unwrap();
         }
         let output = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                TEST_NAME,
+                test_name,
                 "--ignored",
                 "--nocapture",
                 "--test-threads=1",

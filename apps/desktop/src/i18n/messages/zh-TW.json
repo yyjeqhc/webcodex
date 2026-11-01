@@ -302,5 +302,18 @@
   "completion.copied": "已複製讀取請求",
   "completion.identityPending": "Runner 標識尚不可用。嘗試讀取前請重新整理環境。",
   "completion.runnerId": "Runner ID",
-  "completion.projectId": "專案 ID"
+  "completion.projectId": "專案 ID",
+  "tray.computerUnavailable": "Computer：狀態無法取得",
+  "tray.computerPausing": "Computer：正在暫停，仍有進行中的控制",
+  "tray.computerPausedObserving": "Computer：控制已暫停，仍在觀察",
+  "tray.computerPaused": "Computer：控制已暫停",
+  "tray.computerControlling": "Computer：正在處理控制請求",
+  "tray.computerObserving": "Computer：正在觀察",
+  "tray.computerIdle": "Computer：閒置",
+  "tray.computerResume": "恢復 Computer Control",
+  "tray.computerPause": "暫停 Computer Control",
+  "tray.computerRecentControl": "Computer：剛剛處理了控制請求",
+  "tray.computerRecentObservation": "Computer：剛剛觀察過桌面",
+  "tray.computerPauseNotSaved": "Computer：後續輸入已阻斷，但暫停狀態儲存失敗；重新啟動後可能恢復控制",
+  "tray.computerRetryPause": "重試儲存暫停 Computer Control"
 }

@@ -295,6 +295,7 @@ async fn request_policy_pending_wait_and_terminal_observe_keep_one_execution_wit
                     ..Default::default()
                 },
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,

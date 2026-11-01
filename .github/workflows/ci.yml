@@ -7,6 +7,7 @@ on:
       - 'release/**'
       - 'feat/computer-key-chords'
       - 'feat/computer-bounded-scroll'
+      - 'feat/computer-local-control'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   merge_group:

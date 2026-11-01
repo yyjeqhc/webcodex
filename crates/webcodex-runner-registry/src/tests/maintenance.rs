@@ -74,6 +74,7 @@ async fn runner_maintenance_blocks_enqueue_and_requires_exact_owner() {
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

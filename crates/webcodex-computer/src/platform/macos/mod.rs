@@ -1,5 +1,4 @@
 use super::{map_error, resolve_surface_window};
-use crate::validate_key_input;
 use crate::{
     bounded_text, ensure_raw_capture_bound, prepare_clipboard_write_text, validate_input_text,
     AccessibilityTreeResult, ApplicationRecord, ClipboardWriteEffectState, ComputerAction,
@@ -7,6 +6,7 @@ use crate::{
     SurfaceRecord,
 };
 use crate::{is_supported_text_input_fingerprint, ElementFingerprint};
+use crate::{local_control, validate_key_input};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::ptr::NonNull;
@@ -71,7 +71,7 @@ pub(crate) fn scroll(
     _element: &crate::ElementRecord,
     _direction: crate::ComputerScrollDirection,
     _amount: crate::ComputerScrollAmount,
-    _handoff: &std::sync::MutexGuard<'_, std::collections::HashMap<String, crate::SurfaceRecord>>,
+    _control: &crate::local_control::ActivityGuard,
 ) -> Result<serde_json::Value, String> {
     Err("unsupported_platform: bounded container scroll requires a Windows Runner".into())
 }

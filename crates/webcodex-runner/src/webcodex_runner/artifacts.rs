@@ -1143,6 +1143,7 @@ mod tests {
 
     fn artifact_request(root: &Path, kind: &str, path: &str, payload: Value) -> RunnerRequest {
         RunnerRequest {
+            computer_control_epoch: None,
             login: false,
             shell: None,
             request_id: format!("req-{kind}"),

@@ -378,6 +378,9 @@ impl ToolRuntime {
         };
         let (request_id, mut receiver) = match enqueued {
             Ok(value) => value,
+            Err(error) if error.starts_with("computer_control_unavailable:") => {
+                return computer_error("computer_control_unavailable", &error);
+            }
             Err(error) if kind == "computer_launch_application" => {
                 return computer_application_effect_not_started(
                     "not_started",
@@ -497,6 +500,16 @@ impl ToolRuntime {
         };
         if let Some(error) = response.error.as_deref() {
             let error_kind = classify_runner_error(error);
+            if matches!(
+                error_kind,
+                "computer_control_paused"
+                    | "computer_control_changed"
+                    | "computer_control_unavailable"
+            ) {
+                // These are Runner-owned pre-effect rejections. Preserve local
+                // user recovery instead of classifying them as uncertain input.
+                return computer_error(error_kind, error);
+            }
             if is_text_input {
                 return computer_text_input_runner_error(
                     error,

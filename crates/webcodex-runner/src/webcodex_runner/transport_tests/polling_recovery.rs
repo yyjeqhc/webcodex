@@ -1247,6 +1247,7 @@ async fn send_register_rejected_ack(
 
 fn start_job_request(cwd: &Path, command: &str) -> RunnerRequest {
     RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: "req-active-job".to_string(),

@@ -9,50 +9,57 @@ pub(super) fn send_provider_metadata(
     expected_generation: Option<u64>,
 ) {
     runtime.with_active(|config| {
-        if expected_generation.is_some_and(|expected| expected != config.generation) {
-            // An accepted result may belong to the generation that performed a
-            // successful config reload. Treat that result only as a delivery
-            // trigger: metadata is always read from the current active
-            // generation below, so stale work can never publish stale routing.
-            tracing::debug!(
-                expected_generation,
-                active_generation = config.generation,
-                "publishing current Runner metadata after config generation changed"
-            );
-        }
-        let provider_update = config.external_tools.claim_status_update();
-        let availability_update = crate::webcodex_runner::computer_session::changed_availability();
-        if provider_update.is_none() && availability_update.is_none() {
-            return;
-        }
-        let had_provider_update = provider_update.is_some();
-        let (mut status, revision) =
-            provider_update.unwrap_or_else(|| config.external_tools.registration_status());
-        status.config_reload = config.reload_status();
-        if try_send_runner_stream_control(
-            transport,
-            tx,
-            RunnerEnvelope::RuntimeMetadata {
-                job_capacity: Some(webcodex_core::runner_protocol::RunnerJobCapacity {
-                    generation: config.generation,
-                    limit: config.max_concurrent_jobs,
-                }),
-                tool_providers: status,
-                mcp_gateway_providers: Some(runtime.mcp_gateway().provider_inventory()),
-                computer_session_availability: availability_update,
-            },
-        ) {
-            if had_provider_update {
-                config.external_tools.mark_status_reported(revision);
+        crate::webcodex_runner::computer_session::publish_control_epoch_update(|control_epoch| {
+            if expected_generation.is_some_and(|expected| expected != config.generation) {
+                // An accepted result may belong to the generation that performed a
+                // successful config reload. Treat that result only as a delivery
+                // trigger: metadata is always read from the current active
+                // generation below, so stale work can never publish stale routing.
+                tracing::debug!(
+                    expected_generation,
+                    active_generation = config.generation,
+                    "publishing current Runner metadata after config generation changed"
+                );
             }
-            if let Some(available) = availability_update {
-                crate::webcodex_runner::computer_session::mark_availability_reported(available);
+            let provider_update = config.external_tools.claim_status_update();
+            let availability_update =
+                crate::webcodex_runner::computer_session::changed_availability();
+            if provider_update.is_none() && availability_update.is_none() && control_epoch.is_none()
+            {
+                return false;
             }
-        } else {
-            if had_provider_update {
-                config.external_tools.release_status_update(revision);
+            let had_provider_update = provider_update.is_some();
+            let (mut status, revision) =
+                provider_update.unwrap_or_else(|| config.external_tools.registration_status());
+            status.config_reload = config.reload_status();
+            if try_send_runner_stream_control(
+                transport,
+                tx,
+                RunnerEnvelope::RuntimeMetadata {
+                    job_capacity: Some(webcodex_core::runner_protocol::RunnerJobCapacity {
+                        generation: config.generation,
+                        limit: config.max_concurrent_jobs,
+                    }),
+                    tool_providers: status,
+                    mcp_gateway_providers: Some(runtime.mcp_gateway().provider_inventory()),
+                    computer_session_availability: availability_update,
+                    computer_control_epoch: control_epoch.clone(),
+                },
+            ) {
+                if had_provider_update {
+                    config.external_tools.mark_status_reported(revision);
+                }
+                if let Some(available) = availability_update {
+                    crate::webcodex_runner::computer_session::mark_availability_reported(available);
+                }
+                true
+            } else {
+                if had_provider_update {
+                    config.external_tools.release_status_update(revision);
+                }
+                false
             }
-        }
+        });
     });
 }
 
@@ -81,6 +88,15 @@ pub(crate) fn run_runner(
     let runner_instance_id = uuid::Uuid::new_v4().to_string();
     if let Some(dir) = computer_session_dir {
         crate::webcodex_runner::computer_session::configure(dir, runner_instance_id.clone())?;
+    }
+    #[cfg(windows)]
+    if !crate::webcodex_runner::computer_session::configured() {
+        let dir = config_path
+            .parent()
+            .ok_or("Runner config has no parent")?
+            .join("cu");
+        std::fs::create_dir_all(&dir).map_err(|_| "computer control directory unavailable")?;
+        crate::webcodex_runner::computer::configure_local_control(&dir)?;
     }
     let transport = cfg
         .transport

@@ -446,6 +446,7 @@ fn json_file_op_request(
     payload: serde_json::Value,
 ) -> RunnerRequest {
     RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: format!("req-{kind}"),
@@ -1130,6 +1131,7 @@ fn project_policy(root: &Path) -> RunnerPolicy {
 
 fn project_request(kind: &str, payload: serde_json::Value) -> RunnerRequest {
     RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: format!("req-{}", kind),

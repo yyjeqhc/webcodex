@@ -50,6 +50,7 @@ async fn resource_diagnostics_public_focused_status_never_claims_remote_measurem
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 client_id: "remote-fixture".into(),
                 runner_instance_id: "fixture-instance".into(),
                 runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,

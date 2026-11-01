@@ -111,6 +111,7 @@ fn live_focus_control_smoke(application_matches: impl Fn(&str) -> bool) -> bool 
             &record,
             &element,
             ComputerAction::Focus,
+            &test_native_activity(),
         ) {
             Ok(output) => {
                 assert_eq!(output["action"], "focus");

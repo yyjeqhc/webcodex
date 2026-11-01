@@ -1,7 +1,7 @@
 # Requires Windows/WebView2, MSVC and the Desktop dev server on its configured URL.
 # Builds only a dedicated test host, never installs Desktop or starts a Runtime.
 [CmdletBinding()]
-param()
+param([switch]$ComputerControl)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
@@ -24,7 +24,12 @@ try {
     }
     if ($compileCode -ne 0) { throw 'Native smoke test-host compilation failed' }
     if (!$hostExe) { throw 'Cargo did not return an actual library test executable' }
-    & $hostExe --exact desktop_native_smoke::desktop_real_process_windows_lightweight_smoke --ignored --nocapture --test-threads=1 2>&1 |
+    $testName = if ($ComputerControl) {
+        'desktop_native_smoke::desktop_real_process_windows_computer_control_smoke'
+    } else {
+        'desktop_native_smoke::desktop_real_process_windows_lightweight_smoke'
+    }
+    & $hostExe --exact $testName --ignored --nocapture --test-threads=1 2>&1 |
         Tee-Object (Join-Path $logs 'native-smoke.log')
     if ($LASTEXITCODE -ne 0) { throw "Native smoke failed (exit $LASTEXITCODE)" }
 } finally {

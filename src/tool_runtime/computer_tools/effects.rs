@@ -21,19 +21,8 @@ pub(super) fn computer_error_recovery_message(error_kind: &str, error: &str) -> 
 }
 
 pub(super) fn computer_request_is_effect(kind: &str) -> bool {
-    matches!(
-        kind,
-        "computer_activate_window"
-            | "computer_control"
-            | "computer_scroll_to_element"
-            | "computer_scroll"
-            | "computer_key_input"
-            | "computer_input_text"
-            | "computer_pointer_move"
-            | "computer_pointer_click"
-            | "computer_write_clipboard"
-            | "computer_launch_application"
-    )
+    webcodex_core::runner_operation::RunnerComputerOperationKind::from_wire(kind)
+        .is_some_and(|kind| kind.is_effect())
 }
 
 pub(super) fn computer_suggested_recovery(
@@ -82,10 +71,20 @@ pub(super) fn computer_error_with_client(
     message: &str,
     client_id: Option<&str>,
 ) -> ToolResult {
-    let result = ToolResult::err_with_output(
+    let mut result = ToolResult::err_with_output(
         message.to_string(),
         json!({"error_kind": kind, "message": bounded_text(message)}),
     );
+    if matches!(
+        kind,
+        "computer_control_paused" | "computer_control_changed" | "computer_control_unavailable"
+    ) {
+        result
+            .output
+            .as_object_mut()
+            .expect("Computer error object")
+            .insert("execution_state".into(), json!("not_started"));
+    }
     match kind {
         // The original finder filters are not retained here. Knowing only the
         // canonical gateway family is insufficient to manufacture a safe finder call.
@@ -124,6 +123,9 @@ pub(super) fn computer_error_with_client(
         },
         "invalid_request" => result.with_recovery(RecoveryKind::FixInput),
         "permission_denied" => result.with_recovery(RecoveryKind::UserAction),
+        "computer_control_paused" | "computer_control_changed" | "computer_control_unavailable" => {
+            result.with_recovery(RecoveryKind::UserAction)
+        }
         _ => result,
     }
 }
@@ -551,6 +553,9 @@ pub(super) fn computer_text_input_runner_error(
 
 pub(super) fn classify_runner_error(error: &str) -> &'static str {
     for kind in [
+        "computer_control_paused",
+        "computer_control_changed",
+        "computer_control_unavailable",
         "permission_denied",
         "stale_surface",
         "stale_element",

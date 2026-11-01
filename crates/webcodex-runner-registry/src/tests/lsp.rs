@@ -21,6 +21,7 @@ async fn register_lsp_test_runner_capabilities(
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

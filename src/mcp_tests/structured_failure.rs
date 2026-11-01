@@ -299,6 +299,7 @@ async fn register_failure_runner_with_resource_links(
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 client_id: "failure-runner".into(),
                 runner_instance_id: "inst".into(),
                 runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,

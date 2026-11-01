@@ -1048,8 +1048,16 @@ runner_capabilities! {
         #[serde(default, skip_serializing_if = "is_false")]
         pub computer_element_state: bool = false;
     }
-    /// Native bounded accessibility control. Missing on older Runners is false and
-    /// is never inferred from either observation capability.
+    /// Software support for local input gating, independently of helper readiness.
+    ComputerLocalControl => RUNNER_CAPABILITY_COMPUTER_LOCAL_CONTROL("computer_local_control"),
+    v2_baseline = false {
+        /// Local input gate and version-fenced Computer requests. This reports
+        /// support; an unavailable helper does not supply an execution epoch.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_local_control: bool = false;
+    }
+    /// Native bounded accessibility control. Missing on older Runners is false
+    /// and is never inferred from observation or local gate support.
     ComputerControl => RUNNER_CAPABILITY_COMPUTER_CONTROL("computer_control"),
     v2_baseline = false {
         /// Native bounded accessibility control. Missing on older Runners is false
@@ -1710,6 +1718,8 @@ pub struct RunnerRegisterRequest {
     /// older Runners, which retain their existing direct Computer behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub computer_session_availability: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_control_epoch: Option<String>,
     /// Optional bounded planning context declared by the Runner configuration.
     /// This is descriptive metadata only: it never grants authority or proves
     /// current host/service/network state.
@@ -2309,6 +2319,8 @@ pub struct RunnerPollPayload {
     /// Changed-only login-session eligibility for a brokered persistent Runner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub computer_session_availability: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_control_epoch: Option<String>,
     /// Optional bounded project inventory page for the canonical paged inventory protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_inventory_page: Option<ShellProjectInventoryPage>,
@@ -2316,6 +2328,8 @@ pub struct RunnerPollPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunnerRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_control_epoch: Option<String>,
     pub request_id: String,
     pub client_id: String,
     #[serde(default = "default_runner_request_kind")]
@@ -2722,6 +2736,7 @@ mod envelope_tests {
 
     fn sample_process_request() -> RunnerRequest {
         RunnerRequest {
+            computer_control_epoch: None,
             login: false,
             request_id: "req-process-1".to_string(),
             client_id: "ws-1".to_string(),
@@ -2792,6 +2807,7 @@ mod envelope_tests {
 
     fn sample_script_request() -> RunnerRequest {
         RunnerRequest {
+            computer_control_epoch: None,
             login: false,
             request_id: "req-script-1".to_string(),
             client_id: "ws-1".to_string(),
@@ -2902,6 +2918,7 @@ mod envelope_tests {
     fn sample_register() -> RunnerRegisterRequest {
         RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             client_id: "ws-1".to_string(),
@@ -3004,6 +3021,7 @@ mod envelope_tests {
                 computer_accessibility_observe: false,
                 computer_element_state: false,
                 computer_control: false,
+                computer_local_control: false,
                 computer_scroll_to_element: false,
                 computer_key_input: false,
                 computer_selection: false,
@@ -3504,6 +3522,7 @@ mod envelope_tests {
     #[test]
     fn request_envelope_flattens_shell_request_fields() {
         let request = RunnerRequest {
+            computer_control_epoch: None,
             login: false,
             request_id: "req-1".to_string(),
             client_id: "ws-1".to_string(),
@@ -4247,6 +4266,7 @@ mod envelope_tests {
             job_capacity: None,
             tool_providers: sample_tool_providers(),
             computer_session_availability: None,
+            computer_control_epoch: None,
             mcp_gateway_providers: Some(vec![crate::mcp_gateway::McpGatewayProvider {
                 provider_id: "blender".to_string(),
                 provider_instance_id: "instance-1".to_string(),
@@ -4283,6 +4303,7 @@ mod envelope_tests {
             tool_providers: sample_tool_providers(),
             mcp_gateway_providers: None,
             computer_session_availability: None,
+            computer_control_epoch: None,
         };
         let mut json = serde_json::to_value(&envelope).unwrap();
         let old: LegacyMetadata = serde_json::from_value(json.clone()).unwrap();
@@ -4310,6 +4331,7 @@ mod envelope_tests {
             tool_providers: None,
             mcp_gateway_providers: None,
             computer_session_availability: None,
+            computer_control_epoch: None,
             project_inventory_page: None,
         };
         let json = serde_json::to_value(&poll).unwrap();
@@ -4637,6 +4659,7 @@ mod envelope_tests {
     async fn quic_register_codec_round_trips_current_wire_shape() {
         let payload = RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             client_id: "q-1".to_string(),

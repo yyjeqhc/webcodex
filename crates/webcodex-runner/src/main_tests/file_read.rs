@@ -8,6 +8,7 @@ fn file_read_request(
     max_bytes: Option<usize>,
 ) -> RunnerRequest {
     RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: "req-file-read".to_string(),

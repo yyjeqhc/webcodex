@@ -31,6 +31,7 @@ async fn lease_different_online_instance_takes_over_immediately_and_retires_old_
     let view = registry
         .register(current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -490,6 +491,7 @@ async fn lease_register_rejects_empty_instance_id() {
     let err = registry
         .register(current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -530,6 +532,7 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -662,6 +665,7 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
     let view = registry
         .register(current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

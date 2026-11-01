@@ -182,6 +182,7 @@ pub(crate) fn runner_registration(
 ) -> crate::runner_protocol::RunnerRegisterRequest {
     crate::runner_protocol::RunnerRegisterRequest {
         computer_session_availability: None,
+        computer_control_epoch: None,
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,

@@ -19,6 +19,7 @@ async fn register_managed_runner(runtime: &ToolRuntime, instance: &str) {
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 client_id: "runner-a".to_string(),
                 runner_instance_id: instance.to_string(),
                 runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,

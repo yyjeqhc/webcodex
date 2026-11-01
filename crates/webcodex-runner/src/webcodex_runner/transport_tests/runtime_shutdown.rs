@@ -600,6 +600,7 @@ fn start_concurrent_polling_server(
 
 fn sync_file_request(request_id: &str) -> RunnerRequest {
     RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: request_id.to_string(),
@@ -635,6 +636,7 @@ fn sync_file_request(request_id: &str) -> RunnerRequest {
 #[cfg(unix)]
 fn polling_shell_request(request_id: &str, cwd: &Path, command: String) -> RunnerRequest {
     RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: request_id.to_string(),

@@ -22,6 +22,9 @@ from typing import Any, Iterable
 
 SCHEMA_VERSION = 1
 DEFAULT_CASE_MANIFEST = Path(__file__).with_name("agent_loop_cases.json")
+MAX_CASE_MANIFEST_BYTES = 1024 * 1024
+MAX_CASE_MANIFEST_DEPTH = 128
+MAX_CASE_MANIFEST_INTEGER_DIGITS = 4300
 CODE_MODE_TOOLS = frozenset(("execute_code_mode", "execute_effectful_code_mode", "execute_mutating_code_mode"))
 CANONICAL_CODE_MODE_SURFACES = ("read_only", "validation", "guarded_edit")
 CODE_MODE_SURFACES = frozenset(CANONICAL_CODE_MODE_SURFACES)
@@ -169,15 +172,49 @@ def validate_case_manifest(value: Any) -> dict[str, Any]:
     return value
 
 
+def _check_manifest_json_depth(text: str) -> None:
+    # Check before decoding, independently of the interpreter's parser stack.
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+        elif character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            if depth > MAX_CASE_MANIFEST_DEPTH:
+                raise ValueError("case manifest exceeds JSON depth limit")
+        elif character in "]}":
+            depth -= 1
+
+
+def _bounded_manifest_int(text: str) -> int:
+    if len(text.lstrip("-")) > MAX_CASE_MANIFEST_INTEGER_DIGITS:
+        raise ValueError("case manifest exceeds JSON integer limit")
+    return int(text)
+
+
 def load_case_manifest(path: Path) -> dict[str, Any]:
     try:
-        text = path.read_text(encoding="utf-8")
+        with path.open("rb") as source:
+            raw = source.read(MAX_CASE_MANIFEST_BYTES + 1)
+        if len(raw) > MAX_CASE_MANIFEST_BYTES:
+            raise ReportError(f"case manifest is not valid bounded JSON: {path}")
+        text = raw.decode("utf-8")
     except OSError as exc:
         raise ReportError(f"could not read case manifest: {path}") from exc
     except UnicodeDecodeError as exc:
         raise ReportError(f"case manifest must be UTF-8: {path}") from exc
     try:
-        value = json.loads(text)
+        _check_manifest_json_depth(text)
+        value = json.loads(text, parse_int=_bounded_manifest_int)
     except json.JSONDecodeError as exc:
         raise ReportError(f"case manifest is not valid JSON: {path}:{exc.lineno}") from exc
     except (RecursionError, ValueError) as exc:

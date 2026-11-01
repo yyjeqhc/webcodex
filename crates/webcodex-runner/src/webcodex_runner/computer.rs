@@ -22,7 +22,56 @@ pub(super) fn computer_runtime() -> &'static ComputerRuntime {
         ComputerRuntime::new(ComputerConfig {
             max_encoded_image_bytes: MAX_MCP_IMAGE_BYTES,
         })
+        .with_local_control(
+            LOCAL_CONTROL
+                .get()
+                .cloned()
+                .unwrap_or_else(webcodex_computer::local_control::LocalControl::new),
+        )
     })
+}
+
+#[cfg(windows)]
+pub(crate) fn configure_local_control(dir: &std::path::Path) -> Result<(), String> {
+    let control = webcodex_computer::local_control::LocalControl::persistent(dir)?;
+    let serve_result = webcodex_computer::local_control::serve(dir, control.clone());
+    let control = local_control_after_pipe_start(control, serve_result)?;
+    LOCAL_CONTROL
+        .set(control)
+        .map_err(|_| "computer control already configured".to_string())
+}
+
+#[cfg(windows)]
+fn local_control_after_pipe_start(
+    control: std::sync::Arc<webcodex_computer::local_control::LocalControl>,
+    serve_result: Result<(), String>,
+) -> Result<std::sync::Arc<webcodex_computer::local_control::LocalControl>, String> {
+    match serve_result {
+        Ok(()) => Ok(control),
+        Err(error)
+            if error == webcodex_computer::local_control::INTERACTIVE_SESSION_REQUIRED_ERROR =>
+        {
+            // An unmanaged Runner launched as a Windows Session 0 task still
+            // needs to serve its independent Shell/file/Job requests. There is
+            // no physical desktop for a management pipe, so fail the Computer
+            // gate closed rather than failing the entire Runner process.
+            tracing::warn!(
+                "No interactive Computer session; native control is disabled for this Runner"
+            );
+            Ok(webcodex_computer::local_control::LocalControl::disabled())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+static LOCAL_CONTROL: OnceLock<std::sync::Arc<webcodex_computer::local_control::LocalControl>> =
+    OnceLock::new();
+
+pub(crate) fn local_control_epoch() -> Option<String> {
+    LOCAL_CONTROL
+        .get()
+        .and_then(|control| control.snapshot().ok())
+        .map(|state| state.epoch)
 }
 
 #[cfg(test)]
@@ -86,6 +135,20 @@ pub(crate) fn handle_computer_operation_with_runtime(
     operation: &RunnerComputerOperation,
 ) -> CommandResult {
     let start = Instant::now();
+    let is_control = operation.kind.is_effect();
+    let control = LOCAL_CONTROL
+        .get()
+        .unwrap_or_else(|| runtime.local_control());
+    if is_control && LOCAL_CONTROL.get().is_some() && operation.control_epoch.is_none() {
+        return err_cmd(
+            start,
+            "computer_control_changed: Server must bind the current local control epoch".into(),
+        );
+    }
+    let _activity = match control.begin(is_control, operation.control_epoch.as_deref()) {
+        Ok(guard) => guard,
+        Err(error) => return err_cmd(start, error),
+    };
     let payload = match serde_json::from_str::<Value>(&operation.payload) {
         Ok(value) => value,
         Err(_) => {

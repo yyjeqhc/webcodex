@@ -1,7 +1,66 @@
 use super::*;
 
+#[cfg(windows)]
+#[test]
+fn headless_windows_local_control_preserves_runner_startup_without_input_authority() {
+    let original = webcodex_computer::local_control::LocalControl::new();
+    let active = local_control_after_pipe_start(original.clone(), Ok(())).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&active, &original));
+
+    let disabled = local_control_after_pipe_start(
+        original,
+        Err(webcodex_computer::local_control::INTERACTIVE_SESSION_REQUIRED_ERROR.into()),
+    )
+    .unwrap();
+    let epoch = disabled.snapshot().unwrap().epoch;
+    assert!(disabled.snapshot().unwrap().paused);
+    assert!(disabled.begin(true, Some(&epoch)).is_err());
+    assert!(
+        disabled.begin(false, None).is_ok(),
+        "headless observation remains non-effectful"
+    );
+
+    assert!(
+        local_control_after_pipe_start(
+            webcodex_computer::local_control::LocalControl::new(),
+            Err("computer_control_unavailable: pipe ACL".into()),
+        )
+        .is_err(),
+        "unexpected management failures must not silently downgrade"
+    );
+}
+
+#[test]
+fn computer_local_pause_and_old_epoch_reject_before_native_clipboard_dispatch() {
+    let runtime = ComputerRuntime::new(ComputerConfig {
+        max_encoded_image_bytes: MAX_MCP_IMAGE_BYTES,
+    });
+    let control = runtime.local_control();
+    let epoch = control.snapshot().unwrap().epoch;
+    let operation = RunnerComputerOperation {
+        control_epoch: Some(epoch.clone()),
+        kind: RunnerComputerOperationKind::WriteClipboard,
+        payload: r#"{"text":"must never be written"}"#.into(),
+        timeout_secs: 1,
+    };
+    let paused = control.set_paused(&epoch, true).unwrap();
+    let rejected = handle_computer_operation_with_runtime(&runtime, &operation);
+    assert!(rejected
+        .error
+        .unwrap()
+        .starts_with("computer_control_paused:"));
+    control.set_paused(&paused.epoch, false).unwrap();
+    let stale = handle_computer_operation_with_runtime(&runtime, &operation);
+    assert!(stale
+        .error
+        .unwrap()
+        .starts_with("computer_control_changed:"));
+    assert!(!control.snapshot().unwrap().controlling);
+}
+
 fn request(kind: &str, payload: &str) -> RunnerRequest {
     RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: "computer-test".to_string(),
@@ -183,6 +242,7 @@ fn computer_selection_uses_existing_control_wire_and_rejects_extra_effects() {
         let result = handle_computer_operation_with_runtime(
             &runtime,
             &RunnerComputerOperation {
+                control_epoch: None,
                 kind: RunnerComputerOperationKind::Control,
                 payload: payload.to_string(),
                 timeout_secs: 5,

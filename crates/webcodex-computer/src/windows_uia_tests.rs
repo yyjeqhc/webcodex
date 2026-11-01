@@ -968,8 +968,12 @@ fn computer_windows_window_activation_live_smoke() {
             Err(error) => panic!("unexpected Windows activation preflight error: {error}"),
         }
 
-        let output = platform::activate_window("surface_windows_activation_live", &target_record)
-            .expect("activate one exact Windows UIA-backed surface");
+        let output = platform::activate_window(
+            "surface_windows_activation_live",
+            &target_record,
+            &test_native_activity(),
+        )
+        .expect("activate one exact Windows UIA-backed surface");
         assert_eq!(output["platform"], "windows");
         assert_eq!(output["surface_id"], "surface_windows_activation_live");
         assert_eq!(output["success"], true);
@@ -981,6 +985,54 @@ fn computer_windows_window_activation_live_smoke() {
 }
 
 #[test]
+#[ignore = "interactive Windows desktop; owned WinForms fixture verifies the final native pause boundary"]
+fn computer_windows_paused_preflight_fixture_live_smoke() {
+    let mut fixture = WindowsControlFixture::start();
+    let candidate = fixture.wait_for_window(WINDOWS_CONTROL_FIXTURE_TITLE, "paused input fixture");
+    assert_eq!(candidate.pid, fixture.child.id());
+    let record = surface_record(candidate);
+    let surface = "surface_paused_preflight_fixture";
+    platform::activate_window(surface, &record, &test_native_activity()).unwrap();
+    let tree = platform::accessibility_tree(surface, &record, 4, 64).unwrap();
+    let (edit_id, edit) = tree
+        .elements
+        .iter()
+        .find(|(_, element)| {
+            element.target_fingerprint().is_some_and(|fingerprint| {
+                fingerprint.role == "AXTextField" && !fingerprint.protected
+            })
+        })
+        .unwrap();
+    platform::control(
+        surface,
+        edit_id,
+        &record,
+        edit,
+        ComputerAction::Focus,
+        &test_native_activity(),
+    )
+    .unwrap();
+    // A request was admitted before the local user paused. Native UIA lookup
+    // and validation still run, but ValuePattern.SetValue must never be called.
+    let control = local_control::LocalControl::new();
+    let admitted = control.begin(true, None).unwrap();
+    let epoch = control.snapshot().unwrap().epoch;
+    let paused = control.set_paused(&epoch, true).unwrap();
+    let error =
+        platform::input_text(surface, edit_id, &record, edit, "blocked", &admitted).unwrap_err();
+    assert!(error.starts_with("computer_control_paused:"), "{error}");
+    let state = platform::element_state(surface, edit_id, 1, &record, edit, false, false).unwrap();
+    assert_eq!(state["value_empty"], true);
+    assert_eq!(state["can_input_text"], true);
+    drop(admitted);
+    control.set_paused(&paused.epoch, false).unwrap();
+    let fresh = control.begin(true, None).unwrap();
+    platform::input_text(surface, edit_id, &record, edit, "resumed", &fresh).unwrap();
+    let state = platform::element_state(surface, edit_id, 1, &record, edit, false, false).unwrap();
+    assert_eq!(state["value_empty"], false);
+}
+
+#[test]
 #[ignore = "requires an interactive Windows desktop; creates and closes a private WinForms control fixture"]
 fn computer_windows_control_fixture_live_smoke() {
     let mut fixture = WindowsControlFixture::start();
@@ -989,8 +1041,12 @@ fn computer_windows_control_fixture_live_smoke() {
         "private WinForms control fixture",
     );
     let record = surface_record(candidate);
-    let activation = platform::activate_window("surface_windows_control_fixture_activate", &record)
-        .expect("activate private WinForms control fixture");
+    let activation = platform::activate_window(
+        "surface_windows_control_fixture_activate",
+        &record,
+        &test_native_activity(),
+    )
+    .expect("activate private WinForms control fixture");
     assert_eq!(activation["success"], true);
 
     let candidate = platform::list_windows(4096)
@@ -1029,8 +1085,15 @@ fn computer_windows_control_fixture_live_smoke() {
         .expect("read private edit state");
     assert_eq!(edit_state["can_focus"], true);
     assert_eq!(edit_state["value_empty"], true);
-    let focused = platform::control(surface_id, edit_id, &record, edit, ComputerAction::Focus)
-        .expect("focus private UIA edit");
+    let focused = platform::control(
+        surface_id,
+        edit_id,
+        &record,
+        edit,
+        ComputerAction::Focus,
+        &test_native_activity(),
+    )
+    .expect("focus private UIA edit");
     assert_eq!(focused["platform"], "windows");
     assert_eq!(focused["action"], "focus");
     assert_eq!(focused["success"], true);
@@ -1050,17 +1113,29 @@ fn computer_windows_control_fixture_live_smoke() {
                 .is_some_and(|fingerprint| fingerprint.protected)
         })
         .expect("fixture exposes a protected UIA password field");
-    let protected_scroll =
-        platform::scroll_to_element(surface_id, &password.0, &record, &password.1)
-            .expect_err("protected UIA target must fail before scrolling");
+    let protected_scroll = platform::scroll_to_element(
+        surface_id,
+        &password.0,
+        &record,
+        &password.1,
+        &test_native_activity(),
+    )
+    .expect_err("protected UIA target must fail before scrolling");
     assert!(
         protected_scroll.starts_with("permission_denied:"),
         "{protected_scroll}"
     );
 
     let text = "webcodex computer smoke";
-    let input = platform::input_text(surface_id, edit_id, &record, edit, text)
-        .expect("write bounded text through private UIA ValuePattern");
+    let input = platform::input_text(
+        surface_id,
+        edit_id,
+        &record,
+        edit,
+        text,
+        &test_native_activity(),
+    )
+    .expect("write bounded text through private UIA ValuePattern");
     assert_eq!(input["platform"], "windows");
     assert_eq!(input["surface_id"], surface_id);
     assert_eq!(input["element_id"], edit_id.as_str());
@@ -1072,8 +1147,15 @@ fn computer_windows_control_fixture_live_smoke() {
     assert_eq!(after_input["focused"], true);
     assert_eq!(after_input["value_empty"], false);
     assert_eq!(after_input["can_input_text"], false);
-    let second = platform::input_text(surface_id, edit_id, &record, edit, "again")
-        .expect_err("bounded Windows text input must not overwrite a non-empty field");
+    let second = platform::input_text(
+        surface_id,
+        edit_id,
+        &record,
+        edit,
+        "again",
+        &test_native_activity(),
+    )
+    .expect_err("bounded Windows text input must not overwrite a non-empty field");
     assert!(second.starts_with("input_failed:"), "{second}");
 
     let button_state =
@@ -1086,6 +1168,7 @@ fn computer_windows_control_fixture_live_smoke() {
         &record,
         button,
         ComputerAction::Press,
+        &test_native_activity(),
     )
     .expect("invoke private UIA button");
     assert_eq!(pressed["platform"], "windows");
@@ -1124,8 +1207,12 @@ fn computer_windows_scroll_to_element_fixture_live_smoke() {
         "private WinForms scroll fixture",
     );
     let record = surface_record(candidate);
-    platform::activate_window("surface_windows_scroll_fixture_activate", &record)
-        .expect("activate private WinForms scroll fixture");
+    platform::activate_window(
+        "surface_windows_scroll_fixture_activate",
+        &record,
+        &test_native_activity(),
+    )
+    .expect("activate private WinForms scroll fixture");
 
     let candidate = platform::list_windows(4096)
         .expect("re-list Windows windows after scroll fixture activation")
@@ -1162,12 +1249,24 @@ fn computer_windows_scroll_to_element_fixture_live_smoke() {
             })
         })
         .expect("fixture exposes a non-scrollable button");
-    let unsupported = platform::scroll_to_element(surface_id, &button.0, &record, &button.1)
-        .expect_err("button without ScrollItemPattern must fail before effect");
+    let unsupported = platform::scroll_to_element(
+        surface_id,
+        &button.0,
+        &record,
+        &button.1,
+        &test_native_activity(),
+    )
+    .expect_err("button without ScrollItemPattern must fail before effect");
     assert!(unsupported.starts_with("scroll_failed:"), "{unsupported}");
 
-    let output = platform::scroll_to_element(surface_id, target_id, &record, target)
-        .expect("scroll exact off-screen UIA list item into view");
+    let output = platform::scroll_to_element(
+        surface_id,
+        target_id,
+        &record,
+        target,
+        &test_native_activity(),
+    )
+    .expect("scroll exact off-screen UIA list item into view");
     assert_eq!(output["platform"], "windows");
     assert_eq!(output["surface_id"], surface_id);
     assert_eq!(output["element_id"], target_id.as_str());
@@ -1210,8 +1309,12 @@ fn computer_windows_key_input_fixture_live_smoke() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    platform::activate_window("surface_windows_key_fixture_activate", &record)
-        .expect("reconcile already-active private WinForms key-input fixture");
+    platform::activate_window(
+        "surface_windows_key_fixture_activate",
+        &record,
+        &test_native_activity(),
+    )
+    .expect("reconcile already-active private WinForms key-input fixture");
 
     let candidate = platform::list_windows(4096)
         .expect("re-list Windows windows after key-input fixture activation")
@@ -1231,11 +1334,24 @@ fn computer_windows_key_input_fixture_live_smoke() {
             })
         })
         .expect("fixture exposes exact SmokeInput element");
-    platform::control(surface_id, edit_id, &record, edit, ComputerAction::Focus)
-        .expect("focus exact private SmokeInput before key input");
+    platform::control(
+        surface_id,
+        edit_id,
+        &record,
+        edit,
+        ComputerAction::Focus,
+        &test_native_activity(),
+    )
+    .expect("focus exact private SmokeInput before key input");
 
-    let command = platform::key_input(surface_id, &record, "tab", &["command".to_string()])
-        .expect_err("Windows command modifier must fail before SendInput");
+    let command = platform::key_input(
+        surface_id,
+        &record,
+        "tab",
+        &["command".to_string()],
+        &test_native_activity(),
+    )
+    .expect_err("Windows command modifier must fail before SendInput");
     assert!(command.starts_with("key_input_failed:"), "{command}");
     let after_command = platform::accessibility_tree(surface_id, &record, 4, 96)
         .expect("re-observe fixture after rejected command modifier");
@@ -1248,7 +1364,7 @@ fn computer_windows_key_input_fixture_live_smoke() {
         "rejected command modifier must not move focus"
     );
 
-    let tab = platform::key_input(surface_id, &record, "tab", &[])
+    let tab = platform::key_input(surface_id, &record, "tab", &[], &test_native_activity())
         .expect("send one closed Tab to the exact foreground fixture");
     assert_eq!(tab["platform"], "windows");
     assert_eq!(tab["surface_id"], surface_id);
@@ -1274,8 +1390,14 @@ fn computer_windows_key_input_fixture_live_smoke() {
         thread::sleep(Duration::from_millis(10));
     }
 
-    let shift_tab = platform::key_input(surface_id, &record, "tab", &["shift".to_string()])
-        .expect("send Shift+Tab with bounded modifier lifetime");
+    let shift_tab = platform::key_input(
+        surface_id,
+        &record,
+        "tab",
+        &["shift".to_string()],
+        &test_native_activity(),
+    )
+    .expect("send Shift+Tab with bounded modifier lifetime");
     assert_eq!(shift_tab["modifiers"], json!(["shift"]));
     let input_focus_deadline = Instant::now() + Duration::from_secs(1);
     loop {
@@ -1295,9 +1417,9 @@ fn computer_windows_key_input_fixture_live_smoke() {
         thread::sleep(Duration::from_millis(10));
     }
 
-    platform::key_input(surface_id, &record, "tab", &[])
+    platform::key_input(surface_id, &record, "tab", &[], &test_native_activity())
         .expect("return focus to the fixture button");
-    platform::key_input(surface_id, &record, "enter", &[])
+    platform::key_input(surface_id, &record, "enter", &[], &test_native_activity())
         .expect("send Enter to the fixture-only focused button");
     let click_deadline = Instant::now() + Duration::from_secs(1);
     loop {
@@ -1316,7 +1438,7 @@ fn computer_windows_key_input_fixture_live_smoke() {
         thread::sleep(Duration::from_millis(10));
     }
 
-    platform::key_input(surface_id, &record, "tab", &[])
+    platform::key_input(surface_id, &record, "tab", &[], &test_native_activity())
         .expect("move fixture focus from button to password field");
     let protected_focus_deadline = Instant::now() + Duration::from_secs(1);
     loop {
@@ -1345,8 +1467,9 @@ fn computer_windows_key_input_fixture_live_smoke() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    let protected = platform::key_input(surface_id, &record, "escape", &[])
-        .expect_err("protected focused content must reject key input before SendInput");
+    let protected =
+        platform::key_input(surface_id, &record, "escape", &[], &test_native_activity())
+            .expect_err("protected focused content must reject key input before SendInput");
     assert!(protected.starts_with("permission_denied:"), "{protected}");
 
     let mut foreground_probe = WindowsControlFixture::start_foreground_probe();
@@ -1363,14 +1486,19 @@ fn computer_windows_key_input_fixture_live_smoke() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    platform::activate_window("surface_windows_key_foreground_probe", &probe_record)
-        .expect("reconcile already-active private foreground probe");
+    platform::activate_window(
+        "surface_windows_key_foreground_probe",
+        &probe_record,
+        &test_native_activity(),
+    )
+    .expect("reconcile already-active private foreground probe");
 
     let outside = platform::test_windows_focused_element_belongs_to_surface(&record)
         .expect_err("focus in another private root must fail exact-root ancestry");
     assert!(outside.starts_with("key_input_failed:"), "{outside}");
-    let background = platform::key_input(surface_id, &record, "escape", &[])
-        .expect_err("background exact surface must fail before SendInput");
+    let background =
+        platform::key_input(surface_id, &record, "escape", &[], &test_native_activity())
+            .expect_err("background exact surface must fail before SendInput");
     assert!(background.starts_with("key_input_failed:"), "{background}");
 }
 
@@ -1383,8 +1511,12 @@ fn computer_windows_uia_stale_identity_rejects_indistinguishable_replacement_liv
         "private WinForms identity fixture",
     );
     let record = surface_record(candidate);
-    platform::activate_window("surface_windows_identity_fixture_activate", &record)
-        .expect("activate private WinForms identity fixture");
+    platform::activate_window(
+        "surface_windows_identity_fixture_activate",
+        &record,
+        &test_native_activity(),
+    )
+    .expect("activate private WinForms identity fixture");
 
     let candidate = platform::list_windows(4096)
         .expect("re-list Windows windows after identity fixture activation")
@@ -1434,6 +1566,7 @@ fn computer_windows_uia_stale_identity_rejects_indistinguishable_replacement_liv
         &record,
         replace,
         ComputerAction::Press,
+        &test_native_activity(),
     )
     .expect("replace both indistinguishable twins through the private fixture");
 
@@ -1484,14 +1617,21 @@ fn computer_windows_uia_stale_identity_rejects_indistinguishable_replacement_liv
         &record,
         &old_twin,
         ComputerAction::Press,
+        &test_native_activity(),
     )
     .expect_err("old effect handle must fail before invoking the replacement twin");
     assert!(
         stale_control.starts_with("stale_element:"),
         "{stale_control}"
     );
-    let stale_scroll = platform::scroll_to_element(surface_id, &old_twin_id, &record, &old_twin)
-        .expect_err("old scroll handle must not retarget the replacement twin");
+    let stale_scroll = platform::scroll_to_element(
+        surface_id,
+        &old_twin_id,
+        &record,
+        &old_twin,
+        &test_native_activity(),
+    )
+    .expect_err("old scroll handle must not retarget the replacement twin");
     assert!(stale_scroll.starts_with("stale_element:"), "{stale_scroll}");
     let after = platform::accessibility_tree(surface_id, &record, 4, 96)
         .expect("re-observe fixture after rejected stale control");

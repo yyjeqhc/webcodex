@@ -1012,7 +1012,11 @@ fn wait_for_window_activation(
 }
 
 #[cfg(windows)]
-pub(crate) fn activate_window(surface_id: &str, surface: &SurfaceRecord) -> Result<Value, String> {
+pub(crate) fn activate_window(
+    surface_id: &str,
+    surface: &SurfaceRecord,
+    control: &local_control::ActivityGuard,
+) -> Result<Value, String> {
     // Resolve the exact xcap identity immediately before the first native
     // effect. This never falls back to an application name, PID, or title.
     let _window = resolve_surface_window(surface)?;
@@ -1047,7 +1051,7 @@ pub(crate) fn activate_window(surface_id: &str, surface: &SurfaceRecord) -> Resu
         // then observe only the local window-state predicate for a bounded
         // interval before proceeding.
         let restore_expires_at = Instant::now() + Duration::from_secs(2);
-        let _ = unsafe { ShowWindowAsync(hwnd, SW_RESTORE) };
+        let _ = control.commit(|| unsafe { ShowWindowAsync(hwnd, SW_RESTORE) })?;
         prior_effect = true;
         while unsafe { IsIconic(hwnd).as_bool() } {
             if let Err(error) = context.deadline.ensure_remaining() {
@@ -1071,7 +1075,12 @@ pub(crate) fn activate_window(surface_id: &str, surface: &SurfaceRecord) -> Resu
         }
         return Err(error);
     }
-    if let Err(error) = unsafe { root.SetFocus() } {
+    let focus_result = if prior_effect {
+        unsafe { root.SetFocus() }
+    } else {
+        control.commit(|| unsafe { root.SetFocus() })?
+    };
+    if let Err(error) = focus_result {
         return Err(windows_window_activation_attempt_error(&format!(
             "IUIAutomationElement::SetFocus HRESULT(0x{:08X})",
             error.code().0 as u32
@@ -1174,6 +1183,7 @@ pub(crate) fn control(
     surface: &SurfaceRecord,
     element: &ElementRecord,
     action: ComputerAction,
+    control: &local_control::ActivityGuard,
 ) -> Result<Value, String> {
     let target = element.target_fingerprint().ok_or_else(|| {
         "stale_element: UIA element correlation lineage is incomplete".to_string()
@@ -1202,7 +1212,7 @@ pub(crate) fn control(
     }
 
     match action {
-        ComputerAction::Select => selection::select(&context, &current, surface, element)?,
+        ComputerAction::Select => selection::select(&context, &current, surface, element, control)?,
         ComputerAction::Press => {
             let pattern = optional_uia_pattern::<IUIAutomationInvokePattern>(
                 &context,
@@ -1213,7 +1223,7 @@ pub(crate) fn control(
                 "control_failed: UI Automation element does not support InvokePattern".to_string()
             })?;
             context.deadline.ensure_remaining()?;
-            if let Err(error) = unsafe { pattern.Invoke() } {
+            if let Err(error) = control.commit(|| unsafe { pattern.Invoke() })? {
                 return Err(windows_control_attempt_error(&format!(
                     "IUIAutomationInvokePattern::Invoke HRESULT(0x{:08X})",
                     error.code().0 as u32
@@ -1248,7 +1258,7 @@ pub(crate) fn control(
             let already_focused = uia_element_has_exact_focus(&context, &current)?;
             if !already_focused {
                 context.deadline.ensure_remaining()?;
-                if let Err(error) = unsafe { current.SetFocus() } {
+                if let Err(error) = control.commit(|| unsafe { current.SetFocus() })? {
                     return Err(windows_control_attempt_error(&format!(
                         "IUIAutomationElement::SetFocus HRESULT(0x{:08X})",
                         error.code().0 as u32
@@ -1292,6 +1302,7 @@ pub(crate) fn scroll_to_element(
     element_id: &str,
     surface: &SurfaceRecord,
     element: &ElementRecord,
+    control: &local_control::ActivityGuard,
 ) -> Result<Value, String> {
     let target = element.target_fingerprint().ok_or_else(|| {
         "stale_element: UIA element correlation lineage is incomplete".to_string()
@@ -1322,7 +1333,7 @@ pub(crate) fn scroll_to_element(
         "scroll_failed: UI Automation element does not support ScrollItemPattern".to_string()
     })?;
     context.deadline.ensure_remaining()?;
-    if let Err(error) = unsafe { pattern.ScrollIntoView() } {
+    if let Err(error) = control.commit(|| unsafe { pattern.ScrollIntoView() })? {
         return Err(windows_scroll_attempt_error(&format!(
             "IUIAutomationScrollItemPattern::ScrollIntoView HRESULT(0x{:08X})",
             error.code().0 as u32

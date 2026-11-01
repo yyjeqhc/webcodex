@@ -894,6 +894,7 @@ mod tests {
             .register(crate::test_support::current_runner_registration(
                 RunnerRegisterRequest {
                     computer_session_availability: None,
+                    computer_control_epoch: None,
                     client_id: "owned-runner".to_string(),
                     runner_instance_id: "instance-owned".to_string(),
                     runner_protocol_generation:

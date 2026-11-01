@@ -31,6 +31,7 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-m
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 webcodex-core = { path = "../../../crates/webcodex-core" }
+webcodex-computer-control = { path = "../../../crates/webcodex-computer-control" }
 webcodex-build-info = { path = "../../../crates/webcodex-build-info" }
 webcodex-environment = { path = "../../../crates/webcodex-environment" }
 webcodex-process = { path = "../../../crates/webcodex-process" }
@@ -43,7 +44,7 @@ libc = "0.2"
 system-configuration = "0.7"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
 winreg = "0.55"
 
 

@@ -16,6 +16,7 @@ fn apply_patch_request_with_mode(
         "matching_mode": matching_mode,
     });
     RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: "req-apply-patch".to_string(),

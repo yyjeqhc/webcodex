@@ -56,6 +56,7 @@ async fn register_sequenced(registry: &RunnerRegistry, instance: &str) {
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -628,6 +629,7 @@ async fn job_log_wait_unsequenced_update_between_calls_and_noop_update() {
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -722,6 +724,7 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

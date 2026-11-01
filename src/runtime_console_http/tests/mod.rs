@@ -85,6 +85,7 @@ async fn register_project_with_computer_availability(
         .runner_registry
         .register_with_auth(
             RunnerRegisterRequest {
+                computer_control_epoch: None,
                 computer_session_availability,
                 process_started_at: None,
                 build: None,

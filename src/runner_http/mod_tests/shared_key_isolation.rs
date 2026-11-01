@@ -49,6 +49,7 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
             .register_with_auth(
                 RunnerRegisterRequest {
                     computer_session_availability: None,
+                    computer_control_epoch: None,
                     process_started_at: None,
                     build: None,
                     job_concurrency_limit: None,
@@ -79,6 +80,7 @@ async fn registry_filters_lightweight_clients_by_auth_group() {
         registry
             .register(RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -218,6 +220,7 @@ async fn non_bootstrap_admin_keeps_global_visibility_without_owner_bypass() {
     registry
         .register(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -285,6 +288,7 @@ async fn managed_user_coding_agent_inventory_does_not_cross_owner() {
         registry
             .register(RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -371,6 +375,7 @@ async fn same_client_id_in_different_project_grants_is_isolated() {
     let grant_b_access = runner_access_from_auth(Some(&grant_b)).unwrap();
     let registration = |hostname: &str| RunnerRegisterRequest {
         computer_session_availability: None,
+        computer_control_epoch: None,
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -439,6 +444,7 @@ async fn shared_key_client_id_collision_cannot_cross_group_or_revive_old_connect
     let registration = |client_id: &str, instance: &str, hostname: &str, owner: Option<&str>| {
         RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

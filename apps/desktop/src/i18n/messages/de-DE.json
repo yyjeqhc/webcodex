@@ -302,5 +302,18 @@
   "completion.copied": "Leseanfrage kopiert",
   "completion.identityPending": "Die Runner-Identität ist noch nicht verfügbar. Aktualisieren Sie die Umgebung vor der Leseabfrage.",
   "completion.runnerId": "Runner-ID",
-  "completion.projectId": "Projekt-ID"
+  "completion.projectId": "Projekt-ID",
+  "tray.computerUnavailable": "Computer: Status nicht verfügbar",
+  "tray.computerPausing": "Computer: Pause angefordert, Steuerung läuft noch",
+  "tray.computerPausedObserving": "Computer: Steuerung pausiert, Beobachtung aktiv",
+  "tray.computerPaused": "Computer: Steuerung pausiert",
+  "tray.computerControlling": "Computer: Steuerungsanfrage wird verarbeitet",
+  "tray.computerObserving": "Computer: Beobachtung aktiv",
+  "tray.computerIdle": "Computer: inaktiv",
+  "tray.computerResume": "Computer Control fortsetzen",
+  "tray.computerPause": "Computer Control pausieren",
+  "tray.computerRecentControl": "Computer: kürzlich verarbeitete Steuerungsanfrage",
+  "tray.computerRecentObservation": "Computer: kürzliche Beobachtung",
+  "tray.computerPauseNotSaved": "Computer: Eingaben blockiert; Pause nicht gespeichert; Neustart kann Steuerung erlauben",
+  "tray.computerRetryPause": "Computer-Control-Pause erneut speichern"
 }

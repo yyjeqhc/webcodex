@@ -818,6 +818,7 @@ mod tests {
                     limit: 6,
                 }),
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 tool_providers: provider_status(),
                 mcp_gateway_providers: Some(vec![crate::mcp_gateway::McpGatewayProvider {
                     provider_id: "blender".to_string(),

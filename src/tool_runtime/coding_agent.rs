@@ -3020,6 +3020,7 @@ mod tests {
             .runner_registry
             .register(RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: Some(1_700_000_000),
                 build: None,
                 job_concurrency_limit: None,

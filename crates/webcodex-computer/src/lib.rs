@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
+pub use webcodex_computer_control as local_control;
+#[cfg(test)]
+mod local_control_tests;
 #[cfg(any(test, target_os = "macos"))]
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -922,7 +925,13 @@ pub struct ComputerConfig {
     pub max_encoded_image_bytes: usize,
 }
 
+struct NativeEffectGuard<'a> {
+    _handoff: MutexGuard<'a, HashMap<String, SurfaceRecord>>,
+    activity: local_control::ActivityGuard,
+}
+
 pub struct ComputerRuntime {
+    local_control: Arc<local_control::LocalControl>,
     config: ComputerConfig,
     browser_user_handoffs: Mutex<HashMap<String, SurfaceRecord>>,
     surfaces: Mutex<HashMap<String, SurfaceRecord>>,
@@ -935,6 +944,7 @@ pub struct ComputerRuntime {
 impl ComputerRuntime {
     pub fn new(config: ComputerConfig) -> Self {
         Self {
+            local_control: local_control::LocalControl::new(),
             config,
             browser_user_handoffs: Mutex::new(HashMap::new()),
             surfaces: Mutex::new(HashMap::new()),
@@ -945,13 +955,22 @@ impl ComputerRuntime {
         }
     }
 
+    pub fn with_local_control(mut self, control: Arc<local_control::LocalControl>) -> Self {
+        self.local_control = control;
+        self
+    }
+
+    pub fn local_control(&self) -> &Arc<local_control::LocalControl> {
+        &self.local_control
+    }
+
     pub fn read_clipboard(&self) -> Result<Value, String> {
         platform::read_clipboard()
     }
 
     pub fn write_clipboard(&self, text: &str) -> Result<Value, String> {
-        let _handoff = self.native_effect_guard()?;
-        platform::write_clipboard(text)
+        let guard = self.native_effect_guard()?;
+        platform::write_clipboard(text, &guard.activity)
     }
 
     /// Runner-only input reservation for a live, exactly resolved Browser window.
@@ -1044,9 +1063,8 @@ impl ComputerRuntime {
         Ok(())
     }
 
-    fn native_effect_guard(
-        &self,
-    ) -> Result<MutexGuard<'_, HashMap<String, SurfaceRecord>>, String> {
+    fn native_effect_guard(&self) -> Result<NativeEffectGuard<'_>, String> {
+        let activity = self.local_control.begin(true, None)?;
         let holds = self
             .browser_user_handoffs
             .lock()
@@ -1057,7 +1075,13 @@ impl ComputerRuntime {
                     .into(),
             );
         }
-        Ok(holds)
+        // Admission may have preceded a wait on another native effect or Browser
+        // reservation. Reject a pause/epoch change that won while this queued.
+        activity.check_control()?;
+        Ok(NativeEffectGuard {
+            _handoff: holds,
+            activity,
+        })
     }
 
     /// Runner-internal Browser handoff. The caller must retain an exact live
@@ -1343,7 +1367,7 @@ impl ComputerRuntime {
         x: u32,
         y: u32,
     ) -> Result<Value, String> {
-        let _handoff = self.native_effect_guard()?;
+        let guard = self.native_effect_guard()?;
         if !valid_display_id(display_id) || snapshot_generation == 0 {
             return Err(
                 "invalid_request: pointer display_id or snapshot_generation is invalid".to_string(),
@@ -1379,13 +1403,15 @@ impl ComputerRuntime {
 
         // Crossing this boundary consumes the snapshot generation before the first native
         // pointer effect, even if dispatch subsequently reports definite not_started or an uncertain outcome.
-        let result = dispatch_after_spending_pointer_generation(
-            &mut snapshot_registry,
-            display_id,
-            snapshot_generation,
-            &display,
-            |_| platform::dispatch_pointer(plan, action),
-        )?;
+        let result = guard.activity.commit(|| {
+            dispatch_after_spending_pointer_generation(
+                &mut snapshot_registry,
+                display_id,
+                snapshot_generation,
+                &display,
+                |_| platform::dispatch_pointer(plan, action),
+            )
+        })??;
         drop(snapshot_registry);
         drop(display_registry);
         Ok(json!({
@@ -1398,9 +1424,9 @@ impl ComputerRuntime {
         }))
     }
     pub fn launch_application(&self, application_id: &str) -> Result<Value, String> {
-        let _handoff = self.native_effect_guard()?;
+        let guard = self.native_effect_guard()?;
         self.with_current_application(application_id, |record| {
-            platform::launch_application(application_id, record)
+            platform::launch_application(application_id, record, &guard.activity)
         })
     }
 
@@ -1583,7 +1609,7 @@ impl ComputerRuntime {
     }
 
     pub fn activate_window(&self, surface_id: &str) -> Result<Value, String> {
-        let _handoff = self.native_effect_guard()?;
+        let guard = self.native_effect_guard()?;
         if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
             return Err("invalid_request: surface_id is invalid".to_string());
         }
@@ -1594,7 +1620,7 @@ impl ComputerRuntime {
             .get(surface_id)
             .cloned()
             .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
-        platform::activate_window(surface_id, &record)
+        platform::activate_window(surface_id, &record, &guard.activity)
     }
 
     pub fn control(
@@ -1603,7 +1629,7 @@ impl ComputerRuntime {
         element_id: &str,
         action: ComputerAction,
     ) -> Result<Value, String> {
-        let _handoff = self.native_effect_guard()?;
+        let guard = self.native_effect_guard()?;
         if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
             return Err("invalid_request: surface_id is invalid".to_string());
         }
@@ -1630,11 +1656,18 @@ impl ComputerRuntime {
         if element.surface_id != surface_id {
             return Err("stale_element: element_id belongs to a different surface".to_string());
         }
-        platform::control(surface_id, element_id, &record, &element, action)
+        platform::control(
+            surface_id,
+            element_id,
+            &record,
+            &element,
+            action,
+            &guard.activity,
+        )
     }
 
     pub fn scroll_to_element(&self, surface_id: &str, element_id: &str) -> Result<Value, String> {
-        let _handoff = self.native_effect_guard()?;
+        let guard = self.native_effect_guard()?;
         if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
             return Err("invalid_request: surface_id is invalid".to_string());
         }
@@ -1661,7 +1694,7 @@ impl ComputerRuntime {
         if element.surface_id != surface_id {
             return Err("stale_element: element_id belongs to a different surface".to_string());
         }
-        platform::scroll_to_element(surface_id, element_id, &record, &element)
+        platform::scroll_to_element(surface_id, element_id, &record, &element, &guard.activity)
     }
 
     pub fn scroll(
@@ -1699,7 +1732,13 @@ impl ComputerRuntime {
             return Err("stale_element: element_id belongs to a different surface".to_string());
         }
         platform::scroll(
-            surface_id, element_id, &record, &element, direction, amount, &_handoff,
+            surface_id,
+            element_id,
+            &record,
+            &element,
+            direction,
+            amount,
+            &_handoff.activity,
         )
     }
 
@@ -1709,7 +1748,7 @@ impl ComputerRuntime {
         key: &str,
         modifiers: &[String],
     ) -> Result<Value, String> {
-        let _handoff = self.native_effect_guard()?;
+        let guard = self.native_effect_guard()?;
         if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
             return Err("invalid_request: surface_id is invalid".to_string());
         }
@@ -1722,7 +1761,7 @@ impl ComputerRuntime {
             .get(surface_id)
             .cloned()
             .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
-        platform::key_input(surface_id, &record, key, modifiers)
+        platform::key_input(surface_id, &record, key, modifiers, &guard.activity)
     }
 
     pub fn input_text(
@@ -1731,7 +1770,7 @@ impl ComputerRuntime {
         element_id: &str,
         text: &str,
     ) -> Result<Value, String> {
-        let _handoff = self.native_effect_guard()?;
+        let guard = self.native_effect_guard()?;
         if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
             return Err("invalid_request: surface_id is invalid".to_string());
         }
@@ -1759,7 +1798,14 @@ impl ComputerRuntime {
         if element.surface_id != surface_id {
             return Err("stale_element: element_id belongs to a different surface".to_string());
         }
-        platform::input_text(surface_id, element_id, &record, &element, text)
+        platform::input_text(
+            surface_id,
+            element_id,
+            &record,
+            &element,
+            text,
+            &guard.activity,
+        )
     }
 
     pub fn snapshot(
@@ -3379,16 +3425,19 @@ struct PlatformWindow {
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
     use super::{
-        AccessibilityTreeResult, ApplicationRecord, ComputerAction, DisplayRecord, ElementRecord,
-        PlatformApplication, PlatformDisplay, PlatformWindow, PointerAction, PointerPlan,
-        SurfaceRecord,
+        local_control, AccessibilityTreeResult, ApplicationRecord, ComputerAction, DisplayRecord,
+        ElementRecord, PlatformApplication, PlatformDisplay, PlatformWindow, PointerAction,
+        PointerPlan, SurfaceRecord,
     };
 
     pub(super) fn read_clipboard() -> Result<serde_json::Value, String> {
         Err("unsupported_platform: clipboard read is unavailable on this platform".to_string())
     }
 
-    pub(super) fn write_clipboard(_text: &str) -> Result<serde_json::Value, String> {
+    pub(super) fn write_clipboard(
+        _text: &str,
+        _control: &local_control::ActivityGuard,
+    ) -> Result<serde_json::Value, String> {
         Err("unsupported_platform: clipboard write is unavailable on this platform".to_string())
     }
 
@@ -3423,6 +3472,7 @@ mod platform {
     pub(super) fn launch_application(
         _application_id: &str,
         _application: &ApplicationRecord,
+        _control: &local_control::ActivityGuard,
     ) -> Result<serde_json::Value, String> {
         Err("unsupported_platform: application launch is unavailable on this platform".to_string())
     }
@@ -3495,6 +3545,7 @@ mod platform {
     pub(super) fn activate_window(
         _surface_id: &str,
         _surface: &SurfaceRecord,
+        _control: &local_control::ActivityGuard,
     ) -> Result<serde_json::Value, String> {
         Err(
             "unsupported_platform: computer window activation is unavailable on this platform"
@@ -3508,6 +3559,7 @@ mod platform {
         _surface: &SurfaceRecord,
         _element: &ElementRecord,
         _action: ComputerAction,
+        _control: &local_control::ActivityGuard,
     ) -> Result<serde_json::Value, String> {
         Err("unsupported_platform: computer control is unavailable on this platform".to_string())
     }
@@ -3519,7 +3571,7 @@ mod platform {
         _element: &ElementRecord,
         _direction: crate::ComputerScrollDirection,
         _amount: crate::ComputerScrollAmount,
-        _handoff: &std::sync::MutexGuard<'_, std::collections::HashMap<String, SurfaceRecord>>,
+        _control: &crate::local_control::ActivityGuard,
     ) -> Result<serde_json::Value, String> {
         Err("unsupported_platform: bounded container scroll requires a Windows Runner".into())
     }
@@ -3529,6 +3581,7 @@ mod platform {
         _element_id: &str,
         _surface: &SurfaceRecord,
         _element: &ElementRecord,
+        _control: &local_control::ActivityGuard,
     ) -> Result<serde_json::Value, String> {
         Err("unsupported_platform: computer scroll is unavailable on this platform".to_string())
     }
@@ -3538,6 +3591,7 @@ mod platform {
         _surface: &SurfaceRecord,
         _key: &str,
         _modifiers: &[String],
+        _control: &local_control::ActivityGuard,
     ) -> Result<serde_json::Value, String> {
         Err("unsupported_platform: computer key input is unavailable on this platform".to_string())
     }
@@ -3548,6 +3602,7 @@ mod platform {
         _surface: &SurfaceRecord,
         _element: &ElementRecord,
         _text: &str,
+        _control: &local_control::ActivityGuard,
     ) -> Result<serde_json::Value, String> {
         Err("unsupported_platform: computer text input is unavailable on this platform".to_string())
     }
@@ -3608,9 +3663,15 @@ mod unsupported_platform_tests {
             path: Vec::new(),
             lineage: vec![fingerprint],
         };
-        let error =
-            platform::input_text("surface_test", "element_test", &surface, &element, "hello")
-                .unwrap_err();
+        let error = platform::input_text(
+            "surface_test",
+            "element_test",
+            &surface,
+            &element,
+            "hello",
+            &test_native_activity(),
+        )
+        .unwrap_err();
         assert!(error.starts_with("unsupported_platform:"), "{error}");
     }
 }
@@ -3625,3 +3686,10 @@ mod windows_uia_tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "macos_live_tests.rs"]
 mod macos_live_tests;
+
+#[cfg(test)]
+fn test_native_activity() -> local_control::ActivityGuard {
+    local_control::LocalControl::new()
+        .begin(true, None)
+        .unwrap()
+}

@@ -14,6 +14,7 @@ async fn register_with_connection(
         .register_streaming_session(
             RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -356,6 +357,7 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
             .register_streaming_session(
                 RunnerRegisterRequest {
                     computer_session_availability: None,
+                    computer_control_epoch: None,
                     process_started_at: None,
                     build: None,
                     job_concurrency_limit: None,

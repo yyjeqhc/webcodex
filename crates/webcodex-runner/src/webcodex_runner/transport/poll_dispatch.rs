@@ -540,6 +540,7 @@ pub(crate) fn handle_one_poll(
             .as_ref()
             .map(|_| runtime.mcp_gateway().provider_inventory()),
         computer_session_availability: computer_session_update,
+        computer_control_epoch: webcodex_runner::computer_session::control_epoch(),
         project_inventory_page,
     };
     let response: RunnerPollResponse = match post_json(client, cfg, RUNNER_POLL_PATH, &poll) {

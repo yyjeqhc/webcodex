@@ -771,7 +771,11 @@ pub(crate) fn element_state(
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn activate_window(surface_id: &str, surface: &SurfaceRecord) -> Result<Value, String> {
+pub(crate) fn activate_window(
+    surface_id: &str,
+    surface: &SurfaceRecord,
+    control: &local_control::ActivityGuard,
+) -> Result<Value, String> {
     if !unsafe { AXIsProcessTrusted() } {
         return Err("permission_denied: macOS Accessibility permission is not granted".to_string());
     }
@@ -797,12 +801,12 @@ pub(crate) fn activate_window(surface_id: &str, surface: &SurfaceRecord) -> Resu
     prepare_ax_call(&deadline, &window)?;
     let mut application_activated = false;
     if frontmost != Some(true) {
-        let error = unsafe {
+        let error = control.commit(|| unsafe {
             application.set_attribute_value(
                 &CFString::from_static_str("AXFrontmost"),
                 CFBoolean::new(true),
             )
-        };
+        })?;
         if error != AXError::Success {
             return Err(window_activation_attempt_error(
                 "AXUIElementSetAttributeValue(AXFrontmost)",
@@ -813,7 +817,12 @@ pub(crate) fn activate_window(surface_id: &str, surface: &SurfaceRecord) -> Resu
         application_activated = true;
     }
 
-    let error = unsafe { window.perform_action(&CFString::from_static_str("AXRaise")) };
+    let error = if application_activated {
+        unsafe { window.perform_action(&CFString::from_static_str("AXRaise")) }
+    } else {
+        control
+            .commit(|| unsafe { window.perform_action(&CFString::from_static_str("AXRaise")) })?
+    };
     if error != AXError::Success {
         return Err(window_activation_attempt_error(
             "AXUIElementPerformAction(AXRaise)",
@@ -835,6 +844,7 @@ pub(crate) fn control(
     surface: &SurfaceRecord,
     element: &ElementRecord,
     action: ComputerAction,
+    control: &local_control::ActivityGuard,
 ) -> Result<Value, String> {
     if !unsafe { AXIsProcessTrusted() } {
         return Err("permission_denied: macOS Accessibility permission is not granted".to_string());
@@ -875,15 +885,14 @@ pub(crate) fn control(
         ComputerAction::Select => {
             return Err("unsupported_platform: native selection is Windows-only".into())
         }
-        ComputerAction::Press => unsafe {
-            current.perform_action(&CFString::from_static_str("AXPress"))
-        },
-        ComputerAction::Focus => unsafe {
+        ComputerAction::Press => control
+            .commit(|| unsafe { current.perform_action(&CFString::from_static_str("AXPress")) })?,
+        ComputerAction::Focus => control.commit(|| unsafe {
             current.set_attribute_value(
                 &CFString::from_static_str("AXFocused"),
                 CFBoolean::new(true),
             )
-        },
+        })?,
     };
     if error != AXError::Success {
         return Err(control_attempt_error(
@@ -910,6 +919,7 @@ pub(crate) fn scroll_to_element(
     element_id: &str,
     surface: &SurfaceRecord,
     element: &ElementRecord,
+    control: &local_control::ActivityGuard,
 ) -> Result<Value, String> {
     if !unsafe { AXIsProcessTrusted() } {
         return Err("permission_denied: macOS Accessibility permission is not granted".to_string());
@@ -937,7 +947,9 @@ pub(crate) fn scroll_to_element(
         );
     }
     prepare_ax_call(&deadline, &current)?;
-    let error = unsafe { current.perform_action(&CFString::from_static_str("AXScrollToVisible")) };
+    let error = control.commit(|| unsafe {
+        current.perform_action(&CFString::from_static_str("AXScrollToVisible"))
+    })?;
     if error != AXError::Success {
         return Err(scroll_attempt_error(
             "AXUIElementPerformAction(AXScrollToVisible)",

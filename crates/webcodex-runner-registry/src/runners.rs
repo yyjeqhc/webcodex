@@ -36,6 +36,8 @@ use webcodex_core::runner_protocol::{
     RunnerRegisterRequest, RunnerView, RUNNER_JOB_CONCURRENCY_MAX, RUNNER_JOB_CONCURRENCY_MIN,
 };
 
+use webcodex_core::runner_operation::valid_computer_control_epoch;
+
 fn validate_coding_agent_registration(
     client_id: &str,
     capability: bool,
@@ -233,6 +235,16 @@ impl RunnerRegistry {
         auth: Option<&crate::RunnerAccess>,
         streaming: Option<StreamingSessionRegistration>,
     ) -> Result<RunnerView, String> {
+        if body
+            .computer_control_epoch
+            .as_deref()
+            .is_some_and(|epoch| !valid_computer_control_epoch(epoch))
+        {
+            return Err("invalid Computer control epoch".into());
+        }
+        if body.computer_control_epoch.is_some() && !body.capabilities.computer_local_control {
+            return Err("Computer control epoch requires computer_local_control support".into());
+        }
         validate_id(&body.client_id, "client_id")?;
         validate_runner_instance_id(&body.runner_instance_id)?;
         validate_optional_field(&body.display_name, "display_name")?;
@@ -313,6 +325,7 @@ impl RunnerRegistry {
             host_context,
             runner_features: runner_features.clone(),
             computer_session_availability: body.computer_session_availability,
+            computer_control_epoch: body.computer_control_epoch.clone(),
             projects,
             project_inventory,
             last_seen: now,
@@ -882,6 +895,33 @@ impl RunnerRegistry {
         }
         runner.computer_session_availability = Some(availability);
         runner.last_seen = now_ts();
+        Ok(())
+    }
+
+    pub async fn update_computer_control_epoch(
+        &self,
+        client_id: &str,
+        runner_instance_id: &str,
+        connection_id: Option<&str>,
+        epoch: Option<String>,
+    ) -> Result<(), String> {
+        let Some(epoch) = epoch else {
+            return Ok(());
+        };
+        if !valid_computer_control_epoch(&epoch) {
+            return Err("invalid Computer control epoch".into());
+        }
+        let mut inner = self.inner.lock().await;
+        let runner = inner.runners.get_mut(client_id).ok_or("unknown Runner")?;
+        if runner.runner_instance_id != runner_instance_id
+            || runner.connection_id.as_deref() != connection_id
+            || !runner
+                .runner_features
+                .supports(RunnerFeature::ComputerLocalControl)
+        {
+            return Err("Computer control epoch requires the active opted-in Runner lease".into());
+        }
+        runner.computer_control_epoch = Some(epoch);
         Ok(())
     }
 

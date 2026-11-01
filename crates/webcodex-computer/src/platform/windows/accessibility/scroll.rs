@@ -97,7 +97,7 @@ pub(crate) fn scroll(
     element: &ElementRecord,
     direction: ComputerScrollDirection,
     amount: ComputerScrollAmount,
-    _handoff: &std::sync::MutexGuard<'_, std::collections::HashMap<String, SurfaceRecord>>,
+    control: &local_control::ActivityGuard,
 ) -> Result<Value, String> {
     let target = element.target_fingerprint().ok_or_else(|| {
         "stale_element: UIA element correlation lineage is incomplete".to_string()
@@ -155,12 +155,14 @@ pub(crate) fn scroll(
             } else {
                 (ScrollAmount_NoAmount, step)
             };
-            unsafe { scroll_pattern.Scroll(horizontal, vertical) }.map_err(|e| {
-                windows_scroll_attempt_error(&format!(
-                    "IUIAutomationScrollPattern::Scroll HRESULT(0x{:08X})",
-                    e.code().0 as u32
-                ))
-            })?;
+            control
+                .commit(|| unsafe { scroll_pattern.Scroll(horizontal, vertical) })?
+                .map_err(|e| {
+                    windows_scroll_attempt_error(&format!(
+                        "IUIAutomationScrollPattern::Scroll HRESULT(0x{:08X})",
+                        e.code().0 as u32
+                    ))
+                })?;
             context
                 .deadline
                 .ensure_remaining()

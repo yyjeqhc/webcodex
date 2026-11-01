@@ -2610,11 +2610,12 @@ impl RunnerRegistry {
         let (tx, rx) = oneshot::channel();
         let operation_kind = RunnerComputerOperationKind::from_wire(kind)
             .ok_or_else(|| "invalid computer request kind".to_string())?;
-        let request = encode_runner_operation(
+        let mut request = encode_runner_operation(
             &request_id,
             &client_id,
             requested_by,
             RunnerOperation::Computer(RunnerComputerOperation {
+                control_epoch: None,
                 kind: operation_kind,
                 payload,
                 timeout_secs: timeout_secs.max(1),
@@ -2634,6 +2635,22 @@ impl RunnerRegistry {
                 current.supports(RunnerFeature::ComputerKeyChords),
             )
         });
+        if operation_kind.is_effect() {
+            if current
+                .runner_features
+                .supports(RunnerFeature::ComputerLocalControl)
+                && current.computer_control_epoch.is_none()
+            {
+                return Err(
+                    "computer_control_unavailable: local control version is not available".into(),
+                );
+            }
+            request.computer_control_epoch = current.computer_control_epoch.clone();
+        }
+        let control_instance = request
+            .computer_control_epoch
+            .as_ref()
+            .map(|_| current.runner_instance_id.clone());
         let key_instance = key_input
             .as_ref()
             .map(|_| current.runner_instance_id.clone());
@@ -2641,14 +2658,16 @@ impl RunnerRegistry {
             (is_selection || is_scroll).then(|| current.runner_instance_id.clone());
         let expected_runner_instance_id = expected_runner_instance_id
             .or(key_instance.as_deref())
-            .or(selection_instance.as_deref());
+            .or(selection_instance.as_deref())
+            .or(control_instance.as_deref());
         if let Some(expected) = expected_runner_instance_id {
             if expected.is_empty() || current.runner_instance_id != expected {
                 return Err(
                     "runner_replaced: Computer target Runner changed before admission".into(),
                 );
             }
-            if kind != "computer_key_input"
+            if control_instance.is_none()
+                && kind != "computer_key_input"
                 && !is_selection
                 && !is_scroll
                 && !current.supports(RunnerFeature::ComputerAccessibilityObserve)

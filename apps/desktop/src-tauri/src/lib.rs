@@ -1,6 +1,7 @@
 mod activity;
 mod coding_agents;
 mod commands;
+mod computer_control;
 mod connection_id;
 mod connections;
 mod deadline;
@@ -74,9 +75,14 @@ fn desktop_builder() -> tauri::Builder<tauri::Wry> {
             app.manage(AppState::new_resolved(data_dir, resource_dir)?);
             app.manage(desktop_shell::DesktopShellState::default());
             app.manage(tray::TrayPresentationCache::default());
+            app.manage(computer_control::presentation::Presentation::default());
             platform::install_session_shutdown(app.handle())?;
             tray::setup(app.handle())?;
             tray::start_background_observer(app.handle());
+            #[cfg(windows)]
+            tray::start_computer_observer(app.handle());
+            #[cfg(windows)]
+            computer_control::presentation::start_shortcut_listener(app.handle());
 
             let snapshot = app.state::<AppState>().get_state();
             tray::refresh_from_snapshot(app.handle(), &snapshot);

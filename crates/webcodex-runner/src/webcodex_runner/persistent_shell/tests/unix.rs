@@ -4,6 +4,7 @@ use webcodex_core::runner_protocol::RunnerRequest;
 
 fn request(action: &str, shell_id: &str, command: Option<&str>) -> RunnerRequest {
     RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         request_id: format!("req-{action}"),
         client_id: "agent-1".to_string(),

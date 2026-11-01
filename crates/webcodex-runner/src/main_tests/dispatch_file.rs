@@ -216,6 +216,7 @@ fn dispatch_request_edit_routes_to_file_handler() {
     let (sink, mut rx) = ws_sink("ws-client");
     let jobs = JobManager::new(max_concurrent_jobs(&cfg));
     let request = RunnerRequest {
+        computer_control_epoch: None,
         login: false,
         shell: None,
         request_id: "req-edit".to_string(),

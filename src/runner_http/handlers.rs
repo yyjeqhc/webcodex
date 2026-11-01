@@ -223,6 +223,14 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
         )
         .await;
     let _ = registry
+        .update_computer_control_epoch(
+            &body.request.client_id,
+            &body.request.runner_instance_id,
+            None,
+            body.computer_control_epoch,
+        )
+        .await;
+    let _ = registry
         .update_computer_session_availability(
             &body.request.client_id,
             &body.request.runner_instance_id,

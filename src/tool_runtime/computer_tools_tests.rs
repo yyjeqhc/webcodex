@@ -2,6 +2,23 @@ use super::responses::{validate_computer_response, ComputerResponseContext};
 use super::*;
 use crate::tool_runtime::RuntimeInfo;
 
+#[test]
+fn computer_local_pause_errors_preserve_pre_effect_and_local_user_recovery() {
+    for kind in [
+        "computer_control_paused",
+        "computer_control_changed",
+        "computer_control_unavailable",
+    ] {
+        let message = format!("{kind}: local control is unavailable");
+        assert_eq!(effects::classify_runner_error(&message), kind);
+        let result = effects::computer_error(kind, &message);
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], kind);
+        assert_eq!(result.output["execution_state"], "not_started");
+        assert_eq!(result.output["recovery_kind"], "user_action");
+    }
+}
+
 #[tokio::test]
 async fn computer_targets_expose_authoritative_key_capabilities() {
     use crate::runner_protocol::RunnerCapabilities;

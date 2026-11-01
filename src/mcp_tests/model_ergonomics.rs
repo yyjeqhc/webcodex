@@ -166,6 +166,7 @@ async fn model_ergonomics_normalization_reaches_api_and_mcp_action_audit_without
                     ..Default::default()
                 },
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -657,6 +658,7 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,

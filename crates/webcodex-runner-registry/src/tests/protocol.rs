@@ -200,6 +200,7 @@ async fn runner_supports_reflects_registered_capabilities() {
     registry
         .register(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -293,6 +294,7 @@ async fn coding_agent_run_lookup_is_exact_when_bound_and_ambiguous_when_unbound(
         registry
             .register(RunnerRegisterRequest {
                 computer_session_availability: None,
+                computer_control_epoch: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -359,6 +361,7 @@ async fn coding_agent_registration_rejects_semantically_contradictory_snapshot()
     let register =
         |run: webcodex_core::coding_agent::CodingAgentRunSnapshot| RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -445,6 +448,7 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
     registry
         .register(RunnerRegisterRequest {
             computer_session_availability: None,
+            computer_control_epoch: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

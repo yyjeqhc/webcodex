@@ -131,3 +131,9 @@ Full Runtime 由 Server、Runner 和 Runner 已观察到的 Project 清单组成
 Desktop 重启会恢复已保存的 Server/Runner 身份和 Connections，不会预先注册 Project。只有模型驱动的工作解析了具体目录时，才会出现对应 Runtime Project。在线且完整的 Runner inventory 是这些注册状态的权威来源；Desktop 可以清理过期的展示历史，但正常 Desktop UI 不负责修改 Project 注册状态。
 
 项目目录、Git 文件和 Runner policy 是彼此独立的边界：按需注册 Project 只是为已经获得授权的路径创建或复用 runtime identity，不会扩大 `allowed_roots`。
+
+## 本机 Computer 活动与暂停
+
+Windows 原生托盘显示 Computer 观察和控制活动，并为保存的本机 Runner 提供
+**暂停 Computer Control**。暂停控制后仍可观察。恢复、可选边缘提示、快捷键和执行边界
+见[本机 Computer Control](agent/computer-local-control.zh-CN.md)。

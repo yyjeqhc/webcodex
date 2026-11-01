@@ -521,6 +521,7 @@ pub(crate) fn key_input(
     surface: &SurfaceRecord,
     key: &str,
     modifiers: &[String],
+    control: &local_control::ActivityGuard,
 ) -> Result<Value, String> {
     validate_key_input(key, modifiers)?;
     let context = UiaContext::new()?;
@@ -546,7 +547,7 @@ pub(crate) fn key_input(
     // a different chord or leave the model racing an already-held key.
     validate_windows_keyboard_state(key)?;
 
-    let inserted = unsafe { SendInput(&inputs, input_size) };
+    let inserted = control.commit(|| unsafe { SendInput(&inputs, input_size) })?;
     validate_windows_send_input_count(inserted, expected_count)?;
     if let Err(error) = context.deadline.ensure_remaining() {
         return Err(windows_key_input_attempt_error(&error));
@@ -568,6 +569,7 @@ pub(crate) fn input_text(
     surface: &SurfaceRecord,
     element: &ElementRecord,
     text: &str,
+    control: &local_control::ActivityGuard,
 ) -> Result<Value, String> {
     let text_bytes = validate_input_text(text)?;
     let target = element.target_fingerprint().ok_or_else(|| {
@@ -634,7 +636,7 @@ pub(crate) fn input_text(
 
     let value = windows::core::BSTR::from(text);
     context.deadline.ensure_remaining()?;
-    if let Err(error) = unsafe { pattern.SetValue(&value) } {
+    if let Err(error) = control.commit(|| unsafe { pattern.SetValue(&value) })? {
         return Err(windows_text_input_attempt_error(&format!(
             "IUIAutomationValuePattern::SetValue HRESULT(0x{:08X})",
             error.code().0 as u32

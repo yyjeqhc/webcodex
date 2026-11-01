@@ -519,6 +519,7 @@ pub(crate) fn build_register_request_with_provider_status(
     webcodex_runner::computer_session::set_server_availability_contract(false);
     let hot = runtime.snapshot();
     let mut capabilities = runner_register_capabilities(cfg);
+    capabilities.set(RunnerCapabilityId::ComputerLocalControl, cfg!(windows));
     let coding_agent_providers = runtime
         .coding_agents()
         .map(|manager| manager.providers())
@@ -541,6 +542,7 @@ pub(crate) fn build_register_request_with_provider_status(
             host_context: cfg.host_context.clone(),
             capabilities,
             computer_session_availability: webcodex_runner::computer_session::availability(),
+            computer_control_epoch: webcodex_runner::computer_session::control_epoch(),
             policy: Some(register_policy_summary(
                 &hot,
                 prepared_cache_count,

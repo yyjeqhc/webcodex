@@ -633,13 +633,21 @@ mcp_tool_present() {
 }
 
 adaptive_present=1
+# Zero-config only exposes core Adaptive tools. The optional Goal, Agent and
+# Job continuation surfaces require explicit operator opt-in.
 for tname in work_on_project get_runtime_status read_tool_manifest \
     search_project_texts search_file_context read_files edit_project_files run_process write_job_input \
     run_script run_shell project_validate review_changes observe_jobs wait_for_job_readiness \
-    present_work_result present_goal_plan load_skill call_runtime_tool; do
+    present_work_result load_skill call_runtime_tool; do
     if ! mcp_tool_present "$tname"; then
         adaptive_present=0
         fail "MCP tools/list missing Adaptive direct tool $tname"
+    fi
+done
+for tname in present_goal_plan present_agent_continuation present_job_terminal_continuation; do
+    if mcp_tool_present "$tname"; then
+        adaptive_present=0
+        fail "MCP tools/list unexpectedly exposes opt-in direct tool $tname"
     fi
 done
 for tname in list_tools list_projects check_workspace_hygiene finish_coding_task \

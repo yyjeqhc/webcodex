@@ -1408,7 +1408,16 @@ pub enum ComputerControlToolCall {
         #[schemars(length(min = 1, max = 128))]
         element_id: String,
     },
-    /// Scroll one exact observed Windows UIA container by one native increment.
+    /// Scroll one exact observed Windows UIA ScrollPattern container. Requires
+    /// computer_scroll and computer_control. One small/large native increment;
+    /// omitted/null amount selects small. Provider-defined distance is not pixels.
+    /// Inspect element_state scroll axes/percentages: null axis is non-scrollable,
+    /// null object unsupported/protected, omitted field unknown. At a native boundary
+    /// this succeeds without input. position_before/position_after may be unchanged
+    /// or intermediate; they do not prove UI stability or task completion.
+    /// Re-observe content after scrolling. Native attempt/read-back uncertainty is
+    /// outcome_unknown; never replay without reconciliation. Local pause applies.
+    /// No implicit focus/activation or observe_after.
     Scroll {
         #[schemars(length(min = 1, max = 128))]
         client_id: String,

@@ -69,6 +69,19 @@ impl ToolRuntime {
         accessibility_bounds: Option<(usize, usize)>,
         expected_instance: Option<&str>,
     ) -> ToolResult {
+        let scroll_input = if kind == "computer_scroll" {
+            let Ok(input) = serde_json::from_value::<
+                webcodex_core::computer_scroll_contract::ComputerScrollPayload,
+            >(payload.clone()) else {
+                return computer_effect_not_started("invalid computer scroll payload");
+            };
+            if let Err(error) = input.validate() {
+                return computer_effect_not_started(error);
+            }
+            Some(input)
+        } else {
+            None
+        };
         let is_selection = kind == "computer_control"
             && payload.get("action").and_then(Value::as_str) == Some("select");
         let key_input = if kind == "computer_key_input" {
@@ -174,6 +187,9 @@ impl ToolRuntime {
                         .unwrap_or_default(),
                 )
             }
+            "computer_scroll" => {
+                webcodex_core::computer_scroll_contract::COMPUTER_SCROLL_CAPABILITIES
+            }
             "computer_scroll_to_element" => &[RunnerFeature::ComputerScrollToElement],
             "computer_key_input" => &[RunnerFeature::ComputerKeyInput],
             "computer_activate_window" => &[RunnerFeature::ComputerWindowActivate],
@@ -214,7 +230,10 @@ impl ToolRuntime {
                 );
             }
             Err(error)
-                if (expected_instance.is_some() || key_input.is_some() || is_selection)
+                if (expected_instance.is_some()
+                    || key_input.is_some()
+                    || is_selection
+                    || scroll_input.is_some())
                     && computer_request_is_effect(kind) =>
             {
                 return computer_effect_not_started(&error);
@@ -224,7 +243,8 @@ impl ToolRuntime {
         // Pin additive effects to the registration whose capability was observed.
         // The same fence is checked under the queue lock and again at dequeue.
         let expected_instance = expected_instance.or_else(|| {
-            (key_input.is_some() || is_selection).then_some(client.view.runner_instance_id.as_str())
+            (key_input.is_some() || is_selection || scroll_input.is_some())
+                .then_some(client.view.runner_instance_id.as_str())
         });
         let required_features = key_input.as_ref().map_or(required_features, |input| {
             webcodex_core::computer_input_contract::computer_key_input_capabilities(
@@ -273,6 +293,9 @@ impl ToolRuntime {
         // Preserve the exact legacy response shape for old Servers and Runners.
         if kind == "computer_element_state" && client.supports(RunnerFeature::ComputerSelection) {
             payload["include_selection"] = json!(true);
+        }
+        if kind == "computer_element_state" && client.supports(RunnerFeature::ComputerScroll) {
+            payload["include_scroll"] = json!(true);
         }
         let expected_element_id = payload
             .get("element_id")
@@ -621,6 +644,7 @@ impl ToolRuntime {
                 expected_action,
                 expected_key,
                 expected_key_modifiers,
+                scroll_input,
                 expected_text_bytes,
                 snapshot_advanced,
                 expected_snapshot_region,

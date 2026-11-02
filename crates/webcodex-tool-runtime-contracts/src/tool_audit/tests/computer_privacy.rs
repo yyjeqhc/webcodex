@@ -1916,3 +1916,15 @@ fn coding_agent_audit_is_body_free_for_requests_and_observations() {
     assert!(result_summary.get("events").is_none());
     assert!(result_summary.get("observation_token").is_none());
 }
+
+#[test]
+fn computer_bounded_scroll_ledger_keeps_only_typed_metadata() {
+    let request = json!({"action":"scroll","client_id":"mini","surface_id":"surface_safe","element_id":"element_safe","direction":"down","amount":"small"});
+    let summary = session_log_arguments_for_tool_request("control_computer", &request);
+    assert_eq!(summary, request);
+    let result = json!({"platform":"windows","surface_id":"surface_safe","element_id":"element_safe","direction":"down","amount":"small","position_before":10.0,"position_after":20.0,"success":true,"title":"PRIVATE SCROLL CONTENT","value":"PRIVATE SCROLL VALUE"});
+    let summary = session_log_result_for_tool("control_computer", &result);
+    let encoded = serde_json::to_string(&summary).unwrap();
+    assert_eq!(summary["success"], true);
+    assert!(!encoded.contains("PRIVATE SCROLL"));
+}

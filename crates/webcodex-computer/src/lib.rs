@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use webcodex_core::computer_input_contract::{
     COMPUTER_KEY_INPUT_KEYS, COMPUTER_KEY_INPUT_MODIFIERS,
 };
+use webcodex_core::computer_scroll_contract::{ComputerScrollAmount, ComputerScrollDirection};
 
 pub const MAX_WINDOWS: usize = 64;
 pub const MAX_APPLICATIONS: usize = 64;
@@ -1565,6 +1566,7 @@ impl ComputerRuntime {
         surface_id: &str,
         element_id: &str,
         include_selection: bool,
+        include_scroll: bool,
     ) -> Result<Value, String> {
         if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
             return Err("invalid_request: surface_id is invalid".to_string());
@@ -1602,6 +1604,7 @@ impl ComputerRuntime {
             &record,
             &element,
             include_selection,
+            include_scroll,
         )
     }
 
@@ -1692,6 +1695,51 @@ impl ComputerRuntime {
             return Err("stale_element: element_id belongs to a different surface".to_string());
         }
         platform::scroll_to_element(surface_id, element_id, &record, &element, &guard.activity)
+    }
+
+    pub fn scroll(
+        &self,
+        surface_id: &str,
+        element_id: &str,
+        direction: ComputerScrollDirection,
+        amount: ComputerScrollAmount,
+    ) -> Result<Value, String> {
+        let _handoff = self.native_effect_guard()?;
+        if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+            return Err("invalid_request: surface_id is invalid".to_string());
+        }
+        if !element_id.starts_with("element_")
+            || element_id.len() <= "element_".len()
+            || element_id.len() > MAX_ELEMENT_ID_BYTES
+        {
+            return Err("invalid_request: element_id is invalid".to_string());
+        }
+        let surface_registry = self
+            .surfaces
+            .lock()
+            .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())?;
+        let record = surface_registry
+            .get(surface_id)
+            .cloned()
+            .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
+        let element = self
+            .elements
+            .lock()
+            .map_err(|_| "computer_state_error: element registry lock poisoned".to_string())?
+            .get(element_id)
+            .ok_or_else(|| "stale_element: unknown, evicted, or stale element_id".to_string())?;
+        if element.surface_id != surface_id {
+            return Err("stale_element: element_id belongs to a different surface".to_string());
+        }
+        platform::scroll(
+            surface_id,
+            element_id,
+            &record,
+            &element,
+            direction,
+            amount,
+            &_handoff.activity,
+        )
     }
 
     pub fn key_input(
@@ -3486,6 +3534,7 @@ mod platform {
         _surface: &SurfaceRecord,
         _element: &ElementRecord,
         _include_selection: bool,
+        _include_scroll: bool,
     ) -> Result<serde_json::Value, String> {
         Err(
             "unsupported_platform: computer element state is unavailable on this platform"
@@ -3513,6 +3562,18 @@ mod platform {
         _control: &local_control::ActivityGuard,
     ) -> Result<serde_json::Value, String> {
         Err("unsupported_platform: computer control is unavailable on this platform".to_string())
+    }
+
+    pub(super) fn scroll(
+        _surface_id: &str,
+        _element_id: &str,
+        _surface: &SurfaceRecord,
+        _element: &ElementRecord,
+        _direction: crate::ComputerScrollDirection,
+        _amount: crate::ComputerScrollAmount,
+        _control: &crate::local_control::ActivityGuard,
+    ) -> Result<serde_json::Value, String> {
+        Err("unsupported_platform: bounded container scroll requires a Windows Runner".into())
     }
 
     pub(super) fn scroll_to_element(

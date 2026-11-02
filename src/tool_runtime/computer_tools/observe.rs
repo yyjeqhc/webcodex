@@ -292,6 +292,7 @@ impl ToolRuntime {
             let computer_key_input = client.supports(RunnerFeature::ComputerKeyInput);
             let computer_letter_shortcuts = client.supports(RunnerFeature::ComputerLetterShortcuts);
             let computer_key_chords = client.supports(RunnerFeature::ComputerKeyChords);
+            let computer_scroll = client.supports(RunnerFeature::ComputerScroll);
             let view = client.view;
             if !computer_observe
                 && !computer_accessibility_observe
@@ -326,6 +327,7 @@ impl ToolRuntime {
                     "computer_key_input": computer_key_input,
                     "computer_letter_shortcuts": computer_letter_shortcuts,
                     "computer_key_chords": computer_key_chords,
+                    "computer_scroll": computer_scroll,
                 },
             }));
         }

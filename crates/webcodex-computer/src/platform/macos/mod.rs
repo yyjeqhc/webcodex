@@ -63,6 +63,19 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 
 mod accessibility;
+
+pub(crate) fn scroll(
+    _surface_id: &str,
+    _element_id: &str,
+    _surface: &crate::SurfaceRecord,
+    _element: &crate::ElementRecord,
+    _direction: crate::ComputerScrollDirection,
+    _amount: crate::ComputerScrollAmount,
+    _control: &crate::local_control::ActivityGuard,
+) -> Result<serde_json::Value, String> {
+    Err("unsupported_platform: bounded container scroll requires a Windows Runner".into())
+}
+
 mod applications;
 mod capture;
 mod clipboard;

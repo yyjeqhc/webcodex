@@ -11,8 +11,8 @@ use super::effects::{
 use super::input_receipts::{
     validate_computer_activate_window, validate_computer_control, validate_computer_input_text,
     validate_computer_key_input, validate_computer_launch_application, validate_computer_pointer,
-    validate_computer_read_clipboard, validate_computer_scroll_to_element,
-    validate_computer_write_clipboard,
+    validate_computer_read_clipboard, validate_computer_scroll,
+    validate_computer_scroll_to_element, validate_computer_write_clipboard,
 };
 use super::screens::{validate_application_list, validate_display_list, validate_window_list};
 use super::snapshot_receipts::{validate_display_snapshot, validate_snapshot};
@@ -31,6 +31,7 @@ pub(super) struct ComputerResponseContext<'a> {
     pub(super) expected_action: Option<String>,
     pub(super) expected_key: Option<String>,
     pub(super) expected_key_modifiers: Value,
+    pub(super) scroll_input: Option<webcodex_core::computer_scroll_contract::ComputerScrollPayload>,
     pub(super) expected_text_bytes: Option<usize>,
     pub(super) snapshot_advanced: bool,
     pub(super) expected_snapshot_region: Option<Value>,
@@ -56,6 +57,7 @@ pub(super) fn validate_computer_response(
         expected_action,
         expected_key,
         expected_key_modifiers,
+        scroll_input,
         expected_text_bytes,
         snapshot_advanced,
         expected_snapshot_region,
@@ -161,6 +163,10 @@ pub(super) fn validate_computer_response(
                 expected_action.as_deref().unwrap_or_default(),
             ),
             "Runner reported successful computer control but returned inconsistent metadata; inspect current UI state before retrying",
+        ),
+        "computer_scroll" => computer_effect_validated_result(
+            validate_computer_scroll(output, scroll_input.as_ref().expect("scroll request context")),
+            "Runner reported successful container scroll but returned inconsistent metadata; observe the exact container before retrying",
         ),
         "computer_scroll_to_element" => computer_effect_validated_result(
             validate_computer_scroll_to_element(

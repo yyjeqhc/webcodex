@@ -28,6 +28,49 @@ It may show intermediate application state; this is not an atomic UI transaction
 or an application-settled barrier. Each phase retains its existing bounded wait.
 The composition saves a Host round trip; it still uses two Runner requests.
 
+## Bounded Windows container scrolling
+
+`control_computer(action=scroll, client_id, surface_id, element_id,
+direction=up|down|left|right, amount=small|large)` scrolls one exact observed
+Windows UIA container. Omitted or null `amount` selects `small`. Each request
+performs at most one `IUIAutomationScrollPattern::Scroll` call; the provider
+owns the increment distance. This discovers further content without first
+knowing an off-screen item's identity. `scroll_to_element` retains its separate
+ScrollItemPattern semantics for a known item.
+
+Use a fresh tree to identify the container, then `element_state` to inspect its
+optional `scroll` object (`horizontal_percent`, `vertical_percent`). Numeric
+positions are in 0..100. A null axis is natively non-scrollable; a null object
+means no ScrollPattern or protected content. An omitted field from an older
+Runner is unknown. Disabled state still prevents control. The Server requests
+this extension only when the independent `computer_scroll` capability is present;
+legacy element-state requests retain their original shape. These observations
+do not grant permission.
+
+Scrolling requires the existing Computer control authority and both
+`computer_control` and additive `computer_scroll` Runner capabilities. Admission
+and dequeue recheck access, capabilities, and the exact admitted Runner instance.
+The native adapter revalidates the exact window and complete element lineage,
+protected content, enabled state and requested axis before the effect. It uses
+the same native-effect guard as other Computer controls. No focus change is
+required by this semantic UIA operation.
+
+The success receipt contains `position_before` and `position_after` for the
+requested axis. At an already observed edge it returns the same position without
+a native effect. After a native call, the bounded read-back may show an unchanged
+or intermediate position; success does not prove that the application settled or
+that a business goal completed. Native failure, deadline loss, target changes or
+failed post-effect reading preserve `outcome_unknown`, without repeating the
+scroll. Re-observe current content before another decision, including after a
+lost response. Fresh tree reads replace prior element IDs.
+
+Manual native verification uses an owned WPF fixture with independently published
+outer/inner content offsets:
+
+```powershell
+cargo test --locked --profile dogfood -p webcodex-computer --lib computer_windows_bounded_scroll_live -- --ignored
+```
+
 ## Current substrate
 
 Computer Use is semantic-first rather than coordinate-first. The model-facing surface is now deliberately small:

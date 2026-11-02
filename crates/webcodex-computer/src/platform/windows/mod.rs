@@ -51,16 +51,19 @@ use windows::{
         System::Ole::CF_UNICODETEXT,
         UI::Accessibility::{
             CUIAutomation8, IUIAutomation2, IUIAutomationElement, IUIAutomationInvokePattern,
-            IUIAutomationScrollItemPattern, IUIAutomationSelectionItemPattern,
-            IUIAutomationSelectionPattern, IUIAutomationTreeWalker, IUIAutomationValuePattern,
-            UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId,
-            UIA_CustomControlTypeId, UIA_DataGridControlTypeId, UIA_DataItemControlTypeId,
-            UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_GroupControlTypeId,
-            UIA_HeaderControlTypeId, UIA_HeaderItemControlTypeId, UIA_HyperlinkControlTypeId,
-            UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
-            UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_PaneControlTypeId,
-            UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId,
-            UIA_ScrollItemPatternId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
+            IUIAutomationScrollItemPattern, IUIAutomationScrollPattern,
+            IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern,
+            IUIAutomationTreeWalker, IUIAutomationValuePattern, ScrollAmount,
+            ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement, ScrollAmount_NoAmount,
+            ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement, UIA_ButtonControlTypeId,
+            UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_CustomControlTypeId,
+            UIA_DataGridControlTypeId, UIA_DataItemControlTypeId, UIA_DocumentControlTypeId,
+            UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_HeaderControlTypeId,
+            UIA_HeaderItemControlTypeId, UIA_HyperlinkControlTypeId, UIA_InvokePatternId,
+            UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_MenuControlTypeId,
+            UIA_MenuItemControlTypeId, UIA_PaneControlTypeId, UIA_ProgressBarControlTypeId,
+            UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId, UIA_ScrollItemPatternId,
+            UIA_ScrollPatternId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
             UIA_SeparatorControlTypeId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
             UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
             UIA_TableControlTypeId, UIA_TextControlTypeId, UIA_ToolBarControlTypeId,
@@ -118,7 +121,7 @@ mod input;
 
 pub(crate) use accessibility::{
     accessibility_status, accessibility_tree, accessibility_tree_scoped, activate_window, control,
-    element_state, scroll_to_element, uia_semantic_text_input_role, win_hwnd,
+    element_state, scroll, scroll_to_element, uia_semantic_text_input_role, win_hwnd,
 };
 use accessibility::{
     exact_uia_window, resolve_uia_element, uia_element_has_exact_focus, uia_error,

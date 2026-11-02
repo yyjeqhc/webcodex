@@ -92,7 +92,10 @@ impl PendingDispatchFence {
                 use webcodex_core::runner_operation::RunnerComputerOperationKind::*;
                 !runner_instance_id.is_empty()
                     && (op.control_epoch.is_some()
-                        || matches!(op.kind, Control | InputText | AccessibilityTree | KeyInput))
+                        || matches!(
+                            op.kind,
+                            Control | InputText | AccessibilityTree | KeyInput | Scroll
+                        ))
             }
             _ => false,
         };
@@ -165,6 +168,11 @@ impl PendingDispatchFence {
                                 .iter().any(|feature| !runner.supports(*feature))
                                 .then(|| "capability_unavailable: Computer selection capability changed before dispatch".into());
                         }
+                    }
+                    if op.kind == RunnerComputerOperationKind::Scroll {
+                        return webcodex_core::computer_scroll_contract::COMPUTER_SCROLL_CAPABILITIES
+                            .iter().any(|feature| !runner.supports(*feature))
+                            .then(|| "capability_unavailable: Computer scroll capability changed before dispatch".into());
                     }
                     if op.kind == RunnerComputerOperationKind::KeyInput {
                         let Ok(input) = serde_json::from_str::<

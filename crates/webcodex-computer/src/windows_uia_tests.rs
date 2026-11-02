@@ -1,4 +1,6 @@
 use super::*;
+#[path = "windows_uia_tests/scroll.rs"]
+mod scroll;
 #[path = "windows_uia_tests/selection.rs"]
 mod selection;
 use std::process::{Child, Command, Stdio};
@@ -503,7 +505,8 @@ fn computer_windows_combobox_values_live() {
         let id = node["element_id"].as_str().unwrap();
         let element = tree.elements.iter().find(|(key, _)| key == id).unwrap();
         let state =
-            platform::element_state("surface_combo", id, 1, &record, &element.1, false).unwrap();
+            platform::element_state("surface_combo", id, 1, &record, &element.1, false, false)
+                .unwrap();
         assert_eq!(state["can_focus"], false);
         assert_eq!(state["can_input_text"], false);
     }
@@ -1018,14 +1021,14 @@ fn computer_windows_paused_preflight_fixture_live_smoke() {
     let error =
         platform::input_text(surface, edit_id, &record, edit, "blocked", &admitted).unwrap_err();
     assert!(error.starts_with("computer_control_paused:"), "{error}");
-    let state = platform::element_state(surface, edit_id, 1, &record, edit, false).unwrap();
+    let state = platform::element_state(surface, edit_id, 1, &record, edit, false, false).unwrap();
     assert_eq!(state["value_empty"], true);
     assert_eq!(state["can_input_text"], true);
     drop(admitted);
     control.set_paused(&paused.epoch, false).unwrap();
     let fresh = control.begin(true, None).unwrap();
     platform::input_text(surface, edit_id, &record, edit, "resumed", &fresh).unwrap();
-    let state = platform::element_state(surface, edit_id, 1, &record, edit, false).unwrap();
+    let state = platform::element_state(surface, edit_id, 1, &record, edit, false, false).unwrap();
     assert_eq!(state["value_empty"], false);
 }
 
@@ -1078,7 +1081,7 @@ fn computer_windows_control_fixture_live_smoke() {
         })
         .expect("fixture exposes a positively correlated UIA button");
 
-    let edit_state = platform::element_state(surface_id, edit_id, 1, &record, edit, false)
+    let edit_state = platform::element_state(surface_id, edit_id, 1, &record, edit, false, false)
         .expect("read private edit state");
     assert_eq!(edit_state["can_focus"], true);
     assert_eq!(edit_state["value_empty"], true);
@@ -1094,8 +1097,9 @@ fn computer_windows_control_fixture_live_smoke() {
     assert_eq!(focused["platform"], "windows");
     assert_eq!(focused["action"], "focus");
     assert_eq!(focused["success"], true);
-    let focused_state = platform::element_state(surface_id, edit_id, 1, &record, edit, false)
-        .expect("re-read private edit state");
+    let focused_state =
+        platform::element_state(surface_id, edit_id, 1, &record, edit, false, false)
+            .expect("re-read private edit state");
     assert_eq!(focused_state["focused"], true);
     assert_eq!(focused_state["value_empty"], true);
     assert_eq!(focused_state["can_input_text"], true);
@@ -1138,7 +1142,7 @@ fn computer_windows_control_fixture_live_smoke() {
     assert_eq!(input["text_bytes"], text.len());
     assert_eq!(input["success"], true);
 
-    let after_input = platform::element_state(surface_id, edit_id, 1, &record, edit, false)
+    let after_input = platform::element_state(surface_id, edit_id, 1, &record, edit, false, false)
         .expect("re-read private edit state after bounded text input");
     assert_eq!(after_input["focused"], true);
     assert_eq!(after_input["value_empty"], false);
@@ -1154,8 +1158,9 @@ fn computer_windows_control_fixture_live_smoke() {
     .expect_err("bounded Windows text input must not overwrite a non-empty field");
     assert!(second.starts_with("input_failed:"), "{second}");
 
-    let button_state = platform::element_state(surface_id, button_id, 1, &record, button, false)
-        .expect("read private button state");
+    let button_state =
+        platform::element_state(surface_id, button_id, 1, &record, button, false, false)
+            .expect("read private button state");
     assert_eq!(button_state["can_press"], true);
     let pressed = platform::control(
         surface_id,
@@ -1595,9 +1600,16 @@ fn computer_windows_uia_stale_identity_rejects_indistinguishable_replacement_liv
         "replacement must preserve the old semantic path while changing native UIA identity"
     );
 
-    let stale_state =
-        platform::element_state(surface_id, &old_twin_id, 1, &record, &old_twin, false)
-            .expect_err("old element state handle must not retarget the replacement twin");
+    let stale_state = platform::element_state(
+        surface_id,
+        &old_twin_id,
+        1,
+        &record,
+        &old_twin,
+        false,
+        false,
+    )
+    .expect_err("old element state handle must not retarget the replacement twin");
     assert!(stale_state.starts_with("stale_element:"), "{stale_state}");
     let stale_control = platform::control(
         surface_id,
@@ -1667,6 +1679,7 @@ fn computer_windows_uia_live_smoke() {
                     1,
                     &record,
                     element,
+                    false,
                     false,
                 ) {
                     Ok(state) => {

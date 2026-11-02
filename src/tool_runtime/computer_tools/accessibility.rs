@@ -370,6 +370,7 @@ pub(super) fn validate_computer_element_state(
         "can_input_text",
         "can_select",
         "selected",
+        "scroll",
     ];
     let bool_or_null = |field: &str| {
         output
@@ -387,8 +388,24 @@ pub(super) fn validate_computer_element_state(
                     && output.get("platform").and_then(Value::as_str) == Some("windows")))
             && (output.get("protected") != Some(&Value::Bool(true))
                 || output.get("selected") == Some(&Value::Null)));
-    if !selection_valid
-        || object.len() != allowed.len() - if has_selection { 0 } else { 2 }
+    let scroll_valid = match output.get("scroll") {
+        None | Some(Value::Null) => true,
+        Some(value) => {
+            value.as_object().is_some_and(|object| object.len() == 2)
+                && serde_json::from_value::<
+                    webcodex_core::computer_scroll_contract::ComputerScrollState,
+                >(value.clone())
+                .is_ok_and(|state| state.valid())
+                && output.get("protected") == Some(&Value::Bool(false))
+                && output.get("platform").and_then(Value::as_str) == Some("windows")
+        }
+    };
+    if !scroll_valid
+        || !selection_valid
+        || object.len()
+            != allowed.len()
+                - if has_selection { 0 } else { 2 }
+                - if object.contains_key("scroll") { 0 } else { 1 }
         || object.keys().any(|key| !allowed.contains(&key.as_str()))
         || !is_native_accessibility_platform(output.get("platform").and_then(Value::as_str))
         || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)

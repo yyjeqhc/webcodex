@@ -312,6 +312,7 @@ fn response_context(kind: &'static str) -> ComputerResponseContext<'static> {
         expected_action: Some("focus".to_string()),
         expected_key: None,
         expected_key_modifiers: json!([]),
+        scroll_input: None,
         expected_text_bytes: None,
         snapshot_advanced: false,
         expected_snapshot_region: None,

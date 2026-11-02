@@ -1071,8 +1071,15 @@ runner_capabilities! {
         #[serde(default, skip_serializing_if = "is_false")]
         pub computer_selection: bool = false;
     }
+    /// Windows single-increment scrolling on an exact observed UIA container.
+    /// Missing on older Runners is false and never follows from general control.
+    ComputerScroll => RUNNER_CAPABILITY_COMPUTER_SCROLL("computer_scroll"),
+    v2_baseline = false {
+        /// Single bounded ScrollPattern increment on an exact Windows container.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_scroll: bool = false;
+    }
     /// Native semantic scroll-to-visible on one exact observed Accessibility element.
-    /// Missing on older Runners is false and is never inferred from computer_control.
     ComputerScrollToElement => RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT("computer_scroll_to_element"),
     v2_baseline = false {
         /// The Runner can semantically scroll one exact observed Accessibility element
@@ -3018,6 +3025,7 @@ mod envelope_tests {
                 computer_scroll_to_element: false,
                 computer_key_input: false,
                 computer_selection: false,
+                computer_scroll: false,
                 computer_letter_shortcuts: false,
                 computer_key_chords: false,
                 computer_window_activate: false,

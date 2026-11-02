@@ -106,6 +106,12 @@ fn every_native_effect_is_blocked_even_without_a_runner_request() {
         runtime.launch_application("invalid"),
         runtime.control("invalid", "invalid", crate::ComputerAction::Press),
         runtime.scroll_to_element("invalid", "invalid"),
+        runtime.scroll(
+            "invalid",
+            "invalid",
+            crate::ComputerScrollDirection::Down,
+            crate::ComputerScrollAmount::Small,
+        ),
         runtime.key_input("invalid", "a", &[]),
         runtime.input_text("invalid", "invalid", "fixture"),
         runtime.pointer_effect(crate::PointerAction::Move, "invalid", 1, 0, 0),

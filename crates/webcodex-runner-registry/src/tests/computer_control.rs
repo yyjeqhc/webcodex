@@ -1182,3 +1182,161 @@ async fn computer_selection_recheck_access_and_capabilities_at_dequeue() {
         }));
     }
 }
+
+#[tokio::test]
+async fn computer_scroll_require_both_capabilities_before_enqueue() {
+    for (base, scroll) in [(false, false), (true, false), (false, true), (true, true)] {
+        let registry = RunnerRegistry::default();
+        let mut registration = runner_registration("scroll", "instance", Vec::new());
+        registration.owner = Some("alice".into());
+        registration.capabilities.computer_control = base;
+        registration.capabilities.computer_scroll = scroll;
+        registry
+            .register(current_runner_registration(registration))
+            .await
+            .unwrap();
+        let access = auth_context(Some("alice"), false);
+        let payload = r#"{"surface_id":"surface_test","element_id":"element_test","direction":"down","amount":"small"}"#;
+        let result = registry
+            .enqueue_computer(
+                "scroll".into(),
+                "computer_scroll",
+                payload.into(),
+                "alice".into(),
+                Some(&access),
+                5,
+            )
+            .await;
+        assert_eq!(result.is_ok(), base && scroll);
+        let request = registry
+            .poll(RunnerPollRequest {
+                client_id: "scroll".into(),
+                runner_instance_id: "instance".into(),
+            })
+            .await
+            .unwrap();
+        if base && scroll {
+            let request = request.expect("accepted scroll effect");
+            assert_eq!(request.kind, "computer_scroll");
+            assert_eq!(request.stdin.as_deref(), Some(payload));
+        } else {
+            assert!(request.is_none());
+            assert!(result.unwrap_err().contains(if base {
+                "computer_scroll"
+            } else {
+                "computer_control"
+            }));
+        }
+    }
+}
+
+#[tokio::test]
+async fn computer_scroll_recheck_access_and_capabilities_at_dequeue() {
+    for change in ["owner", "control", "scroll", "instance"] {
+        let registry = RunnerRegistry::default();
+        let mut registration = runner_registration("scroll", "instance", Vec::new());
+        registration.owner = Some("alice".into());
+        registration.capabilities.computer_control = true;
+        registration.capabilities.computer_scroll = true;
+        registry
+            .register(current_runner_registration(registration.clone()))
+            .await
+            .unwrap();
+        let access = auth_context(Some("alice"), false);
+        let (_, rx) = registry
+            .enqueue_computer(
+                "scroll".into(),
+                "computer_scroll",
+                r#"{"surface_id":"surface_test","element_id":"element_test","direction":"down","amount":"small"}"#
+                    .into(),
+                "alice".into(),
+                Some(&access),
+                5,
+            )
+            .await
+            .unwrap();
+        match change {
+            "owner" => registration.owner = Some("bob".into()),
+            "control" => registration.capabilities.computer_control = false,
+            "instance" => registration.runner_instance_id = "replacement".into(),
+            _ => registration.capabilities.computer_scroll = false,
+        }
+        registry
+            .register(current_runner_registration(registration))
+            .await
+            .unwrap();
+        assert!(registry
+            .poll(RunnerPollRequest {
+                client_id: "scroll".into(),
+                runner_instance_id: if change == "instance" {
+                    "replacement"
+                } else {
+                    "instance"
+                }
+                .into()
+            })
+            .await
+            .unwrap()
+            .is_none());
+        let response = rx.await.unwrap();
+        assert_eq!(response.request_dispatched, Some(false));
+        assert!(response.error.unwrap().starts_with(match change {
+            "owner" => "client_access_denied:",
+            "instance" => "runner instance was replaced before the request completed; the request was not handed to the replacement instance",
+            _ => "capability_unavailable:",
+        }));
+    }
+}
+
+#[tokio::test]
+async fn computer_element_state_scroll_extension_is_capability_fenced() {
+    for (selection, scroll) in [(false, false), (false, true), (true, false), (true, true)] {
+        for (with_selection, with_scroll) in
+            [(false, false), (false, true), (true, false), (true, true)]
+        {
+            let registry = RunnerRegistry::default();
+            let mut registration = runner_registration("element-state", "instance", Vec::new());
+            registration.owner = Some("alice".into());
+            registration.capabilities.computer_element_state = true;
+            registration.capabilities.computer_selection = selection;
+            registration.capabilities.computer_scroll = scroll;
+            registry
+                .register(current_runner_registration(registration))
+                .await
+                .unwrap();
+            let access = auth_context(Some("alice"), false);
+            let payload = serde_json::json!({
+                "surface_id": "surface_test", "element_id": "element_test",
+                "include_selection": with_selection, "include_scroll": with_scroll
+            })
+            .to_string();
+            let result = registry
+                .enqueue_computer(
+                    "element-state".into(),
+                    "computer_element_state",
+                    payload.clone(),
+                    "alice".into(),
+                    Some(&access),
+                    5,
+                )
+                .await;
+            let allowed = (!with_selection || selection) && (!with_scroll || scroll);
+            assert_eq!(
+                result.is_ok(),
+                allowed,
+                "selection={selection}, scroll={scroll}, with_selection={with_selection}, with_scroll={with_scroll}"
+            );
+            if allowed {
+                let request = registry
+                    .poll(RunnerPollRequest {
+                        client_id: "element-state".into(),
+                        runner_instance_id: "instance".into(),
+                    })
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(request.stdin.as_deref(), Some(payload.as_str()));
+            }
+        }
+    }
+}

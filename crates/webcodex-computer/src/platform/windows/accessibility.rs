@@ -1,7 +1,11 @@
 use super::*;
 
 #[cfg(windows)]
+mod scroll;
+#[cfg(windows)]
 mod selection;
+#[cfg(windows)]
+pub(crate) use scroll::scroll;
 
 #[cfg(windows)]
 const UIA_CONNECTION_TIMEOUT_MS: u32 = 2_000;
@@ -870,6 +874,7 @@ pub(crate) fn element_state(
     surface: &SurfaceRecord,
     element: &ElementRecord,
     include_selection: bool,
+    include_scroll: bool,
 ) -> Result<Value, String> {
     let target = element.target_fingerprint().ok_or_else(|| {
         "stale_element: UIA element correlation lineage is incomplete".to_string()
@@ -950,6 +955,13 @@ pub(crate) fn element_state(
         "can_focus": can_focus,
         "can_input_text": can_input_text,
     });
+    if include_scroll {
+        output["scroll"] = json!(if protected {
+            None
+        } else {
+            scroll::state(&context, &current)?
+        });
+    }
     if include_selection {
         output["can_select"] = json!(can_select);
         output["selected"] = json!(selected);

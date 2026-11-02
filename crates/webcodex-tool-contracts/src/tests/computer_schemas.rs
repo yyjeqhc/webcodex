@@ -225,6 +225,7 @@ fn computer_control_schema_is_closed_action_union() {
         "select",
         "focus",
         "scroll_to_element",
+        "scroll",
         "key",
         "input_text",
         "pointer_move",
@@ -588,4 +589,40 @@ fn computer_selection_has_one_exact_target_and_no_implicit_effects() {
         missing.as_object_mut().unwrap().remove(field);
         assert!(ToolCall::from_tool_name("control_computer", missing).is_err());
     }
+}
+
+#[test]
+fn computer_scroll_schema_matches_closed_parser_and_bounded_receipts() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "control_computer");
+    for direction in ["up", "down", "left", "right"] {
+        for amount in [
+            None,
+            Some(json!(null)),
+            Some(json!("small")),
+            Some(json!("large")),
+        ] {
+            let mut args = json!({"action":"scroll","client_id":"runner","surface_id":"surface_test","element_id":"element_test","direction":direction});
+            if let Some(value) = amount {
+                args["amount"] = value;
+            }
+            test_support::validate_schema_instance(&args, &spec.input_schema).unwrap();
+            assert!(ToolCall::from_tool_name("control_computer", args).is_ok());
+        }
+    }
+    for (field, value) in [
+        ("direction", json!("diagonal")),
+        ("amount", json!("pixels")),
+        ("steps", json!(2)),
+        ("observe_after", json!({"action":"accessibility_tree"})),
+    ] {
+        let mut args = json!({"action":"scroll","client_id":"runner","surface_id":"surface_test","element_id":"element_test","direction":"down"});
+        args[field] = value;
+        assert!(test_support::validate_schema_instance(&args, &spec.input_schema).is_err());
+        assert!(ToolCall::from_tool_name("control_computer", args).is_err());
+    }
+    let mut result = json!({"success":true,"output":{"platform":"windows","surface_id":"surface_test","element_id":"element_test","direction":"down","amount":"small","position_before":0.0,"position_after":10.0,"success":true}});
+    test_support::validate_schema_instance(&result, &spec.output_schema).unwrap();
+    result["output"]["position_after"] = json!(101.0);
+    assert!(test_support::validate_schema_instance(&result, &spec.output_schema).is_err());
 }

@@ -14,6 +14,26 @@ fn computer_post_observation_result_does_not_persist_tree_or_provider_error() {
 }
 
 #[test]
+fn computer_scroll_post_observation_audit_is_metadata_only() {
+    let request = json!({"action":"scroll","client_id":"runner","surface_id":"surface_safe","element_id":"element_safe",
+        "direction":"down","amount":"large","observe_after":{"action":"accessibility_tree","max_depth":3,"max_nodes":16}});
+    assert_eq!(
+        session_log_arguments_for_tool_request("control_computer", &request),
+        request
+    );
+    for success in [false, true] {
+        let output = json!({"platform":"windows","surface_id":"surface_safe","element_id":"element_safe",
+            "direction":"down","amount":"large","position_before":0,"position_after":10,"success":true,
+            "post_observation":{"success":success,"output":{"nodes":[{"value":"PRIVATE_TREE_VALUE"}]},"error":"PRIVATE_PROVIDER_ERROR"}});
+        let summary = session_log_result_for_tool("control_computer", &output);
+        assert_eq!(summary["success"], true);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert!(!serialized.contains("PRIVATE_TREE_VALUE"));
+        assert!(!serialized.contains("PRIVATE_PROVIDER_ERROR"));
+    }
+}
+
+#[test]
 fn request_audit_fails_closed_and_never_mutates_business_arguments() {
     // Structured validation lifecycle controls are audit metadata, not
     // validation identity inputs. Keep the explicit synchronous grace in

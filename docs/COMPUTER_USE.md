@@ -4,7 +4,7 @@ This page tracks the implementation order for WebCodex Computer Use. It is a roa
 
 ## Action followed by a bounded observation
 
-`control_computer(action=press|input_text)` optionally accepts
+`control_computer(action=press|input_text|scroll)` optionally accepts
 `observe_after={"action":"accessibility_tree","max_depth":3,"max_nodes":32}`.
 This requests one action and then one fresh bounded tree of the exact same
 window. Both Computer control and read scopes, action capability and accessibility
@@ -23,10 +23,17 @@ capability checks repeated at admission and dispatch. A replacement Runner or a
 closed window cannot redirect the observation to another target.
 If admission rejects the action before it is queued, the result retains
 `execution_state=not_started` and `state_changed=false`; no post-observation runs.
+Local pause or control-epoch rejection also skips the read without replaying the
+action. After a confirmed successful action, a later pause or epoch change does
+not block the independent read; observation retains its own authority checks.
 A fresh tree replaces old element IDs and obeys the existing depth/node/content budgets.
 It may show intermediate application state; this is not an atomic UI transaction
 or an application-settled barrier. Each phase retains its existing bounded wait.
 The composition saves a Host round trip; it still uses two Runner requests.
+For `scroll`, an already observed boundary no-op also permits the requested read.
+The normal `position_before`/`position_after` receipt remains separate from the
+fresh tree; the returned tree replaces the old container ID along with other
+element IDs. Scrolling does not automatically repeat to find more content.
 
 ## Bounded Windows container scrolling
 
@@ -64,6 +71,12 @@ failed post-effect reading preserve `outcome_unknown`, without repeating the
 scroll. Re-observe current content before another decision, including after a
 lost response. Fresh tree reads replace prior element IDs.
 
+Request `observe_after={"action":"accessibility_tree","max_depth":3,"max_nodes":32}`
+to receive the next bounded tree in the same outer response. This uses the shared
+post-observation contract above, including independent read authority and capability
+preflight, exact Runner/window binding, and a successful scroll result even if the
+subsequent observation fails. Omission or null retains action-only behavior.
+
 Manual native verification uses an owned WPF fixture with independently published
 outer/inner content offsets:
 
@@ -78,7 +91,7 @@ Computer Use is semantic-first rather than coordinate-first. The model-facing su
 ```text
 observe_computer(action=targets|windows|displays|applications|...)
   -> observe_computer(action=accessibility_tree|find_elements|element_state|snapshot_window|snapshot_display|read_clipboard)
-  -> control_computer(action=launch_application|activate_window|press|focus|scroll_to_element|key|input_text|pointer_move|pointer_click|write_clipboard)
+  -> control_computer(action=launch_application|activate_window|press|focus|scroll_to_element|scroll|key|input_text|pointer_move|pointer_click|write_clipboard)
 
 save_computer_snapshot(...)  # separate Computer-read + Project-write boundary
 ```

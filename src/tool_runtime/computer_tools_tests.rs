@@ -212,22 +212,30 @@ async fn computer_post_observation_admission_rejection_preserves_not_started() {
 
 #[test]
 fn computer_post_observation_governance_requires_read_and_control() {
-    let call: ComputerControlToolCall = serde_json::from_value(json!({"action":"press",
-        "client_id":"mini","surface_id":"surface_test","element_id":"element_test",
-        "observe_after":{"action":"accessibility_tree"}}))
-    .unwrap();
-    let policy = computer_control_policy(&call);
-    let mut auth = computer_auth(&[]);
-    auth.scopes = vec![SCOPE_COMPUTER_CONTROL.into()];
-    assert_eq!(
-        policy.authority.first_missing(Some(&auth)),
-        Some(SCOPE_COMPUTER_READ)
-    );
-    auth.scopes = vec![SCOPE_COMPUTER_READ.into()];
-    assert_eq!(
-        policy.authority.first_missing(Some(&auth)),
-        Some(SCOPE_COMPUTER_CONTROL)
-    );
+    for action in ["press", "input_text", "scroll"] {
+        let mut args = json!({"action":action,
+            "client_id":"mini","surface_id":"surface_test","element_id":"element_test",
+            "observe_after":{"action":"accessibility_tree"}});
+        if action == "input_text" {
+            args["text"] = json!("hello");
+        }
+        if action == "scroll" {
+            args["direction"] = json!("down");
+        }
+        let call: ComputerControlToolCall = serde_json::from_value(args).unwrap();
+        let policy = computer_control_policy(&call);
+        let mut auth = computer_auth(&[]);
+        auth.scopes = vec![SCOPE_COMPUTER_CONTROL.into()];
+        assert_eq!(
+            policy.authority.first_missing(Some(&auth)),
+            Some(SCOPE_COMPUTER_READ)
+        );
+        auth.scopes = vec![SCOPE_COMPUTER_READ.into()];
+        assert_eq!(
+            policy.authority.first_missing(Some(&auth)),
+            Some(SCOPE_COMPUTER_CONTROL)
+        );
+    }
 }
 use crate::tool_runtime::specialized::SpecializedAuthorityRequirement;
 

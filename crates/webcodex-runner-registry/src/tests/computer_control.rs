@@ -1287,3 +1287,56 @@ async fn computer_scroll_recheck_access_and_capabilities_at_dequeue() {
         }));
     }
 }
+
+#[tokio::test]
+async fn computer_element_state_scroll_extension_is_capability_fenced() {
+    for (selection, scroll) in [(false, false), (false, true), (true, false), (true, true)] {
+        for (with_selection, with_scroll) in
+            [(false, false), (false, true), (true, false), (true, true)]
+        {
+            let registry = RunnerRegistry::default();
+            let mut registration = runner_registration("element-state", "instance", Vec::new());
+            registration.owner = Some("alice".into());
+            registration.capabilities.computer_element_state = true;
+            registration.capabilities.computer_selection = selection;
+            registration.capabilities.computer_scroll = scroll;
+            registry
+                .register(current_runner_registration(registration))
+                .await
+                .unwrap();
+            let access = auth_context(Some("alice"), false);
+            let payload = serde_json::json!({
+                "surface_id": "surface_test", "element_id": "element_test",
+                "include_selection": with_selection, "include_scroll": with_scroll
+            })
+            .to_string();
+            let result = registry
+                .enqueue_computer(
+                    "element-state".into(),
+                    "computer_element_state",
+                    payload.clone(),
+                    "alice".into(),
+                    Some(&access),
+                    5,
+                )
+                .await;
+            let allowed = (!with_selection || selection) && (!with_scroll || scroll);
+            assert_eq!(
+                result.is_ok(),
+                allowed,
+                "selection={selection}, scroll={scroll}, with_selection={with_selection}, with_scroll={with_scroll}"
+            );
+            if allowed {
+                let request = registry
+                    .poll(RunnerPollRequest {
+                        client_id: "element-state".into(),
+                        runner_instance_id: "instance".into(),
+                    })
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(request.stdin.as_deref(), Some(payload.as_str()));
+            }
+        }
+    }
+}

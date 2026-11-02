@@ -2580,13 +2580,24 @@ impl RunnerRegistry {
             "computer_element_state" => {
                 let state: serde_json::Value = serde_json::from_str(&payload)
                     .map_err(|_| "invalid computer element state payload".to_string())?;
-                if state.get("include_selection") == Some(&serde_json::Value::Bool(true)) {
-                    &[
+                match (
+                    state.get("include_selection") == Some(&serde_json::Value::Bool(true)),
+                    state.get("include_scroll") == Some(&serde_json::Value::Bool(true)),
+                ) {
+                    (false, false) => &[RunnerFeature::ComputerElementState],
+                    (true, false) => &[
                         RunnerFeature::ComputerElementState,
                         RunnerFeature::ComputerSelection,
-                    ]
-                } else {
-                    &[RunnerFeature::ComputerElementState]
+                    ],
+                    (false, true) => &[
+                        RunnerFeature::ComputerElementState,
+                        RunnerFeature::ComputerScroll,
+                    ],
+                    (true, true) => &[
+                        RunnerFeature::ComputerElementState,
+                        RunnerFeature::ComputerSelection,
+                        RunnerFeature::ComputerScroll,
+                    ],
                 }
             }
             "computer_control" => {

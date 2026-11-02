@@ -8,6 +8,7 @@ on:
       - 'feat/computer-key-chords'
       - 'feat/computer-bounded-scroll'
       - 'feat/computer-local-control'
+      - 'feat/computer-scroll-observe-after'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   merge_group:

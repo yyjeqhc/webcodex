@@ -11496,12 +11496,12 @@ var Sl = He(z1), xR = B2(), op = [
     "Dem aktuellen Zugriffsschlüssel fehlt session:collaborate. Verbinden Sie sich mit einem Schlüssel mit Zusammenarbeitsberechtigung erneut.",
     "La clé actuelle ne permet pas la collaboration (session:collaborate requis). Reconnectez-vous avec une clé autorisant la collaboration."
   ],
-  "This Window is not available to the current access key.": [
-    "目前的存取金鑰無法使用此視窗。",
-    "現在のアクセスキーではこのウィンドウを利用できません。",
-    "현재 액세스 키로는 이 창에 접근할 수 없습니다.",
-    "Dieses Fenster ist mit dem aktuellen Zugriffsschlüssel nicht verfügbar.",
-    "Cette fenêtre n’est pas accessible avec la clé actuelle."
+  "Window collaboration history is unavailable or has changed. Refresh to retry.": [
+    "此視窗的協作記錄無法使用或已變更，請重新整理後再試。",
+    "このウィンドウの共同作業履歴は利用できないか変更されています。更新して再試行してください。",
+    "이 창의 협업 기록을 사용할 수 없거나 변경되었습니다. 새로고침 후 다시 시도하세요.",
+    "Der Zusammenarbeitsverlauf dieses Fensters ist nicht verfügbar oder hat sich geändert. Aktualisieren Sie die Ansicht und versuchen Sie es erneut.",
+    "L’historique de collaboration de cette fenêtre est indisponible ou a changé. Actualisez la page et réessayez."
   ],
   "Messages could not be refreshed.": [
     "暫時無法重新整理訊息。",
@@ -12758,7 +12758,7 @@ Object.assign(Sn, {
   "View new messages": "查看新消息",
   Context: "上下文",
   "The current access key cannot collaborate (session:collaborate is required). Reconnect with a collaboration-enabled key.": "当前访问密钥没有协作权限（需要 session:collaborate）。请使用支持协作的访问密钥重新连接。",
-  "This Window is not available to the current access key.": "此窗口对当前访问密钥不可用。",
+  "Window collaboration history is unavailable or has changed. Refresh to retry.": "窗口协作记录不可用或已发生变化，请刷新重试。",
   "Messages could not be refreshed.": "暂时无法刷新消息。",
   "No messages yet": "暂无消息",
   "Send a note or instruction to this Window.": "在这里给这个窗口留下消息或指令。",
@@ -31654,7 +31654,7 @@ function ID(n, a, o, l = !0) {
         } else D(q);
         g(null);
       } else
-        g(U?.status === 403 ? "access" : U?.status === 404 ? "unavailable" : "failed"), ([
+        g(U?.status === 403 ? "access" : U?.status === 404 || U?.data?.available === !1 ? "unavailable" : "failed"), ([
           401,
           403,
           404
@@ -31837,7 +31837,7 @@ function UD({ client: n, windowKey: a, selectedSessionId: o, sessions: l = [], o
           T.error && /* @__PURE__ */ (0, s.jsx)("div", {
             className: "window-collaboration-banner",
             role: "status",
-            children: T.readError === "access" ? g("The current access key cannot collaborate (session:collaborate is required). Reconnect with a collaboration-enabled key.") : T.readError === "unavailable" ? g("This Window is not available to the current access key.") : g("Messages could not be refreshed.")
+            children: T.readError === "access" ? g("The current access key cannot collaborate (session:collaborate is required). Reconnect with a collaboration-enabled key.") : T.readError === "unavailable" ? g("Window collaboration history is unavailable or has changed. Refresh to retry.") : g("Messages could not be refreshed.")
           }),
           (T.transcript?.truncated || T.browsingHistory) && /* @__PURE__ */ (0, s.jsxs)("div", {
             className: "window-collaboration-history-note",

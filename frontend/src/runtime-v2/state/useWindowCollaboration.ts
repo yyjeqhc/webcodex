@@ -79,7 +79,7 @@ export function useWindowCollaboration(client: RuntimeV2Client, windowKey: strin
         }
         setReadError(null);
       } else {
-        setReadError(response?.status === 403 ? "access" : response?.status === 404 ? "unavailable" : "failed");
+        setReadError(response?.status === 403 ? "access" : response?.status === 404 || response?.data?.available === false ? "unavailable" : "failed");
         if ([401, 403, 404].includes(response?.status || 0) || response?.data?.available === false) replace(null);
       }
     } catch { if (alive.current && !controller.signal.aborted && target.current === requestTarget) setReadError("failed"); }

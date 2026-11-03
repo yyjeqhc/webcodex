@@ -419,9 +419,28 @@ it("never merges an older page from a replacement history principal", async () =
   const view = render(<WindowCollaboration client={{ post } as unknown as RuntimeV2Client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={vi.fn()} />);
   await screen.findByText("Review done");
   fireEvent.click(screen.getByRole("button", { name: "Load earlier messages" }));
-  await screen.findByText("This Window is not available to the current access key.");
+  await screen.findByText("Window collaboration history is unavailable or has changed. Refresh to retry.");
   expect(screen.queryByText("Other principal history")).toBeNull();
   expect(screen.queryByText("Review done")).toBeNull();
+  view.unmount();
+});
+
+it.each([
+  { status: 404, data: null },
+  { status: 200, data: { available: false, messages: [] } },
+])("does not present a missing or changed Window history as an invalid access key: $status", async reply => {
+  const post = vi.fn(async () => ({ ok: reply.status === 200, ...reply }));
+  const unauthorized = vi.fn();
+  const view = render(<WindowCollaboration
+    client={{ post } as unknown as RuntimeV2Client}
+    windowKey="exact-window"
+    selectedSessionId=""
+    language="en"
+    onUnauthorized={unauthorized}
+  />);
+  await screen.findByText("Window collaboration history is unavailable or has changed. Refresh to retry.");
+  expect(screen.queryByText("This Window is not available to the current access key.")).toBeNull();
+  expect(unauthorized).not.toHaveBeenCalled();
   view.unmount();
 });
 

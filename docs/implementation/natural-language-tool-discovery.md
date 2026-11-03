@@ -33,6 +33,11 @@ query validation, default 20-result query limit and 1..100 limit clamp remain.
 Category and intent restrict the candidate universe before ranking. Exact
 `tool_name` queries retain their existing contract and route projection.
 
+This is deterministic lexical retrieval over admitted tool metadata. It neither
+indexes Project source files nor calls an embedding model or vector database.
+Project Memory search and the optional Project Knowledge Plugin are separate
+resource domains; finding a tool is not retrieval of that tool's business data.
+
 ## Validation
 
 Focused tests cover field weights and stable ties, English/Chinese task retrieval,

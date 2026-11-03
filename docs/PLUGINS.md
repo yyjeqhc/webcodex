@@ -109,9 +109,13 @@ arguments to the admitted gateway:
 {"action":"call","binding":"wc_pbind_...","arguments":{"path":"build/old.bin"}}
 ```
 
-The separate `call_runtime_tool` operation is only for Adaptive long-tail tools
-whose manifest route is `gateway`; direct tools such as `plugin_tool` must not be
-re-routed through it. Its generic envelope is canonical `{tool, arguments}`.
+Follow the exact manifest's `route.primary` and `route.fallback`. Ordinary direct
+tools such as `plugin_tool` may retain a gateway fallback when the direct callable
+is unavailable; `call_runtime_tool` uses the canonical `{tool, arguments}`
+envelope and the same action-aware Plugin governance. A null fallback forbids
+that route. Host refusal never permits rerouting, and individually reviewed or
+App-presentation operations retain their separate restrictions. See
+[MCP routing](MCP.md#adaptive-runtime-routing).
 
 The static ToolDefinition is intentionally a worst-case discovery contract.
 Execution policy is classified from the validated action before Session or

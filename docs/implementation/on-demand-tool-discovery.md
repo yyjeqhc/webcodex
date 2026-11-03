@@ -1,5 +1,11 @@
 # On-demand tool discovery contracts
 
+Status: current schema-materialization boundary with historical validation
+measurements. The timings and optional-feature failure below belong to the named
+baseline and that change; they are not new measurements or a claim about the
+latest all-feature suite. [Natural-language discovery](natural-language-tool-discovery.md)
+owns query ranking; [MCP](../MCP.md#adaptive-runtime-routing) owns Host routing.
+
 ## Scope
 
 Maintenance group 2, based on `b967a1556ac58b50e32c8399196979fdbae1713c` (#774).

@@ -1,9 +1,10 @@
 # Durable Agent runtime and asynchronous work
 
-This document defines the standing product direction for durable Agent identity and
-asynchronous work in WebCodex. It builds on the implemented Agent/Conversation/Wake
-foundation without turning WebCodex into a generic swarm framework or workflow
-scheduler.
+This document owns the current Goal and Agent Task/TaskAttempt contracts and
+explains the product direction beyond them. The implemented A3/A4a/A4b and Goal/Wait
+sections describe existing primitives; the scheduling and dependency-graph sections
+explicitly describe future boundaries. WebCodex is not a generic swarm framework
+or workflow scheduler.
 
 Implementation details for the current communication and wake substrate live in
 [`durable-agent-conversation.md`](durable-agent-conversation.md). Workflow Session
@@ -14,7 +15,7 @@ semantics remain defined by [`../agent/session-model.md`](../agent/session-model
 The product goal is a durable Agent entity that can outlive any one model turn,
 browser window, host connection, Project, or execution carrier.
 
-A user should eventually be able to:
+The implemented explicit primitives let an authorized user:
 
 1. create or select a durable Agent;
 2. attach a current window/host to that Agent;
@@ -108,7 +109,9 @@ Important current invariants:
   recover the same consume token without pretending it requested a new model turn.
 - bounded Agent listing exposes `production_auto_resume_available` only as the
   conjunction of the listed current durable Endpoint/generation state and a production
-  Host carrier in this Server process. Together with `active_endpoint_count`, this lets
+  Host carrier in this Server process. For MCP Apps, that carrier also requires the
+  separately verified `unattended` Host declaration; a message-capable binding alone
+  does not establish readiness. Together with `active_endpoint_count`, this lets
   a coordinator distinguish a current Endpoint without a carrier from no current
   Endpoint. It is not idle/model liveness, presence, capacity reservation, execution
   authority, or guaranteed/immediate Host scheduling; restart clears the process-local
@@ -139,10 +142,17 @@ Important current invariants:
 - project-scoped Memory is unchanged; Agent-scoped Memory is only a future boundary.
 - durable Goals are independent high-level intent/control truth; Goal identity, ownership, lifecycle, revision, and correlations grant no Project, Runner, filesystem, Workflow Session, AgentTaskAttempt, CodingAgentRun, or Job authority.
 
-G3 adds an optional production ChatGPT MCP App Host carrier on top of this substrate. It is deliberately a pull bridge rather than a fake Server callback: one explicit `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)` card binds the current `ui://webcodex/agent-continuation/v24` resource, while ModelHidden app-only operations establish one exact process-local View binding, renew the exact Endpoint, acquire through the existing Wake claim state machine, cross the existing durable dispatch fence, and record Host dispatch acceptance or uncertainty. The View itself performs `ui/message` only after prepare succeeds. The process-local `binding_id` fences the current iframe instance but grants no authority and is not durable execution truth. The Store retains its identity-bound SHA-256 fingerprint as the no-Window restart fallback plus an optional canonical hashed ClientWindow key as Host-window continuity; raw Host session metadata is never persisted. Natural Endpoint expiry is a separate bounded path: only the same authenticated principal + durable ClientWindow may ask the App-only recovery operation to atomically replace the exact expired generation with its immediate successor. v16 retains v15's independently idempotent predecessor recovery edges and at-most-eight exact `generation+1` successor hops; an old selector never skips directly to a later generation.
+G3 supplies an optional ChatGPT MCP App pull carrier: the live View calls the
+Host only after the durable Wake dispatch fence. The current
+[communication and continuation contract](durable-agent-conversation.md#runtime-console-and-tool-surfaces)
+owns Endpoint/generation checks, same-Window restart/expiry recovery, bounded
+successor hops, dispatch uncertainty and exact consume. Those rules are shared by
+all Goal/Task users of the carrier, rather than redefined here.
 
-Every bridge operation re-runs ordinary communication authorization and exact Agent/Endpoint/controller-generation validation. Ordinary push bindings still require an Endpoint freshly attached in the current Server process. For MCP Apps, successful bind persists the current identity-bound recovery fingerprint and the optional canonical ClientWindow key already derived by the protocol adapter. Server takeover clears process-local bindings and `wake_capable` but preserves both. With no local binding, the exact fingerprint remains sufficient; when a canonical Window is present, the same principal + exact current Endpoint/generation + same Window may also receive the normal `success=true` recovery projection and create a new iframe fence after refresh. Exact unbind clears the current fingerprint but preserves a matching Window key; natural expiry also preserves only that Window key for the dedicated expired-Endpoint replacement operation. Explicit detach (including after expiry), ordinary Endpoint replacement, and push transition clear both recovery values. Replacement replay re-checks the successor's retained Window key, so a historical replay record cannot undo that revocation. Only a newly committed replacement populates `attached_endpoints`; replay and restart recovery never recreate fresh push-attachment authority. Missing or malformed Window metadata grants nothing beyond the exact fingerprint fallback, and another Window, stale generation, expiry, detach, foreign principal, malformed result, or generic bridge failure remains fail-closed. The strict published continuation projection schema still requires `recovery` on every result (`null` normally, the sole fixed restart-loss object when recoverable), so Host schema projection cannot discard the observation. Replacing or withdrawing a View reuses existing Wake reconciliation: a pre-fence claim is revoked and the logical Wake returns to `pending`, while a prepared/delivered Attempt becomes `delivery_unknown`. The App never blindly resends after the dispatch fence. Host `ui/message` success means only `dispatch_accepted`; only later exact `consume_agent_wake` proves that a continuation model turn actually ran. A consume-before-ACK race is valid and late ACK is idempotent. v16 keeps the slower bounded heartbeat cadence while hidden but allows the same acquire -> prepare -> `ui/message` -> finish path in background. Visibility transitions are scheduling observations only: they do not by themselves create `delivery_unknown`. Host scheduling remains best effort/non-immediate, and correctness still depends on the durable Wake and exact consume rather than timer liveness.
-
+A process-local binding, a ready card or Host `ui/message` acceptance does not
+prove that a continuation model turn ran. Only exact `consume_agent_wake` supplies
+that proof; unknown delivery is never a reason to resend an effect. The carrier
+is optional and grants no Goal, Task, Project, Session or Job authority.
 For a new ChatGPT durable-Agent window, the canonical setup sequence is `create_agent_identity -> rotate_agent_continuation_endpoint -> present_agent_continuation -> normal final assistant response`. Let the current turn finalize promptly; the card/tool result alone does not end the assistant turn. Presentation can return before the MCP App has established its process-local Host binding, and the presenting model turn has no authoritative “card fully mounted” signal. Do not present the card and then continue a long coordinator/business turn or wait for wake readiness. On a later turn, `list_agent_identities.production_auto_resume_available` is the bounded readiness observation for the exact current generation; MCP App readiness still requires a separately verified `unattended` Host declaration and exact live authorized binding. ClientWindow continuity remains recovery input, not a correctness or model-liveness signal.
 
 Runtime Console, explicit activation, and push `ContinuationAdapter` behavior retain their existing contracts. The MCP App is an optional carrier, not a scheduler or a source of Agent, Task, Goal, Project, Workflow Session, or execution authority. Ordinary WebCodex Jobs are not materialized as MCP Tasks. See [`../agent/mcp-app-continuation-experiments.md`](../agent/mcp-app-continuation-experiments.md) for the Host evidence and production mapping.
@@ -158,31 +168,31 @@ intent and mechanical milestones, an explicit controller routing identity, and a
 current-work context: Project, validation, Jobs, provenance, and recovery. Task /
 TaskAttempt remains the owner of concrete execution. None replaces another.
 
-The workflow is WebCodex-owned, not a repository convention. The startup brief's
-`webcodex.workflow.model_protocol`, canonical tool descriptions, and
-`single_window_goal_workflow` recommended flow direct ordinary substantial
-multi-step or cross-turn development, fixes, refactoring, troubleshooting,
-deployment and migration through one canonical Goal lifecycle. On explicit exact
-Workflow Session re-entry, `work_on_project` may return owner-scoped sparse
-`goal_context` for active Goals already correlated to that Session. One candidate
-can be explicitly re-read/reused; multiple candidates remain a bounded explicit
-choice. The projection never auto-selects, binds, or completes a Goal and never
-infers identity from Project, Window, title, recency, or Session correlation itself.
-Unavailable evidence is not proof of zero active Goals. With no reusable active Goal
-context, ordinary new substantial work uses the canonical atomic Goal admission.
-Tiny one-step lookups and trivial edits do not mechanically create one. Repository
-`AGENTS.md` continues to express repository-specific rules; it does not decide
-whether Goal workflow exists. Existing exact Goals can still be composed explicitly
-through the lower-level Goal primitives; admission never heuristically selects a
-recent Goal.
+Goal selection is deployment guidance, not execution admission. The default
+`WEBCODEX_GOAL_WORKFLOW=on_demand` does not require a Goal for ordinary
+implementation, review or multi-step work. Use one for an explicit durable
+plan/handoff request or established exact Goal. The optional `preferred` setting
+expresses a preference when useful; user intent still wins, and it neither proves
+unattended Host continuation nor authorizes Agent/Endpoint setup. The current
+selection and continuation policy is owned by
+[`model-workflow-policy.md`](../agent/model-workflow-policy.md) and
+[`src/model_workflow.rs`](../../src/model_workflow.rs).
 
+For selected Goal work, request the optional `webcodex.goal_workflow` guidance.
+On exact Workflow Session re-entry, `work_on_project` may return owner-scoped
+`goal_context` for active Goals explicitly correlated to that Session. Re-read
+and select the exact Goal; multiple candidates require an explicit choice.
+Unavailable evidence is not proof of no active Goal. Neither the guidance nor
+correlation selects identity from Project, Window, title, recency or credentials.
+Without a reusable selected Goal, `prepare_goal_workflow` provides atomic
+admission. Lower-level Goal primitives remain available.
 ```text
-ordinary new substantial work
+explicitly selected Goal work
   -> work_on_project -> exact Workflow Session
   -> prepare_goal_workflow(session_id, completion_conditions, steps, controller_agent_id?)
        # one durable admission: new Goal + exact Session correlation
-  -> present_goal_plan
-  -> work; checkpoint at recovery-worthy boundaries
+  -> present_goal_plan when requested/useful
+  -> work; checkpoint verified milestones
   -> fresh verification/review
   -> complete remaining plan steps; explicitly update_goal(completed)
 
@@ -317,8 +327,10 @@ coding tools, and no Goal lifecycle is inferred from Session closeout.
 
 ### Goal Plan progress projection and inactivity detector
 
-The sole current Goal Plan resource is `ui://webcodex/goal-plan/v6`; its sole current
-wire version is **3**. Older pre-production Goal resource aliases are not served.
+The sole current Goal Plan resource is declared by
+[`MCP_GOAL_PLAN_UI_RESOURCE_URI`](../../src/mcp/app_registry/builtin.rs)
+(`ui://webcodex/goal-plan/v10` at this revision); its current wire version is **3**.
+[Registry tests](../../src/mcp/app_registry/tests.rs) reject retired aliases.
 Goal Plan deliberately advances its canonical resource URI whenever its shipped View
 or App-tool wire changes: production Hosts may retain a same-URI View across Server
 deploys, so resource identity—not an assumed refresh—is the cache/version fence.
@@ -1054,9 +1066,12 @@ source (the TaskAttempt for execution Wakes) and current checkpoint before conti
 neither Host delivery nor Wake consumption completes an Attempt or proves that reported
 work succeeded.
 
-Natural future source kinds include `deadline_reached`, Job terminal state,
-Plugin/external completion, and human approval. They should be added only when each has an
-authoritative source transition and bounded registration/fanout contract. Wait v1 does
+Future extensions to AgentWait could include `deadline_reached`, Job terminal state,
+Plugin/external completion, and human approval. The separate optional
+[`wait_for_job_terminal` contract](../agent/job-reliability-and-concurrency.md) already
+supports bounded Job-specific terminal attention; it is not an AgentWait v1 source.
+New AgentWait source kinds should be added only when each has an authoritative
+source transition and bounded registration/fanout contract. Wait v1 does
 not introduce a timer scheduler, generic event bus, public `publish_event`, recurring
 subscription, generic predicate/expression language, nested boolean conditions, DAG,
 reducer, automatic Goal progression, automatic successor Task creation, or automatic Task

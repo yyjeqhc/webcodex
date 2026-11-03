@@ -45,8 +45,40 @@
 - [架构](ARCHITECTURE.md) —— 主要组件如何协同
 - [Coding 工作流](CODING_WORKFLOW.zh-CN.md) —— 任务启动、指导、验证和收尾
 - [Native Tool Plugins](PLUGINS.zh-CN.md) —— 用任意可执行语言为 Runner 增加本地工具，不需要 MCP SDK
-- [Computer Use roadmap](COMPUTER_USE.md) —— semantic-first desktop automation 方向与验证优先级
-- [Browser/CDP 运行时架构](architecture/browser-cdp-runtime.md) —— Browser 领域、权限、生命周期、陈旧请求隔离与 Phase 1 限制
+- [Computer Use](COMPUTER_USE.md) —— 当前桌面原语、权限与平台边界，以及明确尚未实现的方向
+- [Browser/CDP 运行时架构](architecture/browser-cdp-runtime.md) —— 当前 Browser 归属、托管会话、人工接管、权限与陈旧请求隔离
+
+## 架构阅读路径
+
+先读每一行的当前合同，再看实现或实验记录。学习 Agent Infra 或应用设计时，
+围绕“谁拥有身份、权限、状态、重试和下一次观察”追踪文档中的源码与测试，
+不要把阅读笔记变成第二套规范。
+
+| 步骤与问题 | 接着阅读 |
+| --- | --- |
+| 1. 请求在哪执行，设备实例替换后什么能恢复？ | [架构与请求链](ARCHITECTURE.md#module-map-and-one-request)、[Runner](RUNNER.zh-CN.md)、[Server 拥有的 Tunnel](architecture/server-owned-tunnels.md) |
+| 2. 工具如何被发现，同时不扩大权限？ | [MCP](MCP.zh-CN.md)、[工具合同](agent/tool-contract-guidelines.md)、[Context/指导](architecture/builtin-context-guidance.md)、[Control sidecar](agent/control-sidecars.md) |
+| 3. 什么是证据，什么是执行，什么能接续？ | [Session 模型](agent/session-model.md)、[SQLite 与 Hot/Cold 驻留](implementation/session-active-residency.md)、[Job 恢复](agent/job-reliability-and-concurrency.md)、[手动协作](agent/manual-window-collaboration.md) |
+| 4. Goal、Agent Task/TaskAttempt、Conversation 和 Wake 如何区分？ | [Durable Agent 架构](architecture/durable-agent-runtime.md)、[当前通信合同](architecture/durable-agent-conversation.md) |
+| 5. UI 操作为何需要精确目标与新观察？ | [Browser/CDP](architecture/browser-cdp-runtime.md)、[浏览器连续性](architecture/browser-session-continuity.md)、[Computer Use](COMPUTER_USE.md) |
+| 6. 当前到底有哪些上下文与扩展资源？ | [Native Tool Plugins](PLUGINS.zh-CN.md)、[资源归属复核](architecture/resource-model-and-quality-review.md)、[Project Knowledge 插件](../plugins/project-knowledge/README.zh-CN.md)。核心 Memory、词法工具发现与可选 FTS5 插件相互独立，都不是内置的向量 RAG 流水线。 |
+| 7. 哪些编排结论仍属实验？ | [Host 与 V8 Code Mode](experiments/code-mode.md)、[Code Mode 测量条件](experiments/code-mode-performance.md)、[编排研究](architecture/tool-composition-research.md) |
+
+### 文档状态与归属
+
+| 状态 | 如何使用 |
+| --- | --- |
+| 当前有效合同 | 以拥有该行为的 Schema、源码与回归测试为准；当前 `main` 的行为不意味着所有已发布版本或 Host 都可用。 |
+| 历史实验或实现记录 | 保留源码版本、环境、原始测量和验证限制；通过数量属于当次实验，不是当前验收证据。 |
+| 尚未实现的设计方向 | 视为有明确条件的提案，不是已支持工具或执行要求。 |
+| 已废弃或被替代的设计 | 跟随明确的新入口；先将有用证据并入所属文档、修正引用，再删除重复页面。 |
+
+`docs/agent/` 保存维护者合同及明确标注的部分历史审计；
+`docs/architecture/` 保存设计与源码导航；
+`docs/implementation/` 同时包含当前实现合同和特定阶段验收；
+`docs/experiments/`、`docs/design/`、`docs/contribution-reports/` 保留有范围的研究与阶段记录。
+Integration 和 Plugin 的消费者指南保留在相应代码旁。
+不能仅凭目录、日期、标题或 TODO 数量认定文档状态；混合文档应分别说明各部分状态。
 
 ## 我想参与开发或发布
 

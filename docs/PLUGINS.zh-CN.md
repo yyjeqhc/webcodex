@@ -98,9 +98,12 @@ executor，不存在独立的客户端实现或工具名称兼容表。按照当
 {"action":"call","binding":"wc_pbind_...","arguments":{"path":"build/old.bin"}}
 ```
 
-独立的 `call_runtime_tool` operation 只用于 manifest route 为 `gateway` 的 Adaptive
-long-tail tools；`plugin_tool` 这类 direct tool 不得再通过 gateway 调用。generic
-gateway envelope 是 canonical `{tool, arguments}`。
+遵循精确 manifest 的 `route.primary` 和 `route.fallback`。`plugin_tool` 这类普通
+direct tool 在直接 callable 不可用时，可以保留 manifest 明确允许的 gateway fallback；
+`call_runtime_tool` 使用 canonical `{tool, arguments}` envelope，并经过相同的
+action-aware Plugin governance。fallback 为 null 时禁止改走该路径。Host 拒绝不允许
+换路绕过；需要单独 Host review 或 App presentation 的操作保留各自限制。
+参见 [MCP 路由](MCP.zh-CN.md#adaptive-runtime-routing)。
 
 静态 ToolDefinition 只表达 worst-case discovery contract。真正执行 policy 会在校验后的
 `action` 上先分类，再进入 Session/permission governance：list/describe 只要求

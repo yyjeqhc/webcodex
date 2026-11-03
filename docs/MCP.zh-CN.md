@@ -222,49 +222,59 @@ credential。独立/network-accessible Server 仍默认关闭，不应使用它�
 
 如果在 Windows 上使用普通独立 Server + Runner 并通过 OpenAI Tunnel 接入，或排查“本地 MCP 正常但 ChatGPT Connector 创建失败”的情况，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。它是深入配置/排障文档，不是普通用户第一次必须阅读的教程。
 
-## 对话侧边栏中的 Work Result
+## 结果卡片
 
-`present_work_result` 在首次成功的 Project 操作后展示一次当前 Window 的工作结果。
-支持对话侧边栏的 Host 可以用空参数对象调用公开的界面展示
-`work_result_thread_panel` 入口。入口只恢复同一认证主体、同一 Host Window 中最近一次
-成功展示的 Project，以及该次展示显式传入的业务 Session。其他操作或失败的展示不能
-重新指定侧边栏目标。
+Stateless MCP 2026 请求声明 MCP Apps HTML 支持时，`list_jobs`、
+`read_validation_summary`、`read_git_review_summary` 可以展示有界只读的里程碑卡片。
+Job 卡片突出活跃或需要关注的 Job；验证和已提交区间评审卡片不包含原始日志或 Diff。
+这些静态卡片不轮询、重试或调用工具；高频观察与验证继续使用 Host 原生展示。
+`WEBCODEX_MCP_APPS_ENABLED=false` 关闭 App metadata/resources，不禁用底层普通工具。
 
-inline card 和侧边栏使用相同的 Activity / Results / Collaboration 页签和分区名称。
-页签上方的摘要行把每项结果只陈述一次（变更文件、检查、后台任务、最终变更），点击即
-打开承载证据的分区；失败的检查和失败的后台任务在这里醒目标出，不在各面板重复。
-Results 先列 Session 检查，再列 Changed files / 按需 Diff 和 sealed Final Changes。
-侧边栏默认打开 Results；inline card 默认打开 Activity，其中 Window 调用历史按最新
-优先排列，并以“做了什么”作为标题。Project / Window / Session 标识收进默认折叠的
-Diagnostics，本地 Appearance 偏好位于底栏。打开 Results 不会提前加载所有 Diff。
+实时 Work Result 卡片和专用文档阅读器分别使用显式 App 读取路径。
+历史 [Host 续接实验](agent/mcp-app-continuation-experiments.md) 不会把里程碑卡片
+变成自动续接控制器。
 
-已打开的侧边栏在刷新时保留原 Project 和显式 Session 选择；Window 关联的 Session
-证据不会成为刷新授权依据。重新打开才选择更新的成功展示记录。缺少稳定 Window
-或展示绑定时拒绝打开，每次读取仍校验当前授权和快照边界。
+### 专用 DOCX 阅读器
 
-Changed files 和 Final Changes 仅允许对已列出的路径按需查看 Full text。
-当前文件来自固定的工作树快照，最终文件来自 sealed final tree，后续修改不会漂移。
-每次显式加载最多 32 KiB，每文件累计最多 256 KiB；未完整或达到上限会明确标记。
-已删除文件没有最终版本；二进制、非 UTF-8、符号链接与 submodule 不提供文本预览。
-读取失败或快照过期不会转向实时路径。`.md` / `.markdown` 完整读取后才启用
-Markdown：内嵌 markdown-it 支持标准 Markdown、表格、删除线，不承诺完整 GFM。
-DOM 节点和属性采用允许列表，原生 HTML 作为文本，拒绝不安全 URL；链接不打开，
-外部图片仅显示未加载说明，不自动请求资源。行或选区回传对话留待后续版本。
+`present_docx(project, path)` 展示已授权的未修改或未跟踪 `.docx`，
+不要求 Git 或 Workflow Session。它固定 size/SHA-256（最大 10 MiB），
+私下读取带版本边界的分段。支持常见样式、适应宽度、缩放和 Host 支持的全屏；
+原文件下载要求 Host 提供下载能力。不承诺 Word 等价分页，不支持旧 `.doc`、
+加密包或编辑。文件变化需要显式重新打开。传输、清理、解压边界与验证见
+[DOCX 阅读器合同](architecture/docx-document-viewer.md)。
 
-Markdown bundle 已提交在单 script App 资源内，纯 Rust 编译不需要 npm。
-`npm ci --prefix frontend` 后用 `npm --prefix frontend run build:work-result`
-重新生成；`node frontend/scripts/build-work-result-markdown.mjs --check` 比对确定性产物，
-该检查同时接入 `check:dist`。
+### 对话侧边栏中的 Work Result
 
-展示调用会保存这条窗口绑定，但不会启动 live Window activity；侧边栏入口和 App
-刷新调用也不会启动 live Window activity。新卡片使用当前 descriptor 公布的 Work Result
-资源 URI，其身份由[canonical App registry](../src/mcp/app_registry/builtin.rs)维护。
-刷新 Host schema 并重新打开缓存 reader，以加载当前 thread-panel、lazy-detail 和工具名
-契约；旧版资源 URI 不再提供模板，避免缓存界面调用已退役的工具名。
+首次成功的 Project 操作附近调用一次 `present_work_result`。
+Activity / Results / Collaboration 展示 Window 活动、关联 Session 证据、
+当前未提交文件与 sealed 最终变更。工作树快照可能包含其他工作；
+不完整文件列表与缺失行数会标记，干净工作树不证明任务成功。Results 按需加载 Diff。
 
-界面展示入口保留默认的 model/App 可见性；App-only 桥接工具只返回数据，不声明
-`ui.resourceUri`。ChatGPT 刷新工具时会拒绝声明界面资源的私有工具。更新 Server
-的工具描述后，应先在 ChatGPT 插件设置中刷新已有 App 的工具，再验证新入口。
+Host 可通过 `work_result_thread_panel({})` 恢复同一认证 Host Window
+最近一次成功展示的 Project 及该次显式业务 Session。失败展示和其他操作不能改指目标。
+已打开卡片刷新时保持精确 Project/Session；Window 关联证据不会提供刷新授权或选择
+Session。缺少 binding/Window 时拒绝；重新打开才选择更新的成功展示记录。
+
+Changed files 默认跟随新观察；**Pin snapshot for review** 固定已检查的版本，
+**Follow changes** 恢复更新。每次读取仍绑定精确工作树快照。Final files 使用
+sealed final tree，后续编辑不能漂移。仅能读取已公布的路径，每次显式加载 32 KiB、
+每文件最多 256 KiB，并标记未完整或达到上限。删除文件没有最终版本；
+二进制、非 UTF-8、符号链接和 submodule 不提供文本。失败或过期读取不会退回实时路径，
+每次仍重新授权目标。
+
+完整 `.md` / `.markdown` 可使用内嵌 Markdown parser 展示。原生 HTML 作为文本，
+DOM 节点/属性使用允许列表，拒绝不安全 URL，链接保持不可点击，外部图片不自动请求。
+行或选区回传对话尚未实现。App 隐藏时暂停自动刷新；展示与私下刷新不创建 live Window
+工作活动。
+
+[卡片导航](ui/work-result/README.md)、
+[读取所有权与失效](architecture/work-result-read-lifetimes.md)、
+[renderer 与构建边界](architecture/work-result-sections.md) 说明具体 UI 设计。
+[App registry](../src/mcp/app_registry/builtin.rs) 拥有当前资源身份，旧 URI 不指向新模板。
+descriptor 更新后刷新 Host schema 并重新打开缓存卡片。展示入口保留 model/App
+可见性；私有 bridge 只返回数据，不声明 `ui.resourceUri`，见
+[App presentation 合同](architecture/mcp-presentation-families.md)。
+
 
 ## 已有 Server
 

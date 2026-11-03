@@ -50,12 +50,41 @@ transition or renew a lease.
 | `after_success.session_close` | `close_session`, exact Session id |
 | `after_success.todo_completion` | `complete_session_message`, including the unchanged exact assignment fence |
 
-The envelope and payloads are closed. A present phase has exactly one mutation;
-there is no operation list. Existing `_wc.resolve` is also an
-effectful before mutation, so combining it with `_wc.control.before` is rejected.
-ACK and context material requests do not count. Session close is admitted only on `finish_coding_task`; it must succeed with explicit
-`task_outcome.blocking=false`. Todo completion also requires a known successful
-main result; asynchronous handoff/unknown results do not qualify.
+The envelope and payloads are closed. Each `before` / `after_success` mutation
+object contains exactly one operation; it is not an arbitrary operation list.
+Existing `_wc.resolve` is also an effectful before mutation, so combining it with
+`_wc.control.before` is rejected. ACK and context material requests do not count.
+The separate `communication` field admits at most two messages total, as described
+below. Session close is admitted only on `finish_coding_task`; it must succeed
+with explicit `task_outcome.blocking=false`. Todo completion also requires a known
+successful main result; asynchronous handoff/unknown results do not qualify.
+
+## Replay-safe communication
+
+`_wc.control.communication` can contain `before` and `after_success` arrays.
+Each array entry is a closed, single-key `session_message` or `peer_message`
+object using the corresponding `post_session_message` / `post_peer_message`
+arguments. Every entry requires a nonempty `delivery_key`; the combined array
+count is at most two. This is an optional way to carry already-authorized
+communication on a needed call, not permission to send messages or select targets.
+Standalone message tools remain valid.
+
+The Server parses all message payloads and checks each message tool's scope before
+main dispatch. Malformed payloads, excess messages, missing delivery keys or
+insufficient scopes reject the envelope before effects. Actual message dispatch
+still rechecks its own exact Session/Peer authority. The before mutation, if
+present, runs first: a failed mutation prevents both before messages and main.
+Once that gate succeeds, runtime failure of a communication message is recorded
+independently and does not prevent main. After-success messages run only for a
+known completed successful main result, with the same nonblocking-closeout gate
+when main is `finish_coding_task`.
+
+Receipts live under `output.control.communication.before` / `after_success` and
+retain message identity, replay, state-change and uncertainty facts. Reconcile a
+lost message response with the same canonical target, delivery key and payload;
+changed reuse conflicts. The message's replay protection never makes the main
+call safe to repeat. Sending, model ACK, Reply and Resolve remain distinct; see
+[manual collaboration](manual-window-collaboration.md).
 
 ## Execution and authority
 
@@ -65,9 +94,11 @@ main result; asynchronous handoff/unknown results do not qualify.
 3. Authorize recorder, main request scope and exact business targets.
 4. Run the optional before mutation through the canonical kernel, including its
    own permissions, target/lifecycle checks, domain helper and replay fences.
-5. Dispatch main only if before succeeded or was an exact canonical replay.
-6. Inspect main truth and run the eligible after-success mutation through the
-   same canonical kernel. Domain fences are checked at mutation time.
+5. Run admitted before messages, then dispatch main if the before mutation
+   succeeded or was an exact canonical replay. Message execution failures are
+   separate receipts; they do not grant or remove main authority.
+6. Inspect main truth and run the eligible after-success mutation and messages
+   through the same canonical kernel. Domain fences are checked at each operation.
 7. Preserve the main result and append bounded `output.control` observations.
 
 No domain transaction spans Goal, Agent and Workflow Session stores. A committed
@@ -101,3 +132,15 @@ identity. Its sidecar therefore returns
 The standalone tool is unchanged. Enabling this sidecar later requires a shared
 canonical CAS/replay contract plus exact active Runner resource validation; v1
 never silently broadens context, environment or credential authority.
+
+## Source and regression map
+
+[`ControlSidecars`](../../src/tool_runtime/control_sidecar.rs) owns closed payloads,
+message bounds, canonical dispatch order and receipts. The
+[MCP invocation adapter](../../src/mcp/tools/invocation.rs) filters individually
+reviewed operations and rejects unsupported envelope fields before dispatch.
+[`control_sidecars` tests](../../src/tool_runtime/tests/control_sidecars.rs) cover
+message replay/standalone parity, independent authority, before failures,
+after-success gates, bounds and uncertain outcomes. These are source-level
+regressions; their presence is not evidence that a particular Host displayed or
+acted on a sidecar.

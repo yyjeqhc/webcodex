@@ -1,5 +1,11 @@
 # sf Server memory and Active Session residency — 2026-10-04
 
+> Historical measurement of the JSON-v2 ledger and its RAM-JSON Cold design at
+> the source revision below. The current implementation uses SQLite deltas and
+> metadata-only Cold records; see [Session storage and residency](session-active-residency.md).
+> The original measurements and fixture remain useful, but neither the old
+> retention limits nor the claimed memory savings describe current SQLite behavior.
+
 ## Evidence scope
 
 Read-only observations of `sf` / `webcodex.service`, with implementation work in

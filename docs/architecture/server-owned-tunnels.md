@@ -91,8 +91,10 @@ retain standalone for that configuration. Restart the selected owner explicitly.
 
 ## Startup, status and teardown
 
-HTTP and the Tunnel supervisor are polled together. Each profile first proves its
-authenticated local MCP endpoint ready and then starts its owned Tunnel task.
+HTTP and the Tunnel supervisor are polled together. Each embedded profile with
+`autostart=true` first proves its authenticated local MCP endpoint ready and then
+starts its owned Tunnel task. Profiles with `autostart=false` remain in the startup
+catalog with stopped status; the supervisor does not launch them.
 Startup is bounded at 60 seconds. The supervisor observes task completion for its
 entire lifetime; dropping it aborts every retained task instead of detaching it.
 It does not automatically restart a failed or uncertain task.
@@ -182,6 +184,16 @@ library, standalone CLI and temporary `webcodex share` retain their
 unprotected/manual recovery behavior. Share credentials intentionally change on
 every invocation: a clean stop allows another share, while an uncertain share
 still requires explicit reconciliation. This never downgrades protected history.
+
+## Source ownership
+
+[`server_tunnels.rs`](../../src/server_tunnels.rs) owns the startup snapshot,
+`autostart` selection, local readiness, task lifetime and status projection.
+[`embedded_tunnel.rs`](../../crates/webcodex-environment/src/embedded_tunnel.rs)
+and [`tunnel.rs`](../../crates/webcodex-environment/src/tunnel.rs) own Environment
+profile validation, exact credential bindings, catalog bounds and ownership
+transfer. The adapter delegates Tunnel protocol behavior to
+[`webcodex-openai-tunnel`](../../crates/webcodex-openai-tunnel/src/lib.rs).
 
 ## Focused validation
 

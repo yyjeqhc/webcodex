@@ -3,12 +3,17 @@
 WebCodex is a self-hosted tool runtime that lets online AI clients work with
 registered directories, files, and code through a Server and a local Runner.
 The Server can also retain
-durable Agent/Conversation state independently of a browser window. This page is a
-conceptual overview; the [CLI](CLI.md), [Runner](RUNNER.md), [Deployment](DEPLOYMENT.md),
+durable Agent/Conversation state independently of a browser window. This page is the
+current source architecture and reading entry point; the [CLI](CLI.md), [Runner](RUNNER.md), [Deployment](DEPLOYMENT.md),
 and [Authentication](AUTH_MODEL.md) guides cover the operational details.
 
 For a short definition of the terms, see the terminology sections in
 [CLI](CLI.md#terminology) and [Runner](RUNNER.md#core-terms).
+
+Read the [architecture path](INDEX.md#architecture-reading-path) before selecting
+individual contracts. Historical experiment counts and proposed directions are
+identified separately; source behavior on `main` is not a promise that every
+published release or Host exposes the same capability.
 
 ## Client → Server → Runner → project
 
@@ -151,222 +156,125 @@ Runner Jobs are reconciled when the same live Runner process reconnects. Ordinar
 
 Durable Store aggregates use closed typed Rust lifecycle/state contracts for business authority. SQLite `TEXT` values and `CHECK` constraints remain the persistence encoding, not a second semantic registry. Durable Agent/Conversation/Agent Task/Goal state and other current Store domains decode fail-closed from their owned vocabularies; ordinary coding uses Workflow Session and Runner Job state instead of a parallel Task/Run/Result/Approval schema.
 
-## Module map
+## Module map and one request
 
-```text
-MCP / Runtime HTTP --> ToolRuntime --+--> Project resolution --> Runner bridge
-                                               |      |--> File/Edit/Git/Validation/Job tools
-                                               |      +--> Workflow Session / Handoff / Hygiene
-                                               +--> Durable Agent / Conversation / Delivery / Wake
-                                               +--> Goal (high-level durable intent/control; no execution dispatch)
-Runtime Console -----------------------> canonical Server HTTP/kernel paths above
-```
+Start at the owning layer, then follow its caller and tests. The [documentation
+index](INDEX.md#architecture-reading-path) routes the deeper contracts; this page
+does not define a second schema or lifecycle.
 
-- `route_metadata` — canonical HTTP route identity and security/surface metadata;
-  it contains only maintained endpoints, not a parallel model tool registry.
-- `runtime_http` — authenticated operational routes and `/api/tools/call`, entering
-  the same ToolRuntime kernel as MCP.
-- `mcp` — the model-facing adapter: ToolDefinition-ranked Direct descriptors,
-  `call_runtime_tool` for admitted tools, and independently admitted App extensions.
-- `tool_runtime` — protocol-independent tool parsing, dispatch, project
-  resolution, registry metadata, sessions, handoff, hygiene, files, Git,
-  patches, validation, shell, Jobs, artifacts, and checkpoints.
-  Workspace Git/worktree snapshots (`workspace_checkpoint_*`) are opt-in:
-  build Server and Runner with `--features workspace-checkpoints`. The root
-  feature forwards to tool contracts, runtime contracts, and workspace; Runner
-  forwards separately to workspace. Default builds omit the implementation,
-  tools, schemas, and checkpoint handoff projection. `include_checkpoints`
-  remains accepted and is ignored when disabled; dormant Runner checkpoint
-  wire operations fail closed. Workflow Session explicit handoff recovery,
-  collaboration ACK/message observation, validation evidence, and Jobs remain always active.
-  The shared workspace path policy stays compiled for `read_project_overview`.
-- `auth` / `oauth_http` / `db` — authentication, OAuth endpoints, and
-  persistence.
-- `webcodex-runner` crates — the Runner binary: config, transport, project
-  registry, file/patch/artifact handling, shell execution, and LSP
-  navigation.
+| Owner | Responsibility and boundary | Source entry |
+| --- | --- | --- |
+| Protocol adapters | Authenticate the caller, establish only supported Host/transport context, and enter the shared runtime. Desktop and Console remain adapters. | [MCP](../src/mcp.rs), [HTTP](../src/runtime_http.rs), [route metadata](../src/route_metadata.rs) |
+| Tool contracts | Declare visibility, capabilities, scopes, audit/evidence policy and typed request schemas. Discovery never creates authority. | [ToolDefinition](../crates/webcodex-tool-contracts/src/tool_definition.rs), [request schemas](../crates/webcodex-tool-contracts/src/request_schema.rs) |
+| Runtime kernel and domains | Preserve caller/recorder identity, admit requests, resolve authorized targets and route to domain owners. | [Kernel](../src/tool_runtime/kernel.rs), [governance](../src/tool_runtime/dispatch/governance.rs), [domain convergence](architecture/tool-runtime-domains.md) |
+| Runner and Registry | Execute on the selected device; fence replacement instances, own process trees, reconcile the same Job. | [Runner source](../crates/webcodex-runner/src/webcodex_runner), [Registry reconciliation](../crates/webcodex-runner-registry/src/reconciliation.rs) |
+| Workflow Session and Store | Persist bounded evidence and domain-owned lifecycle facts; presentation does not create execution truth. | [Session residency](../crates/webcodex-workflow-session/src/store/residency.rs), [Store](../crates/webcodex-store/src) |
+| Result adapters | Capture canonical evidence first, then project bounded model/UI results with independent privacy and retention rules. | [Post-record response](../src/tool_runtime/kernel/postprocess.rs), [result projection](../src/tool_runtime/result_projection.rs) |
 
-### Tool invocation context and dispatch
+For an ordinary project tool such as `read_files` or `run_process`, the request
+passes through these boundaries:
 
-The Kernel retains adapter authentication, transport, window and recorder identity
-in `ToolCallContext`. `DispatchContext` carries that context together with recorder
-metadata, requested context, protocol capabilities and return timing through the
-ordinary dispatch path. Context-material capabilities derive from the same
-protocol capabilities used by the invocation.
+1. The MCP/HTTP adapter supplies authentication and protocol capabilities.
+   `ToolCallContext` carries trusted transport, supported `ClientWindow` and
+   optional outer recorder identity; none is inferred from the Project.
+2. The kernel admits the invocation and parses the canonical typed `ToolCall`.
+   The explicit business `session_id` stays on that call. An outer recorder may
+   record a worker reading another Session without becoming that target Session.
+3. `DispatchContext` carries those facts into `govern_dispatch`, preserving the
+   established ordering of target resolution, Session/scope/Runner guards and
+   the single ordinary permission decision. Routing receives a private
+   `AuthorizedDispatch`, not independently assembled authority parameters.
+4. The selected domain still enforces its own paths, capabilities and effect
+   fences. Runner work goes to the resolved device/root/instance. A long-running
+   operation may return the same execution as a Job; it does not launch again
+   because the Host call ended.
+5. Control-sidecar outcomes and Session/permission evidence are recorded before
+   `kernel::postprocess` captures canonical audit output and consumes the one-shot
+   model projection. Bounded response-only attention cannot redispatch the main
+   operation or rewrite its execution truth.
 
-`govern_dispatch` keeps the ordered Session and Runner checks and the single
-ordinary-tool permission evaluation. After those checks and the existing
-canonical Project binding, it constructs a private `AuthorizedDispatch` for
-routing. Domain handlers keep their own path, capability and effect checks.
-Specialized gateways retain the separate lifecycle described below.
+[Kernel pipeline tests](../src/tool_runtime/tests/kernel_pipeline.rs) and
+[dispatch tests](../src/tool_runtime/tests/dispatch.rs) are starting points for
+reproducing these invariants. Their presence is not a claim that a particular
+Host or deployed build was tested.
 
-The business Session stays on `ToolCall`; `ToolCallContext.session_id` identifies
-the outer Kernel recorder. Recorder presence selects the existing recording
-owner. Explicit coding resume still defers its business Session checks to the
-workflow, and reading another Session's handoff keeps the outer recorder separate
-from that target Session.
+### Why one generic dispatcher is insufficient
 
-Public dispatch and Kernel entrypoints keep boxed futures so callers do not
-embed the complete execution future in their stack frame. Canonical evidence
-continues to be recorded before the one-shot model result projection is consumed.
+Action-dependent Plugin and SSH gateways enter
+[`try_dispatch_specialized_gateway`](../src/tool_runtime/specialized.rs) before
+the generic static Session/permission lifecycle. The closed boundary uses the
+same typed parser, but the gateway owns its exact action policy, process/protocol
+lifecycle and uncertain-result handling. Shared specialized governance and finish
+helpers run once; discovery metadata keeps the worst-case policy.
 
-### Heterogeneous gateway governance
+This avoids classifying a heterogeneous gateway's read and effectful actions by
+one static permission decision. It does not bypass canonical authorization or
+create a second set of ordinary tools. See
+[specialized-dispatch tests](../src/tool_runtime/tests/specialized_dispatch.rs)
+and the [Plugin contract](architecture/native-tool-plugins.md).
 
-The Kernel routes action-dependent gateways through
-`tool_runtime::specialized::try_dispatch_specialized_gateway` before the generic
-static ToolDefinition Session/permission lifecycle. This closed boundary
-classifies supported gateway names, uses the canonical typed `ToolCall` parser,
-and maps parse failures and shared governance denials to Kernel outcomes once.
-Ordinary tools fall through without specialized parsing or execution.
+### Typed facts, bounded reads and presentation
 
-`plugin_gateway` and `ssh_resource_gateway` own their action vocabulary, exact
-`SpecializedOperationPolicy`, execution protocols, uncertainty/recovery, and
-result conversion. They call the shared `govern_specialized_invocation` and
-`finish_specialized_invocation` lifecycle; the dispatcher does not repeat it.
-Static definitions retain their worst-case discovery policy. Trusted recording
-Session provenance is supported, while generic invocation continuity metadata
-receives no specialized semantics. Adding another heterogeneous gateway extends
-this closed dispatch boundary without adding a concrete Kernel policy branch.
+[Job queries](../src/tool_runtime/job_query.rs) select authorized Registry records
+and apply filters/order/limits before projection. The internal
+`JobInventoryPage` is deliberately not serializable: `list_jobs` and
+[Console Job projection](../src/runtime_console_http/job_projection.rs) consume
+the same typed facts, while passive Work Result/attention snapshots retain their
+separate non-refreshing read path. See [query tests](../src/tool_runtime/tests/job_query.rs).
 
-### Typed queries and post-record responses
+Presentation snapshots are owned by a `ToolRuntime`, shared by its clones and
+isolated from independent runtimes. Review, Changes and workspace observations
+retain distinct authority fences, quotas and lifetimes. File-read revisions are
+a different correctness boundary: cached range bytes still require fresh Runner
+SHA evidence and edits recheck the original target and source. Their current
+design and tests live in [ToolRuntime domains](architecture/tool-runtime-domains.md)
+and [file-read snapshot ownership](implementation/read-snapshot-service.md).
 
-`tool_runtime::job_query` owns the shared authorized Job inventory selection:
-normalize filters, ask the Registry for visible matching records, then apply
-status/order/limit before any model or Console projection. `JobInventoryPage`
-is internal and deliberately not serializable. `list_jobs` applies the model
-allowlist only to returned records; `runtime_console_http::job_projection`
-projects typed fields directly instead of parsing model-facing JSON. Registry
-lifecycle refresh, endpoint scopes and visibility remain unchanged. Passive
-Work Result/attention snapshots keep their separate non-refreshing reader.
+Validation consumes its typed evidence rather than reparsing model JSON. Historical
+validator success does not prove current source stability; an unproven current
+source must not be projected as `passed`. See
+[typed closeout facts](implementation/typed-closeout-facts.md) and
+[validation evidence](implementation/validation-success-evidence.md).
 
-The ordinary Kernel path finishes authorization, dispatch, control sidecars and
-Session/permission recording before entering `kernel::postprocess`. That stage
-captures canonical audit/telemetry evidence, consumes the existing one-shot
-model projection plan, and finally adds bounded response-only collaboration and
-Job attention. Its internal result keeps canonical audit output separate from
-model output. It cannot redispatch the original operation or reinterpret raw
-business arguments. Specialized gateways and early denials retain their existing
-entry/exit paths. No tool schema, direct admission or UI resource changes follow
-from this internal separation.
+Frontend read cancellation/coalescing cannot cancel mutations, replace delivery
+keys or renew Agent Endpoints. These are separate lifecycles, explained in
+[Window polling consistency](implementation/window-polling-consistency.md) and
+[Work Result read lifetimes](architecture/work-result-read-lifetimes.md).
 
-Window-specific Console query assembly lives in
-`runtime_console_http::window_queries`, behind the same common authorization
-and error helpers; routes and DTOs stay at the adapter boundary. Audit admission
-and exhaustive ToolCall routing remain in `tool_audit`, while private `request`,
-`result` and `execution_identity` modules own their existing projections. Public
-audit import paths remain stable. Related tests are grouped by responsibility,
-not duplicated per adapter; see [module boundaries](implementation/console-audit-module-boundaries.md).
+### Tool contracts, audit and Session evidence
 
-### Runtime ownership and presentation boundaries
+The [tool-contract guidelines](agent/tool-contract-guidelines.md) own model-facing
+ergonomics: strict identity, authority, retry/effect truth and privacy; harmless
+bounded presentation normalization; one domain-proven parser-ready next action.
+Internal taxonomy and diagnostics are disclosed only when they change interpretation
+or the next safe action. Continuation, failure recovery and message ACK remain
+separate semantic lanes.
 
-`tool_runtime::result_projection` owns request-scoped model result projection;
-`dispatch` retains execution targeting, permission/Session orchestration, and
-pre-record expectation facts. The existing one-shot projection plan is consumed
-after canonical evidence capture. Moving a presentation field must not introduce
-execution or authorization into the projection module.
+`ToolDefinition` also owns the static audit and Workflow Session evidence policies.
+Typed `ToolCall` request projection is the sanitizer; unknown/unprojectable requests
+fall back to an empty audit object, never raw business arguments. Result fields,
+persisted context and execution excerpts are bounded by the same declared policy.
+Session's final persistence fence preserves that policy without making a duplicate
+field registry. The [definition regression](../crates/webcodex-tool-contracts/src/tests/definitions.rs)
+`every_runtime_tool_has_an_explicit_fail_closed_audit_contract` checks admission
+of those declarations.
 
-Git review and Changes snapshot registries are owned by one `ToolRuntime` through
-shared `Arc`s. Runtime clones share snapshots; independent runtimes cannot read,
-refresh, or evict each other's entries. Their existing authority fences, source
-identities and distinct review/live/sealed retention rules remain separate.
-There is no process-global presentation registry or universal cache policy.
+Audit is observational: its projection never supplies execution arguments, OAuth
+scopes, permission decisions, Runner identity or retry authority. Static Session
+policy declares evidence meaning; typed bounded Session projectors still decode
+results and enforce privacy. Validation identity normalization/hashing stays in
+`webcodex-core`, not in a second schema or serialized-result registry. See the
+[Session model](agent/session-model.md) and [tracing contract](agent/tool-request-tracing.md).
 
-Validation's current-evidence computation consumes its own typed
-`ValidationSummary` directly and serializes at the projection boundary. It never
-reads counts back from its serialized representation. Current-source status is
-separate from historical validator success; its closed status type deliberately
-cannot assert `passed` while external source stability remains unproven. Existing
-JSON projection ports to handoff/continuation remain explicit wire/presentation
-boundaries, not a second source of validation truth.
+### Optional workspace snapshots
 
-The Frontend shares visible observation scheduling and narrow read-request
-slots. Goal/Session selection cancels only obsolete reads; periodic refresh skips
-occupied slots, while explicit refreshes coalesce behind them. Mutation delivery
-keys, pending sends and Agent Endpoint renewal are independent lifecycles.
-
-Scale/recovery methodology and maintenance rules are recorded in
-[`implementation/runtime-maintenance-boundaries.md`](implementation/runtime-maintenance-boundaries.md).
-
-### Model-facing tool contract ergonomics
-
-Model-facing tools follow one shared design rule: be strict where meaning,
-authority, identity/fences, retry safety, privacy, or effect truth changes, and be
-tolerant where a recognized parameter only controls bounded presentation or
-resource budgets. Server-known harmless normalization should not consume another
-model turn. Unknown or ambiguous semantic input still fails closed.
-
-Successful projections should foreground sparse business truth; failures should
-be structured and decision-complete. Follow-up calls use one parser-ready
-`{tool, arguments}` representation when the producer can prove the next action,
-while continuation, refinement, failure recovery, and collaboration ACK remain
-separate semantic lanes. Duplicate aliases and compatibility projections are not
-kept without a named consumer.
-
-Internal protocol taxonomies do not automatically belong on the model surface.
-Typed continuation kinds/carriers, absolute cursors, lifecycle bookkeeping,
-timestamps, derived counts, and forensic recovery metadata can remain canonical
-inside WebCodex while the normal model projection exposes only the business
-result, correctness-critical identity/fence/completeness, and one unambiguous
-follow-up. Extra diagnostic detail is progressively disclosed when an exceptional
-state actually requires the model to reason about it. A field that cannot change
-the model's interpretation or next safe action is not model-facing merely because
-it is useful to implementation, tests, telemetry, or the operator Console.
-
-The standing detailed guidance is
-[`agent/tool-contract-guidelines.md`](agent/tool-contract-guidelines.md). Tool
-surface pruning and generalized composition are intentionally downstream of this
-contract/friction cleanup so low usage is not confused with poor ergonomics.
-
-### Tool audit and privacy policy
-
-`ToolDefinition` is the canonical declaration point for Tool Audit privacy
-policy. Request audit first resolves the canonical definition, then parses the
-request through the typed `ToolCall` boundary and consumes its exhaustive
-bounded projection. Unknown tools, retired names without an explicit
-compatibility sanitizer, and requests that cannot be projected fail closed to
-an empty audit object; raw business arguments are never the fallback.
-
-Result audit follows the same definition-owned policy. Most privacy-sensitive
-results declare bounded field selectors directly in their ToolDefinition;
-projections that require derived semantics use a small semantic policy rather
-than a second tool-name registry. Ordinary tools that intentionally retain their
-established canonical audit evidence do so through an explicit policy, not an
-unknown-tool fallback. Missing/unknown policy therefore cannot widen persisted
-ActionAudit or Workflow Session evidence.
-
-Workflow Session's final persistence fence consumes the same definition-owned
-policy for its historical input redaction, bounded context-result projection,
-and execution excerpt eligibility. The typed `ToolCall` request projector remains
-the authoritative request sanitizer; Session does not duplicate that field
-registry. Context projections reuse declared bounded result fields where their
-shapes are identical, with semantic exceptions only where the persisted Session
-contract genuinely differs (for example Git working-tree status). Unknown
-runtime identities fail closed during final Session projection and restore.
-
-The audit projector is observational only. Its output is consumed by ActionAudit
-and bounded Workflow Session ledger extraction, but audit policy never feeds
-ToolCall parsing for execution, OAuth/scope checks, permission decisions,
-Runner authority, retry identity, or protocol/model-facing results. Adding a
-runtime ToolDefinition requires an audit policy at construction time, and the
-registry invariant tests reject incomplete declarations.
-
-### Workflow Session evidence policy
-
-`ToolDefinition` owns static Workflow Session/evidence semantics through a closed,
-structured policy: exploration class, trusted result-side changed-path fields,
-persistent-shell evidence action, review/diff classification, Session lifecycle
-effect, proven-no-state-change failure classification, and structured validation
-identity kind. Workflow Session consumes those
-semantic declarations but retains the typed, bounded projectors that decode tool
-results, normalize paths, enforce privacy limits, and persist durable evidence.
-Dynamic request conditions such as `read_workspace_changes(include_diff=true)` remain in the
-projector rather than becoming declaration-time request parsing.
-
-`ToolCall` remains the exhaustive typed authority for business requests and audit
-request sanitization. Validation target canonicalization and hashing remain in
-`webcodex-core`; ToolDefinition declares only the closed identity kind, so policy
-ownership does not move runtime decoders, Store types, callbacks, or request schema
-parsing into the contracts crate.
+Git/worktree `workspace_checkpoint_*` tools require the `workspace-checkpoints`
+feature on Server and Runner. Default builds omit their implementation, tools,
+schemas and handoff projection; dormant Runner operations fail closed.
+`include_checkpoints` remains accepted and is ignored when disabled. This feature
+does not disable ordinary Session handoff, ACK/message observation, validation
+evidence or Jobs. The shared workspace path policy remains active for
+`read_project_overview`.
 
 ### Cargo workspace ownership layers
 
@@ -409,14 +317,21 @@ in the existing collector. See [the experiment and regression contract](implemen
 
 ## Further reading
 
-- [Resource model and architecture quality exploration](architecture/resource-model-and-quality-review.md) — source-grounded review and staged proposals; not a runtime contract
-- [Model-facing tool contract guidelines](agent/tool-contract-guidelines.md) — turn-economy, normalization, truthfulness, recovery, and compatibility policy
-- [Tool composition research and development plan](architecture/tool-composition-research.md) — later-stage round-trip composition research after primitive contract friction is reduced
-- [Durable Agent runtime and asynchronous work](architecture/durable-agent-runtime.md) — persistent Agent identity and planned asynchronous Agent work
-- [Durable Agent/Conversation/Wake contract](architecture/durable-agent-conversation.md) — current communication implementation
-- [CLI](CLI.md) — commands and terminology
-- [Runner](RUNNER.md) — the execution boundary and operations
-- [Deployment](DEPLOYMENT.md) — self-hosting
-- [Authentication](AUTH_MODEL.md) — credentials
-- [MCP](MCP.md) — model-facing surface
-- [SECURITY.md](../SECURITY.md) — security model
+The [documentation index](INDEX.md#architecture-reading-path) gives the ordered
+reading path. For design study, follow each current contract to its source and
+negative/recovery tests before treating a diagram or benchmark as a guarantee:
+
+- [Durable Agent runtime](architecture/durable-agent-runtime.md) and
+  [Conversation/Wake contract](architecture/durable-agent-conversation.md) separate
+  Goal, Agent Task/TaskAttempt, communication, Workflow Session and execution.
+- [Browser/CDP](architecture/browser-cdp-runtime.md) and [Computer Use](COMPUTER_USE.md)
+  explain target identity, stale snapshots, human handoff and platform boundaries.
+- [Resource model review](architecture/resource-model-and-quality-review.md) separates
+  the existing Memory/Skill/Plugin owners from research directions. Memory and tool
+  discovery are not a built-in vector RAG pipeline.
+- [Code Mode experiment](experiments/code-mode.md) separates Host orchestration
+  from WebCodex's feature-gated V8 experiment. Its measured conditions and the
+  [composition research record](architecture/tool-composition-research.md) do not
+  promise automatic Host continuation or production adoption.
+- [Authentication](AUTH_MODEL.md), [SECURITY.md](../SECURITY.md),
+  [Runner](RUNNER.md) and [Deployment](DEPLOYMENT.md) own operational boundaries.

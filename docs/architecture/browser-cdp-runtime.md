@@ -1,7 +1,7 @@
 # Browser/CDP runtime architecture
 
-Status: Browser runtime implementation contract. This document describes the first-class
-Browser domain and the boundaries that later Browser work must preserve. Browser
+Status: current Browser runtime implementation contract. This document describes the first-class
+Browser domain, including capabilities added after its initial implementation. Browser
 is not part of Computer Use: Computer owns OS/window/accessibility/pointer/keyboard
 semantics, while Browser owns page/navigation/DOM-or-AX/CDP semantics.
 
@@ -12,8 +12,8 @@ request bounds and action-admission rules below apply to both transports.
 
 ## Shape of the runtime
 
-Phase 1 intentionally exposes only two primary model-facing tools while retaining
-precise native Runner operations internally:
+The runtime exposes two primary model-facing tools while retaining precise native
+Runner operations internally:
 
 ```text
 observe_browser / control_browser
@@ -30,7 +30,10 @@ observe_browser / control_browser
 `control_browser` has the closed actions `launch`, `attach`, `new_page`, `navigate`, `reload`,
 `click`, `input_text`, `select_option`, `set_value`, `select_choice`, `set_date`,
 `upload_file`, `batch`, `key`,
-`clear_diagnostics`, `close_page`, and `close_browser`. The model surface does not expose one MCP tool
+`clear_diagnostics`, `close_page`, `close_browser`, `begin_user_handoff`, and
+`finish_user_handoff`. Handoff recovery reads the `user_handoff` field returned by
+`observe_browser(action=browsers)`; `user_handoff` is not a separate observation
+action. The model surface does not expose one MCP tool
 per CDP primitive, and it does not accept arbitrary protocol methods, scripts,
 Browser executables, command-line arguments, profile paths, debugger endpoints,
 or remote CDP endpoints.
@@ -40,6 +43,30 @@ The Runner wire remains more precise than the model facade. It uses distinct
 navigation, element effects, key input, and close operations. This separation
 preserves rolling compatibility, capability admission, telemetry, and exact
 failure attribution without inflating the model tool inventory.
+
+### Ownership and request path
+
+Raw CDP target IDs do not identify an authorized WebCodex target. An observed
+element handle loses authority when its document or snapshot generation changes.
+The public tools therefore use opaque identities with explicit action admission. This lets owned Chromium
+and a user-shared Chrome tab reuse the same effects without treating extension
+consent or a process ID as general Browser authority.
+
+| Owner | Responsibility and source |
+|---|---|
+| Tool contracts | Closed action enums in [input_types.rs](../../crates/webcodex-tool-contracts/src/tool_call/input_types.rs), with scopes/effect metadata in [tool_definition/browser.rs](../../crates/webcodex-tool-contracts/src/tool_definition/browser.rs) |
+| Server | [browser_tools.rs](../../src/tool_runtime/browser_tools.rs) resolves the exact action's authority, Runner capabilities and authorized upload Projects before dispatch |
+| Runner adapter | [browser.rs](../../crates/webcodex-runner/src/webcodex_runner/browser.rs) validates wire payloads and upload paths; translates to native Browser operations |
+| Supervisor | [supervisor.rs](../../crates/webcodex-browser/src/supervisor.rs) owns Browser/page/element registries, operation serialization, snapshot generations, handoff and cleanup |
+| Backend | [cdp.rs](../../crates/webcodex-browser/src/cdp.rs), [profiles.rs](../../crates/webcodex-browser/src/profiles.rs) and [bridge.rs](../../crates/webcodex-browser/src/bridge.rs) separate protocol transport, managed profile leases and external consent |
+
+For a field action, the Server admits the closed action and dispatches it to the
+exact Runner. Under the Supervisor operation lock, `ElementIdentity` must still
+match its `PageIdentity`, document, snapshot generation, optional frame fence and
+admitted capability. Only then does the backend submit the native effect. The
+result retains effect certainty; a later observation or delivery failure cannot
+turn a possibly completed input into a safe retry. A batch repeats these same
+checks in order rather than granting a transaction or rollback guarantee.
 
 ### Bounded semantic queries
 
@@ -235,16 +262,19 @@ detail of Browser launch; it does not grant shell, generic process, or Job
 authority. A ReadOnly Workflow Session may call `observe_browser` and must reject
 `control_browser` before dispatch.
 
-Browser tools are model-visible but deliberately do not expand the Local Coding or
-Adaptive Runtime startup-direct schemas. Local Coding does not expose them;
-Adaptive Runtime discovers them and reaches them through `call_runtime_tool`; Full
-Operator may expose them directly.
+Browser tools are model-visible members of the canonical Adaptive Runtime. Their
+ToolDefinitions have no direct-admission rank, so discovery returns the gateway
+route through `call_runtime_tool`. Directness changes presentation, never Browser
+scope or effect authority. There are no separate Local Coding or Full Operator
+runtime contracts to select.
 
 ## Runner capabilities and lifecycle
 
 The Runner advertises independent registration-required capabilities:
-`observe_browser`, `browser_control`, `browser_launch`,
-`browser_element_action_admission`, and `browser_batch`. They are absent/false on
+`observe_browser`, `browser_control`, `browser_launch`, and
+`browser_element_action_admission`. Additive features independently declare
+`browser_batch`, `browser_complex_controls`, `browser_semantic_query`, managed
+profiles, extension attachment and native/user handoff support. They are absent/false on
 older Runners and are never inferred by the Server from OS identity, protocol
 generation, shell support, Computer capabilities, or an assumed browser install.
 At startup the Runner performs deterministic local Chromium-family executable
@@ -416,18 +446,33 @@ not the URL.
 plane. At the MCP boundary it reuses the shared native-image framing used by
 Computer snapshots: the Base64 body is moved into an MCP image content block and
 removed from structured content, which records `content_delivery=mcp_image`.
-Browser does not introduce a second image pipeline or a Phase 1 MCP App.
+Browser does not introduce a second image pipeline or its own MCP App.
 
-## Phase 1 limits and dogfood
+## Current limits and validation evidence
 
-Phase 1 intentionally does not implement arbitrary JavaScript/evaluate, cookies or
-storage mutation, downloads, real-profile attachment, remote CDP
-attachment, durable profiles, network interception, proxy configuration,
-extensions, password-manager access, credential extraction, cloud Browser
-scheduling, Browser MCP Apps, or Agent-specific Browser ownership.
+Managed persistent profiles and explicit extension attachment are implemented;
+their ownership, consent and cleanup contracts live in
+[Browser session continuity](browser-session-continuity.md).
+[User handoff](../implementation/browser-user-handoff.md) is also implemented for
+an exact visible managed Browser on a supported native host. These capabilities
+do not expose personal profile paths or arbitrary CDP. Process ownership and
+consent fences do not create an operating-system sandbox.
 
-CI uses deterministic fake CDP/backend fixtures and must not require Chrome. The
-first live validation target after review/merge is MSI on Windows using the locally
-available Edge/Chrome installation; mini on macOS is the second-platform parity
-check. The special development host having no Chromium-family browser is a valid
-capability-unavailable state and is not a CI blocker.
+The public tools still do not expose arbitrary JavaScript/evaluate, cookie/storage
+APIs, downloads, remote CDP endpoints, network interception, proxy configuration,
+extension installation, password-manager access, credential extraction, cloud
+Browser scheduling, Browser MCP Apps or Agent-specific Browser ownership.
+The built-in custom-widget engine uses bounded internal JavaScript; that is not
+a caller-authored evaluate API.
+
+Deterministic backend fixtures cover [batch progress and fail-stop behavior](../../crates/webcodex-browser/src/supervisor/tests/batch.rs),
+[semantic query bounds](../../crates/webcodex-browser/src/supervisor/tests/query.rs),
+[frame fences](../../crates/webcodex-browser/src/supervisor/tests/frames.rs) and
+[handoff recovery](../../crates/webcodex-browser/src/supervisor/tests/user_handoff.rs).
+[Registry tests](../../crates/webcodex-runner-registry/src/tests/browser.rs) cover
+capability and Runner admission. Ordinary fixtures need no installed browser;
+ignored Chromium fixtures exercise the native backend on an explicitly selected host.
+Source/test coverage does not establish that a particular current machine has
+Chromium, that a real website works, or that a Host rendered an image. Record those
+native acceptance conditions and results separately; unavailable Browser capability
+is a supported state.

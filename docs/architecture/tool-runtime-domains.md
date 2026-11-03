@@ -115,21 +115,9 @@ not discard known execution facts. The shared Browser/Computer terminal helper
 preserves unknown state names and presence-before-type failure-kind fallback.
 Runner raw mutation-receipt validation and audit Job extraction remain separate.
 
-## CI cancellation versus required lane results
-
-The four aggregate jobs use `!cancelled()` as their job-level status guard. GitHub
-[defines cancelled() as workflow cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#cancelled)
-and [re-evaluates job conditions during cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation).
-A concurrency-superseded workflow should stop instead of starting always-running
-aggregates that turn cancelled dependencies into additional failures. This does
-not convert cancellation into success, and does not waive branch protection.
-
-The unchanged aggregate scripts independently require successful required lanes;
-a child result of failure, cancelled, unexpected skipped, or missing is rejected.
-Only a classifier-disabled lane may be skipped. `test_ci_aggregate_cancellation`
-pins those four scheduler guards and runs the actual checked-in Bash bodies over
-these cases. It is local contract evidence, not a hosted scheduler/concurrency
-simulation; final native CI and actual cancellation observations remain separate.
+CI cancellation and aggregate acceptance are owned by the
+[testing policy](../TESTING.md#ci-cancellation-versus-required-lane-results),
+not by ToolRuntime domain decomposition.
 
 ## Out of scope
 

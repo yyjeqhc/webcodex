@@ -1,5 +1,9 @@
 # Linux terminal unified update adapter
 
+Status: current terminal-adapter contract, followed by explicitly versioned historical
+verification. The recorded counts below are not a claim that those suites were rerun
+against current `main`.
+
 The `environment update` command delegates discovery, cache/download validation,
 installation classification, candidate preparation and reconciliation to the shared
 Environment updater. The existing Core journal, owner receipt and installer broker
@@ -88,3 +92,31 @@ installation, OS reboot, system authorization, installer handoff or rollback
 acceptance. Those outstanding checks and their existing recovery boundaries remain
 unchanged. No raw process output, project source, credentials or private configuration
 is included in this report.
+
+## Historical public-entry regression
+
+At upstream commit `4700beb15faa6f8483ece8b93d41b204bccdd80f`, the CLI's
+Environment adapter had lost the `update` dispatch and its help string used
+literal backslash-n text. Existing tests inside the updater did not exercise
+the public Environment entry point.
+
+Three new public-entry tests use isolated child-local config/cache roots and
+stdin EOF. Before the fix, all three failed: update status returned generic
+Environment help, nonTTY apply did not return the updater's structured admission
+response, and help did not contain real newlines. After restoring dispatch to
+`update::run` and correcting the help escapes, the same three tests passed.
+
+The adapter reuses existing update parsing, TTY/confirmation admission, bounded
+status projection and transactions. No updater, service or installer behavior
+was added. Focused dogfood tests, CLI build and built-binary checks cover absent
+roots and nonTTY effect refusal; they do not establish native installation,
+reboot, authorization or rollback acceptance.
+
+The current dispatch lives in
+[`environment.rs`](../../crates/webcodex-cli/src/environment.rs) (`run_inner`),
+with the three `public_environment_entry_*` regressions in
+[`environment/tests.rs`](../../crates/webcodex-cli/src/environment/tests.rs).
+The focused reproduction filter is
+`cargo test --locked -p webcodex-cli --profile dogfood public_environment_entry_`.
+This section preserves the former standalone entry-repair record; the implementation
+and its admission rules remain owned by the adapter above.

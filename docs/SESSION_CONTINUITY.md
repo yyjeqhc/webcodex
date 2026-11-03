@@ -37,8 +37,11 @@ explicitly supplied; a message claiming “tests passed” remains a report.
 
 WebCodex receives tool arguments and results, not every message in the host's
 conversation. Unsaved discussion and private model reasoning cannot be restored.
-Do not put credentials in notes. Retention and truncation remain explicit; the
-saved Session is bounded project history, not an unlimited conversation archive.
+Do not put credentials in notes. Workflow Session identities, events and messages
+persist in SQLite without automatic count/idle expiry; reads and in-memory
+materialization are bounded and report incomplete coverage. Saved tool evidence
+and explicitly recorded notes are not a complete Host conversation transcript.
+See [Session storage and residency](implementation/session-active-residency.md).
 
 ## Continue from a new conversation
 

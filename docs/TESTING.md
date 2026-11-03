@@ -266,7 +266,7 @@ The lanes above define test semantics; workflows decide when to run them.
   lifecycle boundary or investigating platform behavior. Computer, platform-specific,
   Desktop, npm, packaging, signing, and release surfaces retain their existing
   independent deterministic lanes. The stable `test-macos`,
-  `test-windows`, and `test-native` aggregates always resolve and verify each child
+  `test-windows`, and `test-native` aggregates resolve in non-cancelled workflows and verify each child
   lane is `success` when required or `skipped` when not required, avoiding a skipped
   required-check context that could leave branch protection pending.
   The stable `test` and `test-native` contexts are also emitted for `merge_group`.
@@ -315,6 +315,24 @@ The lanes above define test semantics; workflows decide when to run them.
   Manual real-process evidence remains separate and must never be inferred from a passing
   CI run. Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
   `.github/workflows/release-readiness.yml`.
+
+### CI cancellation versus required lane results
+
+The four aggregate jobs use `!cancelled()` as their job-level status guard. GitHub
+[defines cancelled() as workflow cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#cancelled)
+and [re-evaluates job conditions during cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation).
+A concurrency-superseded workflow should stop instead of starting always-running
+aggregates that turn cancelled dependencies into additional failures. This does
+not convert cancellation into success, and does not waive branch protection.
+
+The unchanged aggregate scripts independently require successful required lanes;
+a child result of failure, cancelled, unexpected skipped, or missing is rejected.
+Only a classifier-disabled lane may be skipped.
+[`test_ci_aggregate_cancellation.py`](../scripts/tests/test_ci_aggregate_cancellation.py)
+pins those four scheduler guards and runs the actual checked-in Bash bodies over
+these cases. It is local contract evidence, not a hosted scheduler/concurrency
+simulation; final native CI and actual cancellation observations remain separate.
+
 ## Default Test Principles
 
 - No external network by default. Tests that need HTTP should use in-process

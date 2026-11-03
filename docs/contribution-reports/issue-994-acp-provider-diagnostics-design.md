@@ -1,5 +1,12 @@
 # Issue #994: ACP Provider read-only diagnostics
 
+Status: **historical Runner-only stage 1–2 design and verification**. The statements
+about missing consumers below describe that branch at the recorded baseline. Current
+`main` also has the authorized Server/ToolRuntime and CLI entry described in
+[stage three](../design/issue-994-server-diagnose-entry-design.md). This report's
+original platform, test counts and remaining acceptance limits are preserved; it is
+not current tool-discovery guidance or proof that all of Issue #994 is accepted.
+
 ## Scope and safety contract
 
 Upstream issue: https://github.com/yyjeqhc/webcodex/issues/994
@@ -7,9 +14,9 @@ Base: upstream `main` commit `c425f837b990c000b4dec196650d96e410c67594`.
 
 This is the historical design and verification record for a **Runner-only
 partial implementation**, not acceptance of the complete operator-facing
-Issue #994. A typed Runner `Diagnose` operation now exists, but no
-Server/ToolRuntime, Desktop, CLI, or MCP surface invokes it yet. Such a future
-entry must independently authorize the exact Runner, provider generation, and
+Issue #994. At this Runner-only stage, a typed `Diagnose` operation existed, but no
+Server/ToolRuntime, Desktop, CLI, or MCP surface invoked it. The subsequent
+entry had to independently authorize the exact Runner, provider generation, and
 Project (and explicitly authorize process launch for a live probe). Do not
 claim the complete issue or deploy an unreviewed operator-facing entry.
 
@@ -24,8 +31,8 @@ claim the complete issue or deploy an unreviewed operator-facing entry.
 - Non-Unicode environment values are not stringified.
 - Tests cover present/missing mappings, unknown provider, unlisted-source
   exclusion, serialization non-disclosure and no child process execution.
-- Caveat: the canonical helper currently lacks a consumption path; Rust may
-  report `dead_code` until the diagnostic operation is added.
+- Stage-1 caveat: the canonical helper then lacked a consumption path; Rust could
+  report `dead_code` until the diagnostic operation was added.
 
 ### Historical checklist before the Runner-only PR
 

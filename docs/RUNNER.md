@@ -636,9 +636,11 @@ not use proxy settings.
 
 ## Reconnect and recovery
 
-A Runner disconnect is a liveness fact, not a lost-work fact. Accepted active
-Jobs enter a bounded `recovering` state (default grace 120 seconds) and are
-restored from the Runner's inventory when the same Runner instance reconnects.
+A Runner disconnect is a liveness fact, not a lost-work fact. With
+`job_state_reconciliation` support, accepted active Jobs enter a bounded
+`recovering` state (default grace 120 seconds) and can be restored from the
+complete inventory of the same Runner instance. Without that capability, or
+when the recovery deadline expires, ordinary Jobs become `lost`.
 Ordinary Jobs remain owned by that exact Runner process: a replacement instance
 does not inherit their child processes, so they become `lost`. Explicit
 `run_detached_process` Jobs are different: after a one-shot durable ownership
@@ -649,13 +651,15 @@ control state. This does not make ordinary process execution detachable, and it
 does not promise survival across a machine reboot.
 
 Completed caller-visible ordinary Jobs have a separate Server-owned SQLite
-receipt. Within the original 15-minute terminal retention window, up to 64
+receipt. Within the original 24-hour terminal retention window, up to 64
 receipts per logical Runner survive a coordinated Server/Runner restart and
 remain available through `list_jobs`, `observe_jobs`, and bounded log reads.
 Receipts preserve the Job id, terminal result, retained log cursors and tails,
 and original authorization partition/owner; Runner registration is not required
-to observe them. Restarts and receipt replay do not renew their deadlines.
-Storage failure degrades restart observability without changing execution success.
+to observe them. Restarts and receipt replay do not renew their deadlines. Receipts written by
+an older build with a 15-minute deadline retain that shorter deadline; upgrade
+does not extend them. Storage failure degrades restart observability without
+changing ordinary execution success.
 
 These receipts are read-only evidence. They contain no command input, stdin,
 environment, validation argv, replay intent, process handle, or execution lease.

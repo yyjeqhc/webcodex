@@ -1,6 +1,9 @@
 # MCP Computer App image-result contract
 
-This note records the durable findings from the August 2026 Computer App gray-card investigation. It is intentionally short; the temporary diagnostic tools used during the investigation were removed after their results were captured.
+Status: historical August 2026 investigation with a current transport invariant.
+The measurements and unresolved rendering observations below describe that run,
+not a fresh Host acceptance result. The temporary diagnostic tools were removed
+after their results were captured.
 
 ## Observed failure
 
@@ -29,7 +32,20 @@ That correction materially improved the observed behavior, but it is not proven 
 
 **Invariant:** a transport adapter that rewrites structured output must advertise the post-adapter schema on that transport. Do not reuse a pre-adapter ToolRuntime schema when the fields actually delivered to the MCP client differ. Keep the generic ToolRuntime/API schema unchanged when only the MCP representation changes.
 
-The current regression in `src/mcp_tests/computer_app.rs` intentionally asserts both sides of this boundary: the generic `observe_computer` runtime schema retains `content_base64`, while its MCP-facing schema exposes `content_delivery = "mcp_image"` instead. Resource identity bumps alone did not eliminate the intermittent gray card. During the August investigation the canonical resource was `v11` with `ttlMs = 0`; the current canonical resource is `v12`, retains `ttlMs = 0`, and keeps prior versions as hidden read aliases. Live ActionAudit on 2026-08-16 showed that `ttlMs = 0` is only cache guidance: after the last recorded v11 `resources/read`, fifteen subsequent successful snapshots—including calls against different windows and `surface_id` values—rendered normally without another resource read. Template/resource reuse is therefore compatible with successful rendering and is not by itself the gray-card cause. Computer App `resources/read` outcomes are recorded in ActionAudit as bounded metadata only (`resource_uri`/version, protocol era, UI-capability presence, HTTP status, and MCP error code); HTML, screenshot bytes, tool arguments, window titles, and result content are never persisted by this diagnostic projection.
+The current boundary is owned by the [generic Computer output schema](../../crates/webcodex-tool-contracts/src/registry/output_schemas/computer.rs),
+`adapt_native_image_output_schema_for_mcp` in the [MCP tool adapter](../../src/mcp/tools.rs),
+and native-image framing in [MCP resources](../../src/mcp/resources.rs).
+The generic runtime retains `content_base64`; the MCP descriptor substitutes
+`content_delivery = "mcp_image"`. [Native-image regression tests](../../src/mcp_tests/tools.rs)
+check Computer and Browser framing without duplicate structured Base64;
+[Computer App tests](../../src/mcp_tests/computer_app.rs) cover resource metadata,
+handshake and caller/scope-bound snapshot links.
+
+Resource identity bumps alone did not eliminate the intermittent gray card. During the August investigation the canonical resource was `v11` with `ttlMs = 0`. Live ActionAudit on 2026-08-16 showed that `ttlMs = 0` is only cache guidance: after the last recorded v11 `resources/read`, fifteen subsequent successful snapshots—including calls against different windows and `surface_id` values—rendered normally without another resource read. Template/resource reuse was therefore compatible with successful rendering and was not by itself the gray-card cause.
+
+The current [App registry](../../src/mcp/app_registry/builtin.rs) registers the Computer resource as `ui://webcodex/computer/v12` with `ttlMs = 0`. [URI lookup](../../src/mcp/app_registry.rs) matches the exact registered identity; prior Computer resource versions are not admitted as hidden read aliases. This current admission rule is separate from the historical Host cache/reuse observations above.
+
+Computer App `resources/read` outcomes are recorded in ActionAudit as bounded metadata only (`resource_uri`/version, protocol era, UI-capability presence, HTTP status, and MCP error code); HTML, screenshot bytes, tool arguments, window titles, and result content are never persisted by this diagnostic projection.
 
 ## Separate macOS lock-screen observation
 

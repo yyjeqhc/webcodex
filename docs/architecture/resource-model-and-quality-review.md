@@ -1,8 +1,56 @@
 # WebCodex 资源模型与架构质量探索
 
-状态：探索性评审，不是新的运行时契约。本文会随真实 dogfood 和产品使用证据修订，而不是反过来要求实现服从路线图。2026-09-13 复审后，后续资源路线从 user-private / Memory-first 收缩为 usage-driven 的 Skill / Plugin-first；现有 Memory 保留但冻结扩张，Runner 继续承担执行与资源 placement，而不再作为面向用户的资源 scope。
+状态：历史探索性评审与后续实现记录，不是新的运行时契约或当前任务清单。以下编号章节保留当时的取舍、源码基线、实验和阶段性方向；不能把其中“当前”“后续”“本轮”跨版本解释为最新产品承诺。2026-09-13 复审曾将路线从 user-private / Memory-first 收缩为 usage-driven 的 Skill / Plugin-first。该历史优先级不替代当前用户任务与维护规则。
 
 评审日期：2026-09-12。精确源码基线：`3d8332190c336fc7becaa0ae65700e0fd08cb43d`。分析在 special 主项目的独立 managed worktree 中进行，分支为 `explore/architecture-resource-boundaries`。下文源码行号指这一基线；符号名用于后续定位。
+
+## 当前资源能力的源码边界
+
+以下边界于 2026-11-03 对 `ced35507a48336cacd32f77c4dec0f19130a6162`
+做源码复核，帮助读者使用后面的历史评审；不声明线上部署或 Host 验收结果。
+
+| 能力 | 实际拥有者与检索方式 | 读取、更新与失效边界 |
+| --- | --- | --- |
+| Project Memory | Server SQLite 的显式记录；`memory_scope_id` 由已解析 Project runtime id、Runner client id、root 派生。`query_matches` 对 key、summary、body、tags 做小写子串匹配，额外 tags 为全部匹配；结果按存储 key 顺序，未做语义相似度排序。 | `search_memory` 返回有界 descriptor 与 catalog revision；`read_memory` 才取正文。更新用事务内 CAS，revision 包含实例/代际，A→B→A 也不能复活旧 revision；相同内容无变化与新写入分别记录。 |
+| 工具发现 | canonical `ToolDefinition` 元数据经 scope/capability/surface 过滤，再做确定性词法排名。 | broad/query 只给小目录，exact manifest 才物化所选 input schema；发现不注册 Host callable，也不执行业务读取。 |
+| Skill | Project repository 活文件与 Runner configured / managed 来源；目录包含名称、来源、trust、definition/package revision。 | `load_skill` 精确大小写折叠名称、拒绝歧义，再读 definition；已知 id 的 resource read 重新解析来源并使用 revision fences。managed package 不可变，active pointer 和管理 state revision 是不同事实。 |
+| Native Plugin | Runner 拥有可信本地进程与冻结 tool catalog；Server 拥有 action-aware governance 和 opaque binding。 | 选择目录不含完整 schema/binding；`describe` 固定精确 Runner/provider instance、tool/schema 与可选 Project，`call` 重验授权及目标。reload 或 replacement 不能让旧 binding 改指新实例。 |
+| 可选 Project Knowledge Plugin | [`plugins/project-knowledge`](../../plugins/project-knowledge/README.md) 的派生 SQLite FTS5 索引；BM25 对标识符词项和 CJK 二元组排名。 | 必须单独配置 provider 并显式 index/refresh；读取检查 Git-tracked eligibility、当前 hash 和覆盖范围，排除变化/删除来源。它不读写 Project Memory，不自动继承到其他 Project。 |
+
+这些现有实现不构成完整向量 RAG 系统：Memory 是有界显式笔记，工具发现检索的是
+工具元数据，Project Knowledge Plugin 是可选词法源文件索引；上述路径没有 embedding
+模型或向量数据库。上下文材料由 [Context registry](builtin-context-guidance.md) 按请求
+投影，catalog、读过的正文、版本与当前执行权限是不同事实。
+
+Skill 的“加载指导”和“执行资源”也需分开：当前 `run_skill_resource` 仅接收可信
+Runner configured / managed Skill 的 `scripts/` 资源；Project Skill 在这一路径被
+`skill_execution_trust_denied` 拒绝。执行要求 definition revision，managed 来源还要求
+package revision，并在实际调度前固定 resource SHA。它沿既有 Runner 执行/Job 合同工作，
+加载 Skill 本身不启动进程或授予权限。
+
+一个 Memory 请求从 canonical scope/Project 校验进入 `memory_search`，观察当前
+scope 的有界记录并计算 catalog revision，随后做过滤和有界分页；带旧 catalog revision
+时失败而不把跨版本分页伪装成同一快照。`read_memory` 可固定 record revision；修改
+进入 `set_project_memory_attributed` 的 SQLite immediate transaction，重新校验当前
+revision 并原子更新 generation。Project id 被复用于其他 root 时派生新的 scope，
+不会自动迁移原有 Memory。managed-worktree lineage 同样只是描述关系，
+`read_through=false`，不能当 Memory/Skill/Plugin 的版本或继承授权。
+
+源码入口：[Memory runtime](../../src/tool_runtime/memory.rs)、
+[Memory store](../../crates/webcodex-store/src/memory.rs)、
+[Memory scopes](../../crates/webcodex-tool-contracts/src/tool_definition/memory.rs)、
+[Skill resolver/load/execution](../../src/tool_runtime/skills.rs)、
+[Runner Skill boundary](../../crates/webcodex-runner/src/webcodex_runner/runner_skills.rs)、
+[Plugin gateway](../../src/plugin_gateway.rs)、
+[tool ranker](../../src/tool_runtime/surface/discovery.rs)、
+[Knowledge search](../../plugins/project-knowledge/knowledge.py)。
+回归入口：[Memory scope/CAS tests](../../src/tool_runtime/tests/memory.rs)、
+[Memory ABA tests](../../crates/webcodex-store/src/memory_tests.rs)、
+[Skill tests](../../src/tool_runtime/tests/skills.rs)、
+[Plugin replacement tests](../../src/mcp_tests/plugin_tools.rs)、
+[Knowledge stale-source tests](../../plugins/project-knowledge/test_knowledge.py)。
+具体调用合同仍以 [MCP](../MCP.md#adaptive-runtime-extensions)、
+[Plugins](../PLUGINS.md) 和精确 tool manifest 为准；下文继续保留原评审证据。
 
 ## 1. 总体判断与范围
 

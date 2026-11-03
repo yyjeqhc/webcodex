@@ -112,6 +112,13 @@ brittle millisecond assertions or sleep-based coordination.
 
 ## Reproduction
 
+Use an isolated checkout of report commit `347aa42d2` (#773) for the historical
+commands below. The full-file JSON writer experiment
+`populated_ledger_write_coalescing_experiment` is no longer a test on current main;
+a Cargo filter matching no tests is not a reproduction. Current SQLite writer
+behavior is covered by [`store/writer/sqlite_tests.rs`](../../crates/webcodex-workflow-session/src/store/writer/sqlite_tests.rs)
+and the current storage contract linked above.
+
 ```sh
 cargo test --locked -p webcodex-workflow-session --lib
 cargo test --locked -p webcodex-workflow-session --lib session_store_scale_and_recovery -- --ignored --test-threads=1 --nocapture

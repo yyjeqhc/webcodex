@@ -99,11 +99,26 @@ known.
 - process creation, process-tree ownership, shutdown, and timeout;
 - protocol and schema admission;
 - frozen catalog identity and reload commit;
-- model/operator permission checks around `plugin_tool`;
-- exact Runner/provider/tool binding identity;
+- rechecking the exact provider instance and frozen schema before local dispatch;
 - payload and result bounds;
 - output-schema validation;
 - transport/provider death after send and resulting `OutcomeUnknown` semantics.
+
+### Server owns
+
+- action-aware scope, permission and explicit Workflow Session governance in
+  [`plugin_gateway::invoke`](../../src/plugin_gateway.rs);
+- the bounded, process-local opaque `PluginBinding` store, binding the observed
+  Runner instance, provider instance, tool/schema and optional exact Project;
+- current Runner visibility/ownership and Project reauthorization on every call;
+- canonical audit and transport projection without exposing local launch secrets.
+
+The binding is an observation of exact targets, not a bearer credential. A Server
+restart or binding eviction requires a fresh describe; Runner/provider replacement
+or a changed Project root cannot silently retarget it. The Runner remains the
+owner of the process and local admission. See
+[`project_binding.rs`](../../src/plugin_gateway/project_binding.rs) and the
+[scope, reload and replacement regressions](../../src/mcp_tests/plugin_tools.rs).
 
 An unhandled effectful handler exception must therefore not be normalized by the
 SDK into a fabricated `isError=true` ToolResult. If the provider dies after the

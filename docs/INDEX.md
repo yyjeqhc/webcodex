@@ -45,8 +45,42 @@ Start with the goal that matches what you are trying to do.
 - [Architecture](ARCHITECTURE.md) — how the major components fit together
 - [Coding Workflow](CODING_WORKFLOW.md) — task bootstrap, guidance, validation, and closeout
 - [Native Tool Plugins](PLUGINS.md) — add Runner-local tools with any executable language and no MCP SDK
-- [Computer Use roadmap](COMPUTER_USE.md) — semantic-first desktop automation direction and validation priorities
-- [Browser/CDP runtime architecture](architecture/browser-cdp-runtime.md) — first-class Browser domain, authority, lifecycle, stale fencing, and Phase 1 limits
+- [Computer Use](COMPUTER_USE.md) — current desktop primitives, authority/platform boundaries, and explicitly unimplemented directions
+- [Browser/CDP runtime architecture](architecture/browser-cdp-runtime.md) — current Browser ownership, managed sessions, handoff, authority, and stale fencing
+
+## Architecture reading path
+
+Read each row's current contract before its implementation or experiment record.
+For Agent Infra or application design study, ask which component owns identity,
+authority, state, retries and the next observation; follow the linked source/tests
+in the contract instead of copying a second normative checklist.
+
+| Step and question | Read next |
+| --- | --- |
+| 1. Where does a request execute, and what survives device replacement? | [Architecture and request trace](ARCHITECTURE.md#module-map-and-one-request), [Runner](RUNNER.md), [Server-owned tunnels](architecture/server-owned-tunnels.md) |
+| 2. How do tools become discoverable without widening authority? | [MCP](MCP.md), [tool contracts](agent/tool-contract-guidelines.md), [Context/guidance](architecture/builtin-context-guidance.md), [Control sidecars](agent/control-sidecars.md) |
+| 3. What is evidence, what is execution, and what can resume? | [Session model](agent/session-model.md), [SQLite and Hot/Cold residency](implementation/session-active-residency.md), [Job recovery](agent/job-reliability-and-concurrency.md), [manual collaboration](agent/manual-window-collaboration.md) |
+| 4. How do Goal, Agent Task/TaskAttempt, Conversation and Wake differ? | [Durable Agent architecture](architecture/durable-agent-runtime.md), [current communication contract](architecture/durable-agent-conversation.md) |
+| 5. Why do UI actions need exact targets and fresh observations? | [Browser/CDP](architecture/browser-cdp-runtime.md), [browser continuity](architecture/browser-session-continuity.md), [Computer Use](COMPUTER_USE.md) |
+| 6. What context and extension resources actually exist? | [Native Tool Plugins](PLUGINS.md), [resource ownership review](architecture/resource-model-and-quality-review.md), [Project Knowledge plugin](../plugins/project-knowledge/README.md). Core Memory, lexical tool discovery and this optional FTS5 plugin are distinct; none is a built-in vector RAG pipeline. |
+| 7. Which orchestration claims are experimental? | [Host versus V8 Code Mode](experiments/code-mode.md), [measured Code Mode conditions](experiments/code-mode-performance.md), [composition research](architecture/tool-composition-research.md) |
+
+### Document status and ownership
+
+| Status | How to use it |
+| --- | --- |
+| Current contract | Follow the owning schema/source and regression references. Current `main` behavior does not imply availability in every published release or Host. |
+| Historical experiment or implementation record | Preserve the source revision, environment, raw measurements and validation limits. Reported pass counts describe that run; they are not current acceptance evidence. |
+| Unimplemented design direction | Treat it as a proposal with explicit conditions, not a supported tool or an execution requirement. |
+| Retired or replaced design | Follow the named replacement. Merge useful evidence into its owner and update references before removing the redundant page. |
+
+`docs/agent/` holds maintainer contracts and some explicitly marked historical audits;
+`docs/architecture/` holds designs and source navigation;
+`docs/implementation/` mixes current implementation contracts with dated acceptance;
+`docs/experiments/`, `docs/design/` and `docs/contribution-reports/` retain scoped
+research or staged work. Integrations and Plugins keep their consumer-specific
+guides beside their code. A directory, date, title or TODO count alone does not
+establish a document's status; mixed pages must identify the status of each part.
 
 ## I want to contribute or release WebCodex
 

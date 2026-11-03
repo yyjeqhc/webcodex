@@ -1,5 +1,10 @@
 # v0.4.2 后审查与 Host-native Code Mode 开发方向
 
+> 历史审查与测量记录。下文“本次”“下一阶段”以及统计只对应所列源码和采样窗口；
+> 不构成当前 main 的缺陷清单或执行指令。现行 Host 编排入口见
+> [MCP 客户端策略](../MCP.md#request-local-client-policy)，消息保留规则见
+> [Host Code Mode sidecar 合同](../agent/host-code-mode-sidecar-consumption.md)。
+
 日期：2026-09-27。本文讨论 Host 自己的 code mode，不讨论 WebCodex 的 nested Code Mode，也不引入新的执行引擎。
 
 ## 1. 范围与结论

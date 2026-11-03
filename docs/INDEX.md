@@ -43,6 +43,8 @@ Start with the goal that matches what you are trying to do.
 ## I want to understand or extend WebCodex
 
 - [Architecture](ARCHITECTURE.md) — how the major components fit together
+- [Agent architecture interview learning path (Chinese)](agent/interview-architecture-study.zh-CN.md) — a source-anchored tour of runtime design and tradeoffs
+- [RAG / Agent application interview study (Chinese)](agent/interview-rag-study.zh-CN.md) — a local retrieval experiment, citations, freshness and evaluation
 - [Coding Workflow](CODING_WORKFLOW.md) — task bootstrap, guidance, validation, and closeout
 - [Native Tool Plugins](PLUGINS.md) — add Runner-local tools with any executable language and no MCP SDK
 - [Computer Use roadmap](COMPUTER_USE.md) — semantic-first desktop automation direction and validation priorities

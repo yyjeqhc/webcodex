@@ -43,6 +43,8 @@
 ## 我想理解或扩展 WebCodex
 
 - [架构](ARCHITECTURE.md) —— 主要组件如何协同
+- [Agent Infra 架构面试学习路径](agent/interview-architecture-study.zh-CN.md) —— 按源码学习 Session、Job、MCP、Code Mode、多设备、Browser/Computer
+- [RAG / Agent 应用开发面试专题](agent/interview-rag-study.zh-CN.md) —— 分块、混合检索、引用、版本与评测
 - [Coding 工作流](CODING_WORKFLOW.zh-CN.md) —— 任务启动、指导、验证和收尾
 - [Native Tool Plugins](PLUGINS.zh-CN.md) —— 用任意可执行语言为 Runner 增加本地工具，不需要 MCP SDK
 - [Computer Use roadmap](COMPUTER_USE.md) —— semantic-first desktop automation 方向与验证优先级

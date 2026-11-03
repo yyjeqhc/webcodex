@@ -10,6 +10,12 @@ and [Authentication](AUTH_MODEL.md) guides cover the operational details.
 For a short definition of the terms, see the terminology sections in
 [CLI](CLI.md#terminology) and [Runner](RUNNER.md#core-terms).
 
+For an **interview-oriented, non-normative** source map of Agent Runtime, MCP,
+Session/Job, Browser/Computer and Code Mode, see the
+[architecture study path (Chinese)](agent/interview-architecture-study.zh-CN.md)
+and [RAG application study (Chinese)](agent/interview-rag-study.zh-CN.md).
+These learning guides do not supersede owning domain contracts or historical experiment baselines.
+
 ## Client → Server → Runner → project
 
 ```mermaid

@@ -1,5 +1,6 @@
 import { useFlowingSelection } from "../../ui/useFlowingSelection.js";
 import {
+  ArrowLeft,
   Bot,
   CircleDot,
   Clock3,
@@ -25,9 +26,10 @@ type Props = {
   session: SessionWorkspaceState;
   language: RuntimeLanguage;
   onOpenWindow?: (windowKey: string) => void;
+  onBackToWindows?: () => void;
 };
 
-export function SessionExecution({ item, location, session, language, onOpenWindow }: Props) {
+export function SessionExecution({ item, location, session, language, onOpenWindow, onBackToWindows }: Props) {
   const t = (value: string) => translate(value, language);
   const progress = groupRecentProgress(session.detail);
   const signals = activitySignals(session.detail, item);
@@ -53,6 +55,7 @@ export function SessionExecution({ item, location, session, language, onOpenWind
           <h2>{item.title}</h2>
         </div>
         <div className="session-actions">
+          {onBackToWindows && <button className="text-button" type="button" onClick={onBackToWindows} aria-label={t("Back to Windows")}><ArrowLeft size={16} /> {t("Back to Windows")}</button>}
           <span className="quiet-pill">
             <CircleDot size={12} /> {t("Workflow Session")} · {t(item.lifecycle)} · {relativeTime(item.updatedAt)}
           </span>

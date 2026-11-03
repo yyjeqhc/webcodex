@@ -24,7 +24,7 @@ type Props = {
   language: RuntimeLanguage;
   selectedSessionId?: string;
   onSelectSession?: (sessionId: string) => void;
-  onOpenSessionRecord?: (project: string, sessionId: string) => void;
+  onOpenSessionRecord?: (project: string, sessionId: string, windowKey?: string) => void;
 };
 const failureStatuses = new Set(["error", "failed", "failure", "cancelled", "canceled", "timeout", "timed_out"]);
 const mismatches = new Set(["expectation_mismatch", "unexpected_success", "unexpected_failure"]);
@@ -149,7 +149,7 @@ function WindowActivityContent({
         <button type="button" className="quiet-pill" aria-pressed={statusFilter === "failed"} onClick={() => setStatusFilter("failed")}>{t("Failed calls")} ({failedCount})</button>
         <button type="button" className="quiet-pill" aria-pressed={statusFilter === "running"} onClick={() => setStatusFilter("running")}>{t("Running calls")} ({runningCount})</button>
       </div>
-      {selectedProject && onOpenSessionRecord && <button type="button" className="text-button" onClick={() => onOpenSessionRecord(selectedProject, selectedSessionId)}>{t("View Session record")}</button>}
+      {selectedProject && onOpenSessionRecord && <button type="button" className="text-button" onClick={() => onOpenSessionRecord(selectedProject, selectedSessionId, detail.client_window_key)}>{t("View Session record")}</button>}
       {detail.sessions_truncated && <p className="inventory-note">{t("Some linked Sessions are not available in this view.")}</p>}
       {selectedSessionId && <CopyIdentity key={selectedSessionId} value={selectedSessionId} label={t("Session")} language={language} />}
     </div>

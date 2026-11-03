@@ -185,14 +185,15 @@ describe("Runtime v2 navigation", () => {
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => String(url).endsWith("/window") && JSON.parse(String(init?.body)).client_window_key === "b".repeat(64))).toBe(true));
   });
 
-  it("keeps unlinked history explicit instead of silently switching to the Session layout", async () => {
+  it("keeps unlinked history explicit and provides a direct return to the Window workbench", async () => {
     await openProjectSession();
     expect(await screen.findByText("No linked Windows in retained evidence.")).toBeTruthy();
     expect(screen.queryByRole("searchbox", { name: "Search Sessions" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "View Session record" }));
     expect(await screen.findByRole("searchbox", { name: "Search Sessions" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back to Windows" }));
+    expect(await screen.findByTestId("window-primary-workbench")).toBeTruthy();
   });
-
   it.each([403, 404])("does not redirect to another Window when Session access returns %s", async status => {
     installFetch(undefined, undefined, async () => json({}, status));
     await openProjectSession();

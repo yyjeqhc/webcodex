@@ -32,8 +32,8 @@ export type SessionWorkspaceState = {
   refresh: () => void;
 };
 
-function sessionLocationIdentity(location: SessionLocation): string {
-  return `${location.projectId}\u0000${location.sessionId}`;
+function sessionLocationIdentity(location: SessionLocation, authorityRevision = 0): string {
+  return `${authorityRevision}\u0000${location.projectId}\u0000${location.sessionId}`;
 }
 
 export type SessionWorkspaceOptions = {
@@ -48,6 +48,7 @@ export function useSessionWorkspace(
   options: SessionWorkspaceOptions = {},
 ): SessionWorkspaceState {
   const loadMessages = options.loadMessages ?? true;
+  const authorityRevision = client.authorityRevision ?? 0;
   const [detailAvailability, setDetailAvailability] = useState<Availability>("idle");
   const [messagesAvailability, setMessagesAvailability] = useState<Availability>("idle");
   const [detail, setDetail] = useState<SessionDetail | null>(null);
@@ -68,20 +69,20 @@ export function useSessionWorkspace(
   }, [detailRequest, messageRequest, loadMessages]);
 
   useEffect(() => {
-    const identity = enabled && projectId && sessionId ? `${projectId}\u0000${sessionId}` : "";
+    const identity = enabled && projectId && sessionId ? `${authorityRevision}\u0000${projectId}\u0000${sessionId}` : "";
     if (loadedLocation.current.identity === identity) return;
     loadedLocation.current = { identity, pending: false };
     setDetail(null); setMessages(null); setMutationNotice(""); setMutationAllowed(null); setSending(false);
     setDetailAvailability(identity ? "loading" : "idle");
     setMessagesAvailability(identity && loadMessages ? "loading" : "idle");
-  }, [enabled, projectId, sessionId, loadMessages]);
+  }, [enabled, projectId, sessionId, loadMessages, authorityRevision]);
 
   useEffect(() => {
     detailRequest.cancel();
     if (!enabled || !projectId || !sessionId) return;
     setDetailAvailability(value => value === "idle" ? "loading" : value);
     void detailRequest.run(signal => fetchSessionDetail(client, projectId, sessionId, signal), response => {
-      if (response?.status === 401) { onUnauthorized(); return; }
+      if (response?.status === 401) { if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized(); return; }
       if (response?.status === 403 || response?.status === 404) {
         setDetail(null); setDetailAvailability("denied"); return;
       }
@@ -91,7 +92,7 @@ export function useSessionWorkspace(
       setDetail(response.data); setDetailAvailability("available");
     });
     return () => detailRequest.cancel();
-  }, [client, enabled, projectId, sessionId, onUnauthorized, detailRevision, detailRequest]);
+  }, [client, authorityRevision, enabled, projectId, sessionId, onUnauthorized, detailRevision, detailRequest]);
 
   useEffect(() => {
     messageRequest.cancel();
@@ -100,7 +101,7 @@ export function useSessionWorkspace(
     }
     setMessagesAvailability(value => value === "idle" ? "loading" : value);
     void messageRequest.run(signal => fetchSessionMessages(client, projectId, sessionId, signal), response => {
-      if (response?.status === 401) { onUnauthorized(); return; }
+      if (response?.status === 401) { if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized(); return; }
       if (response?.status === 403 || response?.status === 404) {
         setMessages(null); setMessagesAvailability("denied"); return;
       }
@@ -110,7 +111,7 @@ export function useSessionWorkspace(
       setMessages(response.data); setMessagesAvailability("available"); setMutationNotice("");
     });
     return () => messageRequest.cancel();
-  }, [client, enabled, loadMessages, projectId, sessionId, onUnauthorized, messageRevision, messageRequest]);
+  }, [client, authorityRevision, enabled, loadMessages, projectId, sessionId, onUnauthorized, messageRevision, messageRequest]);
 
   // Transient missing/error detail remains recoverable through polling, but a
   // deterministic authority/not-found result must not become a 5-second retry loop.
@@ -124,7 +125,7 @@ export function useSessionWorkspace(
   const send = useCallback(async (input: { message: string; kind?: string; priority?: string; requiresAck?: boolean; replyTo?: string }) => {
     if (!enabled || !location || !input.message.trim()) return false;
     const requestScope = loadedLocation.current;
-    if (requestScope.identity !== sessionLocationIdentity(location) || requestScope.pending) return false;
+    if (requestScope.identity !== sessionLocationIdentity(location, authorityRevision) || requestScope.pending) return false;
     requestScope.pending = true;
     setSending(true);
     try {
@@ -138,7 +139,7 @@ export function useSessionWorkspace(
         reply_to: input.replyTo,
       });
       if (response?.status === 401) {
-        onUnauthorized();
+        if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized();
         return false;
       }
       if (loadedLocation.current !== requestScope) return false;
@@ -165,18 +166,18 @@ export function useSessionWorkspace(
         setSending(false);
       }
     }
-  }, [client, enabled, location, onUnauthorized, refresh]);
+  }, [client, authorityRevision, enabled, location, onUnauthorized, refresh]);
 
   const replace = useCallback(async (messageId: string, message: string) => {
     if (!enabled || !location || !message.trim()) return false;
     const requestScope = loadedLocation.current;
-    if (requestScope.identity !== sessionLocationIdentity(location) || requestScope.pending) return false;
+    if (requestScope.identity !== sessionLocationIdentity(location, authorityRevision) || requestScope.pending) return false;
     requestScope.pending = true;
     setSending(true);
     try {
       const response = await replaceSessionMessage(client, location.projectId, location.sessionId, messageId, message.trim());
       if (response?.status === 401) {
-        onUnauthorized();
+        if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized();
         return false;
       }
       if (loadedLocation.current !== requestScope) return false;
@@ -203,15 +204,15 @@ export function useSessionWorkspace(
         setSending(false);
       }
     }
-  }, [client, enabled, location, onUnauthorized, refresh]);
+  }, [client, authorityRevision, enabled, location, onUnauthorized, refresh]);
 
   const withdraw = useCallback(async (messageId: string) => {
     if (!enabled || !location) return false;
     const requestScope = loadedLocation.current;
-    if (requestScope.identity !== sessionLocationIdentity(location)) return false;
+    if (requestScope.identity !== sessionLocationIdentity(location, authorityRevision)) return false;
     const response = await withdrawSessionMessage(client, location.projectId, location.sessionId, messageId);
     if (response?.status === 401) {
-      onUnauthorized();
+      if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized();
       return false;
     }
     if (loadedLocation.current !== requestScope) return false;
@@ -232,7 +233,7 @@ export function useSessionWorkspace(
     setMutationNotice("");
     refresh();
     return true;
-  }, [client, enabled, location, onUnauthorized, refresh]);
+  }, [client, authorityRevision, enabled, location, onUnauthorized, refresh]);
 
   return {
     detailAvailability,

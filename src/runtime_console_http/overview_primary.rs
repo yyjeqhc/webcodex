@@ -28,14 +28,15 @@ pub(super) async fn primary_for_auth(
     require_runtime_read(auth)?;
     let access = crate::runner_http::runner_access_from_auth(Some(auth));
     let project_access = project_read_available(auth);
-    let snapshot = runtime
-        .runner_registry
-        .console_registry_snapshot_for_auth(access.as_ref(), project_access)
-        .await;
-    let jobs = runtime
-        .runner_registry
-        .active_job_summary_by_runner_for_auth(access.as_ref())
-        .await;
+    let (snapshot, jobs, active_windows) = tokio::join!(
+        runtime
+            .runner_registry
+            .console_registry_snapshot_for_auth(access.as_ref(), project_access),
+        runtime
+            .runner_registry
+            .active_job_summary_by_runner_for_auth(access.as_ref()),
+        active_window_count_for_auth(runtime, auth),
+    );
     let compatibility = runtime.console_runner_alignment(&snapshot.runners);
     let build = crate::build_info::runtime_build_info();
     let now = chrono::Utc::now().timestamp();
@@ -106,7 +107,7 @@ pub(super) async fn primary_for_auth(
         source_mismatched_runners: source_mismatched,
         mixed_builds_present: mixed,
         active_jobs: jobs.values().map(|j| j.active).sum(),
-        active_windows: active_window_count_for_auth(runtime, auth).await?,
+        active_windows: active_windows?,
         projects_available: project_access,
         visible_projects,
         projects_truncated: false,

@@ -23,11 +23,12 @@ export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnautho
   const [revision, setRevision] = useState(0);
   const [page, setPage] = useState({ key: "", limit: initialLimit });
   const [refreshing, setRefreshing] = useState(false);
+  const authorityRevision = client.authorityRevision ?? 0;
   const listRequest = useRef<AbortController | null>(null);
   const selection = useRef({ client, key: "" });
   const refresh = useCallback(() => { if (!listRequest.current) setRevision(value => value + 1); }, []);
   const stableQuery = useDebouncedValue(query, 220);
-  const key = JSON.stringify([runner, stableQuery, initialLimit]);
+  const key = JSON.stringify([authorityRevision, runner, stableQuery, initialLimit]);
   const limit = page.key === key ? page.limit : initialLimit;
 
   useEffect(() => {
@@ -49,7 +50,7 @@ export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnautho
       if (controller.signal.aborted || listRequest.current !== controller) return;
       listRequest.current = null; setRefreshing(false);
       if (!response) { failed(); return; }
-      if (response.status === 401) { onUnauthorized(); return; }
+      if (response.status === 401) { if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized(); return; }
       if (response.status === 403) {
         setProjects([]); setTotal(0); setTruncated(false); setAvailability("denied"); return;
       }
@@ -62,9 +63,9 @@ export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnautho
       listRequest.current = null; setRefreshing(false); failed();
     });
     return () => { controller.abort(); if (listRequest.current === controller) listRequest.current = null; };
-  }, [client, enabled, onUnauthorized, revision, runner, stableQuery, limit, key]);
+  }, [client, authorityRevision, enabled, onUnauthorized, revision, runner, stableQuery, limit, key]);
 
-  useVisibleRefresh(enabled, refresh, options.refreshMs ?? 30_000);
+  useVisibleRefresh(enabled, refresh, options.refreshMs ?? 10_000);
   return {
     availability, projects, total, truncated, query, runner, setQuery, setRunner, refresh, refreshing,
     loadMore: () => { if (!listRequest.current) setPage({ key, limit: Math.min(2_000, limit + PROJECT_PAGE_SIZE) }); },

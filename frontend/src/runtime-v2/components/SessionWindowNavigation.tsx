@@ -23,13 +23,14 @@ export function SessionWindowNavigation({ client, location, language, onClose, o
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error" | "denied">("loading");
   const [revision, setRevision] = useState(0);
+  const authorityRevision = client.authorityRevision ?? 0;
   useEffect(() => {
     const controller = new AbortController();
     setStatus("loading");
     setDetail(null);
     void fetchSessionDetail(client, location.projectId, location.sessionId, controller.signal, 1).then(response => {
       if (controller.signal.aborted) return;
-      if (response?.status === 401) { onUnauthorized(); return; }
+      if (response?.status === 401) { if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized(); return; }
       if (response?.status === 403 || response?.status === 404) { setStatus("denied"); return; }
       if (!response?.ok || response.data?.session_id !== location.sessionId) { setStatus("error"); return; }
       const data = response.data;
@@ -41,7 +42,7 @@ export function SessionWindowNavigation({ client, location, language, onClose, o
       setStatus("ready");
     });
     return () => controller.abort();
-  }, [client, location.projectId, location.sessionId, onOpenWindow, onUnauthorized, revision]);
+  }, [client, authorityRevision, location.projectId, location.sessionId, onOpenWindow, onUnauthorized, revision]);
 
   return <Modal opened onClose={onClose} title={t("Session activity")} closeButtonProps={{ "aria-label": t("Close") }} centered>
     <p>{detail?.title || location.projectName}</p>

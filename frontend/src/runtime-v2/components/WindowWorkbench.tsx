@@ -41,7 +41,7 @@ type Props = {
   language: RuntimeLanguage;
   projects: ProjectRow[];
   onUnauthorized: () => void;
-  onOpenSessionRecord?: (project: string, sessionId: string) => void;
+  onOpenSessionRecord?: (project: string, sessionId: string, windowKey?: string) => void;
   requestedWindowKey?: string;
   requestedSessionId?: string;
   onRequestedWindowConsumed?: () => void;
@@ -344,7 +344,7 @@ export function WindowWorkbench({
                   language={language}
                   selectedSessionId={selectedSessionId}
                   onSelectSession={setSelectedSessionId}
-                  onOpenSessionRecord={onOpenSessionRecord}
+                  onOpenSessionRecord={onOpenSessionRecord ? (project, sessionId) => onOpenSessionRecord(project, sessionId, windows.selectedKey) : undefined}
                 />
               ) : (
                 <div className="empty-inline">

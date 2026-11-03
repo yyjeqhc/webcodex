@@ -23,6 +23,7 @@ export function useRuntimeOverview(
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [revision, setRevision] = useState(0);
+  const authorityRevision = client.authorityRevision ?? 0;
   const current = useRef<AbortController | null>(null);
   const observed = useRef<RuntimeOverview | null>(null);
   const owner = useRef(client);
@@ -53,7 +54,7 @@ export function useRuntimeOverview(
       if (controller.signal.aborted || current.current !== controller) return;
       current.current = null; setRefreshing(false);
       if (!response) { failed(); return; }
-      if (response.status === 401) { onUnauthorized(); return; }
+      if (response.status === 401) { if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized(); return; }
       if (response.status === 403) {
         observed.current = null; setData(null); setAvailability("denied"); return;
       }
@@ -70,8 +71,8 @@ export function useRuntimeOverview(
       if (hydration !== undefined) clearTimeout(hydration);
       if (current.current === controller) current.current = null;
     };
-  }, [client, enabled, onUnauthorized, revision, includeSessions, refresh]);
+  }, [client, authorityRevision, enabled, onUnauthorized, revision, includeSessions, refresh]);
 
-  useVisibleRefresh(enabled, refresh, includeSessions ? 30_000 : 10_000);
+  useVisibleRefresh(enabled, refresh, includeSessions ? 20_000 : 5_000);
   return { availability, data, refresh, updatedAt, refreshing };
 }

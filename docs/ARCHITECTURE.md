@@ -50,6 +50,18 @@ A regular Server + Runner and the local `webcodex share` / `webcodex run` lifecy
 
 Internal type names used to route these adapters are maintainer implementation details; ordinary users should follow the tools and connection instructions returned by the current Server.
 
+### Console inventory, refresh and credential ownership
+
+The browser Console deliberately separates cheap navigation state from detailed evidence:
+
+- The primary Overview is a bounded Runner-registry snapshot plus active-job and active-Window summaries. It does not scan Project Session history or return full Project rows. Project inventories and Session history are loaded through their own bounded endpoints when the relevant surface needs them.
+- The primary Overview's independent registry, active-job and active-Window reads run concurrently. Full Runner/Session detail remains an explicit, more expensive hydration path.
+- Visible navigation refreshes the primary Overview every 5 seconds; full Session overview hydration refreshes every 20 seconds. Project inventories refresh every 10 seconds by default (the Work catalog uses 15 seconds). Window liveness remains a separate 3-second observation from historical inventory/detail reads. Hidden pages pause periodic refresh and coalesce focus/visibility recovery.
+- Every read is owned by the current client authority generation. A response initiated under an earlier credential may neither populate the new workspace nor interpret its 401 as evidence that the current credential is invalid. Deterministic 403/404 visibility results remain distinct from transient transport/server failures.
+- Session record navigation retains a direct return to the Window workbench; Session evidence and Window activity remain separate views rather than silently substituting one for the other.
+
+These are Console client/server behavior contracts, not a claim that Runner transport uses browser WebSockets. Runner connectivity and registration remain Server-owned; the browser observes bounded Server projections over the runtime HTTP API.
+
 ## Project registration
 
 Projects live on the Runner machine. The Runner registers allowed directories

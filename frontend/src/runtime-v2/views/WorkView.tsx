@@ -26,7 +26,8 @@ type Props = {
   onOpenAgent?: (agentId: string) => void;
   onOpenWindow?: (windowKey: string) => void;
   onOpenSession: (location: SessionLocation) => void;
-  onOpenSessionRecord?: (location: SessionLocation) => void;
+  onOpenSessionRecord?: (location: SessionLocation, windowKey?: string) => void;
+  onBackToWindows?: () => void;
   onLocateSession: (sessionId: string) => Promise<boolean>;
   onUnauthorized: () => void;
   requestedWindowKey?: string;
@@ -49,6 +50,7 @@ export function WorkView({
   onOpenWindow = () => {},
   onOpenSession,
   onOpenSessionRecord,
+  onBackToWindows = () => onSurfaceChange("windows"),
   onLocateSession,
   onUnauthorized,
   requestedWindowKey,
@@ -90,9 +92,9 @@ export function WorkView({
         language={language}
         projects={projects}
         onUnauthorized={onUnauthorized}
-        onOpenSessionRecord={onOpenSessionRecord ? (projectId, sessionId) => {
+        onOpenSessionRecord={onOpenSessionRecord ? (projectId, sessionId, windowKey) => {
           const project = projects.find(row => row.id === projectId);
-          onOpenSessionRecord({ projectId, sessionId, projectName: project?.name || projectId, runner: project?.client_id || "" });
+          onOpenSessionRecord({ projectId, sessionId, projectName: project?.name || projectId, runner: project?.client_id || "" }, windowKey);
         } : undefined}
         requestedWindowKey={requestedWindowKey}
         requestedSessionId={requestedSessionId}
@@ -181,7 +183,7 @@ export function WorkView({
           </div>
         </main>
       ) : selectedItem && selected ? (
-        <SessionExecution item={selectedItem} location={selected} session={session} language={language} onOpenWindow={onOpenWindow} />
+        <SessionExecution item={selectedItem} location={selected} session={session} language={language} onOpenWindow={onOpenWindow} onBackToWindows={onBackToWindows} />
       ) : (
         <main className="session-main ui-workbench-surface">
           <div className="empty-work">

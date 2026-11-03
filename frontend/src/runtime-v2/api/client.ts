@@ -21,14 +21,20 @@ export class RuntimeV2Client {
     this.client.clearToken();
   }
 
-  post<T>(path: string, payload: unknown, signal?: AbortSignal): Promise<ApiResponse<T>> {
-    return this.client.post<T>(path, payload, signal);
+  async post<T>(path: string, payload: unknown, signal?: AbortSignal): Promise<ApiResponse<T>> {
+    const revision = this.credentialRevision;
+    const response = await this.client.post<T>(path, payload, signal);
+    // All consumers (including Window/Goal/Agent views) share this authority
+    // fence. A late result must not lock or repopulate a replacement workspace.
+    return revision === this.credentialRevision ? response : null;
   }
 
-  postAt<T>(apiBase: string, path: string, payload: unknown, signal?: AbortSignal): Promise<ApiResponse<T>> {
+  async postAt<T>(apiBase: string, path: string, payload: unknown, signal?: AbortSignal): Promise<ApiResponse<T>> {
+    const revision = this.credentialRevision;
     const scoped = new RuntimeApiClient(apiBase);
     scoped.setToken(this.client.getToken());
-    return scoped.post<T>(path, payload, signal);
+    const response = await scoped.post<T>(path, payload, signal);
+    return revision === this.credentialRevision ? response : null;
   }
 }
 

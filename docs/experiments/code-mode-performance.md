@@ -1,8 +1,11 @@
 # Code Mode performance: measured baseline and next development steps
 
 Review date: 2026-09-18. Source basis: `bc23562eaf988ef1ccb1eea17c8f210dec61a7d8`.
-This is an engineering roadmap, not an expansion of the currently admitted tools
-or a stable execution contract.
+Status: historical measurement and development record. The inventory and proposed
+priorities below describe that review, not a current backlog or execution contract.
+The E2b-only mutation limit in its baseline was subsequently superseded by E2c;
+[current stage admission and limits](code-mode.md) follow `src/tool_runtime/code_mode.rs`.
+Measured values, source identity and experimental conditions are preserved.
 
 ## Decision
 
@@ -15,7 +18,7 @@ telemetry; those are not missing features to rebuild.
 This review implements only dense host-array conversion and focused tests. All
 other changes below are proposals with explicit validation boundaries.
 
-## Current source, rather than an earlier stage plan
+## Implementation snapshot at the recorded baseline
 
 | Area | Already implemented | Source |
 | --- | --- | --- |
@@ -130,7 +133,7 @@ not use ordinary indexed assignment, which could invoke an inherited setter.
 `Array.prototype[0]` getter/setter. Existing runtime tests cover concurrency,
 child failures, output/call bounds, hard termination, and effect-aware drain.
 
-## Prioritized next work
+## Development directions recorded by the review
 
 ### P0: a task-throughput lane and a small typed Code Mode surface
 

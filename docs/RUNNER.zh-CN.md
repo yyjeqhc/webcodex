@@ -519,10 +519,28 @@ QUIC 不使用代理设置。
 
 ## 重连与恢复
 
-Runner 断连是 liveness 事实，不等于工作丢失。已接受的活跃 Job 会进入有界的
-`recovering` 状态（默认宽限 120 秒），并在同一 Runner 实例重连后从其 inventory
-恢复。替换的 Runner 实例不会继承旧实例的 Job；它们会变成 `lost`。Runner 进程重启
-无法恢复其旧的子进程。
+Runner 断连是 liveness 事实，不等于工作丢失。具备 `job_state_reconciliation`
+能力时，已接受的活跃 Job 会进入有界的 `recovering` 状态（默认宽限 120 秒），
+可从同一 Runner 实例的完整 inventory 恢复。不具备该能力或恢复期限已过时，普通
+Job 会变成 `lost`。普通 Job 的子进程归属于准确的 Runner 进程，替换实例不能接管。
+
+显式的 `run_detached_process` 不同：它在 payload 启动前将执行所有权一次性持久化
+交给专用 supervisor。只有准确的 supervisor 和受 fence 保护的执行身份仍然存活，
+替换 Runner 才能重建同一逻辑 Job，并通过持久控制状态路由观察或停止操作。
+这不会使普通进程自动变成 detached，也不保证主机重启后的进程存活。
+
+已完成、调用者可见的普通 Job 另有 Server 持有的 SQLite receipt。每个逻辑 Runner
+最多保留 64 份，期限为首次接受终态观察后的原始 24 小时；在这段期限内，即使
+Server 与 Runner 都重启，仍可通过 `list_jobs`、`observe_jobs` 和有界日志读取
+查看结果。receipt 保留 Job 身份、终态结果、日志游标和尾部、原授权分区及所有者；
+读取不要求 Runner 当前在线。重启或重放 receipt 不会延长期限，旧版本写入的
+15 分钟 receipt 仍按原期限过期。持久化失败降低重启后的可观察性，不改变普通
+执行的成功事实。
+
+receipt 只提供历史证据，不包含命令输入、stdin、环境、验证 argv、重放意图、
+进程句柄或执行 lease。普通活跃 Job 仍归属于 Runner 进程；只有
+`run_detached_process` 有显式的持久执行所有权转移。隐藏的同步结果和 detached
+所有权状态不属于普通 receipt 持久化。
 
 Server 会把稳定的 Runner `client_id` 与当前 live process lease 分开。stale/replacement process 不能继续使用旧 lease 提交结果，普通 child-process Job 也不会被 replacement Runner 接管。精确 lease identifier 属于内部 wire detail。
 

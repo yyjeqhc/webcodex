@@ -14,7 +14,7 @@ flag authorizes replay of effects.
 
 Executable constraints that agents must obey live in
 [`AGENTS.md`](../../AGENTS.md); this document is the Workflow Sessions domain
-source linked from §6. Standing architecture summary:
+source linked from §5. Standing architecture summary:
 [`architecture-decisions.md`](architecture-decisions.md) §1.
 
 ---
@@ -23,7 +23,7 @@ source linked from §6. Standing architecture summary:
 
 | Formal name | Casual aliases (avoid in design) | Implementation home |
 |---|---|---|
-| **Workflow Session** | coding session, tool ledger session, `wc_sess_*` session | `tool_runtime::sessions` |
+| **Workflow Session** | coding session, tool ledger session, `wc_sess_*` session | `webcodex-workflow-session` owns the domain/store; `tool_runtime::sessions` adapts runtime calls |
 | **Action Audit Session** | HTTP action session, audit session, operator action trail | Internal module `action_audit_sessions` (SQLite table still named `action_sessions` for compatibility) |
 
 When writing code, docs, or reviews, prefer the formal names above. If a
@@ -639,28 +639,11 @@ the authoritative Project root. Skill bodies, Plugin schemas, bindings, native
 paths, commands, environments, and provider identities are not projected; using
 a selected Plugin still requires `plugin_tool describe` before `call`.
 
-Startup selection is strict and ordered:
-
-The durable projection stores only:
-
-The canonical hash input is the principal kind/id, transport, already-hashed
-stable window identity, resolved project, and already-hashed canonical
-repository root. It uses fixed field order and length prefixes under
-`webcodex.workflow-current-binding.v1`. Raw MCP session ids, hosted
-conversation ids, cookies, credentials, authorization headers, and repository
-paths never enter this projection, and neither binding hashes nor component
-hashes are returned to the model.
-
-The binding field is an additive, serde-defaulted field in ledger version 1, so
-older ledgers load it as empty without migration and keep their existing
-Session events/messages. Restore accepts only bounded, lowercase SHA-256 keys
-that reference known active `wc_sess_*` records. Malformed, duplicate,
-conflicting, missing, closed, project-mismatched-on-lookup, and excess entries
-are discarded without rejecting valid Session data. Internal status exposes
-only bounded counts (`durable_binding_count`, `restored_binding_count`,
-`discarded_binding_count`) and never a binding key.
-
-This durable binding remains Workflow Session state and is separate from ActionAudit/window observations. It does not create a second coding-task lifecycle, and window correlation never infers or mutates a Workflow Session.
+Session selection uses the explicit selectors in `work_on_project`; a ClientWindow
+or ActionAudit correlation never silently restores a current Workflow Session.
+The retired `durable_current_bindings` ledger member is not a compatibility
+projection: strict import rejects it, as covered by
+[`current_ledger_rejects_retired_top_level_binding_member`](../../crates/webcodex-workflow-session/src/session_lifecycle_tests.rs).
 
 ### Current lifecycle contract
 
@@ -1098,7 +1081,7 @@ part of this contract.
 | Internal module | `action_audit_sessions` (crate-private; formerly the module path `action_sessions`) |
 | HTTP handlers | `audit_http` under `/api/audit/*` |
 | Persistence | SQLite tables `action_sessions` and `action_events` |
-| Related types | `ActionSessionRecord`, `ActionEventRecord`, DB helpers in `db/audit.rs` |
+| Related types | `ActionSessionRecord`, `ActionEventRecord`, DB helpers in [`webcodex-store/src/audit.rs`](../../crates/webcodex-store/src/audit.rs) |
 
 ### Lifecycle (sketch)
 
@@ -1122,7 +1105,7 @@ This lifecycle is **orthogonal** to Workflow Session start/finish tools.
 - Not a coding / workflow session
 - Not a substitute for canonical coding-startup / `work_on_project` evidence
 - Not an input to `read_session_summary`, message board, or `finish_coding_task`
-- Not automatically correlated to any `wc_sess_*`
+- Not an implicit Workflow Session selector; explicit authorized observation links do not merge lifecycles
 
 ---
 
@@ -1131,7 +1114,7 @@ This lifecycle is **orthogonal** to Workflow Session start/finish tools.
 The two systems:
 
 - Use different ID namespaces
-- Use different storage backends
+- Use independent domain stores and tables in the configured SQLite database
 - Expose different APIs (runtime tools / MCP vs `/api/audit/*`)
 - Define different open/close and failure semantics
 
@@ -1159,11 +1142,19 @@ identity rules, and blur security/guard boundaries. Keep two implementations.
 
 ---
 
-## 5. Future association (explicit only)
+## 5. Explicit observation correlation
 
-The standing optional-correlation contract is:
+The implemented Window-to-Workflow Session relation records an already authorized
+`recording` or successful `work_on_project` observation. It is many-to-many and
+supports history/navigation; it is never a Session selector, recorder, ownership
+lease, or cross-domain transaction. The same database and an explicit link do
+not make the Action Audit Session lifecycle control Workflow Session lifecycle.
+See [ClientWindow](#clientwindow-is-not-a-third-session-type) for identity selection
+and [storage and ownership](#storage-and-ownership) for recorder authorization.
 
-Until that design is implemented, code must treat the systems as unlinked.
+The typed producers are [`src/action_audit.rs`](../../src/action_audit.rs) and the
+[MCP call adapters](../../src/mcp/tools/call/specialized.rs); the Workflow Session
+store remains in its independent crate.
 
 ---
 
@@ -1189,7 +1180,7 @@ renamed without an explicit compatibility migration:
 - Table: `action_sessions`
 - Table: `action_events`
 - Index: `idx_action_sessions_status_last_event`
-- Column names and migration history in `db/schema.rs` / `db/audit.rs`
+- Column names and migration history in [`webcodex-store/src/schema.rs`](../../crates/webcodex-store/src/schema.rs) / [`audit.rs`](../../crates/webcodex-store/src/audit.rs)
 
 ### HTTP routes
 
@@ -1206,8 +1197,9 @@ renamed without an explicit compatibility migration:
   including coverage plus credential-kind/OAuth-client usage summaries
 - Workflow tool fields: `session_id`, `recording_session_id`, session mode
   values `normal` / `read_only`. A pre-0.4 persisted v2 row containing
-  `mode = "inspect"` is malformed under the current enum and is discarded
-  row-closed without reinterpreting it as `normal`.
+  `mode = "inspect"` is malformed under the current enum. The one-time legacy
+  import fails atomically; it neither drops only that row nor reinterprets it as
+  `normal`. See [`legacy_inspect_v2_row_rejects_atomic_import`](../../crates/webcodex-workflow-session/src/session_lifecycle_tests.rs).
 - Error kinds such as `unknown_session_id` and `session_retention_expired`
 
 ### MCP and Runtime API tool surface
@@ -1223,7 +1215,7 @@ renamed without an explicit compatibility migration:
 | Layer | Current clarity practice |
 |---|---|
 | Docs / design | Prefer **Workflow Session** and **Action Audit Session** |
-| Rust module path | `tool_runtime::sessions` vs `action_audit_sessions` |
+| Rust ownership | `webcodex-workflow-session` plus the `tool_runtime::sessions` adapter, versus `action_audit_sessions` plus `webcodex-store` audit persistence |
 | SQLite / HTTP / JSON | Keep existing `action_sessions` / `session_id` names for compatibility |
 
 Renaming a **crate-private** module path does not change wire contracts.
@@ -1232,6 +1224,23 @@ Renaming tables, routes, or serialized field names does.
 ---
 
 ## 8. Quick decision guide
+
+| Need | Owning domain and operation | What it does not establish |
+| --- | --- | --- |
+| Recover saved instructions, decisions and validation | Exact Workflow Session; `read_session_handoff`, then explicit `work_on_project(session_id, instruction)` | Current source validity or permission to repeat uncertain effects |
+| Inspect an HTTP/MCP activity trail | Action Audit and authorized Window activity reads | A business Session or recorder |
+| Correlate activity from one supported Host window | Adapter-derived `ClientWindow` | A model turn, retained model context, Project authority or a worker lease |
+| Learn whether an accepted command finished | Same Job; `observe_jobs` | A new execution or proof that a failed transport never dispatched |
+| Continue durable Agent work | Exact Agent/Endpoint/Wake or TaskAttempt contract | Inherited Workflow Session, Runner or filesystem access |
+
+Implementation entry points are the
+[Workflow Session crate](../../crates/webcodex-workflow-session/src/lib.rs),
+[Session database](../../crates/webcodex-workflow-session/src/persistence/database.rs),
+[ClientWindow resolver](../../src/client_window.rs), and
+[Action Audit Session adapter](../../src/action_audit_sessions.rs).
+[SQLite writer tests](../../crates/webcodex-workflow-session/src/store/writer/sqlite_tests.rs)
+and [MCP Window tests](../../src/mcp_tests/http_transport/client_window.rs) exercise
+these storage and identity boundaries.
 
 ---
 

@@ -1,7 +1,14 @@
 # Browser session continuity and exact Computer handoff
 
+Status: current ownership and continuity contract. The navigation investigation
+below preserves its original revision, reproduced defects and unverified incident
+attribution. The explicitly marked child-tab consent section is a future design.
+
 This extends the existing `webcodex-browser` domain. It does not add raw CDP,
 selectors, scripts, debugger ports, native IDs or filesystem profile paths to tools.
+For a timed manual step such as login, use the separate
+[Browser user handoff contract](../implementation/browser-user-handoff.md);
+resolving a native surface alone does not pause automatic input.
 
 ## Ownership, launch and cleanup
 

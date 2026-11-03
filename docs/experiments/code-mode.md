@@ -1,9 +1,28 @@
 # Experimental Code Mode — E1, E2a, and E2c Bounded Coding
 
-> This is an experiment, not a stable compatibility surface.
+> Current experimental implementation contract. E2b and the original H1 dogfood
+> sections are retained as historical stages; they do not override E2c or current
+> MCP exposure policy. This is not a stable compatibility surface.
 
-For measured runtime costs, the current implementation inventory, and the next
-performance-focused development steps, see [Code Mode performance](code-mode-performance.md).
+## Host Code Mode and WebCodex Code Mode
+
+| Boundary | ChatGPT / other Host-native Code Mode | WebCodex experimental V8 Code Mode |
+| --- | --- | --- |
+| Runtime owner | The Host runs its own orchestration and chooses what tool results enter model context. | The WebCodex Server runs a fresh bounded V8 isolate for one explicit `execute_*_code_mode` call. |
+| WebCodex calls | Ordinary admitted tools, each retaining its own arguments, authorization, recorder and sidecars. | Only the stage's explicit child allowlist; the canonical host injects the outer exact Project and Workflow Session. |
+| Effects and recovery | Normal tool/Job contracts; Host orchestration cannot authorize a replay. | E1 reads; E2a adds structured validation; E2c permits one guarded edit followed by validation. Effect receipts retain dispatched work and uncertainty. |
+| Availability | Depends on the Host; `guidance_profile="host_code_mode"` only selects advice. | Requires the Server build feature `experimental-code-mode`; disabled by default. |
+
+Selecting a guidance profile does not start a VM or prove Host support. The
+[Host sidecar recipe](../agent/host-code-mode-sidecar-consumption.md) covers what
+Host orchestration must preserve. The Server implementation is owned by
+[`code_mode.rs`](../../src/tool_runtime/code_mode.rs),
+[`CanonicalOrchestrationHost`](../../src/tool_runtime/orchestration_host.rs) and
+[the feature-gated definitions](../../crates/webcodex-tool-contracts/src/tool_definition/code_mode.rs).
+
+[Code Mode performance](code-mode-performance.md) preserves the measured baseline
+and its experimental conditions; its dated inventory and proposals are not a
+second current stage contract.
 
 ## Purpose
 
@@ -186,14 +205,30 @@ Admission is not inferred from future tools. A canonical metadata regression tes
 
 ## Job continuation and control boundary
 
-All three stages exclude `observe_jobs`, `list_jobs`, `wait_for_job_terminal`,
+All three stages exclude `observe_jobs`, `list_jobs`, `wait_for_job_readiness`,
+`wait_for_job_terminal`,
 `stop_job`, `present_job_terminal_continuation`, and other Job Host carriers from
 nested admission and from their Typed Surface callable contracts. All three
 entrypoints retain their canonical MCP descriptors; presentation policy changes
-no nested authority. Making`stop_job` directly callable in ordinary MCP/Adaptive does not change that
-allowlist. Query and mutation must not share a conditional-effect sidecar.
+no nested authority. Ordinary MCP/Adaptive routing for `stop_job` does not change
+that allowlist. Query and mutation must not share a conditional-effect sidecar.
 
-An admitted E2a validation may return `execution_state=pending` for the same durable execution. Its exact continuation is a fallback, not a command to poll. Keep independent read/search/review work in the same turn; ordinary **outer** model-facing calls with the exact Window/Project/Session may later carry sparse terminal `job_attention`. Nested children still have no Window and therefore receive no passive Job sidecar, so effect receipts, mutation fences, and validation-source semantics remain the only nested authority. `context_request=["jobs.attention"]` remains a separate bounded Project-level fallback. When terminal is the hard dependency and no independent work remains, use the ordinary continuation / `wait_for_job_terminal` path. Detailed `observe_jobs` and explicit `stop_job(confirm=true)` remain ordinary canonical calls, never nested Job controls. No Host automatic-resume capability is required for the normal pending path.
+An admitted E2a or E2c validator may return `execution_state=pending` for the
+same durable execution. Retain that exact Job and effect receipt; the fallback
+continuation is not an instruction to poll or redispatch. Finish independent
+read/search/review work first. When terminal state is a real dependency, use one
+ordinary **outer** `wait_for_job_readiness` join, then `observe_jobs` for the
+required result evidence. At a wait deadline reassess work and dependencies; do
+not mechanically refill the wait. Terminal readiness does not prove success.
+
+Ordinary outer calls may also carry sparse `job_attention`; nested children have
+no Window and do not receive that passive sidecar. On supported Stateless MCP
+surfaces, `_wc.context=["jobs.attention"]` requests the separate bounded
+Project-level observation. `wait_for_job_terminal` belongs only to an explicitly
+established, opted-in durable continuation workflow; it is not ordinary blocking
+waiting and is not needed by Code Mode. Job details, readiness, explicit stop and
+Host continuation remain outside all child allowlists. See
+[MCP client policy](../MCP.md#request-local-client-policy).
 
 ## Authority and Session model
 
@@ -374,7 +409,7 @@ cargo_check
 cargo_test
 ```
 
-It intentionally does not admit `cargo_fmt`, generic process/shell tools, `observe_jobs`, edit/write/delete/rename tools, Git mutation, Session mutation, plugins/MCP, Computer control, release/deploy tools, or either Code Mode entry point. **E2a does not add source mutation.** Work Result frozen final-changes semantics therefore remain unrelated to E2a; guarded source mutation is an E2b question.
+It intentionally does not admit `cargo_fmt`, generic process/shell tools, `observe_jobs`, edit/write/delete/rename tools, Git mutation, Session mutation, plugins/MCP, Computer control, release/deploy tools, or either Code Mode entry point. **E2a does not add source mutation.** Work Result frozen final-changes semantics therefore remain unrelated to E2a; guarded source mutation is handled by the E2b foundation and current E2c entry below.
 
 ### Canonical composition policy and scheduling
 
@@ -550,7 +585,7 @@ Durable wait/event state survives Store reopen and can be reconciled from the sa
 
 The App is a bounded pull bridge, not Server push. It privately observes the exact wait, prepares through the existing durable `pending -> prepared` fence, calls `ui/message` at one dispatch site, then records `dispatch_accepted` or `delivery_unknown`. Response loss or teardown after prepare never reopens pending for a retry. The automatic Host message is sparse and payload-free; logs/details stay behind `observe_jobs`. Deterministic Rust and JavaScript Host-harness tests prove this topology without model-facing completion polling, but they are not live ChatGPT auto-resume proof.
 
-E3/H1 are not added to any Code Mode allowlist. E1 remains read-only; E2a and E2c hand off the same canonical validation Job, and E2c retains at most one guarded mutation. `wait_for_job_terminal`, the presentation tool, the five App-only coordination operations, and `observe_jobs` all remain outside child allowlists. Nested Job waiting remains out of scope; E2c does not depend on the H1 Host carrier. The remaining H1 verification boundary is a separately authorized 0916 candidate deployment from the then-current `main` plus H1, followed by a real long-Job test with no model `observe_jobs` call before the Host-generated continuation turn.
+E3/H1 are not added to any Code Mode allowlist. E1 remains read-only; E2a and E2c hand off the same canonical validation Job, and E2c retains at most one guarded mutation. `wait_for_job_terminal`, the presentation tool, the five App-only coordination operations, and `observe_jobs` all remain outside child allowlists. Nested Job waiting remains out of scope; E2c does not depend on the H1 Host carrier. The original H1 record left live candidate deployment unverified. It is retained as a historical evidence limit, not an instruction to deploy that old candidate. Current deployments must separately verify exact-wait Host readiness and actual Host-generated continuation; local source tests do not establish that result.
 
 ### Current stage sequence
 
@@ -561,7 +596,7 @@ E2b  retained guarded mutation foundation: one edit_project_files attempt
 E2c  bounded adaptive read -> one guarded edit -> structured validation;
      scoped source observation, never a fabricated current-source proof
 E3   implemented generic asynchronous Job terminal attention v1
-H1   source-complete Job-native MCP App Host carrier; live candidate deployment pending
+H1   Job-native MCP App Host carrier; live Host behavior needs separate evidence
 E4   product/stability decision
 ```
 
@@ -581,4 +616,12 @@ E1 intentionally has no:
 - Windows/macOS Code Mode packaging guarantee;
 - stable compatibility promise.
 
-The implemented stage sequence is documented above. Current E2b remains deliberately narrower than nested validation, multiple mutation attempts, generic shell/process orchestration, global/direct-write serialization, finer-than-Project mutation locking, nested Job waiting, or a stable product commitment. E3 is a separate generic Job capability and does not expand the E1/E2a/E2b child-tool allowlists.
+Current E2c admits at most one guarded edit, followed by structured validation;
+it does not prove that a later validation result covers externally changed
+source. Multiple mutation attempts, generic shell/process orchestration,
+global/direct-write serialization, finer-than-Project mutation locking, nested
+Job waiting and a stable product commitment remain outside this experiment.
+E3 is a separate Job capability and does not expand any child allowlist. The
+[Code Mode tests](../../src/tool_runtime/tests/code_mode.rs) and
+[E2c tests](../../src/tool_runtime/tests/code_mode_e2c.rs) encode the admission,
+authority, source-observation and same-Job recovery boundaries.

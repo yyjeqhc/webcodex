@@ -1,9 +1,12 @@
 # Internal composition roadmap
 
-Current series baseline: `main@d62d5b22`, after the foundation PRs and Work Result
-synchronous sections (#876) / bounded MCP presentation selection (#877). This is
-an implementation roadmap, not a commitment to external plugins or a wholesale
-runtime rewrite. PR completion below does not imply production deployment.
+Status: **historical implementation-series record with conditional future directions**.
+The baseline was `main@d62d5b22`, after the foundation PRs and Work Result synchronous
+sections (#876) / bounded MCP presentation selection (#877). Stages 1–3 below record
+that series; App versions and branch relationships are historical, not the current
+registry or a second development queue. Current contracts are linked per domain below.
+Stages 4 and later remain proposals, not shipped behavior or implementation authority.
+PR completion does not imply production deployment.
 
 ## Objective and protected core
 
@@ -33,7 +36,7 @@ The domain contracts are documented in [context/guidance](builtin-context-guidan
 [model results](builtin-result-projection.md), [Desktop panels](bundled-extension-panels.md)
 and [MCP Apps](bundled-mcp-apps.md).
 
-## Current series: finish the useful internal boundaries
+## Recorded series: useful internal boundaries
 
 | Stage | Implemented slice | Boundary deliberately retained |
 | --- | --- | --- |
@@ -42,15 +45,16 @@ and [MCP Apps](bundled-mcp-apps.md).
 | 3: startup/Context dependencies | This change extracts pure instruction projection, typed startup catalog bounds, common JSON accounting and a named Context request bundle. Three instruction-shortening paths now share one scope-sensitive implementation. | Startup composition, continuation, verdict and aggregate priority stay together: their existing shared dataflow is not a defect. No service locator or new runtime registry. |
 
 The stage-2 change advances only Work Result v23 to v24; stages 1 and 3 change no
-App identity. These three branches touch disjoint paths and can merge separately.
+App identity. Those three branches touched disjoint paths and were designed to merge separately.
 Each leaves existing tool authority, schemas, Session/Job/audit truth, Native Tool
 Plugin protocol and persisted formats intact. No dual execution or rollout flag
 is needed to keep a partially adopted series usable.
 
 See [MCP families](mcp-presentation-families.md) and
-[startup boundaries](startup-projection-boundaries.md). The independent UI branch
-contains `docs/architecture/work-result-read-lifetimes.md`; it is not a required
-file dependency of this branch.
+[startup boundaries](startup-projection-boundaries.md), and the now-landed
+[Work Result read-lifetime design](work-result-read-lifetimes.md). For current App
+identities use the [bundled App contract](bundled-mcp-apps.md) and its registry,
+not the v23/v24 migration numbers in this series.
 
 ## Evidence and stopping criteria
 

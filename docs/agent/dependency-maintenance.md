@@ -1,5 +1,12 @@
 # Dependency and warning maintenance
 
+Status: **historical review and validation record**. Package, warning and test counts
+belong to the revisions below, not current `main`. Keep them as comparative evidence;
+current maintenance policy is in [Repository Maintenance](../MAINTENANCE.md), and
+current dependency ownership is in
+[`workspace-boundaries.toml`](../../workspace-boundaries.toml). Reproduction commands
+below describe this audit's scope, not the required validation for every change.
+
 This review targets the default Linux production graphs and the root Cargo
 workspace. Its starting point was `f8124ef6`; the changes were rebased onto
 `3088938f` (including the recipe and contract-mirror refactors). Desktop has a

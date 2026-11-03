@@ -22,16 +22,18 @@ not supported by this first version.
    principal-scoped Session ref resolves to its exact Session before owner checks.
 3. Ask the user to perform that step and reply when ready. The hold protects idle
    lifetime for at most ten minutes, capped by remaining maximum Browser lifetime;
-   it never auto-renews. Observations/surface resolution and close remain possible.
-   Automatic Browser page effects are denied. Native Computer effects are also
-   paused while any handoff exists because focus, pointer and clipboard input are
+   it never auto-renews. Observations, surface resolution and `close_browser` remain
+   possible. Page effects, including `close_page`, are denied. Native Computer
+   effects are also paused while any handoff exists because focus, pointer and clipboard input are
    shared across the desktop. The user's native input is unaffected.
 4. On the user's explicit reply, call `control_browser(action="finish_user_handoff",
    client_id, browser_id, session_id, handoff_fence)`, then obtain a fresh Browser
    snapshot. Computer input remains paused until this first successful recovery
-   snapshot (or explicit Browser close). Old Browser elements, Computer elements and display snapshot input
-   generations cannot be reused. Observe the actual outcome; the user's reply and
-   Session ACK do not prove login success, resolve the todo, or grant permission.
+   snapshot (or explicit Browser close). Each page that existed at finish needs its
+   own fresh snapshot before page effects resume. Old Browser elements, Computer
+   elements and display snapshot input generations cannot be reused. Observe the
+   actual outcome; the user's reply and Session ACK do not prove login success,
+   resolve the todo, or grant permission.
 
 ## Expiry and recovery
 
@@ -45,6 +47,23 @@ a replacement Browser. An unavailable/stale finish needs fresh observation.
 After finish, the same Browser/Session/message association cannot begin again.
 Each Browser retains at most 64 completed associations; use a new attention message
 for a new manual step, or explicitly close and replace the Browser at capacity.
+
+## Owning implementation
+
+The Server's [Browser gateway](../../src/tool_runtime/browser_tools.rs) authorizes
+the Session/message association independently from Browser authority. The Runner's
+[Browser adapter](../../crates/webcodex-runner/src/webcodex_runner/browser.rs) resolves
+the exact native surface and bridges the
+[Supervisor handoff state](../../crates/webcodex-browser/src/supervisor/user_handoff.rs)
+to the Computer input reservation. The
+[handoff tests](../../crates/webcodex-browser/src/supervisor/tests/user_handoff.rs)
+cover duplicate begin, expiry, per-page recovery snapshots and native reservation
+release; [Server tests](../../src/tool_runtime/tests/browser_user_handoff.rs) cover
+the independent authorization boundary.
+
+`close_browser` is the explicit shutdown escape path. A deadline, a Session ACK,
+a local Computer resume or a page-close request cannot substitute for exact
+handoff finish and recovery observation.
 
 ## Acceptance and limitations
 

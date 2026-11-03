@@ -43,8 +43,11 @@ complete provider definition and one registry entry, not a new ToolCall.
 surfaces that support `_wc` sidecars, code implementation or explicitly requested
 code review tasks may request `_wc.context=["webcodex.coding"]` and select the
 applicable `coding` or `independent_review` role. The chapter is optional and
-grants no authority. CLI presentation does not infer task type and has no `_wc`
-request route; project instructions remain the source of repository conventions.
+grants no authority. CLI presentation does not infer task type and has no
+`_wc.context` route; its `_wc.ack` / `_wc.reply` communication fields remain
+separate. Project instructions remain the source of repository conventions;
+[MCP client policy](../MCP.md#direct-connections-from-claude-code-and-codex) owns
+the surface differences.
 
 ## Guidance contributors
 

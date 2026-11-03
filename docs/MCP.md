@@ -103,111 +103,67 @@ For a regular independent Windows Server + Runner reached through OpenAI Tunnel,
 
 ## Result cards
 
-On Stateless MCP 2026 requests that advertise MCP Apps HTML support, clients can display a
-small set of read-only milestone cards for `list_jobs`, `read_validation_summary`, and
-`read_git_review_summary`. The Job card shows only active or attention-requiring Jobs;
-routine successful terminal Jobs stay out of the foreground. Aggregate validation
-and committed-range review cards remain bounded and do not embed raw logs, diffs,
-or hunks.
+On Stateless MCP 2026 requests advertising MCP Apps HTML support, `list_jobs`,
+`read_validation_summary` and `read_git_review_summary` can show bounded,
+read-only milestone cards. The Job card foregrounds active or attention-requiring
+Jobs; validation and committed-review cards omit raw logs and diffs. These static
+cards do not poll, retry or invoke tools. High-frequency observation and validation
+calls retain native tool presentation. `WEBCODEX_MCP_APPS_ENABLED=false` removes
+App metadata/resources without disabling the underlying ordinary tools.
 
-High-frequency calls such as `observe_jobs`, `cargo_check`, `cargo_test`, `go_test`,
-and `read_workspace_changes` intentionally keep the Host's native tool presentation instead
-of creating an extra custom App card for every call. Cards do not poll, retry, or
-invoke tools; the canonical tool result remains available independently.
-`WEBCODEX_MCP_APPS_ENABLED=false` disables App metadata and resources without
-disabling the underlying tools.
-
-The current Result App is intentionally static. September 2026 Host experiments proved that a separately designed MCP App controller can poll server-owned state and request later ChatGPT model turns, including a bounded foreground autonomous multi-turn loop, but background-tab model-turn scheduling is not an immediate guarantee. Those findings and the production design constraints are recorded in [`agent/mcp-app-continuation-experiments.md`](agent/mcp-app-continuation-experiments.md); they do not change the current Result App contract.
+The live Work Result card and dedicated document readers have their own explicit
+App read paths. Historical [Host continuation experiments](agent/mcp-app-continuation-experiments.md)
+do not turn a milestone card into an automatic continuation controller.
 
 ### Dedicated DOCX reader
 
-`present_docx(project, path)` opens one authorized `.docx` in a dedicated read-only
-MCP App. It supports unchanged/untracked files without Git or a Workflow Session,
-pins size/SHA-256 (10 MiB maximum), and privately reads version-fenced segments.
-The reader offers fit width, zoom, optional fullscreen and original DOCX download.
-Common document styles are supported; layout/pagination may differ from Word.
-Legacy `.doc`, encrypted packages and editing are unsupported. A changed file
-requires explicit reopening; repeated presentation may create another Host card.
-The reader reuses the hidden format-neutral `read_app_artifact_chunk` bridge; no DOCX-specific binary transport is added.
-See [DOCX architecture and bounds](architecture/docx-document-viewer.md).
+`present_docx(project, path)` presents an authorized unchanged/untracked `.docx`
+without Git or a Workflow Session. It pins size/SHA-256 (10 MiB maximum) and
+privately reads version-fenced segments. Common styles, fit width, zoom and supported
+fullscreen are available; original download requires the Host's download capability.
+Word-equivalent pagination, legacy `.doc`, encrypted packages and editing are
+unsupported. Changed content requires explicit reopening. See the
+[DOCX reader contract](architecture/docx-document-viewer.md) for transfer,
+sanitization, expansion limits and verification.
 
 ### Live Work Result card
 
-`present_work_result` opens the separate Window work card with Activity, Results,
-and Collaboration tabs. Results shows the current Project's uncommitted files,
-rename paths, staging state, and available line counts while work is in progress.
-The bounded workspace snapshot can include changes from other work; partial file
-lists and missing line counts are labelled. A clean workspace is not task success.
-Linked Session check/review evidence appears when available.
+Call `present_work_result` once near the first successful Project action. Its
+Activity / Results / Collaboration tabs show Window activity, linked Session
+evidence, current uncommitted files and sealed final changes. A workspace snapshot
+can include other work; partial file lists and missing counts are labelled, and a
+clean workspace is not proof of task success. Results loads diffs only on demand.
 
-Hosts supporting conversation thread panels can open the public rendering
-`work_result_thread_panel` entrypoint with an empty argument object. It resolves
-the latest successful `present_work_result` in the same authenticated Host Window,
-including that presentation's explicit business Session when supplied. Other
-actions and failed presentations cannot retarget the panel. Presentation records
-this durable binding without starting live Window activity; the thread entrypoint
-and App refresh calls also stay outside live Window activity. The model still
-calls `present_work_result` once near the first successful Project action.
+A Host may open `work_result_thread_panel({})` to recover the latest successful
+presentation in the same authenticated Host Window, including its explicit
+business Session. Failed presentations and unrelated actions cannot retarget it.
+An open card retains its exact Project/Session on refresh; Window-linked evidence
+does not grant refresh authority or select a Session. Missing binding/Window
+identity fails closed. Reopen to select a newer successful presentation.
 
-Both the inline card and the thread panel use the same Activity / Results /
-Collaboration tabs and section names. A summary row above the tabs states each
-outcome once (changed files, checks, background work, final changes) and opens the
-section that owns its evidence; failing checks and failed background work are
-flagged there instead of being repeated across panels. Results lists Session
-checks first, then Changed files with lazy diffs and sealed Final Changes. The
-thread panel opens on Results; the inline card opens on Activity, whose Window call
-history is newest first and labels each call by what it did. Project, Window and
-Session identifiers are folded under Diagnostics, and the local Appearance
-preference sits in the footer. Opening Results does not eagerly load diffs.
+Changed-file text follows fresh observations by default; **Pin snapshot for
+review** holds the inspected version, and **Follow changes** resumes updates.
+Each read remains bound to an exact working-tree snapshot. Final files use the
+sealed final tree even after later edits. Only advertised paths may be read,
+in explicit 32 KiB pages up to 256 KiB per file, with partial content/caps labelled.
+Deleted files have no final version. Binary, non-UTF-8, symlink and submodule
+content is unavailable; failed or expired reads never fall back to a live path.
+Every read still reauthorizes its target.
 
-An open panel retains its exact Project and explicit Session selection on refresh.
-Window-linked Session evidence never becomes refresh authority. Reopen the panel
-to select a newer successful presentation; missing Window identity or binding
-fails closed. Current authorization and snapshot fences still apply on every read.
-Changed files and Final Changes offer lazy Full text previews only for advertised
-paths. Changed files follow fresh workspace observations by default, renewing
-only a previously inspected view and keeping each read bound to an exact
-working-tree snapshot. Pin snapshot for review keeps that code stable while
-activity and workspace status refresh; Follow changes resumes updates. Final
-files always use the sealed final tree, even after later workspace edits.
-Snapshot retention and expiry remain bounded; failed reads never retarget code.
-Content loads in explicit
-32 KiB pages up to 256 KiB per file; the card labels partial content and the cap.
-A deleted file has no final version. Binary, non-UTF-8, symlink and submodule
-contents are unavailable; failed or expired reads never fall back to a live path.
-Markdown is enabled for `.md`/`.markdown` only after the complete file is loaded.
-The bundled markdown-it parser supports standard Markdown, tables and
-strikethrough, without promising every GFM extension. Rendering uses DOM node and
-attribute allowlists: raw HTML remains text, unsafe URLs are rejected, links stay
-inert and external images show a placeholder instead of loading resources.
-Line/selection-to-chat interactions remain deferred.
+Complete `.md` / `.markdown` files can render with the bundled Markdown parser.
+Raw HTML remains text, DOM nodes/attributes are allowlisted, unsafe URLs are
+rejected, links stay inert and external images are not fetched. Line/selection
+transfer to chat remains deferred. Automatic App refresh pauses while hidden;
+presentation and private refresh do not create live Window work activity.
 
-The Markdown bundle is checked into the single-script App resource, so Rust-only
-builds need no npm toolchain. After `npm ci --prefix frontend`, regenerate with
-`npm --prefix frontend run build:work-result`; `node frontend/scripts/build-work-result-markdown.mjs --check`
-checks deterministic output and also runs under `check:dist`.
-
-Rendering entrypoints retain the default model/App visibility. App-only bridge
-helpers return data without `ui.resourceUri`: ChatGPT rejects private tools that
-declare a rendering resource when refreshing the connected App. After updating
-the Server's tool descriptors, refresh tools for the existing App in ChatGPT's
-plugin settings before testing the new entrypoint.
-
-After closeout, Results also shows the sealed final task changes with on-demand
-per-file diffs. Those diffs keep their original snapshot identity even if the live
-workspace changes. Refresh uses the existing App-only observation path; opening
-Results adds no tool calls. Automatic refresh pauses while the App document is
-hidden and uses a bounded visible cadence so background cards do not continuously
-exercise the Host tool bridge. Window activity calls are compact, collapsed by default,
-and fetch their sanitized trace/timing details only when expanded. The inline card
-shows the canonical hashed Window key used by the Window activity ledger; the
-thread panel puts the same identity under Diagnostics, making
-support traces attributable without exposing the Host's raw Window identifier.
-New cards use the Work Result resource URI advertised by the current descriptor,
-owned by the [canonical App registry](../src/mcp/app_registry/builtin.rs). Refresh
-Host schemas and reopen cached readers to load the current thread-panel, lazy-detail
-and canonical tool-name contract.
-Retired resource URIs fail closed instead of serving a new template under an old cache key.
+The [card navigation](ui/work-result/README.md),
+[read ownership and invalidation](architecture/work-result-read-lifetimes.md), and
+[renderer/build boundaries](architecture/work-result-sections.md) own UI details.
+The [App registry](../src/mcp/app_registry/builtin.rs) owns current resource identity;
+retired URIs never alias new templates. Refresh Host schemas and reopen cached
+cards after descriptor changes. Rendering entrypoints retain model/App visibility;
+private bridge tools return data without `ui.resourceUri`, as required by the
+[App presentation contract](architecture/mcp-presentation-families.md).
 
 ## Existing Server
 

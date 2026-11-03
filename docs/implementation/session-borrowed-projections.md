@@ -1,5 +1,10 @@
 # Borrowed Session evidence projections
 
+> Historical optimization report, recorded in commit `9ff76f930` (#885) against
+> parent `46c8fe0d`. The fixture and timings below describe that JSON-era version.
+> Borrowed projections remain implemented, but current Cold residency is SQLite
+> backed; see [Session storage and residency](session-active-residency.md).
+
 ## Scope
 
 Based on main@46c8fe0d (Active residency #883). Neither retention, residency,
@@ -37,6 +42,11 @@ Every summary eliminates 2,000 intermediate event deep clones in this fixture;
 the returned tail remains identical. These single-process synthetic timings are
 not a prediction of network/tool latency or sf whole-service memory reduction.
 No deployment, allocator tuning or history deletion is needed for the change.
+
+The benchmark remains in
+[`borrowed_projection_tests.rs`](../../crates/webcodex-workflow-session/src/store/borrowed_projection_tests.rs).
+Run the historical report commit to compare with the recorded numbers; running
+this command on current main measures the current implementation instead.
 
 ```sh
 cargo test --locked --profile dogfood -p webcodex-workflow-session --lib \

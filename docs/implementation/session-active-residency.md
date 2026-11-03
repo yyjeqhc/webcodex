@@ -23,20 +23,29 @@ Active identities, enlarged history and added replay/completion evidence. Moving
 Cold Sessions to immutable serialized JSON reduced object expansion, but still
 kept all encoded history in RAM. A mutation still rewrote the entire corpus.
 
-The October 2026 sf audit reported roughly 382 MB per snapshot, repeated every
-few seconds, with almost all sampled writes in the Session writer and heavy
-swap pressure. This is consistent with the source-level cost: O(all retained
-history) serialization/write for a small mutation, plus history-sized resident
-memory. It does not establish that every byte of kernel I/O came from snapshots.
-Increasing coalescing can reduce ordinary writes, but required durability barriers
-still trigger full snapshots in that design.
+The archived [2026-10-04 sf observation](session-memory-sf-2026-10-04.md)
+retains an 85,169,524-byte JSON ledger, source revision, measurement conditions
+and a separate synthetic Hot/Cold comparison. These historical data illustrate
+history-sized residency; they do not measure the current SQLite implementation
+or attribute all kernel I/O to Session snapshots. In the old design, a small
+mutation still incurred O(all retained history) serialization/write. Coalescing
+reduced write frequency but could not eliminate full snapshots at durability
+barriers.
+
+> Earlier historical report, not independently reproducible from checked-in
+> evidence: a later October sf audit reported roughly 382 MB per snapshot every
+> few seconds, mostly Session-writer samples and heavy swap pressure. Its exact
+> revision, fixture and raw I/O observations are not archived here. This report
+> is retained as context, not a verified current performance result or the same
+> experiment as the 2026-10-04 observation.
 
 The prior implementation and measurements are historical evidence in
 [SessionStore access and write scheduling](session-store-access-and-write-scheduling.md).
 
 ## Tables and commit boundary
 
-`persistence/database.rs` owns domain schema version 1:
+[`persistence/database.rs`](../../crates/webcodex-workflow-session/src/persistence/database.rs)
+owns domain schema version 1:
 
 | Table | Stored fact |
 | --- | --- |
@@ -140,5 +149,13 @@ acknowledgement, multi-Session transaction rollback, failed-write retry,
 nonblocking backpressure and cancellation, strict one-time import, indexed
 identity mismatch and abrupt process exit with committed WAL state. Existing
 privacy, assignment, completion, validation and authorization suites remain
-applicable. These tests establish correctness and changed-payload scaling, not
-production RSS, p95 latency or physical write throughput on sf.
+applicable. The implementation entry points are
+[`store.rs`](../../crates/webcodex-workflow-session/src/store.rs),
+[`store/writer.rs`](../../crates/webcodex-workflow-session/src/store/writer.rs),
+[`store/residency.rs`](../../crates/webcodex-workflow-session/src/store/residency.rs),
+and the strict [`stream::visit` importer](../../crates/webcodex-workflow-session/src/persistence/stream.rs).
+[SQLite writer tests](../../crates/webcodex-workflow-session/src/store/writer/sqlite_tests.rs)
+and [async writer tests](../../crates/webcodex-workflow-session/src/store/writer/async_tests.rs)
+provide focused regression entry points. They establish correctness and
+changed-payload scaling, not production RSS, p95 latency or physical write
+throughput on sf.

@@ -333,7 +333,7 @@ Long-lived Agent communication now belongs to the separate durable Agent domain:
 Durable Agent / Conversation
   Message -> recipient Delivery -> Wake opportunity
             |
-            | explicit accept/create work (planned)
+            | explicit create_agent_task
             v
 Agent Task -> exact fenced TaskAttempt
             |
@@ -349,12 +349,13 @@ These arrows are correlations, not authority inheritance. Conversation membershi
 Message authorship, Delivery state, Wake state, Session todo state, and object
 references never grant Project or execution authority.
 
-A Workflow Session todo and future Agent Task are deliberately different. The todo
-is a bounded explicit assignment inside one Session collaboration ledger. An Agent
-Task will represent asynchronous work that survives model/window turns and owns
-independent TaskAttempt/lease/fencing state. Do not silently convert historical or
-current Session todos into Agent Tasks, and do not use `assignment_fence` as an
-Agent Task execution lease.
+A Workflow Session todo and an Agent Task are deliberately different. The todo
+is a bounded explicit assignment inside one Session collaboration ledger. The
+implemented Agent Task owns durable work and independent TaskAttempt/lease/fencing
+state across model/window turns. Task creation and Attempt execution require
+explicit authorized operations; consuming a Message or Wake does not create or
+accept work. Do not silently convert historical or current Session todos into
+Agent Tasks, and do not use `assignment_fence` as an Agent Task execution lease.
 
 The standing naming and boundary rules for Agent Tasks are in [`../architecture/durable-agent-runtime.md`](../architecture/durable-agent-runtime.md). Ordinary coding continuity remains the Workflow Session/Job model and is not an Agent Task lease.
 

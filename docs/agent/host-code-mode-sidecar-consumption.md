@@ -37,8 +37,8 @@ For a result that may contain Sidecars, keep the raw result inside the cell and
 print **nonempty attention before large business logs**. This example uses a
 normal `get_runtime_status` call only as a small reproducible carrier; use the
 same pattern for other ordinary model-visible tools. The example uses the
-current `NewWebCodex` connector tool name; use your Host's exposed name if
-its installation differs.
+illustrative `NewWebCodex` connector tool name; use the exact callable exposed
+by your Host. Connector labels are not a runtime contract.
 
 ```javascript
 const raw = await tools.mcp__NewWebCodex__get_runtime_status({
@@ -156,11 +156,12 @@ nonempty message forwarding, ACK-only and omitted-message receipts, attention
 on business failure, and the empty-sidecar case. It is not a live ChatGPT Host
 consumer test or evidence of automatic model ACK.
 
-## Scope of this change
+## Enforcement limits
 
-Only model guidance, tests, and documentation change. It does not add a
-new MCP field, a runtime queue, ACK persistence, ToolRuntime authority, or
-Runner behavior. A Server rebuild/deployment would be needed to serve the
-updated built-in guidance to future clients; there is no Runner deployment
-or tool Schema refresh for this prose-only change. Live Host compliance is
-best-effort unless the Host itself implements an enforced forwarding boundary.
+This recipe does not add a new MCP field, runtime queue, ACK persistence or
+ToolRuntime authority. The Server's built-in guidance is owned by
+[`guidance/contributors.rs`](../../src/tool_runtime/guidance/contributors.rs);
+changing a Markdown recipe alone does not change the guidance served by a running
+Server. Live Host compliance is best-effort unless the Host implements an enforced
+forwarding boundary. A successful local fixture or Server projection cannot prove
+model retention.

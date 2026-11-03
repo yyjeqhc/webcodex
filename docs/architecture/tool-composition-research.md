@@ -1,10 +1,19 @@
 # Tool composition research and development plan
 
-Status: active experimental design record. E1 read-only orchestration, the E2a
-structured-validation/Job foundation, and the narrow E2b guarded structured-mutation
-slice are implemented behind the experimental Code Mode feature. The governing rule
-is still that composition may reduce model-facing round trips but may not shortcut
-existing tool, Session, Job, permission, audit, Project, recovery, or Runner boundaries.
+Status: historical research and staged design record. The E1/E2a/E2b discussion
+below preserves why the experimental Server-hosted composition boundary was built;
+it is not the current callable allowlist or a pending-work queue. E2c subsequently
+extended the same mutation entry to guarded edit followed by structured validation.
+Use [the current experimental contract](../experiments/code-mode.md), backed by
+[`code_mode.rs`](../../src/tool_runtime/code_mode.rs), for admission, scopes and
+recovery. [MCP](../MCP.md#optional-workflow-tools-per-client) owns current Host
+exposure of optional Job/Agent continuation.
+
+This is separate from Host-native Code Mode: a Host can already orchestrate
+ordinary WebCodex calls without enabling the Server's V8 feature. The historical
+motivation for an internal composition layer does not imply that current Hosts
+lack heterogeneous orchestration. Both paths preserve canonical tool, Session,
+Job, permission, audit, Project, recovery and Runner boundaries.
 
 ## Motivation
 
@@ -380,12 +389,13 @@ Runtime Console supplies a bounded dogfood projection. Baseline data comes befor
 SLO targets: WebCodex-owned service/failure SLIs and interaction-efficiency gaps
 must remain separate because only the former are wholly service-owned.
 
-## Staged implementation plan
+## Historical staged implementation plan
 
 The concrete Direct-vs-Code-Mode capture/report protocol is documented in
 [`../experiments/agent-loop-baseline.md`](../experiments/agent-loop-baseline.md).
 
-The experiment now uses these concrete stage names:
+The original sequence used these stage names; E2c's subsequent implementation is
+summarized below and specified in the current experimental contract:
 
 ```text
 E1   read-only orchestration
@@ -464,7 +474,20 @@ E3 and E3-H1 deliberately do not enter the E1/E2a/E2b allowlists. `wait_for_job_
 
 ### E2c / E4
 
-E2c still decides whether validation and mutation should coexist in one cell and whether any selective process/shell composition is justified by telemetry. Finer mutation locking is also evidence-driven, not assumed. E3 remains independent of that decision and is not evidence for nested Job waiting. Product/stability commitment comes only after the experimental execution, E3 Host-integration dogfood, and broader evidence are mature.
+E2c is now implemented in the same `execute_mutating_code_mode` entry: E1 reads,
+at most one guarded `edit_project_files` attempt, then `project_validate`,
+`cargo_check` or `cargo_test` only after a known successful edit (including no-op).
+The outer envelope requires both `project:write` and `job:run`; source observation
+does not fabricate a current-source validation proof. The earlier E2b validator
+exclusion above is historical. See
+[E2c ordering and limitations](../experiments/code-mode.md#e2c-public-entry-and-ordering)
+and its [regressions](../../src/tool_runtime/tests/code_mode_e2c.rs).
+
+Generic process/shell composition, finer mutation locking and product/stability
+commitment remain separate evidence-driven directions. E3 is independent of E2c
+and never admits nested Job waiting. Ordinary current-turn Job joins use
+`wait_for_job_readiness`; optional durable attention requires its own explicit
+MCP exposure and Host readiness.
 
 ## What not to build
 
@@ -505,7 +528,7 @@ A production-ready first slice should satisfy all of the following:
 - no Workflow Session is selected from Window identity;
 - guarded mutation reuses canonical `edit_project_files`, allows at most one mutation attempt per cell, preserves exact state-change/uncertainty truth, and leaves direct mutation semantics unchanged.
 
-## Open design questions
+## Historical open design questions
 
 1. Which embedded restricted-JavaScript runtime, if any, meets Linux/macOS/Windows
    portability, startup, memory, cancellation, and sandbox requirements?
@@ -523,5 +546,7 @@ A production-ready first slice should satisfy all of the following:
 8. Does nested short Job observation remove enough outer turns to justify widening E2a, or is ordinary `observe_jobs` the better boundary?
 9. Which timing boundaries can the current Runner protocol prove directly, and which require additive privacy-safe telemetry?
 
-These questions should be answered with focused prototypes and dogfood traces,
-not by widening the first implementation preemptively.
+These questions record the original research agenda. Several have since gained
+implemented answers (V8, named child tools, typed scheduling and E2c); others still
+need separate evidence. They are retained for design rationale, not assigned as
+current work merely because they appear in this historical list.

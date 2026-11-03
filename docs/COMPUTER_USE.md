@@ -1,6 +1,46 @@
-# Computer Use roadmap
+# Computer Use implementation and design
 
-This page tracks the implementation order for WebCodex Computer Use. It is a roadmap, not a duplicate semantic or authorization specification. Current authority, scope, retry, and privacy contracts remain defined by [Authentication](AUTH_MODEL.md#computer-observation-and-control-authorization), the model-facing tool definitions, and the Runner implementation.
+Status: current implementation guide. The CU-* and W* labels below identify
+delivered implementation slices, not a pending roadmap. Scope and authorization
+remain owned by [Authentication](AUTH_MODEL.md#computer-observation-and-control-authorization)
+and the [canonical tool definitions](../crates/webcodex-tool-contracts/src/tool_definition/computer.rs).
+[Explicitly deferred](#explicitly-deferred) lists capabilities that are not implemented.
+
+Computer owns OS windows, Accessibility/UI Automation and shared desktop input.
+[Browser/CDP](architecture/browser-cdp-runtime.md) is a separate, implemented
+domain for page/DOM semantics. Its [exact native handoff](architecture/browser-session-continuity.md)
+connects the two without turning Browser identities into Computer authority.
+
+## Ownership and request path
+
+The implementation addresses two problems that a screenshot-and-click loop alone
+cannot solve: preserving the exact target across window/element replacement, and
+distinguishing an unexecuted action from a lost receipt after a native effect.
+Coordinates are therefore an explicitly scoped path with a one-effect snapshot
+fence; semantic effects instead re-resolve the observed native lineage.
+
+| Layer | Owning source and responsibility |
+|---|---|
+| Model contract | [ToolDefinition](../crates/webcodex-tool-contracts/src/tool_definition/computer.rs) and [closed action types](../crates/webcodex-tool-contracts/src/tool_call/input_types.rs): schemas, effect metadata and discoverable guidance |
+| Server gateway | [gateway.rs](../src/tool_runtime/computer_tools/gateway.rs) resolves action-specific scopes; [request.rs](../src/tool_runtime/computer_tools/request.rs) checks Runner access/capabilities, dispatches bounded requests and validates receipts |
+| Runner adapter | [computer.rs](../crates/webcodex-runner/src/webcodex_runner/computer.rs) decodes closed native operations and checks the local control epoch |
+| Native state | [ComputerRuntime](../crates/webcodex-computer/src/lib.rs) owns process-local surface, element, application, display and snapshot registries; platform adapters revalidate native targets |
+| Native backends | [macOS](../crates/webcodex-computer/src/platform/macos/mod.rs) uses AX/Quartz; [Windows](../crates/webcodex-computer/src/platform/windows/mod.rs) uses UIA and bounded native input |
+| Interactive session | [computer_session.rs](../crates/webcodex-runner/src/webcodex_runner/computer_session.rs) brokers closed Computer requests to a login-session helper when configured; the helper has no Server token, shell or generic Runner request decoder |
+
+An element request travels from the closed tool action through specialized
+governance, the authorized Runner queue and the native adapter. `SurfaceRecord`
+retains native window identity; `ElementRecord` retains the surface and full
+fingerprint lineage; `ElementRegistry` replaces all handles on that surface when
+a new tree/search succeeds. Native re-resolution, protection checks and the local
+effect guard precede dispatch. The response preserves execution certainty rather
+than guessing success from a timeout. Optional post-observation is a separate
+read of the same admitted Runner instance and window after known success.
+
+The [local pause gate](agent/computer-local-control.md) and Browser handoff
+reservation protect WebCodex native input. They do not sandbox separately
+authorized code running as the same OS account or isolate simultaneous human input.
+Image delivery has a separate [MCP adapter contract](agent/mcp-computer-app-image-contract.md).
 
 ## Action followed by a bounded observation
 
@@ -91,7 +131,7 @@ Computer Use is semantic-first rather than coordinate-first. The model-facing su
 ```text
 observe_computer(action=targets|windows|displays|applications|...)
   -> observe_computer(action=accessibility_tree|find_elements|element_state|snapshot_window|snapshot_display|read_clipboard)
-  -> control_computer(action=launch_application|activate_window|press|focus|scroll_to_element|scroll|key|input_text|pointer_move|pointer_click|write_clipboard)
+  -> control_computer(action=launch_application|activate_window|press|select|focus|scroll_to_element|scroll|key|input_text|pointer_move|pointer_click|write_clipboard)
 
 save_computer_snapshot(...)  # separate Computer-read + Project-write boundary
 ```
@@ -174,26 +214,19 @@ On macOS, validation plus `NSString`, pasteboard, and type preparation complete 
 
 `control_computer(action=write_clipboard)` is intentionally a **replacement** operation: the native clear removes any previous image, rich-text, HTML/RTF, file-drop/file-URL, or custom formats before installing only the bounded plain Unicode text. It does not merge or preserve rich formats. Neither clipboard action pastes anything, sends a paste shortcut, focuses/activates a target, or becomes a fallback for `control_computer(action=input_text)`, key input, semantic control, or pointer operations. An `outcome_unknown` write is never blindly retried; a caller that separately holds clipboard-read authority may explicitly issue a fresh `observe_computer(action=read_clipboard)`, while a caller without that read scope must retain the unknown outcome rather than bypass authorization. Windows behavior is production-validated; macOS parity has native compile and non-mutating focused test coverage, with live shared-clipboard validation still pending.
 
-## Near-term slices
+## Semantic observation and effects
 
 ### CU-4 — semantic element finder
 
 The bounded semantic finder is exposed as `observe_computer(action=find_elements)` over the existing Accessibility observation path; the implementation remains a Control-side adapter rather than a new Runner query protocol.
 
-First implementation should be a Control-side focused adapter over the canonical bounded Accessibility tree rather than a new Runner query protocol. Reuse `computer:read`, exact `client_id`/`surface_id`, and the existing `computer_accessibility_observe` capability. Return only deterministic bounded matches and fresh ephemeral `element_id` values already produced by the underlying observation.
+The Server filters the canonical bounded Accessibility tree using `computer:read`, exact `client_id`/`surface_id`, and the existing `computer_accessibility_observe` capability. Results contain deterministic bounded matches and fresh ephemeral `element_id` values produced by that observation; the finder does not introduce a separate Runner query protocol.
 
-Initial filters should remain closed and simple: role/subrole, literal semantic label text, focused, enabled, and limit. Do not add regex, fuzzy scoring, a query DSL, arbitrary AXValue search, or effect behavior. If future measurements show material transport/latency cost from fetching the bounded tree internally, the same semantics may be moved down to the Runner behind an additive capability.
-
-Success criteria:
-
-- Common known-element tasks no longer require the model to read and parse a full AX tree.
-- Finder results preserve existing protected/secure-content behavior and tree bounds.
-- Traversal order and truncation are deterministic and explicit.
-- A stale result remains an ephemeral handle, not a durable bearer reference.
+Filters are closed: role/subrole, literal semantic label text, focused, enabled and limit. There is no regex, fuzzy scoring, query DSL, arbitrary AXValue search or effect behavior. The bounded source tree can be incomplete; filtering it reduces model output, not the native search horizon. Protected-content rules, traversal order, truncation and stale-handle fencing remain unchanged.
 
 ### CU-5 — exact window activation
 
-Expose one narrow `control_computer(action=activate_window)` effect that activates/raises an already observed exact `surface_id`, while retaining the precise `computer_activate_window` Runner operation.
+`control_computer(action=activate_window)` activates/raises an already observed exact `surface_id`, while retaining the precise `computer_activate_window` Runner operation.
 
 The operation must revalidate the exact native surface and may not accept an application name, PID guess, executable path, bundle path, shell command, AppleScript, or fallback to another window. Lost-response behavior follows the existing Computer effect contract.
 
@@ -201,7 +234,7 @@ This is intentionally separate from application launch. It solves the observed f
 
 ### CU-6 — normalized element state and observation generation
 
-Expose low-cost read-only state needed to choose the next semantic action without returning sensitive values. Prefer normalized WebCodex affordances over platform-specific AX vocabulary, for example:
+`element_state` returns bounded read-only state for choosing the next semantic action without returning sensitive values. It uses normalized WebCodex affordances rather than exposing native AX/UIA objects:
 
 ```text
 role / subrole
@@ -214,11 +247,9 @@ can_focus
 can_input_text
 ```
 
-The same model-facing vocabulary should later be derivable from macOS AX and Windows UI Automation patterns.
+Both macOS AX and Windows UI Automation derive this vocabulary from current native eligibility. Lineage/fingerprint re-resolution is the authoritative stale check; a wall-clock TTL cannot establish that an element still denotes the same target.
 
-Record an observation generation (and observation time where useful) with element registrations. Keep lineage/fingerprint re-resolution as the authoritative semantic stale check. Do not impose one aggressively short wall-clock TTL on all current AX effects merely to add a timer; future geometry/focus-sensitive effects may require a fresher generation than semantic press/text effects.
-
-The first implementation uses a positive process-local generation per observed surface and does not add a wall-clock TTL or observation timestamp. `observe_computer(action=accessibility_tree)` and the Control-side finder expose the generation attached to their fresh element handles. `observe_computer(action=element_state, surface_id, element_id)` re-resolves an existing handle and reports that same generation; it neither creates a new handle nor advances generation. `value_empty` is actionable only for supported unprotected text input and is `null` for protected/secure content or when unavailable.
+The current implementation uses a positive process-local generation per observed surface and does not add a wall-clock TTL or observation timestamp. `observe_computer(action=accessibility_tree)` and the Control-side finder expose the generation attached to their fresh element handles. `observe_computer(action=element_state, surface_id, element_id)` re-resolves an existing handle and reports that same generation; it neither creates a new handle nor advances generation. `value_empty` is actionable only for supported unprotected text input and is `null` for protected/secure content or when unavailable.
 
 When an element's semantic action support is unclear, query its current state before choosing an effect:
 
@@ -245,9 +276,9 @@ Do not add a `refresh_element` operation that upgrades an old handle into new au
 
 ### CU-7 — region snapshot
 
-Extend window snapshot observation with a bounded window-relative region and optional output dimension bounds. The Runner must first revalidate the exact `surface_id`, then capture/crop within that surface; caller coordinates must never be treated as global desktop coordinates.
+Window snapshots support a bounded window-relative region and optional output dimension bounds. The Runner first revalidates the exact `surface_id`, then captures/crops within that surface; caller coordinates are never global desktop coordinates.
 
-The first version does not need caller-controlled image quality or a general screenshot backend. Prefer bounded system-selected encoding for model observation. Return enough metadata to correlate the image with what was captured, including source/output dimensions, captured region, MIME type, byte count, digest, and capture time when available.
+Encoding remains system-selected. The result includes source/output dimensions, captured region, MIME type, byte count, digest and capture metadata; it accepts no caller-controlled image quality or general screenshot backend.
 
 The model surface uses `observe_computer(action=snapshot_window)`. Calls with only `client_id` + `surface_id` retain the existing `computer_snapshot` Runner wire and `observe_computer` capability for rolling compatibility. Supplying `region`, `max_width`, or `max_height` switches internally to the additive `computer_snapshot_region` Runner wire and requires both the baseline `observe_computer` capability and the additive `computer_snapshot_region` capability, so an older Runner can still serve whole-window snapshots but fails closed for the new transform. Region coordinates remain in the revalidated surface coordinate space; the Runner maps them into captured pixels, crops inside the bounded image, applies aspect-preserving downscale only when requested, and keeps JPEG encoding/quality system-selected.
 
@@ -255,7 +286,7 @@ All three snapshot wires (`computer_snapshot`, `computer_snapshot_region`, and `
 
 ### CU-8 — snapshot to project artifact
 
-Use a separate `save_computer_snapshot(project, path, client_id, surface_id, region?, max_width?, max_height?, session_id?)` operation rather than a `save=true` flag on observation. The Control reuses the exact CU-7 capture path and then sends the validated bounded image directly to the target project's existing artifact write path; the model never receives or resubmits the Base64 image body. Whole-window capture retains the existing rolling-compatible `observe_computer` path, while region/downscale capture still additionally requires `computer_snapshot_region`; CU-8 adds no new Runner Computer protocol capability.
+`save_computer_snapshot(project, path, client_id, surface_id, region?, max_width?, max_height?, session_id?)` is a separate operation, because artifact creation has write authority that ordinary observation does not. The Control reuses the exact CU-7 capture path and then sends the validated bounded image directly to the target project's existing artifact write path; the model never receives or resubmits the Base64 image body. Whole-window capture retains the existing rolling-compatible `observe_computer` path, while region/downscale capture still additionally requires `computer_snapshot_region`; CU-8 adds no new Runner Computer protocol capability.
 
 The artifact write is create-only: callers cannot request overwrite, encoding format, quality, or arbitrary content. The target path is validated by the existing project-artifact policy, and the target Runner must still advertise `file_write` when the request is admitted under the registry lock. The source Computer Runner and target project Runner may be different devices.
 
@@ -287,7 +318,7 @@ For example, Ctrl+Shift+P uses `{"action":"key","client_id":"<observed client>",
 
 Key input retains `control_computer(action=key, client_id, surface_id, key, modifiers?)`, the `computer_key_input` wire kind, and the independent `computer_key_input` base capability. Extra keys require the additive Windows-only `computer_key_chords` capability. The earlier F02 Server/Runner wire consumer remains supported through `computer_letter_shortcuts` for exactly Ctrl+J and Ctrl+P; this bit does not grant other letter/modifier combinations. A general-chord Runner needs no legacy letter bit. `observe_computer(action=targets)` reports all three actual capability bits so independently upgraded Servers and Runners can be distinguished. All key requests pin the accepted Runner instance and recheck access and the required capabilities at queue admission and dequeue. An older Runner advertising only semantic `computer_control` is not key-input capable. Ordinary text continues through `control_computer(action=input_text)`; callers cannot supply Unicode characters, virtual keycodes, repeat counts, held-key state, or modifier key-down/up sequences.
 
-Windows chords use the existing bounded `SendInput` path with logical virtual keys. Punctuation names map to the corresponding `VK_OEM_*` keys; they do not promise a particular character under another keyboard layout. Keypad names preserve their native virtual-key and extended-key distinctions; NumLock and input-method state can affect application behavior and are not changed by this tool. The complete down/up sequence is prepared before injection, with at most eight events on Windows; foreground/focus, protected-content, held-key and partial-delivery checks remain. Application bindings, global hotkeys and hooks also affect behavior. A successful receipt proves the complete sequence entered the shared input stream, not that an application command completed. Observe the resulting UI; a newly opened dialog needs a fresh observed identity. A failed or missing response must not cause automatic replay or a guessed key-release sequence.
+Windows chords use the existing bounded `SendInput` path with logical virtual keys. Punctuation names map to the corresponding `VK_OEM_*` keys; they do not promise a particular character under another keyboard layout. Navigation, Delete/Insert, keypad Divide and keypad Enter retain their required extended-key flags; NumLock and input-method state can affect application behavior and are not changed by this tool. The complete sequence is prepared before injection: modifier downs, one main-key down/up pair, then modifier ups in reverse order, at most eight events. One `SendInput` must report exactly that inserted count. Foreground/focus, protected-content, held-key and partial-delivery checks remain. Application bindings, global hotkeys and hooks also affect behavior. A successful receipt proves the complete sequence entered the shared input stream, not that an application command completed. Observe the resulting UI; a newly opened dialog needs a fresh observed identity. A failed or missing response must not cause automatic replay or a guessed key-release sequence.
 
 On macOS the Runner revalidates the exact surface through the existing native window identity path, then requires its application to already be frontmost and `AXFocusedWindow` to equal that exact window. It never activates or focuses the surface implicitly. When an `AXFocusedUIElement` is available, explicitly protected or secure content fails closed. Accessibility and event-posting permission checks are preflight-only and do not request permission UI. Both key-down and key-up events are constructed and flagged before the first effect, then posted only to the exact surface PID. Quartz exposes no atomic/batch post for the pair, so the two posts are adjacent with no fallible work between them; if the Runner process terminates in that narrow interval, the result is a partial `outcome_unknown`, not a supported held-key state.
 
@@ -299,7 +330,7 @@ The first Windows parity slice extends the corresponding `observe_computer` acti
 
 The Windows Runner revalidates the exact xcap-observed HWND/PID before obtaining the UIA root, walks the UIA Control View with the same depth/node bounds, and registers the same ephemeral `element_id` plus observation-generation lineage used by macOS. The native client uses `CUIAutomation8` / `IUIAutomation2` with bounded connection/transaction timeouts plus a top-level observation deadline, so a stalled provider does not turn node bounds into an unbounded call. UIA control types are projected into the existing semantic role vocabulary where a stable equivalent exists. Password/protected elements suppress value observation.
 
-`observe_computer(action=find_elements)` remains a Control-side adapter over the canonical bounded tree, so Windows support adds no finder-specific Runner protocol. `observe_computer(action=element_state)` re-resolves the exact UIA lineage before returning normalized state. W1 deliberately reports all mutation `can_*` affordances false because the corresponding Windows effect capabilities remain independently unavailable until later parity slices.
+`observe_computer(action=find_elements)` remains a Control-side adapter over the canonical bounded tree, so Windows support adds no finder-specific Runner protocol. `observe_computer(action=element_state)` re-resolves the exact UIA lineage before returning normalized state. Current Windows implementations derive `can_press`, `can_focus`, `can_input_text` and negotiated `can_select` from native patterns and live preconditions. W1's original all-false mutation projection was superseded by the implemented effect slices below; observation itself still grants no control authority.
 
 ### Windows native replacement selection
 
@@ -362,7 +393,7 @@ The restore path still requires a valid retained surface identity. Window enumer
 
 Windows uses the canonical `control_computer(action=press|focus, surface_id, element_id)` contract for the same closed semantic vocabulary. `press` requires the exact re-resolved UIA element to expose `InvokePattern` and calls only `IUIAutomationInvokePattern::Invoke`. The first bounded Windows `focus` slice is narrower: the exact surface must already be foreground and the exact element must normalize to `AXTextField`, be enabled, unprotected, and keyboard-focusable before `IUIAutomationElement::SetFocus` is attempted. Buttons and other controls are not treated as reliable exact-focus targets merely because a provider reports keyboard-focusability; their semantic action remains `press` when `InvokePattern` is available. Focus never activates a background window implicitly. No Windows-specific model tool, LegacyIAccessible fallback, coordinate click, `SendInput`, script, shell, or generic action path is added.
 
-`observe_computer(action=element_state)` now derives `can_press` from live `InvokePattern` support and exposes Windows `can_focus=true` only for an enabled, unprotected, keyboard-focusable `AXTextField` on the exact foreground surface; Windows `can_input_text` remains false until the separate text-input parity slice. Focus state/read-back uses `IUIAutomation::GetFocusedElement` plus `CompareElements` against the exact re-resolved element rather than trusting a provider-local focus flag. Protected or disabled targets, background-surface focus, roles outside the bounded focus set, and missing patterns fail closed before an effect. Once `Invoke` or `SetFocus` has been attempted, native failure, deadline loss, or a failed bounded exact-focus read-back is `outcome_unknown`; callers must re-observe before considering another effect.
+`observe_computer(action=element_state)` now derives `can_press` from live `InvokePattern` support and exposes Windows `can_focus=true` only for an enabled, unprotected, keyboard-focusable `AXTextField` on the exact foreground surface; `can_input_text` now follows the implemented foreground/focused/writable/empty predicate described in W4. Focus state/read-back uses `IUIAutomation::GetFocusedElement` plus `CompareElements` against the exact re-resolved element rather than trusting a provider-local focus flag. Protected or disabled targets, background-surface focus, roles outside the bounded focus set, and missing patterns fail closed before an effect. Once `Invoke` or `SetFocus` has been attempted, native failure, deadline loss, or a failed bounded exact-focus read-back is `outcome_unknown`; callers must re-observe before considering another effect.
 
 ### Windows UIA parity W4 — bounded text input
 
@@ -380,31 +411,36 @@ Missing `ScrollItemPattern` and other pre-effect validation failures are determi
 
 Windows uses `control_computer(action=key, surface_id, key, modifiers?)` while retaining the independent `computer_key_input` Runner capability. Immediately before input the Runner revalidates the exact xcap surface, HWND/PID UIA root, requires `GetForegroundWindow()` to equal that HWND, obtains the current focused UIA element, and walks a bounded Control View ancestry chain until it proves that focus belongs to the exact window root. Password/protected focused content or ancestry fails closed. The Runner performs this exact foreground/root/focus preflight again immediately before native input and never activates or focuses a window implicitly.
 
-The shared key vocabulary maps to native Windows virtual keys internally. `shift` maps to Shift, `control` to Control, and model-facing `option` to Alt. `command` deliberately has no Windows mapping and fails before any native input. Windows also rejects `option+Tab`, `option+Escape`, `control+Escape`, and `control+option+Delete` chords, including supersets, before native input. The full bounded `INPUT` sequence is constructed before the first effect: modifier downs, one key down/up pair, then modifier ups in reverse order. Navigation, Delete/Insert, keypad Divide and keypad Enter use their required extended-key flags. The entire sequence is sent with one `SendInput` call and the returned inserted-event count must exactly equal the prepared sequence length. Immediately before that call, the Runner also fails closed if Shift, Control, Alt, either Windows key, or the requested target key is already physically down, because existing keyboard state can otherwise change the effective chord.
+CU-10 above owns the shared key vocabulary, denied chords and one-call event-sequence contract. Immediately before native dispatch, Windows also checks that Shift, Control, Alt, either Windows key and the requested target key are not already held, because existing keyboard state could change the effective chord.
 
 Windows `SendInput` uses the shared interactive-desktop input stream; the exact surface/focus checks and held-key guard bound the action but do not make it a concurrent-user isolation primitive. Do not assume Windows key input can run independently while a person is simultaneously changing focus or keyboard state on the same desktop. Before `SendInput`, deterministic foreground/focus/mapping/held-key failures are pre-effect. A zero inserted-event return is also deterministic because no keyboard event entered the input stream. Partial insertion, deadline loss after insertion, interruption, lost response, or inconsistent success metadata is `outcome_unknown`; callers must re-observe before considering a retry. There is no PostMessage/SendMessage, `keybd_event`, caller virtual-key/scan-code control, clipboard/paste, script/shell, coordinate/pointer fallback, implicit activation, or cross-call held-key state. Successful output remains closed metadata containing only platform, surface identity, key, modifiers, and success.
 
-## Next capability sequence
+## Platform capability status
 
-The planned mainline sequence is now complete on Windows:
+The [registration tests](../crates/webcodex-runner/src/main_tests/registration.rs)
+check independent capability advertisement. A capability identifies implementation
+support; live permission, interactive-session availability and target eligibility
+still decide whether a request can execute.
 
-```text
-Windows UIA parity
--> application discovery / bounded launch (implemented on Windows and macOS)
--> full-display discovery and snapshot
--> coordinate pointer
--> clipboard (Windows production accepted; macOS native parity implemented)
-```
+| Capability family | Windows | macOS | Linux |
+|---|---|---|---|
+| Window/display discovery, screenshots, AX/UIA observation, application discovery/launch | Implemented through native backends | Implemented through native backends | Native Computer backend unavailable |
+| Semantic press/focus/text, exact activation, scroll-to-element | Implemented with the restrictions above | Implemented through AX | Unavailable |
+| Replacement selection and bounded container scroll | UIA selection/scroll patterns | No corresponding additive capability | Unavailable |
+| Keys | Navigation and bounded extra keys/chords | Eleven navigation keys with supported modifiers | Unavailable |
+| Display-fenced pointer and bounded plain-text clipboard | Implemented | Implemented; pointer requires exact zero-degree rotation | Unavailable |
+| Persistent local pause and Desktop control UI | Implemented | Not advertised by this Windows control path | Unavailable |
 
-Windows parity should map UI Automation patterns into the same WebCodex semantic action/affordance vocabulary instead of exposing a second OS-specific model API.
-
-Windows Computer Use current planned mainline capabilities are implemented, independently reviewed, and production/integration validated; future work should be driven by observed product friction rather than checklist parity.
-
-Full-display observation receives separate authority from single-window observation because it widens the privacy surface. Windows and macOS share the same exact-display discovery, snapshot-generation, and bounded JPEG contract. macOS display/source geometry is the current display mode's backing pixel space, not Quartz logical bounds; the native macOS pointer path privately maps those source pixels into Quartz global coordinates without exposing scale/DPI/topology, while Windows maps them into virtual-desktop absolute input coordinates. Pointer actions on both platforms depend on a fresh snapshot generation, exact display-local geometry, native-coordinate revalidation, and post-effect reconciliation. Windows and macOS clipboard read/write share the same separately scoped bounded global authority while retaining platform-native plain-text representations and effect boundaries.
+The initial Windows mainline sequence is implemented. Earlier acceptance text
+reported Windows production/integration validation and left live macOS clipboard
+validation pending. Implementation presence and registration tests alone do not
+refresh those acceptance results. Native live tests, OS grants, binary alignment and
+application/provider behavior must be verified for the deployment being used.
+Linux Browser/CDP support does not imply Linux native Computer support.
 
 ## Explicitly deferred
 
-Do not introduce these as shortcuts while implementing earlier slices:
+These capabilities remain outside the current Computer contract:
 
 - a natural-language `computer_do_everything` or generic automation command;
 - implicit focus/send/paste/retry flags on existing effects;
@@ -412,9 +448,12 @@ Do not introduce these as shortcuts while implementing earlier slices:
 - arbitrary application/executable paths or shell/AppleScript fallback;
 - global desktop coordinates for pointer or region input;
 - a general plugin/callback framework for Computer backends;
-- browser tasks forced through desktop coordinates when a future DOM/ARIA-native browser surface is the better substrate.
+- a Browser DOM/CDP API embedded into the desktop AX/UIA backend.
 
-Browser-native automation may become a separate branch of Computer Use later, sharing high-level safety principles without forcing DOM/ARIA semantics into the desktop AX/UIA backend.
+Browser-native automation already exists as a separate first-class domain; use
+[Browser/CDP](architecture/browser-cdp-runtime.md) for page semantics and the exact
+Browser/Computer handoff when native UI is needed. A Computer fallback never grants
+Browser consent, unrestricted input or replay authority.
 
 ## Cancellation and late observations
 
@@ -443,6 +482,19 @@ selection, not wire delivery, native execution or Host receipt. Missing events
 remain unknown within trace retention/capture limits. A late read-only call
 alone does not establish a failed cancellation; see [MCP lifecycle](MCP.md).
 
+## Regression entry points
+
+- [Computer schema tests](../crates/webcodex-tool-contracts/src/tests/computer_schemas.rs) check closed public actions and bounds.
+- [Registry Computer tests](../crates/webcodex-runner-registry/src/tests/computer_control.rs) and [text-input tests](../crates/webcodex-runner-registry/src/tests/computer_text_input.rs) cover admission and dispatch fences.
+- [Post-observation tests](../src/tool_runtime/tests/computer_post_observation.rs) cover exact-instance composition, separate read failure and no replay after uncertain effects.
+- [Lifecycle tests](../src/tool_runtime/tests/computer_lifecycle.rs) cover waiter ownership during timeout cleanup.
+- [Native runtime tests](../crates/webcodex-computer/src/lib.rs), [Windows UIA tests](../crates/webcodex-computer/src/windows_uia_tests.rs) and [macOS live tests](../crates/webcodex-computer/src/macos_live_tests.rs) separate deterministic identity/geometry checks from opt-in native effects.
+
+For example, `cargo test --locked -p webcodex --lib computer_post_observation`
+runs the focused Server composition fixtures. The ignored native commands above
+operate owned fixtures on their stated platform; they are not required to validate
+a documentation-only change and do not establish acceptance on another platform.
+
 ## Validation loop
 
 Keep a small set of representative scenarios and use them to reorder work when repeated friction is demonstrated:
@@ -453,7 +505,7 @@ Keep a small set of representative scenarios and use them to reorder work when r
 4. Stale element: recover by semantic re-observation without reviving the old handle.
 5. Unknown effect outcome: observe and reconcile without blind retry.
 
-Track interaction quality by observation economy rather than an absolute call-count target. A healthy happy path should not repeatedly fetch full trees or screenshots, while distinct effects such as focus, text input, press, activation, and later scroll/key input remain explicit when they have different outcome semantics.
+Track interaction quality by observation economy rather than an absolute call-count target. A healthy happy path should not repeatedly fetch full trees or screenshots, while distinct effects such as focus, text input, press, activation and scroll/key input remain explicit when they have different outcome semantics.
 
 For every new Computer feature:
 

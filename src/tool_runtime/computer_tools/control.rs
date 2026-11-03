@@ -112,6 +112,7 @@ impl ToolRuntime {
                 element_id,
                 direction,
                 amount,
+                ..
             } => {
                 if surface_id.is_empty()
                     || surface_id.len() > MAX_SURFACE_ID_BYTES

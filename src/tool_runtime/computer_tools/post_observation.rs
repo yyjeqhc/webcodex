@@ -24,8 +24,13 @@ impl ToolRuntime {
                 client_id,
                 surface_id,
                 ..
+            }
+            | ComputerControlToolCall::Scroll {
+                client_id,
+                surface_id,
+                ..
             } => (client_id.clone(), surface_id.clone()),
-            _ => unreachable!("only press/input_text admit post-observation"),
+            _ => unreachable!("only press/input_text/scroll admit post-observation"),
         };
         if client_id.is_empty()
             || client_id.len() > 128
@@ -36,7 +41,8 @@ impl ToolRuntime {
         }
         let element_id = match &call {
             ComputerControlToolCall::Press { element_id, .. }
-            | ComputerControlToolCall::InputText { element_id, .. } => element_id,
+            | ComputerControlToolCall::InputText { element_id, .. }
+            | ComputerControlToolCall::Scroll { element_id, .. } => element_id,
             _ => unreachable!(),
         };
         if !element_id.starts_with("element_")
@@ -79,12 +85,18 @@ impl ToolRuntime {
                 )
             }
         };
-        let action_feature = if matches!(&call, ComputerControlToolCall::Press { .. }) {
-            RunnerFeature::ComputerControl
-        } else {
-            RunnerFeature::ComputerTextInput
+        let action_features: &[RunnerFeature] = match &call {
+            ComputerControlToolCall::Press { .. } => &[RunnerFeature::ComputerControl],
+            ComputerControlToolCall::InputText { .. } => &[RunnerFeature::ComputerTextInput],
+            ComputerControlToolCall::Scroll { .. } => {
+                webcodex_core::computer_scroll_contract::COMPUTER_SCROLL_CAPABILITIES
+            }
+            _ => unreachable!(),
         };
-        if !target.supports(action_feature) {
+        if action_features
+            .iter()
+            .any(|feature| !target.supports(*feature))
+        {
             return computer_effect_not_started(
                 "target Runner does not support the requested action",
             );

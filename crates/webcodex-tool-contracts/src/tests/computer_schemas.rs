@@ -6,6 +6,7 @@ fn computer_post_observation_contract_is_explicit_and_narrow() {
     let spec = spec_named(&specs, "control_computer");
     assert!(action_properties(&spec.input_schema, "press").contains_key("observe_after"));
     assert!(action_properties(&spec.input_schema, "input_text").contains_key("observe_after"));
+    assert!(action_properties(&spec.input_schema, "scroll").contains_key("observe_after"));
     assert!(!action_properties(&spec.input_schema, "focus").contains_key("observe_after"));
     assert_eq!(
         spec.output_schema["properties"]["output"]["properties"]["post_observation"]["properties"]
@@ -18,12 +19,16 @@ fn computer_post_observation_contract_is_explicit_and_narrow() {
             "post_observation":{"success":false,"output":{"error_kind":"timeout","message":"read timed out"},"error":"read timed out"}}}),
         &spec.output_schema,
     ).unwrap();
-    for action in ["press", "input_text"] {
+    for action in ["press", "input_text", "scroll"] {
         let mut args = json!({"action":action,"client_id":"runner","surface_id":"surface_test",
             "element_id":"element_test", "observe_after":{"action":"accessibility_tree","max_depth":3,"max_nodes":32}});
         if action == "input_text" {
             args["text"] = json!("hello");
         }
+        if action == "scroll" {
+            args["direction"] = json!("down");
+        }
+        test_support::validate_schema_instance(&args, &spec.input_schema).unwrap();
         let call = ToolCall::from_tool_name("control_computer", args.clone()).unwrap();
         let ToolCall::ComputerControl(control) = call else {
             panic!("Computer control call")
@@ -614,7 +619,10 @@ fn computer_scroll_schema_matches_closed_parser_and_bounded_receipts() {
         ("direction", json!("diagonal")),
         ("amount", json!("pixels")),
         ("steps", json!(2)),
-        ("observe_after", json!({"action":"accessibility_tree"})),
+        (
+            "observe_after",
+            json!({"action":"accessibility_tree", "surface_id":"other"}),
+        ),
     ] {
         let mut args = json!({"action":"scroll","client_id":"runner","surface_id":"surface_test","element_id":"element_test","direction":"down"});
         args[field] = value;
@@ -625,4 +633,46 @@ fn computer_scroll_schema_matches_closed_parser_and_bounded_receipts() {
     test_support::validate_schema_instance(&result, &spec.output_schema).unwrap();
     result["output"]["position_after"] = json!(101.0);
     assert!(test_support::validate_schema_instance(&result, &spec.output_schema).is_err());
+}
+
+#[test]
+fn computer_scroll_post_observation_keeps_optional_defaults_and_closed_read() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "control_computer");
+    let base = json!({"action":"scroll","client_id":"runner","surface_id":"surface_test","element_id":"element_test","direction":"down"});
+    for after in [None, Some(Value::Null)] {
+        let mut args = base.clone();
+        if let Some(value) = after {
+            args["observe_after"] = value;
+        }
+        test_support::validate_schema_instance(&args, &spec.input_schema).unwrap();
+        let ToolCall::ComputerControl(call) =
+            ToolCall::from_tool_name("control_computer", args).unwrap()
+        else {
+            panic!("scroll control");
+        };
+        assert!(call.observe_after().is_none());
+        assert!(serde_json::to_value(call)
+            .unwrap()
+            .get("observe_after")
+            .is_none());
+    }
+    for after in [
+        json!({"action":"snapshot_display"}),
+        json!({"action":"accessibility_tree", "root_element_id":"element_old"}),
+        json!({"action":"accessibility_tree", "repeat":2}),
+    ] {
+        let mut args = base.clone();
+        args["observe_after"] = after;
+        assert!(test_support::validate_schema_instance(&args, &spec.input_schema).is_err());
+        assert!(ToolCall::from_tool_name("control_computer", args).is_err());
+    }
+    let result = json!({"success":true,"output":{"platform":"windows","surface_id":"surface_test",
+        "element_id":"element_old","direction":"down","amount":"small","position_before":0,"position_after":10,"success":true,
+        "post_observation":{"success":true,"output":{"platform":"windows","surface_id":"surface_test","observation_generation":2,
+            "max_depth":3,"max_nodes":16,"truncated":false,"node_count":1,
+            "nodes":[{"element_id":"element_new","parent_element_id":null,"depth":0,"role":"AXWindow",
+            "subrole":null,"title":null,"description":null,"placeholder":null,"value":null,
+            "enabled":true,"focused":false,"child_count":0}]}}}});
+    test_support::validate_schema_instance(&result, &spec.output_schema).unwrap();
 }

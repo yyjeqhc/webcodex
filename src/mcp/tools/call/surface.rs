@@ -169,10 +169,17 @@ impl RuntimeSurface {
             let message = if mcp_adaptive_runtime_gateway_target_route(&params.name, stateless_2026)
                 != crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Gateway
             {
-                format!(
-                    "tool '{}' is unavailable on the current MCP surface; refresh tools/list (reconnect the MCP client after a Server upgrade if its tool catalog is stale) and select a current callable",
-                    params.name
-                )
+                if params.name == "import_conversation_files_to_project" {
+                    format!(
+                        "tool '{}' is unavailable on the current MCP surface; refresh tools/list (reconnect the MCP client after a Server upgrade if its tool catalog is stale) and select a current callable",
+                        params.name
+                    )
+                } else {
+                    format!(
+                        "tool '{}' is unavailable on the current MCP surface; refresh tools/list and select a current callable",
+                        params.name
+                    )
+                }
             } else if !crate::tool_runtime::kernel::runtime_tool_scope_allows_discovery(
                 auth,
                 &params.name,

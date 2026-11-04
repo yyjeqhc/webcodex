@@ -240,6 +240,30 @@ async fn stale_host_file_import_name_rejects_and_guides_client_reconnection() {
     assert!(message.contains("refresh tools/list"), "{message}");
     assert!(message.contains("reconnect the MCP client"), "{message}");
     assert!(!message.contains("call_runtime_tool"), "{message}");
+
+    // The recovery hint is specific to the retired import tool: changing the
+    // generic denial text would invalidate established conformance evidence.
+    let generic = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(63)),
+            mcp_2026_params(json!({
+                "name": "retired_unrelated_tool_name",
+                "arguments": {}
+            })),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::BadRequest(response) = generic else {
+        panic!("unrelated unavailable tool must still fail closed: {generic:?}");
+    };
+    let generic_message = response["error"]["message"].as_str().unwrap();
+    assert_eq!(
+        generic_message,
+        "tool 'retired_unrelated_tool_name' is unavailable on the current MCP surface; refresh tools/list and select a current callable"
+    );
 }
 
 #[tokio::test]

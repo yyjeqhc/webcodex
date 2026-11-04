@@ -194,6 +194,55 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
 }
 
 #[tokio::test]
+async fn stale_host_file_import_name_rejects_and_guides_client_reconnection() {
+    let runtime = test_runtime();
+    let auth = adaptive_direct_auth();
+    let current = "import_host_files";
+    let retired = "import_conversation_files_to_project";
+    assert!(webcodex_tool_contracts::lookup_tool_definition(retired).is_none());
+
+    let list = handle_mcp_request(
+        &runtime,
+        rpc("tools/list", Some(json!(61)), mcp_2026_params(json!({}))),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(value) = list else {
+        panic!("current Adaptive tools/list must succeed");
+    };
+    let names = tool_names(&value);
+    assert!(
+        names.contains(&current),
+        "canonical host import must be discoverable"
+    );
+    assert!(
+        !names.contains(&retired),
+        "retired host import must not be discoverable"
+    );
+
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(62)),
+            mcp_2026_params(json!({
+                "name": retired,
+                "arguments": {"project": "not-a-project", "openaiFileIdRefs": ["stale"]}
+            })),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::BadRequest(response) = outcome else {
+        panic!("stale imported-file descriptor must fail closed: {outcome:?}");
+    };
+    let message = response["error"]["message"].as_str().unwrap();
+    assert!(message.contains("refresh tools/list"), "{message}");
+    assert!(message.contains("reconnect the MCP client"), "{message}");
+    assert!(!message.contains("call_runtime_tool"), "{message}");
+}
+
+#[tokio::test]
 async fn list_jobs_direct_and_gateway_preserve_caller_visibility_and_validation() {
     use webcodex_runner_registry::JobStartRequest;
 

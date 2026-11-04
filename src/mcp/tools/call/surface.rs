@@ -170,7 +170,7 @@ impl RuntimeSurface {
                 != crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Gateway
             {
                 format!(
-                    "tool '{}' is unavailable on the current MCP surface; refresh tools/list and select a current callable",
+                    "tool '{}' is unavailable on the current MCP surface; refresh tools/list (reconnect the MCP client after a Server upgrade if its tool catalog is stale) and select a current callable",
                     params.name
                 )
             } else if !crate::tool_runtime::kernel::runtime_tool_scope_allows_discovery(

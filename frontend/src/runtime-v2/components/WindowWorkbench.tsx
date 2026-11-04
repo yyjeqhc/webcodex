@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { CopyIdentity } from "./ui/CopyIdentity.js";
 import { FocusTrap, Popover, TextInput } from "@mantine/core";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   displayProjectPath,
   projectFamilyId,
@@ -27,6 +27,8 @@ import type { ProjectRow, WindowSummary } from "../model/types.js";
 import { windowSessionCatalog } from "../model/windowSessions.js";
 
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
+import type { SessionLocation } from "../state/useSessionWorkspace.js";
+import { WindowSessionRecord } from "./WindowSessionRecord.js";
 import { WindowCollaboration } from "./WindowCollaboration.js";
 import { WindowActivityFeed } from "./WindowActivityFeed.js";
 import { WindowLabelEditor } from "./WindowLabelEditor.js";
@@ -41,11 +43,22 @@ type Props = {
   language: RuntimeLanguage;
   projects: ProjectRow[];
   onUnauthorized: () => void;
-  onOpenSessionRecord?: (project: string, sessionId: string) => void;
   requestedWindowKey?: string;
   requestedSessionId?: string;
   onRequestedWindowConsumed?: () => void;
   onMobileDetailChange?: (open: boolean) => void;
+};
+
+type SessionRecordTarget = {
+  client: RuntimeV2Client;
+  authorityRevision: number;
+  windowKey: string;
+  location: SessionLocation;
+};
+type ActivityScroll = {
+  target: Pick<SessionRecordTarget, "client" | "authorityRevision" | "windowKey">;
+  positions: Array<{ element: HTMLElement; top: number }>;
+  focus: HTMLElement | null;
 };
 
 type ProjectFamily = {
@@ -108,7 +121,6 @@ export function WindowWorkbench({
   language,
   projects,
   onUnauthorized,
-  onOpenSessionRecord,
   requestedWindowKey,
   requestedSessionId,
   onRequestedWindowConsumed,
@@ -123,10 +135,68 @@ export function WindowWorkbench({
   const [tierFilter, setTierFilter] = useState<"all" | "named" | WindowTier>("all");
   const [editingKey, setEditingKey] = useState("");
   const [search, setSearch] = useState("");
-  const [centerTab, setCenterTab] = useState<"window" | "collaboration">("window");
+  const [centerTab, setCenterTab] = useState<"window" | "collaboration" | "session">("window");
+  const [recordTarget, setRecordTarget] = useState<SessionRecordTarget | null>(null);
+  const authorityRevision = client.authorityRevision ?? 0;
+  // The record is owned by an exact Window and credential before effects run.
+  const record = recordTarget?.client === client
+    && recordTarget.authorityRevision === authorityRevision
+    && recordTarget.windowKey === windows.selectedKey ? recordTarget : null;
+  const activeTab = centerTab === "session" && !record ? "window" : centerTab;
+  const activityPanelRef = useRef<HTMLDivElement | null>(null);
+  const activityScroll = useRef<ActivityScroll | null>(null);
   const selectionRef = useRef<HTMLDivElement | null>(null);
-  useFlowingSelection(selectionRef, centerTab, { variant: "underline" });
+  useFlowingSelection(selectionRef, activeTab, { variant: "underline" });
   const [selectedSessionId, setSelectedSessionId] = useState("");
+
+  const rememberActivityScroll = () => {
+    if (activeTab !== "window") return;
+    const panel = activityPanelRef.current;
+    const containers = [panel, panel?.querySelector<HTMLElement>(".window-activity-results"), navigation.detailRef.current,
+      ...(navigation.mobile ? [navigation.detailRef.current?.closest<HTMLElement>(".app-content"), document.scrollingElement] : [])];
+    const focused = document.activeElement;
+    activityScroll.current = {
+      target: { client, authorityRevision, windowKey: windows.selectedKey },
+      positions: containers.filter((element): element is HTMLElement => element instanceof HTMLElement)
+        .map(element => ({ element, top: element.scrollTop })),
+      focus: focused instanceof HTMLElement && panel?.contains(focused) ? focused : null,
+    };
+  };
+  const changeCenterTab = (next: typeof centerTab) => {
+    if (next !== "window") rememberActivityScroll();
+    setCenterTab(next);
+  };
+  const openSessionRecord = (projectId: string, sessionId: string, windowKey?: string) => {
+    if (!windows.selectedKey || windowKey !== windows.selectedKey) return;
+    const project = projectIndex.get(projectId);
+    rememberActivityScroll();
+    setRecordTarget({ client, authorityRevision, windowKey, location: {
+      projectId, sessionId, projectName: project?.name || projectId, runner: project?.client_id || "",
+    } });
+    setCenterTab("session");
+  };
+  useLayoutEffect(() => {
+    const saved = activityScroll.current;
+    if (!saved) return;
+    if (saved.target.client !== client || saved.target.authorityRevision !== authorityRevision
+        || saved.target.windowKey !== windows.selectedKey) {
+      activityScroll.current = null;
+      return;
+    }
+    if (activeTab === "session") {
+      for (const { element } of saved.positions) element.scrollTop = 0;
+    } else if (activeTab === "window") {
+      for (const { element, top } of saved.positions) if (element.isConnected) element.scrollTop = top;
+      saved.focus?.focus({ preventScroll: true });
+      activityScroll.current = null;
+    }
+  }, [activeTab, client, authorityRevision, windows.selectedKey]);
+  const openLinkedWindow = (windowKey: string) => {
+    if (windowKey !== windows.selectedKey) { setSearch(""); setProjectFamily(""); }
+    setRecordTarget(null);
+    setCenterTab("window");
+    navigation.open(windowKey);
+  };
 
   const historicalFamilies = useMemo(() => buildProjectFamilies(projects, projectIndex, windows.historicalWindows), [projects, projectIndex, windows.historicalWindows]);
   const familyById = useMemo(() => new Map(historicalFamilies.map(family => [family.id, family])), [historicalFamilies]);
@@ -153,12 +223,12 @@ export function WindowWorkbench({
 
   const detail = windows.detail;
   const linkedSessions = useMemo(() => detail ? windowSessionCatalog(detail) : [], [detail?.activity, detail?.linked_sessions]);
-  // A different Window keeps the operator's current view but never inherits
-  // the previous Window's Session focus.
+  // Keep the Window/collaboration view, but never carry a Session to another owner.
   useEffect(() => {
-    if (!windows.selectedKey) return;
     setSelectedSessionId("");
-  }, [windows.selectedKey]);
+    setRecordTarget(null);
+    setCenterTab(current => current === "session" ? "window" : current);
+  }, [client, authorityRevision, windows.selectedKey]);
   useEffect(() => {
     if (!requestedWindowKey) return;
     if (windows.selectedKey !== requestedWindowKey) {
@@ -301,11 +371,11 @@ export function WindowWorkbench({
               <button
                 id="window-activity-tab"
                 role="tab"
-                aria-selected={centerTab === "window"}
+                aria-selected={activeTab === "window"}
                 aria-controls="window-activity-panel"
-                className={centerTab === "window" ? "active" : ""}
+                className={activeTab === "window" ? "active" : ""}
                 type="button"
-                onClick={() => setCenterTab("window")}
+                onClick={() => changeCenterTab("window")}
               >
                 <Monitor size={14} />
                 {t("Window")}
@@ -313,23 +383,30 @@ export function WindowWorkbench({
               <button
                 id="window-collaboration-tab"
                 role="tab"
-                aria-selected={centerTab === "collaboration"}
+                aria-selected={activeTab === "collaboration"}
                 aria-controls="window-collaboration-panel"
-                className={centerTab === "collaboration" ? "active" : ""}
+                className={activeTab === "collaboration" ? "active" : ""}
                 type="button"
-                onClick={() => setCenterTab("collaboration")}
+                onClick={() => changeCenterTab("collaboration")}
               >
                 <MessageSquare size={14} />
                 {t("Collaboration")}
               </button>
+              {record && <button
+                id="window-session-record-tab" role="tab"
+                aria-selected={activeTab === "session"} aria-controls="window-session-record-panel"
+                className={activeTab === "session" ? "active" : ""} type="button"
+                onClick={() => changeCenterTab("session")}
+              >{t("Session record")}</button>}
             </div>
 
             <div
               id="window-activity-panel"
+              ref={activityPanelRef}
               className="window-board-panel"
               role="tabpanel"
               aria-labelledby="window-activity-tab"
-              hidden={centerTab !== "window"}
+              hidden={activeTab !== "window"}
             >
               {windows.detailAvailability === "stale" && <div className="inventory-note">{t("Window activity refresh failed; showing previous observations.")}</div>}
               {windows.detailHydrating && detail?.detail_level !== "full" && (
@@ -344,7 +421,7 @@ export function WindowWorkbench({
                   language={language}
                   selectedSessionId={selectedSessionId}
                   onSelectSession={setSelectedSessionId}
-                  onOpenSessionRecord={onOpenSessionRecord}
+                  onOpenSessionRecord={openSessionRecord}
                 />
               ) : (
                 <div className="empty-inline">
@@ -362,14 +439,14 @@ export function WindowWorkbench({
               className="window-board-panel window-collaboration-pane"
               role="tabpanel"
               aria-labelledby="window-collaboration-tab"
-              hidden={centerTab !== "collaboration"}
+              hidden={activeTab !== "collaboration"}
             >
               {windows.selectedKey && (
                 <WindowCollaboration
                   key={windows.selectedKey}
                   client={client}
                   windowKey={windows.selectedKey}
-                  active={centerTab === "collaboration"}
+                  active={activeTab === "collaboration"}
                   selectedSessionId={selectedSessionId}
                   sessions={linkedSessions}
                   onSelectSession={setSelectedSessionId}
@@ -378,6 +455,20 @@ export function WindowWorkbench({
                 />
               )}
             </div>
+
+            {record && <div
+              id="window-session-record-panel"
+              className="window-board-panel window-board-session-panel"
+              role="tabpanel"
+              aria-labelledby="window-session-record-tab"
+              hidden={activeTab !== "session"}
+            >
+              {activeTab === "session" && <WindowSessionRecord
+                key={record.windowKey + ":" + record.location.projectId + ":" + record.location.sessionId + ":" + authorityRevision}
+                client={client} location={record.location} language={language} onUnauthorized={onUnauthorized}
+                onBack={() => setCenterTab("window")} onOpenWindow={openLinkedWindow}
+              />}
+            </div>}
       </section>
       </FocusTrap>
       </>}

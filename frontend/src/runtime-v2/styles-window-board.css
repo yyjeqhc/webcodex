@@ -78,8 +78,19 @@
 .window-board-facts dd code { font-size: 12px; }
 .window-board-path { grid-column: 1 / -1; }
 .window-board-context summary { min-height: 40px; padding-block: 11px 8px; color: var(--ui-text-secondary); cursor: pointer; font-size: 12px; font-weight: 600; }
+/* Each Window destination gets one equal track, including the optional Session record. */
+.window-board-detail .window-center-tabs { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 120px); align-items: stretch; }
+.window-board-detail .window-center-tabs > button { gap: 4px; padding-inline: 8px; white-space: normal; overflow-wrap: anywhere; }
 .window-board-panel { min-width: 0; min-height: 0; overflow: auto; }
 .window-board-panel[hidden] { display: none !important; }
+.window-board-session-panel { overflow: hidden; }
+.window-board-session-panel > .window-session-record { height: 100%; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr); border: 0; border-radius: 0; box-shadow: none; }
+.window-session-record .session-header { align-items: start; gap: 12px; padding: 12px var(--web-panel-inset); flex-wrap: wrap; }
+.window-session-record .session-heading { flex: 1 1 200px; }
+.window-session-record .session-heading h2 { white-space: normal; overflow-wrap: anywhere; }
+.window-session-record .session-actions { flex-wrap: wrap; }
+.window-session-record .timeline-measure { width: calc(100% - 2 * var(--web-panel-inset)); padding-top: 16px; }
+.window-session-record-empty { padding: 16px var(--web-panel-inset); }
 .window-board-detail .window-workflow-section { display: flex; flex-direction: column; flex: 1; min-height: 0; margin: 0; padding: 0; }
 .window-primary-workbench :focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .window-board-backdrop { position: fixed; inset: 0; z-index: 79; border: 0; background: var(--ui-shadow-color, transparent); }
@@ -133,8 +144,11 @@
   .window-board-detail-header h2 { margin-top: 8px; font-size: 17px; }
   .window-board-detail-header .window-board-status { white-space: normal; overflow-wrap: anywhere; }
   .window-board-context { padding: 12px 8px; }
-  .window-board-detail .window-center-tabs { position: sticky; top: calc(var(--window-board-header-height, 96px) - 16px); z-index: 11; background: var(--ui-content); }
+  .window-board-detail .window-center-tabs { position: sticky; top: calc(var(--window-board-header-height, 96px) - 16px); z-index: 11; background: var(--ui-content); padding-inline: 8px; }
+  .window-board-detail .window-center-tabs > button { gap: 4px; padding-inline: 4px; }
   .window-board-panel, .window-board-detail .window-activity-results { overflow: visible; max-height: none; }
+  .window-board-session-panel > .window-session-record { height: auto; display: block; overflow: visible; }
+  .window-session-record .session-center-pane { overflow: visible; max-height: none; }
   .window-board-detail .window-collaboration { height: auto; display: block; }
   .window-board-detail .window-collaboration-thread { overflow: visible; }
   .window-board-detail .window-collaboration-composer { position: sticky; bottom: -16px; z-index: 10; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }

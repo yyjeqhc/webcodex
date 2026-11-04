@@ -197,6 +197,61 @@ describe("Session workspace mutation guard", () => {
   });
 });
 
+describe("Session workspace render ownership", () => {
+  it.each(["client", "credential", "project", "session", "disabled"] as const)("hides previous evidence on the first %s render", async change => {
+    const makeClient = () => ({
+      authorityRevision: 0,
+      post: vi.fn(async (path: string, payload: { session_id: string }) => ({
+        ok: true, status: 200, data: path === "workflow-session"
+          ? sessionDetail({ session_id: payload.session_id, title: "Old evidence" })
+          : { session_id: payload.session_id, messages: [] },
+      })),
+    }) as unknown as RuntimeV2Client;
+    const client = makeClient();
+    const unauthorized = vi.fn();
+    const renders: SessionWorkspaceState[] = [];
+    const hook = renderHook(({ currentClient, selected, enabled }) => {
+      const value = useSessionWorkspace(currentClient, enabled, selected, unauthorized);
+      renders.push(value);
+      return value;
+    }, { initialProps: { currentClient: client, selected: location, enabled: true } });
+    await waitFor(() => expect(hook.result.current.messagesAvailability).toBe("available"));
+    expect(hook.result.current.detail?.title).toBe("Old evidence");
+    renders.length = 0;
+    if (change === "credential") (client as unknown as { authorityRevision: number }).authorityRevision++;
+    hook.rerender({
+      currentClient: change === "client" ? makeClient() : client,
+      selected: change === "project" ? { ...location, projectId: "other-project" } : change === "session" ? secondLocation : location,
+      enabled: change !== "disabled",
+    });
+    expect(renders[0].detail).toBeNull();
+    expect(renders[0].messages).toBeNull();
+    expect(renders[0].sending).toBe(false);
+    expect(renders[0].mutationAllowed).toBeNull();
+  });
+
+  it.each(["send", "replace", "withdraw"] as const)("ignores a late %s 401 after replacing the client for the same Session", async action => {
+    const pending = deferred<{ ok: boolean; status: number; data: object }>();
+    const makeClient = () => ({
+      post: vi.fn(async (path: string, payload: { session_id: string }) => {
+        if (path === "workflow-session") return { ok: true, status: 200, data: sessionDetail({ session_id: payload.session_id }) };
+        if (path === "workflow-session-messages") return { ok: true, status: 200, data: { session_id: payload.session_id, messages: [] } };
+        return pending.promise;
+      }),
+    }) as unknown as RuntimeV2Client;
+    const unauthorized = vi.fn();
+    const hook = renderHook(({ client }) => useSessionWorkspace(client, true, location, unauthorized), { initialProps: { client: makeClient() } });
+    await waitFor(() => expect(hook.result.current.messagesAvailability).toBe("available"));
+    let mutation!: Promise<boolean>;
+    act(() => { mutation = action === "send" ? hook.result.current.send({ message: "submitted" })
+      : action === "replace" ? hook.result.current.replace("message", "submitted")
+      : hook.result.current.withdraw("message"); });
+    hook.rerender({ client: makeClient() });
+    await act(async () => { pending.resolve({ ok: false, status: 401, data: {} }); expect(await mutation).toBe(false); });
+    expect(unauthorized).not.toHaveBeenCalled();
+  });
+});
+
 describe("Session inspector tabs", () => {
   it("links both panels and manages roving focus with arrows and Home/End", () => {
     render(<SessionInspector item={workItemFromRecent(recentSession())} location={location} detail={null} detailAvailability="available" language="en" />);

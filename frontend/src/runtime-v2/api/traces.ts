@@ -53,5 +53,5 @@ export type TracePage = {
 };
 
 export function readTrace(client: RuntimeV2Client, request: TraceRequest, signal?: AbortSignal) {
-  return client.post<TracePage>("trace", request, signal);
+  return client.post<TracePage>("trace", request, signal, { observation: true });
 }

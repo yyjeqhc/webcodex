@@ -21,8 +21,8 @@ use crate::tool_runtime::window_activity_projection::{
     RuntimeConsoleWindowActivity,
 };
 use crate::tool_runtime::{
-    ListRunnersOptions, ProjectInventoryPage, ProjectInventoryRow, RunnerInventoryPage,
-    RunnerInventoryRow, ToolCall, ToolRuntime,
+    ConsoleProjectInventoryPage, ConsoleProjectInventoryRow, ListRunnersOptions,
+    RunnerInventoryPage, RunnerInventoryRow, ToolCall, ToolRuntime,
 };
 use salvo::prelude::*;
 use salvo::writing::Scribe;
@@ -692,6 +692,12 @@ struct RuntimeConsoleRunnerSummary {
     job_concurrency_limit: Option<u64>,
     jobs_running: usize,
     jobs_queued: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_inventory_generation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_inventory_sync_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_inventory_updated_at: Option<i64>,
     projects_scanned: usize,
     projects_scan_partial: bool,
     sessions: WorkflowSessionConsoleAggregate,
@@ -1417,6 +1423,18 @@ fn runner_fleet_rows(
                 job_concurrency_limit: client.job_concurrency_limit.map(|limit| limit as u64),
                 jobs_running: row.active.running,
                 jobs_queued: row.active.queued,
+                project_inventory_generation: client
+                    .project_inventory
+                    .as_ref()
+                    .and_then(|inventory| inventory.generation.as_deref())
+                    .and_then(|value| bounded_text_str(value, 96)),
+                project_inventory_sync_state: client.project_inventory.as_ref().and_then(
+                    |inventory| bounded_text_str(&inventory.sync_state, MAX_STATUS_CHARS),
+                ),
+                project_inventory_updated_at: client
+                    .project_inventory
+                    .as_ref()
+                    .and_then(|inventory| inventory.last_sync_at),
                 projects_scanned,
                 projects_scan_partial: scan.project_scan_truncated,
                 sessions,
@@ -1434,7 +1452,7 @@ async fn listed_projects_for_auth(
     project: Option<String>,
     query: Option<String>,
     limit: usize,
-) -> Result<ProjectInventoryPage, RuntimeConsoleError> {
+) -> Result<ConsoleProjectInventoryPage, RuntimeConsoleError> {
     require_project_read(auth)?;
     runtime
         .query_projects_for_runtime_console(Some(auth), client_id, project, query, limit)
@@ -1462,7 +1480,7 @@ async fn exact_console_project_for_auth(
         .ok_or(RuntimeConsoleError::NotFound)
 }
 
-fn project_selector_row(row: &ProjectInventoryRow) -> Option<RuntimeConsoleProject> {
+fn project_selector_row(row: &ConsoleProjectInventoryRow) -> Option<RuntimeConsoleProject> {
     let id = bounded_text_str(&row.id, MAX_PROJECT_ID_CHARS)?;
     if !valid_project_id(&id) {
         return None;
@@ -1475,11 +1493,10 @@ fn project_selector_row(row: &ProjectInventoryRow) -> Option<RuntimeConsoleProje
             .as_deref()
             .and_then(|s| bounded_text_str(s, MAX_PROJECT_ID_CHARS)),
         name: row
-            .project
             .name
             .as_deref()
             .and_then(|s| bounded_text_str(s, MAX_PROJECT_NAME_CHARS)),
-        path: bounded_project_path(&row.project.path),
+        path: bounded_project_path(&row.path),
         // These optional DTO fields were absent from the list_projects adapter.
         // Sharing raw inventory must not expand the Console field allowlist.
         registration_source: None,
@@ -1861,11 +1878,22 @@ async fn overview_for_auth_detail(
 ) -> Result<RuntimeConsoleOverview, RuntimeConsoleError> {
     require_runtime_read(auth)?;
     let access = crate::runner_http::runner_access_from_auth(Some(auth));
-    let (runners, jobs) = tokio::join!(
+    let project_access = project_read_available(auth);
+    let (runners, jobs, project_families) = tokio::join!(
         listed_runners_for_auth(runtime, auth, None),
         runtime
             .runner_registry
             .runtime_job_aggregate_for_auth(access.as_ref(), None),
+        async {
+            if project_access {
+                runtime
+                    .runner_registry
+                    .visible_project_family_count_for_auth(access.as_ref())
+                    .await
+            } else {
+                0
+            }
+        },
     );
     let runners = runners?;
     let runner_count = runners.runners.len();
@@ -1880,7 +1908,6 @@ async fn overview_for_auth_detail(
         .filter(|row| row.client.status == "stale")
         .count();
     let build = crate::build_info::runtime_build_info();
-    let project_access = project_read_available(auth);
     let visible = if project_access {
         Some(projects_for_auth(runtime, auth, Some(HOME_PROJECT_SCAN_LIMIT)).await?)
     } else {
@@ -1926,7 +1953,7 @@ async fn overview_for_auth_detail(
     Ok(RuntimeConsoleOverview {
         detail_level: if include_sessions { "full" } else { "primary" },
         projects_included: true,
-        visible_project_families: overview_primary::family_count(&home.projects),
+        visible_project_families: project_families,
         authenticated_user: auth.username.clone(),
         effective_config: runtime.effective_config_status(),
         service: Some("webcodex".into()),

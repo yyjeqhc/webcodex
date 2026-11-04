@@ -28,7 +28,7 @@ async fn selector_uses_bounded_authoritative_client_id_without_parsing_project_i
         "/private/bad\npath".into(),
         format!("/{}", "x".repeat(MAX_PROJECT_PATH_BYTES)),
     ] {
-        row.project.path = path;
+        row.path = path;
         assert!(project_selector_row(&row).unwrap().path.is_none());
     }
     for client_id in ["x".repeat(MAX_CLIENT_ID_CHARS + 1), "bad\nclient".into()] {
@@ -134,6 +134,22 @@ async fn product_routes_reject_unknown_effect_selectors_and_invisible_projects()
 async fn runtime_console_project_projection_preserves_short_ref_and_existing_allowlist() {
     let runtime = test_runtime();
     register_project(&runtime, "special", "webcodex", "/root/git/webcodex", None).await;
+    let mut summary = project("webcodex", "/root/git/webcodex");
+    summary.registration_source = Some("auto_registered".into());
+    summary.lineage = Some(
+        webcodex_core::runner_protocol::RunnerProjectLineage::ManagedWorktreeSource {
+            source_project_id: "webcodex-source".into(),
+            source_root_fingerprint: format!("wc_projroot_{}", "1".repeat(64)),
+            base_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+        },
+    );
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.runner_registry,
+        "special",
+        "inst-special",
+        vec![summary],
+    )
+    .await;
     let mut row = runtime
         .query_projects_for_runtime_console(None, None, None, None, 1)
         .await
@@ -142,14 +158,6 @@ async fn runtime_console_project_projection_preserves_short_ref_and_existing_all
         .pop()
         .unwrap();
     row.project_ref = Some("~p118".into());
-    row.project.registration_source = Some("auto_registered".into());
-    row.project.lineage = Some(
-        webcodex_core::runner_protocol::RunnerProjectLineage::ManagedWorktreeSource {
-            source_project_id: "webcodex-source".into(),
-            source_root_fingerprint: "private-root".into(),
-            base_sha: "0123456789abcdef0123456789abcdef01234567".into(),
-        },
-    );
     let projected = project_selector_row(&row).unwrap();
     assert_eq!(projected.project_ref.as_deref(), Some("~p118"));
     let value = serde_json::to_value(projected).unwrap();

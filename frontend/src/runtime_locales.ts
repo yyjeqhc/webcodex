@@ -112,6 +112,8 @@ export const WORK_TEXT: Record<string, Translations> = {
   "All calls": ["全部呼叫", "すべての呼び出し", "모든 호출", "Alle Aufrufe", "Tous les appels"],
   "Work Session": ["工作階段", "作業セッション", "작업 세션", "Arbeitssitzung", "Session de travail"],
   "View Session record": ["查看工作階段記錄", "セッション記録を表示", "세션 기록 보기", "Sitzungsverlauf anzeigen", "Voir l’historique de session"],
+  "Session record": ["工作階段記錄", "セッション記録", "세션 기록", "Sitzungsverlauf", "Historique de session"],
+  "Back to Window": ["返回視窗", "ウィンドウに戻る", "창으로 돌아가기", "Zurück zum Fenster", "Retour à la fenêtre"],
   "Collaboration": ["協作", "共同作業", "협업", "Zusammenarbeit", "Collaboration"],
   "Acknowledged": ["已確認", "確認済み", "확인됨", "Bestätigt", "Accusé de réception reçu"],
   "Included in tool result": ["已附入工具結果", "ツール結果に添付済み", "도구 결과에 포함됨", "Im Werkzeugergebnis enthalten", "Inclus dans le résultat de l’outil"],
@@ -162,7 +164,7 @@ export const WORK_TEXT: Record<string, Translations> = {
   "Collaboration is unavailable for this Window.": ["此視窗目前無法協作。", "このウィンドウでは共同作業を利用できません。", "이 창에서는 협업을 사용할 수 없습니다.", "Zusammenarbeit ist für dieses Fenster nicht verfügbar.", "La collaboration n’est pas disponible pour cette fenêtre."],
   "Message could not be sent.": ["無法傳送訊息。", "メッセージを送信できませんでした。", "메시지를 보내지 못했습니다.", "Nachricht konnte nicht gesendet werden.", "Impossible d’envoyer le message."],
   "The current access key cannot collaborate (session:collaborate is required). Reconnect with a collaboration-enabled key.": ["目前的存取金鑰沒有協作權限（需要 session:collaborate）。請使用支援協作的金鑰重新連線。", "現在のアクセスキーには共同作業権限がありません（session:collaborate が必要）。対応するキーで再接続してください。", "현재 액세스 키에는 협업 권한이 없습니다(session:collaborate 필요). 협업이 가능한 키로 다시 연결하세요.", "Dem aktuellen Zugriffsschlüssel fehlt session:collaborate. Verbinden Sie sich mit einem Schlüssel mit Zusammenarbeitsberechtigung erneut.", "La clé actuelle ne permet pas la collaboration (session:collaborate requis). Reconnectez-vous avec une clé autorisant la collaboration."],
-  "This Window is not available to the current access key.": ["目前的存取金鑰無法使用此視窗。", "現在のアクセスキーではこのウィンドウを利用できません。", "현재 액세스 키로는 이 창에 접근할 수 없습니다.", "Dieses Fenster ist mit dem aktuellen Zugriffsschlüssel nicht verfügbar.", "Cette fenêtre n’est pas accessible avec la clé actuelle."],
+  "Window collaboration history is unavailable or has changed. Refresh to retry.": ["此視窗的協作記錄無法使用或已變更，請重新整理後再試。", "このウィンドウの共同作業履歴は利用できないか変更されています。更新して再試行してください。", "이 창의 협업 기록을 사용할 수 없거나 변경되었습니다. 새로고침 후 다시 시도하세요.", "Der Zusammenarbeitsverlauf dieses Fensters ist nicht verfügbar oder hat sich geändert. Aktualisieren Sie die Ansicht und versuchen Sie es erneut.", "L’historique de collaboration de cette fenêtre est indisponible ou a changé. Actualisez la page et réessayez."],
   "Messages could not be refreshed.": ["暫時無法重新整理訊息。", "メッセージを更新できませんでした。", "메시지를 새로 고치지 못했습니다.", "Nachrichten konnten nicht aktualisiert werden.", "Impossible d’actualiser les messages."],
 };
 

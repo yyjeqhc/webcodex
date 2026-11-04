@@ -350,6 +350,28 @@ export function groupRecentProgress(detail: SessionDetail | null): ProgressGroup
   return groups;
 }
 
+/** Project a selected Session consistently in standalone and Window-owned records. */
+export function selectedSessionWork(
+  location: Pick<WorkItem, "projectId" | "projectName" | "runner" | "sessionId">,
+  detail: SessionDetail | null,
+  retained?: WorkItem,
+): WorkItem {
+  return selectedWorkFromDetail(retained || {
+    ...location,
+    key: location.projectId + ":" + location.sessionId,
+    title: location.sessionId,
+    lifecycle: "retained",
+    mode: "normal",
+    updatedAt: 0,
+    bucket: "recent",
+    phase: "Retained",
+    runningCall: false,
+    runningJobs: 0,
+    attentionCount: 0,
+    validation: { state: "not_run", unresolved_failure_count: 0, history_complete: false, history_truncated: false },
+  }, detail);
+}
+
 export function selectedWorkFromDetail(item: WorkItem, detail: SessionDetail | null): WorkItem {
   if (!detail) return item;
   const phase = phaseFromSession(detail);

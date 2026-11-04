@@ -48,8 +48,8 @@ pub(crate) struct ListProjectsOptions {
     pub(crate) include_git_summary: bool,
 }
 
-/// Authorized, filtered and bounded facts shared by model and Console adapters.
-/// Rows are deliberately not serializable: each adapter owns its field allowlist.
+/// Authorized, filtered and bounded facts for model-facing discovery.
+/// Console selectors use a separate minimal projection of the same authority.
 pub(crate) struct ProjectInventoryPage {
     pub(crate) projects: Vec<ProjectInventoryRow>,
     pub(crate) matched_count: usize,
@@ -69,6 +69,23 @@ pub(crate) struct ProjectInventoryRow {
     resolved_shell_profile: Option<String>,
     shell_profile_status: &'static str,
     capabilities: ProjectCapabilities,
+}
+
+/// Minimal authorized selector facts for the browser. This path deliberately
+/// omits model capabilities, active Jobs and shell-policy projections.
+pub(crate) struct ConsoleProjectInventoryPage {
+    pub(crate) projects: Vec<ConsoleProjectInventoryRow>,
+    pub(crate) matched_count: usize,
+}
+
+pub(crate) struct ConsoleProjectInventoryRow {
+    pub(crate) id: String,
+    pub(crate) project_ref: Option<String>,
+    pub(crate) client_id: String,
+    pub(crate) runner_status: String,
+    pub(crate) connected: bool,
+    pub(crate) name: Option<String>,
+    pub(crate) path: String,
 }
 
 #[derive(serde::Serialize)]
@@ -548,19 +565,55 @@ impl ToolRuntime {
         project: Option<String>,
         query: Option<String>,
         limit: usize,
-    ) -> Result<ProjectInventoryPage, ToolResult> {
-        self.query_project_inventory(
-            auth,
-            &ListProjectsOptions {
-                client_id,
-                project,
-                query,
-                limit: Some(limit),
-                ..Default::default()
-            },
-            RUNTIME_CONSOLE_LIST_PROJECTS_MAX_RESULTS,
-        )
-        .await
+    ) -> Result<ConsoleProjectInventoryPage, ToolResult> {
+        let options = ListProjectsOptions {
+            client_id,
+            project,
+            query,
+            limit: Some(limit),
+            ..Default::default()
+        };
+        let (query, limit) =
+            validate_list_projects_options(&options, RUNTIME_CONSOLE_LIST_PROJECTS_MAX_RESULTS)?;
+        let access = crate::runner_http::runner_access_from_auth(auth);
+        let selection = self
+            .runner_registry
+            .select_projects_for_auth(
+                access.as_ref(),
+                options.client_id.as_deref(),
+                options.project.as_deref(),
+                limit,
+                |id, project| {
+                    query
+                        .as_deref()
+                        .is_none_or(|needle| project_query_matches(needle, id, project))
+                },
+            )
+            .await;
+        let identities = selection
+            .projects
+            .iter()
+            .map(|row| (row.id.clone(), row.root_fingerprint.clone()))
+            .collect();
+        let references = self.project_references_for_console(identities, auth).await;
+        let projects = selection
+            .projects
+            .into_iter()
+            .zip(references)
+            .map(|(row, project_ref)| ConsoleProjectInventoryRow {
+                id: row.id,
+                project_ref,
+                client_id: row.client_id,
+                runner_status: row.runner_status,
+                connected: row.connected,
+                name: row.name,
+                path: row.path,
+            })
+            .collect();
+        Ok(ConsoleProjectInventoryPage {
+            projects,
+            matched_count: selection.matched_count,
+        })
     }
 
     pub(super) async fn list_projects_with_options_cap(

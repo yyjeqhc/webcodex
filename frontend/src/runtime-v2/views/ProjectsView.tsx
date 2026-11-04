@@ -32,6 +32,7 @@ type Props = {
   client: RuntimeV2Client;
   language: RuntimeLanguage;
   runners: RunnerSummary[];
+  inventoryKey?: string;
   onOpenSession: (location: SessionLocation) => void;
   onOpenWindow: (windowKey: string) => void;
   onUnauthorized: () => void;
@@ -73,9 +74,9 @@ function windowTime(window: WindowSummary): number {
   return window.last_seen_at_ms || window.last_tool_call_at_ms || window.last_meaningful_activity_at_ms || 0;
 }
 
-export function ProjectsView({ client, language, runners, onOpenSession, onOpenWindow, onUnauthorized }: Props) {
+export function ProjectsView({ client, language, runners, inventoryKey, onOpenSession, onOpenWindow, onUnauthorized }: Props) {
   const t = (value: string) => translate(value, language);
-  const projectsState = useProjects(client, true, onUnauthorized);
+  const projectsState = useProjects(client, true, onUnauthorized, { inventoryKey });
   const [selectedFamilyId, setSelectedFamilyId] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [addOpen, setAddOpen] = useState(false);

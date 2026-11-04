@@ -198,6 +198,9 @@ export type RunnerSummary = {
   status?: string;
   transport?: string;
   runner_protocol_generation?: number;
+  project_inventory_generation?: string;
+  project_inventory_sync_state?: string;
+  project_inventory_updated_at?: number;
   last_seen_age_secs?: number;
   version?: string;
   build_git_commit?: string;

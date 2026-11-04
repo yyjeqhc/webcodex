@@ -170,7 +170,7 @@ export function WindowCollaboration({
             {state.readError === "access"
               ? t("The current access key cannot collaborate (session:collaborate is required). Reconnect with a collaboration-enabled key.")
               : state.readError === "unavailable"
-                ? t("This Window is not available to the current access key.")
+                ? t("Window collaboration history is unavailable or has changed. Refresh to retry.")
                 : t("Messages could not be refreshed.")}
           </div>
         )}

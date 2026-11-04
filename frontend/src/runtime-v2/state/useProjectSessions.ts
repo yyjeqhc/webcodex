@@ -22,6 +22,7 @@ export function useProjectSessions(
   const [total, setTotal] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [revision, setRevision] = useState(0);
+  const authorityRevision = client.authorityRevision ?? 0;
   const listRequest = useRef<AbortController | null>(null);
   const activeProject = useRef("");
   const refresh = useCallback(() => {
@@ -58,7 +59,7 @@ export function useProjectSessions(
         return;
       }
       if (response.status === 401) {
-        onUnauthorized();
+        if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized();
         return;
       }
       if (response.status === 403 || response.status === 404) {
@@ -85,7 +86,7 @@ export function useProjectSessions(
       controller.abort();
       if (listRequest.current === controller) listRequest.current = null;
     };
-  }, [client, enabled, onUnauthorized, projectId, revision]);
+  }, [client, authorityRevision, enabled, onUnauthorized, projectId, revision]);
 
   useVisibleRefresh(enabled && Boolean(projectId), refresh, 10_000);
 

@@ -44,6 +44,6 @@ it.each(["work", "projects"])("%s has one Project inventory owner while navigati
     await act(async()=>{visibility="hidden";document.dispatchEvent(new Event("visibilitychange"));});
     await act(async()=>{await vi.advanceTimersByTimeAsync(60_000);});
     expect(requests).toHaveLength(before);
-    console.info(`CONSOLE_REQUEST_COUNTS view=${view} elapsed_ms=25000 overview=3 full_project_inventories=1 window_inventories=1 liveness=${live.length} hidden_60000ms=0`);
+    console.info(`CONSOLE_REQUEST_COUNTS view=${view} elapsed_ms=25000 overview=${nav.length} project_inventories=1 window_inventories=1 liveness=${live.length} hidden_60000ms=0`);
   } finally {unmount?.();spy.mockRestore();vi.useRealTimers();vi.unstubAllGlobals();}
 });

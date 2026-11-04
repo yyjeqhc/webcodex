@@ -3,7 +3,7 @@
 use crate::state::{RunnerRecord, RunnerRegistryInner};
 use crate::{RunnerAccess, RunnerRegistry};
 use std::collections::{HashMap, HashSet};
-use webcodex_core::runner_protocol::{RunnerProjectLineage, RunnerView};
+use webcodex_core::runner_protocol::{RunnerProjectLineage, RunnerProjectSummary, RunnerView};
 
 #[derive(Debug, Default)]
 pub struct ActiveJobAggregate {
@@ -32,7 +32,39 @@ pub struct WorkspaceObservationIdentity {
     git_dirty: Option<bool>,
 }
 
+fn enabled_project_counts(projects: &[RunnerProjectSummary]) -> (usize, usize) {
+    let mut count = 0;
+    let mut families = HashSet::new();
+    for project in projects.iter().filter(|project| !project.disabled) {
+        count += 1;
+        let family = match &project.lineage {
+            Some(RunnerProjectLineage::ManagedWorktreeSource {
+                source_project_id, ..
+            }) => source_project_id,
+            None => &project.id,
+        };
+        families.insert(family);
+    }
+    (count, families.len())
+}
+
 impl RunnerRegistry {
+    /// Same canonical lineage/disabled/authority rules as navigation overview,
+    /// independent of a selector page's truncation or intentionally sparse DTO.
+    pub async fn visible_project_family_count_for_auth(
+        &self,
+        auth: Option<&RunnerAccess>,
+    ) -> usize {
+        let inner = self.inner.read().await;
+        let now = crate::now_ts();
+        inner
+            .runners
+            .values()
+            .filter(|runner| self.runner_visible_for_snapshot(auth, &inner, runner, now))
+            .map(|runner| enabled_project_counts(&runner.projects).1)
+            .sum()
+    }
+
     pub async fn workspace_observation_identity_for_auth(
         &self,
         auth: Option<&RunnerAccess>,
@@ -140,20 +172,8 @@ impl RunnerRegistry {
                 continue;
             }
             if include_project_counts {
-                let mut count = 0;
-                let mut families = HashSet::new();
-                for project in runner.projects.iter().filter(|project| !project.disabled) {
-                    count += 1;
-                    let family = match &project.lineage {
-                        Some(RunnerProjectLineage::ManagedWorktreeSource {
-                            source_project_id,
-                            ..
-                        }) => source_project_id,
-                        None => &project.id,
-                    };
-                    families.insert(family);
-                }
-                project_families += families.len();
+                let (count, families) = enabled_project_counts(&runner.projects);
+                project_families += families;
                 projects_by_runner.insert(runner.client_id.clone(), count);
             }
             if let Some(view) =

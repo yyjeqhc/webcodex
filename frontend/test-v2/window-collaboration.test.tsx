@@ -405,7 +405,7 @@ it("loads earlier durable history without a later poll erasing it, then returns 
     expect(post).toHaveBeenCalledTimes(count);
     expect(screen.getByText("Durable older message")).toBeTruthy();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Return to latest messages" })); });
-    expect(post).toHaveBeenLastCalledWith("window-collaboration", expect.not.objectContaining({ before_message_id: expect.anything() }), expect.anything());
+    expect(post).toHaveBeenLastCalledWith("window-collaboration", expect.not.objectContaining({ before_message_id: expect.anything() }), expect.anything(), { observation: true });
     expect(screen.getByText("Reply from this Window")).toBeTruthy();
   } finally { view.unmount(); vi.useRealTimers(); }
 });
@@ -419,9 +419,28 @@ it("never merges an older page from a replacement history principal", async () =
   const view = render(<WindowCollaboration client={{ post } as unknown as RuntimeV2Client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={vi.fn()} />);
   await screen.findByText("Review done");
   fireEvent.click(screen.getByRole("button", { name: "Load earlier messages" }));
-  await screen.findByText("This Window is not available to the current access key.");
+  await screen.findByText("Window collaboration history is unavailable or has changed. Refresh to retry.");
   expect(screen.queryByText("Other principal history")).toBeNull();
   expect(screen.queryByText("Review done")).toBeNull();
+  view.unmount();
+});
+
+it.each([
+  { status: 404, data: null },
+  { status: 200, data: { available: false, messages: [] } },
+])("does not present a missing or changed Window history as an invalid access key: $status", async reply => {
+  const post = vi.fn(async () => ({ ok: reply.status === 200, ...reply }));
+  const unauthorized = vi.fn();
+  const view = render(<WindowCollaboration
+    client={{ post } as unknown as RuntimeV2Client}
+    windowKey="exact-window"
+    selectedSessionId=""
+    language="en"
+    onUnauthorized={unauthorized}
+  />);
+  await screen.findByText("Window collaboration history is unavailable or has changed. Refresh to retry.");
+  expect(screen.queryByText("This Window is not available to the current access key.")).toBeNull();
+  expect(unauthorized).not.toHaveBeenCalled();
   view.unmount();
 });
 
@@ -435,7 +454,7 @@ it("keeps the unvisited cursor when a head refresh skips a full page", async () 
     page = { ...page, next_before: "wc_msg_jump", messages: [{ ...transcript.messages[0], message_id: "wc_msg_jump", created_at_ms: 9000 }] };
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Load earlier messages" })); });
-    expect(post).toHaveBeenLastCalledWith("window-collaboration", expect.objectContaining({ before_message_id: "wc_msg_jump" }), expect.anything());
+    expect(post).toHaveBeenLastCalledWith("window-collaboration", expect.objectContaining({ before_message_id: "wc_msg_jump" }), expect.anything(), { observation: true });
   } finally { view.unmount(); vi.useRealTimers(); }
 });
 

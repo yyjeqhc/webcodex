@@ -15,9 +15,10 @@ export class ObservationRequest {
   }
 
   /** Explicit refreshes coalesce behind a slow read rather than canceling it. */
-  requestRefresh(refresh: () => void): void {
-    if (this.pending) this.queuedRefresh = refresh;
-    else refresh();
+  requestRefresh(refresh: () => void, replaceQueued = true): void {
+    if (this.pending) {
+      if (replaceQueued || !this.queuedRefresh) this.queuedRefresh = refresh;
+    } else refresh();
   }
 
   async run<T>(load: (signal: AbortSignal) => Promise<T | null>, receive: (result: T | null) => void): Promise<void> {

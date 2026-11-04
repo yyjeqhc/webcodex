@@ -52,7 +52,7 @@ describe("Runtime usability", () => {
     const openRecord = vi.fn();
     render(<WindowActivityFeed detail={detail} projects={[]} language="en" selectedSessionId="session-without-calls" onOpenSessionRecord={openRecord} />);
     fireEvent.click(screen.getByRole("button", { name: "View Session record" }));
-    expect(openRecord).toHaveBeenCalledWith("agent:runner:project", "session-without-calls");
+    expect(openRecord).toHaveBeenCalledWith("agent:runner:project", "session-without-calls", "window-a");
     fireEvent.click(screen.getByRole("combobox", { name: "Session filter" }));
     expect(screen.getByRole("option", { name: /Retained work/ })).toBeTruthy();
     expect(screen.getByText("This Session is linked to the Window but has no retained calls.")).toBeTruthy();

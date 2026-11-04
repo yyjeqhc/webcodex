@@ -22,6 +22,8 @@ mod jobs;
 mod maintenance;
 mod polling;
 mod project_inventory;
+mod project_selection;
+pub use project_selection::{ProjectSelection, ProjectSelectionRow, PROJECT_SELECTION_MAX_RESULTS};
 mod projects;
 mod protocol;
 mod receipts;

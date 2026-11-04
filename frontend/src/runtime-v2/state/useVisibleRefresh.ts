@@ -1,25 +1,27 @@
 import { useEffect, useRef } from "react";
 
 /** Shared visible-only inventory refresh. Callers own single-flight and request fences. */
-export function useVisibleRefresh(enabled: boolean, refresh: () => void, intervalMs: number, onPause?: () => void) {
+export function useVisibleRefresh(enabled: boolean, refresh: () => void, intervalMs: number, onPause?: () => void, onResume?: () => void) {
   const latest = useRef(refresh);
   latest.current = refresh;
+  const resumeRefresh = useRef(onResume ?? refresh);
+  resumeRefresh.current = onResume ?? refresh;
   const pause = useRef(onPause);
   pause.current = onPause;
   useEffect(() => {
     if (!enabled) { pause.current?.(); return; }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const clear = () => { if (timer !== undefined) clearTimeout(timer); timer = undefined; };
-    const schedule = (delay: number) => {
+    const schedule = (delay: number, resuming = false) => {
       clear();
       if (document.visibilityState === "hidden") return;
       timer = setTimeout(() => {
         timer = undefined;
-        if (document.visibilityState !== "hidden") latest.current();
+        if (document.visibilityState !== "hidden") (resuming ? resumeRefresh.current : latest.current)();
         schedule(intervalMs);
       }, delay);
     };
-    const resume = () => schedule(150);
+    const resume = () => schedule(150, true);
     const visibility = () => {
       if (document.visibilityState === "hidden") { clear(); pause.current?.(); }
       else resume();

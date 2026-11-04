@@ -6,20 +6,6 @@ use super::{
     RuntimeConsoleOverview, RuntimeConsoleRunnerSummary, RuntimeConsoleWorkflowAggregate,
     ToolRuntime,
 };
-use std::collections::HashSet;
-
-pub(super) fn family_count(rows: &[super::RuntimeConsoleProject]) -> usize {
-    rows.iter()
-        .map(|project| match &project.lineage {
-            Some(super::RuntimeConsoleProjectLineage::ManagedWorktreeSource {
-                source_project_id,
-                ..
-            }) => format!("agent:{}:{source_project_id}", project.client_id),
-            None => project.id.clone(),
-        })
-        .collect::<HashSet<_>>()
-        .len()
-}
 
 pub(super) async fn primary_for_auth(
     runtime: &ToolRuntime,
@@ -28,14 +14,15 @@ pub(super) async fn primary_for_auth(
     require_runtime_read(auth)?;
     let access = crate::runner_http::runner_access_from_auth(Some(auth));
     let project_access = project_read_available(auth);
-    let snapshot = runtime
-        .runner_registry
-        .console_registry_snapshot_for_auth(access.as_ref(), project_access)
-        .await;
-    let jobs = runtime
-        .runner_registry
-        .active_job_summary_by_runner_for_auth(access.as_ref())
-        .await;
+    let (snapshot, jobs, active_windows) = tokio::join!(
+        runtime
+            .runner_registry
+            .console_registry_snapshot_for_auth(access.as_ref(), project_access),
+        runtime
+            .runner_registry
+            .active_job_summary_by_runner_for_auth(access.as_ref()),
+        active_window_count_for_auth(runtime, auth),
+    );
     let compatibility = runtime.console_runner_alignment(&snapshot.runners);
     let build = crate::build_info::runtime_build_info();
     let now = chrono::Utc::now().timestamp();
@@ -71,6 +58,18 @@ pub(super) async fn primary_for_auth(
             job_concurrency_limit: client.job_concurrency_limit.map(|limit| limit as u64),
             jobs_running: active.map_or(0, |j| j.running),
             jobs_queued: active.map_or(0, |j| j.queued),
+            project_inventory_generation: client
+                .project_inventory
+                .as_ref()
+                .and_then(|inventory| inventory.generation.as_deref())
+                .and_then(|value| super::bounded_text_str(value, 96)),
+            project_inventory_sync_state: client.project_inventory.as_ref().and_then(|inventory| {
+                super::bounded_text_str(&inventory.sync_state, super::MAX_STATUS_CHARS)
+            }),
+            project_inventory_updated_at: client
+                .project_inventory
+                .as_ref()
+                .and_then(|inventory| inventory.last_sync_at),
             projects_scanned: 0,
             projects_scan_partial: project_count > 0,
             sessions,
@@ -106,7 +105,7 @@ pub(super) async fn primary_for_auth(
         source_mismatched_runners: source_mismatched,
         mixed_builds_present: mixed,
         active_jobs: jobs.values().map(|j| j.active).sum(),
-        active_windows: active_window_count_for_auth(runtime, auth).await?,
+        active_windows: active_windows?,
         projects_available: project_access,
         visible_projects,
         projects_truncated: false,

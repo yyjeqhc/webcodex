@@ -59,6 +59,6 @@ export type WindowCollaborationPostResult = {
 export const fetchWindowCollaboration = (client: RuntimeV2Client, key: string, signal?: AbortSignal, before?: string) =>
   client.post<WindowCollaborationTranscript>("window-collaboration", {
     client_window_key: key, limit: 50, ...(before ? { before_message_id: before } : {}),
-  }, signal);
+  }, signal, { observation: true });
 export const postWindowCollaboration = (client: RuntimeV2Client, payload: WindowCollaborationPost) =>
   client.post<WindowCollaborationPostResult>("window-collaboration-post", payload);

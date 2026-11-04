@@ -22,6 +22,7 @@ mod communication;
 mod goals;
 mod http_responses;
 mod overview;
+mod project_inventory_benchmark;
 mod projects;
 mod session_collaboration;
 mod sessions;

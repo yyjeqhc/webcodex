@@ -6,20 +6,6 @@ use super::{
     RuntimeConsoleOverview, RuntimeConsoleRunnerSummary, RuntimeConsoleWorkflowAggregate,
     ToolRuntime,
 };
-use std::collections::HashSet;
-
-pub(super) fn family_count(rows: &[super::RuntimeConsoleProject]) -> usize {
-    rows.iter()
-        .map(|project| match &project.lineage {
-            Some(super::RuntimeConsoleProjectLineage::ManagedWorktreeSource {
-                source_project_id,
-                ..
-            }) => format!("agent:{}:{source_project_id}", project.client_id),
-            None => project.id.clone(),
-        })
-        .collect::<HashSet<_>>()
-        .len()
-}
 
 pub(super) async fn primary_for_auth(
     runtime: &ToolRuntime,
@@ -72,6 +58,18 @@ pub(super) async fn primary_for_auth(
             job_concurrency_limit: client.job_concurrency_limit.map(|limit| limit as u64),
             jobs_running: active.map_or(0, |j| j.running),
             jobs_queued: active.map_or(0, |j| j.queued),
+            project_inventory_generation: client
+                .project_inventory
+                .as_ref()
+                .and_then(|inventory| inventory.generation.as_deref())
+                .and_then(|value| super::bounded_text_str(value, 96)),
+            project_inventory_sync_state: client.project_inventory.as_ref().and_then(|inventory| {
+                super::bounded_text_str(&inventory.sync_state, super::MAX_STATUS_CHARS)
+            }),
+            project_inventory_updated_at: client
+                .project_inventory
+                .as_ref()
+                .and_then(|inventory| inventory.last_sync_at),
             projects_scanned: 0,
             projects_scan_partial: project_count > 0,
             sessions,

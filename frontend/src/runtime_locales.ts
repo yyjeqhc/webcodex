@@ -112,6 +112,8 @@ export const WORK_TEXT: Record<string, Translations> = {
   "All calls": ["全部呼叫", "すべての呼び出し", "모든 호출", "Alle Aufrufe", "Tous les appels"],
   "Work Session": ["工作階段", "作業セッション", "작업 세션", "Arbeitssitzung", "Session de travail"],
   "View Session record": ["查看工作階段記錄", "セッション記録を表示", "세션 기록 보기", "Sitzungsverlauf anzeigen", "Voir l’historique de session"],
+  "Session record": ["工作階段記錄", "セッション記録", "세션 기록", "Sitzungsverlauf", "Historique de session"],
+  "Back to Window": ["返回視窗", "ウィンドウに戻る", "창으로 돌아가기", "Zurück zum Fenster", "Retour à la fenêtre"],
   "Collaboration": ["協作", "共同作業", "협업", "Zusammenarbeit", "Collaboration"],
   "Acknowledged": ["已確認", "確認済み", "확인됨", "Bestätigt", "Accusé de réception reçu"],
   "Included in tool result": ["已附入工具結果", "ツール結果に添付済み", "도구 결과에 포함됨", "Im Werkzeugergebnis enthalten", "Inclus dans le résultat de l’outil"],

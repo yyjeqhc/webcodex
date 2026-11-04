@@ -166,7 +166,7 @@ pub(crate) use files::{
 };
 #[cfg(test)]
 pub(crate) use permissions::{AuthorityMode, PermissionEvaluator};
-pub(crate) use projects::{ProjectInventoryPage, ProjectInventoryRow};
+pub(crate) use projects::{ConsoleProjectInventoryPage, ConsoleProjectInventoryRow};
 #[cfg(test)]
 pub(crate) use runner_authorization::required_runner_capability;
 pub use runtime::ToolRuntime;

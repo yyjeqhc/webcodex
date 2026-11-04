@@ -2,6 +2,150 @@ use super::*;
 use crate::state::{JobLifecycleState, ShellJobVisibility};
 use std::collections::HashSet;
 
+#[tokio::test]
+async fn project_selector_is_read_only_bounded_and_avoids_job_scans() {
+    let (registry, job_id) = fixture().await;
+    {
+        let mut inner = registry.inner.lock().await;
+        let record = inner.runners.get_mut("oe").unwrap();
+        record.projects = (0..5_000)
+            .rev()
+            .map(|index| {
+                serde_json::from_value(serde_json::json!({
+                    "id": format!("p{index:05}"),
+                    "path": format!("/fixture/p{index:05}"),
+                    "name": format!("Project {index}"),
+                    "description": "private metadata".repeat(20),
+                    "disabled": index == 0,
+                    "updated_at": 1,
+                }))
+                .unwrap()
+            })
+            .collect();
+    }
+    let auth = auth_context(Some("alice"), false);
+    let before_jobs = registry.full_job_history_scan_count_for_test();
+    let before_project_jobs = registry.project_job_scan_count_for_test();
+    // Immutable observation shares the Registry mutex but must not consume
+    // unrelated receipt retries on Drop, unlike the mutation/lifecycle guard.
+    registry
+        .inner
+        .candidates
+        .lock()
+        .unwrap()
+        .insert(job_id.clone());
+    let selected = registry
+        .select_projects_for_auth(Some(&auth), None, None, 24, |_, _| true)
+        .await;
+    assert!(registry.inner.candidates.lock().unwrap().contains(&job_id));
+    let read_guard = registry.inner.read().await;
+    assert_eq!(selected.matched_count, 5_000);
+    assert_eq!(selected.projects.len(), 24);
+    assert_eq!(selected.projects[0].id, "agent:oe:p00000");
+    assert_eq!(selected.projects[23].id, "agent:oe:p00023");
+    assert_eq!(selected.projects[0].path, "/fixture/p00000");
+    let canonical =
+        RunnerRegistry::runner_view_with_projects_locked(&read_guard, "oe", false).unwrap();
+    assert!(
+        !read_guard.notifiers.contains_key("oe"),
+        "polling fixture has no stream notifier"
+    );
+    assert!(canonical.connected);
+    assert_eq!(selected.projects[0].connected, canonical.connected);
+    assert_eq!(selected.projects[0].runner_status, canonical.status);
+    // Preserve discovery semantics for disabled registrations; enabled family
+    // counts are a separate aggregate, not a hidden selector authorization rule.
+    assert_eq!(read_guard.runners["oe"].projects.len(), 5_000);
+    drop(read_guard);
+    let capped = registry
+        .select_projects_for_auth(Some(&auth), None, None, usize::MAX, |_, _| true)
+        .await;
+    assert_eq!(capped.projects.len(), crate::PROJECT_SELECTION_MAX_RESULTS);
+    let exact = registry
+        .select_projects_for_auth(
+            Some(&auth),
+            Some("oe"),
+            Some("agent:oe:p04999"),
+            1,
+            |_, _| true,
+        )
+        .await;
+    assert_eq!(exact.matched_count, 1);
+    assert_eq!(exact.projects[0].id, "agent:oe:p04999");
+    let searched = registry
+        .select_projects_for_auth(Some(&auth), None, None, 1, |_, p| {
+            p.name.as_deref() == Some("Project 4321")
+        })
+        .await;
+    assert_eq!(searched.matched_count, 1);
+    assert_eq!(searched.projects[0].id, "agent:oe:p04321");
+    {
+        let mut inner = registry.inner.lock().await;
+        inner.runners.get_mut("oe").unwrap().last_seen =
+            crate::now_ts() - crate::RUNNER_ONLINE_WINDOW_SECS - 1;
+    }
+    let stale = registry
+        .select_projects_for_auth(Some(&auth), None, None, 1, |_, _| true)
+        .await;
+    let inner = registry.inner.read().await;
+    let canonical = RunnerRegistry::runner_view_with_projects_locked(&inner, "oe", false).unwrap();
+    assert!(!canonical.connected);
+    assert_eq!(stale.projects[0].connected, canonical.connected);
+    assert_eq!(stale.projects[0].runner_status, canonical.status);
+    assert_eq!(registry.full_job_history_scan_count_for_test(), before_jobs);
+    assert_eq!(
+        registry.project_job_scan_count_for_test(),
+        before_project_jobs
+    );
+}
+
+#[tokio::test]
+async fn project_selector_keeps_authority_and_expired_runner_fences() {
+    let registry = RunnerRegistry::default();
+    for id in ["own", "foreign", "expired"] {
+        register_with_instance(&registry, id, &format!("instance-{id}")).await;
+    }
+    {
+        let mut inner = registry.inner.lock().await;
+        for record in inner.runners.values_mut() {
+            record.projects = vec![serde_json::from_value(serde_json::json!({
+                "id": "p", "path": "/fixture/p", "updated_at": 1
+            }))
+            .unwrap()];
+        }
+        inner.runners.get_mut("foreign").unwrap().owner = Some("bob".into());
+        let expired = inner.runners.get_mut("expired").unwrap();
+        expired.auth_group = Some(crate::RunnerAccessGroup::SharedKey("old".into()));
+        expired.last_seen = crate::now_ts() - registry.shared_key_limits.offline_ttl_secs - 120;
+        expired.disconnected_at = Some(expired.last_seen);
+    }
+    let alice = auth_context(Some("alice"), false);
+    let selected = registry
+        .select_projects_for_auth(Some(&alice), None, None, 10, |_, _| true)
+        .await;
+    assert_eq!(selected.matched_count, 1);
+    assert_eq!(selected.projects[0].id, "agent:own:p");
+    let hidden = registry
+        .select_projects_for_auth(
+            Some(&alice),
+            Some("foreign"),
+            Some("agent:foreign:p"),
+            1,
+            |_, _| true,
+        )
+        .await;
+    assert_eq!(hidden.matched_count, 0);
+    let global = registry
+        .select_projects_for_auth(None, None, None, 10, |_, _| true)
+        .await;
+    assert_eq!(global.matched_count, 2);
+    assert!(!global.projects.iter().any(|row| row.client_id == "expired"));
+    assert!(
+        registry.inner.read().await.runners.contains_key("expired"),
+        "read-only TTL exclusion must not prune canonical records"
+    );
+}
+
 async fn fixture() -> (RunnerRegistry, String) {
     let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "index-instance").await;

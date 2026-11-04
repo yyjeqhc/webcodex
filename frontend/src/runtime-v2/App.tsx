@@ -36,6 +36,7 @@ import { useFlowingSelection } from "../ui/useFlowingSelection.js";
 import { locateSession } from "./api/sessions.js";
 import { useProjects } from "./state/useProjects.js";
 import { projectFamilyId } from "../ui/projectPresentation.js";
+import { projectInventoryKey } from "./model/projectInventory.js";
 import { RuntimeV2Client } from "./api/client.js";
 import { SessionWindowNavigation } from "./components/SessionWindowNavigation.js";
 import { AuthGate } from "./components/AuthGate.js";
@@ -151,10 +152,11 @@ export function App() {
   const overviewState = useRuntimeOverview(client, Boolean(token), handleUnauthorized,
     view === "runtime" || (view === "work" && workSurface === "session"));
   const overview = overviewState.data;
+  const inventoryKey = projectInventoryKey(overview);
   // Work needs labels/lineage, not a new Project projection on every nav tick.
   // Projects owns its own inventory; Runtime/Session hydrate through full overview.
   const workCatalog = useProjects(client, Boolean(token) && view === "work" && workSurface !== "session" && overview?.projects_included === false,
-    handleUnauthorized, { initialLimit: 2_000, refreshMs: 15_000 });
+    handleUnauthorized, { initialLimit: 2_000, refreshMs: 60_000, inventoryKey });
   const workProjects = overview?.projects_included === false ? workCatalog.projects : overview?.projects || [];
   const visibleProjectFamilyCount = useMemo(
     () => overview?.visible_project_families ?? new Set((overview?.projects || []).map(projectFamilyId)).size,
@@ -179,9 +181,8 @@ export function App() {
 
   const openSession = useCallback((location: SessionLocation) => setSessionNavigation(location), []);
 
-  const openSessionRecord = useCallback((location: SessionLocation, windowKey?: string) => {
+  const openSessionRecord = useCallback((location: SessionLocation) => {
     setSessionNavigation(null);
-    if (windowKey) setWorkWindowTarget({ windowKey, sessionId: "" });
     setSelected(location);
     setWorkSurface("session");
     setView("work");
@@ -370,7 +371,6 @@ export function App() {
             onOpenWindow={openWindow}
             onOpenSession={openSession}
             onLocateSession={locateExactSession}
-            onOpenSessionRecord={openSessionRecord}
             onBackToWindows={openWork}
             requestedWindowKey={workWindowTarget?.windowKey}
             requestedSessionId={workWindowTarget?.sessionId}
@@ -384,6 +384,7 @@ export function App() {
             client={client}
             language={language}
             runners={overview?.runners || []}
+            inventoryKey={inventoryKey}
             onOpenSession={openSession}
             onOpenWindow={openWindow}
             onUnauthorized={handleUnauthorized}

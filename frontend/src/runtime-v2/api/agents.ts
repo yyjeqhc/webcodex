@@ -12,6 +12,7 @@ export function fetchAgents(client: RuntimeV2Client, signal?: AbortSignal) {
     "communication/agents",
     { offset: 0, limit: 100 },
     signal,
+    { observation: true },
   );
 }
 
@@ -79,6 +80,7 @@ export function fetchConversations(client: RuntimeV2Client, signal?: AbortSignal
     "communication/conversations",
     { offset: 0, limit: 100 },
     signal,
+    { observation: true },
   );
 }
 
@@ -92,6 +94,7 @@ export function fetchConversation(
     "communication/conversation",
     { conversation_id: conversationId, after_seq: Math.max(0, afterSeq), limit: 100 },
     signal,
+    { observation: true },
   );
 }
 
@@ -140,6 +143,7 @@ export function fetchInbox(
       limit: 100,
     },
     signal,
+    { observation: true },
   );
 }
 

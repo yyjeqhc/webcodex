@@ -60,7 +60,7 @@ export function useSessionWorkspace(
   const [messageRevision, setMessageRevision] = useState(0);
   const detailRequest = useObservationRequest();
   const messageRequest = useObservationRequest();
-  const loadedLocation = useRef({ identity: "", pending: false });
+  const loadedLocation = useRef({ client, identity: "", pending: false });
   const projectId = location?.projectId;
   const sessionId = location?.sessionId;
   const refresh = useCallback(() => {
@@ -70,12 +70,12 @@ export function useSessionWorkspace(
 
   useEffect(() => {
     const identity = enabled && projectId && sessionId ? `${authorityRevision}\u0000${projectId}\u0000${sessionId}` : "";
-    if (loadedLocation.current.identity === identity) return;
-    loadedLocation.current = { identity, pending: false };
+    if (loadedLocation.current.client === client && loadedLocation.current.identity === identity) return;
+    loadedLocation.current = { client, identity, pending: false };
     setDetail(null); setMessages(null); setMutationNotice(""); setMutationAllowed(null); setSending(false);
     setDetailAvailability(identity ? "loading" : "idle");
     setMessagesAvailability(identity && loadMessages ? "loading" : "idle");
-  }, [enabled, projectId, sessionId, loadMessages, authorityRevision]);
+  }, [client, enabled, projectId, sessionId, loadMessages, authorityRevision]);
 
   useEffect(() => {
     detailRequest.cancel();
@@ -125,7 +125,7 @@ export function useSessionWorkspace(
   const send = useCallback(async (input: { message: string; kind?: string; priority?: string; requiresAck?: boolean; replyTo?: string }) => {
     if (!enabled || !location || !input.message.trim()) return false;
     const requestScope = loadedLocation.current;
-    if (requestScope.identity !== sessionLocationIdentity(location, authorityRevision) || requestScope.pending) return false;
+    if (requestScope.client !== client || requestScope.identity !== sessionLocationIdentity(location, authorityRevision) || requestScope.pending) return false;
     requestScope.pending = true;
     setSending(true);
     try {
@@ -138,11 +138,11 @@ export function useSessionWorkspace(
         requires_ack: input.requiresAck,
         reply_to: input.replyTo,
       });
+      if (loadedLocation.current !== requestScope) return false;
       if (response?.status === 401) {
         if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized();
         return false;
       }
-      if (loadedLocation.current !== requestScope) return false;
       if (response?.status === 0) {
         setMutationNotice("Send outcome unknown. Refresh and review retained messages before retrying.");
         return false;
@@ -171,16 +171,16 @@ export function useSessionWorkspace(
   const replace = useCallback(async (messageId: string, message: string) => {
     if (!enabled || !location || !message.trim()) return false;
     const requestScope = loadedLocation.current;
-    if (requestScope.identity !== sessionLocationIdentity(location, authorityRevision) || requestScope.pending) return false;
+    if (requestScope.client !== client || requestScope.identity !== sessionLocationIdentity(location, authorityRevision) || requestScope.pending) return false;
     requestScope.pending = true;
     setSending(true);
     try {
       const response = await replaceSessionMessage(client, location.projectId, location.sessionId, messageId, message.trim());
+      if (loadedLocation.current !== requestScope) return false;
       if (response?.status === 401) {
         if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized();
         return false;
       }
-      if (loadedLocation.current !== requestScope) return false;
       if (response?.status === 0) {
         setMutationNotice("Message mutation outcome unknown. Refresh retained messages before retrying.");
         return false;
@@ -209,13 +209,13 @@ export function useSessionWorkspace(
   const withdraw = useCallback(async (messageId: string) => {
     if (!enabled || !location) return false;
     const requestScope = loadedLocation.current;
-    if (requestScope.identity !== sessionLocationIdentity(location, authorityRevision)) return false;
+    if (requestScope.client !== client || requestScope.identity !== sessionLocationIdentity(location, authorityRevision)) return false;
     const response = await withdrawSessionMessage(client, location.projectId, location.sessionId, messageId);
+    if (loadedLocation.current !== requestScope) return false;
     if (response?.status === 401) {
       if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized();
       return false;
     }
-    if (loadedLocation.current !== requestScope) return false;
     if (response?.status === 0) {
       setMutationNotice("Message mutation outcome unknown. Refresh retained messages before retrying.");
       return false;
@@ -235,14 +235,19 @@ export function useSessionWorkspace(
     return true;
   }, [client, authorityRevision, enabled, location, onUnauthorized, refresh]);
 
+  // Effects cancel/reset the previous owner after commit. The render itself
+  // must already hide that owner's evidence, including same-Session client swaps.
+  const ownsLocation = Boolean(enabled && location
+    && loadedLocation.current.client === client
+    && loadedLocation.current.identity === sessionLocationIdentity(location, authorityRevision));
   return {
-    detailAvailability,
-    messagesAvailability,
-    detail,
-    messages,
-    sending,
-    mutationNotice,
-    mutationAllowed,
+    detailAvailability: ownsLocation ? detailAvailability : enabled && location ? "loading" : "idle",
+    messagesAvailability: ownsLocation && loadMessages ? messagesAvailability : enabled && location && loadMessages ? "loading" : "idle",
+    detail: ownsLocation ? detail : null,
+    messages: ownsLocation && loadMessages ? messages : null,
+    sending: ownsLocation && sending,
+    mutationNotice: ownsLocation ? mutationNotice : "",
+    mutationAllowed: ownsLocation ? mutationAllowed : null,
     send,
     replace,
     withdraw,

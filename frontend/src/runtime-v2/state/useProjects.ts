@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchProjects } from "../api/projects.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import type { Availability, ProjectRow } from "../model/types.js";
-import { useVisibleRefresh } from "./useVisibleRefresh.js";
+import { useInventoryRefresh } from "./useInventoryRefresh.js";
 
 export const PROJECT_PAGE_SIZE = 24;
 export type ProjectsState = {
@@ -12,7 +12,7 @@ export type ProjectsState = {
 };
 
 export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnauthorized: () => void,
-  options: { initialLimit?: number; refreshMs?: number } = {}): ProjectsState {
+  options: { initialLimit?: number; refreshMs?: number; inventoryKey?: string } = {}): ProjectsState {
   const initialLimit = Math.max(PROJECT_PAGE_SIZE, Math.min(2_000, options.initialLimit ?? PROJECT_PAGE_SIZE));
   const [availability, setAvailability] = useState<Availability>("idle");
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -20,56 +20,65 @@ export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnautho
   const [truncated, setTruncated] = useState(false);
   const [query, setQuery] = useState("");
   const [runner, setRunner] = useState("");
-  const [revision, setRevision] = useState(0);
   const [page, setPage] = useState({ key: "", limit: initialLimit });
   const [refreshing, setRefreshing] = useState(false);
   const authorityRevision = client.authorityRevision ?? 0;
-  const listRequest = useRef<AbortController | null>(null);
   const selection = useRef({ client, key: "" });
-  const refresh = useCallback(() => { if (!listRequest.current) setRevision(value => value + 1); }, []);
+  const { request, revision, refresh, invalidate, reset, failed: deferRetry, stopAutomatic } = useInventoryRefresh(
+    enabled, options.refreshMs ?? 30_000, availability !== "denied",
+  );
   const stableQuery = useDebouncedValue(query, 220);
   const key = JSON.stringify([authorityRevision, runner, stableQuery, initialLimit]);
   const limit = page.key === key ? page.limit : initialLimit;
 
   useEffect(() => {
+    request.cancel();
     if (selection.current.client !== client || selection.current.key !== key) {
-      selection.current = { client, key };
+      selection.current = { client, key }; reset();
       setProjects([]); setTotal(0); setTruncated(false); setAvailability("loading");
     }
     if (!enabled) {
-      listRequest.current?.abort(); listRequest.current = null;
+      reset();
       setProjects([]); setTotal(0); setTruncated(false); setRefreshing(false); setAvailability("idle");
       return;
     }
-    const controller = new AbortController();
-    listRequest.current?.abort(); listRequest.current = controller;
     setRefreshing(true);
     setAvailability(value => value === "idle" ? "loading" : value);
-    const failed = () => setAvailability(value => value === "available" || value === "stale" ? "stale" : "error");
-    void fetchProjects(client, { runner, query: stableQuery, limit }, controller.signal).then(response => {
-      if (controller.signal.aborted || listRequest.current !== controller) return;
-      listRequest.current = null; setRefreshing(false);
+    const failed = () => {
+      deferRetry();
+      setAvailability(value => value === "available" || value === "stale" ? "stale" : "error");
+    };
+    void request.run(signal => fetchProjects(client, { runner, query: stableQuery, limit }, signal), response => {
+      setRefreshing(false);
       if (!response) { failed(); return; }
-      if (response.status === 401) { if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized(); return; }
+      if (response.status === 401) { stopAutomatic(); if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized(); return; }
       if (response.status === 403) {
+        stopAutomatic();
         setProjects([]); setTotal(0); setTruncated(false); setAvailability("denied"); return;
       }
       if (!response.ok || !response.data) { failed(); return; }
+      reset();
       setProjects(current => JSON.stringify(current) === JSON.stringify(response.data!.projects || []) ? current : response.data!.projects || []);
       setTotal(Math.max(response.data.total || 0, response.data.projects?.length || 0));
       setTruncated(Boolean(response.data.truncated)); setAvailability("available");
-    }).catch(() => {
-      if (controller.signal.aborted || listRequest.current !== controller) return;
-      listRequest.current = null; setRefreshing(false); failed();
     });
-    return () => { controller.abort(); if (listRequest.current === controller) listRequest.current = null; };
-  }, [client, authorityRevision, enabled, onUnauthorized, revision, runner, stableQuery, limit, key]);
+    return () => request.cancel();
+  }, [client, authorityRevision, enabled, onUnauthorized, revision, runner, stableQuery, limit, key, request, reset, deferRetry, stopAutomatic]);
 
-  useVisibleRefresh(enabled, refresh, options.refreshMs ?? 10_000);
+  const inventory = useRef({ client, key, enabled, value: options.inventoryKey });
+  useEffect(() => {
+    const previous = inventory.current;
+    inventory.current = { client, key, enabled, value: options.inventoryKey };
+    if (enabled && previous.enabled && previous.client === client && previous.key === key && previous.value !== undefined
+      && options.inventoryKey !== undefined && previous.value !== options.inventoryKey) invalidate();
+  }, [client, enabled, key, options.inventoryKey, invalidate]);
+  const visible = enabled && selection.current.client === client && selection.current.key === key;
   return {
-    availability, projects, total, truncated, query, runner, setQuery, setRunner, refresh, refreshing,
-    loadMore: () => { if (!listRequest.current) setPage({ key, limit: Math.min(2_000, limit + PROJECT_PAGE_SIZE) }); },
-    showLess: () => { if (!listRequest.current) setPage({ key, limit: PROJECT_PAGE_SIZE }); },
+    availability: visible ? availability : enabled ? "loading" : "idle",
+    projects: visible ? projects : [], total: visible ? total : 0, truncated: visible && truncated,
+    query, runner, setQuery, setRunner, refresh, refreshing: enabled && (visible ? refreshing : true),
+    loadMore: () => { if (!request.pending) setPage({ key, limit: Math.min(2_000, limit + PROJECT_PAGE_SIZE) }); },
+    showLess: () => { if (!request.pending) setPage({ key, limit: PROJECT_PAGE_SIZE }); },
     canShowLess: limit > PROJECT_PAGE_SIZE,
   };
 }

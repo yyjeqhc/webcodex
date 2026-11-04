@@ -15,11 +15,12 @@ export function fetchProjectSessions(
     "workflow-sessions",
     { project },
     signal,
+    { observation: true },
   );
 }
 
 export function locateSession(client: RuntimeV2Client, sessionId: string, signal?: AbortSignal) {
-  return client.post<LocatedSession>("workflow-session-locate", { session_id: sessionId }, signal);
+  return client.post<LocatedSession>("workflow-session-locate", { session_id: sessionId }, signal, { observation: true });
 }
 
 export function fetchSessionDetail(
@@ -33,6 +34,7 @@ export function fetchSessionDetail(
     "workflow-session",
     { project, session_id: sessionId, ...(activityLimit !== undefined ? { limit: activityLimit } : {}) },
     signal,
+    { observation: true },
   );
 }
 
@@ -46,6 +48,7 @@ export function fetchSessionMessages(
     "workflow-session-messages",
     { project, session_id: sessionId, limit: 100 },
     signal,
+    { observation: true },
   );
 }
 

@@ -324,32 +324,88 @@ async fn navigation_overview_does_not_project_projects_or_scan_job_history() {
     );
 }
 
-#[test]
-fn navigation_family_count_uses_explicit_lineage_like_project_view() {
-    let row = |id: &str, source: Option<&str>| RuntimeConsoleProject {
-        id: format!("agent:r:{id}"),
-        client_id: "r".into(),
-        project_ref: None,
-        name: None,
-        path: None,
-        registration_source: None,
-        lineage: source.map(
-            |source| RuntimeConsoleProjectLineage::ManagedWorktreeSource {
-                source_project_id: source.into(),
-                base_sha: "a".repeat(40),
-            },
-        ),
-        connected: true,
-        runner_status: None,
-        sessions: None,
-    };
+#[tokio::test]
+async fn navigation_family_count_and_inventory_identity_match_full_overview() {
+    let runtime = test_runtime();
+    let auth = crate::auth::shared_key_context("canonical-families");
+    let foreign = crate::auth::shared_key_context("hidden-families");
+    register_project(&runtime, "own", "seed", "/fixture/seed", Some(&auth)).await;
+    register_project(
+        &runtime,
+        "foreign",
+        "hidden",
+        "/fixture/hidden",
+        Some(&foreign),
+    )
+    .await;
+    let mut summaries = (0..MAX_PROJECT_LIMIT + 10)
+        .map(|index| {
+            let mut summary = project(&format!("p{index:05}"), &format!("/fixture/p{index:05}"));
+            summary.disabled = index == MAX_PROJECT_LIMIT + 9;
+            if index == 1 {
+                summary.lineage = Some(
+                    webcodex_core::runner_protocol::RunnerProjectLineage::ManagedWorktreeSource {
+                        source_project_id: "p00000".into(),
+                        source_root_fingerprint: format!("wc_projroot_{}", "1".repeat(64)),
+                        base_sha: "a".repeat(40),
+                    },
+                );
+            }
+            summary
+        })
+        .collect::<Vec<_>>();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.runner_registry,
+        "own",
+        "inst-own",
+        summaries.clone(),
+    )
+    .await;
+    let primary = super::super::overview_primary::primary_for_auth(&runtime, &auth)
+        .await
+        .unwrap();
+    let full = overview_for_auth(&runtime, &auth).await.unwrap();
+    assert_eq!(primary.visible_project_families, MAX_PROJECT_LIMIT + 8);
     assert_eq!(
-        super::super::overview_primary::family_count(&[
-            row("repo", None),
-            row("wt", Some("repo")),
-            row("other", None)
-        ]),
-        2
+        full.visible_project_families,
+        primary.visible_project_families
+    );
+    assert_eq!(full.projects.len(), MAX_PROJECT_LIMIT);
+    assert!(full.projects_truncated);
+    assert_eq!(primary.runners.len(), 1);
+    let primary_row = serde_json::to_value(&primary.runners[0]).unwrap();
+    let full_row = serde_json::to_value(&full.runners[0]).unwrap();
+    for field in [
+        "project_inventory_generation",
+        "project_inventory_sync_state",
+        "project_inventory_updated_at",
+    ] {
+        assert_eq!(primary_row[field], full_row[field], "{field}");
+        assert!(!primary_row[field].is_null(), "missing wire field {field}");
+    }
+    assert_eq!(primary_row["project_inventory_sync_state"], "complete");
+    assert!(primary_row["project_inventory_generation"]
+        .as_str()
+        .unwrap()
+        .starts_with("test-inventory-"));
+
+    // Same cardinality, new metadata: a new completed generation must invalidate
+    // the browser catalogue without depending on count or ordinary heartbeat age.
+    summaries[0].name = Some("Renamed".into());
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.runner_registry,
+        "own",
+        "inst-own",
+        summaries,
+    )
+    .await;
+    let updated = super::super::overview_primary::primary_for_auth(&runtime, &auth)
+        .await
+        .unwrap();
+    assert_eq!(updated.visible_projects, primary.visible_projects);
+    assert_ne!(
+        updated.runners[0].project_inventory_generation,
+        primary.runners[0].project_inventory_generation
     );
 }
 

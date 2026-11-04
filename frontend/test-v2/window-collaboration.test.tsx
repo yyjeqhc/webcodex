@@ -405,7 +405,7 @@ it("loads earlier durable history without a later poll erasing it, then returns 
     expect(post).toHaveBeenCalledTimes(count);
     expect(screen.getByText("Durable older message")).toBeTruthy();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Return to latest messages" })); });
-    expect(post).toHaveBeenLastCalledWith("window-collaboration", expect.not.objectContaining({ before_message_id: expect.anything() }), expect.anything());
+    expect(post).toHaveBeenLastCalledWith("window-collaboration", expect.not.objectContaining({ before_message_id: expect.anything() }), expect.anything(), { observation: true });
     expect(screen.getByText("Reply from this Window")).toBeTruthy();
   } finally { view.unmount(); vi.useRealTimers(); }
 });
@@ -454,7 +454,7 @@ it("keeps the unvisited cursor when a head refresh skips a full page", async () 
     page = { ...page, next_before: "wc_msg_jump", messages: [{ ...transcript.messages[0], message_id: "wc_msg_jump", created_at_ms: 9000 }] };
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Load earlier messages" })); });
-    expect(post).toHaveBeenLastCalledWith("window-collaboration", expect.objectContaining({ before_message_id: "wc_msg_jump" }), expect.anything());
+    expect(post).toHaveBeenLastCalledWith("window-collaboration", expect.objectContaining({ before_message_id: "wc_msg_jump" }), expect.anything(), { observation: true });
   } finally { view.unmount(); vi.useRealTimers(); }
 });
 

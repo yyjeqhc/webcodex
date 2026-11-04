@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchRuntimeOverview } from "../api/runtime.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import type { Availability, RuntimeOverview } from "../model/types.js";
-import { useVisibleRefresh } from "./useVisibleRefresh.js";
+import { useInventoryRefresh } from "./useInventoryRefresh.js";
 
 export type RuntimeOverviewState = {
   availability: Availability;
@@ -22,57 +22,57 @@ export function useRuntimeOverview(
   const [data, setData] = useState<RuntimeOverview | null>(null);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [revision, setRevision] = useState(0);
   const authorityRevision = client.authorityRevision ?? 0;
-  const current = useRef<AbortController | null>(null);
   const observed = useRef<RuntimeOverview | null>(null);
-  const owner = useRef(client);
-  const refresh = useCallback(() => {
-    if (!current.current) setRevision(value => value + 1);
-  }, []);
+  const owner = useRef({ client, authorityRevision });
+  const { request, revision, refresh, reset, failed: deferRetry, stopAutomatic } = useInventoryRefresh(
+    enabled, includeSessions ? 30_000 : 10_000, availability !== "denied",
+  );
 
   useEffect(() => {
-    if (owner.current !== client) {
-      owner.current = client; observed.current = null;
-      setData(null); setUpdatedAt(null); setAvailability("idle");
+    request.cancel();
+    if (owner.current.client !== client || owner.current.authorityRevision !== authorityRevision) {
+      owner.current = { client, authorityRevision }; observed.current = null;
+      reset(); setData(null); setUpdatedAt(null); setAvailability("idle");
     }
     if (!enabled) {
-      current.current?.abort(); current.current = null; observed.current = null;
+      observed.current = null; reset();
       setData(null); setUpdatedAt(null); setRefreshing(false); setAvailability("idle");
       return;
     }
-    const controller = new AbortController();
-    current.current?.abort(); current.current = controller;
-    let hydration: ReturnType<typeof setTimeout> | undefined;
     setRefreshing(true);
     setAvailability(value => value === "idle" ? "loading" : value);
-    const failed = () => setAvailability(value => value === "available" || value === "stale" ? "stale" : "error");
+    const failed = () => {
+      deferRetry();
+      setAvailability(value => value === "available" || value === "stale" ? "stale" : "error");
+    };
     // Render registry facts first. Only the Session/Runtime surfaces need the
     // more expensive fleet-wide retained-Session aggregation, never Window work.
     const full = includeSessions && observed.current !== null;
-    void fetchRuntimeOverview(client, controller.signal, full).then(response => {
-      if (controller.signal.aborted || current.current !== controller) return;
-      current.current = null; setRefreshing(false);
+    void request.run(signal => fetchRuntimeOverview(client, signal, full), response => {
+      setRefreshing(false);
       if (!response) { failed(); return; }
-      if (response.status === 401) { if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized(); return; }
+      if (response.status === 401) { stopAutomatic(); if ((client.authorityRevision ?? 0) === authorityRevision) onUnauthorized(); return; }
       if (response.status === 403) {
+        stopAutomatic();
         observed.current = null; setData(null); setAvailability("denied"); return;
       }
       if (!response.ok || !response.data) { failed(); return; }
-      observed.current = response.data;
+      reset(); observed.current = response.data;
       setData(response.data); setUpdatedAt(Date.now()); setAvailability("available");
-      if (includeSessions && response.data.detail_level === "primary") hydration = setTimeout(refresh, 0);
-    }).catch(() => {
-      if (controller.signal.aborted || current.current !== controller) return;
-      current.current = null; setRefreshing(false); failed();
+      // Upgrade once after a primary request. A server that still returns a
+      // partial result to a full request must not cause a zero-delay retry loop.
+      if (!full && includeSessions && response.data.detail_level === "primary") refresh();
     });
-    return () => {
-      controller.abort();
-      if (hydration !== undefined) clearTimeout(hydration);
-      if (current.current === controller) current.current = null;
-    };
-  }, [client, authorityRevision, enabled, onUnauthorized, revision, includeSessions, refresh]);
+    return () => request.cancel();
+  }, [client, authorityRevision, enabled, onUnauthorized, revision, includeSessions, request, refresh, reset, deferRetry, stopAutomatic]);
 
-  useVisibleRefresh(enabled, refresh, includeSessions ? 20_000 : 5_000);
-  return { availability, data, refresh, updatedAt, refreshing };
+  // Effects retire the old request, but may not expose its facts for even the
+  // first render of a replacement authority.
+  const visible = enabled && owner.current.client === client && owner.current.authorityRevision === authorityRevision;
+  return {
+    availability: visible ? availability : enabled ? "loading" : "idle",
+    data: visible ? data : null, refresh, updatedAt: visible ? updatedAt : null,
+    refreshing: enabled && (visible ? refreshing : true),
+  };
 }

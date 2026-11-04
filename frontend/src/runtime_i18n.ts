@@ -154,6 +154,8 @@ export const RUNTIME_ZH_TEXT: Record<string, string> = {
   "Could not load Session activity.": "无法加载会话活动。",
   "Choose a Window for this Session": "选择要查看的关联窗口",
   "View Session record": "查看会话记录",
+  "Session record": "会话记录",
+  "Back to Window": "返回窗口",
   "Check branch": "查看分支",
   "Git status unavailable": "无法读取 Git 状态",
   "Detached HEAD": "分离的 HEAD",

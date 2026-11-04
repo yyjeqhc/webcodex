@@ -7,12 +7,12 @@ export const WINDOW_PAGE_SIZE = 50;
 export type WindowSelection = { projects?: string[]; query?: string; client_window_key?: string };
 
 export function fetchWindows(client: RuntimeV2Client, selection: WindowSelection & { offset?: number; limit?: number } = {}, signal?: AbortSignal) {
-  return client.post<WindowsResponse>("windows", { projection: "inventory", limit: WINDOW_PAGE_SIZE, ...selection }, signal);
+  return client.post<WindowsResponse>("windows", { projection: "inventory", limit: WINDOW_PAGE_SIZE, ...selection }, signal, { observation: true });
 }
 
 export function fetchWindowLiveness(client: RuntimeV2Client, selection: WindowSelection = {}, signal?: AbortSignal) {
   // The server bounds its in-flight registry independently of retained history.
-  return client.post<WindowsResponse>("windows", { projection: "liveness", ...selection }, signal);
+  return client.post<WindowsResponse>("windows", { projection: "liveness", ...selection }, signal, { observation: true });
 }
 
 export function fetchWindowPrimaryDetail(
@@ -28,6 +28,7 @@ export function fetchWindowPrimaryDetail(
       detail_level: "primary",
     },
     signal,
+    { observation: true },
   );
 }
 
@@ -40,6 +41,7 @@ export function fetchWindowDetail(
     "window",
     { client_window_key: key, activity_limit: 2_000 },
     signal,
+    { observation: true },
   );
 }
 

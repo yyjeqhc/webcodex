@@ -317,6 +317,35 @@ fn project_reference_principal_key(auth: Option<&AuthContext>) -> Option<String>
     super::session_context::project_reference_principal_fingerprint(auth).ok()
 }
 
+static CONSOLE_PROJECT_REFERENCE_READ: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1)));
+
+const CONSOLE_PROJECT_REFERENCE_BUDGET: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// One absolute budget covers queue admission and the blocking result. A timed
+/// out caller does not release a running worker's permit or replay its writes.
+async fn run_console_reference_lookup<T: Send + 'static>(
+    lane: std::sync::Arc<tokio::sync::Semaphore>,
+    budget: std::time::Duration,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let deadline = tokio::time::Instant::now() + budget;
+    let permit = match tokio::time::timeout_at(deadline, lane.acquire_owned()).await {
+        Ok(Ok(permit)) => permit,
+        _ => return None,
+    };
+    let dispatcher = tracing::dispatcher::get_default(Clone::clone);
+    let worker = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        tracing::dispatcher::with_default(&dispatcher, work)
+    });
+    tokio::time::timeout_at(deadline, worker).await.ok()?.ok()
+}
+
+#[cfg(test)]
+#[path = "tests/console_project_references.rs"]
+mod console_reference_tests;
+
 impl ToolRuntime {
     pub(crate) fn project_reference_for_identity(
         &self,
@@ -336,6 +365,53 @@ impl ToolRuntime {
             )
             .ok()?;
         Some(format_project_reference(record.ref_index))
+    }
+
+    /// A Console page resolves all optional display refs together. The one
+    /// admitted blocking worker owns its permit through completion, including
+    /// when the HTTP future is cancelled, so SQLite waits never occupy Tokio
+    /// workers or create an unbounded queue of detached blocking work. Queue
+    /// admission and lookup share a one-second budget; optional refs may be
+    /// absent while the authorized canonical Project page remains available.
+    pub(crate) async fn project_references_for_console(
+        &self,
+        identities: Vec<(String, Option<String>)>,
+        auth: Option<&AuthContext>,
+    ) -> Vec<Option<String>> {
+        let empty = || vec![None; identities.len()];
+        let Some(db) = self.project_reference_db.as_ref().cloned() else {
+            return empty();
+        };
+        let Some(principal_key) = project_reference_principal_key(auth) else {
+            return empty();
+        };
+        if identities.iter().all(|(_, root)| root.is_none()) {
+            return empty();
+        }
+        let missing = empty();
+        let resolved = run_console_reference_lookup(
+            CONSOLE_PROJECT_REFERENCE_READ.clone(),
+            CONSOLE_PROJECT_REFERENCE_BUDGET,
+            move || {
+                let requested = identities
+                    .iter()
+                    .map(|(id, root)| (id.as_str(), root.as_deref().unwrap_or("")))
+                    .collect::<Vec<_>>();
+                db.get_or_create_project_references(
+                    &principal_key,
+                    &requested,
+                    chrono::Utc::now().timestamp(),
+                )
+            },
+        )
+        .await;
+        match resolved {
+            Some(Ok(references)) => references
+                .into_iter()
+                .map(|record| record.map(|record| format_project_reference(record.ref_index)))
+                .collect(),
+            _ => missing,
+        }
     }
 
     pub(crate) fn project_reference_for_resolved(

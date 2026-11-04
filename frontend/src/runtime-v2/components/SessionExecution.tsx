@@ -27,10 +27,13 @@ type Props = {
   language: RuntimeLanguage;
   onOpenWindow?: (windowKey: string) => void;
   onBackToWindows?: () => void;
+  embedded?: boolean;
 };
 
-export function SessionExecution({ item, location, session, language, onOpenWindow, onBackToWindows }: Props) {
+export function SessionExecution({ item, location, session, language, onOpenWindow, onBackToWindows, embedded = false }: Props) {
   const t = (value: string) => translate(value, language);
+  const Container = embedded ? "section" : "main";
+  const backLabel = t(embedded ? "Back to Window" : "Back to Windows");
   const progress = groupRecentProgress(session.detail);
   const signals = activitySignals(session.detail, item);
   const [centerTab, setCenterTab] = useState<"workflow" | "collaboration">("workflow");
@@ -48,14 +51,14 @@ export function SessionExecution({ item, location, session, language, onOpenWind
   }, []);
 
   return (
-    <main className="session-main">
+    <Container className={"session-main" + (embedded ? " window-session-record" : "")} aria-label={embedded ? t("Session record") : undefined}>
       <header className="session-header">
         <div className="session-heading">
           <div className="breadcrumbs"><span>{location.runner}</span><span>/</span><span>{location.projectName}</span></div>
           <h2>{item.title}</h2>
         </div>
         <div className="session-actions">
-          {onBackToWindows && <button className="text-button" type="button" onClick={onBackToWindows} aria-label={t("Back to Windows")}><ArrowLeft size={16} /> {t("Back to Windows")}</button>}
+          {onBackToWindows && <button className="text-button" type="button" onClick={onBackToWindows} aria-label={backLabel}><ArrowLeft size={16} /> {backLabel}</button>}
           <span className="quiet-pill">
             <CircleDot size={12} /> {t("Workflow Session")} · {t(item.lifecycle)} · {relativeTime(item.updatedAt)}
           </span>
@@ -217,6 +220,6 @@ export function SessionExecution({ item, location, session, language, onOpenWind
       >
         <SessionCollaboration location={location} session={session} language={language} />
       </section>
-    </main>
+    </Container>
   );
 }

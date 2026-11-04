@@ -33,8 +33,8 @@ it.each(["work", "projects"])("%s has one Project inventory owner while navigati
       await act(async()=>{await vi.advanceTimersByTimeAsync(1_000);});
     }
     const nav=requests.filter(r=>r.path==="overview");
-    expect(nav).toHaveLength(6); expect(nav.every(r=>r.body.include_projects===false && r.body.include_sessions===false)).toBe(true);
-    expect(requests.filter(r=>r.path==="projects")).toHaveLength(view==="work"?2:3);
+    expect(nav).toHaveLength(3); expect(nav.every(r=>r.body.include_projects===false && r.body.include_sessions===false)).toBe(true);
+    expect(requests.filter(r=>r.path==="projects")).toHaveLength(1);
     const inventory=requests.filter(r=>r.path==="windows"&&r.body.projection==="inventory");
     const live=requests.filter(r=>r.path==="windows"&&r.body.projection==="liveness");
     expect(inventory).toHaveLength(1); expect(inventory[0].body.limit).toBe(50);
@@ -44,6 +44,6 @@ it.each(["work", "projects"])("%s has one Project inventory owner while navigati
     await act(async()=>{visibility="hidden";document.dispatchEvent(new Event("visibilitychange"));});
     await act(async()=>{await vi.advanceTimersByTimeAsync(60_000);});
     expect(requests).toHaveLength(before);
-    console.info(`CONSOLE_REQUEST_COUNTS view=${view} elapsed_ms=25000 overview=6 project_inventories=${view==="work"?2:3} window_inventories=1 liveness=${live.length} hidden_60000ms=0`);
+    console.info(`CONSOLE_REQUEST_COUNTS view=${view} elapsed_ms=25000 overview=${nav.length} project_inventories=1 window_inventories=1 liveness=${live.length} hidden_60000ms=0`);
   } finally {unmount?.();spy.mockRestore();vi.useRealTimers();vi.unstubAllGlobals();}
 });

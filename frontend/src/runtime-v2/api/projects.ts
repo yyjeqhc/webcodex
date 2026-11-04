@@ -10,11 +10,11 @@ export function fetchProjects(
   if (options.limit !== undefined) payload.limit = options.limit;
   if (options.runner) payload.client_id = options.runner;
   if (options.query) payload.query = options.query;
-  return client.post<ProjectsResponse>("projects", payload, signal);
+  return client.post<ProjectsResponse>("projects", payload, signal, { observation: true });
 }
 
 export function fetchProjectGit(client: RuntimeV2Client, project: string, signal?: AbortSignal) {
-  return client.post<ProjectGit>("project-git", { project }, signal);
+  return client.post<ProjectGit>("project-git", { project }, signal, { observation: true });
 }
 
 export function registerProject(

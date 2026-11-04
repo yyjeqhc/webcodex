@@ -56,6 +56,23 @@ its queued callback. These slots are not used for mutations or lease renewal.
 Agent Endpoint renewal retains its own schedule while the page is hidden; only
 its inventory observation timer follows document visibility.
 
+### Inventory scheduling and invalidation (2026-11-04)
+
+Overview and Projects now reuse the same observation slots. Primary/full
+Overview refresh at 10/30 seconds, Project pages at 30 seconds, and Work's
+Project catalog at 60 seconds. Typed Runner Project inventory generation,
+sync state and update time invalidate mounted Project lists as soon as the
+primary Overview observes a change. Heartbeat age and job counters do not.
+Transient failures back off automatic retry eligibility up to 120 seconds;
+explicit refresh remains available and coalesces behind an occupied slot.
+Queued focus/resume callbacks recheck failure or denial before starting a read.
+
+The [controlled request comparison](../ui/inventory-observation-performance.md)
+records actual baseline/patch runs for 1/5/10 independent hook trees, shared
+and independent clients, slow 503 responses, first Project readiness and hidden
+documents. These are fake-clock request-load measurements, not production
+browser latency or cross-tab caching claims.
+
 ## Exact Session Job state
 
 Work Result v13 retains an explicitly supplied business `session_id` on its normal

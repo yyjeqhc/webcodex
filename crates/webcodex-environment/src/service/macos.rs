@@ -4,8 +4,15 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::process::Command;
+use std::time::Duration;
 
 const DAEMON_DIR: &str = "/Library/LaunchDaemons";
+
+/// `launchctl print gui/<uid>` dumps the whole login session: hundreds of
+/// services plus their endpoints, whose size grows with the number of running
+/// applications. It routinely exceeds the 128 KiB default used for short
+/// metadata probes, so launchctl keeps its own larger, still bounded, budget.
+const LAUNCHCTL_OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
 
 #[cfg(test)]
 mod scope_tests {
@@ -99,11 +106,11 @@ fn plist_path(spec: &ServiceSpec) -> Result<PathBuf, ServiceError> {
 fn launchctl(args: &[&str]) -> Result<String, ServiceError> {
     let output = Command::new("/bin/launchctl")
         .args(args)
-        .bounded_output()
-        .map_err(|_| {
+        .output_with_limits(Duration::from_secs(55), LAUNCHCTL_OUTPUT_LIMIT)
+        .map_err(|error| {
             ServiceError::new(
                 ServiceErrorCode::OutcomeUnknown,
-                "launchctl could not execute",
+                format!("launchctl could not execute ({error})"),
             )
         })?;
     if !output.status.success() {
@@ -204,8 +211,14 @@ pub(super) fn inspect(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError>
 pub(super) fn preflight(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
     if spec.scope == ServiceScope::User {
         scope::verify_current_user(spec)?;
-        launchctl(&["print", &domain(spec)?]).map_err(|_| ServiceError::new(ServiceErrorCode::MissingPrerequisite,
-            "The saved user's GUI login domain is unavailable; sign in locally, or explicitly choose system scope for boot services"))?;
+        launchctl(&["print", &domain(spec)?]).map_err(|error| {
+            ServiceError::new(
+                ServiceErrorCode::MissingPrerequisite,
+                format!(
+                    "The saved user's GUI login domain is unavailable ({error}); sign in locally, or explicitly choose system scope for boot services"
+                ),
+            )
+        })?;
     }
     check_files(spec)?;
     if spec

@@ -22,7 +22,7 @@ async fn console_job_query_uses_the_same_authorized_inventory_without_model_only
     )
     .await;
     let project = "agent:job-query-own:demo";
-    let session = start_authorized_session(&runtime, project, &auth);
+    let session = start_authorized_session(&runtime, project, &auth).await;
     let started = runtime
         .dispatch_with_auth(
             ToolCall::RunJob {

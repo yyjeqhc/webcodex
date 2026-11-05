@@ -641,16 +641,11 @@ impl ToolRuntime {
             ));
         };
         if let Some(project) = project {
-            let caller_fingerprint = workflow_session_authority_fingerprint(auth)
-                .map_err(|_| session_authority_denied_result(session_id, tool_name))?;
             #[cfg(test)]
             let synthetic_test_fixture = owner_authority_fingerprint
                 == sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT;
             #[cfg(not(test))]
             let synthetic_test_fixture = false;
-            if !synthetic_test_fixture && owner_authority_fingerprint != caller_fingerprint {
-                return Err(session_authority_denied_result(session_id, tool_name));
-            }
             let historical_only = matches!(tool_name, "read_session_summary" | "close_session");
             let resolved = if let Some(auth) = auth {
                 let resolved = match self
@@ -683,6 +678,15 @@ impl ToolRuntime {
             } else {
                 None
             };
+            // Preserve Project concealment: an invisible Project must remain
+            // indistinguishable from an unknown one, even when a Session ID
+            // is supplied. A retired-Project fallback independently checks the
+            // original Session owner before accepting historical access.
+            let caller_fingerprint = workflow_session_authority_fingerprint(auth)
+                .map_err(|_| session_authority_denied_result(session_id, tool_name))?;
+            if !synthetic_test_fixture && owner_authority_fingerprint != caller_fingerprint {
+                return Err(session_authority_denied_result(session_id, tool_name));
+            }
             if let Some(resolved) = resolved.as_ref() {
                 let live_identity = workflow_project_identity(
                     resolved.root_fingerprint.as_deref(),

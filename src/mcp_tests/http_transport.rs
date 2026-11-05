@@ -262,7 +262,17 @@ fn full_trace_dir_with_payload(
     panic!("missing full-trace payload phase {phase} matching this request");
 }
 
-fn start_mcp_fixture_session(runtime: &ToolRuntime, project: Option<&str>, title: &str) -> String {
+async fn start_mcp_fixture_session(
+    runtime: &ToolRuntime,
+    project: Option<&str>,
+    title: &str,
+) -> String {
+    let project_identity = match project {
+        Some(project) => {
+            crate::test_support::registered_session_project_identity(runtime, project, None).await
+        }
+        None => None,
+    };
     let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap);
     auth.is_bootstrap = true;
     let fingerprint = crate::tool_runtime::workflow_session_authority_fingerprint(Some(&auth))
@@ -276,7 +286,8 @@ fn start_mcp_fixture_session(runtime: &ToolRuntime, project: Option<&str>, title
                 crate::tool_runtime::SessionMode::Normal,
                 crate::tool_runtime::sessions::SessionGuards::default(),
             )
-            .with_owner_authority_fingerprint(Some(fingerprint)),
+            .with_owner_authority_fingerprint(Some(fingerprint))
+            .with_project_identity(project_identity),
         )
         .unwrap()
         .session_id
@@ -1194,7 +1205,7 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
     let runtime = Arc::new(test_runtime());
     let service = Service::new(build_test_router(config, db, runtime.clone()));
 
-    let session_id = start_mcp_fixture_session(&runtime, None, "ACK dogfood");
+    let session_id = start_mcp_fixture_session(&runtime, None, "ACK dogfood").await;
 
     let (status, post_body) = stateless_2026_tool_call(
         &service,
@@ -1586,7 +1597,7 @@ async fn http_mcp_2026_explicit_handoff_without_context_ack_body() {
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());
     let service = Service::new(build_test_router(config, db, runtime.clone()));
-    let session_id = start_mcp_fixture_session(&runtime, None, "explicit recovery");
+    let session_id = start_mcp_fixture_session(&runtime, None, "explicit recovery").await;
     let (status, posted) = stateless_2026_tool_call(
         &service,
         "secret",
@@ -1680,9 +1691,9 @@ async fn http_mcp_2026_collaboration_completion_preserves_explicit_recorder_prov
     let runtime = Arc::new(test_runtime());
     let service = Service::new(build_test_router(config, db, runtime.clone()));
 
-    let coordinator_id = start_mcp_fixture_session(&runtime, None, "Coordinator C");
-    let worker_id = start_mcp_fixture_session(&runtime, None, "Worker W");
-    let replay_worker_id = start_mcp_fixture_session(&runtime, None, "Replay worker X");
+    let coordinator_id = start_mcp_fixture_session(&runtime, None, "Coordinator C").await;
+    let worker_id = start_mcp_fixture_session(&runtime, None, "Worker W").await;
+    let replay_worker_id = start_mcp_fixture_session(&runtime, None, "Replay worker X").await;
 
     let (status, posted_body) = stateless_2026_tool_call(
         &service,
@@ -1999,19 +2010,22 @@ async fn http_mcp_2026_observe_session_messages_preserves_stateless_delta_contra
     // The assertions below still exercise project resolution and immutable recorder authority
     // through the real stateless collaboration calls.
     let coordinator_id =
-        start_mcp_fixture_session(&runtime, Some(&shared_project), "Observation coordinator C");
+        start_mcp_fixture_session(&runtime, Some(&shared_project), "Observation coordinator C")
+            .await;
     let worker_id =
-        start_mcp_fixture_session(&runtime, Some(&shared_project), "Observation worker W");
+        start_mcp_fixture_session(&runtime, Some(&shared_project), "Observation worker W").await;
     let second_coordinator_id = start_mcp_fixture_session(
         &runtime,
         Some(&shared_project),
         "Observation coordinator C2",
-    );
+    )
+    .await;
     let foreign_worker_id = start_mcp_fixture_session(
         &runtime,
         Some(&foreign_project),
         "Foreign observation worker W2",
-    );
+    )
+    .await;
 
     let pre_baseline_body_marker = "pre-baseline-history-must-not-replay";
     let (status, pre_baseline_body) = stateless_2026_tool_call(

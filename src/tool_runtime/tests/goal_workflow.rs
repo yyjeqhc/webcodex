@@ -37,6 +37,7 @@ impl Workflow {
         .await;
         let session_id =
             start_goal_activity_session(&runtime, &auth, &project, "Current Goal workflow")
+                .await
                 .session_id;
         let agent = runtime.create_agent_identity(
             Some(&auth),
@@ -1028,6 +1029,7 @@ async fn goal_workflow_exact_business_session_evidence_covers_only_its_own_recor
         &different.project,
         "Different business Session",
     )
+    .await
     .session_id;
     let different_work = T0 + 3_000;
     different.recorder_gap_work(different_work, Some(&other_session), None);
@@ -1228,7 +1230,8 @@ async fn goal_workflow_revoked_correlated_project_is_partial_even_with_older_wor
         &fixture.auth,
         &other_project,
         "Earlier explicitly correlated work",
-    );
+    )
+    .await;
     link_goal_activity_session(
         &fixture.runtime,
         &fixture.auth,
@@ -1318,7 +1321,8 @@ async fn goal_workflow_requires_current_unambiguous_active_session_not_historica
                     &fixture.auth,
                     &fixture.project,
                     "Different current work",
-                );
+                )
+                .await;
                 record_goal_window_event(
                     &fixture.db,
                     &fixture.auth,
@@ -1892,7 +1896,8 @@ async fn goal_workflow_checkpoint_card_and_closeout_are_sparse_canonical_and_own
         &fixture.auth,
         &fixture.project,
         "Same Project is not Goal correlation",
-    );
+    )
+    .await;
     assert!(fixture
         .runtime
         .active_goal_context_for_session(Some(&fixture.auth), &other.session_id)
@@ -2287,7 +2292,8 @@ async fn goal_workflow_old_work_imported_through_new_correlation_does_not_manufa
         &fixture.auth,
         &fixture.project,
         "Already-existing prior work",
-    );
+    )
+    .await;
     record_goal_window_event(
         &fixture.db,
         &fixture.auth,

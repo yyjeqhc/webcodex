@@ -95,12 +95,15 @@ async fn register_goal_activity_project(
     crate::tool_runtime::runner_project_runtime_id(client_id, project_id)
 }
 
-fn start_goal_activity_session(
+async fn start_goal_activity_session(
     runtime: &ToolRuntime,
     auth: &crate::auth::AuthContext,
     project: &str,
     title: &str,
 ) -> crate::tool_runtime::sessions::SessionSummary {
+    let project_identity =
+        crate::test_support::registered_session_project_identity(runtime, project, Some(auth))
+            .await;
     let fingerprint =
         super::super::session_context::workflow_session_authority_fingerprint(Some(auth))
             .expect("stable Goal activity test authority");
@@ -113,7 +116,8 @@ fn start_goal_activity_session(
                 crate::tool_runtime::SessionMode::Normal,
                 crate::tool_runtime::sessions::SessionGuards::default(),
             )
-            .with_owner_authority_fingerprint(Some(fingerprint)),
+            .with_owner_authority_fingerprint(Some(fingerprint))
+            .with_project_identity(project_identity),
         )
         .unwrap()
 }
@@ -854,7 +858,8 @@ async fn prepare_goal_workflow_reauthorizes_session_project_controller_and_stays
         temp.path(),
     )
     .await;
-    let session = start_goal_activity_session(&runtime, &owner, &project, "Prepare Goal Session");
+    let session =
+        start_goal_activity_session(&runtime, &owner, &project, "Prepare Goal Session").await;
 
     let controller = runtime.create_agent_identity(
         Some(&owner),
@@ -1385,7 +1390,7 @@ async fn goal_activity_tracks_window_wide_work_and_separates_seen_from_meaningfu
         temp.path(),
     )
     .await;
-    let session = start_goal_activity_session(&runtime, &auth, &project_a, "Goal Session A");
+    let session = start_goal_activity_session(&runtime, &auth, &project_a, "Goal Session A").await;
     let goal_id = create_goal(&runtime, Some(&auth), "goal-window-wide-create");
     link_goal_activity_session(
         &runtime,
@@ -1473,7 +1478,7 @@ async fn goal_activity_is_unobserved_without_windows_and_inflight_work_prevents_
         temp.path(),
     )
     .await;
-    let session = start_goal_activity_session(&runtime, &auth, &project, "Goal inflight");
+    let session = start_goal_activity_session(&runtime, &auth, &project, "Goal inflight").await;
     let goal_id = create_goal(&runtime, Some(&auth), "goal-inflight-create");
     link_goal_activity_session(
         &runtime,
@@ -1576,7 +1581,8 @@ async fn goal_activity_respects_principal_project_visibility_and_runtime_read_sc
         temp.path(),
     )
     .await;
-    let session = start_goal_activity_session(&runtime, &alice, &visible, "Visible Goal Session");
+    let session =
+        start_goal_activity_session(&runtime, &alice, &visible, "Visible Goal Session").await;
     let goal_id = create_goal(&runtime, Some(&alice), "goal-visibility-create");
     link_goal_activity_session(
         &runtime,
@@ -1663,7 +1669,8 @@ async fn goal_activity_bounded_partial_window_scan_never_manufactures_attention(
         temp.path(),
     )
     .await;
-    let session = start_goal_activity_session(&runtime, &auth, &project, "Partial Goal Session");
+    let session =
+        start_goal_activity_session(&runtime, &auth, &project, "Partial Goal Session").await;
     let goal_id = create_goal(&runtime, Some(&auth), "goal-partial-create");
     link_goal_activity_session(
         &runtime,

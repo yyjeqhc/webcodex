@@ -327,6 +327,9 @@ async fn closed_recording_session_remains_provenance_only_for_business_write() {
     let auth = auth_context(None, true);
     let authority = crate::tool_runtime::workflow_session_authority_fingerprint(Some(&auth))
         .expect("closed recorder auth should have stable authority");
+    let project_identity =
+        crate::test_support::registered_session_project_identity(&runtime, &project, Some(&auth))
+            .await;
     let recorder = runtime
         .sessions
         .start_session_with_options(
@@ -336,7 +339,8 @@ async fn closed_recording_session_remains_provenance_only_for_business_write() {
                 crate::tool_runtime::SessionMode::Normal,
                 crate::tool_runtime::SessionGuards::default(),
             )
-            .with_owner_authority_fingerprint(Some(authority)),
+            .with_owner_authority_fingerprint(Some(authority))
+            .with_project_identity(project_identity),
         )
         .unwrap();
     let recorder_ref = runtime

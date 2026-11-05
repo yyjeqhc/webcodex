@@ -2522,6 +2522,7 @@ async fn read_files_ignores_context_ack_and_preserves_bounded_attention() {
     runtime
         .sessions
         .ensure_coding_session(crate::tool_runtime::sessions::CodingSessionRequest {
+            project_identity: None,
             project: project.clone(),
             authority_fingerprint:
                 crate::tool_runtime::sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT

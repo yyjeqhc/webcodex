@@ -3,7 +3,7 @@
 use super::session_context::{
     absent_workflow_session_result, session_authority_denied_result,
     session_lifecycle_denied_result, session_message_error_result, session_project_mismatch_result,
-    workflow_session_authority_fingerprint, SessionProjectMismatch,
+    workflow_project_identity, workflow_session_authority_fingerprint, SessionProjectMismatch,
 };
 use super::tool_inputs::SessionMode;
 use super::{sessions, RecoveryKind, ToolCall, ToolResult, ToolRuntime};
@@ -369,6 +369,9 @@ impl ToolRuntime {
             ),
         )
         .with_owner_authority_fingerprint(Some(owner_authority_fingerprint))
+        .with_project_identity(resolved.as_ref().map(|project| {
+            workflow_project_identity(project.root_fingerprint.as_deref(), &project.config.path)
+        }))
         .with_project_instructions(project_instructions.clone())
         .with_execution_context(execution_context.unwrap_or_default());
         if self.sessions.prepare_request().await.is_err() {
@@ -506,12 +509,7 @@ impl ToolRuntime {
             .authorize_session_target(&session_id, "read_session_summary", auth)
             .await
         {
-            if !self
-                .retired_project_session_history_authorized(&session_id, auth)
-                .await
-            {
-                return result;
-            }
+            return result;
         }
         match self.sessions.summary(&session_id, limit) {
             Some(summary) => {
@@ -536,12 +534,7 @@ impl ToolRuntime {
             .authorize_session_target(&session_id, "close_session", auth)
             .await
         {
-            if !self
-                .retired_project_session_history_authorized(&session_id, auth)
-                .await
-            {
-                return result;
-            }
+            return result;
         }
         match self.sessions.close_session(&session_id) {
             Ok(outcome) => {
@@ -549,6 +542,20 @@ impl ToolRuntime {
                 // cannot escape cleanup by reserving after the initial scan.
                 let persistent_shells_closed =
                     self.close_persistent_shells_for_session(&session_id).await;
+                // The lifecycle and Shell evidence must survive a crash before
+                // claiming a successful close. A failed flush is indeterminate:
+                // the in-memory Session has already been closed.
+                if self.sessions.flush().await.is_err() {
+                    return ToolResult::err_with_output(
+                        "session_persistence_uncertain",
+                        json!({
+                            "error_kind": "session_persistence_uncertain",
+                            "session_id": session_id,
+                            "state_changed": true,
+                            "recovery": "retry close_session using the exact session_id after storage recovers",
+                        }),
+                    );
+                }
                 ToolResult::ok(json!({
                     "success": true,
                     "session_id": outcome.summary.session_id,
@@ -564,30 +571,21 @@ impl ToolRuntime {
         }
     }
 
-    /// A retired Project no longer resolves as an executable target. Permit only
-    /// its original administrator to read/close retained Session history, never
-    /// to resume or execute work. Ordinary Project-scoped authorization stays
-    /// unchanged, including when a Project still exists but is not visible.
+    /// Only historical Session read/close may outlive a Project registration.
+    /// A visible, online Runner without a *complete* authoritative Project
+    /// inventory cannot prove removal; a replaced/revoked Runner owner also
+    /// cannot inherit historical Session visibility.
     async fn retired_project_session_history_authorized(
         &self,
         session_id: &str,
         auth: Option<&AuthContext>,
     ) -> bool {
-        let Some(auth) = auth else { return false };
-        if !auth.is_admin_caller()
-            || auth.is_project_scoped_model_subject()
-            || !auth.project_root_scopes.is_empty()
-        {
-            return false;
-        }
         let Some((Some(project), original_owner)) =
             self.sessions.session_target_authority(session_id)
         else {
             return false;
         };
-        if workflow_session_authority_fingerprint(Some(auth))
-            .ok()
-            .as_deref()
+        if workflow_session_authority_fingerprint(auth).ok().as_deref()
             != Some(original_owner.as_str())
         {
             return false;
@@ -598,21 +596,29 @@ impl ToolRuntime {
         else {
             return false;
         };
-        let access = crate::runner_http::runner_access_from_auth(Some(auth));
+        let access = crate::runner_http::runner_access_from_auth(auth);
+        if self
+            .runner_registry
+            .assert_runner_access(access.as_ref(), client_id)
+            .await
+            .is_err()
+        {
+            return false;
+        }
         let Some(runner) = self
             .runner_registry
-            .get_runner_semantic_view_for_auth(client_id, access.as_ref())
+            .get_runner_view_for_auth(client_id, access.as_ref())
             .await
         else {
             return false;
         };
-        if !runner.view.connected
-            || runner.view.status != "online"
+        if !runner.connected
+            || runner.status != "online"
             || runner
-                .view
-                .projects
-                .iter()
-                .any(|item| item.id == project_id)
+                .project_inventory
+                .as_ref()
+                .is_none_or(|inventory| inventory.sync_state != "complete")
+            || runner.projects.iter().any(|item| item.id == project_id)
         {
             return false;
         }
@@ -635,16 +641,33 @@ impl ToolRuntime {
             ));
         };
         if let Some(project) = project {
-            // Project authorization and immutable creation-time Session authority
-            // are independent checks. Local/dev has no credential project check,
-            // but still has the same canonical authority fence as every caller.
+            let caller_fingerprint = workflow_session_authority_fingerprint(auth)
+                .map_err(|_| session_authority_denied_result(session_id, tool_name))?;
+            #[cfg(test)]
+            let synthetic_test_fixture = owner_authority_fingerprint
+                == sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT;
+            #[cfg(not(test))]
+            let synthetic_test_fixture = false;
+            if !synthetic_test_fixture && owner_authority_fingerprint != caller_fingerprint {
+                return Err(session_authority_denied_result(session_id, tool_name));
+            }
+            let historical_only = matches!(tool_name, "read_session_summary" | "close_session");
             let resolved = if let Some(auth) = auth {
                 let resolved = match self
                     .resolve_project_input_for_auth(&project, Some(auth))
                     .await
                 {
                     Ok(resolved) => resolved,
-                    Err(err) => return Err(err.into_tool_result()),
+                    Err(err) => {
+                        if historical_only
+                            && self
+                                .retired_project_session_history_authorized(session_id, Some(auth))
+                                .await
+                        {
+                            return Ok(None);
+                        }
+                        return Err(err.into_tool_result());
+                    }
                 };
                 if resolved.resolved_id != project {
                     return Err(session_project_mismatch_result(
@@ -660,15 +683,33 @@ impl ToolRuntime {
             } else {
                 None
             };
-            let caller_fingerprint = workflow_session_authority_fingerprint(auth)
-                .map_err(|_| session_authority_denied_result(session_id, tool_name))?;
-            #[cfg(test)]
-            let synthetic_test_fixture = owner_authority_fingerprint
-                == sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT;
-            #[cfg(not(test))]
-            let synthetic_test_fixture = false;
-            if !synthetic_test_fixture && owner_authority_fingerprint != caller_fingerprint {
-                return Err(session_authority_denied_result(session_id, tool_name));
+            if let Some(resolved) = resolved.as_ref() {
+                let live_identity = workflow_project_identity(
+                    resolved.root_fingerprint.as_deref(),
+                    &resolved.config.path,
+                );
+                let recorded_identity =
+                    self.sessions.session_project_identity(session_id).flatten();
+                // A replaced Project must never inherit access to old history or
+                // its Shell cleanup. Legacy Sessions without a root identity may
+                // be read/closed, but cannot regain execution authority.
+                if !synthetic_test_fixture
+                    && match recorded_identity.as_deref() {
+                        Some(original) => original != live_identity,
+                        None => !historical_only,
+                    }
+                {
+                    return Err(ToolResult::err_with_output(
+                        "session_project_identity_changed: the original Project root is no longer verified",
+                        json!({
+                            "error_kind": "session_project_identity_changed",
+                            "session_id": session_id,
+                            "tool_name": tool_name,
+                            "state_changed": false,
+                            "recovery": "start a new Session for the registered Project; close the old Session only after its original Project is safely retired",
+                        }),
+                    ).with_recovery(RecoveryKind::FixInput));
+                }
             }
             self.sessions
                 .prepare_request()

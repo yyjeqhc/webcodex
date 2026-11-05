@@ -99,6 +99,7 @@ impl PersistedSessionRecord {
         Self {
             session_id: record.session_id.clone(),
             project: record.project.clone(),
+            project_identity: record.project_identity.clone(),
             owner_authority_fingerprint: record.owner_authority_fingerprint.clone(),
             title: record.title.clone(),
             mode: record.mode,
@@ -165,6 +166,7 @@ impl PersistedSessionRecord {
     pub fn still_matches_record(&self, record: &SessionRecord) -> bool {
         self.session_id == record.session_id
             && self.project == record.project
+            && self.project_identity == record.project_identity
             && self.owner_authority_fingerprint == record.owner_authority_fingerprint
             && self.title == record.title
             && self.mode == record.mode
@@ -226,6 +228,13 @@ impl PersistedSessionRecord {
         // can enter the in-memory Session store.
         let owner_authority_fingerprint =
             sanitize_owner_authority_fingerprint(self.owner_authority_fingerprint)?;
+        if self
+            .project_identity
+            .as_deref()
+            .is_some_and(|value| !is_lower_hex_sha256(value))
+        {
+            return None;
+        }
         let lifecycle = self.lifecycle;
         let events: VecDeque<Arc<SessionEvent>> = self
             .events
@@ -441,6 +450,7 @@ impl PersistedSessionRecord {
             durable: None,
             session_id,
             project,
+            project_identity: self.project_identity,
             owner_authority_fingerprint,
             title: self.title.map(|value| bound_summary_string(value.trim())),
             mode: self.mode,
@@ -533,6 +543,16 @@ pub fn cold_session_from_persisted(
                     "persisted Session has invalid canonical authority",
                 ))
             })?;
+    if persisted
+        .project_identity
+        .as_deref()
+        .is_some_and(|value| !is_lower_hex_sha256(value))
+    {
+        return Err(serde_json::Error::io(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "persisted Session has invalid Project identity",
+        )));
+    }
     let lifecycle = persisted.lifecycle;
     let raw = Arc::from(serde_json::value::to_raw_value(persisted)?);
     let revision_raw = Arc::downgrade(&raw);
@@ -541,6 +561,7 @@ pub fn cold_session_from_persisted(
         database_revision: 0,
         session_id: persisted.session_id.clone(),
         project: persisted.project.clone(),
+        project_identity: persisted.project_identity.clone(),
         owner_authority_fingerprint,
         mode: persisted.mode,
         guards: persisted.guards,
@@ -569,6 +590,7 @@ pub fn materialize_cold_session(
     };
     if persisted.session_id != record.session_id
         || persisted.project != record.project
+        || persisted.project_identity != record.project_identity
         || persisted.owner_authority_fingerprint != record.owner_authority_fingerprint
         || persisted.lifecycle != record.lifecycle
         || persisted.mode != record.mode

@@ -509,6 +509,7 @@ impl SessionStore {
                 durable: None,
                 session_id: session_id.clone(),
                 project: opts.project,
+                project_identity: opts.project_identity,
                 owner_authority_fingerprint,
                 title: opts.title,
                 mode: opts.mode,
@@ -616,6 +617,9 @@ impl SessionStore {
                         session_project: stored.project().map(str::to_string),
                         request_project: request.project.clone(),
                     });
+                }
+                if stored.project_identity() != request.project_identity.as_deref() {
+                    return Err(CodingSessionError::ResumeProjectIdentityChanged { session_id });
                 }
                 Some(session_id)
             } else {
@@ -786,6 +790,7 @@ impl SessionStore {
                     durable: None,
                     session_id: new_session_id.clone(),
                     project: Some(request.project.clone()),
+                    project_identity: request.project_identity.clone(),
                     owner_authority_fingerprint: request.authority_fingerprint.clone(),
                     // The first accepted instruction remains the root title.
                     // Follow-up instructions never overwrite it.
@@ -1335,6 +1340,14 @@ impl SessionStore {
     pub fn session_project(&self, session_id: &str) -> Option<Option<String>> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.session_project(session_id)
+    }
+
+    pub fn session_project_identity(&self, session_id: &str) -> Option<Option<String>> {
+        let inner = self.inner.lock().expect("session store mutex poisoned");
+        inner
+            .sessions
+            .get(session_id)
+            .map(|s| s.project_identity().map(str::to_string))
     }
 
     pub fn session_target_authority(&self, session_id: &str) -> Option<(Option<String>, String)> {

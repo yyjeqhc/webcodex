@@ -829,6 +829,7 @@ fn add_instruction(runtime: &ToolRuntime, session_id: &str, instruction: &str, m
     runtime
         .sessions
         .ensure_coding_session(sessions::CodingSessionRequest {
+            project_identity: None,
             project: "test-project".to_string(),
             authority_fingerprint: sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT
                 .to_string(),
@@ -936,6 +937,7 @@ fn add_instruction_for(
     runtime
         .sessions
         .ensure_coding_session(sessions::CodingSessionRequest {
+            project_identity: None,
             project: project.to_string(),
             authority_fingerprint: sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT
                 .to_string(),

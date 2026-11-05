@@ -141,6 +141,9 @@ pub struct SessionRecord {
     pub(crate) durable: Option<ColdSessionRecord>,
     pub session_id: String,
     pub project: Option<String>,
+    /// Immutable identity of the Project root captured at Session creation.
+    /// None marks legacy/unproven identity and never authorizes retargeting.
+    pub project_identity: Option<String>,
     /// Domain-separated SHA-256 of the canonical creation-time authority group.
     /// The historical field name is retained only in persistence; in-memory
     /// mutable/queryable Sessions always carry a canonical fingerprint and never
@@ -226,6 +229,7 @@ pub struct ColdSessionRecord {
     pub(crate) database_revision: u64,
     pub session_id: String,
     pub project: Option<String>,
+    pub project_identity: Option<String>,
     pub owner_authority_fingerprint: String,
     pub mode: SessionMode,
     pub guards: SessionGuards,
@@ -264,6 +268,13 @@ impl StoredSession {
         match self {
             Self::Hot(record) => record.project.as_deref(),
             Self::Cold(record) => record.project.as_deref(),
+        }
+    }
+
+    pub fn project_identity(&self) -> Option<&str> {
+        match self {
+            Self::Hot(record) => record.project_identity.as_deref(),
+            Self::Cold(record) => record.project_identity.as_deref(),
         }
     }
 
@@ -335,6 +346,7 @@ pub struct SessionDiscoveryPage {
 #[derive(Debug, Clone)]
 pub struct SessionCreateOptions {
     pub project: Option<String>,
+    pub project_identity: Option<String>,
     pub owner_authority_fingerprint: Option<String>,
     pub title: Option<String>,
     pub mode: SessionMode,
@@ -352,6 +364,7 @@ impl SessionCreateOptions {
     ) -> Self {
         Self {
             project,
+            project_identity: None,
             owner_authority_fingerprint: None,
             title,
             mode,
@@ -359,6 +372,11 @@ impl SessionCreateOptions {
             project_instructions: None,
             execution_context: SessionExecutionContext::default(),
         }
+    }
+
+    pub fn with_project_identity(mut self, project_identity: Option<String>) -> Self {
+        self.project_identity = project_identity;
+        self
     }
 
     pub fn with_project_instructions(
@@ -391,6 +409,7 @@ impl SessionCreateOptions {
 #[derive(Debug, Clone)]
 pub struct CodingSessionRequest {
     pub project: String,
+    pub project_identity: Option<String>,
     /// Canonical creation-time authority fence for every caller, including the
     /// canonical local/dev authority group.
     pub authority_fingerprint: String,
@@ -443,6 +462,9 @@ pub enum CodingSessionError {
         session_id: String,
         session_project: Option<String>,
         request_project: String,
+    },
+    ResumeProjectIdentityChanged {
+        session_id: String,
     },
     ResumeAuthorityMismatch {
         session_id: String,
@@ -543,6 +565,8 @@ impl PersistedSessionSnapshot {
 pub struct PersistedSessionRecord {
     pub session_id: String,
     pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_identity: Option<String>,
     /// Historical field name retained on disk, but v2 requires the canonical
     /// domain-separated authority-group fingerprint on every persisted row.
     pub owner_authority_fingerprint: String,

@@ -11,6 +11,7 @@ pub(super) fn materialize(
     let PersistedSessionRecord {
         session_id,
         project,
+        project_identity,
         owner_authority_fingerprint,
         title,
         mode,
@@ -52,6 +53,7 @@ pub(super) fn materialize(
         durable: cold.database.as_ref().map(|_| cold.clone()),
         session_id,
         project,
+        project_identity,
         owner_authority_fingerprint,
         title,
         mode,

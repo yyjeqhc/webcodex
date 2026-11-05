@@ -34,6 +34,7 @@ fn start_changes_session(
         .sessions
         .ensure_coding_session_with_git_baseline(
             CodingSessionRequest {
+                project_identity: None,
                 project: project.to_string(),
                 authority_fingerprint,
                 resume_session_id: None,

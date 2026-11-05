@@ -94,6 +94,7 @@ async fn durable_observation_of_unchanged_state_does_not_write() {
 fn latest_instruction_and_closed_identity_survive_history_and_session_churn() {
     let (temporary, store) = persistent_fixture(Duration::from_secs(60));
     let request = CodingSessionRequest {
+        project_identity: None,
         project: "agent:scale:populated".into(),
         authority_fingerprint: TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.into(),
         resume_session_id: None,

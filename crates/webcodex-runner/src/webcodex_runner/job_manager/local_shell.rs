@@ -228,7 +228,18 @@ impl JobManager {
             let mut command = match configured {
                 Ok(command) => command,
                 Err(error) => {
-                    self.fail_job(&operation, error, None);
+                    // The command has not started. Preserve the canonical empty
+                    // validation progress so the Server can accept the Runner's
+                    // tool-unavailable evidence rather than reject its protocol.
+                    self.fail_job(
+                        &operation,
+                        error,
+                        validation.then_some(ShellJobValidationProgress {
+                            completed: 0,
+                            current_step: None,
+                            failed_step: None,
+                        }),
+                    );
                     return;
                 }
             };

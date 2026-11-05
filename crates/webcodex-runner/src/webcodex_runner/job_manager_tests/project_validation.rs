@@ -867,6 +867,120 @@ fn project_validation_rechecks_provenance_after_shell_profile_preparation() {
     }
 }
 
+#[test]
+fn project_validation_missing_clippy_keeps_prestart_progress() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    let registry = temp.path().join("registry");
+    let bin = temp.path().join("bin");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&registry).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='missing_clippy_fixture'\nversion='0.1.0'\nedition='2021'\n[workspace]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        registry.join("demo.toml"),
+        format!(
+            "id='demo'\nname='Demo'\npath={}\nallow_patch=true\n",
+            serde_json::to_string(root.to_str().unwrap()).unwrap()
+        ),
+    )
+    .unwrap();
+    let policy = RunnerPolicy {
+        allowed_roots: vec![root.clone()],
+        ..Default::default()
+    };
+    let request = ProjectValidationRequest {
+        project_id: "demo".into(),
+        cwd: None,
+        action: ProjectValidationAction::Lint,
+        adapter: ProjectValidationAdapter::Rust,
+        scope: None,
+        dependency_policy: None,
+        dependency_resolution_policy: None,
+        test: None,
+    };
+    let (plan, cwd) =
+        crate::webcodex_runner::validation::project::plan(&policy, &registry, &request).unwrap();
+    let metadata = ShellJobValidationMetadata {
+        project_validation: Some(plan.provenance),
+        source_fence: None,
+        tool: "project_validate".into(),
+        kind: "lint".into(),
+        steps: vec![plan.step.clone()],
+        effective_timeout_secs: 30,
+        sync_wait_secs: 8,
+        adapter: plan.adapter,
+        validation_target_id: Some(plan.validation_target_id),
+        minimum_tests: None,
+        require_tests: None,
+        no_run: None,
+    };
+    let context = ShellJobContext {
+        runtime_project_id: Some("agent:validation-agent:demo".into()),
+        workflow_session_id: None,
+        ssh_resource: None,
+        project_cwd: Some(".".into()),
+        cwd: Some(cwd.to_string_lossy().into_owned()),
+        purpose: Some("validation".into()),
+        shell: Some("configured".into()),
+        command_preview: "validation: lint".into(),
+        validation_steps: vec![plan.step.name.clone()],
+        validation: Some(metadata),
+        structured_execution: None,
+    };
+    let operation = RunnerJobOperation::StartValidation(RunnerJobValidationOperation {
+        job_id: "clippy-missing-job".into(),
+        cwd: Some(cwd.to_string_lossy().into_owned()),
+        steps: vec![plan.step],
+        timeout_secs: 30,
+        context,
+    });
+    let wire = RunnerRequest::from_operation(
+        RunnerInvocationMetadata {
+            request_id: "clippy-missing-request".into(),
+            client_id: "validation-agent".into(),
+            requested_by: "test".into(),
+            created_at: chrono::Utc::now().timestamp(),
+        },
+        RunnerOperation::Job(operation),
+    )
+    .unwrap();
+    let mut shell = ShellConfig::default();
+    shell
+        .env
+        .insert("PATH".into(), bin.to_string_lossy().into_owned());
+    let manager = JobManager::new(1);
+    let (sink, _rx) = structured_test_sink("validation-agent", "validation-instance");
+    manager.enqueue(
+        sink,
+        PendingJobStart::from_wire(1, policy, shell, SshConfig::default(), registry, wire),
+    );
+    assert!(manager.wait_for_workers(Instant::now() + Duration::from_secs(12)));
+    let snapshot = lock_unpoison(&manager.jobs)["clippy-missing-job"]
+        .snapshot
+        .clone();
+    manager.stop_all();
+    assert_eq!(
+        snapshot.command_execution_state,
+        Some(ShellCommandExecutionState::NotStarted)
+    );
+    assert_eq!(snapshot.exit_code, None);
+    assert_eq!(
+        snapshot.error.as_deref(),
+        Some(VALIDATION_TOOL_UNAVAILABLE_CODE)
+    );
+    let progress = snapshot
+        .validation_progress
+        .expect("prestart tool failure must retain canonical validation progress");
+    assert_eq!(progress.completed, 0);
+    assert!(progress.current_step.is_none());
+    assert!(progress.failed_step.is_none());
+}
+
 #[cfg(feature = "runner-real-process-tests")]
 #[test]
 #[ignore = "requires installed Cargo Clippy; run explicitly with --ignored"]

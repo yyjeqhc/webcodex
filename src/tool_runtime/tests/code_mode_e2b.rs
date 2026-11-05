@@ -94,20 +94,23 @@ fn commit_file(root: &Path, path: &str, content: &str) {
     git(root, &["commit", "-q", "-m", "fixture"]);
 }
 
-fn start_coding_session_with_baseline(
+async fn start_coding_session_with_baseline(
     runtime: &ToolRuntime,
     auth: &crate::auth::AuthContext,
     project: &str,
     baseline: String,
     instruction: &str,
 ) -> crate::tool_runtime::SessionSummary {
+    let project_identity =
+        crate::test_support::registered_session_project_identity(runtime, project, Some(auth))
+            .await;
     let authority_fingerprint =
         crate::tool_runtime::workflow_session_authority_fingerprint(Some(auth)).unwrap();
     runtime
         .sessions
         .ensure_coding_session_with_git_baseline(
             CodingSessionRequest {
-                project_identity: None,
+                project_identity,
                 project: project.to_string(),
                 authority_fingerprint,
                 resume_session_id: None,
@@ -1143,7 +1146,8 @@ async fn e2b_nested_edit_drives_real_final_changes_baseline_to_full_final_worksp
         &project,
         baseline,
         "E2b Final Changes integration",
-    );
+    )
+    .await;
 
     // This non-Code-Mode workspace change proves Final Changes freezes the
     // complete baseline→final workspace, not merely the nested edit provenance.
@@ -1270,7 +1274,8 @@ async fn e2b_outer_only_noop_and_prestart_failure_do_not_create_final_changes_el
         &project,
         baseline.clone(),
         "outer-only E2b",
-    );
+    )
+    .await;
     let read = spawn_e2b_call(
         &runtime,
         &project,
@@ -1296,7 +1301,8 @@ async fn e2b_outer_only_noop_and_prestart_failure_do_not_create_final_changes_el
         &project,
         baseline.clone(),
         "no-op E2b",
-    );
+    )
+    .await;
     let noop_task = spawn_e2b_call(
         &runtime,
         &project,
@@ -1325,7 +1331,8 @@ async fn e2b_outer_only_noop_and_prestart_failure_do_not_create_final_changes_el
         &project,
         baseline,
         "prestart failure E2b",
-    );
+    )
+    .await;
     let prestart_result = spawn_e2b_call(
         &runtime,
         &project,

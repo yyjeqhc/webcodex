@@ -714,6 +714,12 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
         is_bootstrap: true,
         ..crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap)
     };
+    let project_identity = crate::test_support::registered_session_project_identity(
+        &runtime,
+        exact_project,
+        Some(&auth),
+    )
+    .await;
     let fingerprint = crate::tool_runtime::workflow_session_authority_fingerprint(Some(&auth))
         .expect("bootstrap test authority");
     let session = runtime
@@ -725,7 +731,8 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
                 crate::tool_runtime::SessionMode::ReadOnly,
                 crate::tool_runtime::SessionGuards::default(),
             )
-            .with_owner_authority_fingerprint(Some(fingerprint)),
+            .with_owner_authority_fingerprint(Some(fingerprint))
+            .with_project_identity(project_identity),
         )
         .unwrap();
     let service = Service::new(build_test_router(config, db.clone(), runtime));

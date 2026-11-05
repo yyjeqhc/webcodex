@@ -506,7 +506,12 @@ impl ToolRuntime {
             .authorize_session_target(&session_id, "read_session_summary", auth)
             .await
         {
-            return result;
+            if !self
+                .retired_project_session_history_authorized(&session_id, auth)
+                .await
+            {
+                return result;
+            }
         }
         match self.sessions.summary(&session_id, limit) {
             Some(summary) => {
@@ -531,7 +536,12 @@ impl ToolRuntime {
             .authorize_session_target(&session_id, "close_session", auth)
             .await
         {
-            return result;
+            if !self
+                .retired_project_session_history_authorized(&session_id, auth)
+                .await
+            {
+                return result;
+            }
         }
         match self.sessions.close_session(&session_id) {
             Ok(outcome) => {
@@ -552,6 +562,61 @@ impl ToolRuntime {
                 absent_workflow_session_result(&self.sessions, &session_id, auth)
             }
         }
+    }
+
+    /// A retired Project no longer resolves as an executable target. Permit only
+    /// its original administrator to read/close retained Session history, never
+    /// to resume or execute work. Ordinary Project-scoped authorization stays
+    /// unchanged, including when a Project still exists but is not visible.
+    async fn retired_project_session_history_authorized(
+        &self,
+        session_id: &str,
+        auth: Option<&AuthContext>,
+    ) -> bool {
+        let Some(auth) = auth else { return false };
+        if !auth.is_admin_caller()
+            || auth.is_project_scoped_model_subject()
+            || !auth.project_root_scopes.is_empty()
+        {
+            return false;
+        }
+        let Some((Some(project), original_owner)) =
+            self.sessions.session_target_authority(session_id)
+        else {
+            return false;
+        };
+        if workflow_session_authority_fingerprint(Some(auth))
+            .ok()
+            .as_deref()
+            != Some(original_owner.as_str())
+        {
+            return false;
+        }
+        let Some((client_id, project_id)) = project
+            .strip_prefix("agent:")
+            .and_then(|part| part.split_once(':'))
+        else {
+            return false;
+        };
+        let access = crate::runner_http::runner_access_from_auth(Some(auth));
+        let Some(runner) = self
+            .runner_registry
+            .get_runner_semantic_view_for_auth(client_id, access.as_ref())
+            .await
+        else {
+            return false;
+        };
+        if !runner.view.connected
+            || runner.view.status != "online"
+            || runner
+                .view
+                .projects
+                .iter()
+                .any(|item| item.id == project_id)
+        {
+            return false;
+        }
+        self.sessions.prepare_request().await.is_ok()
     }
 
     pub(crate) async fn authorize_session_target(

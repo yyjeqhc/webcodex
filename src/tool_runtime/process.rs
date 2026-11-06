@@ -1,9 +1,9 @@
 use serde_json::json;
 
 use super::helpers::{
-    bounded_tail, command_failed_message, command_outcome_unknown_message,
-    command_rejected_message, command_timeout_message, project_relative_runner_cwd,
-    resolve_runner_cwd, COMMAND_STDIO_TAIL_CHARS,
+    command_failed_message, command_outcome_unknown_message, command_rejected_message,
+    command_timeout_message, project_relative_runner_cwd, resolve_runner_cwd,
+    COMMAND_STDIO_TAIL_CHARS,
 };
 use super::shell::command_execution_state_name;
 use super::structured_execution::{
@@ -60,8 +60,10 @@ pub(crate) fn success_output(
     stderr: String,
     duration_ms: Option<u64>,
 ) -> serde_json::Value {
-    let (stdout_tail, stdout_truncated) = bounded_tail(&stdout, COMMAND_STDIO_TAIL_CHARS);
-    let (stderr_tail, stderr_truncated) = bounded_tail(&stderr, COMMAND_STDIO_TAIL_CHARS);
+    let (stdout_tail, stdout_truncated) =
+        super::helpers::bounded_head_tail(&stdout, COMMAND_STDIO_TAIL_CHARS);
+    let (stderr_tail, stderr_truncated) =
+        super::helpers::bounded_head_tail(&stderr, COMMAND_STDIO_TAIL_CHARS);
     json!({
         "exit_code": exit_code,
         "stdout_tail": stdout_tail,
@@ -88,8 +90,10 @@ pub(crate) fn command_failure_result(
     timeout_secs: u64,
     state: ShellCommandExecutionState,
 ) -> ToolResult {
-    let (stdout_tail, stdout_truncated) = bounded_tail(&stdout, COMMAND_STDIO_TAIL_CHARS);
-    let (stderr_tail, stderr_truncated) = bounded_tail(&stderr, COMMAND_STDIO_TAIL_CHARS);
+    let (stdout_tail, stdout_truncated) =
+        super::helpers::bounded_head_tail(&stdout, COMMAND_STDIO_TAIL_CHARS);
+    let (stderr_tail, stderr_truncated) =
+        super::helpers::bounded_head_tail(&stderr, COMMAND_STDIO_TAIL_CHARS);
     let timed_out = state == ShellCommandExecutionState::TimedOut;
     let output = json!({
         "exit_code": exit_code,

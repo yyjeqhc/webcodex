@@ -189,17 +189,23 @@ The opt-in local-agent execution acceptance uses real authenticated model accoun
 and process-local MCP configuration, with `low` reasoning/effort for both clients:
 
 ```bash
-cargo build --locked --profile dogfood -p webcodex -p webcodex-runner --bin webcodex-server --bin webcodex-runner
+cargo build --locked --profile dogfood -p webcodex -p webcodex-runner -p webcodex-cli --bin webcodex-server --bin webcodex-runner --bin webcodex
 python3 scripts/e2e_local_agent_execution.py --bin-dir target/dogfood --output-dir /tmp/new-local-agent-run
 ```
 
 The output directory must be new. The harness starts an isolated loopback
 Server/Runner, gives each model a fresh remote Python fixture and unrelated local
-cwd, verifies the resulting tests independently, and requires exactly one long
-command execution with Job observation and zero Workflow Sessions. Codex retains
-a read-only local sandbox with explicit per-tool approval for the disposable MCP
-connection; Claude allows only that connection's tools. Normal client tool search
-is permitted. Model credential variables are omitted from the service environment. Temporary
+cwd, then repeats the same task with each client's native tools in the fixture.
+It checks a 16-second foreground command, early handoff with output, tokenless
+terminal waiting, 500-line head/tail previews and retained-log pagination, absolute
+paths, revision-fenced overwrite and stale-write rejection. Each model must pass
+independent unit tests and launch its long command exactly once, with zero
+Workflow Sessions. The prompt does not ask it to read instructions: a separate
+fixture rule records whether remote instructions were discovered and followed.
+MCP Codex uses a read-only local sandbox with explicit per-tool approval; MCP
+Claude allows only that connection's tools. Native controls can edit the disposable
+fixture using their own tools. Client tool search is counted separately. Use
+`--probe-only` for the deterministic Server/Runner probes without paid model calls. Model credential variables are omitted from the service environment. Temporary
 credentials and raw logs are removed after service cleanup; the bounded report
 retains binary hashes, dirty source identity, client versions, tool counts,
 client-reported token usage and model feedback. The harness contacts paid model

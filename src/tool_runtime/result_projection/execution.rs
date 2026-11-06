@@ -176,7 +176,11 @@ fn bound_execution_lines(result: &mut ToolResult) {
         if lines.len() <= MAX_LINES {
             continue;
         }
-        let tail = lines[lines.len() - MAX_LINES..].concat();
+        let tail = format!(
+            "{}... output omitted ...\n{}",
+            lines[..MAX_LINES / 2].concat(),
+            lines[lines.len() - (MAX_LINES / 2 - 1)..].concat()
+        );
         // The canonical failure template may still carry these exact tails.
         if let Some(error) = result.error.as_mut() {
             *error = error.replace(&format!("{key}:\n{original}"), &format!("{key}:\n{tail}"));
@@ -186,6 +190,6 @@ fn bound_execution_lines(result: &mut ToolResult) {
         omitted = true;
     }
     if omitted {
-        result.output["output_hint"] = serde_json::json!("Showing the last 200 lines per stream. For full future output, write a project file and use read_files.");
+        result.output["output_hint"] = serde_json::json!("Output preview keeps the beginning and end. Use the original Job continuation for retained logs; do not rerun the command.");
     }
 }

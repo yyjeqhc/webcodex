@@ -2116,7 +2116,7 @@ fn create_project_rejects_retired_allow_existing_empty_with_migration_hint() {
 #[test]
 fn observe_jobs_wake_policy_defaults_and_validates() {
     for (policy, expected) in [
-        (None, ObserveJobsWakeOn::Change),
+        (None, ObserveJobsWakeOn::Terminal),
         (Some("change"), ObserveJobsWakeOn::Change),
         (Some("terminal"), ObserveJobsWakeOn::Terminal),
         (Some("all_terminal"), ObserveJobsWakeOn::AllTerminal),

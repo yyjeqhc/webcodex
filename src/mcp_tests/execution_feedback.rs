@@ -98,13 +98,13 @@ fn mcp_observation_wake_defaults_preserve_explicit_values_and_api_default() {
     let crate::tool_runtime::ToolCall::ObserveJobs { wake_on, .. } = canonical else {
         panic!("observe_jobs");
     };
-    assert_eq!(serde_json::to_value(wake_on).unwrap(), "change");
+    assert_eq!(serde_json::to_value(wake_on).unwrap(), "terminal");
     let schema = webcodex_tool_contracts::input_schema_for_tool("observe_jobs");
-    assert_eq!(schema["properties"]["wake_on"]["default"], "change");
+    assert_eq!(schema["properties"]["wake_on"]["default"], "terminal");
     assert!(schema["properties"]["wake_on"]["description"]
         .as_str()
         .unwrap()
-        .contains("change (default)"));
+        .contains("terminal (default)"));
 }
 
 #[tokio::test]
@@ -116,12 +116,11 @@ async fn mcp_observation_defaults_are_published_by_direct_gateway_and_cli() {
         assert_eq!(wake_on["default"], "meaningful_change");
         let description = wake_on["description"].as_str().unwrap();
         assert!(description.contains("MCP defaults to meaningful_change"));
-        assert!(!description.contains("change (default)"));
+        assert!(!description.contains("terminal (default)"));
     };
     for tools in [
         mcp_tools_list_payload_with_compact(false),
         mcp_tools_list_payload_with_compact(true),
-        crate::mcp::cli::tools_list(None, false),
     ] {
         let descriptor = tools["tools"]
             .as_array()
@@ -131,6 +130,15 @@ async fn mcp_observation_defaults_are_published_by_direct_gateway_and_cli() {
             .unwrap();
         assert_defaults(&descriptor["inputSchema"]);
     }
+    let cli = crate::mcp::cli::tools_list(None, false);
+    let schema = &cli["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "observe_jobs")
+        .unwrap()["inputSchema"];
+    assert_eq!(schema["properties"]["summary_only"]["default"], false);
+    assert_eq!(schema["properties"]["wake_on"]["default"], "terminal");
     for gateway in [false, true] {
         let arguments = json!({"tool_name":"observe_jobs"});
         let params = if gateway {
@@ -323,7 +331,7 @@ async fn mcp_observation_wake_default_ignores_heartbeats_on_direct_gateway_and_c
             observe(
                 &runtime,
                 route,
-                json!({"items":[{"job_id":job.job_id}],"wait_secs":5}),
+                json!({"items":[{"job_id":job.job_id}],"wait_secs":5,"wake_on":"meaningful_change"}),
                 &auth,
             ),
         )
@@ -332,12 +340,13 @@ async fn mcp_observation_wake_default_ignores_heartbeats_on_direct_gateway_and_c
         assert_reply(route, &baseline, &job.job_id, "immediate", None, None);
 
         let cursor = token(&runtime, &job.job_id).await;
-        let meaningful = observe(
-            &runtime,
-            route,
-            json!({"items":[{"job_id":job.job_id,"after_observation_token":cursor}],"wait_secs":5}),
-            &auth,
-        );
+        let mut arguments =
+            json!({"items":[{"job_id":job.job_id,"after_observation_token":cursor}],"wait_secs":5});
+        // Adaptive defaults to meaningful changes; CLI defaults to terminal.
+        if route == "cli" {
+            arguments["wake_on"] = json!("meaningful_change");
+        }
+        let meaningful = observe(&runtime, route, arguments, &auth);
         tokio::pin!(meaningful);
         // Enter the observation wait before publishing the next accepted revision.
         assert!(futures_util::poll!(&mut meaningful).is_pending());
@@ -394,12 +403,12 @@ async fn mcp_observation_wake_default_ignores_heartbeats_on_direct_gateway_and_c
         );
 
         let cursor = token(&runtime, &job.job_id).await;
-        let terminal = observe(
-            &runtime,
-            route,
-            json!({"items":[{"job_id":job.job_id,"after_observation_token":cursor}],"wait_secs":5}),
-            &auth,
-        );
+        let arguments = if route == "cli" {
+            json!({"items":[{"job_id":job.job_id}],"wait_secs":5})
+        } else {
+            json!({"items":[{"job_id":job.job_id,"after_observation_token":cursor}],"wait_secs":5})
+        };
+        let terminal = observe(&runtime, route, arguments, &auth);
         tokio::pin!(terminal);
         assert!(futures_util::poll!(&mut terminal).is_pending());
         // Finish the same Job with a Runner-provided failure. summary_only stays

@@ -1,3 +1,2 @@
-==> a.rs (read_revision 9)
+==> a.rs of 1 (read_revision 9)
 fn main() {}
-total_lines: 1

@@ -276,7 +276,30 @@ fn validate_apply_file_change(
                     });
                 }
             }
-            valid_revision(true, positional_edit_index)?;
+            let globally_unique_exact = change.edits.iter().all(|edit| {
+                matches!(
+                    edit.kind,
+                    ApplyTextEditKind::ReplaceExact | ApplyTextEditKind::DeleteExact
+                ) && edit.occurrence.is_none()
+                    && edit.line_scope.is_none()
+                    && edit.expected_match_count.is_none()
+            });
+            valid_revision(!globally_unique_exact, positional_edit_index)?;
+        }
+        ApplyFileChangeKind::Write => {
+            valid_revision(true, None)?;
+            if change.to_path.is_some() || !change.edits.is_empty() {
+                return Err(
+                    format!("change {index} (write): to_path and edits are not allowed").into(),
+                );
+            }
+            let content = change
+                .content
+                .as_deref()
+                .ok_or_else(|| format!("change {index} (write): content is required"))?;
+            if content.contains('\0') {
+                return Err(format!("change {index} (write): content cannot contain NUL").into());
+            }
         }
         ApplyFileChangeKind::Create => {
             if change.to_path.is_some()
@@ -403,7 +426,7 @@ impl ToolRuntime {
     pub(crate) async fn apply_text_edits(
         &self,
         project: String,
-        changes: Vec<ApplyFileChangeInput>,
+        mut changes: Vec<ApplyFileChangeInput>,
         dry_run: Option<bool>,
     ) -> ToolResult {
         if changes.is_empty() {
@@ -428,6 +451,59 @@ impl ToolRuntime {
                 None,
                 None,
             );
+        }
+        let mut raw_paths = std::collections::HashMap::new();
+        for (change_index, change) in changes.iter().enumerate() {
+            for path in std::iter::once(change.path.as_str()).chain(change.to_path.as_deref()) {
+                if let Some(first) = raw_paths.insert(path, change_index) {
+                    return apply_text_edits_path_overlap(
+                        first,
+                        change_index,
+                        change.kind.as_str(),
+                        path,
+                    );
+                }
+            }
+            if let Err(validation_error) = validate_apply_file_change(change_index, change) {
+                let failed_kind = validation_error
+                    .edit_index
+                    .and_then(|edit_index| change.edits.get(edit_index))
+                    .map(|edit| edit.kind.as_str())
+                    .unwrap_or_else(|| change.kind.as_str());
+                let mut result = compact_apply_text_edits_preflight_rejection(
+                    validation_error.message,
+                    if validation_error.reread_required {
+                        "missing_read_revision"
+                    } else if validation_error.edit_index.is_some() {
+                        "invalid_edit"
+                    } else {
+                        "invalid_change"
+                    },
+                    Some(change_index),
+                    validation_error.edit_index,
+                    Some(failed_kind),
+                    Some(&change.path),
+                );
+                if validation_error.reread_required {
+                    result.output["recovery"] = read_files_recovery(&project, &change.path);
+                }
+                return result;
+            }
+        }
+        let resolved = match self.resolve_project_input(&project).await {
+            Ok(resolved) => resolved,
+            Err(error) => return ToolResult::err(error),
+        };
+        for change in &mut changes {
+            for path in std::iter::once(&mut change.path).chain(change.to_path.iter_mut()) {
+                match crate::tool_runtime::helpers::project_relative_file_path(
+                    &resolved.config,
+                    path,
+                ) {
+                    Ok(relative) => *path = relative,
+                    Err(error) => return ToolResult::err(error),
+                }
+            }
         }
         let mut touched_paths = std::collections::HashMap::new();
         for (change_index, change) in changes.iter().enumerate() {
@@ -465,37 +541,8 @@ impl ToolRuntime {
                     );
                 }
             }
-            if let Err(validation_error) = validate_apply_file_change(change_index, change) {
-                let failed_kind = validation_error
-                    .edit_index
-                    .and_then(|edit_index| change.edits.get(edit_index))
-                    .map(|edit| edit.kind.as_str())
-                    .unwrap_or_else(|| change.kind.as_str());
-                let mut result = compact_apply_text_edits_preflight_rejection(
-                    validation_error.message,
-                    if validation_error.reread_required {
-                        "missing_read_revision"
-                    } else if validation_error.edit_index.is_some() {
-                        "invalid_edit"
-                    } else {
-                        "invalid_change"
-                    },
-                    Some(change_index),
-                    validation_error.edit_index,
-                    Some(failed_kind),
-                    Some(&change.path),
-                );
-                if validation_error.reread_required {
-                    result.output["recovery"] = read_files_recovery(&project, &change.path);
-                }
-                return result;
-            }
         }
 
-        let resolved = match self.resolve_project_input(&project).await {
-            Ok(resolved) => resolved,
-            Err(error) => return ToolResult::err(error),
-        };
         let Some(runner) = self
             .runner_registry
             .get_runner_view(&resolved.config.client_id)
@@ -617,6 +664,17 @@ impl ToolRuntime {
             .await;
         let (request_id, rx) = match enqueue_result {
             Ok(request) => request,
+            Err(error)
+                if error.starts_with("capability_unavailable:")
+                    && error.contains(crate::runner_protocol::RUNNER_CAPABILITY_APPLY_FILE_WRITE) =>
+            {
+                return ToolResult::err_with_output(
+                    "Runner does not support apply_file_write; update it before whole-file overwrite. No files were modified.",
+                    json!({"state_changed":false,"execution_state":"not_started",
+                        "error_kind":"agent_capability_unavailable","failure_kind":"capability_unavailable",
+                        "capability":crate::runner_protocol::RUNNER_CAPABILITY_APPLY_FILE_WRITE}),
+                );
+            }
             Err(error)
                 if error.starts_with("capability_unavailable:")
                     && error.contains(

@@ -7,7 +7,3 @@ src/sample.txt-3-between
 src/sample.txt-3-between
 src/sample.txt:4:needle again
 src/sample.txt-5-after
-context_after: 1
-context_before: 1
-path: src
-pattern_mode: literal

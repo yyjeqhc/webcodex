@@ -1833,3 +1833,53 @@ fn file_apply_text_edits_scoped_dry_run_uses_same_resolution_without_write() {
     assert_eq!(out["would_change"], true);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
 }
+
+#[test]
+fn file_apply_text_edits_write_is_revision_fenced_and_transactional() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let path = tmp.path().join("whole.txt");
+    std::fs::write(&path, "original\n").unwrap();
+    let sha = sha256_hex_bytes(b"original\n");
+    for guard in [serde_json::Value::Null, serde_json::json!("a".repeat(64))] {
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "whole.txt",
+                serde_json::json!({"changes":[{"kind":"write", "path":"whole.txt", "content":"replacement", "expected_sha256":guard}]}),
+            ),
+        ));
+        assert!(out.get("error_kind").is_some(), "{out}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+    }
+    let batch = serde_json::json!({"changes":[{"kind":"write", "path":"whole.txt", "content":"replacement", "expected_sha256":sha}, {"kind":"delete", "path":"missing.txt", "expected_sha256":sha}]});
+    let failed = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(tmp.path(), "whole.txt", batch),
+    ));
+    assert!(failed.get("error_kind").is_some());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+    // Empty content is a valid overwrite; write never creates a missing file.
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "whole.txt",
+            serde_json::json!({"changes":[{"kind":"write", "path":"whole.txt", "content":"", "expected_sha256":sha}]}),
+        ),
+    ));
+    assert_eq!(out["changed"], true, "{out}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+    assert_eq!(out["files"][0]["new_sha256"], sha256_hex_bytes(b""));
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "missing.txt",
+            serde_json::json!({"changes":[{"kind":"write", "path":"missing.txt", "content":"new", "expected_sha256":sha}]}),
+        ),
+    ));
+    assert!(out.get("error_kind").is_some());
+    assert!(!tmp.path().join("missing.txt").exists());
+}

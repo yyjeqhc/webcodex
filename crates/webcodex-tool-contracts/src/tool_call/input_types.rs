@@ -299,7 +299,7 @@ pub enum WorkResultFileView {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadFilesItem {
-    /// Non-empty project-relative file path.
+    /// Non-empty Project-relative file path or absolute path inside its root.
     #[schemars(length(min = 1))]
     #[serde(deserialize_with = "deserialize_non_empty_read_path")]
     pub path: String,
@@ -338,7 +338,7 @@ pub struct SearchProjectTextsQuery {
     /// literal unless regex syntax is intentional.
     #[serde(default)]
     pub pattern_mode: Option<SearchPatternMode>,
-    /// Optional project-relative directory to scope the search (default: project root).
+    /// Optional Project-relative or in-Project absolute directory (default: root).
     #[serde(default)]
     pub path: Option<String>,
     /// Maximum records to return: matches in matches mode, files in files_with_matches/count modes.
@@ -431,9 +431,9 @@ pub const MAX_JOB_READINESS_WAIT_SECS: u64 = 45;
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ObserveJobsWakeOn {
-    #[default]
     Change,
     MeaningfulChange,
+    #[default]
     Terminal,
     AllTerminal,
 }

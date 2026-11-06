@@ -1,5 +1,1 @@
-edit a.rs; read_revision 8; changed
-  replace_exact lines 1-1 -> 1 lines
-match_count: 2
-match_ranges_truncated: true
-warning: review repeated anchors
+edit a.rs (1 edits, lines 1-1, match_count: 2, match_ranges_truncated: true, review repeated anchors); changed; read_revision 8

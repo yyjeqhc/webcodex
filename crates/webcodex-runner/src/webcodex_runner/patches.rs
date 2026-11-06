@@ -1173,7 +1173,7 @@ fn write_new_file_atomic(path: &Path, content: &str) -> Result<(), String> {
 
 fn rollback_change(plan: &PlannedFileChange) -> Result<(), String> {
     match plan.kind {
-        ApplyFileChangeKind::Edit => {
+        ApplyFileChangeKind::Edit | ApplyFileChangeKind::Write => {
             if plan.would_change {
                 write_file_atomic(&plan.resolved, plan.original.as_deref().unwrap_or_default())?;
             }
@@ -1232,7 +1232,7 @@ fn require_planned_source_unchanged(plan: &PlannedFileChange) -> Result<(), Appl
 fn apply_change(plan: &PlannedFileChange) -> Result<Vec<PathBuf>, ApplyChangeFailure> {
     require_planned_source_unchanged(plan)?;
     match plan.kind {
-        ApplyFileChangeKind::Edit => {
+        ApplyFileChangeKind::Edit | ApplyFileChangeKind::Write => {
             if plan.would_change {
                 write_file_atomic(
                     &plan.resolved,
@@ -2095,6 +2095,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
                 }
             }
             ApplyFileChangeKind::Edit
+            | ApplyFileChangeKind::Write
             | ApplyFileChangeKind::Delete
             | ApplyFileChangeKind::Rename => {
                 let (original, permissions, old_sha256) = match read_batch_file(&resolved) {
@@ -2133,7 +2134,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
                         Some(change.kind.as_str()),
                         Some(&change.path),
                         "missing_sha256_guard",
-                        "whole-file delete/rename requires an expected_sha256 wire guard",
+                        "whole-file write/delete/rename requires an expected_sha256 wire guard",
                         start,
                     );
                 }
@@ -2220,6 +2221,53 @@ pub(crate) fn handle_apply_text_edits_file_request(
                             old_sha256: Some(old_sha256),
                             new_sha256: Some(new_sha256),
                             edit_summaries: summaries,
+                            would_change,
+                        }
+                    }
+                    ApplyFileChangeKind::Write => {
+                        if change.to_path.is_some() || !change.edits.is_empty() {
+                            return batch_error(
+                                Some(index),
+                                Some("write"),
+                                Some(&change.path),
+                                "invalid_fields",
+                                "write allows only path, content and expected_sha256",
+                                start,
+                            );
+                        }
+                        let replacement = match change.content.as_deref() {
+                            Some(content)
+                                if !content.contains('\0')
+                                    && content.len() <= APPLY_TEXT_EDITS_MAX_FILE_BYTES =>
+                            {
+                                content.to_owned()
+                            }
+                            _ => {
+                                return batch_error(
+                                    Some(index),
+                                    Some("write"),
+                                    Some(&change.path),
+                                    "invalid_content",
+                                    "content is required, must be bounded UTF-8 without NUL",
+                                    start,
+                                )
+                            }
+                        };
+                        let new_sha256 = sha256_hex_bytes(replacement.as_bytes());
+                        let would_change = replacement != original;
+                        PlannedFileChange {
+                            index,
+                            kind: change.kind,
+                            path: change.path.clone(),
+                            to_path: None,
+                            resolved,
+                            resolved_to: None,
+                            original: Some(original),
+                            replacement: Some(replacement),
+                            permissions: Some(permissions),
+                            old_sha256: Some(old_sha256),
+                            new_sha256: Some(new_sha256),
+                            edit_summaries: Vec::new(),
                             would_change,
                         }
                     }

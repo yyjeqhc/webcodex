@@ -66,7 +66,10 @@ fn cli_discovery_uses_execution_contracts_without_sidecars() {
         let tool = tools.iter().find(|tool| tool["name"] == *name).expect(name);
         assert!(crate::tool_runtime::tool_definition::is_model_visible_tool_name(name));
         assert!(tool.get("outputSchema").is_none());
-        assert!(tool.get("_meta").is_none());
+        assert_eq!(tool["_meta"]["anthropic/alwaysLoad"], true);
+        assert!(tool["inputSchema"]["properties"]
+            .get("session_id")
+            .is_none());
         assert_execution_only_schema(&tool["inputSchema"]);
         assert_eq!(tool["inputSchema"]["additionalProperties"], false, "{name}");
     }
@@ -101,6 +104,35 @@ fn cli_discovery_uses_execution_contracts_without_sidecars() {
     sizes.sort_unstable_by(|a, b| b.cmp(a));
     eprintln!("Largest CLI descriptors: {:?}", &sizes[..5]);
     assert!(cli_bytes < default_bytes);
+}
+
+#[test]
+fn cli_native_defaults_are_declared_and_keep_input_schemas_under_codex_limit() {
+    let listed = crate::mcp::cli::tools_list(None, true);
+    for tool in listed["tools"].as_array().unwrap() {
+        let bytes = serde_json::to_vec(&tool["inputSchema"]).unwrap().len();
+        assert!(bytes <= 5000, "{}: {bytes}", tool["name"]);
+        if tool["name"] == "observe_jobs" {
+            assert_eq!(
+                tool["inputSchema"]["properties"]["wake_on"]["default"],
+                "terminal"
+            );
+            assert_eq!(
+                tool["inputSchema"]["properties"]["summary_only"]["default"],
+                false
+            );
+        }
+        if tool["name"] == "run_shell" {
+            for key in [
+                "session_id",
+                "purpose",
+                "assertion_name",
+                "result_expectation",
+            ] {
+                assert!(tool["inputSchema"]["properties"].get(key).is_none());
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -183,12 +215,12 @@ fn cli_reads_keep_raw_source_revision_partial_failures_and_fenced_continuation()
     ] {
         assert!(rendered.contains(expected), "{rendered}");
     }
-    assert!(rendered.contains("unused-peer"));
+    assert!(!rendered.contains("unused-peer"));
     assert_eq!(body["result"]["isError"], false);
 }
 
 #[test]
-fn cli_collaboration_preserves_execution_facts_on_every_outcome() {
+fn cli_execution_projection_keeps_facts_without_workflow_fields_on_every_outcome() {
     for tool in [
         "run_job",
         "run_process",
@@ -215,17 +247,20 @@ fn cli_collaboration_preserves_execution_facts_on_every_outcome() {
                 "session_attention": {"messages":[{"message_id":"wc_msg_session000000000","message":"session-message-marker","requires_ack":true}]},
                 "peer_awareness": {"new_peers":[{"peer_id":"wc_peer_0123456789abcdef0123456789abcdef","source":"codex-thread"}],"semantics":"recent_same_project_activity_not_liveness"}
             });
-            let body = project(tool, success, output);
+            let body = project(
+                tool,
+                success,
+                if tool == "observe_jobs" {
+                    json!({"items":[output]})
+                } else {
+                    output
+                },
+            );
             let rendered = text(&body);
             for marker in [
                 "execution-output-marker",
                 "wc_job_0123456789abcdef",
                 "observe_jobs",
-                "operator-message-marker",
-                "peer-message-marker",
-                "session-message-marker",
-                "wc_peer_0123456789abcdef0123456789abcdef",
-                "recent_same_project_activity_not_liveness",
             ] {
                 assert!(
                     rendered.contains(marker),
@@ -251,7 +286,7 @@ fn cli_complete_file_read_header_omits_absent_range() {
     );
     let rendered = text(&body);
     assert!(
-        rendered.starts_with("==> a.rs (read_revision 7)\nfn main() {}\ntotal_lines: 1\n"),
+        rendered.starts_with("==> a.rs of 1 (read_revision 7)\nfn main() {}\n"),
         "{rendered}"
     );
     assert!(!rendered.contains("null"), "{rendered}");
@@ -272,7 +307,6 @@ fn cli_search_keeps_context_counts_failure_and_truncation_without_read_hints() {
         "a.rs:3:fn \"source\"()",
         "before",
         "truncated: true",
-        "total_matches: null",
         "search timeout",
     ] {
         assert!(rendered.contains(expected), "{rendered}");
@@ -318,11 +352,9 @@ fn cli_text_overhead_is_bounded_without_losing_unknown_effects() {
     let body = project("run_process", false, output.clone());
     let canonical = json!({"success":false,"output":output,"error":"failed"});
     assert!(text(&body).len() <= serde_json::to_vec(&canonical).unwrap().len() + 1024);
-    // Dense nested output uses the lossless compact fallback, not truncation.
-    assert_eq!(
-        serde_json::from_str::<Value>(text(&body)).unwrap(),
-        canonical
-    );
+    assert!(text(&body).contains("outcome_unknown"));
+    assert!(text(&body).contains("wc_job_exact"));
+    assert!(!text(&body).contains("unknown_nested_evidence"));
     assert_eq!(body["result"]["isError"], true);
     assert!(body["result"].get("structuredContent").is_none());
 }
@@ -650,7 +682,7 @@ async fn cli_scope_and_protocol_capability_checks_still_apply() {
 fn cli_manifest_routes_match_the_advertised_surface() {
     for (name, mode) in [
         ("find_definition", "gateway"),
-        ("list_project_tracked_files", "gateway"),
+        ("list_project_tracked_files", "direct"),
         ("get_runtime_status", "gateway"),
         ("present_work_result", "unavailable"),
     ] {

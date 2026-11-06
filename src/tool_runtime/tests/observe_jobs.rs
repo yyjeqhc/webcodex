@@ -367,7 +367,7 @@ fn observe_jobs_tool_call_enforces_batch_and_scalar_bounds() {
             ToolCall::ObserveJobs {
                 tail_lines: 40,
                 wait_secs: None,
-                wake_on: ObserveJobsWakeOn::Change,
+                wake_on: ObserveJobsWakeOn::Terminal,
 
                 summary_only: false,
                 ..
@@ -1405,7 +1405,7 @@ async fn observe_jobs_mixed_success_result_matches_declared_output_schema_and_en
 }
 
 #[tokio::test]
-async fn observe_jobs_missing_baseline_is_immediate_and_projects_activity_without_item_wait() {
+async fn observe_jobs_change_without_baseline_reads_immediately() {
     let runtime = test_runtime();
     let (job_id, request, auth) = register_and_start_agent_job(&runtime, "observe-immediate").await;
     update_observed_job(
@@ -1425,7 +1425,7 @@ async fn observe_jobs_missing_baseline_is_immediate_and_projects_activity_withou
                 items: vec![item(&job_id, None)],
                 tail_lines: 40,
                 wait_secs: Some(120),
-                wake_on: ObserveJobsWakeOn::Terminal,
+                wake_on: ObserveJobsWakeOn::Change,
 
                 summary_only: false,
             },
@@ -1446,6 +1446,52 @@ async fn observe_jobs_missing_baseline_is_immediate_and_projects_activity_withou
         serde_json::to_value(process_activity()).unwrap()
     );
     assert_item_has_no_wait_metadata(&result.output["items"][0]);
+}
+
+#[tokio::test]
+async fn observe_jobs_terminal_wait_needs_no_prior_observation_token() {
+    for wake_on in [ObserveJobsWakeOn::Terminal, ObserveJobsWakeOn::AllTerminal] {
+        let runtime = test_runtime();
+        let (job_id, request, auth) =
+            register_and_start_agent_job(&runtime, "observe-no-token").await;
+        let observation = runtime.observe_jobs_for_auth(
+            vec![item(&job_id, None)],
+            40,
+            Some(5),
+            wake_on,
+            Some(&auth),
+        );
+        tokio::pin!(observation);
+        assert!(futures_util::poll!(&mut observation).is_pending());
+        update_observed_job(
+            &runtime,
+            "observe-no-token",
+            &request,
+            "running",
+            Some("before completion\n"),
+            None,
+            false,
+        )
+        .await;
+        assert!(futures_util::poll!(&mut observation).is_pending());
+        update_observed_job(
+            &runtime,
+            "observe-no-token",
+            &request,
+            "completed",
+            Some("done\n"),
+            None,
+            true,
+        )
+        .await;
+        let result = observation.await;
+        assert!(result.success, "{result:?}");
+        assert_eq!(result.output["wait"]["outcome"], "terminal");
+        assert!(result.output["items"][0]["output"]["stdout_tail"]
+            .as_str()
+            .unwrap()
+            .contains("done"));
+    }
 }
 
 #[tokio::test]
@@ -1550,7 +1596,7 @@ async fn observe_jobs_one_item_update_wakes_shared_wait_and_refreshes_all_snapsh
                     ],
                     tail_lines: 40,
                     wait_secs: Some(5),
-                    wake_on: Default::default(),
+                    wake_on: ObserveJobsWakeOn::Change,
 
                     summary_only: false,
                 },

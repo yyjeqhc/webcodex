@@ -438,7 +438,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             .with_host_orchestration_hint(
                 super::ToolHostOrchestrationHint::sequential().with_native_batch_field("items"),
             ),
-            "Read known Job logs/details/recovery; do not call list_jobs first. Reuse observation_ref or unchanged observation_token as after_observation_token. No token or omitted wait_secs gives an immediate baseline; bounded wait_secs observes changes. Terminal is not success. Never redispatch, stop or subscribe; observation grants no execution authority.",
+            "Read Jobs by job_id or observation_ref; no list_jobs needed. wait_secs defaults to 0; wake_on defaults to terminal, waiting without a token. change/meaningful_change need after_observation_token to wait. Reuse observation_token as after_observation_token for incremental logs. Terminal is not success: inspect exit status. Never redispatch to observe.",
         ).with_discovery_keywords(&["observe", "poll", "job", "progress", "output", "logs", "status", "观察", "作业", "进度", "输出", "日志", "状态"]),
         80,
         super::ToolDirectReason::CoreWorkflow,

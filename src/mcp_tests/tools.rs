@@ -1727,7 +1727,7 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
                 expected["properties"]["summary_only"]["description"] = json!("MCP defaults to a Project identity/path/state summary. Set false for revision, shell, policy and smoke capabilities.");
             }
             if name == "observe_jobs" {
-                assert_eq!(expected["properties"]["wake_on"]["default"], "change");
+                assert_eq!(expected["properties"]["wake_on"]["default"], "terminal");
                 expected["properties"]["wake_on"]["default"] = json!("meaningful_change");
                 expected["properties"]["wake_on"]["description"] = json!("MCP defaults to meaningful_change (ignores pure heartbeats). Set change for all updates; terminal/all_terminal for completion. Missing tokens return an immediate baseline.");
                 assert_eq!(expected["properties"]["summary_only"]["default"], false);
@@ -2355,7 +2355,7 @@ fn mcp_execution_descriptions_share_canonical_source_across_surfaces() {
         crate::mcp::discovery::compact_tool(&mut descriptor);
         assert_eq!(descriptor["description"], canonical, "{name}");
         assert!(canonical.chars().count() <= crate::mcp::discovery::TOOL_DESCRIPTION_MAX_CHARS);
-        for surface in &surfaces {
+        for (surface_index, surface) in surfaces.iter().enumerate() {
             if let Some(tool) = surface["tools"]
                 .as_array()
                 .unwrap()
@@ -2364,7 +2364,26 @@ fn mcp_execution_descriptions_share_canonical_source_across_surfaces() {
             {
                 // MCP changes the canonical observer's wake_on and summary_only defaults.
                 // Keep these adapter differences without copying its L0 contract.
-                let expected = if name == "observe_jobs" {
+                let expected = if surface_index == 2 && name == "run_shell" {
+                    let description = tool["description"].as_str().unwrap();
+                    for fact in [
+                        "50s",
+                        "observe_jobs",
+                        "Never redispatch",
+                        "Permissions",
+                        "process-tree",
+                    ] {
+                        assert!(description.contains(fact), "{description}");
+                    }
+                    assert!(!description.contains("Session"));
+                    continue;
+                } else if surface_index == 2 && name == "observe_jobs" {
+                    assert_eq!(
+                        tool["inputSchema"]["properties"]["wake_on"]["default"],
+                        "terminal"
+                    );
+                    canonical.to_owned()
+                } else if name == "observe_jobs" {
                     assert_eq!(
                         tool["inputSchema"]["properties"]["wake_on"]["default"],
                         "meaningful_change"
@@ -5131,21 +5150,21 @@ async fn mcp_compact_general_workflow_preserves_recovery_and_business_schemas() 
                 for phrase in [
                     "one change per file",
                     "expected_read_revision",
-                    "fail closed on ambiguity",
-                    "1-based inclusive",
-                    "from that snapshot",
-                    "preflight transactionally",
+                    "can omit revision",
+                    "write/delete/rename",
+                    "positional/bulk",
+                    "reject stale",
+                    "preflight",
                     "Runner rechecks source",
+                    "Ambiguity fails closed",
                     "read_files recovery",
-                    "outcome_unknown: observe before another write",
-                    "task-appropriate validation.",
+                    "Unknown effects: inspect before writing",
                 ] {
                     assert!(
                         description.contains(phrase),
                         "missing {phrase}: {description}"
                     );
                 }
-                assert!(description.ends_with("task-appropriate validation."));
             }
         }
     }

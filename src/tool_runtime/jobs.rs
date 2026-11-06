@@ -1125,7 +1125,13 @@ pub(super) fn sparsify_job_handoff_model_result(result: &mut ToolResult) {
     }
     let continuation = call.clone();
     let timeout = output.get("timeout").cloned();
-    output.clear();
+    output.retain(|key, value| {
+        matches!(
+            key.as_str(),
+            "stdout_tail" | "stderr_tail" | "stdout_truncated" | "stderr_truncated"
+        ) && value != ""
+            && value != &Value::Bool(false)
+    });
     output.insert("execution_state".to_string(), json!("pending"));
     output.insert("continuation".to_string(), continuation);
     if let Some(timeout) = timeout {
@@ -1944,8 +1950,8 @@ impl ToolRuntime {
                     "activity": job.activity,
                     "stdout_tail": stdout,
                     "stderr_tail": stderr,
-                    "stdout_lines": next_stdout_line.saturating_sub(1),
-                    "stderr_lines": next_stderr_line.saturating_sub(1),
+                    "stdout_lines": wait.stdout_total_lines,
+                    "stderr_lines": wait.stderr_total_lines,
                     "stdout_returned_lines": wait.stdout_returned_lines,
                     "stderr_returned_lines": wait.stderr_returned_lines,
                     "stdout_returned_bytes": stdout.len(),

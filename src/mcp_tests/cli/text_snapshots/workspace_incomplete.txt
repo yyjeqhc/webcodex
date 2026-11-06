@@ -1,9 +1,4 @@
-clean: null
-files:
-  []
+Workspace status unavailable.
+status_observation: {"status":"unavailable"}
+warnings: ["status unavailable"]
 output_truncated: true
-status_observation:
-  status: unavailable
-warnings:
-  [0]
-    status unavailable

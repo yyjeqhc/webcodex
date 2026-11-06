@@ -1478,7 +1478,13 @@ impl ToolRuntime {
         let immediate_reason =
             if wake_on == ObserveJobsWakeOn::AllTerminal && observed_has_error(&initial) {
                 Some(WakeReason::ItemError)
-            } else if wait_secs.is_none() || missing_baseline {
+            } else if wait_secs.is_none()
+                || (missing_baseline
+                    && matches!(
+                        wake_on,
+                        ObserveJobsWakeOn::Change | ObserveJobsWakeOn::MeaningfulChange
+                    ))
+            {
                 Some(WakeReason::Immediate)
             } else if observed_has_error(&initial) {
                 Some(WakeReason::ItemError)
@@ -1499,7 +1505,7 @@ impl ToolRuntime {
         } else {
             let wait_secs = wait_secs.expect("shared wait requires validated wait_secs");
             let wait_started = Instant::now();
-            let pending: Vec<_> = resolved
+            let mut pending: Vec<_> = resolved
                 .iter()
                 .filter(|resolved| {
                     wake_on != ObserveJobsWakeOn::AllTerminal
@@ -1512,6 +1518,18 @@ impl ToolRuntime {
                 })
                 .cloned()
                 .collect();
+            // Terminal waits need no caller baseline. Capture a private cursor
+            // from this authorized snapshot so Notify/revision waiting remains
+            // race-safe. Final logs still use the caller's original cursor.
+            for pending in &mut pending {
+                if pending.item.after_observation_token.is_none() {
+                    pending.item.after_observation_token = initial
+                        .iter()
+                        .find(|observed| observed.index == pending.index)
+                        .and_then(|observed| observed.result.output["observation_token"].as_str())
+                        .map(str::to_owned);
+                }
+            }
             let wait_reason = match self
                 .wait_for_observed_jobs(
                     &pending,

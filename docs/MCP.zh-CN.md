@@ -81,7 +81,7 @@ Session 或历史调用猜测，也不证明模型实际使用了程序编排。
 
 可选的正整数 Budget 只能缩短服务端已解析的 Host budget，不能放大服务端上限。
 继续保留 5 秒返回余量与极小预算下已有的 1 秒等待下限。例如服务端 budget=55，
-Direct 默认执行 handoff=10 秒、同步/观察上限=50 秒；Host Code Mode 保留
+Direct 同步/观察上限为 50 秒；CLI 默认等待到此上限，Adaptive 默认执行 handoff 仍为 10 秒。Host Code Mode 保留
 5 秒 handoff/观察切片。readiness 最多等待 45 秒，同时受 budget 减去返回余量约束，
 不会被通用 5 秒 handoff 切片误缩短。空值、重复或畸形 header 在 dispatch 前拒绝，
 不回显其原文；超大的合法整数 budget 会被截到服务端上限。
@@ -116,13 +116,12 @@ CLI 只负责工具执行：本地 Agent 自己管理规划、仓库指令和对
 Workflow Session、获取 guidance/Skill、投递协作消息或附带其他 Job 的被动提醒。
 所有 `_wc` 附带字段均拒绝，包括空对象和 gateway 内嵌对象。规范审计证据及已有历史保留。
 
-- 默认 11 个工具：`list_projects`、`list_project_files`、`read_files`、
+- 默认 12 个工具：`list_projects`、`list_project_files`、`list_project_tracked_files`、`read_files`、
   `search_project_texts`、`edit_project_files`、`read_workspace_changes`、
   `run_shell`、`observe_jobs`、`stop_job`、`read_tool_manifest`、`call_runtime_tool`。
 - `run_shell` 是默认命令入口；`observe_jobs` 对原 Job 合并有界等待与结果/日志读取；
-  `stop_job` 请求取消。精确 argv、脚本、交互 stdin、tracked-file glob/LSP、构建和验证
-  仍保留规范工具，通过 manifest 按需发现，再用 gateway 调用。执行生命周期、超时、
-  cursor、取消和不确定效果恢复规则不变。
+  `stop_job` 请求取消。精确 argv、脚本、交互 stdin、LSP、构建和验证
+  仍保留规范工具，通过 manifest 按需发现，再用 gateway 调用。执行生命周期、超时、取消和不确定效果的权限规则不变。
 - Workflow Session、Goal、durable Agent 编排、Skill、Memory、通信和 App 在发现及调用
   路径上均不可用。CLI workflow exposure 开关不能重新开放这些路径；manifest 不返回
   工作流步骤，显式 `include_recommended_flows=true` 会被拒绝。
@@ -131,6 +130,50 @@ Workflow Session、获取 guidance/Skill、投递协作消息或附带其他 Job
   原生 image/resource block 与第三方 provider passthrough 保持各自协议。
 - `initialize.instructions` / `server/discover` 只说明执行边界及恢复契约。
   客户端按需显式读取仓库指令文件，不自动注入指令内容。
+
+CLI 命令与文件行为：
+
+- Direct 下 `run_shell` 默认最多等待 50 秒；`sync_wait_secs` 请求更早交接，
+  Server/Host 上限只会缩短等待。交接结果包含已有输出尾部及原 Job 的后续调用。
+- `observe_jobs(items=[{job_id}], wait_secs=50)` 无需 token 就能等待结束。
+  `wake_on` 默认 `terminal`；显式 `change` / `meaningful_change` 仍需 baseline token。
+  带 token 时从已保留日志向前分页；首次无 token 观察取当前尾部，存储缺口或 epoch
+  变化会报告 reset。terminal 只表示结束，不代表成功。
+- 截断预览保留开头和结尾。同步结果发生截断时，原 Job 按现有有界保留策略留下，
+  可继续读取日志；不要为了补日志重跑有副作用的命令。
+- 文件读取、搜索、目录/文件名查找、LSP 和事务编辑接受本次解析的 Project 根目录内
+  的绝对路径。Runner 原有路径及 symlink 保护保留，目录外路径拒绝。
+- `edit_project_files` 使用统一的扁平 change schema。文件 `kind` 默认 `edit`，
+  编辑 `kind` 默认 `replace_exact`。`write` 通过 `content` 和 `expected_read_revision`
+  覆盖已有文件，并要求 Runner 声明新增能力 `apply_file_write`。全文件唯一、无位置
+  选择器的 `replace_exact` / `delete_exact` 可省略 revision；Runner 在同一事务提交前
+  用原始快照检查所有旧文本匹配。这只校验被编辑的文本，不证明文件其他部分未变化。
+  提供了 revision 就始终校验；整文件覆盖/删除/重命名、插入、位置/范围/occurrence
+  选择器以及批量替换仍要求 revision。
+- CLI 拒绝 `session_id`，并拒绝 `run_shell` 的记录专用参数 `purpose`、
+  `assertion_name`、`result_expectation`。调用 CLI `stop_job` 本身表达取消意图，
+  不再要求额外 `confirm=true`。客户端审批和规范 Job/Project 所有权检查保留。
+- 直接执行、读取、编辑、搜索和工作区状态使用明确列出的内容字段，后端新增遥测字段
+  不再自动进入文本。失败、不确定效果、日志缺失和精确后续调用参数保留。未过滤的
+  manifest 默认列编码工具；精确或带过滤条件查询仍可发现其他已准入执行工具。
+- 读取/搜索默认使用 45,000 字节的规范结果预算，保留带 revision 的分页。
+  CLI 描述声明 Claude `anthropic/alwaysLoad`、`anthropic/maxResultSizeChars=70000`；
+  这些是客户端呈现提示，不扩大 Server 输出预算。初始化只提示读取远端 AGENTS.md /
+  CLAUDE.md，不注入文件内容或管理任务规划。实际客户端行为通过验收脚本确认。
+
+生成连接配置，不读取 token、不修改配置文件：
+
+```bash
+webcodex mcp-config --client claude --url http://127.0.0.1:8080/mcp --project agent:dev:repo
+webcodex mcp-config --client codex --url http://127.0.0.1:8080/mcp --project agent:dev:repo
+```
+
+另行设置 `WEBCODEX_TOKEN`，或用 `--token-env` 指定变量名。输出为带 `alwaysLoad`
+的 Claude MCP JSON，或含 65 秒工具超时和编辑、shell、取消、gateway 审批配置的
+Codex TOML 片段。Codex 默认 `prompt`，显式 `--approve-execution` 才改为 `approve`。
+Claude 审批继续由客户端设置管理。命令不安装配置，也不授予 Server 权限。
+参考官方 [Claude MCP 加载/结果大小契约](https://code.claude.com/docs/en/mcp)及
+[Codex 配置参考](https://developers.openai.com/codex/config-reference/)。
 
 **从 v0.5.0 迁移：** 此次有意替换原 CLI workflow bootstrap 和 `_wc.ack/reply` 行为。
 重新连接/刷新 `tools/list` 并停止发送 CLI sidecar。需要 WebCodex 管理工作流或协作的
@@ -150,6 +193,7 @@ Claude Code `.mcp.json` 示例（环境变量 URL 应使用实际报告的 endpo
   "mcpServers": {
     "webcodex-cli": {
       "type": "http",
+      "alwaysLoad": true,
       "url": "${WEBCODEX_MCP_URL}",
       "headers": {
         "Authorization": "Bearer ${WEBCODEX_MCP_TOKEN}",

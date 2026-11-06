@@ -289,7 +289,7 @@ impl ToolRuntime {
         )
     }
 
-    fn call_tool_with_invocation_metadata_and_return_timing<'a>(
+    pub(crate) fn call_tool_with_invocation_metadata_and_return_timing<'a>(
         &'a self,
         request: ToolCallRequest,
         context: ToolCallContext<'a>,

@@ -183,6 +183,8 @@ pub struct ShellJobLogObservation {
     pub stderr_truncated: bool,
     pub stdout_returned_lines: usize,
     pub stderr_returned_lines: usize,
+    pub stdout_total_lines: usize,
+    pub stderr_total_lines: usize,
     pub analysis_stdout: String,
     pub analysis_stderr: String,
     pub analysis_truncated: bool,
@@ -207,6 +209,8 @@ impl Default for ShellJobLogObservation {
             stderr_truncated: false,
             stdout_returned_lines: 0,
             stderr_returned_lines: 0,
+            stdout_total_lines: 0,
+            stderr_total_lines: 0,
             analysis_stdout: String::new(),
             analysis_stderr: String::new(),
             analysis_truncated: false,
@@ -266,6 +270,8 @@ fn frozen_shell_job_log_projection(
             stderr_truncated,
             stdout_returned_lines: stdout.as_deref().unwrap_or_default().lines().count(),
             stderr_returned_lines: stderr.as_deref().unwrap_or_default().lines().count(),
+            stdout_total_lines: job.stdout.next_line.saturating_sub(1),
+            stderr_total_lines: job.stderr.next_line.saturating_sub(1),
             analysis_stdout,
             analysis_stderr,
             analysis_truncated,
@@ -349,6 +355,8 @@ fn frozen_shell_job_log_projection(
         stderr_truncated: stderr.truncated,
         stdout_returned_lines: stdout.returned_lines,
         stderr_returned_lines: stderr.returned_lines,
+        stdout_total_lines: stdout.total_lines,
+        stderr_total_lines: stderr.total_lines,
         analysis_stdout,
         analysis_stderr,
         analysis_truncated,
@@ -863,6 +871,25 @@ impl RunnerRegistry {
         auth: Option<&crate::RunnerAccess>,
         job_id: &str,
     ) -> Result<ShellJobInfo, String> {
+        self.publish_hidden_job(auth, job_id, false).await
+    }
+
+    /// Preserve the same authorized terminal Job when its initiating response
+    /// cannot contain all output. Existing bounded Job retention owns cleanup.
+    pub async fn retain_terminal_job_logs(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        job_id: &str,
+    ) -> Result<ShellJobInfo, String> {
+        self.publish_hidden_job(auth, job_id, true).await
+    }
+
+    async fn publish_hidden_job(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        job_id: &str,
+        retain_terminal_logs: bool,
+    ) -> Result<ShellJobInfo, String> {
         #[cfg(any(test, feature = "root-test-support"))]
         self.hidden_handoff_failure_for_test(false).await?;
         validate_id(job_id, "job_id")?;
@@ -882,6 +909,9 @@ impl RunnerRegistry {
         if job.visibility == ShellJobVisibility::CleanupPending {
             return Err(format!("structured job cleanup is pending: {job_id}"));
         }
+        if retain_terminal_logs && !job.lifecycle.is_terminal() {
+            return Err("log retention requires a terminal Job".into());
+        }
         // A conclusive terminal update may race the sync-wait deadline. Keep
         // those records hidden so the initiating structured tool call returns
         // the terminal result without leaving a redundant public Job. An
@@ -890,7 +920,7 @@ impl RunnerRegistry {
         // recovery identity instead of discarding the only reconciliation handle.
         let publish_terminal_recovery = job.lifecycle.is_terminal()
             && job.command_execution_state == Some(ShellCommandExecutionState::OutcomeUnknown);
-        if !job.lifecycle.is_terminal() || publish_terminal_recovery {
+        if !job.lifecycle.is_terminal() || publish_terminal_recovery || retain_terminal_logs {
             let view = job_view(job);
             if view.observation_token.is_none() {
                 return Err(format!(

@@ -537,9 +537,10 @@ async fn manifests_use_admitted_surface_routes_before_pagination() {
                 json!({"name":"read_tool_manifest","arguments":{"limit":100,"include_recommended_flows":surface == McpSurface::Adaptive}}), compact, true).await);
             let output = &response["structuredContent"]["output"];
             let tools = output["tools"].as_array().unwrap();
-            assert!(
+            assert_eq!(
                 tools.iter().any(|t| t["name"] == "observe_browser"),
-                "gateway discovery lost: {output}"
+                surface == McpSurface::Adaptive,
+                "CLI's unfiltered catalog is coding-only; exact gateway discovery remains above: {output}"
             );
             let exposure = ToolExposure::default();
             for tool in tools {

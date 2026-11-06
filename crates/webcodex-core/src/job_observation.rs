@@ -334,14 +334,25 @@ pub fn project_log_stream(
                     .expect("continuous cursor is present")
                     .saturating_sub(first_retained_line)
                     .min(lines.len());
-                let bounded_start = tail_bound
-                    .map(|tail| lines.len().saturating_sub(tail).max(delta_start))
-                    .unwrap_or(delta_start);
-                (bounded_start, bounded_start > delta_start)
+                // A valid receipt resumes forward from that cursor. Page the
+                // remaining retained output instead of dropping its beginning.
+                (delta_start, false)
             }
         }
     };
-    let selected = lines[start..].join("\n");
+    let end = if matches!(mode, JobLogSelectionMode::Delta { .. }) && !delta_reset {
+        tail_bound
+            .map(|bound| start.saturating_add(bound).min(lines.len()))
+            .unwrap_or(lines.len())
+    } else {
+        lines.len()
+    };
+    let next_line = if end < lines.len() {
+        first_retained_line.saturating_add(end)
+    } else {
+        next_line
+    };
+    let selected = lines[start..end].join("\n");
     let text = if preserve_trailing_newline && !selected.is_empty() {
         format!("{selected}\n")
     } else {
@@ -351,13 +362,14 @@ pub fn project_log_stream(
         mode,
         JobLogSelectionMode::Baseline | JobLogSelectionMode::Reset
     );
-    let truncated = (baseline_or_reset || delta_reset)
-        && (storage_truncated || first_retained_line > 1 || start > 0);
+    let truncated = end < lines.len()
+        || ((baseline_or_reset || delta_reset)
+            && (storage_truncated || first_retained_line > 1 || start > 0));
     JobLogStreamProjection {
         text,
         next_line,
         total_lines: observed_next_line.saturating_sub(1),
-        returned_lines: lines.len().saturating_sub(start),
+        returned_lines: end.saturating_sub(start),
         first_retained_line,
         truncated,
         delta_reset,
@@ -400,6 +412,35 @@ impl fmt::Display for JobObservationTokenError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn continuous_delta_pages_forward_without_skipping_retained_lines() {
+        let log = (0..501).map(|i| format!("line-{i}\n")).collect::<String>();
+        let mut cursor = 1;
+        let mut collected = String::new();
+        loop {
+            let page = project_log_stream(
+                &log,
+                1,
+                502,
+                false,
+                Some(40),
+                JobLogSelectionMode::Delta { cursor },
+                true,
+            );
+            assert_eq!(page.total_lines, 501);
+            assert!(!page.delta_reset);
+            assert!(page.returned_lines <= 40);
+            collected.push_str(&page.text);
+            if !page.truncated {
+                assert_eq!(page.next_line, 502);
+                break;
+            }
+            assert!(page.next_line as u64 > cursor);
+            cursor = page.next_line as u64;
+        }
+        assert_eq!(collected, log);
+    }
 
     #[test]
     fn observation_ref_registry_is_principal_scoped_and_lru_bounded() {

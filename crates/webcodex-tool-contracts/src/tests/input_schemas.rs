@@ -514,12 +514,7 @@ fn execution_timeout_schemas_keep_runtime_bounds_and_hide_sync_wait_tuning() {
         .get("sync_wait_secs")
         .is_none());
 
-    for name in [
-        "run_process",
-        "run_script",
-        "run_shell",
-        "run_skill_resource",
-    ] {
+    for name in ["run_process", "run_script", "run_skill_resource"] {
         let spec = spec_named(&specs, name);
         assert!(
             spec.input_schema["properties"]
@@ -530,6 +525,10 @@ fn execution_timeout_schemas_keep_runtime_bounds_and_hide_sync_wait_tuning() {
     }
 
     let run_shell = spec_named(&specs, "run_shell");
+    assert_eq!(
+        run_shell.input_schema["properties"]["sync_wait_secs"]["minimum"],
+        1
+    );
     let timeout = &run_shell.input_schema["properties"]["timeout_secs"];
     assert_eq!(timeout["type"], "integer");
     assert_eq!(timeout["minimum"], 1);

@@ -1043,10 +1043,10 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         #[serde(default)]
         timeout_secs: Option<u64>,
-        /// Legacy caller override for same-execution durable Job handoff grace. Hidden from model discovery;
-        /// Server transport policy and timeout_secs bound the effective wait. It controls return only, not
-        /// when the command is killed; named SSH remains unsupported.
-        #[schemars(skip)]
+        /// Seconds to wait before returning the same background Job. Omit for the connection default
+        /// (CLI: up to 50s). Smaller values return earlier; Server limits and timeout_secs still apply.
+        /// This never changes command lifetime or re-executes it; Session SSH does not support handoff.
+        #[schemars(range(min = 1))]
         #[serde(default)]
         sync_wait_secs: Option<u64>,
         /// Working directory contract: without a Session SSH resource, omit, empty string, or '.' selects
@@ -2856,7 +2856,7 @@ pub enum ToolCall {
         close: bool,
     },
 
-    /// Stop a bounded runtime job after explicit confirmation.
+    /// Stop a bounded runtime Job. Calling this tool expresses cancellation intent.
     StopJob {
         /// Configured project id that must match the job project.
         project: String,
@@ -2868,6 +2868,7 @@ pub enum ToolCall {
         #[serde(default)]
         session_id: Option<String>,
         /// Must be true to stop or no-op an already-finished job; false returns confirmation_required.
+        /// The execution-only CLI adapter treats an explicit stop_job call as this intent.
         #[serde(default)]
         confirm: bool,
     },
@@ -2893,8 +2894,9 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         tail_lines: usize,
         /// Optional one shared bounded wait (a maximum), never a minimum sleep or multiplied by item count.
-        /// Omission or any item without a token returns an immediate observation/baseline. Values above 100
-        /// seconds are clamped to 100. With tokens, wake_on selects early wake behavior; updates never
+        /// Omitted wait_secs returns an immediate observation. Terminal waits need no token; change
+        /// waits without a token return an immediate baseline. Values above 100 seconds are clamped to 100.
+        /// wake_on selects early wake behavior; updates never
         /// extend the deadline. Runtime accepts explicit waits up to 100 seconds; MCP transport may clamp
         /// that wait further using the effective Server-side Host timing profile. Use terminal waits
         /// when further useful progress depends on terminal outcome; otherwise defer observation while
@@ -2902,15 +2904,15 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         #[serde(default, deserialize_with = "deserialize_observe_jobs_wait_secs")]
         wait_secs: Option<u64>,
-        #[schemars(extend("default" = "change"))]
-        /// Bounded-wait wake policy. change (default) returns on any observable change.
+        #[schemars(extend("default" = "terminal"))]
+        /// Bounded-wait wake policy. terminal (default) waits for any selected Job to finish. change returns on any observable change.
         /// meaningful_change suppresses sequence-only heartbeat revisions but still wakes for log,
         /// lifecycle, progress, activity and recovery changes. terminal waits for any Job to be terminal;
         /// use it for one Job or when any terminal result unblocks progress. all_terminal waits for every
         /// Job in a predetermined set needed before progress. Terminal policies coalesce non-terminal
         /// updates and all policies return immediately on any item error or at the shared deadline.
         /// Deadline returns timeout even when changed=true; deltas remain relative to the caller's
-        /// original tokens. No token means immediate baseline; no wait_secs means immediate observation.
+        /// original tokens. No token is required for terminal/all_terminal; change policies need a baseline. No wait_secs means immediate observation.
         #[serde(default)]
         wake_on: ObserveJobsWakeOn,
         /// Opt-in projection for proven successful structured validation Jobs. Removes routine

@@ -1,23 +1,7 @@
 isError: true
-ERROR: Command exited with status 7.
-Logs: available stdout_tail and stderr_tail are included below.
-
-execution_state: completed; exit_code: 7
-stdout_tail:
+ERROR: command failed
+completed; exit_code: 7
+stdout:
 captured
-
-stderr_tail:
+stderr:
 denied
-
-command_completed: true
-command_ok: false
-command_started: true
-cwd: .
-failure_kind: command_exit_nonzero
-promoted_to_job: false
-shell: configured
-stderr_lines: 1
-stderr_truncated: false
-stdout_lines: 1
-stdout_truncated: false
-tool_failure: false

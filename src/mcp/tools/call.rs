@@ -268,6 +268,13 @@ impl ParsedCall {
                 "Invocation sidecars are unavailable on the execution-only CLI surface",
             )));
         }
+        if cli && crate::mcp::cli::unavailable_argument(&params.name, &params.arguments).is_some() {
+            return Err(McpOutcome::BadRequest(rpc_error(
+                id,
+                -32602,
+                "Session recording arguments are unavailable on the execution-only CLI surface",
+            )));
+        }
         let invocation = match parse_mcp_invocation_envelope(
             &params.name,
             &mut params.arguments,
@@ -395,6 +402,29 @@ impl ParsedCall {
             )));
         }
         if cli {
+            if let Some(key) =
+                crate::mcp::cli::unavailable_argument(&params.name, &params.arguments)
+            {
+                return Err(McpOutcome::BadRequest(rpc_error(
+                    id,
+                    -32602,
+                    format!("{key} is unavailable on the execution-only CLI surface"),
+                )));
+            }
+            if matches!(params.name.as_str(), "read_files" | "search_project_texts") {
+                if let Some(args) = params.arguments.as_object_mut() {
+                    if args.get("max_result_bytes").is_none_or(Value::is_null) {
+                        args.insert("max_result_bytes".into(), json!(45000));
+                    }
+                }
+            }
+            // Calling the destructive stop tool is explicit cancellation intent.
+            // Client review and canonical Project/Job ownership checks still apply.
+            if params.name == "stop_job" {
+                if let Some(args) = params.arguments.as_object_mut() {
+                    args.entry("confirm").or_insert(json!(true));
+                }
+            }
             crate::mcp::cli::apply_default_project(
                 &params.name,
                 &mut params.arguments,
@@ -496,6 +526,14 @@ impl PreparedRuntimeCall {
             metadata.discovery_tools = Some(
                 webcodex_tool_contracts::tool_definitions()
                     .filter(|definition| {
+                        if context.surface == crate::mcp::request_policy::McpSurface::Cli
+                            && ["tool_name", "query", "category", "intent"]
+                                .iter()
+                                .all(|key| params.arguments.get(*key).is_none_or(Value::is_null))
+                            && !crate::mcp::cli::coding_catalog_entry(definition.name)
+                        {
+                            return false;
+                        }
                         context.exposure.route(
                             context.surface,
                             definition.name,
@@ -517,7 +555,11 @@ impl PreparedRuntimeCall {
         // shared ToolRuntime kernel; preserve those failed attempts in generic
         // telemetry without creating a second record for normal kernel calls.
         // Preserve omission versus explicit false before canonical bool parsing.
-        project_mcp_model_argument_defaults(&params.name, &mut params.arguments);
+        if context.surface != crate::mcp::request_policy::McpSurface::Cli
+            || params.name != "observe_jobs"
+        {
+            project_mcp_model_argument_defaults(&params.name, &mut params.arguments);
+        }
         let invocation_facts = crate::tool_runtime::model_ergonomics_telemetry::invocation::InvocationFacts::from_arguments(&raw_mcp_arguments);
         let mut pre_kernel_model_ergonomics =
             ModelErgonomicsTimer::start_with_arguments(&params.name, &params.arguments);
@@ -632,7 +674,7 @@ impl PreparedRuntimeCall {
         }
         let outcome = context
             .runtime
-            .call_tool_with_invocation_metadata(
+            .call_tool_with_invocation_metadata_and_return_timing(
                 KernelToolCallRequest {
                     tool_name: params.name.clone(),
                     arguments: params.arguments,
@@ -647,6 +689,11 @@ impl PreparedRuntimeCall {
                 },
                 metadata,
                 response.surface.capabilities,
+                if context.surface == crate::mcp::request_policy::McpSurface::Cli {
+                    crate::tool_runtime::return_timing::ToolReturnTimingPolicy::handoff_default_secs(50)
+                } else {
+                    crate::tool_runtime::return_timing::ToolReturnTimingPolicy::unconstrained()
+                },
             )
             .await;
         response.finish(

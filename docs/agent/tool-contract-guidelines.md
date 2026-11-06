@@ -745,10 +745,19 @@ omits command/purpose echoes and local cwd/shell, while retaining remote target
 context, nonempty output, truncation/loss, expectations, normalization and sidecars.
 Ordinary nonzero exits omit generic retry prose and redundant timing; timeout,
 uncertainty and exceptional handoff retain their recovery evidence. Normal pending
-receipts contain `execution_state=pending` and the exact continuation, plus a single
-`timeout` explanation only when the accepted lifetime was capped. Synchronous
-process/script/shell output displays at most 200 lines per stream, retaining loss
-flags and guidance to capture full future output in a Project file.
+receipts contain `execution_state=pending`, available output tails and the exact
+continuation, plus a single `timeout` explanation only when the accepted lifetime
+was capped. Synchronous process/script/shell output displays at most 200 lines per
+stream, preserving the beginning and end. Truncated output retains the same Job
+under existing bounded retention; its continuation pages forward through retained
+logs without rerunning the command. Retention loss remains explicit.
+
+The CLI adapter selects model-facing content explicitly for core coding tools;
+new telemetry fields are not implicitly displayed. Keep output, revisions,
+uncertain effects, partial coverage and actionable recovery. CLI timing defaults
+to up to 50 seconds within every transport cap; its tokenless `observe_jobs`
+waits for terminal state. ChatGPT retains its adapter defaults. See
+[CLI MCP](../MCP.md) for the execution-only client contract.
 
 ### Runtime status projections
 

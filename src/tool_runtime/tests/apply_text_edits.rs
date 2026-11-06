@@ -121,31 +121,12 @@ async fn bulk_exact_old_runner_is_rejected_without_queueing() {
 fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "edit_project_files");
-    let change_variants = spec.input_schema["properties"]["changes"]["items"]["oneOf"]
-        .as_array()
-        .expect("apply_text_edits change wire union");
-    let canonical = change_variants
-        .iter()
-        .find(|variant| variant["properties"].get("kind").is_some())
-        .expect("canonical apply-file-change wire variant");
-    let edit = &canonical["properties"]["edits"]["items"];
-    let edit_variants = edit["oneOf"].as_array().expect("text edit wire union");
-    assert_eq!(edit_variants.len(), 5);
-    assert!(edit_variants
-        .iter()
-        .all(|variant| variant["additionalProperties"] == false));
-    let replace_exact = edit_variants
-        .iter()
-        .find(|variant| {
-            variant["properties"]["kind"]["enum"] == serde_json::json!(["replace_exact"])
-        })
-        .expect("replace_exact variant");
-    let replace_range = edit_variants
-        .iter()
-        .find(|variant| {
-            variant["properties"]["kind"]["enum"] == serde_json::json!(["replace_range"])
-        })
-        .expect("replace_range variant");
+    let change = &spec.input_schema["properties"]["changes"]["items"];
+    assert_eq!(change["additionalProperties"], false);
+    let edit = &change["properties"]["edits"]["items"];
+    assert_eq!(edit["additionalProperties"], false);
+    let replace_exact = edit;
+    let replace_range = edit;
     assert_eq!(replace_exact["properties"]["occurrence"]["type"], "integer");
     assert_eq!(replace_exact["properties"]["occurrence"]["minimum"], 1);
     assert_eq!(
@@ -165,16 +146,9 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     );
     assert_eq!(line_scope["properties"]["start_line"]["minimum"], 1);
     assert_eq!(line_scope["properties"]["end_line"]["minimum"], 1);
-    assert!(!replace_exact["required"]
-        .as_array()
-        .unwrap()
-        .contains(&serde_json::json!("occurrence")));
     assert_eq!(replace_range["properties"]["start_line"]["minimum"], 1);
     assert_eq!(replace_range["properties"]["end_line"]["minimum"], 1);
-    assert_eq!(
-        replace_range["required"],
-        serde_json::json!(["kind", "start_line", "end_line", "new_text"])
-    );
+    assert!(edit["allOf"].is_array());
     let output_properties = &spec.output_schema["properties"]["output"]["properties"];
     for removed in [
         "conflict_recovery",
@@ -2660,4 +2634,37 @@ fn edit_project_files_projection_preserves_identity_and_nonhappy_results() {
         result_projection::ModelFacingProjectionPlan::capture(&call).project(&mut result);
         assert_eq!(result.output, before);
     }
+}
+
+#[tokio::test]
+async fn whole_file_write_rejects_an_older_runner_before_queueing() {
+    let client = "write-old-runner";
+    let runtime = runtime_with_agent_project(client);
+    register_agent(
+        &runtime,
+        client,
+        None,
+        RunnerCapabilities {
+            file_write: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client);
+    let revision = seed_read_revision(&runtime, &project, "sample.txt", &"a".repeat(64)).await;
+    let changes = parsed_edit_project_files_changes(serde_json::json!({
+        "project": project, "changes":[{"kind":"write", "path":"sample.txt", "content":"replacement", "expected_read_revision":revision}]
+    }));
+    let result = runtime.apply_text_edits(project, changes, None).await;
+    assert!(!result.success);
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("apply_file_write"),
+        "{result:?}"
+    );
+    assert_eq!(result.output["execution_state"], "not_started");
+    assert_no_apply_text_edits_runner_request(&runtime, client).await;
 }

@@ -271,8 +271,9 @@ Server defaulting to `host_code_mode`, ordinary clients must explicitly select
 The optional positive-integer budget header can only **reduce** the deployment's
 resolved `WEBCODEX_MCP_HOST_BUDGET_SECS` budget. Return waits preserve the existing
 five-second guard (and the existing one-second floor for tiny budgets). A Direct
-request on a Server budget of 55 seconds therefore defaults to a ten-second
-execution handoff, with a 50-second synchronous/observation ceiling; Host Code
+request on a Server budget of 55 seconds has a 50-second synchronous/observation
+ceiling. CLI defaults to that ceiling; Adaptive retains its ten-second execution
+handoff; Host Code
 Mode retains its five-second handoff/observation slices. `wait_for_job_readiness`
 uses up to 45 seconds, further capped by the selected budget minus the guard,
 not by the five-second handoff slice. Header omission leaves deployment behavior
@@ -325,16 +326,16 @@ fetch guidance/Skills, deliver collaboration messages, or attach passive Job
 attention. `_wc` sidecars are rejected, including empty envelopes and nested
 gateway envelopes. Canonical audit evidence and existing history remain intact.
 
-- The default catalog has 11 tools: `list_projects`, `list_project_files`,
+- The default catalog has 12 tools: `list_projects`, `list_project_files`,
+  `list_project_tracked_files`,
   `read_files`, `search_project_texts`, `edit_project_files`,
   `read_workspace_changes`, `run_shell`, `observe_jobs`, `stop_job`,
   `read_tool_manifest` and `call_runtime_tool`.
 - `run_shell` is the default command entry. `observe_jobs` combines bounded
   waiting with result/log retrieval for the original Job; `stop_job` requests
-  cancellation. Exact argv, scripts, interactive stdin, tracked-file glob/LSP
+  cancellation. Exact argv, scripts, interactive stdin, LSP
   navigation, build and validation remain canonical specialized tools, discovered
-  through the manifest and called through the gateway. Existing lifecycle,
-  timeout, cursor, cancellation and uncertain-effect contracts are unchanged.
+  through the manifest and called through the gateway. Process lifetime, cancellation and uncertain-effect authority remain unchanged.
 - Workflow Sessions, Goals, durable Agent orchestration, Skills, Memory,
   communication and Apps are unavailable through discovery **and** dispatch.
   CLI workflow exposure flags cannot reopen these routes. Manifest workflow
@@ -346,6 +347,63 @@ gateway envelopes. Canonical audit evidence and existing history remain intact.
 - `initialize.instructions` / `server/discover` contain only the execution
   boundary and recovery contract. Read repository instructions explicitly as
   files when needed; there is no automatic instruction injection.
+
+CLI command and file behavior:
+
+- `run_shell` waits up to 50 seconds by default under Direct timing. Set
+  `sync_wait_secs` for an earlier handoff; Server/Host caps can only shorten it.
+  Pending output includes the available tail and the same Job continuation.
+- `observe_jobs(items=[{job_id}], wait_secs=50)` waits for terminal without a
+  prior token. `wake_on` defaults to `terminal`; explicitly select `change` or
+  `meaningful_change` for update waits, which still require a baseline token.
+  A token resumes retained logs **forward in bounded pages**. A first observation
+  without one reads the current tail; storage gaps/epoch changes report reset.
+- Truncated command previews keep the beginning and end. A synchronous truncated
+  result retains its original Job under existing bounded retention and offers a
+  log continuation. Never rerun an effectful command to recover its output.
+- File reads, searches, directory/filename listing, LSP paths and transactional
+  edits accept absolute paths inside the resolved Project root. Runner path and
+  symlink protections still apply; paths outside that root are rejected.
+- `edit_project_files` has one canonical flat change schema. `kind` defaults to
+  `edit`, and an edit's `kind` defaults to `replace_exact`. `write` overwrites an
+  existing file using `content` plus `expected_read_revision`; it requires the
+  additive Runner capability `apply_file_write`. Unique, unscoped
+  `replace_exact`/`delete_exact` can omit revision: Runner checks every old-text
+  match against the same source snapshot before committing the transaction.
+  This checks the edited text, not whether unrelated file content changed.
+  Supplied revisions always apply; whole-file writes/deletes/renames, insertions,
+  occurrence/range/scope selectors and bulk replacements still require revision.
+- CLI rejects `session_id`, and `run_shell` recording-only fields `purpose`,
+  `assertion_name`, `result_expectation`. Calling CLI `stop_job` explicitly
+  requests cancellation; there is no additional `confirm=true` step. Client
+  approval and canonical Job/Project ownership checks remain in force.
+- Direct execution/read/edit/search/status text uses explicit content fields;
+  telemetry additions no longer automatically appear. Failures, uncertain
+  effects, retained-log loss and exact follow-up arguments remain visible.
+  Unfiltered manifests start with coding tools; exact or filtered lookup can
+  still discover other admitted execution tools.
+- Reads/searches default to a 45,000-byte canonical result budget, preserving
+  revision-fenced paging. CLI descriptors request Claude `anthropic/alwaysLoad`
+  and `anthropic/maxResultSizeChars=70000`; these are client presentation hints,
+  not larger Server output budgets. The initialization hint asks clients to read
+  remote AGENTS.md / CLAUDE.md; WebCodex does not inject their contents or plan
+  the task. Client behavior should be checked with the acceptance harness.
+
+Generate connection configuration without reading a token or changing files:
+
+```bash
+webcodex mcp-config --client claude --url http://127.0.0.1:8080/mcp --project agent:dev:repo
+webcodex mcp-config --client codex --url http://127.0.0.1:8080/mcp --project agent:dev:repo
+```
+
+Set `WEBCODEX_TOKEN` separately, or select its name with `--token-env`. Output is
+Claude MCP JSON (including `alwaysLoad`) or a Codex TOML fragment with a 65-second
+client timeout and explicit approval settings for edit, shell, stop and gateway.
+Codex defaults these to `prompt`; `--approve-execution` deliberately selects
+`approve`. Claude permissions remain in its client settings. The command does
+not install configuration or grant Server permissions. See the official
+[Claude MCP loading/result-size contract](https://code.claude.com/docs/en/mcp) and
+[Codex configuration reference](https://developers.openai.com/codex/config-reference/).
 
 **Migration from v0.5.0:** this intentionally replaces the previous CLI workflow
 bootstrap and `_wc.ack/reply` behavior. Reconnect/refresh `tools/list` and stop
@@ -370,6 +428,7 @@ Claude Code `.mcp.json` example (replace the URL with the reported endpoint):
   "mcpServers": {
     "webcodex-cli": {
       "type": "http",
+      "alwaysLoad": true,
       "url": "${WEBCODEX_MCP_URL}",
       "headers": {
         "Authorization": "Bearer ${WEBCODEX_MCP_TOKEN}",

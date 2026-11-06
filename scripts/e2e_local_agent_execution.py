@@ -14,6 +14,7 @@ from collections import Counter
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -21,7 +22,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from urllib.request import Request
+from urllib.error import HTTPError
 
 from e2e_session_continuity_ws import ROOT, Smoke, check
 
@@ -47,18 +50,52 @@ import time
 with Path("executions.txt").open("a") as log:
     log.write("started\\n")
     log.flush()
-time.sleep(14)
+time.sleep(16)
 Path("long-result.txt").write_text("LONG_CHECK_OK\\n")
 print("LONG_CHECK_OK", flush=True)
 '''
 PROMPT = (
     "Work on the remote Project configured on the webcodex MCP server; your local cwd is unrelated. "
     "Fix ranges.py so clamp handles both inclusive bounds and raises ValueError when lower > upper. "
-    "Preserve SENTINEL. Read the repository instructions and run the unit tests. "
+    "First run python3 noisy_check.py to reproduce the failure, then fix the code and run the unit tests. "
     "Then run python3 long_check.py exactly once, wait for its completion and report its output. "
-    "Do not modify the tests or long_check.py. Do not delegate. "
+    "Do not modify the tests, noisy_check.py or long_check.py. Do not delegate. "
     "Finish with a brief result and candid feedback on friction or redundant tool interactions."
 )
+
+NOISY_CHECK = """from ranges import clamp
+if clamp(-3, 0, 5) != 0:
+    print("FIRST_ERROR: lower bound is not enforced", flush=True)
+    for i in range(500): print(f"build detail {i}")
+    raise SystemExit(3)
+print("NOISY_CHECK_OK")
+"""
+INSTRUCTIONS = ("This disposable repository uses Python unittest. Preserve SENTINEL. "
+                "After changing ranges.py, write instructions-read.txt containing REMOTE_RULE_OK and a newline.\n")
+
+
+def response_text(response):
+    return "\n".join(block.get("text", "") for block in response.get("result", {}).get("content", []) if block.get("type") == "text")
+
+
+def next_calls(text):
+    decoder = json.JSONDecoder()
+    for line in text.splitlines():
+        if not line.startswith("next: "): continue
+        tool, _, rest = line[6:].partition(" ")
+        arguments = {}
+        while rest.strip():
+            key, _, value = rest.lstrip().partition("=")
+            parsed, used = decoder.raw_decode(value)
+            arguments[key] = parsed
+            rest = value[used:]
+        yield tool, arguments
+
+
+def inline_toml(value):
+    if isinstance(value, dict):
+        return "{" + ",".join(json.dumps(k) + "=" + inline_toml(v) for k, v in value.items()) + "}"
+    return json.dumps(value)
 
 
 def private_json(path: Path, value):
@@ -109,43 +146,126 @@ class Acceptance(Smoke):
         with self.opener.open(request, timeout=60) as response:
             return json.load(response)
 
+    def probe_native_contracts(self):
+        self.reset_fixture()
+        def call(tool, arguments):
+            response = self.rpc("tools/call", {"name":tool, "arguments":arguments})
+            check("error" not in response, f"{tool}: RPC error")
+            return response, response_text(response)
+        start = time.monotonic()
+        result, text = call("run_shell", {"command":"python3 long_check.py"})
+        check(not result["result"].get("isError") and "LONG_CHECK_OK" in text, "16s default wait did not finish")
+        check("next: observe_jobs" not in text, "16s command unexpectedly handed off")
+        sync_elapsed = time.monotonic() - start
+        result, text = call("run_shell", {"command":"printf 'EARLY_OUTPUT\\n'; sleep 4; printf 'ASYNC_DONE\\n'", "sync_wait_secs":1})
+        check("EARLY_OUTPUT" in text, "handoff lost initial output")
+        tool, arguments = next(next_calls(text))
+        job_id = arguments["items"][0]["job_id"]
+        start = time.monotonic()
+        result, text = call("observe_jobs", {"items":[{"job_id":job_id}], "wait_secs":10})
+        wait_elapsed = time.monotonic() - start
+        check(wait_elapsed > 1 and "ASYNC_DONE" in text, f"tokenless terminal wait failed after {wait_elapsed:.2f}s: {text[:3000]}")
+        result, text = call("run_shell", {"command":"python3 noisy_check.py"})
+        check(result["result"]["isError"] and "FIRST_ERROR" in text and "build detail 499" in text, "head/tail omitted first error or final output")
+        seen = text
+        pages = 0
+        pending = list(next_calls(text))
+        while pending and pages < 20:
+            tool, arguments = pending[0]
+            result, text = call(tool, arguments)
+            seen += text
+            pages += 1
+            pending = list(next_calls(text))
+        check("build detail 250" in seen and not pending, "retained log paging failed")
+        absolute = str(self.project_dir / "ranges.py")
+        result, text = call("read_files", {"items":[{"path":absolute}]})
+        revision = int(re.search(r"read_revision (\d+)", text).group(1))
+        result, text = call("edit_project_files", {"changes":[{"kind":"write", "path":absolute, "expected_read_revision":revision, "content":SOURCE + "# overwritten\n"}]})
+        check(not result["result"].get("isError") and "read_revision" in text, "revision-fenced overwrite failed")
+        result, text = call("edit_project_files", {"changes":[{"path":absolute, "edits":[{"old_text":"# overwritten", "new_text":"# exact"}]}]})
+        check(not result["result"].get("isError"), "revisionless unique exact edit failed")
+        result, text = call("edit_project_files", {"changes":[{"kind":"write", "path":absolute, "expected_read_revision":revision, "content":"stale"}]})
+        check(result["result"].get("isError"), "stale overwrite unexpectedly accepted")
+        check((self.project_dir / "ranges.py").read_text() == SOURCE + "# exact\n", "stale write modified file")
+        result, text = call("read_files", {"items":[{"path":str(self.root / "runner.toml")}]})
+        check("server_url" not in text, "outside-root read exposed content")
+        (self.project_dir / "large.txt").write_text(("large line " + "x" * 120 + "\n") * 500)
+        result, text = call("read_files", {"items":[{"path":"large.txt", "limit":1000}]})
+        check(not result["result"].get("isError") and len(text) < 50000 and "more lines available" in text,
+              "default read budget exceeded client threshold or lost coverage")
+        large_read_chars = len(text)
+        try:
+            self.rpc("tools/call", {"name":"edit_project_files", "arguments":{"changes":[{
+                "kind":"write", "path":"ranges.py", "expected_read_revision":"bad",
+                "content":"PRIVATE_CONTENT_MUST_NOT_APPEAR"}]}})
+            raise AssertionError("invalid revision type accepted")
+        except HTTPError as error:
+            diagnostic = error.read().decode()
+            check(error.code == 400 and "expected_read_revision" in diagnostic
+                  and "PRIVATE_CONTENT_MUST_NOT_APPEAR" not in diagnostic,
+                  "invalid revision did not identify the field safely")
+        result, text = call("run_shell", {"command":"python3 -c 'import time; print(1, flush=True); time.sleep(30)'", "sync_wait_secs":1})
+        _, arguments = next(next_calls(text))
+        stopped_job = arguments["items"][0]["job_id"]
+        result, text = call("stop_job", {"job_id":stopped_job})
+        check(not result["result"].get("isError") and "job_session_unknown" not in text,
+              "CLI stop required redundant confirmation or emitted a Session warning")
+        result, text = call("observe_jobs", {"items":[{"job_id":stopped_job}], "wait_secs":10})
+        check("cancelled" in text or "stopped" in text, "stopped process did not reach terminal state")
+        return {"sync_16s_elapsed":round(sync_elapsed, 2), "tokenless_wait_elapsed":round(wait_elapsed, 2),
+                "retained_log_pages":pages, "absolute_read_and_edit":True, "revision_fenced_overwrite":True,
+                "unique_exact_without_revision":True, "stale_write_rejected":True, "outside_path_rejected":True,
+                "large_read_chars":large_read_chars, "revision_error_field_path":True,
+                "stop_without_confirmation":True}
+
     def reset_fixture(self):
         for file in self.project_dir.iterdir():
             if file.is_dir(): shutil.rmtree(file)
             else: file.unlink()
         for name, text in {"ranges.py": SOURCE, "test_ranges.py": TESTS,
-                           "long_check.py": LONG_CHECK,
-                           "AGENTS.md": "This disposable repository uses Python unittest. Preserve SENTINEL.\n"}.items():
+                           "long_check.py": LONG_CHECK, "noisy_check.py": NOISY_CHECK,
+                           "AGENTS.md": INSTRUCTIONS, "CLAUDE.md": INSTRUCTIONS}.items():
             (self.project_dir / name).write_text(text)
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.project_dir,
                        env=self.env, stdin=subprocess.DEVNULL, check=True)
 
-    def run_client(self, client, args):
+    def run_client(self, client, args, native=False):
         self.reset_fixture()
-        env = dict(os.environ) | {"WEBCODEX_LOCAL_TEST_TOKEN": self.owner}
+        env = dict(os.environ)
+        if not native: env["WEBCODEX_LOCAL_TEST_TOKEN"] = self.owner
+        label = client + ("-native" if native else "-mcp")
+        cwd = self.project_dir if native else self.client_dir
+        prompt = PROMPT if not native else PROMPT.replace(
+            "Work on the remote Project configured on the webcodex MCP server; your local cwd is unrelated. ",
+            "Work in the current local repository using your native tools. ")
+        generated = None
+        if not native:
+            generator = [str(self.bin_dir / "webcodex"), "mcp-config", "--client", client,
+                         "--url", self.url + "/mcp", "--project", self.project,
+                         "--token-env", "WEBCODEX_LOCAL_TEST_TOKEN"]
+            if client == "codex": generator.append("--approve-execution")
+            generated = subprocess.check_output(generator, env=self.env, stdin=subprocess.DEVNULL, text=True)
         if client == "codex":
-            server = '{url=' + json.dumps(self.url + "/mcp") + ',bearer_token_env_var="WEBCODEX_LOCAL_TEST_TOKEN",required=true,tool_timeout_sec=65,tools={edit_project_files={approval_mode="approve"},run_shell={approval_mode="approve"},stop_job={approval_mode="approve"}},http_headers={'
-            server += ",".join(json.dumps(k) + "=" + json.dumps(v) for k, v in self.headers.items()) + '}}'
+            servers = {} if native else tomllib.loads(generated)["mcp_servers"]
             command = [args.codex_path, "exec", "--ignore-user-config", "--strict-config",
-                       "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--json",
+                       "--sandbox", "danger-full-access" if native else "read-only", "--ephemeral", "--skip-git-repo-check", "--json",
                        "--model", args.codex_model, "--config", 'model_reasoning_effort="low"',
-                       "--config", "mcp_servers={webcodex=" + server + "}",
-                       "--cd", str(self.client_dir), "-"]
+                       "--config", "mcp_servers=" + inline_toml(servers),
+                       "--cd", str(cwd), "-"]
         else:
             config = self.root / "claude-mcp.json"
-            private_json(config, {"mcpServers": {"webcodex": {"type": "http", "url": self.url + "/mcp",
-                "headers": self.headers | {"Authorization": "Bearer ${WEBCODEX_LOCAL_TEST_TOKEN}"}}}})
+            private_json(config, {"mcpServers": {}} if native else json.loads(generated))
             command = [args.claude_path, "-p", "--model", args.claude_model, "--effort", "low",
                        "--strict-mcp-config", "--mcp-config", str(config), "--setting-sources", "",
-                       "--permission-mode", "dontAsk", "--allowedTools", "mcp__webcodex__*",
+                       "--permission-mode", "dontAsk", "--allowedTools", "Bash,Read,Edit,Write,Glob,Grep" if native else "mcp__webcodex__*",
                        "--no-session-persistence", "--output-format", "stream-json", "--verbose"]
-        stdout, stderr = self.root / f"{client}.jsonl", self.root / f"{client}.stderr"
+        stdout, stderr = self.root / f"{label}.jsonl", self.root / f"{label}.stderr"
         start = time.monotonic()
         with stdout.open("wb") as output, stderr.open("wb") as errors:
-            process = subprocess.Popen(command, cwd=self.client_dir, env=env, stdin=subprocess.PIPE,
+            process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.PIPE,
                                        stdout=output, stderr=errors, start_new_session=True)
             try:
-                process.stdin.write(PROMPT.encode())
+                process.stdin.write(prompt.encode())
                 process.stdin.close()
                 while process.poll() is None:
                     check(time.monotonic() - start < args.timeout, "model deadline exceeded")
@@ -168,7 +288,8 @@ class Acceptance(Smoke):
                 if frame.get("type") == "item.completed":
                     if item.get("type") == "mcp_tool_call": calls.append(item.get("tool", "unknown"))
                     if item.get("type") == "agent_message": feedback.append(item.get("text", ""))
-                    check(item.get("type") != "command_execution", "model used local command execution")
+                    if native and item.get("type") in {"command_execution", "file_change"}: calls.append(item["type"])
+                    if not native: check(item.get("type") != "command_execution", "model used local command execution")
                 if frame.get("type") == "turn.completed": usage.append(frame.get("usage", {}))
         else:
             for frame in frames:
@@ -179,17 +300,20 @@ class Acceptance(Smoke):
                             if name == "ToolSearch":
                                 native_discovery.append(name)
                             else:
-                                check(name.startswith("mcp__webcodex__"), "model used a non-fixture execution tool")
+                                check(native or name.startswith("mcp__webcodex__"), "model used a non-fixture execution tool")
                                 calls.append(name.removeprefix("mcp__webcodex__"))
                 if frame.get("type") == "result":
                     feedback.append(frame.get("result", ""))
                     usage.append(frame.get("usage", {}))
         print(json.dumps({"client": client, "observed_calls": dict(Counter(calls)),
                           "native_discovery": dict(Counter(native_discovery))}), flush=True)
-        check(calls and "observe_jobs" in calls, "model did not observe the asynchronous Job")
+        check(calls, "model did not use tools")
         check(not set(calls) & {"work_on_project", "run_process", "run_script"}, "unexpected default workflow")
         check((self.project_dir / "test_ranges.py").read_text() == TESTS, "model changed fixture tests")
         check((self.project_dir / "long_check.py").read_text() == LONG_CHECK, "model changed long check")
+        check((self.project_dir / "noisy_check.py").read_text() == NOISY_CHECK, "model changed noisy check")
+        instructions_followed = ((self.project_dir / "instructions-read.txt").exists() and
+            (self.project_dir / "instructions-read.txt").read_text() == "REMOTE_RULE_OK\n")
         check((self.project_dir / "executions.txt").read_text() == "started\n", "long command replayed")
         check((self.project_dir / "long-result.txt").read_text() == "LONG_CHECK_OK\n", "long command incomplete")
         result = subprocess.run([sys.executable, "-m", "unittest", "-v"], cwd=self.project_dir,
@@ -197,9 +321,11 @@ class Acceptance(Smoke):
         check(result.returncode == 0, "independent tests failed")
         sessions = self.post("/api/tools/call", {"tool": "list_sessions", "params": {"project": self.project}}, self.bootstrap)
         check(sessions.get("success") and sessions["output"]["total"] == 0, "unexpected Workflow Session created")
-        report = {"client": client, "model": args.codex_model if client == "codex" else args.claude_model,
+        report = {"client": client, "mode": "native" if native else "mcp", "instructions_followed": instructions_followed,
+                  "model": args.codex_model if client == "codex" else args.claude_model,
                   "effort": "low", "elapsed_secs": round(time.monotonic() - start, 2),
                   "tool_calls": dict(Counter(calls)), "total_calls": len(calls), "usage": usage,
+                  "call_metric": "completed_action_events; native stdin polls are not separately emitted" if client == "codex" else "tool_use_blocks",
                   "native_discovery": dict(Counter(native_discovery)), "workflow_sessions": 0,
                   "feedback": "\n".join(feedback)[-8000:], "independent_tests_passed": True,
                   "long_command_executions": 1}
@@ -219,6 +345,7 @@ def main():
     parser.add_argument("--claude-path", default="claude")
     parser.add_argument("--codex-model", default="gpt-6-astra")
     parser.add_argument("--claude-model", default="opus")
+    parser.add_argument("--probe-only", action="store_true")
     parser.add_argument("--timeout", type=int, default=360)
     args = parser.parse_args()
     args.output_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -228,18 +355,21 @@ def main():
               "client_versions": {name: subprocess.check_output([executable, "--version"], text=True).strip()
                                   for name, executable in [("codex", args.codex_path), ("claude", args.claude_path)] if name in args.clients},
               "binaries": {name: hashlib.sha256((args.bin_dir / name).read_bytes()).hexdigest()
-                           for name in ("webcodex-server", "webcodex-runner")}, "clients": []}
+                           for name in ("webcodex-server", "webcodex-runner", "webcodex")}, "clients": []}
     with tempfile.TemporaryDirectory(prefix="private-", dir=args.output_dir) as private:
         smoke = Acceptance(args.bin_dir.resolve(), Path(private))
         try:
             smoke.prepare()
             inventory = smoke.rpc("tools/list", {})["result"]
             report["discovery"] = {"tools": [tool["name"] for tool in inventory["tools"]],
-                                   "json_bytes": len(json.dumps(inventory, separators=(",", ":")).encode())}
-            for client in args.clients:
-                report["clients"].append(smoke.run_client(client, args))
-                private_json(args.output_dir / "report.json", report)
-                print(json.dumps(report["clients"][-1], ensure_ascii=False), flush=True)
+                                   "json_bytes": len(json.dumps(inventory, separators=(",", ":")).encode()),
+                                   "input_schema_bytes": {tool["name"]:len(json.dumps(tool["inputSchema"], separators=(",", ":")).encode()) for tool in inventory["tools"]}}
+            report["probes"] = smoke.probe_native_contracts()
+            for client in ([] if args.probe_only else args.clients):
+                for native in [False, True]:
+                    report["clients"].append(smoke.run_client(client, args, native))
+                    private_json(args.output_dir / "report.json", report)
+                    print(json.dumps(report["clients"][-1], ensure_ascii=False), flush=True)
         finally:
             smoke.close()
             report["services_stopped"] = all(p is None or p.poll() is not None for p in [smoke.server, smoke.runner])

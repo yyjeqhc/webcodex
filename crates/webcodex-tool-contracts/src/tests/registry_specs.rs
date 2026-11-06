@@ -1027,16 +1027,15 @@ fn observe_jobs_wake_policy_schema_is_closed_and_compatible() {
         wake["enum"],
         serde_json::json!(["change", "meaningful_change", "terminal", "all_terminal"])
     );
-    assert_eq!(wake["default"], "change");
+    assert_eq!(wake["default"], "terminal");
     assert!(!spec.input_schema["required"]
         .as_array()
         .unwrap()
         .contains(&serde_json::json!("wake_on")));
     for phrase in [
-        "No token",
-        "omitted wait_secs",
-        "immediate baseline",
-        "bounded wait_secs",
+        "without a token",
+        "wait_secs defaults to 0",
+        "change/meaningful_change need after_observation_token",
         "Terminal is not success",
     ] {
         assert!(spec.description.contains(phrase), "missing {phrase}");
@@ -1053,14 +1052,14 @@ fn observe_jobs_wake_policy_schema_is_closed_and_compatible() {
     assert!(wake_description.contains("any terminal result unblocks progress"));
     assert!(wake_description.contains("predetermined set"));
     for boundary in [
-        "change (default)",
+        "terminal (default)",
         "meaningful_change",
         "sequence-only heartbeat",
         "terminal waits for any Job",
         "all_terminal waits for every",
         "changed=true",
-        "No token means immediate baseline",
-        "no wait_secs means immediate observation",
+        "No token is required for terminal/all_terminal",
+        "No wait_secs means immediate observation",
     ] {
         assert!(wake_description.contains(boundary), "missing {boundary}");
     }

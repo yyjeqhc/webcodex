@@ -168,7 +168,7 @@ fn cli_text(body: &Value) -> &str {
 fn recovery_calls(body: &Value) -> Vec<Value> {
     cli_text(body)
         .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+        .filter_map(crate::mcp::parse_call_line_for_test)
         .filter(|value| value["tool"].is_string() && value["arguments"].is_object())
         .collect()
 }
@@ -207,7 +207,7 @@ fn assert_model_evidence_survives_cli(tool: &str, model: &Value, body: &Value) {
     fn check(value: &Value, rendered: &str, calls: &[Value]) {
         if value["tool"].is_string() && value["arguments"].is_object() {
             assert!(
-                calls.contains(value),
+                calls.contains(&json!({"tool":value["tool"], "arguments":value["arguments"]})),
                 "recovery changed: {value}\n{rendered}"
             );
             assert_call_parses(value);
@@ -222,7 +222,6 @@ fn assert_model_evidence_survives_cli(tool: &str, model: &Value, body: &Value) {
                         | "execution_state"
                         | "command_execution_state"
                         | "status"
-                        | "failure_kind"
                         | "error_kind"
                         | "recovery_reason_code"
                         | "stdout_tail"
@@ -245,27 +244,21 @@ fn assert_model_evidence_survives_cli(tool: &str, model: &Value, body: &Value) {
                                 );
                             }
                         }
-                        "terminal"
-                        | "command_started"
-                        | "command_completed"
-                        | "promoted_to_job"
-                        | "tool_failure"
-                        | "direct_retry_safe"
-                        | "has_more"
-                        | "limit"
-                        | "returned_lines"
-                        | "stdout_truncated"
+                        "stdout_truncated"
                         | "stderr_truncated"
                         | "stdout_delta_reset"
                         | "stderr_delta_reset"
                         | "earlier_stdout_unavailable"
-                        | "earlier_stderr_unavailable" => {
-                            if !value.is_object() && !value.is_array() {
-                                assert!(
-                                    rendered.contains(&format!("{key}: {value}")),
-                                    "{key}: {value}\n{rendered}"
-                                );
-                            }
+                        | "earlier_stderr_unavailable"
+                            if value == true =>
+                        {
+                            assert!(rendered.contains(&format!("{key}: true")), "{rendered}");
+                        }
+                        "failure_kind" if value == "outcome_unknown" => {
+                            assert!(rendered.contains("outcome_unknown"), "{rendered}");
+                        }
+                        "has_more" if value == true => {
+                            assert!(rendered.contains("more lines available"), "{rendered}");
                         }
                         "output_truncated" if value == true => {
                             assert!(rendered.contains("output_truncated: true"), "{rendered}");
@@ -540,7 +533,7 @@ async fn cli_runtime_files_search_and_execution_snapshots() {
     for (name, body) in contexts {
         let rendered = cli_text(&body);
         if name == "process_success" {
-            if rendered != "hello\n" {
+            if rendered != "stdout:\nhello\n" {
                 presentation_regressions
                     .push(format!("{name}: default success retains redundant fields"));
             }

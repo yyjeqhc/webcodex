@@ -618,23 +618,24 @@ pub(crate) fn workflow_session_authority_fingerprint(
     ))
 }
 
-/// Snapshot-scoped Project root identity. The Runner's canonical root witness
-/// wins; older/mock Runner inventories fall back to their registered root path,
-/// never to the user-supplied Project selector.
+/// Scope a Project-bound Session to a single persisted Runner registration.
+/// A root path alone cannot prove continuity after unregister/re-register.
 pub(crate) fn workflow_project_identity(
     root_fingerprint: Option<&str>,
     registered_path: &str,
-) -> String {
+    registration_incarnation: Option<&str>,
+) -> Option<String> {
+    let incarnation = registration_incarnation.filter(|value| !value.is_empty())?;
     let root = root_fingerprint.filter(|fp| !fp.trim().is_empty());
-    hash_authority_identity(
-        b"webcodex.workflow-project-root.v1\0",
+    Some(hash_authority_identity(
+        b"webcodex.workflow-project-registration.v2\0",
         if root.is_some() {
             "canonical-root"
         } else {
             "registered-path"
         },
-        root.unwrap_or(registered_path),
-    )
+        &format!("{}\0{}", incarnation, root.unwrap_or(registered_path)),
+    ))
 }
 
 pub(crate) fn workflow_session_incarnation_fingerprint(

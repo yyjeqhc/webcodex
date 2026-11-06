@@ -1250,6 +1250,7 @@ fn register_managed_source_project_as(registry: &Path, source: &Path, id: &str) 
         name: Some("Source".to_string()),
         kind: Some("repo".to_string()),
         registration_source: None,
+        registration_incarnation: None,
         description: None,
         disabled: false,
         hooks: HashMap::new(),
@@ -2076,6 +2077,128 @@ fn runner_project_cache_invalidate_refreshes_after_project_op() {
     let projects = cache.get(&cfg);
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0].id, "cached");
+}
+
+#[test]
+fn runner_registration_incarnation_survives_reload_and_rotates_after_unregister() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    let registry = tmp.path().join("project-registry");
+    std::fs::create_dir(&root).unwrap();
+    let policy = project_policy(tmp.path());
+    let register = || {
+        project_request(
+            "register_project",
+            serde_json::json!({
+                "id": "reusable",
+                "name": "Reusable",
+                "path": root.to_string_lossy()
+            }),
+        )
+    };
+
+    let first = project_ok(handle_project_op(&policy, &registry, &register()));
+    let original_id = first["registration_incarnation"]
+        .as_str()
+        .expect("new registration must persist an incarnation")
+        .to_string();
+    uuid::Uuid::parse_str(&original_id).unwrap();
+
+    let persisted = std::fs::read_to_string(registry.join("reusable.toml")).unwrap();
+    let parsed = parse_runner_project_toml(&persisted).unwrap();
+    assert_eq!(
+        parsed.registration_incarnation.as_deref(),
+        Some(original_id.as_str())
+    );
+    assert_eq!(
+        runner_project_summary(&parsed, 1, false)
+            .registration_incarnation
+            .as_deref(),
+        Some(original_id.as_str())
+    );
+
+    let recovered = project_ok(handle_project_op(&policy, &registry, &register()));
+    assert_eq!(recovered["registration_incarnation"], original_id);
+    let removed = project_ok(handle_project_lifecycle_op(
+        &policy,
+        &registry,
+        &project_request(
+            "project_lifecycle_unregister",
+            serde_json::json!({
+                "project_id": "reusable",
+                "expected_revision": first["revision"],
+            }),
+        ),
+    ));
+    assert_eq!(removed["changed"], true);
+    assert!(!registry.join("reusable.toml").exists());
+
+    let replacement = project_ok(handle_project_op(&policy, &registry, &register()));
+    let replacement_id = replacement["registration_incarnation"]
+        .as_str()
+        .expect("new registration must have an incarnation");
+    assert_ne!(replacement_id, original_id);
+    uuid::Uuid::parse_str(replacement_id).unwrap();
+}
+
+#[test]
+fn legacy_project_toml_migration_is_durable_and_never_resumes_old_registration() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_dir = tmp.path().join("repo");
+    let registry = tmp.path().join("project-registry");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::create_dir(&registry).unwrap();
+    let record = registry.join("legacy.toml");
+    let legacy_toml = format!(
+        "id = \"legacy\"\npath = {:?}\nname = \"Legacy\"\n[hooks]\ncheck = [\"echo safe\"]\n",
+        project_dir.to_string_lossy()
+    );
+    std::fs::write(&record, &legacy_toml).unwrap();
+
+    let first = load_runner_project_summaries_from_dir(&registry);
+    assert_eq!(first.len(), 1);
+    let first_identity = first[0].registration_incarnation.as_deref().unwrap();
+    uuid::Uuid::parse_str(first_identity).unwrap();
+
+    let upgraded_toml = std::fs::read_to_string(&record).unwrap();
+    assert!(
+        upgraded_toml.starts_with("registration_incarnation = "),
+        "migration must prepend the key before a trailing TOML table"
+    );
+    assert!(upgraded_toml.contains("[hooks]\ncheck = [\"echo safe\"]"));
+    let upgraded = parse_runner_project_toml(&upgraded_toml).unwrap();
+    assert_eq!(
+        upgraded.registration_incarnation.as_deref(),
+        Some(first_identity)
+    );
+    assert_eq!(
+        load_runner_project_summaries_from_dir(&registry)[0]
+            .registration_incarnation
+            .as_deref(),
+        Some(first_identity)
+    );
+
+    let removed = project_ok(handle_project_lifecycle_op(
+        &project_policy(tmp.path()),
+        &registry,
+        &project_request(
+            "project_lifecycle_unregister",
+            serde_json::json!({
+                "project_id": "legacy",
+                "expected_revision": first[0].revision
+            }),
+        ),
+    ));
+    assert_eq!(removed["changed"], true);
+
+    // Even a byte-for-byte reintroduced legacy config is a NEW registration.
+    std::fs::write(&record, legacy_toml).unwrap();
+    let replacement = load_runner_project_summaries_from_dir(&registry);
+    assert_eq!(replacement.len(), 1);
+    assert_ne!(
+        replacement[0].registration_incarnation,
+        first[0].registration_incarnation
+    );
 }
 
 #[test]

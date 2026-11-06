@@ -442,6 +442,7 @@ async fn hidden_extensions_keep_exact_manifest_and_gateway_execution() {
         "hidden-extension-runner",
         "inst",
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: "demo".to_string(),
             name: None,
             path: tmp.path().display().to_string(),
@@ -1270,6 +1271,7 @@ async fn project_artifact_image_call_returns_native_image_for_remote_agent_proje
         client_id,
         runner_instance_id,
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: project_name.to_string(),
             name: Some(project_name.to_string()),
             path: "/remote/session-atlas".to_string(),
@@ -3466,6 +3468,7 @@ async fn mcp_read_files_ignores_inapplicable_context_ack_without_consuming_it() 
         client_id,
         runner_instance_id,
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: project_name.to_string(),
             name: Some(project_name.to_string()),
             path: "/remote/repo".to_string(),
@@ -3889,6 +3892,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
         "mcp-client",
         "inst",
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: "demo".to_string(),
             name: Some("demo".to_string()),
             path: "/tmp/mcp-demo".to_string(),
@@ -4065,6 +4069,7 @@ async fn managed_worktree_project_grant_admission_preserves_exact_and_root_autho
         CLIENT,
         INSTANCE,
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: PROJECT.into(),
             name: Some(PROJECT.into()),
             path: source.to_string_lossy().into_owned(),
@@ -4196,6 +4201,7 @@ async fn managed_worktree_project_grant_admission_preserves_exact_and_root_autho
         CLIENT,
         INSTANCE,
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: PROJECT.into(),
             name: Some(PROJECT.into()),
             path: source.to_string_lossy().into_owned(),
@@ -4525,6 +4531,7 @@ async fn project_grant_authority_is_identical_for_project_credential_and_share_o
         })
     };
     let project = |id: &str, path: &str| RunnerProjectSummary {
+        registration_incarnation: None,
         id: id.to_string(),
         name: Some(id.to_string()),
         path: path.to_string(),

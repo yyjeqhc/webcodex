@@ -42,6 +42,7 @@ fn agent_auth_context(
 
 fn project_summary(id: &str, path: &str) -> RunnerProjectSummary {
     RunnerProjectSummary {
+        registration_incarnation: None,
         id: id.to_string(),
         name: Some(id.to_string()),
         path: path.to_string(),

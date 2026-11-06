@@ -107,6 +107,8 @@ pub(crate) struct RunnerProjectFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) registration_source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) registration_incarnation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) description: Option<String>,
     #[serde(default)]
     pub(crate) disabled: bool,
@@ -294,6 +296,7 @@ mod durability_tests {
             name: None,
             kind: None,
             registration_source: None,
+            registration_incarnation: None,
             description: None,
             disabled: false,
             hooks: HashMap::new(),

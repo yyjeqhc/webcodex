@@ -1451,6 +1451,10 @@ pub struct RunnerProjectSummary {
     /// Stable SHA-256 revision of the persisted project registration record TOML content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+    /// Opaque stable ID for this exact persisted Project registration. A new
+    /// registration must never reuse the ID, even for the same root and name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_incarnation: Option<String>,
     /// Domain-separated identity of the currently observed canonical Project
     /// root. Missing means the Runner could not prove a current root identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]

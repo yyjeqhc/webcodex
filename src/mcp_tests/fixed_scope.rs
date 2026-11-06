@@ -70,6 +70,7 @@ async fn scope_fixture_runner(
         client_id,
         &format!("inst-{client_id}"),
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: "repo".to_string(),
             name: None,
             path: format!("/scope-fixture/{client_id}"),

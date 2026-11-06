@@ -727,6 +727,13 @@ pub(super) fn validate_project_summary(project: &RunnerProjectSummary) -> Result
     {
         return Err("project_summary_invalid_root_fingerprint");
     }
+    if project
+        .registration_incarnation
+        .as_deref()
+        .is_some_and(|value| uuid::Uuid::parse_str(value).is_err())
+    {
+        return Err("project_summary_invalid_registration_incarnation");
+    }
     if let Some(RunnerProjectLineage::ManagedWorktreeSource {
         source_project_id,
         source_root_fingerprint,

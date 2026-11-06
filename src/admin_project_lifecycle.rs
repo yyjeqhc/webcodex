@@ -655,6 +655,10 @@ fn map_create_result(
 
 fn lifecycle_summary(output: &Value, id: &str) -> Option<RunnerProjectSummary> {
     Some(RunnerProjectSummary {
+        registration_incarnation: output
+            .get("registration_incarnation")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         id: id.to_string(),
         name: output
             .get("name")

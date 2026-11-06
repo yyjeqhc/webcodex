@@ -341,6 +341,16 @@ impl ToolRuntime {
                 }),
             );
         }
+        if resolved
+            .as_ref()
+            .is_some_and(|project| project.registration_incarnation.is_none())
+        {
+            return ToolResult::err_with_output(
+                "project_registration_identity_unavailable",
+                json!({"error_kind": "project_registration_identity_unavailable", "state_changed": false,
+                    "recovery": "upgrade the Runner and refresh the persisted Project inventory before starting a new Session"}),
+            );
+        }
         let owner_authority_fingerprint = match workflow_session_authority_fingerprint(auth) {
             Ok(fingerprint) => fingerprint,
             Err(_) => {
@@ -369,8 +379,12 @@ impl ToolRuntime {
             ),
         )
         .with_owner_authority_fingerprint(Some(owner_authority_fingerprint))
-        .with_project_identity(resolved.as_ref().map(|project| {
-            workflow_project_identity(project.root_fingerprint.as_deref(), &project.config.path)
+        .with_project_identity(resolved.as_ref().and_then(|project| {
+            workflow_project_identity(
+                project.root_fingerprint.as_deref(),
+                &project.config.path,
+                project.registration_incarnation.as_deref(),
+            )
         }))
         .with_project_instructions(project_instructions.clone())
         .with_execution_context(execution_context.unwrap_or_default());
@@ -691,20 +705,17 @@ impl ToolRuntime {
                 let live_identity = workflow_project_identity(
                     resolved.root_fingerprint.as_deref(),
                     &resolved.config.path,
+                    resolved.registration_incarnation.as_deref(),
                 );
                 let recorded_identity =
                     self.sessions.session_project_identity(session_id).flatten();
-                // A replaced Project must never inherit access to old history or
-                // its Shell cleanup. Legacy Sessions without a root identity may
-                // be read/closed, but cannot regain execution authority.
+                // Only a proven same registration may retain live or historical
+                // rights while registered. A missing legacy witness fails closed.
                 if !synthetic_test_fixture
-                    && match recorded_identity.as_deref() {
-                        Some(original) => original != live_identity,
-                        None => !historical_only,
-                    }
+                    && (live_identity.is_none() || recorded_identity != live_identity)
                 {
                     return Err(ToolResult::err_with_output(
-                        "session_project_identity_changed: the original Project root is no longer verified",
+                        "session_project_identity_changed: the original Project registration is no longer verified",
                         json!({
                             "error_kind": "session_project_identity_changed",
                             "session_id": session_id,

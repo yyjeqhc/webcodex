@@ -277,6 +277,141 @@ async fn retired_project_reused_id_cannot_resume_old_session() {
 }
 
 #[tokio::test]
+async fn retired_project_same_root_reregistration_cannot_resume_old_session() {
+    let runtime = test_runtime();
+    let auth = owner(false);
+    register(&runtime, "alice", Some("/original-root")).await;
+    let id = start(&runtime, &auth).await;
+    unregister(&runtime).await;
+    register(&runtime, "alice", Some("/original-root")).await;
+
+    let result = call(
+        &runtime,
+        Some(&auth),
+        "update_session_context",
+        json!({
+            "project": PROJECT,
+            "session_id": id,
+            "execution_context": {"default_cwd": "src"}
+        }),
+        None,
+    )
+    .await;
+    assert!(
+        !result.success,
+        "re-registering the same root must not revive a retired Session: {result:?}"
+    );
+
+    // A stale Session must not enqueue a Runner command on the replacement,
+    // even when the Project selector and canonical root are byte-for-byte equal.
+    let forbidden = runtime
+        .dispatch_with_auth(
+            ToolCall::RunShell {
+                login: false,
+                project: PROJECT.to_string(),
+                command: "echo stale".to_string(),
+                session_id: Some(id),
+                timeout_secs: Some(10),
+                sync_wait_secs: None,
+                cwd: None,
+                purpose: None,
+                shell: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(
+        !forbidden.success,
+        "stale Session must not execute: {forbidden:?}"
+    );
+    assert_eq!(
+        forbidden.output["error_kind"],
+        "session_project_identity_changed"
+    );
+    assert_ne!(forbidden.output["command_started"], true);
+    assert!(
+        probe_agent_request_for_instance(&runtime, CLIENT, &format!("inst-{CLIENT}"))
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn project_inventory_reconnect_keeps_registration_identity() {
+    let runtime = test_runtime();
+    let auth = owner(false);
+    let project = registered_project("repo", "/original-root");
+    let original_incarnation = project.registration_incarnation.clone();
+    assert!(original_incarnation.is_some());
+
+    register_agent_projects(
+        &runtime,
+        CLIENT,
+        Some("alice"),
+        RunnerCapabilities::default(),
+        vec![project.clone()],
+    )
+    .await;
+    let id = start(&runtime, &auth).await;
+
+    // Reconnect/re-publish the same persisted registration, not a fresh one.
+    register_agent_projects(
+        &runtime,
+        CLIENT,
+        Some("alice"),
+        RunnerCapabilities::default(),
+        vec![project],
+    )
+    .await;
+
+    let result = call(
+        &runtime,
+        Some(&auth),
+        "update_session_context",
+        json!({"project": PROJECT, "session_id": id,
+            "execution_context": {"default_cwd": "src"}}),
+        None,
+    )
+    .await;
+    assert!(
+        result.success,
+        "a reconnect must not retire the same registration: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn legacy_registration_without_incarnation_cannot_create_live_session() {
+    let runtime = test_runtime();
+    let auth = owner(false);
+    let mut legacy = registered_project("repo", "/original-root");
+    legacy.registration_incarnation = None;
+    register_agent_projects(
+        &runtime,
+        CLIENT,
+        Some("alice"),
+        RunnerCapabilities::default(),
+        vec![legacy],
+    )
+    .await;
+    let result = call(
+        &runtime,
+        Some(&auth),
+        "start_session",
+        json!({"project": PROJECT}),
+        None,
+    )
+    .await;
+    assert!(
+        !result.success,
+        "legacy path-only identity is not execution authority: {result:?}"
+    );
+    assert_eq!(
+        result.result.unwrap().output["error_kind"],
+        "project_registration_identity_unavailable"
+    );
+}
+
+#[tokio::test]
 async fn retired_project_close_commits_before_success_and_survives_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("webcodex.db");

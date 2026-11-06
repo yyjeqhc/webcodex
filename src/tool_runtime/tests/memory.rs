@@ -24,6 +24,7 @@ fn resolved(id: &str, client: &str, root: &str) -> ResolvedProject {
             allow_patch: true,
         },
         root_fingerprint: None,
+        registration_incarnation: None,
         knowledge_association: None,
     }
 }

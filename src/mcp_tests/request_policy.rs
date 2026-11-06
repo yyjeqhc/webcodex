@@ -316,6 +316,7 @@ async fn request_policy_pending_wait_and_terminal_observe_keep_one_execution_wit
         "request-policy",
         "inst-policy",
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: "demo".into(),
             name: None,
             path: "/tmp/request-policy".into(),

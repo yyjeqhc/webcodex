@@ -138,6 +138,7 @@ async fn stateless_observation_runner_registry() -> Arc<crate::runner_http::Runn
         "inst-mcp-observation",
         vec![
             crate::runner_protocol::RunnerProjectSummary {
+                registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
                 id: "shared".to_string(),
                 name: Some("Shared observation project".to_string()),
                 path: "/tmp/mcp-observation-shared".to_string(),
@@ -157,6 +158,7 @@ async fn stateless_observation_runner_registry() -> Arc<crate::runner_http::Runn
                 shell_profile: None,
             },
             crate::runner_protocol::RunnerProjectSummary {
+                registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
                 id: "foreign".to_string(),
                 name: Some("Foreign observation project".to_string()),
                 path: "/tmp/mcp-observation-foreign".to_string(),

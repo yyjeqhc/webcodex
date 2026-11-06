@@ -282,6 +282,7 @@ async fn register_import_agent_with_capabilities(
         "importer",
         "inst-import",
         vec![RunnerProjectSummary {
+            registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
             id: "demo".to_string(),
             name: Some("demo".to_string()),
             path: root.to_string_lossy().to_string(),
@@ -632,6 +633,7 @@ fn http_runtime_status_after_runner_registration_fits_default_worker_stack() {
                 "status-stack-runner",
                 "status-stack-instance",
                 vec![RunnerProjectSummary {
+                    registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
                     id: "smoke-proj".to_string(),
                     name: Some("Smoke Project".to_string()),
                     path: "/tmp/status-stack-project".to_string(),

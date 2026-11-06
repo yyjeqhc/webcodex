@@ -291,6 +291,7 @@ async fn mcp_import_runtime_inner(
         "importer",
         "inst-import",
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: "demo".to_string(),
             name: Some("demo".to_string()),
             path: root.to_string_lossy().into_owned(),

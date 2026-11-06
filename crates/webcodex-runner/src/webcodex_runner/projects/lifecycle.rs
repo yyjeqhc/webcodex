@@ -40,7 +40,7 @@ fn lifecycle_config_path(project_registry_dir: &Path, id: &str) -> Result<PathBu
     Ok(path)
 }
 
-fn write_existing_project_atomic(path: &Path, content: &str) -> Result<(), String> {
+pub(super) fn write_existing_project_atomic(path: &Path, content: &str) -> Result<(), String> {
     let dir = path
         .parent()
         .ok_or_else(|| "project config has no parent".to_string())?;
@@ -316,6 +316,7 @@ fn recovered_project_result(
         "outcome": if create { "created" } else { "registered" },
         "revision": project_revision(project),
         "root_fingerprint": root_fingerprint,
+        "registration_incarnation": project.registration_incarnation,
         "lineage": project_lineage(project),
     })
 }
@@ -435,7 +436,12 @@ pub(crate) fn handle_project_operation(
     let client_id = client_id.to_string();
     let runtime_id = format!("agent:{}:{}", client_id, id);
 
-    let toml_content = build_project_toml(&id, &name, &path, &description, allow_patch);
+    let registration_incarnation = uuid::Uuid::new_v4().to_string();
+    let mut toml_content = build_project_toml(&id, &name, &path, &description, allow_patch);
+    toml_content.push_str(&format!(
+        "registration_incarnation = \"{}\"\n",
+        registration_incarnation
+    ));
     let template = json
         .get("template")
         .and_then(|v| v.as_str())
@@ -528,6 +534,7 @@ pub(crate) fn handle_project_operation(
             "registration_source": EXPLICIT_REGISTRATION_SOURCE,
             "revision": project_revision(&parse_runner_project_toml(&toml_content).expect("generated project TOML must parse")),
             "root_fingerprint": project_root_fingerprint(&canonical),
+            "registration_incarnation": registration_incarnation,
             "operation": "register", "outcome": "registered", "changed": true, "recovered": false,
         });
         return ok_cmd(start, result);
@@ -733,6 +740,7 @@ pub(crate) fn handle_project_operation(
         "template": template,
         "revision": project_revision(&parse_runner_project_toml(&toml_content).expect("generated project TOML must parse")),
         "root_fingerprint": path_buf.canonicalize().ok().filter(|path| path.is_dir()).as_deref().map(project_root_fingerprint),
+        "registration_incarnation": registration_incarnation,
         "git_initialized": git_initialized,
         "operation": "create", "outcome": "created", "changed": true, "recovered": false,
     });

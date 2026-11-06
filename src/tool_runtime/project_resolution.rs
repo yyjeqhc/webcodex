@@ -15,6 +15,7 @@ pub(crate) struct ProjectResolverCandidate {
     pub(crate) path: String,
     pub(crate) allow_patch: bool,
     pub(crate) root_fingerprint: Option<String>,
+    pub(crate) registration_incarnation: Option<String>,
     pub(crate) lineage: Option<RunnerProjectLineage>,
     pub(crate) connected: bool,
     pub(crate) status: String,
@@ -65,6 +66,7 @@ pub(crate) struct ResolvedProject {
     /// produced this resolution. It is descriptive only and never authorizes
     /// access by itself.
     pub(crate) root_fingerprint: Option<String>,
+    pub(crate) registration_incarnation: Option<String>,
     /// Descriptive Runner-owned lineage only. It never changes execution cwd,
     /// ProjectConfig, Session authority, Plugin placement, or tool permission.
     pub(crate) knowledge_association: Option<RunnerProjectLineage>,
@@ -450,6 +452,7 @@ impl ToolRuntime {
             path: project.path.clone(),
             allow_patch: project.allow_patch,
             root_fingerprint: project.root_fingerprint.clone(),
+            registration_incarnation: project.registration_incarnation.clone(),
             lineage: project.lineage.clone(),
             connected: client.connected,
             status: client.status.clone(),
@@ -474,6 +477,7 @@ impl ToolRuntime {
             resolved_id: candidate.id.clone(),
             config: Self::project_config_from_candidate(candidate),
             root_fingerprint: candidate.root_fingerprint.clone(),
+            registration_incarnation: candidate.registration_incarnation.clone(),
             knowledge_association: candidate.lineage.clone(),
         }
     }

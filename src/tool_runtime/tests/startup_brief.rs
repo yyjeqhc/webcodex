@@ -920,10 +920,43 @@ async fn restart_restored_coding_task_session_reloads_rules_without_persisting_b
     assert!(!persisted.contains(marker));
     assert!(!persisted.contains(source_marker));
     assert!(!persisted.contains("Repository rules"));
+    let original_registration = runtime1
+        .runner_registry
+        .get_runner_view("rules-restart")
+        .await
+        .unwrap()
+        .projects
+        .into_iter()
+        .find(|project| project.id == "demo")
+        .unwrap();
     drop(runtime1);
 
     let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    register_runner_project_at_path(&runtime2, "rules-restart", "demo", root.path()).await;
+    runtime2
+        .runner_registry
+        .register(crate::test_support::runner_registration(
+            "rules-restart",
+            "inst",
+            RunnerCapabilities {
+                shell: true,
+                explicit_shell_selection: true,
+                bash_login_shell: true,
+                git: true,
+                file_read: true,
+                file_write: true,
+                internal_posix_script: true,
+                ..Default::default()
+            },
+        ))
+        .await
+        .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime2.runner_registry,
+        "rules-restart",
+        "inst",
+        vec![original_registration],
+    )
+    .await;
     let restored = start(
         &runtime2,
         "rules-restart",

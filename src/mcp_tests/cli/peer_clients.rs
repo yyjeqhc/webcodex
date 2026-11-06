@@ -146,6 +146,7 @@ fn chatgpt_codex_and_claude_discover_message_and_ack_through_real_mcp() {
             }).await.unwrap();
             crate::test_support::apply_project_inventory_snapshot(&runtime.runner_registry,
                 "peer-client-runner", "instance", vec![RunnerProjectSummary {
+        registration_incarnation: None,
                     id: "repo".into(), name: Some("Peer fixture".into()), path: temp.path().to_string_lossy().to_string(),
                     allow_patch: true, kind: Some("repo".into()), registration_source: None, description: None,
                     hooks: Vec::new(), disabled: false, revision: None, root_fingerprint: None, lineage: None,

@@ -67,7 +67,10 @@ async fn register(runtime: &ToolRuntime, name: &str, root: char) -> String {
     format!("agent:resources:{name}")
 }
 
-fn session(runtime: &ToolRuntime, project: &str, auth: &AuthContext) -> String {
+async fn session(runtime: &ToolRuntime, project: &str, auth: &AuthContext) -> String {
+    let project_identity =
+        crate::test_support::registered_session_project_identity(runtime, project, Some(auth))
+            .await;
     runtime
         .sessions
         .start_session_with_options(
@@ -79,7 +82,8 @@ fn session(runtime: &ToolRuntime, project: &str, auth: &AuthContext) -> String {
             )
             .with_owner_authority_fingerprint(Some(
                 workflow_session_authority_fingerprint(Some(auth)).unwrap(),
-            )),
+            ))
+            .with_project_identity(project_identity),
         )
         .unwrap()
         .session_id
@@ -247,7 +251,7 @@ async fn artifact_discovery_uses_exact_session_latest_manifest_and_historical_pr
     let (_temp, runtime) = fixture();
     let project = register(&runtime, "demo", '1').await;
     let auth = auth_context(None, true);
-    let selected = session(&runtime, &project, &auth);
+    let selected = session(&runtime, &project, &auth).await;
     let output = |path: &str| json!({"task_outputs":{"items":[{"path":path,"status":"verified","file_bytes":7,"sha256":"a".repeat(64),"mime_type":"text/plain"}],"verified_count":1,"missing_count":0,"unavailable_count":0,"observed_at":123}});
     finish(&runtime, &project, &selected, output("old.txt"));
     finish(&runtime, &project, &selected, output("latest.txt"));
@@ -270,7 +274,7 @@ async fn artifact_discovery_uses_exact_session_latest_manifest_and_historical_pr
         !uri.contains(&"a".repeat(64)),
         "historical SHA must not pin current file identity"
     );
-    let other_project_session = session(&runtime, "agent:resources:other", &auth);
+    let other_project_session = session(&runtime, "agent:resources:other", &auth).await;
     let mismatch = search(
         &runtime,
         WebcodexResourceKind::Artifact,
@@ -295,7 +299,8 @@ async fn artifact_discovery_uses_exact_session_latest_manifest_and_historical_pr
         &runtime,
         &project,
         &reader("other", &[SCOPE_PROJECT_READ, SCOPE_RUNTIME_READ]),
-    );
+    )
+    .await;
     assert!(
         !search(
             &runtime,

@@ -1771,6 +1771,7 @@ async fn register_job_runner(runtime: &ToolRuntime, auth: &crate::auth::AuthCont
         "result-app-runner",
         "inst-result-app",
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: "demo".to_string(),
             name: Some("Result App Demo".to_string()),
             path: "/tmp/result-app-demo".to_string(),

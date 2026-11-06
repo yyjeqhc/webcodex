@@ -254,6 +254,10 @@ fn managed_worktree_project_toml(
         true,
     );
     content.push_str("managed_worktree = true\n");
+    content.push_str(&format!(
+        "registration_incarnation = \"{}\"\n",
+        uuid::Uuid::new_v4()
+    ));
     content.push_str(&format!("managed_source = {}\n", toml_basic_string(source)));
     content.push_str(&format!(
         "managed_source_project_id = {}\n",
@@ -305,6 +309,7 @@ fn managed_worktree_success(
             "disabled": project.disabled,
             "revision": project_revision(project),
             "root_fingerprint": project_root_fingerprint(worktree),
+            "registration_incarnation": project.registration_incarnation,
             "lineage": project_lineage(project),
             "source": "managed_worktree",
             "outcome": outcome,

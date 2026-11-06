@@ -23,7 +23,11 @@ impl FileReadFailure {
             Self::StaleRevision => "stale_read_revision",
         };
         ToolResult::err_with_output(
-            format!("read_file failed: {reason}"),
+            if reason == "outside_project" {
+                "read_file failed: path is outside the Project".to_string()
+            } else {
+                format!("read_file failed: {reason}")
+            },
             json!({
                 "error_kind": "read_file_failed",
                 "reason_code": reason,
@@ -1123,10 +1127,13 @@ impl ToolRuntime {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
-        let rel_path = path
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| ".".to_string());
+        let rel_path = match crate::tool_runtime::helpers::project_relative_file_path(
+            &proj,
+            path.as_deref().filter(|p| !p.is_empty()).unwrap_or("."),
+        ) {
+            Ok(path) => path,
+            Err(error) => return ToolResult::err(error),
+        };
         if let Err(e) = validate_project_relative_path(&rel_path) {
             return ToolResult::err(e);
         }
@@ -1272,7 +1279,17 @@ impl ToolRuntime {
                 "query must be at most 200 characters without NUL".to_string(),
             );
         }
-        let scope_input = path.as_deref().unwrap_or("").trim().to_string();
+        let proj = match self.resolve_project(&project).await {
+            Ok(project) => project,
+            Err(error) => return ToolResult::err(error),
+        };
+        let scope_input = match crate::tool_runtime::helpers::project_relative_file_path(
+            &proj,
+            path.as_deref().filter(|p| !p.is_empty()).unwrap_or("."),
+        ) {
+            Ok(path) => path,
+            Err(error) => return list_tracked_error("invalid_path", error),
+        };
         if !scope_input.is_empty() && scope_input != "." {
             if let Err(error) = validate_project_relative_path(&scope_input) {
                 return list_tracked_error("invalid_path", error);
@@ -1299,10 +1316,6 @@ impl ToolRuntime {
         let offset = offset.unwrap_or(0);
         let depth = depth.map(|depth| depth.clamp(1, 16));
 
-        let proj = match self.resolve_project(&project).await {
-            Ok(project) => project,
-            Err(error) => return ToolResult::err(error),
-        };
         let command = list_tracked_files_command(&scope);
         let client_id = proj.client_id.clone();
         let (raw, exit_code, stderr) = {

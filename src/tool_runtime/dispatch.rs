@@ -42,7 +42,6 @@ pub(crate) struct DispatchContext<'a> {
     pub(crate) caller: ToolCallContext<'a>,
     pub(crate) recorder: sessions::ToolCallRecorderMetadata,
     pub(crate) context_request: Vec<String>,
-    pub(crate) prefer_full_instruction_content: bool,
     pub(crate) capabilities: ToolProtocolCapabilities,
     pub(crate) discovery_tools: Option<std::collections::BTreeSet<String>>,
     pub(crate) return_timing: ToolReturnTimingPolicy,
@@ -54,7 +53,6 @@ impl<'a> DispatchContext<'a> {
             caller,
             recorder: Default::default(),
             context_request: Vec::new(),
-            prefer_full_instruction_content: false,
             capabilities: Default::default(),
             discovery_tools: None,
             return_timing: ToolReturnTimingPolicy::unconstrained(),
@@ -192,7 +190,6 @@ impl ToolRuntime {
                 &mut result,
                 ContextProjectionRequest {
                     requested: &context.context_request,
-                    prefer_full_instruction_content: context.prefer_full_instruction_content,
                     resolved_project: None,
                     auth,
                     capabilities: context.material_capabilities(),

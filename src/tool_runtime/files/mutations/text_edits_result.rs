@@ -200,7 +200,9 @@ fn validate_apply_text_edits_success_metadata(
             ApplyFileChangeKind::Create => {
                 matches!(old_sha256, Some(Value::Null)) && apply_text_edits_sha256(new_sha256)
             }
-            ApplyFileChangeKind::Edit | ApplyFileChangeKind::Rename => {
+            ApplyFileChangeKind::Edit
+            | ApplyFileChangeKind::Write
+            | ApplyFileChangeKind::Rename => {
                 apply_text_edits_sha256(old_sha256) && apply_text_edits_sha256(new_sha256)
             }
             ApplyFileChangeKind::Delete => {

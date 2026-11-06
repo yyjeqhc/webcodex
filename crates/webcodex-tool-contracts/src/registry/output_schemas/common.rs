@@ -256,6 +256,7 @@ pub fn observe_job_continuation_schema() -> Value {
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
+                            "page": {"type":"boolean"},
                             "job_id": {"type": "string", "minLength": 1},
                             "after_observation_token": {
                                 "type": "string",
@@ -266,6 +267,7 @@ pub fn observe_job_continuation_schema() -> Value {
                         "required": ["job_id"]
                     }
                 },
+                "tail_lines": {"type":"integer", "minimum":1},
                 "wait_secs": {
                     "type": "integer",
                     "minimum": 1,
@@ -273,7 +275,7 @@ pub fn observe_job_continuation_schema() -> Value {
                 },
                 "wake_on": {"type": "string", "const": "terminal"}
             },
-            "required": ["items", "wait_secs", "wake_on"]
+            "required": ["items"]
         }),
         "Bounded next-call hint for observing the exact already-started Job. Advisory only: it grants no authority, is not a retry token, and never starts background polling.",
     )

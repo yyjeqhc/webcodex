@@ -1,7 +1,8 @@
 //! Render the Runtime's model-facing projection without escaping source text.
-//! Fields represented in text need not be repeated. Unknown fields, failures,
-//! revision fences, incomplete coverage and exact recovery calls survive.
+//! Direct execution tools declare their content fields. Specialized tools keep
+//! their existing adapters; source, revision fences and recovery remain exact.
 mod compact;
+mod native;
 
 use serde_json::{json, Value};
 use std::fmt::Write;
@@ -21,123 +22,89 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
     let Some(success) = structured.get("success").and_then(Value::as_bool) else {
         return;
     };
-    let mut output = structured.get("output").cloned().unwrap_or(Value::Null);
-    let mut text = String::new();
-    if !success {
-        let _ = writeln!(
-            text,
-            "ERROR: {}",
-            execution_error_text(
-                tool,
-                structured["error"].as_str().unwrap_or("Tool failed"),
-                &output
-            )
-        );
-    }
-    if let Some(fields) = output.as_object_mut() {
-        // Collaboration hints are already bounded and deduplicated by their
-        // owning Runtime. Keep them visible on text surfaces as on Adaptive.
-        // Native LSP failures already name the exact code and message in the
-        // error header. Keep the code and all state/recovery fields.
-        if !success
-            && matches!(
-                tool,
-                "get_lsp_status"
-                    | "list_document_symbols"
-                    | "read_document_diagnostics"
-                    | "read_symbol_hover"
-                    | "list_workspace_symbols"
-                    | "find_definition"
-                    | "find_references"
-                    | "read_call_hierarchy"
-            )
-            && fields
-                .get("code")
-                .and_then(Value::as_str)
-                .zip(fields.get("message").and_then(Value::as_str))
-                .is_some_and(|(code, message)| {
-                    structured["error"].as_str() == Some(format!("{code}: {message}").as_str())
-                })
-        {
-            fields.remove("message");
+    let mut text = if let Some(rendered) = native::render(
+        tool,
+        success,
+        structured["error"].as_str().unwrap_or("Tool failed"),
+        &structured["output"],
+    ) {
+        rendered
+    } else {
+        let mut output = structured.get("output").cloned().unwrap_or(Value::Null);
+        let mut text = String::new();
+        if !success {
+            let _ = writeln!(
+                text,
+                "ERROR: {}",
+                structured["error"].as_str().unwrap_or("Tool failed")
+            );
         }
-    }
-    match tool {
-        "read_tool_manifest" if success => render_manifest(&mut text, output),
-        "find_definition" | "find_references" if success => compact::locations(&mut text, output),
-        "list_project_files" | "list_project_tracked_files" if success => {
-            compact::files(&mut text, output)
-        }
-        "list_jobs" if success => compact::inventory(&mut text, output, "jobs"),
-        "list_projects" if success => compact::inventory(&mut text, output, "projects"),
-        "list_document_symbols" if success => compact::symbols(&mut text, output),
-        "list_workspace_symbols" if success => compact::workspace_symbols(&mut text, output),
-        "run_job" if success => compact::execution(&mut text, output),
-        "observe_jobs" | "wait_for_job_readiness" => compact::jobs(&mut text, output),
-        "run_shell" | "run_process" | "run_script" | "run_detached_process" => {
-            compact::execution(&mut text, output)
-        }
-        "read_workspace_changes" if success => compact::changes(&mut text, output),
-        "edit_project_files" if success => compact::edits(&mut text, output),
-        "read_files" => render_reads(&mut text, output),
-        "search_project_texts" => render_search_batch(&mut text, output),
-        "search_file_context" => {
-            if let Some(fields) = output.as_object_mut() {
-                if let Some(search) = fields.remove("search") {
-                    render_search_batch(&mut text, search);
-                }
-                if let Some(reads) = fields.remove("reads") {
-                    render_reads(&mut text, reads);
-                }
-                // An empty read error is redundant only when the producer
-                // confirms success. Partial/failed read diagnostics stay visible.
-                if fields.get("read_success") == Some(&Value::Bool(true)) {
-                    fields.remove("read_success");
-                    if fields.get("read_error") == Some(&Value::Null) {
-                        fields.remove("read_error");
-                    }
-                }
+        if let Some(fields) = output.as_object_mut() {
+            // Collaboration hints are already bounded and deduplicated by their
+            // owning Runtime. Keep them visible on text surfaces as on Adaptive.
+            // Native LSP failures already name the exact code and message in the
+            // error header. Keep the code and all state/recovery fields.
+            if !success
+                && matches!(
+                    tool,
+                    "get_lsp_status"
+                        | "list_document_symbols"
+                        | "read_document_diagnostics"
+                        | "read_symbol_hover"
+                        | "list_workspace_symbols"
+                        | "find_definition"
+                        | "find_references"
+                        | "read_call_hierarchy"
+                )
+                && fields
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .zip(fields.get("message").and_then(Value::as_str))
+                    .is_some_and(|(code, message)| {
+                        structured["error"].as_str() == Some(format!("{code}: {message}").as_str())
+                    })
+            {
+                fields.remove("message");
             }
-            render_fields(&mut text, &output);
         }
-        "work_on_project" if success => {
-            // Static Host workflow belongs in initialize.instructions. Retain
-            // Session identity, workspace, blockers, permission and all receipts.
-            if let Some(fields) = output.as_object_mut() {
-                fields.remove("workflow");
-                if let Some(mut context) = fields.remove("context_projection") {
-                    if let Some(materials) =
-                        context.get_mut("materials").and_then(Value::as_array_mut)
-                    {
-                        if let Some(index) = materials
-                            .iter()
-                            .position(|material| material["key"] == "project.instructions")
-                        {
-                            // Supersede the body-free startup summary, including
-                            // incomplete/unavailable evidence, without dropping
-                            // other requested chapters or truncation receipts.
-                            fields.insert("instructions".into(), materials.remove(index));
+        match tool {
+            "read_tool_manifest" if success => render_manifest(&mut text, output),
+            "find_definition" | "find_references" if success => {
+                compact::locations(&mut text, output)
+            }
+            "list_project_files" | "list_project_tracked_files" if success => {
+                compact::files(&mut text, output)
+            }
+            "list_jobs" if success => compact::inventory(&mut text, output, "jobs"),
+            "list_projects" if success => compact::inventory(&mut text, output, "projects"),
+            "list_document_symbols" if success => compact::symbols(&mut text, output),
+            "list_workspace_symbols" if success => compact::workspace_symbols(&mut text, output),
+            "run_job" if success => compact::execution(&mut text, output),
+            "wait_for_job_readiness" => compact::jobs(&mut text, output),
+            "search_project_texts" => render_search_batch(&mut text, output),
+            "search_file_context" => {
+                if let Some(fields) = output.as_object_mut() {
+                    if let Some(search) = fields.remove("search") {
+                        render_search_batch(&mut text, search);
+                    }
+                    if let Some(reads) = fields.remove("reads") {
+                        native::reads(&mut text, &reads);
+                    }
+                    // An empty read error is redundant only when the producer
+                    // confirms success. Partial/failed read diagnostics stay visible.
+                    if fields.get("read_success") == Some(&Value::Bool(true)) {
+                        fields.remove("read_success");
+                        if fields.get("read_error") == Some(&Value::Null) {
+                            fields.remove("read_error");
                         }
                     }
-                    let empty_projection = context
-                        .get("materials")
-                        .and_then(Value::as_array)
-                        .is_some_and(Vec::is_empty)
-                        && matches!(context.get("truncated"), None | Some(Value::Bool(false)))
-                        && context.as_object().is_some_and(|fields| {
-                            fields
-                                .keys()
-                                .all(|key| matches!(key.as_str(), "materials" | "truncated"))
-                        });
-                    if !empty_projection {
-                        fields.insert("context_projection".into(), context);
-                    }
                 }
+                render_fields(&mut text, &output);
             }
-            render_fields(&mut text, &output);
+            _ => render_fields(&mut text, &output),
         }
-        _ => render_fields(&mut text, &output),
-    }
+        text
+    };
     if text.is_empty() {
         text.push_str("OK\n");
     }
@@ -243,158 +210,6 @@ fn ordinary_read_failure(item: &Value) -> bool {
                 )
             })
         })
-}
-
-fn render_reads(text: &mut String, mut output: Value) {
-    let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) else {
-        render_fields(text, &output);
-        return;
-    };
-    let count = items.len();
-    let succeeded = items
-        .iter()
-        .filter(|item| {
-            item.get("success").is_none_or(|v| v == true) && item["output"]["text"].is_string()
-        })
-        .count();
-    let all_presented = !items.is_empty()
-        && items.iter().all(|item| {
-            (item
-                .get("success")
-                .is_none_or(|v| v.as_bool() == Some(true))
-                && item["error"].is_null()
-                && item["output"]["text"].is_string())
-                || ordinary_read_failure(item)
-        });
-    for (index, mut item) in std::mem::take(items).into_iter().enumerate() {
-        if ordinary_read_failure(&item) {
-            let _ = writeln!(
-                text,
-                "{}: {}",
-                compact::one_line(&item["path"]),
-                compact::one_line(&item["error"])
-            );
-            continue;
-        }
-        let path = item["path"].as_str().unwrap_or("?").to_string();
-        let read = &mut item["output"];
-        if let Some(source) = read.get("text").and_then(Value::as_str).map(str::to_string) {
-            // Canonical complete-file reads omit their range; never print "null".
-            let range = match (read["start_line"].as_u64(), read["end_line"].as_u64()) {
-                (Some(start), Some(end)) => format!(":{start}-{end}"),
-                (Some(start), None) => format!(":{start}"),
-                (None, _) => String::new(),
-            };
-            let _ = writeln!(
-                text,
-                "==> {path}{range} (read_revision {})",
-                ordered_json(&read["read_revision"])
-            );
-            text.push_str(&source);
-            if !source.ends_with('\n') {
-                text.push('\n');
-            }
-            if let Some(fields) = read.as_object_mut() {
-                for key in [
-                    "text",
-                    "path",
-                    "start_line",
-                    "end_line",
-                    "read_revision",
-                    "format",
-                ] {
-                    fields.remove(key);
-                }
-            }
-            render_fields(text, read);
-            if let Some(fields) = item.as_object_mut() {
-                for key in ["path", "output"] {
-                    fields.remove(key);
-                }
-                if fields.get("success") == Some(&Value::Bool(true)) {
-                    fields.remove("success");
-                }
-                if fields.get("error") == Some(&Value::Null) {
-                    fields.remove("error");
-                }
-            }
-            if item["index"].as_u64() == Some(index as u64) {
-                item.as_object_mut().unwrap().remove("index");
-            }
-            render_fields(text, &item);
-        } else {
-            let _ = writeln!(text, "==> {path}");
-            if let Some(fields) = item.as_object_mut() {
-                fields.remove("path");
-                if fields.get("index") == Some(&json!(index)) {
-                    fields.remove("index");
-                }
-            }
-            if item["success"] == false {
-                let error = item["error"].clone();
-                if let Some(fields) = item.get_mut("output").and_then(Value::as_object_mut) {
-                    if fields.get("error") == Some(&error) {
-                        fields.remove("error");
-                    }
-                    if fields.get("path") == Some(&json!(path)) {
-                        fields.remove("path");
-                    }
-                    if fields.is_empty() {
-                        item.as_object_mut().unwrap().remove("output");
-                    }
-                }
-                item.as_object_mut().unwrap().remove("success");
-            }
-            render_fields(text, &item);
-        }
-    }
-    output.as_object_mut().unwrap().remove("items");
-    if all_presented
-        && output
-            .get("output_truncated")
-            .is_none_or(|v| v.as_bool() == Some(false))
-    {
-        for key in ["requested_count", "returned_count"] {
-            if output[key].as_u64() == Some(count as u64) {
-                output.as_object_mut().unwrap().remove(key);
-            }
-        }
-        for (key, value) in [
-            ("succeeded_count", json!(succeeded)),
-            ("failed_count", json!(count - succeeded)),
-            ("output_truncated", json!(false)),
-            ("next_index", Value::Null),
-        ] {
-            if output.get(key) == Some(&value) {
-                output.as_object_mut().unwrap().remove(key);
-            }
-        }
-        output.as_object_mut().unwrap().remove("project");
-    }
-    render_fields(text, &output);
-}
-
-/// Replace only the MCP adapter's exact native execution log pointer. The
-/// following renderer prints those tails directly; provider errors never enter.
-fn execution_error_text(tool: &str, error: &str, output: &Value) -> String {
-    if !matches!(tool, "run_shell" | "run_process" | "run_script") {
-        return error.to_owned();
-    }
-    let logs = output.get("details").unwrap_or(output);
-    let replacement = if logs["stdout_tail"] == "" && logs["stderr_tail"] == "" {
-        "Logs: stdout and stderr were empty."
-    } else {
-        "Logs: available stdout_tail and stderr_tail are included below."
-    };
-    error
-        .replace(
-            "Logs: see output.stdout_tail and output.stderr_tail.",
-            replacement,
-        )
-        .replace(
-            "Logs: see output.details.stdout_tail and output.details.stderr_tail.",
-            replacement,
-        )
 }
 
 fn render_search_batch(text: &mut String, mut output: Value) {

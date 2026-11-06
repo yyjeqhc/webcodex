@@ -304,7 +304,7 @@ async fn fixed_credential_scope_canonical_http_matrix_preserves_failure_and_oaut
                         let params = fixed_scope_params(
                             route,
                             "run_shell",
-                            json!({"project":project,"command":"printf scope-fixture","purpose":"diagnostic"}),
+                            json!({"project":project,"command":"printf scope-fixture"}),
                         );
                         let (status, body, challenge) = fixed_scope_request(
                             &fixture.service,

@@ -14,8 +14,9 @@ fn peer_token(db: &crate::Database, username: &str) -> (String, String) {
         last_used_at: None,
         revoked_at: None,
         scopes: format!(
-            "runtime:read project:read project:write job:run {}",
-            crate::auth::SCOPE_SESSION_COLLABORATE
+            "runtime:read project:read project:write job:run {} {}",
+            crate::auth::SCOPE_SESSION_COLLABORATE,
+            crate::auth::SCOPE_PLUGIN_INSPECT
         ),
         expires_at: None,
         kind: crate::models::TOKEN_KIND_USER.into(),
@@ -67,16 +68,20 @@ async fn peer_call(
         .await;
     let status = effective_status(&response);
     let body: Value = response.take_json().await.unwrap();
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        status,
+        if ack.is_some() {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::OK
+        },
+        "{body}"
+    );
     body
 }
 
-fn rendered(body: &Value, client: usize) -> String {
-    if client == 0 {
-        body.to_string()
-    } else {
-        text(body).to_string()
-    }
+fn rendered(body: &Value, _client: usize) -> String {
+    body.to_string()
 }
 
 fn seed_meaningful_activity(
@@ -131,7 +136,7 @@ fn seed_meaningful_activity(
 }
 
 #[test]
-fn chatgpt_codex_and_claude_discover_message_and_ack_through_real_mcp() {
+fn cli_preserves_peer_audit_identity_without_consuming_or_acknowledging_delivery() {
     std::thread::Builder::new().name("peer-client-mcp-matrix".into())
         .stack_size(8 * 1024 * 1024).spawn(|| {
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -173,71 +178,41 @@ fn chatgpt_codex_and_claude_discover_message_and_ack_through_real_mcp() {
                 seed_meaningful_activity(&db, key, source, (kind, principal), project, now + index as i64);
             }
             let peers: Vec<_> = identities.iter().map(|row| crate::client_window::peer_id_from_window_key(&row.0).unwrap()).collect();
-            for client in 0..3 {
-                // No-ACK discovery may legitimately be omitted by the production
-                // 40ms optional budget. Observe later ordinary HTTP calls without
-                // changing that budget or inserting discovery routes ourselves.
-                let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
-                let mut seen = [false; 3];
-                seen[client] = true;
-                let mut last = String::new();
-                for _ in 0..12 {
-                    let body = peer_call(&service, &token, client, "list_sessions", json!({"project":project}), None).await;
-                    assert_eq!(body["result"]["isError"], false, "{body}");
-                    last = rendered(&body, client);
-                    if last.contains("new_peers") {
-                        assert!(last.contains("recent_same_project_activity_not_liveness"), "{last}");
-                        assert!(last.contains(project), "{last}");
-                    }
-                    for other in 0..3 {
-                        if other != client && last.contains(&peers[other]) {
-                            assert!(!seen[other], "duplicate discovery {client}/{other}: {last}");
-                            assert!(last.contains(&identities[other].1), "{last}");
-                            seen[other] = true;
-                        }
-                    }
-                    if seen.iter().all(|found| *found) || std::time::Instant::now() >= until { break; }
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                }
-                assert!(seen.iter().all(|found| *found), "missing peers for {client}: {seen:?}; {last}");
-                let again = peer_call(&service, &token, client, "list_sessions", json!({"project":project}), None).await;
-                assert_eq!(again["result"]["isError"], false, "{again}");
-                assert!(!rendered(&again, client).contains("new_peers"), "discovery must be deduplicated: {again}");
-            }
-            for sender in 0..3 {
-                let recipient = (sender + 1) % 3;
-                let message = format!("cross-client-message-{sender}");
-                let posted = peer_call(&service, &token, sender, "post_peer_message", json!({
-                    "peer_id":peers[recipient], "kind":"question", "message":message, "requires_ack":true
+            // Seed the Adaptive sender's retained discoveries through the canonical
+            // store API. Optional HTTP discovery has a 40ms budget and may be shed;
+            // this fixture tests CLI suppression, not scheduler-dependent delivery.
+            let sender = &identities[0];
+            let known = db.take_new_recent_project_peers(&sender.2, &sender.3, &sender.0, project, now - 1, now + 10, 8).unwrap();
+            assert_eq!(known.len(), 2);
+            for client in 1..3 {
+                let response = peer_call(&service, &token, client, "list_jobs", json!({"project":project}), None).await;
+                assert_eq!(response["result"]["isError"], false, "{response}");
+                assert!(!text(&response).contains("peer_awareness"), "{response}");
+                let discovered: i64 = db.conn_for_tests().query_row(
+                    "SELECT count(*) FROM window_peer_discoveries WHERE observer_window_key=?1", [&identities[client].0], |r| r.get(0),
+                ).unwrap();
+                assert_eq!(discovered, 0, "CLI must not consume optional discovery");
+                let message = format!("retained-for-client-{client}");
+                let posted = peer_call(&service, &token, 0, "post_peer_message", json!({
+                    "peer_id":peers[client], "kind":"question", "message":message, "requires_ack":true
                 }), None).await;
                 assert_eq!(posted["result"]["isError"], false, "{posted}");
                 let id: String = db.conn_for_tests().query_row(
                     "SELECT message_id FROM window_peer_messages WHERE message=?1", [&message], |r| r.get(0),
                 ).unwrap();
-                let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
-                let mut received = false;
-                let mut last = String::new();
-                for _ in 0..12 {
-                    let delivered = peer_call(&service, &token, recipient, "list_jobs", json!({}), None).await;
-                    assert_eq!(delivered["result"]["isError"], false, "{delivered}");
-                    last = rendered(&delivered, recipient);
-                    let before: Option<i64> = db.conn_for_tests().query_row(
-                        "SELECT first_ack_observed_at_ms FROM window_peer_messages WHERE message_id=?1", [&id], |r| r.get(0),
-                    ).unwrap();
-                    assert!(before.is_none(), "projection is not ACK");
-                    received = last.contains(&message) && last.contains(&id);
-                    if received || std::time::Instant::now() >= until { break; }
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                // Exercise the ordinary kernel and the specialized Plugin adapter.
+                for (tool, args) in [("list_jobs", json!({})), ("plugin_tool", json!({"action":"list"}))] {
+                    let response = peer_call(&service, &token, client, tool, args, None).await;
+                    assert!(!response.to_string().contains(&message));
+                    assert!(!response.to_string().contains(&id));
                 }
-                assert!(received, "missing retained message {id}: {last}");
-                // Explicit ACK is not optional budget shedding: send it once and
-                // require its durable timestamp immediately.
-                let acked = peer_call(&service, &token, recipient, "list_jobs", json!({}), Some(&id)).await;
-                assert_eq!(acked["result"]["isError"], false, "{acked}");
-                let after: Option<i64> = db.conn_for_tests().query_row(
-                    "SELECT first_ack_observed_at_ms FROM window_peer_messages WHERE message_id=?1", [&id], |r| r.get(0),
+                let rejected = peer_call(&service, &token, client, "list_jobs", json!({}), Some(&id)).await;
+                assert_eq!(rejected["error"]["code"], -32602);
+                let (ack, projections): (Option<i64>, i64) = db.conn_for_tests().query_row(
+                    "SELECT first_ack_observed_at_ms,projection_count FROM window_peer_messages WHERE message_id=?1", [&id], |r| Ok((r.get(0)?,r.get(1)?)),
                 ).unwrap();
-                assert!(after.is_some(), "client {recipient} must ACK through its advertised envelope");
+                assert!(ack.is_none());
+                assert_eq!(projections, 0, "CLI must skip collection, not strip an already consumed delivery");
             }
             let foreign = peer_call(&service, &foreign_token, 0, "post_peer_message", json!({
                 "peer_id":peers[1], "kind":"question", "message":"foreign principal must not send"

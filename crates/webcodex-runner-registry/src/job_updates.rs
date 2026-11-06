@@ -183,6 +183,9 @@ pub struct ShellJobLogObservation {
     pub stderr_truncated: bool,
     pub stdout_returned_lines: usize,
     pub stderr_returned_lines: usize,
+    pub stdout_total_lines: usize,
+    pub stderr_total_lines: usize,
+    pub has_more_log_pages: bool,
     pub analysis_stdout: String,
     pub analysis_stderr: String,
     pub analysis_truncated: bool,
@@ -207,6 +210,9 @@ impl Default for ShellJobLogObservation {
             stderr_truncated: false,
             stdout_returned_lines: 0,
             stderr_returned_lines: 0,
+            stdout_total_lines: 0,
+            stderr_total_lines: 0,
+            has_more_log_pages: false,
             analysis_stdout: String::new(),
             analysis_stderr: String::new(),
             analysis_truncated: false,
@@ -221,6 +227,7 @@ fn frozen_shell_job_log_projection(
     since_stderr_line: Option<usize>,
     tail_lines: Option<usize>,
     wait: JobLogWait,
+    page: bool,
 ) -> (
     ShellJobInfo,
     Option<String>,
@@ -266,6 +273,9 @@ fn frozen_shell_job_log_projection(
             stderr_truncated,
             stdout_returned_lines: stdout.as_deref().unwrap_or_default().lines().count(),
             stderr_returned_lines: stderr.as_deref().unwrap_or_default().lines().count(),
+            stdout_total_lines: job.stdout.next_line.saturating_sub(1),
+            stderr_total_lines: job.stderr.next_line.saturating_sub(1),
+            has_more_log_pages: false,
             analysis_stdout,
             analysis_stderr,
             analysis_truncated,
@@ -310,6 +320,12 @@ fn frozen_shell_job_log_projection(
                 .expect("cursor-aware token has stderr cursor"),
         },
     };
+    let base_mode = match base_mode {
+        webcodex_core::job_observation::JobLogSelectionMode::Delta { cursor } if page => {
+            webcodex_core::job_observation::JobLogSelectionMode::Page { cursor }
+        }
+        mode => mode,
+    };
     let stdout = webcodex_core::job_observation::project_log_stream(
         &job.stdout.tail,
         job.stdout.first_retained_line,
@@ -319,6 +335,12 @@ fn frozen_shell_job_log_projection(
         base_mode,
         true,
     );
+    let stderr_mode = match stderr_mode {
+        webcodex_core::job_observation::JobLogSelectionMode::Delta { cursor } if page => {
+            webcodex_core::job_observation::JobLogSelectionMode::Page { cursor }
+        }
+        mode => mode,
+    };
     let stderr = webcodex_core::job_observation::project_log_stream(
         &job.stderr.tail,
         job.stderr.first_retained_line,
@@ -349,6 +371,9 @@ fn frozen_shell_job_log_projection(
         stderr_truncated: stderr.truncated,
         stdout_returned_lines: stdout.returned_lines,
         stderr_returned_lines: stderr.returned_lines,
+        stdout_total_lines: stdout.total_lines,
+        stderr_total_lines: stderr.total_lines,
+        has_more_log_pages: stdout.has_more || stderr.has_more,
         analysis_stdout,
         analysis_stderr,
         analysis_truncated,
@@ -863,6 +888,25 @@ impl RunnerRegistry {
         auth: Option<&crate::RunnerAccess>,
         job_id: &str,
     ) -> Result<ShellJobInfo, String> {
+        self.publish_hidden_job(auth, job_id, false).await
+    }
+
+    /// Preserve the same authorized terminal Job when its initiating response
+    /// cannot contain all output. Existing bounded Job retention owns cleanup.
+    pub async fn retain_terminal_job_logs(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        job_id: &str,
+    ) -> Result<ShellJobInfo, String> {
+        self.publish_hidden_job(auth, job_id, true).await
+    }
+
+    async fn publish_hidden_job(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        job_id: &str,
+        retain_terminal_logs: bool,
+    ) -> Result<ShellJobInfo, String> {
         #[cfg(any(test, feature = "root-test-support"))]
         self.hidden_handoff_failure_for_test(false).await?;
         validate_id(job_id, "job_id")?;
@@ -882,6 +926,9 @@ impl RunnerRegistry {
         if job.visibility == ShellJobVisibility::CleanupPending {
             return Err(format!("structured job cleanup is pending: {job_id}"));
         }
+        if retain_terminal_logs && !job.lifecycle.is_terminal() {
+            return Err("log retention requires a terminal Job".into());
+        }
         // A conclusive terminal update may race the sync-wait deadline. Keep
         // those records hidden so the initiating structured tool call returns
         // the terminal result without leaving a redundant public Job. An
@@ -890,7 +937,7 @@ impl RunnerRegistry {
         // recovery identity instead of discarding the only reconciliation handle.
         let publish_terminal_recovery = job.lifecycle.is_terminal()
             && job.command_execution_state == Some(ShellCommandExecutionState::OutcomeUnknown);
-        if !job.lifecycle.is_terminal() || publish_terminal_recovery {
+        if !job.lifecycle.is_terminal() || publish_terminal_recovery || retain_terminal_logs {
             let view = job_view(job);
             if view.observation_token.is_none() {
                 return Err(format!(
@@ -1844,6 +1891,41 @@ impl RunnerRegistry {
         ),
         String,
     > {
+        self.job_log_with_paging_for_auth(
+            auth,
+            job_id,
+            since_stdout_line,
+            since_stderr_line,
+            tail_lines,
+            after_observation_token,
+            wait_secs,
+            false,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn job_log_with_paging_for_auth(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        job_id: &str,
+        since_stdout_line: Option<usize>,
+        since_stderr_line: Option<usize>,
+        tail_lines: Option<usize>,
+        after_observation_token: Option<&str>,
+        wait_secs: Option<u64>,
+        page: bool,
+    ) -> Result<
+        (
+            ShellJobInfo,
+            Option<String>,
+            Option<String>,
+            usize,
+            usize,
+            ShellJobLogObservation,
+        ),
+        String,
+    > {
         validate_id(job_id, "job_id")?;
         let after = after_observation_token
             .map(|value| {
@@ -1896,6 +1978,7 @@ impl RunnerRegistry {
                     since_stderr_line,
                     tail_lines,
                     wait,
+                    page,
                 ));
             }
 
@@ -1936,6 +2019,7 @@ impl RunnerRegistry {
                     since_stderr_line,
                     tail_lines,
                     wait,
+                    page,
                 ));
             }
             drop(inner);
@@ -1983,6 +2067,7 @@ impl RunnerRegistry {
                     since_stderr_line,
                     tail_lines,
                     wait,
+                    page,
                 ));
             }
         }

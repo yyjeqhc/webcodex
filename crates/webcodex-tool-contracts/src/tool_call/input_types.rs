@@ -299,7 +299,7 @@ pub enum WorkResultFileView {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadFilesItem {
-    /// Non-empty project-relative file path.
+    /// Non-empty Project-relative file path or absolute path inside its root.
     #[schemars(length(min = 1))]
     #[serde(deserialize_with = "deserialize_non_empty_read_path")]
     pub path: String,
@@ -338,7 +338,7 @@ pub struct SearchProjectTextsQuery {
     /// literal unless regex syntax is intentional.
     #[serde(default)]
     pub pattern_mode: Option<SearchPatternMode>,
-    /// Optional project-relative directory to scope the search (default: project root).
+    /// Optional Project-relative or in-Project absolute directory (default: root).
     #[serde(default)]
     pub path: Option<String>,
     /// Maximum records to return: matches in matches mode, files in files_with_matches/count modes.
@@ -394,6 +394,9 @@ pub struct ObserveJobsItem {
     #[schemars(length(max = 62))]
     #[serde(default, deserialize_with = "deserialize_optional_observation_token")]
     pub after_observation_token: Option<String>,
+    /// Read forward from the token instead of the latest log tail. Use only for retained-log pagination.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub page: bool,
     /// Compact server-issued continuation selector for one exact prior Job observation state.
     /// Mutually exclusive with a non-empty `job_id`; when supplied, callers must not also supply
     /// `after_observation_token`. Unknown or expired refs fail closed at observation time.
@@ -412,6 +415,7 @@ impl ObserveJobsItem {
             job_id,
             after_observation_token,
             observation_ref: None,
+            page: false,
         }
     }
 }
@@ -431,9 +435,9 @@ pub const MAX_JOB_READINESS_WAIT_SECS: u64 = 45;
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ObserveJobsWakeOn {
-    #[default]
     Change,
     MeaningfulChange,
+    #[default]
     Terminal,
     AllTerminal,
 }
@@ -543,6 +547,9 @@ where
     }
     let mut selectors = HashSet::with_capacity(items.len());
     for item in &items {
+        if item.page && item.after_observation_token.is_none() && item.observation_ref.is_none() {
+            return Err(serde::de::Error::custom("page requires after_observation_token or observation_ref"));
+        }
         let has_job_id = !item.job_id.is_empty();
         match (has_job_id, item.observation_ref.as_deref()) {
             (false, None) => {
@@ -586,6 +593,7 @@ fn observe_jobs_items_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sch
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
+                        "page": {"type":"boolean", "default":false, "description":"Read forward from the token for log recovery; default reads the latest incremental tail."},
                         "job_id": {
                             "type": "string",
                             "minLength": 1,
@@ -600,12 +608,17 @@ fn observe_jobs_items_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sch
                         },
                         "observation_ref": {"type": "null"}
                     },
-                    "required": ["job_id"]
+                    "required": ["job_id"],
+                    "allOf": [{"anyOf":[
+                        {"properties":{"page":{"const":false}}},
+                        {"required":["after_observation_token"],"properties":{"after_observation_token":{"type":"string"}}}
+                    ]}]
                 },
                 {
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
+                        "page": {"type":"boolean", "default":false, "description":"Read forward from the saved log cursor instead of the latest tail."},
                         "after_observation_token": {"type": "null"},
                         "observation_ref": {
                             "type": "string",

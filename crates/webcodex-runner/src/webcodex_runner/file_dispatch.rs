@@ -48,6 +48,23 @@ pub(crate) fn handle_file_operation_with_artifact_store(
     let request = operation.payload();
     let path = request.path.as_str();
     let start = Instant::now();
+    // Transactional batches resolve and validate every member before writing.
+    // Let that boundary issue the authoritative no-effect rejection receipt.
+    if matches!(operation, RunnerFileOperation::ApplyTextEdits(_)) {
+        return handle_apply_text_edits_file_request(policy, request, start);
+    }
+    if matches!(operation, RunnerFileOperation::Read(_)) {
+        let target = Path::new(request.cwd.as_deref().unwrap_or("")).join(path);
+        if let Err(reason) = super::files::ensure_file_read_target_in_project(request, &target) {
+            return CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(format!("read_file failed: {}", reason.as_str())),
+            };
+        }
+    }
     if matches!(
         operation,
         RunnerFileOperation::WriteProjectFile(_)

@@ -407,6 +407,12 @@ runner_capabilities! {
         #[serde(default, skip_serializing_if = "is_false")]
         pub apply_patch: bool = false;
     }
+    /// Revision-fenced whole-file replacement in a transactional file batch.
+    ApplyFileWrite => RUNNER_CAPABILITY_APPLY_FILE_WRITE("apply_file_write"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub apply_file_write: bool = false;
+    }
     /// The Runner returns the complete trusted apply_patch patch-plan/match metadata
     /// required by the 0.4 success contract. Missing on older Runners is false; a
     /// current Server must reject apply_patch before dispatch rather than accepting a
@@ -2942,6 +2948,7 @@ mod envelope_tests {
                 apply_text_edit_local_guard_without_sha: false,
                 apply_text_edit_line_scope: false,
                 apply_text_edit_range: false,
+                apply_file_write: false,
                 apply_text_edit_expected_match_count: false,
                 apply_patch: false,
                 apply_patch_match_metadata: false,

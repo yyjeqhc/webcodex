@@ -365,11 +365,20 @@ fn execution_tail_bound_keeps_failure_and_loss_evidence_without_duplicate_full_l
                 200
             );
             assert_eq!(result.output[format!("{stream}_truncated")], true);
-            assert!(!result
-                .error
-                .as_ref()
-                .unwrap()
-                .contains(&format!("{stream}-000")));
+            let tail = result.output[format!("{stream}_tail")].as_str().unwrap();
+            assert!(
+                tail.contains(&format!("{stream}-000")),
+                "keep the first diagnostic"
+            );
+            assert!(tail.contains("output omitted"));
+            assert!(
+                !result
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .contains(&format!("{stream}-100")),
+                "do not duplicate omitted middle logs in the error"
+            );
         }
         assert_eq!(result.output["exit_code"], 9);
         assert!(result

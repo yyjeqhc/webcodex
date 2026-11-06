@@ -906,6 +906,7 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
     let observed = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
+                page: false,
                 job_id: job_id.clone(),
                 after_observation_token: Some(observation_token.clone()),
                 observation_ref: None,
@@ -1287,6 +1288,7 @@ async fn default_cargo_check_handoff_preserves_same_execution_through_terminal()
     let observed = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
+                page: false,
                 job_id: job_id.clone(),
                 after_observation_token: Some(observation_token.clone()),
                 observation_ref: None,
@@ -1583,6 +1585,7 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
     let observed = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
+                page: false,
                 job_id: job_id.clone(),
                 after_observation_token: Some(observation_token.clone()),
                 observation_ref: None,
@@ -1649,6 +1652,7 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
     let observed = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
+                page: false,
                 job_id,
                 after_observation_token: Some(observation_token),
                 observation_ref: None,
@@ -2004,6 +2008,7 @@ async fn e3_cargo_test_lib_handoff_arms_terminal_attention_without_polling() {
         .dispatch_with_auth(
             ToolCall::ObserveJobs {
                 items: vec![ObserveJobsItem {
+                    page: false,
                     job_id: job_id.clone(),
                     after_observation_token: None,
                     observation_ref: None,

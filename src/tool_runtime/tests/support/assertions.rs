@@ -95,6 +95,12 @@ pub(in crate::tool_runtime::tests) fn assert_sparse_pending_job_handoff(output: 
         .expect("pending handoff output object")
         .keys()
         .map(String::as_str)
+        .filter(|key| {
+            !matches!(
+                *key,
+                "stdout_tail" | "stderr_tail" | "stdout_truncated" | "stderr_truncated"
+            )
+        })
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         keys,
@@ -116,6 +122,12 @@ pub(in crate::tool_runtime::tests) fn assert_sparse_pending_job_handoff_with_unr
         .expect("pending handoff output object")
         .keys()
         .map(String::as_str)
+        .filter(|key| {
+            !matches!(
+                *key,
+                "stdout_tail" | "stderr_tail" | "stdout_truncated" | "stderr_truncated"
+            )
+        })
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         keys,

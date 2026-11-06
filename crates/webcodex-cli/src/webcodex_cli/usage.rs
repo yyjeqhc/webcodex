@@ -30,6 +30,7 @@ Account:\n\
   auth status                   Show login status\n\
   logout                        Remove this device's credentials\n\n\
 Advanced / operator:\n\
+  mcp-config                    Print Codex or Claude MCP connection configuration\n\
   ops                           Read-only operator workflow checks\n\
   plugin                        Inspect, check, and reload Native Tool Plugins\n\
   users                         Manage users\n\

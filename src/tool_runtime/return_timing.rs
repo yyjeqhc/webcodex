@@ -7,18 +7,30 @@ use super::{structured_execution::STRUCTURED_EXECUTION_SYNC_WAIT_SECS, ToolCall}
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ToolReturnTimingPolicy {
     max_handoff_secs: Option<u64>,
+    default_handoff_secs: Option<u64>,
 }
 
 impl ToolReturnTimingPolicy {
     pub(crate) const fn unconstrained() -> Self {
         Self {
             max_handoff_secs: None,
+            default_handoff_secs: None,
         }
     }
 
     pub(crate) const fn handoff_max_secs(max_handoff_secs: u64) -> Self {
         Self {
             max_handoff_secs: Some(max_handoff_secs),
+            default_handoff_secs: None,
+        }
+    }
+
+    /// Adapter preference for an omitted wait. Intersections still honor every
+    /// trusted upper bound; execution lifetime and caller-supplied waits are separate.
+    pub(crate) const fn handoff_default_secs(default_handoff_secs: u64) -> Self {
+        Self {
+            max_handoff_secs: None,
+            default_handoff_secs: Some(default_handoff_secs),
         }
     }
 
@@ -33,7 +45,15 @@ impl ToolReturnTimingPolicy {
             (Some(value), None) | (None, Some(value)) => Some(value),
             (None, None) => None,
         };
-        Self { max_handoff_secs }
+        let default_handoff_secs = match (self.default_handoff_secs, other.default_handoff_secs) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (Some(value), None) | (None, Some(value)) => Some(value),
+            (None, None) => None,
+        };
+        Self {
+            max_handoff_secs,
+            default_handoff_secs,
+        }
     }
 }
 
@@ -41,12 +61,15 @@ impl ToolReturnTimingPolicy {
 /// caller-supplied sync_wait_secs remains a compatibility preference, but it
 /// can only make handoff earlier; it can never exceed a Server-owned cap.
 ///
-/// When the compatibility field is omitted, the canonical 10-second handoff
-/// default is the starting point before trusted caps are applied.
+/// An adapter can supply a different default without changing execution lifetime.
 pub(super) fn normalize_structured_handoff(call: &mut ToolCall, policy: ToolReturnTimingPolicy) {
-    let Some(max_handoff_secs) = policy.max_handoff_secs() else {
+    if policy.max_handoff_secs.is_none() && policy.default_handoff_secs.is_none() {
         return;
-    };
+    }
+    let default = policy
+        .default_handoff_secs
+        .unwrap_or(STRUCTURED_EXECUTION_SYNC_WAIT_SECS);
+    let max_handoff_secs = policy.max_handoff_secs.unwrap_or(u64::MAX);
 
     match call {
         ToolCall::RunProcess { sync_wait_secs, .. }
@@ -56,27 +79,49 @@ pub(super) fn normalize_structured_handoff(call: &mut ToolCall, policy: ToolRetu
         | ToolCall::CargoCheck { sync_wait_secs, .. }
         | ToolCall::CargoTest { sync_wait_secs, .. }
         | ToolCall::GoTest { sync_wait_secs, .. } => {
-            constrain_sync_wait(sync_wait_secs, max_handoff_secs);
+            constrain_sync_wait(sync_wait_secs, default, max_handoff_secs);
         }
         ToolCall::CargoFmt {
             check,
             sync_wait_secs,
             ..
         } if *check == Some(true) => {
-            constrain_sync_wait(sync_wait_secs, max_handoff_secs);
+            constrain_sync_wait(sync_wait_secs, default, max_handoff_secs);
         }
         _ => {}
     }
 }
 
-fn constrain_sync_wait(sync_wait_secs: &mut Option<u64>, max_handoff_secs: u64) {
-    let requested = sync_wait_secs.unwrap_or(STRUCTURED_EXECUTION_SYNC_WAIT_SECS);
+fn constrain_sync_wait(sync_wait_secs: &mut Option<u64>, default: u64, max_handoff_secs: u64) {
+    let requested = sync_wait_secs.unwrap_or(default);
     *sync_wait_secs = Some(requested.min(max_handoff_secs));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adapter_default_and_explicit_early_return_obey_every_cap() {
+        for (requested, cap, expected) in [
+            (None, 50, 50),
+            (None, 4, 4),
+            (Some(1), 50, 1),
+            (Some(60), 4, 4),
+        ] {
+            let policy = ToolReturnTimingPolicy::handoff_default_secs(50)
+                .intersect(ToolReturnTimingPolicy::handoff_max_secs(cap));
+            let mut args = serde_json::json!({"project":"demo", "command":"true"});
+            if let Some(wait) = requested {
+                args["sync_wait_secs"] = serde_json::json!(wait);
+            }
+            let mut call = ToolCall::from_tool_name("run_shell", args).unwrap();
+            normalize_structured_handoff(&mut call, policy);
+            assert!(
+                matches!(call, ToolCall::RunShell { sync_wait_secs: Some(actual), .. } if actual == expected)
+            );
+        }
+    }
 
     #[test]
     fn upper_bound_policies_intersect_to_the_strictest_limit() {

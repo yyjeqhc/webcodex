@@ -1306,7 +1306,7 @@ impl ToolRuntime {
     async fn read_files_planned_resolved(
         &self,
         resolved: &ResolvedProject,
-        items: Vec<ReadFilesItem>,
+        mut items: Vec<ReadFilesItem>,
         with_line_numbers: Option<bool>,
         coalesced_output: bool,
     ) -> ReadFilesOutput {
@@ -1318,6 +1318,14 @@ impl ToolRuntime {
             ));
         }
 
+        for item in &mut items {
+            // Keep invalid members for the existing per-item rejection path.
+            if let Ok(relative) =
+                super::helpers::project_relative_file_path(&resolved.config, &item.path)
+            {
+                item.path = relative;
+            }
+        }
         let runtime_project_id = resolved.resolved_id.clone();
         let Some(runner_project_id) =
             crate::tool_runtime::runner_local_project_id(&resolved.resolved_id).map(str::to_string)

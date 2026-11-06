@@ -40,5 +40,11 @@ pub(crate) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<
     deserializer.deserialize_any(Revision)
 }
 
+pub(crate) fn deserialize_optional<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error> {
+    deserialize(deserializer).map(Some)
+}
+
 #[cfg(test)]
 mod tests;

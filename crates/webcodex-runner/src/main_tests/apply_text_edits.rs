@@ -457,14 +457,11 @@ fn file_apply_text_edits_allows_public_dotenv_template_but_rejects_env() {
             }),
         ),
     );
-    assert_eq!(denied.exit_code, None, "{denied:?}");
-    assert!(
-        denied
-            .error
-            .as_deref()
-            .is_some_and(|error| error.contains("sensitive")),
-        "{denied:?}"
-    );
+    let denied = line_edit_json(denied);
+    assert_eq!(denied["state_changed"], false);
+    assert_eq!(denied["execution_state"], "not_started");
+    assert_eq!(denied["error_kind"], "invalid_path");
+    assert!(denied["error"].as_str().unwrap().contains("sensitive"));
     assert_eq!(
         std::fs::read_to_string(tmp.path().join(".env")).unwrap(),
         "KEY=secret\n"
@@ -1832,4 +1829,89 @@ fn file_apply_text_edits_scoped_dry_run_uses_same_resolution_without_write() {
     assert_eq!(out["changed"], false);
     assert_eq!(out["would_change"], true);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+}
+
+#[test]
+fn file_apply_text_edits_write_is_revision_fenced_and_transactional() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let path = tmp.path().join("whole.txt");
+    std::fs::write(&path, "original\n").unwrap();
+    let sha = sha256_hex_bytes(b"original\n");
+    for guard in [serde_json::Value::Null, serde_json::json!("a".repeat(64))] {
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "whole.txt",
+                serde_json::json!({"changes":[{"kind":"write", "path":"whole.txt", "content":"replacement", "expected_sha256":guard}]}),
+            ),
+        ));
+        assert!(out.get("error_kind").is_some(), "{out}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+    }
+    let batch = serde_json::json!({"changes":[{"kind":"write", "path":"whole.txt", "content":"replacement", "expected_sha256":sha}, {"kind":"delete", "path":"missing.txt", "expected_sha256":sha}]});
+    let failed = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(tmp.path(), "whole.txt", batch),
+    ));
+    assert!(failed.get("error_kind").is_some());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+    // Empty content is a valid overwrite; write never creates a missing file.
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "whole.txt",
+            serde_json::json!({"changes":[{"kind":"write", "path":"whole.txt", "content":"", "expected_sha256":sha}]}),
+        ),
+    ));
+    assert_eq!(out["changed"], true, "{out}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+    assert_eq!(out["files"][0]["new_sha256"], sha256_hex_bytes(b""));
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "missing.txt",
+            serde_json::json!({"changes":[{"kind":"write", "path":"missing.txt", "content":"new", "expected_sha256":sha}]}),
+        ),
+    ));
+    assert!(out.get("error_kind").is_some());
+    assert!(!tmp.path().join("missing.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn apply_text_edits_symlink_escape_is_a_transactional_no_effect_refusal() {
+    let project = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), project.path().join("escape")).unwrap();
+    std::fs::write(project.path().join("unchanged.txt"), "old").unwrap();
+    for allow_outside in [false, true] {
+        let mut policy = project_policy(project.path());
+        if allow_outside {
+            policy.allowed_roots.push(outside.path().to_path_buf());
+        }
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                project.path(),
+                "escape/new.txt",
+                serde_json::json!({"changes":[
+                    {"kind":"create","path":"new-inside.txt","content":"not committed"},
+                    {"kind":"create","path":"escape/new.txt","content":"not committed"}
+                ]}),
+            ),
+        ));
+        assert_eq!(out["state_changed"], false);
+        assert_eq!(out["execution_state"], "not_started");
+        assert_eq!(out["error_kind"], "path_policy_rejected");
+        assert!(!outside.path().join("new.txt").exists());
+        assert!(!project.path().join("new-inside.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("unchanged.txt")).unwrap(),
+            "old"
+        );
+    }
 }

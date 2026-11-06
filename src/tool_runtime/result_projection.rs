@@ -41,7 +41,7 @@ fn sparsify_empty_execution_streams(output: &mut serde_json::Map<String, Value>)
 }
 
 fn sparsify_terminal_structured_validation_success(tool_name: &str, result: &mut ToolResult) {
-    if !is_structured_validation_tool(tool_name) {
+    if !is_structured_validation_tool(tool_name) || result.output["continuation"].is_object() {
         return;
     }
     let terminal_success = ExecutionOutcomeFacts::from_result(result).is_terminal_success()
@@ -127,6 +127,7 @@ fn sparsify_terminal_structured_execution_success(
         tool_name,
         "project_build" | "run_process" | "run_script" | "run_skill_resource"
     ) || result.error.is_some()
+        || result.output["continuation"].is_object()
         || !ExecutionOutcomeFacts::from_result(result).is_terminal_command_success()
     {
         return false;

@@ -4,6 +4,7 @@ pub(crate) mod controller;
 pub(crate) mod env;
 pub(crate) mod http;
 pub(crate) mod login;
+pub(crate) mod mcp_config;
 pub(crate) mod ops;
 pub(crate) mod output;
 pub(crate) mod pairing;

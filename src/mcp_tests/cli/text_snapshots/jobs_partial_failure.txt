@@ -1,7 +1,4 @@
 job_id: missing
 error: Job unavailable
 error_kind: unknown_job
-index: 0
 recovery_kind: reobserve
-success: false
-failed_count: 1

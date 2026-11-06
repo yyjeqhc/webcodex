@@ -714,6 +714,7 @@ fn observe_jobs_output_schema() -> Value {
                             {
                                 "type": "object", "additionalProperties": false,
                                 "properties": {
+                                    "page": {"type": "boolean"},
                                     "job_id": {"type": "string", "minLength": 1},
                                     "after_observation_token": {"type": "string", "maxLength": webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN}
                                 },
@@ -722,6 +723,7 @@ fn observe_jobs_output_schema() -> Value {
                             {
                                 "type": "object", "additionalProperties": false,
                                 "properties": {
+                                    "page": {"type": "boolean"},
                                     "observation_ref": {
                                         "type": "string",
                                         "pattern": "^~j[0-9]+$",
@@ -742,6 +744,7 @@ fn observe_jobs_output_schema() -> Value {
         "Expand retained logs with the original observation cursor. Logs may have expired; retention/reset evidence remains authoritative. Never re-executes the Job.",
     );
     for observation in [&mut job_observation, &mut sparse_job_observation] {
+        observation["properties"]["continuation"] = observe_job_continuation_schema();
         observation["properties"]["logs_omitted"] = json!({
             "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true,
             "items": {"type": "string", "enum": ["stdout", "stderr"]},

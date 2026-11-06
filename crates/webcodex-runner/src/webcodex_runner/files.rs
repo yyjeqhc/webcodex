@@ -313,7 +313,7 @@ fn read_file_reason_message(reason: ReadFileReason) -> String {
     format!("read_file failed: {}", reason.as_str())
 }
 
-fn ensure_file_read_target_in_project(
+pub(super) fn ensure_file_read_target_in_project(
     request: &RunnerFilePayload,
     resolved: &Path,
 ) -> Result<(), ReadFileReason> {
@@ -324,8 +324,8 @@ fn ensure_file_read_target_in_project(
     let target = resolved
         .canonicalize()
         .map_err(|error| read_file_reason_from_io(&error))?;
-    if !target.starts_with(&project_root) {
-        return Err(ReadFileReason::InvalidPath);
+    if !webcodex_runner_config::paths::path_is_within(&target, &project_root) {
+        return Err(ReadFileReason::OutsideProject);
     }
     let relative = target
         .strip_prefix(&project_root)

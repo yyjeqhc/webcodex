@@ -20,15 +20,35 @@ try {
             return $null
         }
     }
-    # Task Scheduler may return an account name even when registration used a SID.
-    function Account-Sid($identity) {
+    function Resolve-AccountSid($identity) {
         if ([string]::IsNullOrWhiteSpace($identity)) { return $null }
         try {
             if ($identity -match '^S-1-') {
-                return ([Security.Principal.SecurityIdentifier]::new($identity)).Value
+                return [Security.Principal.SecurityIdentifier]::new($identity)
             }
-            return ([Security.Principal.NTAccount]::new($identity)).Translate([Security.Principal.SecurityIdentifier]).Value
+            return ([Security.Principal.NTAccount]::new($identity)).Translate([Security.Principal.SecurityIdentifier])
         } catch { return $null }
+    }
+    # Task Scheduler may return an account name even when registration used a SID.
+    function Account-Sid($identity) {
+        $resolved = Resolve-AccountSid $identity
+        if ($null -ne $resolved -and $resolved.Value -ceq $inputData.sid) { return $resolved.Value }
+        $computer = [Environment]::MachineName
+        # Only the bare local computer/user collision permits another lookup.
+        # Qualified names, UPNs and SID literals never change authority here.
+        if ([string]::IsNullOrWhiteSpace($identity) -or $identity -match '[\\/@]' -or $identity -match '^S-1-' -or
+            ![string]::Equals($identity, $computer, [StringComparison]::OrdinalIgnoreCase)) {
+            if ($null -ne $resolved) { return $resolved.Value }
+            return $null
+        }
+        $local = Resolve-AccountSid ($computer + '\' + $identity)
+        if ($null -eq $local -or $local.Value -cne $inputData.sid) { return $null }
+        # The bare name can identify the local SAM domain instead of its user
+        # (NTAccount.Translate may reject that domain SID). Never override a
+        # successfully resolved different user, group or foreign domain.
+        if ($null -ne $resolved -and
+            ($null -eq $local.AccountDomainSid -or $resolved.Value -cne $local.AccountDomainSid.Value)) { return $null }
+        return $local.Value
     }
     function Owned-Task($task) {
         if ($null -eq $task) { return $false }

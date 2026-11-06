@@ -167,32 +167,6 @@ pub(crate) fn validate_allowed_client_id(value: &str) -> Result<String, String> 
     Ok(value.to_string())
 }
 
-/// Validate a username against the Phase 2 rules: non-empty, bounded length,
-/// only lowercase ASCII letters, digits, `_`, and `-`. No slash, no `..`, no
-/// whitespace, no uppercase. Returns the trimmed username on success.
-pub(crate) fn validate_username(username: &str) -> Result<String, String> {
-    let username = username.trim();
-    if username.is_empty() {
-        return Err("username cannot be empty".to_string());
-    }
-    if username.chars().count() > 64 {
-        return Err("username is too long; maximum is 64 characters".to_string());
-    }
-    if username.contains("..") {
-        return Err("username cannot contain '..'".to_string());
-    }
-    for ch in username.chars() {
-        let ok = ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-';
-        if !ok {
-            return Err(format!(
-                "username contains an invalid character '{}'; only lowercase letters, digits, '_' and '-' are allowed",
-                ch
-            ));
-        }
-    }
-    Ok(username.to_string())
-}
-
 /// Validate a role string. Must be `"admin"` or `"user"`.
 pub(crate) fn validate_role(role: &str) -> Result<String, String> {
     let role = role.trim();
@@ -313,20 +287,6 @@ mod tests {
         // Uppercase ASCII letters are allowed, matching the existing client_id
         // validation rules (validate_id uses is_ascii_alphanumeric).
         assert!(validate_allowed_client_id("UPPER").is_ok());
-    }
-
-    #[test]
-    fn validate_username_accepts_valid() {
-        assert_eq!(validate_username("alice").unwrap(), "alice");
-        assert_eq!(validate_username("bob_123").unwrap(), "bob_123");
-    }
-
-    #[test]
-    fn validate_username_rejects_invalid() {
-        assert!(validate_username("").is_err());
-        assert!(validate_username("Alice").is_err());
-        assert!(validate_username("../etc").is_err());
-        assert!(validate_username(&"x".repeat(65)).is_err());
     }
 
     #[test]

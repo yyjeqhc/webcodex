@@ -2,9 +2,12 @@
 //!
 //! Authentication execution, principal context, middleware, and credential
 //! verification remain application concerns. This module owns only stable scope
-//! names and policy values consumed by auth, route metadata, and tool contracts.
+//! names, identity grammars and policy values consumed by auth, setup, route
+//! metadata, and tool contracts.
 
 pub mod profiles;
+mod usernames;
+pub use usernames::validate_username;
 
 pub const SCOPE_RUNTIME_READ: &str = "runtime:read";
 /// Consequential management of one exact caller-visible Runner process. This is

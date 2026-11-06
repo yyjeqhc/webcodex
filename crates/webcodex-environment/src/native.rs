@@ -15,7 +15,7 @@ mod project_addition;
 
 const HTTP_LIMIT: usize = 1024 * 1024;
 use webcodex_core::authority::{
-    profiles::LOCAL_USER as USER_SCOPES, AGENT_SCOPES as RUNNER_SCOPES,
+    profiles::LOCAL_USER as USER_SCOPES, validate_username, AGENT_SCOPES as RUNNER_SCOPES,
 };
 
 /// The production adapter. Neither frontend supplies its own deployment backend.
@@ -814,7 +814,7 @@ impl NativeEnvironment {
         })?;
         let status = response.status();
         if !status.is_success() {
-            return Err(match status.as_u16() {
+            let mut error = match status.as_u16() {
                 401 => diagnostic(
                     "authentication_required",
                     "The user credential was not accepted",
@@ -828,7 +828,13 @@ impl NativeEnvironment {
                     "The Server reports an existing or conflicting resource",
                 ),
                 _ => diagnostic("server_request_failed", "The Server rejected the operation"),
-            });
+            };
+            // Status is bounded protocol metadata. Never expose the response
+            // body, request URL, credentials or user-controlled error text.
+            error
+                .message
+                .push_str(&format!(" (HTTP {})", status.as_u16()));
+            return Err(error);
         }
         if response
             .content_length()
@@ -955,6 +961,12 @@ impl NativeEnvironment {
                 Err(error) => return Err(error),
             }
         }
+        validate_username(&username).map_err(|_| {
+            diagnostic(
+                "user_identity_conflict",
+                "The saved local username is invalid; resume the original setup to check recovery",
+            )
+        })?;
         match self
             .post(
                 &record.request.server_url,
@@ -975,7 +987,10 @@ impl NativeEnvironment {
                 ))
             }
             Err(error) if error.code == "server_conflict" => {}
-            Err(error) => return Err(error),
+            Err(mut error) => {
+                error.message = format!("Local user creation failed: {}", error.message);
+                return Err(error);
+            }
         }
         if !path.exists() {
             atomic_private_write(&path, generate_token("wc_pat_").as_bytes())?;
@@ -1245,7 +1260,14 @@ impl EnvironmentBackend for NativeEnvironment {
         use Reconciliation::*;
         use SetupStep::*;
         match step {
-            Preflight | ServerReachability | Readiness => Ok(Missing),
+            Preflight => {
+                // Inspect the original failed journal before starting another
+                // step clears its diagnostic. The engine saves any correction
+                // before applying preflight or sending a provisioning request.
+                recover_uncreated_username(store, record)?;
+                Ok(Missing)
+            }
+            ServerReachability | Readiness => Ok(Missing),
             ServerConfiguration => {
                 let path = store.root().join("server/webcodex.env");
                 if !path.exists() {
@@ -1457,7 +1479,7 @@ impl EnvironmentBackend for NativeEnvironment {
                 if record.request.local_runner() && record.runner_client_id.is_none() {
                     record.runner_client_id = Some(format!(
                         "{}-{}",
-                        account_username(&record.request.account.name),
+                        account_client_id_prefix(&record.request.account.name),
                         &record.environment_id.replace('-', "")[..16]
                     ));
                 }
@@ -2243,6 +2265,14 @@ fn generate_token(prefix: &str) -> String {
     )
 }
 fn account_username(name: &str) -> String {
+    account_client_id_prefix(name)
+        .to_ascii_lowercase()
+        .replace('.', "_")
+}
+
+// Runner IDs accept uppercase and dots. Preserve their existing generation,
+// also used to recognize usernames written by the published broken setup.
+fn account_client_id_prefix(name: &str) -> String {
     let value: String = name
         .rsplit(['\\', '/'])
         .next()
@@ -2256,6 +2286,65 @@ fn account_username(name: &str) -> String {
     } else {
         value
     }
+}
+
+fn recover_uncreated_username(
+    store: &EnvironmentStore,
+    record: &mut EnvironmentRecord,
+) -> SetupResultValue<()> {
+    let Some(username) = record.username.as_deref() else {
+        return Ok(());
+    };
+    if !record.request.local_server() || validate_username(username).is_ok() {
+        return Ok(());
+    }
+    let conflict = || {
+        diagnostic(
+            "user_identity_conflict",
+            "The invalid saved username cannot be recovered without changing an established or uncertain identity",
+        )
+    };
+    let journal = store.load_journal()?.ok_or_else(conflict)?;
+    // v0.5.0 saved the OS-derived name after /users/create rejected uppercase
+    // or dots. The Server grammar proves that name could not have been created.
+    // Only repair that exact unfinished step, before any credential/Runner state.
+    if record.configured
+        || journal.environment.configured
+        || !record.projects.is_empty()
+        || !journal.environment.projects.is_empty()
+        || username != account_client_id_prefix(&record.request.account.name)
+        || journal.environment.environment_id != record.environment_id
+        || journal.environment.request != record.request
+        || journal.environment.username != record.username
+        || journal.steps.get(&SetupStep::UserAuthentication) != Some(&StepState::Started)
+        || journal
+            .steps
+            .keys()
+            .any(|step| *step > SetupStep::UserAuthentication)
+        || journal
+            .last_diagnostic
+            .as_ref()
+            .map(|error| error.code.as_str())
+            != Some("server_request_failed")
+        || store.load_environment()?.is_some()
+    {
+        return Err(conflict());
+    }
+    for name in [
+        "webcodex-user-token",
+        "runner.toml",
+        "enrollment-recovery.json",
+    ] {
+        match std::fs::symlink_metadata(store.root().join(name)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(SetupDiagnostic::io()),
+            Ok(_) => return Err(conflict()),
+        }
+    }
+    // The setup engine persists this correction before applying the step. Keep
+    // the environment, OS owner and already allocated Runner ID unchanged.
+    record.username = Some(account_username(&record.request.account.name));
+    Ok(())
 }
 fn project_record(path: &Path) -> ProjectRecord {
     ProjectRecord {

@@ -101,12 +101,14 @@ pub(crate) use middleware::{
     enforce_token_surface, is_account_control_path, is_runner_transport_path,
 };
 
+pub(crate) use webcodex_core::authority::validate_username;
+
 pub(crate) use pat::{
     clean_token_name, generate_account_credential, generate_agent_token, generate_api_token,
     generate_oauth_access_token, generate_oauth_authorization_code, generate_oauth_client_id,
     generate_oauth_client_secret, generate_oauth_refresh_token, hash_token,
     is_unique_constraint_error, normalize_token_hash, token_prefix, validate_allowed_client_id,
-    validate_role, validate_token_prefix, validate_username,
+    validate_role, validate_token_prefix,
 };
 pub(crate) use shared_key::{
     allow_anonymous_enabled, direct_shared_key_enabled, direct_shared_key_enabled_with_quic,

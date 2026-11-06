@@ -11,8 +11,8 @@ use super::helpers::{
 };
 use super::shell::{command_execution_state_name, ProjectCommandOutput};
 use super::structured_execution::{
-    recover_hidden_structured_job, structured_job_observation, HiddenStructuredJobWait,
-    StructuredExecutionBudget, StructuredJobHandoffFailure, STRUCTURED_EXECUTION_SYNC_WAIT_SECS,
+    HiddenJobHandoff, HiddenStructuredJobWait, StructuredExecutionBudget,
+    StructuredJobHandoffFailure, StructuredJobObservation, STRUCTURED_EXECUTION_SYNC_WAIT_SECS,
 };
 use super::tool_result::ToolResult;
 use super::validation_profile::{
@@ -884,17 +884,9 @@ impl ToolRuntime {
             .await
     }
 
-    /// Wait up to `sync_wait_secs` for a structured validation Job to reach a
-    /// terminal state. If it completes in-window, return the terminal result
-    /// and discard the hidden Job; if it is still active, return a Job handoff
-    /// for the same execution.
-    ///
-    /// The `ValidationCleanupGuard` arms cleanup while the sync wait is in
-    /// flight. If the MCP request is cancelled before handoff, a queued start is
-    /// removed atomically; an accepted/running Job is marked cleanup-pending,
-    /// stopped, and retained for reconciliation until a terminal Runner update
-    /// confirms cleanup. Once a terminal result or handoff is produced, the
-    /// guard is disarmed.
+    /// Share same-Job waiting, promotion and recovery with ordinary structured
+    /// execution. Keep the validation polling cadence and terminal log bound;
+    /// cleanup stays armed through terminal evidence projection.
     async fn await_validation_job(
         &self,
         job_id: String,
@@ -902,115 +894,43 @@ impl ToolRuntime {
         adapter: &'static dyn ValidationEvidenceProfile,
         handoff: ValidationHandoff,
     ) -> ToolResult {
-        let mut guard = ValidationCleanupGuard::new(
-            self.runner_registry.clone(),
-            job_id.clone(),
-            handoff.auth.clone(),
-        );
-        // Poll the job status up to the effective synchronous grace. Each poll
-        // is cheap and total sleep stays bounded by that grace. The wait is
-        // taken from the runtime's injectable clock so tests can shrink it.
+        let mut cleanup =
+            HiddenJobHandoff::new(self.runner_registry.clone(), job_id, handoff.auth.clone());
         let wait = self
             .validation_sync_wait
-            .min(std::time::Duration::from_secs(sync_wait_secs));
-        let deadline = std::time::Instant::now() + wait;
-        loop {
-            let status = self
-                .runner_registry
-                .get_hidden_job_for_auth(handoff.auth.as_ref(), &job_id)
-                .await;
-            let (terminal, observed_status) = match status {
-                Ok(status) => (
-                    crate::tool_runtime::jobs::is_terminal_job_status(&status.status),
-                    status.status,
-                ),
-                Err(_) => (false, "unknown".to_string()),
-            };
-            if terminal {
-                // The terminal result builder removes the hidden Job record.
-                let result = self
-                    .validation_terminal_result(job_id, adapter, &observed_status, handoff)
-                    .await;
-                guard.disarm_if_returnable(&result);
-                return result;
-            }
-            if std::time::Instant::now() >= deadline {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        }
-        // Promote under the registry lock. A terminal update may race the
-        // deadline; promote_hidden_job deliberately leaves such a record hidden
-        // so the original Cargo call can still return its structured terminal
-        // result instead of handing off an already-finished Job.
-        let promoted = match self
-            .runner_registry
-            .promote_hidden_job(handoff.auth.as_ref(), &job_id)
+            .min(Duration::from_secs(sync_wait_secs));
+        let (observation, execution_state, command_started) = match cleanup
+            .wait(wait, Duration::from_millis(200), Some(200))
             .await
         {
-            Ok(job) => job,
-            Err(_) => {
-                return Box::pin(
-                    self.recover_validation_handoff(job_id, adapter, handoff, &mut guard),
-                )
-                .await;
-            }
-        };
-        let latest_status = promoted.status.clone();
-        if crate::tool_runtime::jobs::is_terminal_job_status(&latest_status) {
-            let result = self
-                .validation_terminal_result(job_id, adapter, &latest_status, handoff)
-                .await;
-            guard.disarm_if_returnable(&result);
-            return result;
-        }
-        let observation =
-            match structured_job_observation(&self.runner_registry, handoff.auth.as_ref(), &job_id)
-                .await
-            {
-                Ok(observation) => observation,
-                Err(_) => {
-                    return Box::pin(
-                        self.recover_validation_handoff(job_id, adapter, handoff, &mut guard),
-                    )
+            Ok(HiddenStructuredJobWait::Terminal(observation)) => {
+                let result = self
+                    .validation_terminal_result(observation, adapter, handoff)
                     .await;
-                }
-            };
-        let latest_status = observation.job.status.clone();
-        if crate::tool_runtime::jobs::is_terminal_job_status(&latest_status) {
-            let result = self
-                .validation_terminal_result(job_id, adapter, &latest_status, handoff)
-                .await;
-            guard.disarm_if_returnable(&result);
-            return result;
-        }
-        let observation_token = match observation.job.observation_token.clone() {
-            Some(token) => token,
-            None => {
-                return Box::pin(
-                    self.recover_validation_handoff(job_id, adapter, handoff, &mut guard),
-                )
-                .await;
+                cleanup.disarm();
+                return result;
             }
+            Ok(HiddenStructuredJobWait::Continued {
+                observation,
+                execution_state,
+                command_started,
+            }) => (observation, execution_state, command_started),
+            Err(failure) => return validation_handoff_failure_result(failure, &handoff),
         };
-        let (execution_state, command_started) = validation_handoff_execution_state(
-            latest_status.as_str(),
-            observation.job.started_at.is_some(),
-        );
+        let latest_status = &observation.job.status;
+        let observation_token = observation.job.observation_token.as_deref();
         let detected_summary = crate::tool_runtime::jobs::detected_job_summary_with_activity(
             Some(&handoff.command_summary),
             Some(&handoff.purpose),
-            &latest_status,
+            latest_status,
             observation.job.exit_code.map(i64::from),
             &observation.stdout_tail,
             &observation.stderr_tail,
             observation.stdout_truncated || observation.stderr_truncated,
             observation.job.activity.as_ref(),
         );
-        let continuation = crate::tool_runtime::jobs::observe_job_continuation(
-            &handoff.job_id,
-            Some(&observation_token),
-        );
+        let continuation =
+            crate::tool_runtime::jobs::observe_job_continuation(&handoff.job_id, observation_token);
         let payload = json!({
             "execution_source": handoff.execution_source,
             "purpose": handoff.purpose,
@@ -1040,99 +960,42 @@ impl ToolRuntime {
             "terminal": false,
             "continuation": continuation,
         });
-        guard.disarm();
         ToolResult::ok(payload)
-    }
-
-    /// Recover while the initiating cleanup guard still owns the hidden record.
-    /// This calls only the same canonical visibility transition and observations.
-    /// Callers box this cold future so terminal parsing/recovery does not inflate
-    /// every ordinary dispatch future (including unrelated observations).
-    async fn recover_validation_handoff(
-        &self,
-        job_id: String,
-        adapter: &'static dyn ValidationEvidenceProfile,
-        handoff: ValidationHandoff,
-        guard: &mut ValidationCleanupGuard,
-    ) -> ToolResult {
-        let result = match recover_hidden_structured_job(
-            &self.runner_registry,
-            handoff.auth.as_ref(),
-            &job_id,
-        )
-        .await
-        {
-            Ok(HiddenStructuredJobWait::Terminal { job, .. }) => {
-                self.validation_terminal_result(job_id, adapter, &job.status, handoff)
-                    .await
-            }
-            Ok(HiddenStructuredJobWait::Continued { .. }) => {
-                unreachable!("recovery never fabricates a successful handoff observation")
-            }
-            Err(failure) => validation_handoff_failure_result(failure, &handoff),
-        };
-        guard.disarm_if_returnable(&result);
-        result
     }
 
     /// Build a terminal structured validation result from a Job's final state.
     async fn validation_terminal_result(
         &self,
-        job_id: String,
+        observation: StructuredJobObservation,
         adapter: &'static dyn ValidationEvidenceProfile,
-        job_status: &str,
         handoff: ValidationHandoff,
     ) -> ToolResult {
-        let log = self
-            .runner_registry
-            .hidden_job_log_for_auth(handoff.auth.as_ref(), &job_id, Some(200))
-            .await;
-        let (job, stdout, stderr, stdout_source_truncated, stderr_source_truncated) = match log {
-            Ok((job, stdout, stderr, next_stdout_line, next_stderr_line)) => {
-                let stdout = stdout.unwrap_or_default();
-                let stderr = stderr.unwrap_or_default();
-                let stdout_source_truncated = job.stdout_log_truncated
-                    || job.stdout_retained_from_line.is_some_and(|line| line > 1)
-                    || stdout.lines().count() < next_stdout_line.saturating_sub(1);
-                let stderr_source_truncated = job.stderr_log_truncated
-                    || job.stderr_retained_from_line.is_some_and(|line| line > 1)
-                    || stderr.lines().count() < next_stderr_line.saturating_sub(1);
-                (
-                    Some(job),
-                    stdout,
-                    stderr,
-                    stdout_source_truncated,
-                    stderr_source_truncated,
-                )
-            }
-            Err(_) => {
-                let failure = StructuredJobHandoffFailure::unresolved(
-                    &self.runner_registry,
-                    handoff.auth.as_ref(),
-                    &job_id,
-                )
-                .await;
-                return validation_handoff_failure_result(failure, &handoff);
-            }
-        };
+        let StructuredJobObservation {
+            job,
+            stdout_tail: stdout,
+            stderr_tail: stderr,
+            stdout_truncated: stdout_source_truncated,
+            stderr_truncated: stderr_source_truncated,
+            ..
+        } = observation;
+        let job_id = &job.job_id;
+        let job_status = job.status.as_str();
         let (stdout_tail, bounded_stdout_truncated) = bounded_tail(&stdout, CARGO_STDIO_TAIL_CHARS);
         let (stderr_tail, bounded_stderr_truncated) = bounded_tail(&stderr, CARGO_STDIO_TAIL_CHARS);
         let stdout_truncated = stdout_source_truncated || bounded_stdout_truncated;
         let stderr_truncated = stderr_source_truncated || bounded_stderr_truncated;
-        let exit_code = job.as_ref().and_then(|job| job.exit_code);
+        let exit_code = job.exit_code;
         if handoff.execution_source == "project_validate"
-            && job.as_ref().is_some_and(|job| {
-                job.command_execution_state == Some(ShellCommandExecutionState::NotStarted)
-            })
+            && job.command_execution_state == Some(ShellCommandExecutionState::NotStarted)
         {
             let stale = job
-                .as_ref()
-                .and_then(|job| job.error.as_deref())
+                .error
+                .as_deref()
                 .is_some_and(|error| error.contains("validation_plan_stale"));
             let tool_unavailable = !stale
                 && job
-                    .as_ref()
-                    .and_then(|job| job.error.as_deref())
+                    .error
+                    .as_deref()
                     .and_then(validation_infrastructure_failure_code)
                     == Some(VALIDATION_TOOL_UNAVAILABLE_CODE);
             let failure_kind = if stale {
@@ -1143,7 +1006,7 @@ impl ToolRuntime {
                 "validation_unavailable"
             };
             self.runner_registry
-                .remove_projected_hidden_terminal_job_record(&job_id)
+                .remove_projected_hidden_terminal_job_record(job_id)
                 .await;
             return ToolResult::err_with_output(
                 if stale {
@@ -1160,7 +1023,7 @@ impl ToolRuntime {
                     "execution_source": "project_validate",
                     "execution_state": "not_started",
                     "exit_code": exit_code,
-                    "duration_ms": job.as_ref().and_then(|job| job.duration_ms),
+                    "duration_ms": job.duration_ms,
                     "stdout_tail": stdout_tail,
                     "stderr_tail": stderr_tail,
                     "stdout_lines": stdout.lines().count(),
@@ -1184,8 +1047,8 @@ impl ToolRuntime {
         let infrastructure_code = (lifecycle == Some(RunnerJobLifecycle::Failed)
             && exit_code.is_none())
         .then(|| {
-            job.as_ref()
-                .and_then(|job| job.error.as_deref())
+            job.error
+                .as_deref()
                 .and_then(validation_infrastructure_failure_code)
         })
         .flatten();
@@ -1214,7 +1077,7 @@ impl ToolRuntime {
                 "completed"
             },
             "exit_code": exit_code,
-            "duration_ms": job.as_ref().and_then(|job| job.duration_ms),
+            "duration_ms": job.duration_ms,
             "stdout_tail": stdout_tail,
             "stderr_tail": stderr_tail,
             "stdout_lines": stdout.lines().count(),
@@ -1237,8 +1100,7 @@ impl ToolRuntime {
             &stdout_tail,
             &stderr_tail,
             stdout_truncated || stderr_truncated,
-            job.as_ref()
-                .and_then(|job| job.test_count_evidence.as_ref()),
+            job.test_count_evidence.as_ref(),
             handoff.minimum_tests,
             handoff.require_tests,
             handoff.no_run,
@@ -1253,7 +1115,7 @@ impl ToolRuntime {
             // Discard the hidden Job record so a fast validation never leaves a
             // redundant visible job in list_jobs.
             self.runner_registry
-                .remove_projected_hidden_terminal_job_record(&job_id)
+                .remove_projected_hidden_terminal_job_record(job_id)
                 .await;
             ToolResult::ok(payload)
         } else {
@@ -1291,7 +1153,7 @@ impl ToolRuntime {
                 error: Some(error),
             };
             self.runner_registry
-                .remove_projected_hidden_terminal_job_record(&job_id)
+                .remove_projected_hidden_terminal_job_record(job_id)
                 .await;
             result
         }
@@ -1514,110 +1376,6 @@ pub(super) fn apply_validation_projection_fields(payload: &mut Value, projection
                 payload[field] = value.clone();
             }
         }
-    }
-}
-
-/// Cancellation guard for a hidden structured validation Job during its
-/// synchronous wait window.
-///
-/// If the MCP request is cancelled before the tool returns, Drop synchronously
-/// records cleanup intent in the registry and then triggers asynchronous stop
-/// delivery. The registry lifecycle retries delayed intents; active records are
-/// retained for reconciliation until a terminal Runner update confirms cleanup.
-/// Once the tool has produced a terminal result or public handoff, the guard is
-/// disarmed.
-struct ValidationCleanupGuard {
-    clients: std::sync::Arc<crate::runner_http::RunnerRegistry>,
-    job_id: String,
-    auth: Option<webcodex_runner_registry::RunnerAccess>,
-    armed: bool,
-}
-
-impl ValidationCleanupGuard {
-    fn new(
-        clients: std::sync::Arc<crate::runner_http::RunnerRegistry>,
-        job_id: String,
-        auth: Option<webcodex_runner_registry::RunnerAccess>,
-    ) -> Self {
-        Self {
-            clients,
-            job_id,
-            auth,
-            armed: true,
-        }
-    }
-
-    fn disarm_if_returnable(&mut self, result: &ToolResult) {
-        if result.output["terminal"] == true || result.output["promoted_to_job"] == true {
-            self.disarm();
-        }
-    }
-
-    fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for ValidationCleanupGuard {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        // Register intent before attempting any asynchronous work. This is the
-        // durable in-process safety boundary: if the immediate processor is
-        // delayed or the runtime is closing, the periodic registry lifecycle
-        // still sees and retries the cleanup without deleting the active record.
-        let job_id = self.job_id.clone();
-        let auth = self.auth.clone();
-        let clients = self.clients.clone();
-        clients.record_hidden_cleanup_intent(job_id, auth);
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                clients.process_hidden_cleanup_intents().await;
-            });
-        }
-    }
-}
-
-pub(super) fn validation_handoff_execution_state(
-    status: &str,
-    started: bool,
-) -> (&'static str, bool) {
-    let pending_status = matches!(
-        RunnerJobLifecycle::from_wire(status),
-        Ok(RunnerJobLifecycle::Queued
-            | RunnerJobLifecycle::RunnerQueued
-            | RunnerJobLifecycle::StartedLegacy)
-    );
-    let command_started = !pending_status || started;
-    (
-        if command_started { "running" } else { "queued" },
-        command_started,
-    )
-}
-
-#[cfg(test)]
-mod validation_handoff_projection_tests {
-    use super::validation_handoff_execution_state;
-
-    #[test]
-    fn fresh_started_evidence_prevents_false_queued_validation_handoff() {
-        assert_eq!(
-            validation_handoff_execution_state("agent_queued", false),
-            ("queued", false)
-        );
-        assert_eq!(
-            validation_handoff_execution_state("agent_queued", true),
-            ("running", true)
-        );
-        assert_eq!(
-            validation_handoff_execution_state("started", true),
-            ("running", true)
-        );
-        assert_eq!(
-            validation_handoff_execution_state("running", true),
-            ("running", true)
-        );
     }
 }
 

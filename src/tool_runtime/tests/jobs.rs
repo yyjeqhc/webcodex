@@ -854,13 +854,12 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
     assert!(finished.failure_kind.is_none());
 
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["job_id"], job_id);
-    assert_eq!(status.output["status"], "running");
-    assert!(status.output.as_object().unwrap().contains_key("activity"));
-    assert!(status.output["activity"].is_null());
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(status.job.job_id, job_id);
+    assert_eq!(status.job.status, "running");
+    assert!(status.job.activity.is_none());
 
     let log = runtime
         .job_log_for_auth(job_id.clone(), None, Some(40), Some(&auth), None, None)
@@ -936,10 +935,10 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
     )
     .await;
     let terminal = runtime
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(terminal.success, "{:?}", terminal.error);
-    assert_eq!(terminal.output["status"], "stopped");
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(terminal.job.status, "stopped");
     assert!(runtime.runner_registry.remove_job_record(&job_id).await);
 }
 
@@ -1341,11 +1340,19 @@ async fn long_run_shell_job_timeout_is_terminal_and_never_becomes_fake_outcome_u
         true,
     )
     .await;
-    let status = runtime.job_status(job_id.clone()).await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["status"], "timeout");
-    assert_eq!(status.output["command_execution_state"], "timed_out");
-    assert_ne!(status.output["command_execution_state"], "outcome_unknown");
+    let status = runtime
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .unwrap();
+    assert_eq!(status.job.status, "timeout");
+    assert_eq!(
+        status.job.command_execution_state,
+        Some(ShellCommandExecutionState::TimedOut)
+    );
+    assert_ne!(
+        status.job.command_execution_state,
+        Some(ShellCommandExecutionState::OutcomeUnknown)
+    );
     let log = runtime.job_log(job_id.clone(), None, Some(40)).await;
     assert!(log.success, "{:?}", log.error);
     assert_eq!(log.output["command_execution_state"], "timed_out");
@@ -1789,12 +1796,12 @@ async fn model_facing_stop_job_requires_confirm_without_stopping_or_approving() 
     assert_eq!(result.output["command_started"], false);
     assert!(result.output.get("permission").is_none());
     let status = runtime
-        .job_status_for_auth(job_id, false, Some(&auth))
-        .await;
-    assert!(status.success, "{:?}", status.error);
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
     assert!(matches!(
-        status.output["status"].as_str(),
-        Some("queued" | "agent_queued")
+        status.job.status.as_str(),
+        "queued" | "agent_queued"
     ));
     let summary = runtime
         .sessions
@@ -1951,10 +1958,10 @@ async fn model_facing_stop_job_stops_agent_job_with_same_session() {
     assert_eq!(result.output["permission"]["status"], "auto_approved");
     assert_eq!(result.output["permission"]["risk"], "job");
     let status = runtime
-        .job_status_for_auth(job_id, false, Some(&auth))
-        .await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["status"], "stopped");
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(status.job.status, "stopped");
 }
 
 #[tokio::test]
@@ -2012,15 +2019,10 @@ async fn model_facing_stop_job_reports_requested_and_already_stop_requested() {
     assert_eq!(result.output["stop_effect"], "requested");
 
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["status"], "stop_requested");
-    assert_eq!(status.output["active"], true);
-    assert_eq!(status.output["blocking_active"], false);
-    assert_eq!(status.output["terminal"], false);
-    assert_eq!(status.output["terminal_pending"], true);
-    assert_eq!(status.output["command_preview_included"], false);
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(status.job.status, "stop_requested");
 
     let second = runtime
         .dispatch_with_auth(
@@ -2354,10 +2356,10 @@ async fn managed_user_job_inventory_and_counts_do_not_cross_owner() {
     assert_eq!(listed_job_ids(&alice_list), vec![alice_job.clone()]);
     assert!(!alice_list.output.to_string().contains(&bob_job));
 
-    let hidden_bob_job = runtime
-        .job_status_for_auth(bob_job.clone(), false, Some(&alice))
-        .await;
-    assert_unknown_job(hidden_bob_job);
+    assert!(runtime
+        .query_job_status_for_auth(&bob_job, Some(&alice))
+        .await
+        .is_err());
 
     let alice_status = runtime
         .dispatch_with_auth(
@@ -2489,21 +2491,18 @@ async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group_body() {
     expected.sort();
     assert_eq!(bootstrap_ids, expected);
 
-    assert_unknown_job(
-        runtime
-            .job_status_for_auth(job_b.clone(), false, Some(&shared_a))
-            .await,
-    );
-    assert_unknown_job(
-        runtime
-            .job_status_for_auth(job_a.clone(), false, Some(&bridge_b))
-            .await,
-    );
-    assert_unknown_job(
-        runtime
-            .job_status_for_auth(job_b.clone(), false, Some(&bridge_a))
-            .await,
-    );
+    assert!(runtime
+        .query_job_status_for_auth(&job_b, Some(&shared_a))
+        .await
+        .is_err());
+    assert!(runtime
+        .query_job_status_for_auth(&job_a, Some(&bridge_b))
+        .await
+        .is_err());
+    assert!(runtime
+        .query_job_status_for_auth(&job_b, Some(&bridge_a))
+        .await
+        .is_err());
     assert_unknown_job(
         runtime
             .job_log_for_auth(job_b.clone(), None, None, Some(&shared_a), None, None)
@@ -2524,20 +2523,11 @@ async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group_body() {
     );
 
     let status_b = runtime
-        .job_status_for_auth(job_b.clone(), false, Some(&shared_b))
-        .await;
-    assert!(status_b.success, "{:?}", status_b.error);
-    assert_eq!(status_b.output["job_id"], job_b);
-    assert!(status_b.output.get("command_preview").is_none());
-
-    let status_b_debug = runtime
-        .job_status_for_auth(job_b.clone(), true, Some(&shared_b))
-        .await;
-    assert!(status_b_debug.success, "{:?}", status_b_debug.error);
-    assert!(status_b_debug.output["command_preview"]
-        .as_str()
-        .unwrap()
-        .contains("echo client-b"));
+        .query_job_status_for_auth(&job_b, Some(&shared_b))
+        .await
+        .unwrap();
+    assert_eq!(status_b.job.job_id, job_b);
+    assert!(status_b.job.command_preview.contains("echo client-b"));
 
     let log_b = runtime
         .job_log_for_auth(job_b.clone(), None, None, Some(&shared_b), None, None)
@@ -2814,9 +2804,10 @@ async fn list_jobs_filters_visible_jobs_by_project_session_and_status_before_lim
     assert!(ambiguous.get("active_job").is_none());
 
     let status = runtime
-        .job_status_for_auth(job_a1_running, false, Some(&auth_a))
-        .await;
-    assert_eq!(status.output["status"], "running");
+        .query_job_status_for_auth(&job_a1_running, Some(&auth_a))
+        .await
+        .unwrap();
+    assert_eq!(status.job.status, "running");
 }
 
 #[tokio::test]

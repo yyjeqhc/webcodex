@@ -1504,14 +1504,11 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
         "lost-response recovery must not enqueue a second payload"
     );
     let status = restarted
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(
-        status.success,
-        "reconstructed logical Job must remain observable"
-    );
-    assert_eq!(status.output["job_id"], job_id);
-    assert_eq!(status.output["status"], "running");
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(status.job.job_id, job_id);
+    assert_eq!(status.job.status, "running");
 }
 
 #[tokio::test]
@@ -2144,26 +2141,24 @@ async fn run_process_six_hour_handoff_is_queryable_once_and_keeps_the_original_b
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
 
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["job_id"], job_id);
-    assert_eq!(status.output["status"], "running");
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(status.job.job_id, job_id);
+    assert_eq!(status.job.status, "running");
     assert_eq!(
-        status.output["activity"],
+        serde_json::to_value(&status.job.activity).unwrap(),
         json!({
             "state": "working",
             "phase": "process_running",
             "source": "runner_execution"
         })
     );
-    assert!(status.output["command_execution_state"].is_null());
-    assert_eq!(
-        status.output["structured_execution"]["execution_source"],
-        "run_process"
-    );
-    assert_eq!(status.output["structured_execution"]["arg_count"], 3);
-    assert_eq!(status.output["structured_execution"]["stdin_present"], true);
+    assert!(status.job.command_execution_state.is_none());
+    let execution = status.job.structured_execution.as_ref().unwrap();
+    assert_eq!(execution.execution_source, "run_process");
+    assert_eq!(execution.arg_count, 3);
+    assert!(execution.stdin_present);
     let list = runtime
         .dispatch_with_auth(
             ToolCall::ListJobs {
@@ -2197,14 +2192,22 @@ async fn run_process_six_hour_handoff_is_queryable_once_and_keeps_the_original_b
     )
     .await;
     let terminal = runtime
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(terminal.success, "{:?}", terminal.error);
-    assert_eq!(terminal.output["status"], "completed");
-    assert!(terminal.output["activity"].is_null());
-    assert_eq!(terminal.output["command_execution_state"], "completed");
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(terminal.job.status, "completed");
+    assert!(terminal.job.activity.is_none());
     assert_eq!(
-        terminal.output["structured_execution"]["execution_source"],
+        terminal.job.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert_eq!(
+        terminal
+            .job
+            .structured_execution
+            .as_ref()
+            .unwrap()
+            .execution_source,
         "run_process"
     );
     assert!(probe_patch_agent_request(&runtime, "process-slow-job")

@@ -135,8 +135,10 @@ async fn cargo_fmt_check_short_grace_hands_off_within_short_total_budget() {
     assert_eq!(result.output["effective_timeout_secs"], timeout);
     assert_eq!(result.output["sync_wait_secs"], 1);
     let job_id = result.output["job_id"].as_str().unwrap().to_string();
-    let status = runtime.job_status_for_auth(job_id, false, None).await;
-    assert!(status.success, "{:?}", status.error);
+    runtime
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

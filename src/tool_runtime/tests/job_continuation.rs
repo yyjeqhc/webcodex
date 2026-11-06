@@ -1,5 +1,7 @@
 //! Same-execution recovery through real dispatch, deterministic registry faults,
 //! canonical Runner updates, model projection, and parser-ready follow-ups.
+mod terminal_snapshot;
+
 use super::support::*;
 use super::validation_handoff::{cargo_test_update, completed_progress, running_progress};
 use crate::auth::AuthContext;

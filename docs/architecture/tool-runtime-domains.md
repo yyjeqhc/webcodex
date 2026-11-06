@@ -114,6 +114,19 @@ Candidate snapshots retain the complete authorized set, independent of model
 pagination, and the existing snapshot-to-materialization lock and durable
 deduplication markers remain intact.
 
+The retired Job status tool projection is removed; internal tests use the typed
+query and public-output tests exercise the current Job observation path.
+
+Validation and ordinary structured executions share `HiddenJobHandoff` for
+waiting, promotion of the same Job, observation recovery and cancellation cleanup.
+The owner remains armed through terminal snapshot acquisition and projection;
+uncertain process effects retain their original recovery record during publication.
+Validation keeps its 200 ms polling cadence and 200-line terminal log limit per
+stream; ordinary execution keeps its 25 ms cadence and retained terminal snapshot.
+Terminal validation consumes that snapshot directly, without a second log read.
+Tool-specific result interpretation and internal synchronous execution stay with
+their existing adapters.
+
 ## Canonical execution consumers
 
 Mutation observation and Code Mode receipts consume `ExecutionOutcomeFacts`, but

@@ -382,7 +382,7 @@ CLI command and file behavior:
   effects, retained-log loss and exact follow-up arguments remain visible.
   Unfiltered manifests start with coding tools; exact or filtered lookup can
   still discover other admitted execution tools.
-- Reads/searches default to a 45,000-byte canonical result budget, preserving
+- `read_files`/`search_project_texts` default to a 45,000-byte canonical result budget, preserving
   revision-fenced paging. CLI descriptors request Claude `anthropic/alwaysLoad`
   and `anthropic/maxResultSizeChars=70000`; these are client presentation hints,
   not larger Server output budgets. The initialization hint asks clients to read
@@ -408,7 +408,8 @@ not install configuration or grant Server permissions. See the official
 **Migration from v0.5.0:** this intentionally replaces the previous CLI workflow
 bootstrap and `_wc.ack/reply` behavior. Reconnect/refresh `tools/list` and stop
 sending CLI sidecars. Clients needing WebCodex-managed workflows or collaboration
-can explicitly choose `adaptive`, whose behavior is preserved. No persisted
+can explicitly choose `adaptive`, whose workflow behavior is preserved. Shared canonical editing and log contracts
+apply to both surfaces. No persisted
 Session, message, credential or Job is migrated or removed.
 
 Optionally set `X-WebCodex-MCP-Project` to a server-issued `project_ref` (for

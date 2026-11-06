@@ -156,7 +156,7 @@ CLI 命令与文件行为：
 - 直接执行、读取、编辑、搜索和工作区状态使用明确列出的内容字段，后端新增遥测字段
   不再自动进入文本。失败、不确定效果、日志缺失和精确后续调用参数保留。未过滤的
   manifest 默认列编码工具；精确或带过滤条件查询仍可发现其他已准入执行工具。
-- 读取/搜索默认使用 45,000 字节的规范结果预算，保留带 revision 的分页。
+- `read_files`/`search_project_texts` 默认使用 45,000 字节的规范结果预算，保留带 revision 的分页。
   CLI 描述声明 Claude `anthropic/alwaysLoad`、`anthropic/maxResultSizeChars=70000`；
   这些是客户端呈现提示，不扩大 Server 输出预算。初始化只提示读取远端 AGENTS.md /
   CLAUDE.md，不注入文件内容或管理任务规划。实际客户端行为通过验收脚本确认。
@@ -177,7 +177,7 @@ Claude 审批继续由客户端设置管理。命令不安装配置，也不授�
 
 **从 v0.5.0 迁移：** 此次有意替换原 CLI workflow bootstrap 和 `_wc.ack/reply` 行为。
 重新连接/刷新 `tools/list` 并停止发送 CLI sidecar。需要 WebCodex 管理工作流或协作的
-客户端可显式选择 `adaptive`，原行为继续保留。不迁移或删除已有 Session、消息、凭据或 Job。
+客户端可显式选择 `adaptive`，工作流行为继续保留。共享的规范编辑和日志契约适用于两种 surface。不迁移或删除已有 Session、消息、凭据或 Job。
 
 可选 `X-WebCodex-MCP-Project` 接受 Server 签发的 `project_ref`（例如 `~p17`）或完整
 `agent:<runner>:<project>` ID。reference 保留 principal/root 绑定，过期时拒绝；完整 ID

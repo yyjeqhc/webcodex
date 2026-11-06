@@ -10,9 +10,10 @@ visible AS (
                 CASE WHEN EXISTS(SELECT 1 FROM json_each(anchors) WHERE value IS NOT NULL)
                      THEN EXISTS(SELECT 1 FROM json_each(anchors) WHERE value IN allowed)
                      ELSE (principal_kind=:ck AND principal_id=:ci)
-                        OR (principal_kind='oauth2' AND :oauth_user IS NOT NULL AND :oauth_client IS NOT NULL
+                        OR (principal_kind='oauth2' AND :oauth_user IS NOT NULL
                             AND json_extract(scope_key,'$[4]')=:oauth_user
-                            AND json_extract(scope_key,'$[5]')=:oauth_client) END
+                            AND length(trim(json_extract(scope_key,'$[5]')))>0
+                            AND (:oauth_client IS NULL OR json_extract(scope_key,'$[5]')=:oauth_client)) END
             ELSE json_array_length(anchors)=0 OR EXISTS(SELECT 1 FROM json_each(anchors) WHERE value IS NULL OR value IN allowed) END
 ), ranked AS (
     SELECT *, ROW_NUMBER() OVER(PARTITION BY window_key ORDER BY last_seen DESC,observed DESC,event_id DESC) AS newest,

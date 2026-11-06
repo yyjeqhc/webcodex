@@ -15,7 +15,7 @@ fn inventory(
         visible_projects: &allowed,
         principal,
         caller: Some(("username", "alice")),
-        managed_oauth_identity: None,
+        managed_oauth_visibility: None,
         management,
         projects,
         window_key: None,
@@ -38,6 +38,7 @@ fn window_inventory_backfills_oauth_attribution_without_widening_principal_or_pr
         ("foreign-user", "other", "client", None, 20),
         ("foreign-client", "owner", "other", None, 30),
         ("denied-project", "owner", "client", Some("hidden"), 40),
+        ("missing-client", "owner", "", None, 50),
     ] {
         let mut row = event(id, id, id, "", time);
         row.project = project.map(str::to_string);
@@ -56,41 +57,110 @@ fn window_inventory_backfills_oauth_attribution_without_widening_principal_or_pr
     drop(db);
     for _ in 0..2 {
         let db = Database::open(&path).unwrap();
-        let page = |principal, identity, allowed: &[String]| {
-            db.read_window_inventory(WindowInventoryQuery {
-                principal,
-                caller: Some(("oauth2", "renewed-token")),
-                managed_oauth_identity: identity,
-                management: true,
-                visible_projects: allowed,
-                projects: None,
-                window_key: None,
-                query: "",
-                live: &[],
-                offset: 0,
-                limit: 10,
-            })
-            .unwrap()
-        };
-        let own = page(None, Some(("owner", "client")), &[]);
+        let page =
+            |principal, identity: Option<crate::WindowOAuthVisibility>, allowed: &[String]| {
+                db.read_window_inventory(WindowInventoryQuery {
+                    principal,
+                    caller: Some(("oauth2", "renewed-token")),
+                    managed_oauth_visibility: identity.as_ref(),
+                    management: true,
+                    visible_projects: allowed,
+                    projects: None,
+                    window_key: None,
+                    query: "",
+                    live: &[],
+                    offset: 0,
+                    limit: 10,
+                })
+                .unwrap()
+            };
+        let own = page(
+            None,
+            Some(crate::WindowOAuthVisibility::Client {
+                user_id: "owner".into(),
+                client_id: "client".into(),
+            }),
+            &[],
+        );
         assert_eq!(own.total, 1);
         assert_eq!(own.rows[0].client_window_key, "own");
         assert_eq!(
-            page(None, Some(("owner", "client")), &["hidden".into()]).total,
+            page(
+                None,
+                Some(crate::WindowOAuthVisibility::Client {
+                    user_id: "owner".into(),
+                    client_id: "client".into()
+                }),
+                &["hidden".into()]
+            )
+            .total,
             2
         );
         assert_eq!(page(None, None, &[]).total, 0);
+        let owner = crate::WindowOAuthVisibility::User {
+            user_id: "owner".into(),
+        };
+        let owned = page(None, Some(owner.clone()), &[]);
+        assert_eq!(owned.total, 2);
+        assert_eq!(
+            owned
+                .rows
+                .iter()
+                .map(|row| row.client_window_key.as_str())
+                .collect::<Vec<_>>(),
+            ["foreign-client", "own"]
+        );
+        assert_eq!(page(None, Some(owner.clone()), &["hidden".into()]).total, 3);
+        assert_eq!(
+            page(Some(("oauth2", "renewed-token")), Some(owner), &[]).total,
+            0
+        );
         assert_eq!(
             page(
-                Some(("oauth2", "renewed-token")),
-                Some(("owner", "client")),
+                None,
+                Some(crate::WindowOAuthVisibility::User {
+                    user_id: " ".into()
+                }),
                 &[]
             )
             .total,
             0
         );
         assert_eq!(
-            page(None, Some(("owner", "other")), &[]).rows[0].client_window_key,
+            page(
+                None,
+                Some(crate::WindowOAuthVisibility::Client {
+                    user_id: "owner".into(),
+                    client_id: "".into()
+                }),
+                &[]
+            )
+            .total,
+            0
+        );
+        assert_eq!(
+            page(
+                Some(("oauth2", "renewed-token")),
+                Some(crate::WindowOAuthVisibility::Client {
+                    user_id: "owner".into(),
+                    client_id: "client".into()
+                }),
+                &[]
+            )
+            .total,
+            0
+        );
+        assert_eq!(
+            page(
+                None,
+                Some(crate::WindowOAuthVisibility::Client {
+                    user_id: "owner".into(),
+                    client_id: "other".into()
+                }),
+                &[]
+            )
+            .rows[0]
+                .client_window_key,
             "foreign-client"
         );
         let rows = db.list_window_activity_events("own", None, 10).unwrap();
@@ -107,7 +177,7 @@ fn window_inventory_backfills_oauth_attribution_without_widening_principal_or_pr
                 .query_row("SELECT COUNT(*) FROM action_events", [], |row| row
                     .get::<_, i64>(0))
                 .unwrap(),
-            4
+            5
         );
     }
 }

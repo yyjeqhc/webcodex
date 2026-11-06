@@ -2,8 +2,8 @@
 //! retain evidence, never grant authority; all Project anchors are reauthorized
 //! with the canonical resolver on every HTTP request.
 use super::window_queries::{
-    console_active_window_request_visible_cached, window_principal_filter, window_principal_ref,
-    window_summary_internal_tool,
+    console_active_window_request_visible_cached, managed_oauth_window_visibility,
+    window_principal_filter, window_principal_ref, window_summary_internal_tool,
 };
 use super::{
     require_project_read, require_runtime_read, valid_project_id, valid_window_key, AuthContext,
@@ -347,14 +347,12 @@ pub(super) async fn inventory_and_read_for_auth<T: Send + 'static>(
     let query = query.to_string();
     let management = principal.is_none() && !auth.is_admin_caller();
     let query_allowed = allowed.clone();
-    let managed_oauth_identity = auth
-        .managed_oauth_window_identity()
-        .map(|(user, client)| (user.to_string(), client.to_string()));
+    let managed_oauth_visibility = managed_oauth_window_visibility(auth);
     let (page, extra) = super::store_read::run(db, move |db| {
         let page = db.read_window_inventory(WindowInventoryQuery {
             principal: window_principal_ref(&owned_principal),
             caller: window_principal_ref(&caller),
-            managed_oauth_identity: window_principal_ref(&managed_oauth_identity),
+            managed_oauth_visibility: managed_oauth_visibility.as_ref(),
             management,
             visible_projects: &query_allowed,
             projects: owned_projects.as_deref(),

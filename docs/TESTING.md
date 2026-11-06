@@ -185,6 +185,27 @@ parallelism; keep the original failing entry point in the final regression evide
 
 ## Explicit High-Cost Local Evidence
 
+The opt-in local-agent execution acceptance uses real authenticated model accounts
+and process-local MCP configuration, with `low` reasoning/effort for both clients:
+
+```bash
+cargo build --locked --profile dogfood -p webcodex -p webcodex-runner --bin webcodex-server --bin webcodex-runner
+python3 scripts/e2e_local_agent_execution.py --bin-dir target/dogfood --output-dir /tmp/new-local-agent-run
+```
+
+The output directory must be new. The harness starts an isolated loopback
+Server/Runner, gives each model a fresh remote Python fixture and unrelated local
+cwd, verifies the resulting tests independently, and requires exactly one long
+command execution with Job observation and zero Workflow Sessions. Codex retains
+a read-only local sandbox with explicit per-tool approval for the disposable MCP
+connection; Claude allows only that connection's tools. Normal client tool search
+is permitted. Model credential variables are omitted from the service environment. Temporary
+credentials and raw logs are removed after service cleanup; the bounded report
+retains binary hashes, dirty source identity, client versions, tool counts,
+client-reported token usage and model feedback. The harness contacts paid model
+APIs; ordinary tests never run it. Byte counts are not tokenizer measurements,
+and model feedback is not proof until checked against actual receipts/fixture state.
+
 Cloudflare's isolated real Server/Runner/CLI acceptance harness is
 `python3 scripts/e2e_cloudflare_oauth.py --bin-dir target/debug`; its required
 native-TLS-root build and verified ephemeral-CA topology are documented in

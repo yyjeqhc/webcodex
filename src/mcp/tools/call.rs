@@ -261,6 +261,13 @@ impl ParsedCall {
         // their existing bounded audit projections below.
         let raw_mcp_arguments = params.arguments.clone();
         let via_adaptive_runtime_gateway = params.name == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME;
+        if cli && params.arguments.get("_wc").is_some() {
+            return Err(McpOutcome::BadRequest(rpc_error(
+                id,
+                -32602,
+                "Invocation sidecars are unavailable on the execution-only CLI surface",
+            )));
+        }
         let invocation = match parse_mcp_invocation_envelope(
             &params.name,
             &mut params.arguments,
@@ -299,7 +306,7 @@ impl ParsedCall {
                         return Err(McpOutcome::BadRequest(rpc_error(id, -32602, message)));
                     }
                 };
-            if !context.exposure.allows(&target) {
+            if !context.exposure.allows(&target) || (cli && !crate::mcp::cli::admits(&target)) {
                 return Err(McpOutcome::BadRequest(rpc_error(
                     id,
                     -32602,
@@ -379,11 +386,12 @@ impl ParsedCall {
                 }
             }
         }
-        if cli && crate::mcp::cli::is_app_tool(&params.name) {
+        if cli && (!crate::mcp::cli::admits(&params.name) || params.arguments.get("_wc").is_some())
+        {
             return Err(McpOutcome::BadRequest(rpc_error(
                 id,
                 -32602,
-                "MCP App tools are unavailable on the CLI surface",
+                "Tool or invocation sidecar is unavailable on the execution-only CLI surface",
             )));
         }
         if cli {
@@ -457,23 +465,24 @@ impl PreparedRuntimeCall {
             recording_session_selector,
             mut metadata,
         } = invocation;
-        if context.surface == crate::mcp::request_policy::McpSurface::Cli
-            && params.name == "work_on_project"
-        {
-            metadata.context_request = vec!["project.instructions".into()];
-            metadata.prefer_full_instruction_content = true;
-            if let Some(arguments) = params.arguments.as_object_mut() {
-                arguments
-                    .entry("include_extension_catalog")
-                    .or_insert(json!(false));
-            }
-        }
         if params.name == "read_tool_manifest" {
             if context.surface == crate::mcp::request_policy::McpSurface::Cli {
                 if params.arguments.is_null() {
                     params.arguments = json!({});
                 }
                 if let Some(arguments) = params.arguments.as_object_mut() {
+                    if arguments
+                        .get("include_recommended_flows")
+                        .is_some_and(|v| !v.is_null() && v != &json!(false))
+                    {
+                        return Err(McpOutcome::BadRequest(rpc_error(
+                            context.id.clone(),
+                            -32602,
+                            "Workflow recipes are unavailable on the execution-only CLI surface",
+                        )));
+                    }
+                    // Workflow recipes belong to the caller, including exact manifests.
+                    arguments.insert("include_recommended_flows".into(), json!(false));
                     if arguments.get("tool_name").is_none_or(Value::is_null)
                         && arguments.get("limit").is_none_or(Value::is_null)
                     {

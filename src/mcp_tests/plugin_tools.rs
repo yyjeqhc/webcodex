@@ -2117,7 +2117,7 @@ async fn tool_manifest_returns_sparse_static_plugin_tool_contract_without_runner
         .find(|tool| tool["name"] == crate::plugin_gateway::PLUGIN_TOOL_NAME)
         .expect("plugin_tool after Runner registration");
     assert_eq!(
-        super::cli::business_schema_with_collaboration_checked(&gateway["inputSchema"]),
+        super::cli::business_schema_without_sidecars(&gateway["inputSchema"]),
         output["input_schema"]
     );
     assert!(!listed["result"]["tools"]

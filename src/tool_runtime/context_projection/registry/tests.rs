@@ -38,7 +38,6 @@ async fn context_registry_rejects_before_invoking_provider() {
     let runtime = ToolRuntime::new_for_tests();
     let context = || ContextMaterialContext {
         runtime: &runtime,
-        prefer_full_instruction_content: false,
         key: "test.denied",
         project: None,
         auth: None,

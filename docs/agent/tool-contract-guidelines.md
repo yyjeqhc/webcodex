@@ -568,7 +568,7 @@ target.
 HostReview is a static per-definition exposure reason, not a client profile or
 request-time override. MCP may omit the corresponding workflow group through
 [`WEBCODEX_MCP_TOOL_EXPOSURE`](../MCP.md#optional-workflow-tools-per-client);
-enabling it exposes the canonical dedicated tools, including on CLI. Disabling
+enabling it exposes the canonical dedicated tools on Adaptive. The execution-only CLI surface excludes these workflow tools even when legacy CLI flags are enabled. Disabling
 it must not translate HostReview into a gateway fallback. Its no-fallback rule is
 specific to the nine tools listed above. It does not change ordinary Direct fallback behavior, generic gateway
 annotations, or ModelHidden admission; hidden App methods remain hidden.

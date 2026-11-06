@@ -29,7 +29,6 @@ pub(crate) struct ContextMaterialCapabilities {
 /// It never resolves targets, loads instructions, or infers Session authority.
 pub(crate) struct ContextProjectionRequest<'a> {
     pub requested: &'a [String],
-    pub prefer_full_instruction_content: bool,
     pub resolved_project: Option<&'a ResolvedProject>,
     pub auth: Option<&'a AuthContext>,
     pub capabilities: ContextMaterialCapabilities,
@@ -89,7 +88,6 @@ impl ToolRuntime {
             result,
             ContextProjectionRequest {
                 requested,
-                prefer_full_instruction_content: false,
                 resolved_project,
                 auth,
                 capabilities,
@@ -108,7 +106,6 @@ impl ToolRuntime {
     ) {
         let ContextProjectionRequest {
             requested,
-            prefer_full_instruction_content,
             resolved_project,
             auth,
             capabilities,
@@ -147,7 +144,6 @@ impl ToolRuntime {
                             auth,
                             window,
                             instructions,
-                            prefer_full_instruction_content,
                             budget: ContextProjectionBudget {
                                 preceding: &materials,
                                 remaining: &requested[index + 1..],

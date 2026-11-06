@@ -5028,7 +5028,7 @@ async fn compact_bootstrap_reuses_canonical_description_with_request_local_conte
             .unwrap();
         assert!(tool.pointer("/inputSchema/properties/_wc").is_some());
         if !modern {
-            super::cli::business_schema_with_collaboration_checked(&tool["inputSchema"]);
+            super::cli::business_schema_without_sidecars(&tool["inputSchema"]);
         }
         let description = tool["description"].as_str().unwrap();
         assert!(description.starts_with(canonical));

@@ -195,9 +195,9 @@ When their workflow group is enabled, nine durable Agent and Goal operations hav
 
 ### Optional workflow tools per client
 
-Both Adaptive Runtime (including ChatGPT) and CLI default to a small workflow
-surface: model-facing Goal, Agent continuation and Job continuation tools are
-opt-in. Configure the Server's `WEBCODEX_MCP_TOOL_EXPOSURE` as closed JSON:
+Adaptive Runtime (including ChatGPT) keeps model-facing Goal, Agent continuation
+and Job continuation tools opt-in. The execution-only CLI surface excludes them;
+legacy CLI configuration fields remain readable but cannot reopen workflow routes. Configure the Server's `WEBCODEX_MCP_TOOL_EXPOSURE` as closed JSON:
 
 ```json
 {
@@ -230,8 +230,7 @@ a complete replacement, with omitted booleans defaulting to false. Client names,
 
 The switches are independent. Enable both `goals` and `agent_continuation` for
 Goal-driven automatic continuation. Enabled individually reviewed operations
-receive canonical standalone descriptors on both surfaces; CLI still has text
-results, no Apps, and only `_wc.ack` / `_wc.reply` communication metadata. Disabling a group removes its model descriptors
+receive canonical standalone descriptors on Adaptive. CLI remains execution-only. Disabling a group removes its model descriptors
 and optional App resources/bridge helpers. Exact manifests report unavailable
 routes, generated follow-ups omit unavailable targets, and direct/gateway calls
 cannot enable the omitted group. The Workbench independently retains its existing
@@ -320,50 +319,46 @@ change authentication, or remember a Project/Session between calls. Reconnect or
 refresh tools after changing connection headers. Empty, unknown or repeated
 preference headers fail before dispatch without echoing their values.
 
-CLI and legacy Adaptive MCP accept the same bounded `_wc.ack` and `_wc.reply`
-communication fields. Echo `requires_ack` message IDs in `_wc.ack` on a subsequent
-call after retaining them in model context. Reply to an Operator message with
-`_wc.reply: {"reply_to": "wc_msg_…", "message": "…"}`. With `call_runtime_tool`,
-place `_wc` beside `tool` and `arguments`, not inside the target arguments.
-These fields neither select a Workflow Session nor grant authority. The existing
-principal, Window, Project visibility, delivery, and scope checks still apply.
-Projection is not ACK; ACK records explicit client retention evidence, not human
-acceptance or completed work. Peer discovery describes recent same-principal
-activity in an authorized shared Project; it is not an online-presence guarantee.
+The CLI surface is execution-only: the local agent owns planning, repository
+instructions and conversation state. It does not bootstrap a Workflow Session,
+fetch guidance/Skills, deliver collaboration messages, or attach passive Job
+attention. `_wc` sidecars are rejected, including empty envelopes and nested
+gateway envelopes. Canonical audit evidence and existing history remain intact.
 
-The CLI surface provides:
+- The default catalog has 11 tools: `list_projects`, `list_project_files`,
+  `read_files`, `search_project_texts`, `edit_project_files`,
+  `read_workspace_changes`, `run_shell`, `observe_jobs`, `stop_job`,
+  `read_tool_manifest` and `call_runtime_tool`.
+- `run_shell` is the default command entry. `observe_jobs` combines bounded
+  waiting with result/log retrieval for the original Job; `stop_job` requests
+  cancellation. Exact argv, scripts, interactive stdin, tracked-file glob/LSP
+  navigation, build and validation remain canonical specialized tools, discovered
+  through the manifest and called through the gateway. Existing lifecycle,
+  timeout, cursor, cancellation and uncertain-effect contracts are unchanged.
+- Workflow Sessions, Goals, durable Agent orchestration, Skills, Memory,
+  communication and Apps are unavailable through discovery **and** dispatch.
+  CLI workflow exposure flags cannot reopen these routes. Manifest workflow
+  recipes are disabled (`include_recommended_flows=true` is rejected).
+- WebCodex results are text without duplicate `structuredContent`, using standard
+  `isError`. Source/read revisions, partial failures, unknown effects, Job
+  identities, limits and fenced recovery remain visible. Native image/resource
+  blocks and third-party provider passthrough retain their contracts.
+- `initialize.instructions` / `server/discover` contain only the execution
+  boundary and recovery contract. Read repository instructions explicitly as
+  files when needed; there is no automatic instruction injection.
 
-- A small coding tool list, with directory listing, tracked-file glob discovery,
-  and `find_definition` / `find_references` directly callable. Build, validation,
-  specialized edits and other admitted tools remain available through
-  `read_tool_manifest` and `call_runtime_tool`; the manifest describes the current
-  route. MCP App tools are unavailable through either route. `_wc.ack` and
-  `_wc.reply` are accepted for communication; other `_wc` fields remain unavailable.
-- Text-only WebCodex results, with unescaped source, file/line headers and read
-  revisions. Search previews omit per-match `read_hint`. Bounded `peer_awareness`,
-  `operator_messages`, `peer_messages`, and `session_attention` remain visible,
-  including on failed or pending calls. Partial failures, unknown effects, Job identities, coverage limits,
-  and revision-fenced recovery/continuation arguments remain visible. Native
-  image/resource blocks and third-party provider passthrough retain their own
-  contracts. CLI framing overrides text-JSON and OpenAI structured-failure
-  compatibility for WebCodex results: no `structuredContent`, standard `isError`.
-- Short `initialize.instructions` (also returned by stateless `server/discover`).
-  `work_on_project` includes repository instructions automatically, reusing its
-  authorized observation. Complete observed bodies are preferred within the
-  existing 20 KiB context envelope; oversized/incomplete sources retain explicit
-  truncation and `read_more`. Workspace status, Session identity, permissions,
-  warnings and blockers remain; ChatGPT workflow prose is omitted. Extension
-  catalogs default off on CLI; request `include_extension_catalog=true` when
-  needed. Startup still creates/resumes a Workflow Session, so uncertain startup
-  must be observed before creating another Session.
+**Migration from v0.5.0:** this intentionally replaces the previous CLI workflow
+bootstrap and `_wc.ack/reply` behavior. Reconnect/refresh `tools/list` and stop
+sending CLI sidecars. Clients needing WebCodex-managed workflows or collaboration
+can explicitly choose `adaptive`, whose behavior is preserved. No persisted
+Session, message, credential or Job is migrated or removed.
 
 Optionally set `X-WebCodex-MCP-Project` to a server-issued `project_ref` (for
 example `~p17`) or full `agent:<runner>:<project>` ID. A reference retains its
 principal/root binding and fails closed if stale; a full ID has the same resolver
 semantics as that explicit tool argument. Short names are rejected. This supplies
 an omitted required `project`, including inside the gateway. Explicit project
-values win; exact Session resume and `client_id`/`path` registration keep their
-own source rules. Optional filters such as `list_jobs.project` are not filled.
+values win; registration retains its own explicit source rules. Optional filters such as `list_jobs.project` are not filled.
 The header requires the CLI surface, is bounded to 512 bytes, and is never
 persisted as connection authority. Select the target deliberately; the default
 is not an authorization grant.
@@ -638,7 +633,7 @@ snapshot-fenced continuation calls. Synchronous process/script/shell output disp
 at most 200 lines per stream, with truncation flags and guidance to capture full
 future output in a Project file.
 
-Stateless MCP 2026 execution tools can opt in to `_wc.compact_execution=true`.
+Adaptive Stateless MCP 2026 execution tools can opt in to `_wc.compact_execution=true`.
 This separates stable `output.execution` control facts from `output.details`
 (per item for `observe_jobs`) while retaining logs, recovery and collaboration
 obligations. Only `outcome=passed` proves successful execution; tool acceptance
@@ -814,7 +809,7 @@ and execution keep the direct `load_skill` and `run_skill_resource` paths.
 The optional closeout helpers `check_workspace_hygiene` and `finish_coding_task`
 are model-visible gateway tools; review/coding catalogs still recommend them.
 
-Stateless MCP 2026 exposes common untrusted invocation metadata only through one optional closed `_wc` envelope. Depending on the tool, the envelope may admit `record`, `ack`, `ack_ref`, `resolve`, `reply`, `context`, `control`, and `compact_execution`. These are adapter metadata only: they never become canonical ToolCall business arguments or grant authority. Legacy flat root wrappers such as `recording_session_id`, `ack_session_message_ids`, `ack_ref`, `session_message_resolution`, `window_reply`, `context_request`, and `_control` are rejected on this Stateless 2026 surface; legacy/non-stateless transports keep their existing contracts. `call_runtime_tool` carries `_wc` only on the outer gateway call; the nested target `arguments` remain canonical business arguments and reject a second `_wc`.
+Adaptive Stateless MCP 2026 exposes common untrusted invocation metadata only through one optional closed `_wc` envelope. Depending on the tool, the envelope may admit `record`, `ack`, `ack_ref`, `resolve`, `reply`, `context`, `control`, and `compact_execution`. These are adapter metadata only: they never become canonical ToolCall business arguments or grant authority. Legacy flat root wrappers such as `recording_session_id`, `ack_session_message_ids`, `ack_ref`, `session_message_resolution`, `window_reply`, `context_request`, and `_control` are rejected on this Stateless 2026 surface; legacy/non-stateless transports keep their existing contracts. `call_runtime_tool` carries `_wc` only on the outer gateway call; the nested target `arguments` remain canonical business arguments and reject a second `_wc`.
 
 `WEBCODEX_MCP_COMPACT_SCHEMAS` defaults to `true`. Compact `tools/list` omits
 `outputSchema` and projects shorter MCP-specific tool/input descriptions for

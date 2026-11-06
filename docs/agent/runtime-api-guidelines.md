@@ -23,25 +23,25 @@ Hidden/App-only tools remain independently capability-admitted. A gateway cannot
 turn presentation metadata into authority or call an unadmitted hidden tool.
 Host schema refresh and workflow guidance refresh remain distinct operations.
 
-The MCP adapter owns `WEBCODEX_MCP_TOOL_EXPOSURE`: Goal, Agent continuation and
-Job continuation model surfaces default off, with independent Adaptive/CLI
-defaults and bounded exact authenticated OAuth-client overrides. Keep selection
-request-local, snapshot configuration at startup, and align discovery, manifests,
-suggested calls, static App resources and call admission. Workbench App-only Goal
-controls retain their independent admission; they never create a model/gateway
-route. Enabled Host-reviewed tools require standalone descriptors even on CLI.
+The MCP adapter owns `WEBCODEX_MCP_TOOL_EXPOSURE`. Optional workflow surfaces
+remain independently configurable on Adaptive, including bounded authenticated
+OAuth-client overrides. CLI is execution-only even if legacy CLI exposure flags
+are enabled. Configuration never changes canonical authority. Discovery,
+manifests, suggested calls, resources and dispatch must agree on admission.
 See [client configuration](../MCP.md#optional-workflow-tools-per-client).
 
-`X-WebCodex-MCP-Surface: cli` selects an MCP-adapter-owned coding descriptor
-subset and text projection. Its direct entries come from canonical model-visible
-ToolDefinitions; long-tail calls still enter the same gateway and kernel. App
-admission is disabled for the request, including gateway calls. `_wc` is absent
-and rejected; CLI startup requests instruction context using internal typed
-metadata, with unchanged scope checks and context bounds. The optional default
-Project header supplies only omitted required selectors and never overrides an
-explicit Project, exact Session resume, or path registration. Render text only
-after canonical audit/Job correlation so presentation cannot change execution
-success or retry evidence. Third-party passthrough retains provider semantics.
+`X-WebCodex-MCP-Surface: cli` selects canonical execution tools and text projection.
+Use one default command entry (`run_shell`), `observe_jobs` for bounded wait/read,
+and `stop_job` for cancellation; specialized execution and navigation remain
+available by manifest/gateway. Workflow, communication, Skills, Memory and Apps
+are excluded on both dispatch routes. `_wc` is absent and rejected. The kernel's
+request-local execution-only capability skips optional workflow/collaboration
+collection before it happens; it never suppresses execution evidence or audit.
+The client reads repository instructions and owns its planning/context. The
+optional default Project supplies only omitted required selectors, with normal
+reauthorization and source fencing. Render text after canonical audit/Job
+correlation so presentation cannot change execution success or retry evidence.
+Third-party passthrough retains provider semantics. Adaptive behavior is unchanged.
 
 ## Maintained operational routes
 

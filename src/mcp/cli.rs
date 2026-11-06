@@ -12,28 +12,22 @@ pub(super) use text::project_response;
 // discovery. Every entry must be an ordinary model-visible canonical tool.
 pub(super) const DIRECT_TOOLS: &[&str] = &[
     "list_projects",
-    "work_on_project",
     "list_project_files",
-    "list_project_tracked_files",
     "read_files",
     "search_project_texts",
-    "search_file_context",
-    "find_definition",
-    "find_references",
     "edit_project_files",
     "read_workspace_changes",
-    "run_process",
     "run_shell",
     "observe_jobs",
-    "wait_for_job_readiness",
+    "stop_job",
     "read_tool_manifest",
 ];
 
-pub(super) const INSTRUCTIONS: &str = "WebCodex operates on registered Projects on their owning Runner, which may be a different machine from your local shell. Use WebCodex tools for that Project. Select an exact project id from list_projects or user configuration; never infer a Project or Session from the connection. work_on_project starts/resumes a Workflow Session and returns workspace status and bounded repository instructions; follow any read_more before dependent work. Use list_project_tracked_files for filename/glob discovery, list_project_files for one directory, and find_definition/find_references for semantic navigation when available. Batch independent reads/searches; use search_file_context when matches need source context. Keep read_revision for edit_project_files and expected_read_revision for continued reads. A pending command is the same Job: do independent work, then wait_for_job_readiness and observe_jobs; never redispatch after timeout or outcome_unknown. Unknown effects require observation. Other tools: read_tool_manifest, then call_runtime_tool with exact arguments. Results are text; failures retain isError and recovery facts. MCP Apps are unavailable. Recent peer_awareness identifies same-principal Project collaborators, not liveness. Retain operator_messages, peer_messages and session_attention even on failures or pending Jobs. On the next call, echo requires_ack message IDs in _wc.ack; reply to an Operator message with _wc.reply={reply_to,message}. ACK is model-context retention evidence, not acceptance or execution. Only ack and reply are supported _wc fields; on call_runtime_tool place _wc beside tool/arguments, never inside arguments.";
+pub(super) const INSTRUCTIONS: &str = "Tools execute on the Project's owning Runner, which may differ from your local machine. Use an exact Project from configuration or list_projects. run_shell executes commands; pending/unknown execution retains one Job: observe_jobs can wait and read it, stop_job cancels it. Never redispatch uncertain effects. File edits require their read revision. Discover specialized tools with read_tool_manifest, then call_runtime_tool. The client owns planning and repository instructions; no Workflow Session is required.";
 
 pub(super) fn initialize_instructions(default_project: Option<&str>) -> Value {
     json!(match default_project {
-        Some(project) => format!("{INSTRUCTIONS}\nConfigured default Project: {project}. It applies only to tools requiring a Project and fresh work_on_project; explicit selectors and exact Session resumes win. This is a target preference, not authorization."),
+        Some(project) => format!("{INSTRUCTIONS}\nConfigured default Project: {project}. It supplies omitted required Project selectors; explicit selectors win. This is a target preference, not authorization."),
         None => INSTRUCTIONS.to_string(),
     })
 }
@@ -47,8 +41,43 @@ pub(super) fn is_app_tool(name: &str) -> bool {
         .is_some_and(|definition| definition.presents_app())
 }
 
+/// Execution-only admission is shared by discovery, direct/gateway dispatch and
+/// recovery routes. Categories belong to the canonical registry; no new authority.
+pub(super) fn admits(name: &str) -> bool {
+    use webcodex_tool_contracts::tool_definition::*;
+    // These named protocol adapters own action-dependent schemas/authority and
+    // are deliberately outside the ToolDefinition registry.
+    if matches!(
+        name,
+        crate::mcp_gateway::MCP_TOOL_NAME | crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME
+    ) {
+        return true;
+    }
+    let Some(definition) = webcodex_tool_contracts::lookup_tool_definition(name) else {
+        return false;
+    };
+    if definition.presents_app() || definition.policy.requires_explicit_business_session {
+        return false;
+    }
+    match definition.category {
+        TOOL_CATEGORY_SESSION
+        | TOOL_CATEGORY_GOAL
+        | TOOL_CATEGORY_COMMUNICATION
+        | TOOL_CATEGORY_SKILL
+        | TOOL_CATEGORY_MEMORY
+        | TOOL_CATEGORY_AGENT_TASK
+        | TOOL_CATEGORY_AGENT_WAIT
+        | TOOL_CATEGORY_CODING_AGENT => false,
+        TOOL_CATEGORY_RUNTIME => matches!(
+            name,
+            "read_tool_manifest" | "get_runtime_status" | "list_runners" | "read_tool_trace"
+        ),
+        _ => !matches!(name, "work_on_project" | "wait_for_job_terminal"),
+    }
+}
+
 pub(super) fn suggested_route(name: &str, stateless: bool) -> SuggestedToolCallRoute {
-    if is_app_tool(name) || crate::model_surface::tool_requires_individual_host_review(name) {
+    if !admits(name) || crate::model_surface::tool_requires_individual_host_review(name) {
         SuggestedToolCallRoute::Unavailable
     } else if is_direct(name) {
         SuggestedToolCallRoute::Direct
@@ -82,22 +111,11 @@ pub(super) fn tools_list_with_exposure(
         .collect();
     tools.push(super::tools::adaptive_runtime_gateway_tool_json(true));
     for tool in &mut tools {
-        let name = tool["name"].as_str().unwrap().to_owned();
-        super::tools::add_invocation_envelope_input_schema(&name, &mut tool["inputSchema"], false);
         super::discovery::compact_tool(tool);
-        // Shared ACK/reply guidance is in initialize.instructions. Do not repeat
-        // the same envelope prose on every small CLI descriptor.
-        if let Some(envelope) = tool
-            .pointer_mut("/inputSchema/properties/_wc")
-            .and_then(Value::as_object_mut)
-        {
-            envelope.remove("description");
-        }
-        project_work_on_project(tool, "inputSchema");
         let name = tool["name"].as_str().unwrap().to_owned();
         project_manifest_limit_schema(&name, &mut tool["inputSchema"]);
         if tool["name"] == "call_runtime_tool" {
-            tool["description"] = json!("Call one admitted runtime tool using its exact read_tool_manifest contract. Prefer a direct callable when listed. Normal authorization, permissions, capability and effect checks apply. MCP App tools are unavailable. Optional _wc.ack/reply belongs beside tool/arguments, never inside arguments. No other sidecars. Never replay uncertain effects.");
+            tool["description"] = json!("Call one admitted runtime tool using its exact read_tool_manifest contract. Prefer a direct callable when listed. Normal authorization, permissions, capability and effect checks apply. Workflow, communication and MCP App tools are unavailable. No _wc sidecars. Never replay uncertain effects.");
         }
         if default_project {
             let name = tool["name"].as_str().unwrap().to_string();
@@ -119,32 +137,14 @@ pub(super) fn tools_list_with_exposure(
     json!({"tools": tools})
 }
 
-/// CLI keeps the canonical bootstrap contract and adds only adapter behavior.
-/// The same projection serves tools/list and exact Manifest discovery. Broad
-/// Manifest entries keep their canonical selection summary.
-fn project_work_on_project(value: &mut Value, schema_key: &str) {
-    if value["name"] != "work_on_project" || !value[schema_key].is_object() {
-        return;
-    }
-    let canonical = webcodex_tool_contracts::lookup_tool_definition("work_on_project")
-        .expect("registered bootstrap")
-        .model_spec
-        .expect("model-visible bootstrap")
-        .description;
-    value["description"] = json!(format!(
-        "{canonical} CLI returns bounded project instructions automatically. include_extension_catalog defaults false; set true for extension discovery. Only _wc.ack/reply communication sidecars are available; they grant no Session or execution authority. MCP Apps are unavailable."
-    ));
-    if let Some(field) = value[schema_key].pointer_mut("/properties/include_extension_catalog") {
-        field["default"] = json!(false);
-        field["description"] =
-            json!("Include extension catalog; CLI defaults false. Set true when needed.");
-    }
-}
-
 pub(super) const MANIFEST_DEFAULT_LIMIT: usize = 20;
 
 fn project_manifest_limit_schema(name: &str, schema: &mut Value) {
     if name == "read_tool_manifest" {
+        schema["properties"]["include_recommended_flows"]["default"] = json!(false);
+        schema["properties"]["include_recommended_flows"]["const"] = json!(false);
+        schema["properties"]["include_recommended_flows"]["description"] =
+            json!("Workflow recipes are unavailable on the execution-only surface.");
         schema["properties"]["limit"]["default"] = json!(MANIFEST_DEFAULT_LIMIT);
         schema["properties"]["limit"]["description"] = json!("Maximum catalog entries, clamped to 1..100; CLI defaults to 20. Narrow by query/category/intent, or use tool_name for one full input contract.");
     }
@@ -156,10 +156,9 @@ pub(super) fn project_can_default(tool: &str) -> bool {
     {
         return false;
     }
-    tool == "work_on_project"
-        || webcodex_tool_contracts::input_schema_for_tool(tool)["required"]
-            .as_array()
-            .is_some_and(|required| required.iter().any(|key| key == "project"))
+    webcodex_tool_contracts::input_schema_for_tool(tool)["required"]
+        .as_array()
+        .is_some_and(|required| required.iter().any(|key| key == "project"))
 }
 
 pub(super) fn apply_default_project(tool: &str, arguments: &mut Value, project: Option<&str>) {
@@ -172,15 +171,6 @@ pub(super) fn apply_default_project(tool: &str, arguments: &mut Value, project: 
     let Some(arguments) = arguments.as_object_mut() else {
         return;
     };
-    // Exact Session resume and explicit path registration have their own source
-    // rules. A default must never override them, even when malformed.
-    if tool == "work_on_project"
-        && ["session_id", "client_id", "path"]
-            .iter()
-            .any(|key| arguments.contains_key(*key))
-    {
-        return;
-    }
     arguments.entry("project").or_insert_with(|| json!(project));
 }
 
@@ -221,7 +211,15 @@ pub(super) fn project_manifest(
         if let Some(schema) = value.get_mut("input_schema") {
             project_manifest_limit_schema(&name, schema);
         }
-        project_work_on_project(value, "input_schema");
+        if let Some(properties) = value
+            .pointer_mut("/input_schema/properties")
+            .and_then(Value::as_object_mut)
+        {
+            properties.remove("_wc");
+        }
+    }
+    if let Some(output) = result.output.as_object_mut() {
+        output.remove("recommended_flows");
     }
     entry(&mut result.output, default_project);
     if let Some(contract) = result

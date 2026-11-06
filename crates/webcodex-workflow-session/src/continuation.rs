@@ -28,7 +28,7 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::{
     canonical_tool_call_finished_events, closeout_work_projection, current_attempt_event_view,
@@ -631,51 +631,86 @@ fn empty_attempt() -> AttemptSummary {
     }
 }
 
-/// Read-only, bounded projection over the retained Session ledger.
+/// Whether any mutating tool call in `events` lacks exactly one matching
+/// finish after it. Callers pass the full retained history so an unfinished
+/// mutation older than a bounded summary window is still detected; the scan
+/// is a single reverse pass that allocates only per-identity finish counters.
 ///
 /// A successful Job acceptance has its own matching terminal tool event;
 /// its subsequent running/recovering state belongs to the Job lifecycle,
 /// not to this unfinished-call check. Never correlate by wall time or args.
-fn has_unconfirmed_mutating_call(summary: &SessionSummary) -> bool {
-    summary.events.iter().enumerate().any(|(index, start)| {
-        if start.kind != "tool_call_started"
-            || !(start.write_like || start.shell_like)
-            || start.session_id != summary.session_id
-        {
-            return false;
+pub(crate) fn has_unclosed_mutating_call<'a>(
+    events: impl DoubleEndedIterator<Item = &'a SessionEvent>,
+    session_id: &str,
+) -> bool {
+    // Exact call identity. `session_id` is fixed for the whole scan, so the
+    // key carries the remaining match dimensions. Project comes from the
+    // event's own resolved/plain project, never the Session default.
+    type CallIdentity<'a> = (
+        Option<&'a str>,
+        &'a str,
+        &'a str,
+        Option<&'a str>,
+        Option<&'a str>,
+    );
+    fn call_identity<'a>(event: &'a SessionEvent) -> Option<CallIdentity<'a>> {
+        let call_id = event.call_id.as_deref().filter(|id| !id.is_empty())?;
+        Some((
+            event
+                .resolved_project
+                .as_deref()
+                .or(event.project.as_deref()),
+            event.tool_name.as_str(),
+            call_id,
+            event.logical_invocation_id.as_deref(),
+            event.logical_invocation_role.as_deref(),
+        ))
+    }
+    // Suffix finish counts, built back-to-front so each start is closed only
+    // by finishes recorded after it: a duplicated call identity must not let a
+    // later start inherit an earlier invocation's finish. Duplicated or
+    // corrupted finishes are not authoritative confirmation — exactly one
+    // match closes a call.
+    let mut suffix_finishes: HashMap<CallIdentity<'_>, usize> = HashMap::new();
+    for event in events.rev() {
+        if event.kind == "tool_call_finished" {
+            if event.session_id != session_id {
+                continue;
+            }
+            if let Some(identity) = call_identity(event) {
+                *suffix_finishes.entry(identity).or_insert(0) += 1;
+            }
+            continue;
         }
+        if event.kind != "tool_call_started"
+            || !(event.write_like || event.shell_like)
+            || event.session_id != session_id
+        {
+            continue;
+        }
+        let Some(call_id) = event.call_id.as_deref().filter(|id| !id.is_empty()) else {
+            // Legacy starts cannot be proven to have a matching finish.
+            return true;
+        };
         // A Session can record implicitly scoped calls and requests for a
         // different Project (including rejected requests). Neither case is
         // proof that the recorded start finished. Compare the start's own
         // Project identity with the finish, not with the Session default.
-        let project = start
-            .resolved_project
-            .as_deref()
-            .or(start.project.as_deref());
-        let Some(call_id) = start.call_id.as_deref().filter(|id| !id.is_empty()) else {
-            // Legacy starts cannot be proven to have a matching finish.
+        let identity: CallIdentity<'_> = (
+            event
+                .resolved_project
+                .as_deref()
+                .or(event.project.as_deref()),
+            event.tool_name.as_str(),
+            call_id,
+            event.logical_invocation_id.as_deref(),
+            event.logical_invocation_role.as_deref(),
+        );
+        if suffix_finishes.get(&identity).copied().unwrap_or(0) != 1 {
             return true;
-        };
-        // Duplicated/corrupted finishes are not authoritative confirmation.
-        let matching_finishes = summary.events[index + 1..]
-            .iter()
-            .filter(|finish| {
-                finish.kind == "tool_call_finished"
-                    && finish.session_id == start.session_id
-                    && finish
-                        .resolved_project
-                        .as_deref()
-                        .or(finish.project.as_deref())
-                        == project
-                    && finish.tool_name == start.tool_name
-                    && finish.call_id.as_deref() == Some(call_id)
-                    && finish.logical_invocation_id == start.logical_invocation_id
-                    && finish.logical_invocation_role == start.logical_invocation_role
-            })
-            .take(2)
-            .count();
-        matching_finishes != 1
-    })
+        }
+    }
+    false
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -728,7 +763,10 @@ fn build_attempt_summary(
     // --- activity (meaningful tool calls only) ---
     // An attempt boundary is not confirmation that a prior mutating request
     // finished. Only exact retained call identity can resolve such a start.
-    let unconfirmed_mutating_call = has_unconfirmed_mutating_call(session_summary);
+    // The store computed the flag over the full retained history (see
+    // `SessionSummary::unclosed_mutating_call`), so an unfinished mutation
+    // older than this bounded summary window still blocks the attempt.
+    let unconfirmed_mutating_call = session_summary.unclosed_mutating_call;
     let incomplete_call_history =
         session_summary.events_truncated || session_summary.retention_truncated;
     let canonical_finished = canonical_tool_call_finished_events(semantic_attempt_events);

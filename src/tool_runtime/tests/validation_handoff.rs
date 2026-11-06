@@ -8,6 +8,7 @@
 
 mod cargo_test_assertions;
 mod project_validation;
+mod typed_observations;
 
 use super::support::*;
 use crate::runner_http::ShellJobVisibility;
@@ -2118,15 +2119,9 @@ async fn stale_validation_terminal_snapshot_cannot_evict_newer_materialization_m
         .get(&session_id)
         .expect("new authoritative candidate snapshot");
     assert_eq!(newer_candidates.len(), JOB_INVENTORY_MAX_TERMINAL_JOBS);
-    assert!(newer_candidates
-        .iter()
-        .all(|job| job["job_id"].as_str() != Some(j0.job_id.as_str())));
-    assert!(newer_candidates
-        .iter()
-        .any(|job| job["job_id"].as_str() == Some(jold.job_id.as_str())));
-    assert!(newer_candidates
-        .iter()
-        .any(|job| job["job_id"].as_str() == Some(jnew.job_id.as_str())));
+    assert!(newer_candidates.iter().all(|job| job.job_id != j0.job_id));
+    assert!(newer_candidates.iter().any(|job| job.job_id == jold.job_id));
+    assert!(newer_candidates.iter().any(|job| job.job_id == jnew.job_id));
 
     let newer_reconciliation = tokio::spawn({
         let runtime = runtime.clone();
@@ -2388,7 +2383,7 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
         .get(&session_id)
         .into_iter()
         .flatten()
-        .any(|job| job["job_id"].as_str() == Some(success_job_id.as_str())));
+        .any(|job| job.job_id == success_job_id));
     let events_total_before_repeat = evicted.events_total;
     let updated_at_before_repeat = evicted.updated_at;
     let _ = runtime

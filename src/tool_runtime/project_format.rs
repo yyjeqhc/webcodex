@@ -1,7 +1,7 @@
 //! Explicit-file formatter gateway. Native Job admission owns every effect.
 use super::helpers::{project_relative_runner_cwd, resolve_runner_cwd};
 use super::structured_execution::{
-    await_hidden_structured_job, HiddenStructuredJobWait, StructuredExecutionBudget,
+    HiddenJobHandoff, HiddenStructuredJobWait, StructuredExecutionBudget,
 };
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
@@ -231,9 +231,13 @@ impl ToolRuntime {
                 return rejected(code);
             }
         };
-        match await_hidden_structured_job(self.runner_registry.clone(), job.job_id.clone(),
-            self.structured_execution_sync_wait.min(Duration::from_secs(budget.sync_wait_secs)), auth.cloned()).await {
-            Ok(HiddenStructuredJobWait::Terminal { job, .. }) => terminal_result(&job),
+        let mut handoff =
+            HiddenJobHandoff::new(self.runner_registry.clone(), job.job_id.clone(), access);
+        let result = match handoff.wait(
+            self.structured_execution_sync_wait.min(Duration::from_secs(budget.sync_wait_secs)),
+            Duration::from_millis(25), None,
+        ).await {
+            Ok(HiddenStructuredJobWait::Terminal(observation)) => terminal_result(&observation.job),
             Ok(HiddenStructuredJobWait::Continued { observation, .. }) => ToolResult::ok(json!({
                 "execution_state": "pending",
                 "state_changed": null,
@@ -245,6 +249,8 @@ impl ToolRuntime {
                 "job_id": job.job_id,
                 "continuation": super::jobs::observe_job_continuation(&job.job_id, job.observation_token.as_deref()),
             })),
-        }
+        };
+        handoff.disarm();
+        result
     }
 }

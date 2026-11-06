@@ -243,6 +243,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             "cwd_invalid",
             "sandbox_unavailable",
             "executor_unavailable",
+            "validation_tool_unavailable",
             "validation_plan_stale",
             "validation_unavailable"
         ])

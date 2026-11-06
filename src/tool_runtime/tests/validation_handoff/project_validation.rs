@@ -1209,6 +1209,61 @@ async fn node_json_project_validation_handoff_owns_counts_and_keeps_freshness_un
     }
 }
 
+/// The Runner's missing-Clippy prestart failure must survive the validated
+/// Registry Job update and the model-facing project_validate MCP result.
+#[tokio::test]
+async fn project_validation_prestart_clippy_preserves_runner_failure_kind() {
+    let runtime = setup(1_000).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            let auth = auth_context(None, true);
+            let (result, _, _) = runtime
+                .dispatch_canonical(
+                    call(ProjectValidationAction::Lint, None),
+                    DispatchContext::internal(Some(&auth), SessionTransport::Mcp, None),
+                )
+                .await;
+            result
+        }
+    });
+    let (request, job_id) = reply_plan(&runtime, "rust", ProjectValidationAction::Lint).await;
+    let mut update = cargo_test_update(
+        "project-validation",
+        &request.request_id,
+        &job_id,
+        "failed",
+        "",
+        "",
+        None,
+        ShellJobValidationProgress {
+            completed: 0,
+            current_step: None,
+            failed_step: None,
+        },
+        true,
+    );
+    update.error = Some(VALIDATION_TOOL_UNAVAILABLE_CODE.to_string());
+    update.command_execution_state = Some(ShellCommandExecutionState::NotStarted);
+    runtime.runner_registry.update_job(update).await.unwrap();
+    let result = task.await.unwrap();
+    assert!(!result.success, "{result:?}");
+    assert_eq!(result.output["execution_state"], "not_started");
+    assert_eq!(result.output["command_started"], false);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(
+        result.output["failure_kind"],
+        VALIDATION_TOOL_UNAVAILABLE_CODE
+    );
+    assert_eq!(result.output["terminal"], true);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains(VALIDATION_TOOL_UNAVAILABLE_CODE));
+    assert_model_cargo_result_matches_schema("project_validate", &result);
+}
+
 #[tokio::test]
 async fn rust_clippy_pending_observes_same_job_and_exit_status_controls_outcome() {
     for offline in [false, true] {

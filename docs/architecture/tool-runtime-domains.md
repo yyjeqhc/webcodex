@@ -104,6 +104,16 @@ capture request context and delegate bounded projections, so moving those adapte
 alone would not eliminate business-semantic duplication. Keep continuation tokens,
 source completeness, validation provenance and retry uncertainty unchanged.
 
+Job validation reconciliation consumes typed Registry candidates and a shared,
+non-serializable Job status observation rather than decoding tool-result JSON.
+The validation verdict has one typed owner and is serialized only at the output
+boundary. Diagnostic payloads retain their existing bounded public/persisted JSON
+format. Status analysis still reads at most 500 log lines per stream and Session
+evidence reads 200 per stream; failed log reads remain incomplete evidence.
+Candidate snapshots retain the complete authorized set, independent of model
+pagination, and the existing snapshot-to-materialization lock and durable
+deduplication markers remain intact.
+
 ## Canonical execution consumers
 
 Mutation observation and Code Mode receipts consume `ExecutionOutcomeFacts`, but

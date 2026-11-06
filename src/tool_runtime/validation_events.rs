@@ -6,6 +6,7 @@
 
 use serde_json::{json, Value};
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
+use webcodex_core::runner_protocol::ShellJobInfo;
 use webcodex_core::validation_source::{ValidationFreshness, ValidationSourceState};
 use webcodex_tool_runtime_contracts::tool_audit::{
     assertion_validation_identity, is_structured_validation_target_identity,
@@ -203,47 +204,33 @@ impl ToolRuntime {
             let Some(job_id) = observed.job_id.as_deref() else {
                 continue;
             };
-            let status = self
-                .job_status_for_auth(job_id.to_string(), false, auth)
-                .await;
-            if !status.success
-                || status.output.get("terminal").and_then(Value::as_bool) != Some(true)
-                || status.output.get("session_id").and_then(Value::as_str)
-                    != Some(summary.session_id.as_str())
-                || status.output.get("project").and_then(Value::as_str) != Some(project)
+            let Ok(observation) = self.query_job_status_for_auth(job_id, auth).await else {
+                continue;
+            };
+            let status = observation.job;
+            let job_lifecycle = RunnerJobLifecycle::from_wire(&status.status).ok();
+            if !job_lifecycle.is_some_and(RunnerJobLifecycle::is_terminal)
+                || status.session_id.as_deref() != Some(summary.session_id.as_str())
+                || status.project_id.as_deref() != Some(project)
             {
                 continue;
             }
-            // A generic execution carrying structured validation metadata belongs to the durable
-            // materialization path and must not be synthesized a second time here.
-            if status
-                .output
-                .get("validation")
-                .is_some_and(Value::is_object)
-            {
+            // Structured validation belongs to the durable materialization path.
+            if observation.validation.is_some() {
                 continue;
             }
 
-            let log = self
-                .job_log_for_auth(job_id.to_string(), None, Some(200), auth, None, None)
-                .await;
-            let job_status = status
-                .output
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            let job_lifecycle = RunnerJobLifecycle::from_wire(job_status).ok();
-            let exit_code = status.output.get("exit_code").and_then(Value::as_i64);
+            let exit_code = status.exit_code.map(i64::from);
             let succeeded =
                 job_lifecycle == Some(RunnerJobLifecycle::Completed) && exit_code == Some(0);
             observed.status = Some(if succeeded { "succeeded" } else { "failed" }.to_string());
             observed.exit_code = exit_code;
-            observed.started_at = status.output.get("started_at").and_then(Value::as_i64);
-            observed.finished_at = status.output.get("ended_at").and_then(Value::as_i64);
+            observed.started_at = status.started_at;
+            observed.finished_at = status.ended_at;
             if let Some(completed_at) = observed.finished_at {
                 observed.timestamp = completed_at;
             }
-            observed.duration_ms = status.output.get("duration_ms").and_then(Value::as_u64);
+            observed.duration_ms = status.duration_ms;
             observed.failure_kind = (!succeeded).then(|| match job_lifecycle {
                 Some(RunnerJobLifecycle::Timeout | RunnerJobLifecycle::TimedOut) => {
                     "timeout".to_string()
@@ -255,16 +242,7 @@ impl ToolRuntime {
                 _ => "command_exit_nonzero".to_string(),
             });
 
-            let mut output = if log.success {
-                log.output
-            } else {
-                json!({
-                    "stdout_tail": "",
-                    "stderr_tail": "",
-                    "stdout_truncated": true,
-                    "stderr_truncated": true,
-                })
-            };
+            let mut output = self.validation_job_log_output(job_id, auth).await;
             for field in ["purpose", "command_summary", "cwd", "shell", "executor"] {
                 if output.get(field).is_none_or(Value::is_null) {
                     output[field] = observed
@@ -281,11 +259,7 @@ impl ToolRuntime {
                 Some(RunnerJobLifecycle::Lost) => "lost",
                 _ => "completed",
             });
-            output["exit_code"] = status
-                .output
-                .get("exit_code")
-                .cloned()
-                .unwrap_or(Value::Null);
+            output["exit_code"] = json!(status.exit_code);
             observed.validation_output_summary =
                 super::sessions::execution_output_summary_for_tool_result(
                     &observed.tool_name,
@@ -294,6 +268,42 @@ impl ToolRuntime {
             if observed.validation_output_summary.is_some() {
                 events.push(observed);
             }
+        }
+    }
+
+    /// Read the same bounded log tail used for Session evidence, without routing
+    /// an internal query through the model-facing Job tool and its projections.
+    async fn validation_job_log_output(&self, job_id: &str, auth: Option<&AuthContext>) -> Value {
+        match self
+            .runner_registry
+            .job_log_for_auth(
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
+                job_id,
+                None,
+                None,
+                Some(200),
+                None,
+                None,
+            )
+            .await
+        {
+            Ok((job, stdout, stderr, next_stdout_line, next_stderr_line, observation)) => json!({
+                "stdout_tail": stdout.unwrap_or_default(),
+                "stderr_tail": stderr.unwrap_or_default(),
+                "stdout_lines": next_stdout_line.saturating_sub(1),
+                "stderr_lines": next_stderr_line.saturating_sub(1),
+                "stdout_truncated": observation.stdout_truncated,
+                "stderr_truncated": observation.stderr_truncated,
+                "purpose": job.purpose.as_deref().unwrap_or("other"),
+                "command_summary": job.command_preview,
+                "cwd": job.project_cwd,
+                "shell": job.shell,
+                "executor": "agent",
+            }),
+            Err(_) => json!({
+                "stdout_tail": "", "stderr_tail": "",
+                "stdout_truncated": true, "stderr_truncated": true,
+            }),
         }
     }
 
@@ -350,72 +360,68 @@ impl ToolRuntime {
         &self,
         project: &str,
         session_id: &str,
-        jobs: &[Value],
+        jobs: &[ShellJobInfo],
         auth: Option<&AuthContext>,
     ) {
         let retained_terminal_job_ids = jobs
             .iter()
             .filter(|job| {
-                job.get("status")
-                    .and_then(Value::as_str)
-                    .and_then(|status| RunnerJobLifecycle::from_wire(status).ok())
-                    .is_some_and(RunnerJobLifecycle::is_terminal)
+                RunnerJobLifecycle::from_wire(&job.status)
+                    .is_ok_and(RunnerJobLifecycle::is_terminal)
             })
-            .filter_map(|job| job.get("job_id").and_then(Value::as_str))
+            .map(|job| job.job_id.as_str())
             .collect::<Vec<_>>();
         for job in jobs {
-            let Some(job_id) = job.get("job_id").and_then(Value::as_str) else {
-                continue;
-            };
-            let status_name = job
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if !RunnerJobLifecycle::from_wire(status_name)
+            let job_id = job.job_id.as_str();
+            if !RunnerJobLifecycle::from_wire(&job.status)
                 .is_ok_and(RunnerJobLifecycle::is_terminal)
             {
                 continue;
             }
-            let status = self
-                .job_status_for_auth(job_id.to_string(), false, auth)
-                .await;
-            if !status.success
-                || status.output.get("terminal").and_then(Value::as_bool) != Some(true)
-                || status.output.get("session_id").and_then(Value::as_str) != Some(session_id)
-                || status.output.get("project").and_then(Value::as_str) != Some(project)
+            let Ok(observation) = self.query_job_status_for_auth(job_id, auth).await else {
+                continue;
+            };
+            let status = observation.job;
+            let terminal_status = status.status.as_str();
+            let terminal_lifecycle = RunnerJobLifecycle::from_wire(terminal_status).ok();
+            if !terminal_lifecycle.is_some_and(RunnerJobLifecycle::is_terminal)
+                || status.session_id.as_deref() != Some(session_id)
+                || status.project_id.as_deref() != Some(project)
             {
                 continue;
             }
-            let validation = status.output.get("validation").and_then(Value::as_object);
-            let structured_execution = job.get("structured_execution").and_then(Value::as_object);
-            let terminal_status = status
-                .output
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or(status_name);
-            let terminal_lifecycle = RunnerJobLifecycle::from_wire(terminal_status).ok();
+            let passed = observation
+                .validation
+                .as_ref()
+                .and_then(|validation| validation.passed());
+            // Only the persisted diagnostic payload remains JSON. Job identity,
+            // lifecycle, correlation and verdict are consumed above as typed facts.
+            let validation = observation
+                .validation
+                .map(|validation| validation.into_value());
+            let validation = validation.as_ref().and_then(Value::as_object);
+            let structured_execution = job.structured_execution.as_ref();
             let (
                 tool_name,
                 validation_target_id,
                 validation_tool,
                 validation_passed,
                 assertion_name,
-            ) = if let Some(validation) = validation {
-                let Some(tool_name) =
-                    validation
-                        .get("tool")
-                        .and_then(Value::as_str)
-                        .filter(|tool| {
-                            *tool == "project_validate"
-                                || validation_evidence_profile_for_tool(tool).is_some()
-                        })
-                else {
-                    continue;
+            ) = if let Some(metadata) = status.validation.as_ref() {
+                let tool_name = if metadata.project_validation.is_some() {
+                    metadata.tool.as_str()
+                } else {
+                    metadata.adapter.as_str()
                 };
+                if tool_name != "project_validate"
+                    && validation_evidence_profile_for_tool(tool_name).is_none()
+                {
+                    continue;
+                }
                 // Portable validation retains its wrapper tool identity; the
                 // verified Job metadata supplies its read-only adapter separately.
                 let adapter = if tool_name == "project_validate" {
-                    validation.get("adapter").and_then(Value::as_str)
+                    Some(metadata.adapter.as_str())
                 } else {
                     Some(tool_name)
                 };
@@ -424,62 +430,41 @@ impl ToolRuntime {
                 else {
                     continue;
                 };
-                let Some(identity) = validation
-                    .get("validation_target_id")
-                    .and_then(Value::as_str)
+                let Some(identity) = metadata
+                    .validation_target_id
+                    .as_deref()
                     .filter(|value| is_structured_validation_target_identity(value))
                 else {
                     continue;
                 };
-                (
-                    tool_name,
-                    identity,
-                    Some(adapter),
-                    validation.get("passed").and_then(Value::as_bool),
-                    None,
-                )
+                (tool_name, identity, Some(adapter), passed, None)
             } else {
                 let Some(metadata) = structured_execution else {
                     continue;
                 };
-                let Some(source) = metadata
-                    .get("execution_source")
-                    .and_then(Value::as_str)
-                    .filter(|source| matches!(*source, "run_process" | "run_script"))
-                else {
+                let source = metadata.execution_source.as_str();
+                if !matches!(source, "run_process" | "run_script") {
                     continue;
                 };
                 let Some(identity) = metadata
-                    .get("validation_identity")
-                    .and_then(Value::as_str)
+                    .validation_identity
+                    .as_deref()
                     .filter(|identity| is_validation_execution_identity(identity))
                 else {
                     continue;
                 };
                 let validation_tool = metadata
-                    .get("validation_tool")
-                    .and_then(Value::as_str)
+                    .validation_tool
+                    .as_deref()
                     .filter(|tool| validation_evidence_profile_for_tool(tool).is_some());
                 let assertion_name = metadata
-                    .get("assertion_name")
-                    .and_then(Value::as_str)
+                    .assertion_name
+                    .as_deref()
                     .and_then(|value| safe_model_facing_assertion_name(source, value))
                     .filter(|value| assertion_validation_identity(value) == identity);
                 (source, identity, validation_tool, None, assertion_name)
             };
-            let log = self
-                .job_log_for_auth(job_id.to_string(), None, Some(200), auth, None, None)
-                .await;
-            let mut output = if log.success {
-                log.output
-            } else {
-                json!({
-                    "stdout_tail": "",
-                    "stderr_tail": "",
-                    "stdout_truncated": true,
-                    "stderr_truncated": true,
-                })
-            };
+            let mut output = self.validation_job_log_output(job_id, auth).await;
             if let Some(validation) = validation {
                 for field in [
                     "adapter",
@@ -510,10 +495,10 @@ impl ToolRuntime {
                 }
             } else {
                 let detected = super::jobs::detected_job_summary(
-                    job.get("command_summary").and_then(Value::as_str),
-                    job.get("purpose").and_then(Value::as_str),
+                    Some(job.command_preview.as_str()),
+                    job.purpose.as_deref(),
                     terminal_status,
-                    status.output.get("exit_code").and_then(Value::as_i64),
+                    status.exit_code.map(i64::from),
                     output
                         .get("stdout_tail")
                         .and_then(Value::as_str)
@@ -535,9 +520,15 @@ impl ToolRuntime {
                     }
                 }
             }
-            for field in ["purpose", "command_summary", "cwd", "shell", "executor"] {
+            for (field, value) in [
+                ("purpose", json!(job.purpose)),
+                ("command_summary", json!(job.command_preview)),
+                ("cwd", json!(job.project_cwd)),
+                ("shell", json!(job.shell)),
+                ("executor", json!("agent")),
+            ] {
                 if output.get(field).is_none_or(Value::is_null) {
-                    output[field] = job.get(field).cloned().unwrap_or(Value::Null);
+                    output[field] = value;
                 }
             }
             if output.get("purpose").is_none_or(Value::is_null) {
@@ -552,11 +543,7 @@ impl ToolRuntime {
                 Some(RunnerJobLifecycle::Lost) => "lost",
                 _ => "completed",
             });
-            output["exit_code"] = status
-                .output
-                .get("exit_code")
-                .cloned()
-                .unwrap_or(Value::Null);
+            output["exit_code"] = json!(status.exit_code);
             let validation_output_summary =
                 super::sessions::execution_output_summary_for_tool_result(tool_name, &output);
             self.sessions.record_validation_job_terminal(
@@ -569,11 +556,11 @@ impl ToolRuntime {
                 validation_target_id,
                 assertion_name.as_deref(),
                 terminal_status,
-                status.output.get("exit_code").and_then(Value::as_i64),
+                status.exit_code.map(i64::from),
                 validation_passed,
-                status.output.get("started_at").and_then(Value::as_i64),
-                status.output.get("ended_at").and_then(Value::as_i64),
-                status.output.get("duration_ms").and_then(Value::as_u64),
+                status.started_at,
+                status.ended_at,
+                status.duration_ms,
                 validation_output_summary,
             );
         }

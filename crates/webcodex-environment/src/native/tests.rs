@@ -1,3 +1,6 @@
+#[path = "tests/user_creation.rs"]
+mod user_creation;
+
 #[path = "tests/invitation.rs"]
 mod invitation;
 

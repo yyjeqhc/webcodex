@@ -3,7 +3,7 @@
 use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{RunnerPollRequest, RunnerRequest, RunnerResultRequest};
-use crate::tool_runtime::files::{search_project_text_output, SearchOptions, SearchRequest};
+use crate::tool_runtime::files::{search_project_text_output, SearchOptions};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -126,20 +126,18 @@ fn canonical_search_result(
     stdout: &str,
     exit_code: i32,
 ) -> ToolResult {
-    let options = SearchOptions::normalize_with_pattern_mode(
-        SearchRequest {
-            pattern: pattern.to_string(),
-            path: None,
-            limit: Some(limit),
-            context_before: Some(context_before),
-            context_after: Some(context_after),
-            include_globs: None,
-            exclude_globs: None,
-            result_mode: Some(result_mode),
-            timeout_secs: None,
-        },
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         pattern_mode,
-    )
+        pattern: pattern.to_string(),
+        path: None,
+        limit: Some(limit),
+        context_before: Some(context_before),
+        context_after: Some(context_after),
+        include_globs: None,
+        exclude_globs: None,
+        result_mode: Some(result_mode),
+        timeout_secs: None,
+    })
     .expect("canonical search options");
     search_project_text_output("demo", &options, stdout, Some(exit_code), "")
 }

@@ -325,7 +325,7 @@ pub struct ReadFilesItem {
 /// Canonical search context ceiling shared by Runtime normalization and output schemas.
 pub const MAX_SEARCH_CONTEXT_LINES: usize = 80;
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SearchProjectTextsQuery {
     /// Search pattern. Interpreted as a regular expression by default. For identifiers, source

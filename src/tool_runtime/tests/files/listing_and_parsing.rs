@@ -141,7 +141,7 @@ fn validate_project_relative_path_rejects_absolute_and_parent_traversal() {
 #[test]
 fn parse_search_matches_is_bounded_and_strips_dot_slash() {
     let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\n./src/main.rs:10:fn main() {}\n./src/lib.rs:3:pub fn x()\n./src/a:1:1\n";
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(2),
         ..raw_search_request()
     })
@@ -170,7 +170,7 @@ fn parse_search_matches_is_bounded_and_strips_dot_slash() {
 fn search_match_read_hint_is_deterministic_and_centers_later_matches() {
     let stdout =
         "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/lib.rs:42:needle\nsrc/lib.rs:120:later\n";
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(10),
         ..raw_search_request()
     })
@@ -191,7 +191,7 @@ fn search_match_read_hint_is_deterministic_and_centers_later_matches() {
 fn parse_search_matches_skips_lines_without_line_number() {
     // Binary file matches or malformed lines are skipped, not counted.
     let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nbinary:file\nsrc/main.rs:5:hit\n";
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(10),
         ..raw_search_request()
     })
@@ -209,7 +209,7 @@ fn parse_search_matches_drops_claude_worktree_records() {
         ".claude/worktrees/stale/src/lib.rs:1:needle stale\n",
         "src/lib.rs:1:needle active\n",
     );
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(10),
         ..raw_search_request()
     })

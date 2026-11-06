@@ -1,6 +1,6 @@
 //! Bounded independent text searches built from the canonical single-search core.
 
-use super::files::{SearchOptions, SearchOutcome, SearchRequest};
+use super::files::{SearchOptions, SearchOutcome};
 use super::project_resolution::ResolvedProject;
 use super::{SearchProjectTextsQuery, SuggestedToolCall, ToolResult, ToolRuntime};
 use crate::json_measurement::serialized_json_len;
@@ -21,37 +21,6 @@ pub(crate) const DEFAULT_SEARCH_PROJECT_TEXTS_DEADLINE: Duration = Duration::fro
 pub(crate) use webcodex_core::runtime_contract::{
     DEFAULT_SEARCH_PROJECT_TEXTS_RESULT_BYTES, MIN_SEARCH_PROJECT_TEXTS_RESULT_BYTES,
 };
-
-fn search_request_and_pattern_mode(
-    query: SearchProjectTextsQuery,
-) -> (SearchRequest, Option<super::SearchPatternMode>) {
-    let SearchProjectTextsQuery {
-        pattern,
-        pattern_mode,
-        path,
-        limit,
-        context_before,
-        context_after,
-        include_globs,
-        exclude_globs,
-        result_mode,
-        timeout_secs,
-    } = query;
-    (
-        SearchRequest {
-            pattern,
-            path,
-            limit,
-            context_before,
-            context_after,
-            include_globs,
-            exclude_globs,
-            result_mode,
-            timeout_secs,
-        },
-        pattern_mode,
-    )
-}
 
 fn include_glob_diagnostic_query(
     query: &SearchProjectTextsQuery,
@@ -902,43 +871,36 @@ impl ToolRuntime {
                 let project = &resolved.config;
                 async move {
                     let diagnostic_query = include_glob_diagnostic_query(&query);
-                    let (request, pattern_mode) = search_request_and_pattern_mode(query);
-                    let mut result =
-                        match SearchOptions::normalize_with_pattern_mode(request, pattern_mode) {
-                            Ok(options) => {
-                                let first = self
-                                    .search_one_resolved_project_text_outcome(
-                                        project,
-                                        options.clone(),
-                                        Some(deadline),
-                                    )
-                                    .await;
-                                if first
-                                    .as_ref()
-                                    .is_err_and(|failure| failure.retryable_request_drop())
-                                    && Instant::now() < deadline
-                                {
-                                    self.search_one_resolved_project_text_outcome(
-                                        project,
-                                        options,
-                                        Some(deadline),
-                                    )
-                                    .await
-                                } else {
-                                    first
-                                }
+                    let mut result = match SearchOptions::normalize(query) {
+                        Ok(options) => {
+                            let first = self
+                                .search_one_resolved_project_text_outcome(
+                                    project,
+                                    options.clone(),
+                                    Some(deadline),
+                                )
+                                .await;
+                            if first
+                                .as_ref()
+                                .is_err_and(|failure| failure.retryable_request_drop())
+                                && Instant::now() < deadline
+                            {
+                                self.search_one_resolved_project_text_outcome(
+                                    project,
+                                    options,
+                                    Some(deadline),
+                                )
+                                .await
+                            } else {
+                                first
                             }
-                            Err(error) => Err(error.into()),
-                        };
+                        }
+                        Err(error) => Err(error.into()),
+                    };
                     if let Ok(success) = &mut result {
                         if success.is_complete_and_empty() {
                             if let Some(diagnostic_query) = diagnostic_query {
-                                let (request, pattern_mode) =
-                                    search_request_and_pattern_mode(diagnostic_query);
-                                if let Ok(options) = SearchOptions::normalize_with_pattern_mode(
-                                    request,
-                                    pattern_mode,
-                                ) {
+                                if let Ok(options) = SearchOptions::normalize(diagnostic_query) {
                                     let diagnostic = self
                                         .search_one_resolved_project_text_outcome(
                                             project,
@@ -1084,8 +1046,9 @@ mod tests {
 
     #[test]
     fn batch_projection_preserves_incomplete_count_truth_after_path_filtering() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
+            pattern_mode: None,
             path: None,
             limit: Some(10),
             context_before: None,
@@ -1684,7 +1647,7 @@ mod tests {
 
     #[test]
     fn omitted_query_failure_summary_uses_only_stable_classification() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".into(),
             ..Default::default()
         })

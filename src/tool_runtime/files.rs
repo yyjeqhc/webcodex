@@ -22,7 +22,7 @@ use super::tool_inputs::{
 };
 use super::tool_result::{SuggestedToolCall, ToolResult};
 use super::{file_listing, project_instructions};
-use super::{SearchPatternMode, SearchResultMode, ToolRuntime};
+use super::{SearchPatternMode, SearchProjectTextsQuery, SearchResultMode, ToolRuntime};
 use crate::artifact_policy::{
     canonical_known_mime, export_presentation_mime, mime_is_compatible_with_path,
     ooxml_extension_for_mime, GENERIC_BINARY_MIME, MAX_MCP_IMAGE_BYTES,
@@ -75,7 +75,7 @@ pub(crate) use search::{
     MAX_SEARCH_GLOBS, MAX_SEARCH_GLOB_BYTES, SEARCH_OUTPUT_BYTE_BUDGET,
 };
 pub(crate) use search::{
-    SearchOptions, SearchOutcome, SearchRequest, DEFAULT_SEARCH_HEAD_ABSOLUTE_CANDIDATES,
+    SearchOptions, SearchOutcome, DEFAULT_SEARCH_HEAD_ABSOLUTE_CANDIDATES,
     DEFAULT_SEARCH_TIMEOUT_SECS,
 };
 

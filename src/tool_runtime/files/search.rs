@@ -40,20 +40,6 @@ pub(crate) const DEFAULT_SEARCH_TIMEOUT_SECS: u64 = 30;
 const MIN_SEARCH_TIMEOUT_SECS: i64 = 1;
 const MAX_SEARCH_TIMEOUT_SECS: i64 = 120;
 
-#[derive(Debug, Clone)]
-#[cfg_attr(test, derive(Default))]
-pub(crate) struct SearchRequest {
-    pub(crate) pattern: String,
-    pub(crate) path: Option<String>,
-    pub(crate) limit: Option<usize>,
-    pub(crate) context_before: Option<usize>,
-    pub(crate) context_after: Option<usize>,
-    pub(crate) include_globs: Option<Vec<String>>,
-    pub(crate) exclude_globs: Option<Vec<String>>,
-    pub(crate) result_mode: Option<SearchResultMode>,
-    pub(crate) timeout_secs: Option<i64>,
-}
-
 /// Stable structured validation failure for `search_project_text` inputs.
 /// Messages must not echo raw pattern/glob values.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,14 +114,8 @@ pub(crate) struct SearchOptions {
 }
 
 impl SearchOptions {
-    #[cfg(test)]
-    pub(crate) fn normalize(request: SearchRequest) -> Result<Self, SearchValidationError> {
-        Self::normalize_with_pattern_mode(request, None)
-    }
-
-    pub(crate) fn normalize_with_pattern_mode(
-        request: SearchRequest,
-        pattern_mode: Option<SearchPatternMode>,
+    pub(crate) fn normalize(
+        request: SearchProjectTextsQuery,
     ) -> Result<Self, SearchValidationError> {
         if request.pattern.trim().is_empty() {
             return Err(
@@ -169,7 +149,7 @@ impl SearchOptions {
             false,
         )?;
         let result_mode = request.result_mode.unwrap_or(SearchResultMode::Matches);
-        let pattern_mode = pattern_mode.unwrap_or(SearchPatternMode::Regex);
+        let pattern_mode = request.pattern_mode.unwrap_or(SearchPatternMode::Regex);
         let timeout_secs = request
             .timeout_secs
             .unwrap_or(DEFAULT_SEARCH_TIMEOUT_SECS as i64)
@@ -1927,7 +1907,7 @@ mod tests {
             SearchResultMode::FilesWithMatches,
             SearchResultMode::Count,
         ] {
-            let options = SearchOptions::normalize(SearchRequest {
+            let options = SearchOptions::normalize(SearchProjectTextsQuery {
                 pattern: "needle".into(),
                 path: Some(".git".into()),
                 result_mode: Some(result_mode),
@@ -1955,7 +1935,7 @@ mod tests {
 
     #[test]
     fn provider_error_codes_cannot_impersonate_retryable_transport_failures() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".into(),
             ..Default::default()
         })
@@ -2015,7 +1995,7 @@ mod tests {
 
     #[test]
     fn parse_search_matches_default_output_has_empty_context_arrays() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "main".to_string(),
             limit: Some(10),
             ..Default::default()
@@ -2042,7 +2022,7 @@ mod tests {
     #[test]
     fn parse_search_context_matches_returns_context_line_numbers() {
         let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/lib.rs\x001-one\nsrc/lib.rs\x002-two\nsrc/lib.rs\x003:needle\nsrc/lib.rs\x004-four\nsrc/lib.rs\x005-five\n";
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             context_before: Some(2),
@@ -2079,7 +2059,7 @@ mod tests {
         // A `head -c` cut stops mid-record: the last line has no trailing
         // newline. Only complete records are returned and the partial tail is
         // reported as an output_bytes truncation, never surfaced as a record.
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             ..Default::default()
@@ -2100,7 +2080,7 @@ mod tests {
     fn search_complete_output_under_budget_is_not_truncated() {
         // A naturally complete stream below the formal byte budget is not
         // truncated merely because its final record ends with a newline.
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(50),
             ..Default::default()
@@ -2116,7 +2096,7 @@ mod tests {
 
     #[test]
     fn search_byte_probe_detects_exact_newline_boundary_truncation() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(50),
             ..Default::default()
@@ -2137,7 +2117,7 @@ mod tests {
 
     #[test]
     fn search_files_with_matches_reports_output_byte_truncation() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(50),
             result_mode: Some(SearchResultMode::FilesWithMatches),
@@ -2160,7 +2140,7 @@ mod tests {
 
     #[test]
     fn search_count_reports_output_byte_truncation_and_incomplete_total() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(50),
             result_mode: Some(SearchResultMode::Count),
@@ -2190,7 +2170,7 @@ mod tests {
         // SIGPIPEs the backend (141). That is an intentional early stop, not a
         // backend failure, and the collected records are returned with
         // truncation_reason = "limit".
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(2),
             ..Default::default()
@@ -2207,7 +2187,7 @@ mod tests {
     #[test]
     fn search_normal_no_matches_is_success_empty() {
         // Exit 1 (no matches) is a successful empty result, never an error.
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(5),
             ..Default::default()
@@ -2226,7 +2206,7 @@ mod tests {
     fn search_timeout_with_complete_records_returns_partial_success() {
         // The backend timed out but had already emitted complete records. They
         // are returned as a partial success, not discarded.
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             timeout_secs: Some(0),
@@ -2267,7 +2247,7 @@ mod tests {
 
     #[test]
     fn search_timeout_without_complete_records_returns_structured_failure() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             timeout_secs: Some(0),
@@ -2292,7 +2272,7 @@ mod tests {
 
     #[test]
     fn search_count_timeout_never_claims_complete_total() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             result_mode: Some(SearchResultMode::Count),
@@ -2325,7 +2305,7 @@ mod tests {
 
     #[test]
     fn search_files_with_matches_timeout_returns_complete_files_truncated() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             result_mode: Some(SearchResultMode::FilesWithMatches),
@@ -2360,7 +2340,7 @@ mod tests {
         // A backend exit >= 2 is a real failure even when the pipeline produced
         // some output before it died; it is never reported as an early-stop
         // partial success.
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(5),
             ..Default::default()
@@ -2374,7 +2354,7 @@ mod tests {
 
     #[test]
     fn search_rejects_absolute_and_temp_paths_in_output() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             ..Default::default()
@@ -2411,14 +2391,12 @@ mod tests {
             "RuntimeInfo { value.* }\nRuntimeInfo valueZZ\n",
         )
         .expect("write sample");
-        let options = SearchOptions::normalize_with_pattern_mode(
-            SearchRequest {
-                pattern: "RuntimeInfo { value.* }".to_string(),
-                limit: Some(10),
-                ..Default::default()
-            },
-            Some(SearchPatternMode::Literal),
-        )
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
+            pattern_mode: Some(SearchPatternMode::Literal),
+            pattern: "RuntimeInfo { value.* }".to_string(),
+            limit: Some(10),
+            ..Default::default()
+        })
         .unwrap();
         let command = search_project_text_command(&options);
         assert!(command.contains("--fixed-strings"));
@@ -2436,7 +2414,7 @@ mod tests {
 
     #[test]
     fn search_result_retention_truncated_stdout_cannot_recover_backend_identity() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             ..Default::default()
@@ -2457,7 +2435,7 @@ mod tests {
 
     #[test]
     fn search_result_retention_marker_forms_cannot_recover_match_identity() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             ..Default::default()
@@ -2484,7 +2462,7 @@ mod tests {
 
     #[test]
     fn search_result_retention_marker_forms_cannot_recover_file_identity() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             result_mode: Some(SearchResultMode::FilesWithMatches),
@@ -2512,7 +2490,7 @@ mod tests {
 
     #[test]
     fn search_result_retention_marker_forms_cannot_recover_count_identity() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             result_mode: Some(SearchResultMode::Count),
@@ -2540,7 +2518,7 @@ mod tests {
 
     #[test]
     fn search_result_retention_marker_text_in_middle_is_not_prefix_loss() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             ..Default::default()
@@ -2566,7 +2544,7 @@ mod tests {
         // field semantics in both. This pins that parity for the record fields
         // the task lists: backend, result_mode, matches, count, truncated,
         // truncation_reason, effective_timeout_secs.
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(2),
             context_before: Some(1),
@@ -2613,7 +2591,7 @@ mod tests {
             "needle-start\nmiddle\nneedle-end\n",
         )
         .expect("write sample");
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             limit: Some(10),
             context_before: Some(3),
@@ -2652,7 +2630,7 @@ mod tests {
 
     #[test]
     fn effective_search_context_clamps_values() {
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             pattern: "needle".to_string(),
             context_before: Some(21),
             context_after: Some(99),

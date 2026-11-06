@@ -23,8 +23,8 @@ pub(crate) use webcodex_runner_registry::{
     command_preview, process_preview, recovery_timeout_sweep, script_preview, EnqueueLspError,
     EnqueueRunnerSkillError, JobShellTarget, JobStartContext, JobStartExecution, JobStartRequest,
     JobValidationCorrelation, JobValidationPlan, RunnerFeature, RunnerFeatureSet, RunnerRegistry,
-    RunnerSemanticView, RunnerTransport, ShellJobVisibility, COMMAND_PREVIEW_MAX_CHARS,
-    RECOVERY_SWEEP_INTERVAL_SECS, RUNNER_ONLINE_WINDOW_SECS,
+    RunnerSemanticView, RunnerTransport, ShellJobVisibility, RECOVERY_SWEEP_INTERVAL_SECS,
+    RUNNER_ONLINE_WINDOW_SECS,
 };
 
 /// Mounted below the authenticated `/api` router. Keep Runner transport

@@ -20,13 +20,15 @@ use super::{
 use crate::auth::AuthContext;
 use crate::runner_http::{
     command_preview, JobShellTarget, JobStartContext, JobStartExecution, JobStartRequest,
-    JobValidationPlan, COMMAND_PREVIEW_MAX_CHARS,
+    JobValidationPlan,
 };
 use crate::runner_protocol::{
     ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource,
     ShellJobActivityState, ShellJobInfo, ShellJobStructuredExecutionMetadata,
     ShellJobTestCountEvidence, ShellJobValidationStep, RAW_SHELL_JOB_TIMEOUT_DEFAULT_SECS,
 };
+#[cfg(test)]
+use webcodex_runner_registry::COMMAND_PREVIEW_MAX_CHARS;
 
 pub(crate) fn is_blocking_active_job_status(status: &str) -> bool {
     webcodex_runner_registry::job_status_is_active(status) && !is_stop_pending_job_status(status)
@@ -843,6 +845,7 @@ fn is_lifecycle_active_status(status: &str) -> bool {
     is_blocking_active_job_status(status) || is_stop_pending_job_status(status)
 }
 
+#[cfg(test)]
 fn add_job_lifecycle_fields(
     output: &mut Value,
     status: &str,
@@ -910,10 +913,12 @@ pub(crate) fn recovery_reason_text(
     }
 }
 
+#[cfg(test)]
 fn command_preview_truncated(preview: &str) -> bool {
     preview.chars().count() > COMMAND_PREVIEW_MAX_CHARS
 }
 
+#[cfg(test)]
 fn add_command_preview_metadata(output: &mut Value, preview: String) {
     output["command_preview_truncated"] = json!(command_preview_truncated(&preview));
     output["command_preview_max_chars"] = json!(COMMAND_PREVIEW_MAX_CHARS);
@@ -1772,6 +1777,7 @@ impl ToolRuntime {
         self.job_status_for_auth(job_id, false, None).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn job_status_for_auth(
         &self,
         job_id: String,

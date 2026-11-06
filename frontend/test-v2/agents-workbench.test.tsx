@@ -479,3 +479,45 @@ it("does not prompt Agent creation while the first inventory read is pending or 
   expect((await screen.findAllByText("Agents could not be loaded. Refresh to retry.")).length).toBeGreaterThan(0);
   expect(screen.queryByText("No durable Agents are visible.")).toBeNull();
 });
+
+it("protects Agent creation inputs while the create request is in flight", async () => {
+  let createCalls = 0;
+  let resolveCreate: ((value: unknown) => void) | null = null;
+  const client = clientFor(() => ok({ messages: [] }), (path: string) => {
+    if (path === "communication/agent/create") {
+      createCalls += 1;
+      if (createCalls === 1) return new Promise(resolve => { resolveCreate = resolve; });
+      return { ok: false, status: 0, data: null };
+    }
+    return ok({});
+  });
+  render(<UiProvider><AgentsPanel client={client} language="en" onUnauthorized={vi.fn()} /></UiProvider>);
+  expect(await screen.findByRole("heading", { name: "Reviewer" })).toBeTruthy();
+  fireEvent.click(screen.getByText("Create Agent"));
+  fireEvent.change(screen.getByLabelText("Handle"), { target: { value: "first-agent" } });
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "First Agent" } });
+  expect((screen.getByLabelText("Handle") as HTMLInputElement).disabled).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+  // While the request is in flight the inputs are locked, so nothing new can
+  // be typed into the form that success would then wipe. (fireEvent bypasses
+  // the disabled-input event gating a real browser applies, so the protection
+  // is asserted through the disabled state itself.)
+  expect((screen.getByLabelText("Handle") as HTMLInputElement).disabled).toBe(true);
+  expect((screen.getByLabelText("Display name") as HTMLInputElement).disabled).toBe(true);
+  expect((screen.getByLabelText("Description") as HTMLTextAreaElement).disabled).toBe(true);
+  expect((screen.getByLabelText("Specialty labels") as HTMLInputElement).disabled).toBe(true);
+
+  await act(async () => resolveCreate!(ok({ agent: agents[0] })));
+  expect((screen.getByLabelText("Handle") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Display name") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Handle") as HTMLInputElement).disabled).toBe(false);
+
+  // A failed creation keeps the operator's input for correction.
+  fireEvent.change(screen.getByLabelText("Handle"), { target: { value: "retry-agent" } });
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Retry Agent" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await waitFor(() => expect((screen.getByLabelText("Handle") as HTMLInputElement).disabled).toBe(false));
+  expect((screen.getByLabelText("Handle") as HTMLInputElement).value).toBe("retry-agent");
+  expect((screen.getByLabelText("Display name") as HTMLInputElement).value).toBe("Retry Agent");
+});

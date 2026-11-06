@@ -71,19 +71,26 @@ export function AgentsPanel({ client, language, onUnauthorized, selectedAgentId,
 
   useEffect(() => { setSendAsAgent(false); }, [state.selectedAgentId]);
 
+  const [submittingCreate, setSubmittingCreate] = useState(false);
   const submitCreate = async (event: FormEvent) => {
     event.preventDefault();
-    const ok = await state.createAgent({
-      handle: createHandle,
-      displayName: createName,
-      description: createDescription,
-      labels: createLabels,
-    });
-    if (ok) {
-      setCreateHandle("");
-      setCreateName("");
-      setCreateDescription("");
-      setCreateLabels("");
+    if (submittingCreate) return;
+    setSubmittingCreate(true);
+    try {
+      const ok = await state.createAgent({
+        handle: createHandle,
+        displayName: createName,
+        description: createDescription,
+        labels: createLabels,
+      });
+      if (ok) {
+        setCreateHandle("");
+        setCreateName("");
+        setCreateDescription("");
+        setCreateLabels("");
+      }
+    } finally {
+      setSubmittingCreate(false);
     }
   };
 
@@ -160,11 +167,11 @@ export function AgentsPanel({ client, language, onUnauthorized, selectedAgentId,
         <details className="agent-create-disclosure">
           <summary><Plus size={14} /> {t("Create Agent")}</summary>
           <form className="compact-form" onSubmit={(event) => void submitCreate(event)}>
-            <label>{t("Handle")}<input value={createHandle} onChange={(event) => setCreateHandle(event.target.value)} /></label>
-            <label>{t("Display name")}<input value={createName} onChange={(event) => setCreateName(event.target.value)} /></label>
-            <label>{t("Description")}<textarea rows={2} value={createDescription} onChange={(event) => setCreateDescription(event.target.value)} /></label>
-            <label>{t("Specialty labels")}<input value={createLabels} onChange={(event) => setCreateLabels(event.target.value)} placeholder="rust, runtime" /></label>
-            <button className="primary-button compact" type="submit" disabled={state.busy || state.manageAvailable === false}>{t("Create")}</button>
+            <label>{t("Handle")}<input value={createHandle} disabled={submittingCreate} onChange={(event) => setCreateHandle(event.target.value)} /></label>
+            <label>{t("Display name")}<input value={createName} disabled={submittingCreate} onChange={(event) => setCreateName(event.target.value)} /></label>
+            <label>{t("Description")}<textarea rows={2} value={createDescription} disabled={submittingCreate} onChange={(event) => setCreateDescription(event.target.value)} /></label>
+            <label>{t("Specialty labels")}<input value={createLabels} disabled={submittingCreate} onChange={(event) => setCreateLabels(event.target.value)} placeholder="rust, runtime" /></label>
+            <button className="primary-button compact" type="submit" disabled={state.busy || submittingCreate || state.manageAvailable === false}>{t("Create")}</button>
           </form>
         </details>
       </aside>

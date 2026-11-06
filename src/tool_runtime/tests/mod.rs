@@ -38,7 +38,7 @@ mod diagnostics;
 mod dispatch;
 mod edit_tool_telemetry;
 mod execution_context;
-mod files;
+pub(super) mod files;
 mod files_helpers;
 mod git;
 mod goals;

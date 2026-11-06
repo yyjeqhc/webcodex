@@ -1,7 +1,38 @@
+// Parser fixtures use the live batch projection, including its failure schema.
+// Only the one-item envelope is unwrapped for the assertions below.
+pub(in crate::tool_runtime) fn search_project_text_output(
+    project: &str,
+    options: &SearchOptions,
+    stdout: &str,
+    exit_code: Option<i32>,
+    stderr: &str,
+) -> ToolResult {
+    search_project_text_output_with_agent_error(project, options, stdout, exit_code, stderr, None)
+}
+
+pub(in crate::tool_runtime) fn search_project_text_output_with_agent_error(
+    project: &str,
+    options: &SearchOptions,
+    stdout: &str,
+    exit_code: Option<i32>,
+    stderr: &str,
+    agent_error: Option<&str>,
+) -> ToolResult {
+    use crate::tool_runtime::search_project_texts::{CompletedSearchQuery, SearchBatch};
+    let batch = SearchBatch {
+        project: project.to_string(),
+        items: vec![CompletedSearchQuery {
+            index: 0,
+            result: search_project_text_outcome(options, stdout, exit_code, stderr, agent_error),
+        }],
+    }
+    .into_tool_result();
+    extract_single_search_batch_result(batch)
+}
 
 #[test]
 fn search_project_text_command_excludes_sensitive_dirs_and_bounds_output() {
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         pattern: "fn main".to_string(),
         path: Some("src".to_string()),
         limit: Some(25),
@@ -137,7 +168,7 @@ fn search_project_text_command_prefers_rg_backend_when_available() {
         "PATH={}; export PATH\n{}",
         shell_escape_simple(&bin.to_string_lossy()),
         search_project_text_command(
-            &SearchOptions::normalize(SearchRequest {
+            &SearchOptions::normalize(SearchProjectTextsQuery {
                 limit: Some(5),
                 ..raw_search_request()
             })
@@ -146,7 +177,7 @@ fn search_project_text_command_prefers_rg_backend_when_available() {
     );
     let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
     assert_eq!(exit_code, 0, "stderr: {stderr}");
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -180,7 +211,7 @@ fn search_project_text_command_falls_back_to_grep_without_rg() {
         "PATH={}; export PATH\n{}",
         shell_escape_simple(&bin.to_string_lossy()),
         search_project_text_command(
-            &SearchOptions::normalize(SearchRequest {
+            &SearchOptions::normalize(SearchProjectTextsQuery {
                 limit: Some(5),
                 ..raw_search_request()
             })
@@ -189,7 +220,7 @@ fn search_project_text_command_falls_back_to_grep_without_rg() {
     );
     let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
     assert_eq!(exit_code, 0, "stderr: {stderr}");
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -219,14 +250,12 @@ fn search_project_text_grep_single_file_matches_and_no_match() {
     }
 
     for (pattern, expected_exit) in [("needle", 0), ("definitely_missing", 1)] {
-        let options = SearchOptions::normalize_with_pattern_mode(
-            SearchRequest {
-                pattern: pattern.to_string(),
-                path: Some("one.txt".to_string()),
-                ..raw_search_request()
-            },
-            Some(SearchPatternMode::Literal),
-        )
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
+            pattern_mode: Some(SearchPatternMode::Literal),
+            pattern: pattern.to_string(),
+            path: Some("one.txt".to_string()),
+            ..raw_search_request()
+        })
         .unwrap();
         let command = format!(
             "PATH={}; export PATH\n{}",
@@ -264,7 +293,7 @@ fn search_project_text_grep_directory_matches_multiple_files() {
     for command in ["grep", "head"] {
         symlink_host_command(command, &bin);
     }
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         path: Some("src".to_string()),
         ..raw_search_request()
     })
@@ -311,16 +340,14 @@ fn search_project_text_grep_files_with_matches_scopes_and_bounds() {
         ("src", "missing", 10, 1, vec![], false),
         ("src", "needle", 1, 0, vec!["src/a.txt", "src/b.txt"], true),
     ] {
-        let options = SearchOptions::normalize_with_pattern_mode(
-            SearchRequest {
-                pattern: pattern.to_string(),
-                path: Some(path.to_string()),
-                limit: Some(limit),
-                result_mode: Some(SearchResultMode::FilesWithMatches),
-                ..raw_search_request()
-            },
-            Some(SearchPatternMode::Literal),
-        )
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
+            pattern_mode: Some(SearchPatternMode::Literal),
+            pattern: pattern.to_string(),
+            path: Some(path.to_string()),
+            limit: Some(limit),
+            result_mode: Some(SearchResultMode::FilesWithMatches),
+            ..raw_search_request()
+        })
         .unwrap();
         assert!(!options.requires_ripgrep());
         let command = format!(
@@ -352,15 +379,13 @@ fn search_project_text_grep_files_with_matches_scopes_and_bounds() {
         (SearchPatternMode::Regex, 0),
         (SearchPatternMode::Literal, 1),
     ] {
-        let options = SearchOptions::normalize_with_pattern_mode(
-            SearchRequest {
-                pattern: "need.e".to_string(),
-                path: Some("src".to_string()),
-                result_mode: Some(SearchResultMode::FilesWithMatches),
-                ..raw_search_request()
-            },
-            Some(pattern_mode),
-        )
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
+            pattern_mode: Some(pattern_mode),
+            pattern: "need.e".to_string(),
+            path: Some("src".to_string()),
+            result_mode: Some(SearchResultMode::FilesWithMatches),
+            ..raw_search_request()
+        })
         .unwrap();
         let command = format!(
             "PATH={}; export PATH\n{}",
@@ -400,7 +425,7 @@ fn search_project_text_grep_output_contract_handles_crlf_and_multiple_records() 
     assert_eq!(matches.output["matches"][0]["preview"], "needle");
     assert_eq!(matches.output["matches"][1]["line"], 2);
 
-    let files_options = SearchOptions::normalize(SearchRequest {
+    let files_options = SearchOptions::normalize(SearchProjectTextsQuery {
         result_mode: Some(SearchResultMode::FilesWithMatches),
         ..raw_search_request()
     })
@@ -427,14 +452,14 @@ fn search_project_text_grep_output_contract_handles_crlf_and_multiple_records() 
         let inconsistent = search_project_text_output("demo", options, marker, Some(0), "");
         assert!(!inconsistent.success);
         assert_eq!(
-            inconsistent.output["reason_code"],
+            inconsistent.output["detail_code"],
             "backend_output_inconsistent"
         );
         let missing_marker =
             search_project_text_output("demo", options, "src/foo.rs:1:needle\n", Some(0), "");
         assert!(!missing_marker.success);
         assert_eq!(
-            missing_marker.output["reason_code"],
+            missing_marker.output["detail_code"],
             "backend_identity_missing"
         );
     }
@@ -486,15 +511,13 @@ fn search_project_text_grep_windows_backend_smoke() {
             vec!["src/a.txt", "src/b.txt"],
         ),
     ] {
-        let options = SearchOptions::normalize_with_pattern_mode(
-            SearchRequest {
-                pattern: pattern.to_string(),
-                path: Some(path.to_string()),
-                result_mode: Some(mode),
-                ..raw_search_request()
-            },
-            Some(SearchPatternMode::Literal),
-        )
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
+            pattern_mode: Some(SearchPatternMode::Literal),
+            pattern: pattern.to_string(),
+            path: Some(path.to_string()),
+            result_mode: Some(mode),
+            ..raw_search_request()
+        })
         .unwrap();
         // Git for Windows provides grep and head together in usr/bin. Scope
         // PATH to that directory so an unrelated installed rg cannot mask the
@@ -591,14 +614,12 @@ fn search_project_text_basic_regex_semantics_match_rg_and_grep_fallback() {
     ];
 
     for (pattern, expected) in cases {
-        let options = SearchOptions::normalize_with_pattern_mode(
-            SearchRequest {
-                pattern: pattern.to_string(),
-                limit: Some(20),
-                ..raw_search_request()
-            },
-            Some(SearchPatternMode::Regex),
-        )
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
+            pattern_mode: Some(SearchPatternMode::Regex),
+            pattern: pattern.to_string(),
+            limit: Some(20),
+            ..raw_search_request()
+        })
         .unwrap();
         let command = search_project_text_command(&options);
         assert!(command.contains("-A 0 -E"), "{command}");
@@ -645,14 +666,12 @@ fn search_project_text_grep_fallback_keeps_literal_patterns_literal() {
         ("RuntimeInfo {", 8, "RuntimeInfo {"),
     ];
     for (pattern, line, preview) in cases {
-        let options = SearchOptions::normalize_with_pattern_mode(
-            SearchRequest {
-                pattern: pattern.to_string(),
-                limit: Some(20),
-                ..raw_search_request()
-            },
-            Some(SearchPatternMode::Literal),
-        )
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
+            pattern_mode: Some(SearchPatternMode::Literal),
+            pattern: pattern.to_string(),
+            limit: Some(20),
+            ..raw_search_request()
+        })
         .unwrap();
         let command = search_project_text_command(&options);
         assert!(command.contains("-A 0 -F"), "{command}");
@@ -708,7 +727,7 @@ fn search_project_text_grep_fallback_excludes_ignored_claude_worktrees() {
         std::os::unix::fs::symlink(target, bin.join(command)).unwrap();
     }
 
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(10),
         ..raw_search_request()
     })
@@ -745,7 +764,7 @@ fn parse_search_project_text_output_accepts_leading_canonical_marker_and_reports
         "src/b.rs:2:needle two\n",
         "{\"webcodex_search\":{\"backend\":\"grep\"}}\n",
     );
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(1),
         ..raw_search_request()
     })
@@ -759,34 +778,23 @@ fn parse_search_project_text_output_accepts_leading_canonical_marker_and_reports
     assert_eq!(result.output["matches"][0]["path"], "src/a.rs");
 }
 
-fn raw_search_request() -> SearchRequest {
-    SearchRequest {
+fn raw_search_request() -> SearchProjectTextsQuery {
+    SearchProjectTextsQuery {
         pattern: "needle".to_string(),
         ..Default::default()
     }
 }
 
-fn search_call(project: String, request: SearchRequest) -> ToolCall {
+fn search_call(project: String, request: SearchProjectTextsQuery) -> ToolCall {
     ToolCall::SearchProjectTexts {
         project,
-        queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
-            pattern: request.pattern,
-            pattern_mode: None,
-            path: request.path,
-            limit: request.limit,
-            context_before: request.context_before,
-            context_after: request.context_after,
-            include_globs: request.include_globs,
-            exclude_globs: request.exclude_globs,
-            result_mode: request.result_mode,
-            timeout_secs: request.timeout_secs,
-        }],
+        queries: vec![request],
         session_id: None,
         max_result_bytes: None,
     }
 }
 
-fn extract_single_search_batch_result(batch: ToolResult) -> ToolResult {
+pub(in crate::tool_runtime) fn extract_single_search_batch_result(batch: ToolResult) -> ToolResult {
     if !batch.success {
         return batch;
     }
@@ -812,9 +820,6 @@ fn extract_single_search_batch_result(batch: ToolResult) -> ToolResult {
 }
 
 fn assert_search_output_keys_are_declared(output: &Value) {
-    if output.get("code").is_some() {
-        return;
-    }
     let schema = crate::tool_runtime::registry::output_schema_for_tool("search_project_texts");
     let item_output = &schema["properties"]["output"]["anyOf"][0]["anyOf"][0]["properties"]
         ["items"]["items"]["properties"]["output"];
@@ -845,7 +850,7 @@ async fn execute_agent_search(
     runtime: &ToolRuntime,
     client_id: &str,
     project: String,
-    request: SearchRequest,
+    request: SearchProjectTextsQuery,
 ) -> (ToolResult, RunnerRequest) {
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -888,7 +893,7 @@ fn search_options_clamp_timeout_and_context() {
     assert_eq!(low.timeout_secs, 1);
     assert_eq!(low.context_before, MAX_SEARCH_CONTEXT_LINES);
 
-    let high = SearchOptions::normalize(SearchRequest {
+    let high = SearchOptions::normalize(SearchProjectTextsQuery {
         timeout_secs: Some(999),
         context_after: Some(usize::MAX),
         ..raw_search_request()
@@ -900,7 +905,7 @@ fn search_options_clamp_timeout_and_context() {
 
 #[test]
 fn search_timeout_uses_structured_failure_with_effective_timeout() {
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         timeout_secs: Some(0),
         ..raw_search_request()
     })
@@ -915,7 +920,7 @@ fn search_timeout_uses_structured_failure_with_effective_timeout() {
 
     assert!(!result.success);
     assert_search_output_keys_are_declared(&result.output);
-    assert_eq!(result.output["code"], "search_timeout");
+    assert_eq!(result.output["reason_code"], "timeout");
     assert_eq!(result.output["backend"], "rg");
     assert_eq!(result.output["effective_timeout_secs"], 1);
     assert_eq!(result.output["result_mode"], "matches");
@@ -1002,7 +1007,7 @@ fn search_backend_exit_codes_map_to_results() {
 
     for case in cases {
         let ctx = format!("backend={} exit_code={}", case.backend, case.exit_code);
-        let options = SearchOptions::normalize(SearchRequest {
+        let options = SearchOptions::normalize(SearchProjectTextsQuery {
             limit: case.limit,
             ..raw_search_request()
         })
@@ -1025,10 +1030,10 @@ fn search_backend_exit_codes_map_to_results() {
             Expect::ExecutionFailure => {
                 assert!(!result.success, "{ctx}");
                 assert_search_output_keys_are_declared(&result.output);
-                assert_eq!(result.output["code"], "search_execution_failed", "{ctx}");
+                assert_eq!(result.output["reason_code"], "search_execution_failed", "{ctx}");
                 assert_eq!(result.output["failure_stage"], "backend_execution", "{ctx}");
                 assert_eq!(
-                    result.output["reason_code"], "backend_process_failed",
+                    result.output["detail_code"], "backend_process_failed",
                     "{ctx}"
                 );
                 assert_eq!(result.output["exit_code"], case.exit_code, "{ctx}");
@@ -1061,9 +1066,9 @@ fn search_markerless_output_cannot_be_reported_as_a_search_result() {
         let result = search_project_text_output("demo", &options, stdout, exit_code, stderr);
         assert!(!result.success, "stdout={stdout:?} exit_code={exit_code:?}");
         assert_search_output_keys_are_declared(&result.output);
-        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["reason_code"], "search_execution_failed");
         assert_eq!(result.output["failure_stage"], "backend_protocol");
-        assert_eq!(result.output["reason_code"], "backend_identity_missing");
+        assert_eq!(result.output["detail_code"], "backend_identity_missing");
         assert!(result.output["backend"].is_null());
         let rendered = serde_json::to_string(&result).unwrap();
         assert!(!rendered.contains("PowerShell parser"));
@@ -1082,9 +1087,9 @@ fn search_backend_identity_requires_leading_canonical_namespaced_marker() {
         let result = search_project_text_output("demo", &options, stdout, Some(0), "");
         assert!(!result.success, "stdout={stdout:?}");
         assert_search_output_keys_are_declared(&result.output);
-        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["reason_code"], "search_execution_failed");
         assert_eq!(result.output["failure_stage"], "backend_protocol");
-        assert_eq!(result.output["reason_code"], "backend_identity_missing");
+        assert_eq!(result.output["detail_code"], "backend_identity_missing");
         assert!(result.output["backend"].is_null());
         let rendered = serde_json::to_string(&result).unwrap();
         assert!(!rendered.contains("src/a.rs"));
@@ -1103,9 +1108,9 @@ fn search_invalid_backend_marker_reports_protocol_provenance() {
         let result = search_project_text_output("demo", &options, stdout, Some(0), "");
         assert!(!result.success, "stdout={stdout:?}");
         assert_search_output_keys_are_declared(&result.output);
-        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["reason_code"], "search_execution_failed");
         assert_eq!(result.output["failure_stage"], "backend_protocol");
-        assert_eq!(result.output["reason_code"], "backend_identity_invalid");
+        assert_eq!(result.output["detail_code"], "backend_identity_invalid");
         assert!(result.output["backend"].is_null());
     }
 }
@@ -1118,9 +1123,9 @@ fn search_missing_completion_status_cannot_prove_success() {
 
     assert!(!result.success);
     assert_search_output_keys_are_declared(&result.output);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
     assert_eq!(result.output["failure_stage"], "backend_protocol");
-    assert_eq!(result.output["reason_code"], "backend_status_unavailable");
+    assert_eq!(result.output["detail_code"], "backend_status_unavailable");
     assert_eq!(result.output["backend"], "rg");
     assert!(result.output.get("exit_code").is_none());
 }
@@ -1138,9 +1143,9 @@ fn search_status_and_records_must_agree_before_empty_is_trusted() {
         let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), "");
         assert!(!result.success, "stdout={stdout:?} exit_code={exit_code}");
         assert_search_output_keys_are_declared(&result.output);
-        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["reason_code"], "search_execution_failed");
         assert_eq!(result.output["failure_stage"], "backend_protocol");
-        assert_eq!(result.output["reason_code"], "backend_output_inconsistent");
+        assert_eq!(result.output["detail_code"], "backend_output_inconsistent");
         assert_eq!(result.output["backend"], "rg");
         assert_eq!(result.output["exit_code"], exit_code);
         assert!(!serde_json::to_string(&result)
@@ -1153,7 +1158,7 @@ fn search_status_and_records_must_agree_before_empty_is_trusted() {
     let unproven = search_project_text_output("demo", &options, provider_marker, Some(0), "");
     assert!(!unproven.success);
     assert_eq!(
-        unproven.output["reason_code"],
+        unproven.output["detail_code"],
         "backend_output_inconsistent"
     );
     let proven_empty = search_project_text_output("demo", &options, provider_marker, Some(1), "");
@@ -1164,7 +1169,7 @@ fn search_status_and_records_must_agree_before_empty_is_trusted() {
 
 #[test]
 fn search_count_uses_backend_evidence_without_claiming_filtered_absence() {
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         result_mode: Some(SearchResultMode::Count),
         limit: Some(10),
         ..raw_search_request()
@@ -1189,7 +1194,7 @@ fn search_count_uses_backend_evidence_without_claiming_filtered_absence() {
     let malformed = search_project_text_output("demo", &options, &malformed_stdout, Some(0), "");
     assert!(!malformed.success);
     assert_eq!(
-        malformed.output["reason_code"],
+        malformed.output["detail_code"],
         "backend_output_inconsistent"
     );
 
@@ -1208,7 +1213,7 @@ fn search_count_uses_backend_evidence_without_claiming_filtered_absence() {
     let contradictory = search_project_text_output("demo", &options, &filtered_stdout, Some(1), "");
     assert!(!contradictory.success);
     assert_eq!(
-        contradictory.output["reason_code"],
+        contradictory.output["detail_code"],
         "backend_output_inconsistent"
     );
 }
@@ -1225,7 +1230,7 @@ fn search_command_preserves_rg_exit_2_despite_head() {
     write_executable_script(&bin.join("rg"), "#!/bin/sh\nexit 2\n");
     write_executable_script(&bin.join("head"), fake_head_script());
 
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -1239,7 +1244,7 @@ fn search_command_preserves_rg_exit_2_despite_head() {
     assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
     let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
     assert!(!result.success);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
     assert_eq!(result.output["backend"], "rg");
 }
 
@@ -1254,7 +1259,7 @@ fn search_command_preserves_rg_exit_1_as_success_empty() {
     write_executable_script(&bin.join("rg"), "#!/bin/sh\nexit 1\n");
     write_executable_script(&bin.join("head"), fake_head_script());
 
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -1284,7 +1289,7 @@ fn search_command_preserves_grep_exit_2_despite_head() {
     write_executable_script(&bin.join("grep"), "#!/bin/sh\nexit 2\n");
     write_executable_script(&bin.join("head"), fake_head_script());
 
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -1298,7 +1303,7 @@ fn search_command_preserves_grep_exit_2_despite_head() {
     assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
     let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
     assert!(!result.success);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
     assert_eq!(result.output["backend"], "grep");
 }
 
@@ -1315,7 +1320,7 @@ fn search_command_illegal_regex_is_not_swallowed_by_head() {
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.txt"), "hello\n").unwrap();
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         pattern: "[invalid".to_string(),
         limit: Some(5),
         ..raw_search_request()
@@ -1329,9 +1334,9 @@ fn search_command_illegal_regex_is_not_swallowed_by_head() {
     );
     let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
     assert!(!result.success);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
     assert_eq!(result.output["failure_stage"], "backend_execution");
-    assert_eq!(result.output["reason_code"], "backend_process_failed");
+    assert_eq!(result.output["detail_code"], "backend_process_failed");
     assert_eq!(result.output["backend"], "rg");
     assert_eq!(result.output["exit_code"], exit_code);
     let rendered = serde_json::to_string(&result).unwrap();
@@ -1372,7 +1377,7 @@ fn search_status_tmpdir_relative_does_not_use_worktree() {
         "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
     );
     write_executable_script(&bin.join("head"), fake_head_script());
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -1406,7 +1411,7 @@ fn search_status_tmpdir_project_root_does_not_use_worktree() {
         "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
     );
     write_executable_script(&bin.join("head"), fake_head_script());
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -1443,7 +1448,7 @@ fn search_status_tmpdir_symlink_into_worktree_is_rejected() {
         "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
     );
     write_executable_script(&bin.join("head"), fake_head_script());
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -1481,7 +1486,7 @@ fn search_status_file_is_removed_after_successful_run() {
         "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
     );
     write_executable_script(&bin.join("head"), fake_head_script());
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -1521,7 +1526,7 @@ fn search_early_stop_reaps_process_group_and_status_files() {
         "#!/bin/sh\ni=0\nwhile :; do\n  printf 'src/f%d.rs:%d:needle line\\n' \"$i\" \"$i\"\n  i=$((i + 1))\ndone\n",
     );
     write_executable_script(&bin.join("head"), truncating_fake_head_script());
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(3),
         ..raw_search_request()
     })
@@ -1617,7 +1622,7 @@ fn search_command_fails_when_head_unavailable() {
         "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
     );
     // No head in PATH and no absolute fallbacks → fail closed (no unbounded output).
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -1631,7 +1636,7 @@ fn search_command_fails_when_head_unavailable() {
     assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
     let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
     assert!(!result.success);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
 }
 
 #[cfg(unix)]
@@ -1647,7 +1652,7 @@ fn search_command_fails_when_head_exits_nonzero_even_if_backend_succeeds() {
         "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
     );
     write_executable_script(&bin.join("head"), "#!/bin/sh\nexit 2\n");
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -1662,7 +1667,7 @@ fn search_command_fails_when_head_exits_nonzero_even_if_backend_succeeds() {
     assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
     let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
     assert!(!result.success);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
 }
 
 #[cfg(unix)]
@@ -1678,7 +1683,7 @@ fn search_command_keeps_success_when_head_is_available() {
         "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
     );
     write_executable_script(&bin.join("head"), fake_head_script());
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -1752,7 +1757,7 @@ done
 "#,
     );
     write_executable_script(&bin.join("head"), truncating_fake_head_script());
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(3),
         ..raw_search_request()
     })
@@ -1803,7 +1808,7 @@ fn search_overlong_match_line_does_not_overflow_byte_budget() {
     // Real-head semantics: byte-accurate -n/-c truncation. The restricted PATH
     // contains only this delegating head plus the fake rg.
     write_executable_script(&bin.join("head"), "#!/bin/sh\nexec /usr/bin/head \"$@\"\n");
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         limit: Some(5),
         ..raw_search_request()
     })
@@ -1835,7 +1840,7 @@ fn search_overlong_match_line_does_not_overflow_byte_budget() {
 
 #[test]
 fn search_requires_ripgrep_based_on_effective_features_not_field_presence() {
-    let empty_globs = SearchOptions::normalize(SearchRequest {
+    let empty_globs = SearchOptions::normalize(SearchProjectTextsQuery {
         include_globs: Some(vec![]),
         exclude_globs: Some(vec![]),
         timeout_secs: Some(5),
@@ -1847,7 +1852,7 @@ fn search_requires_ripgrep_based_on_effective_features_not_field_presence() {
     assert!(empty_globs.exclude_globs.is_empty());
     assert_eq!(empty_globs.timeout_secs, 5);
 
-    let timeout_only = SearchOptions::normalize(SearchRequest {
+    let timeout_only = SearchOptions::normalize(SearchProjectTextsQuery {
         timeout_secs: Some(5),
         result_mode: Some(SearchResultMode::Matches),
         ..raw_search_request()
@@ -1855,28 +1860,28 @@ fn search_requires_ripgrep_based_on_effective_features_not_field_presence() {
     .unwrap();
     assert!(!timeout_only.requires_ripgrep());
 
-    let files_mode = SearchOptions::normalize(SearchRequest {
+    let files_mode = SearchOptions::normalize(SearchProjectTextsQuery {
         result_mode: Some(SearchResultMode::FilesWithMatches),
         ..raw_search_request()
     })
     .unwrap();
     assert!(!files_mode.requires_ripgrep());
 
-    let with_include = SearchOptions::normalize(SearchRequest {
+    let with_include = SearchOptions::normalize(SearchProjectTextsQuery {
         include_globs: Some(vec!["**/*.rs".to_string()]),
         ..raw_search_request()
     })
     .unwrap();
     assert!(with_include.requires_ripgrep());
 
-    let with_exclude = SearchOptions::normalize(SearchRequest {
+    let with_exclude = SearchOptions::normalize(SearchProjectTextsQuery {
         exclude_globs: Some(vec!["**/vendor/**".to_string()]),
         ..raw_search_request()
     })
     .unwrap();
     assert!(with_exclude.requires_ripgrep());
 
-    let count_mode = SearchOptions::normalize(SearchRequest {
+    let count_mode = SearchOptions::normalize(SearchProjectTextsQuery {
         result_mode: Some(SearchResultMode::Count),
         ..raw_search_request()
     })
@@ -1889,7 +1894,7 @@ fn search_validation_errors_are_structured_without_raw_secrets() {
     let secret_pattern = "SUPER_SECRET_PATTERN_VALUE_XYZ";
     let secret_glob = "private-secret-name/**/*.rs";
 
-    let empty = SearchOptions::normalize(SearchRequest {
+    let empty = SearchOptions::normalize(SearchProjectTextsQuery {
         pattern: "   ".to_string(),
         ..raw_search_request()
     })
@@ -1897,7 +1902,7 @@ fn search_validation_errors_are_structured_without_raw_secrets() {
     assert_eq!(empty.field, "pattern");
     assert_eq!(empty.reason, Some("empty"));
 
-    let nul = SearchOptions::normalize(SearchRequest {
+    let nul = SearchOptions::normalize(SearchProjectTextsQuery {
         pattern: format!("a{secret_pattern}\0b"),
         ..raw_search_request()
     })
@@ -1905,14 +1910,14 @@ fn search_validation_errors_are_structured_without_raw_secrets() {
     assert_eq!(nul.field, "pattern");
     assert!(!nul.message.contains(secret_pattern));
 
-    let path = SearchOptions::normalize(SearchRequest {
+    let path = SearchOptions::normalize(SearchProjectTextsQuery {
         path: Some("../outside".to_string()),
         ..raw_search_request()
     })
     .unwrap_err();
     assert_eq!(path.field, "path");
 
-    let glob = SearchOptions::normalize(SearchRequest {
+    let glob = SearchOptions::normalize(SearchProjectTextsQuery {
         include_globs: Some(vec![format!("!{secret_glob}")]),
         ..raw_search_request()
     })
@@ -1943,7 +1948,7 @@ async fn search_invalid_request_dispatch_returns_structured_error() {
         .dispatch_with_auth(
             search_call(
                 agent_test_project_id("search-invalid"),
-                SearchRequest {
+                SearchProjectTextsQuery {
                     include_globs: Some(vec![format!("!{secret_glob}")]),
                     ..raw_search_request()
                 },
@@ -1981,7 +1986,7 @@ async fn search_agent_command_timeout_returns_search_timeout() {
                 .dispatch_with_auth(
                     search_call(
                         project,
-                        SearchRequest {
+                        SearchProjectTextsQuery {
                             timeout_secs: Some(1),
                             ..raw_search_request()
                         },
@@ -2088,7 +2093,7 @@ async fn search_agent_timeout_without_trusted_marker_cannot_return_partial_succe
                 .dispatch_with_auth(
                     search_call(
                         project,
-                        SearchRequest {
+                        SearchProjectTextsQuery {
                             timeout_secs: Some(1),
                             ..raw_search_request()
                         },
@@ -2142,7 +2147,7 @@ async fn search_agent_timeout_with_complete_records_returns_partial_success() {
                 .dispatch_with_auth(
                     search_call(
                         project,
-                        SearchRequest {
+                        SearchProjectTextsQuery {
                             timeout_secs: Some(1),
                             ..raw_search_request()
                         },
@@ -2199,7 +2204,7 @@ async fn search_agent_outer_timeout_returns_search_timeout_and_cancels() {
                 .dispatch_with_auth(
                     search_call(
                         project,
-                        SearchRequest {
+                        SearchProjectTextsQuery {
                             // Outer wait is command+4 seconds; leave request unanswered.
                             timeout_secs: Some(1),
                             ..raw_search_request()
@@ -2261,7 +2266,7 @@ async fn search_agent_request_dropped_returns_structured_error() {
                 .dispatch_with_auth(
                     search_call(
                         project,
-                        SearchRequest {
+                        SearchProjectTextsQuery {
                             timeout_secs: Some(30),
                             ..raw_search_request()
                         },
@@ -2326,7 +2331,7 @@ async fn search_timeout_only_without_rg_still_allows_grep_fallback() {
                 .dispatch_with_auth(
                     search_call(
                         project,
-                        SearchRequest {
+                        SearchProjectTextsQuery {
                             pattern: "timeout_fallback_needle".to_string(),
                             result_mode: Some(SearchResultMode::Matches),
                             timeout_secs: Some(5),
@@ -2367,7 +2372,7 @@ fn search_glob_validation_rejects_invalid_and_protected_inputs() {
         "**/*.key",
     ];
     for glob in invalid {
-        let result = SearchOptions::normalize(SearchRequest {
+        let result = SearchOptions::normalize(SearchProjectTextsQuery {
             include_globs: Some(vec![glob.to_string()]),
             ..raw_search_request()
         });
@@ -2378,7 +2383,7 @@ fn search_glob_validation_rejects_invalid_and_protected_inputs() {
     }
 
     for glob in ["", "!vendor/**", "vendor/\n**"] {
-        let result = SearchOptions::normalize(SearchRequest {
+        let result = SearchOptions::normalize(SearchProjectTextsQuery {
             exclude_globs: Some(vec![glob.to_string()]),
             ..raw_search_request()
         });
@@ -2392,7 +2397,7 @@ fn search_glob_validation_enforces_count_and_byte_limits() {
     let too_many = (0..=MAX_SEARCH_GLOBS)
         .map(|index| format!("src/{index}/**"))
         .collect::<Vec<_>>();
-    let count_error = SearchOptions::normalize(SearchRequest {
+    let count_error = SearchOptions::normalize(SearchProjectTextsQuery {
         include_globs: Some(too_many),
         ..raw_search_request()
     })
@@ -2405,7 +2410,7 @@ fn search_glob_validation_enforces_count_and_byte_limits() {
         count_error.message
     );
 
-    let length_error = SearchOptions::normalize(SearchRequest {
+    let length_error = SearchOptions::normalize(SearchProjectTextsQuery {
         exclude_globs: Some(vec!["a".repeat(MAX_SEARCH_GLOB_BYTES + 1)]),
         ..raw_search_request()
     })
@@ -2449,7 +2454,7 @@ fn search_audit_arguments_record_bounded_feature_summary_without_pattern_or_glob
 
     let call_summary = search_call(
         "agent:demo:project".to_string(),
-        SearchRequest {
+        SearchProjectTextsQuery {
             pattern: "NEVER_LOG_PATTERN_VALUE".to_string(),
             include_globs: Some(vec!["private name/**/*.rs".to_string()]),
             exclude_globs: Some(vec!["generated secret name/**".to_string()]),
@@ -2481,7 +2486,7 @@ fn search_command_passes_shell_metacharacter_globs_as_one_literal_argument() {
     );
     write_executable_script(&bin.join("head"), fake_head_script());
     let literal = "src/**/space $HOME; 'double\" `tick`";
-    let options = SearchOptions::normalize(SearchRequest {
+    let options = SearchOptions::normalize(SearchProjectTextsQuery {
         include_globs: Some(vec![literal.to_string()]),
         ..raw_search_request()
     })
@@ -2507,75 +2512,96 @@ fn search_command_passes_shell_metacharacter_globs_as_one_literal_argument() {
 
 #[tokio::test]
 async fn search_project_text_zero_match_include_glob_reports_nonleaking_hint() {
-    let tmp = tempfile::tempdir().unwrap();
-    let runtime = test_runtime();
-    let client_id = "search-glob-hint";
-    let project = register_runner_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    search_call(
-                        project,
-                        SearchRequest {
-                            pattern: "SCOPE_NEEDLE".to_string(),
-                            include_globs: Some(vec!["docs/**/*.md".to_string()]),
-                            ..raw_search_request()
-                        },
-                    ),
-                    Some(&auth_context(None, true)),
-                )
-                .await
-        }
-    });
+    for pattern_mode in [SearchPatternMode::Regex, SearchPatternMode::Literal] {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = test_runtime();
+        let client_id = "search-glob-hint";
+        let project =
+            register_runner_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        search_call(
+                            project,
+                            SearchProjectTextsQuery {
+                                pattern: "SCOPE_NEEDLE.*".to_string(),
+                                pattern_mode: Some(pattern_mode),
+                                include_globs: Some(vec!["docs/**/*.md".to_string()]),
+                                ..raw_search_request()
+                            },
+                        ),
+                        Some(&auth_context(None, true)),
+                    )
+                    .await
+            }
+        });
 
-    let scoped = wait_for_patch_agent_request(&runtime, client_id).await;
-    let scoped_payload: Value = serde_json::from_str(scoped.stdin.as_deref().unwrap()).unwrap();
-    assert_eq!(scoped_payload["include_globs"], json!(["docs/**/*.md"]));
-    complete_patch_agent_request(
-        &runtime,
-        client_id,
-        &scoped.request_id,
-        1,
-        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
-        "",
-    )
-    .await;
-
-    let diagnostic = wait_for_patch_agent_request(&runtime, client_id).await;
-    let diagnostic_payload: Value =
-        serde_json::from_str(diagnostic.stdin.as_deref().unwrap()).unwrap();
-    assert!(diagnostic_payload["include_globs"]
-        .as_array()
-        .is_some_and(Vec::is_empty));
-    assert_eq!(diagnostic_payload["limit"], 1);
-    complete_patch_agent_request(
-        &runtime,
-        client_id,
-        &diagnostic.request_id,
-        0,
-        concat!(
+        let scoped = wait_for_patch_agent_request(&runtime, client_id).await;
+        let scoped_payload: Value = serde_json::from_str(scoped.stdin.as_deref().unwrap()).unwrap();
+        assert_eq!(scoped_payload["include_globs"], json!(["docs/**/*.md"]));
+        assert_eq!(
+            scoped_payload["pattern"],
+            match pattern_mode {
+                SearchPatternMode::Regex => "SCOPE_NEEDLE.*",
+                SearchPatternMode::Literal => r"SCOPE_NEEDLE\.\*",
+            }
+        );
+        complete_patch_agent_request(
+            &runtime,
+            client_id,
+            &scoped.request_id,
+            1,
             "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
-            "src/private.rs\0",
-            "1:SCOPE_NEEDLE\n"
-        ),
-        "",
-    )
-    .await;
+            "",
+        )
+        .await;
 
-    let result = extract_single_search_batch_result(task.await.unwrap());
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["matches"], json!([]));
-    assert_eq!(
-        result.output["zero_match_hint"],
-        "include_globs_excluded_matches"
-    );
-    assert!(!serde_json::to_string(&result.output)
-        .unwrap()
-        .contains("src/private.rs"));
-    assert_search_output_keys_are_declared(&result.output);
+        let diagnostic = wait_for_patch_agent_request(&runtime, client_id).await;
+        let diagnostic_payload: Value =
+            serde_json::from_str(diagnostic.stdin.as_deref().unwrap()).unwrap();
+        assert!(diagnostic_payload["include_globs"]
+            .as_array()
+            .is_some_and(Vec::is_empty));
+        assert_eq!(diagnostic_payload["limit"], 1);
+        assert_eq!(diagnostic_payload["pattern"], scoped_payload["pattern"]);
+        assert_eq!(
+            diagnostic.command.contains("--fixed-strings"),
+            pattern_mode == SearchPatternMode::Literal
+        );
+        complete_patch_agent_request(
+            &runtime,
+            client_id,
+            &diagnostic.request_id,
+            0,
+            concat!(
+                "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+                "src/private.rs\0",
+                "1:SCOPE_NEEDLE.*\n"
+            ),
+            "",
+        )
+        .await;
+
+        let result = extract_single_search_batch_result(task.await.unwrap());
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["matches"], json!([]));
+        assert_eq!(
+            result.output["zero_match_hint"],
+            "include_globs_excluded_matches"
+        );
+        assert!(!serde_json::to_string(&result.output)
+            .unwrap()
+            .contains("src/private.rs"));
+        assert_search_output_keys_are_declared(&result.output);
+        assert!(
+            probe_agent_request_for_instance(&runtime, client_id, "inst")
+                .await
+                .is_none()
+        );
+    }
 }
 
 #[tokio::test]
@@ -2606,7 +2632,7 @@ async fn search_project_text_include_and_exclude_globs_are_additive() {
         &runtime,
         "search-globs",
         project,
-        SearchRequest {
+        SearchProjectTextsQuery {
             pattern: "SCOPE_NEEDLE".to_string(),
             include_globs: Some(vec!["**/*.rs".to_string(), "docs/**/*.md".to_string()]),
             exclude_globs: Some(vec!["vendor/**".to_string()]),
@@ -2651,7 +2677,7 @@ async fn search_project_text_files_with_matches_is_unique_stable_and_bounded() {
         &runtime,
         "search-files",
         project,
-        SearchRequest {
+        SearchProjectTextsQuery {
             pattern: "FILE_NEEDLE".to_string(),
             limit: Some(1),
             result_mode: Some(SearchResultMode::FilesWithMatches),
@@ -2692,7 +2718,7 @@ async fn search_project_text_single_file_count_preserves_filename() {
         &runtime,
         "single-file-count",
         project,
-        SearchRequest {
+        SearchProjectTextsQuery {
             pattern: "COUNT_NEEDLE".to_string(),
             path: Some(path.to_string()),
             result_mode: Some(SearchResultMode::Count),
@@ -2726,7 +2752,7 @@ async fn search_project_text_count_distinguishes_complete_and_truncated_totals()
         &runtime,
         "search-count",
         project.clone(),
-        SearchRequest {
+        SearchProjectTextsQuery {
             pattern: "COUNT_NEEDLE".to_string(),
             limit: Some(1),
             result_mode: Some(SearchResultMode::Count),
@@ -2758,7 +2784,7 @@ async fn search_project_text_count_distinguishes_complete_and_truncated_totals()
         &runtime,
         "search-count",
         project,
-        SearchRequest {
+        SearchProjectTextsQuery {
             pattern: "COUNT_NEEDLE".to_string(),
             limit: Some(10),
             result_mode: Some(SearchResultMode::Count),
@@ -2814,7 +2840,7 @@ async fn search_project_text_reports_effective_clamped_timeout() {
         &runtime,
         "search-timeout",
         project.clone(),
-        SearchRequest {
+        SearchProjectTextsQuery {
             pattern: "TIMEOUT_NEEDLE".to_string(),
             timeout_secs: Some(0),
             ..raw_search_request()
@@ -2829,7 +2855,7 @@ async fn search_project_text_reports_effective_clamped_timeout() {
         &runtime,
         "search-timeout",
         project,
-        SearchRequest {
+        SearchProjectTextsQuery {
             pattern: "TIMEOUT_NEEDLE".to_string(),
             timeout_secs: Some(999),
             ..raw_search_request()
@@ -2860,7 +2886,7 @@ async fn advanced_search_without_rg_returns_structured_capability_error() {
                 .dispatch_with_auth(
                     search_call(
                         project,
-                        SearchRequest {
+                        SearchProjectTextsQuery {
                             result_mode: Some(SearchResultMode::Count),
                             ..raw_search_request()
                         },
@@ -3500,7 +3526,7 @@ async fn assert_max_context_runtime_schema(grep_only_path: Option<&std::path::Pa
             let runtime = runtime.clone();
             let call = search_call(
                 project.clone(),
-                SearchRequest {
+                SearchProjectTextsQuery {
                     context_before: Some(before),
                     context_after: Some(after),
                     ..raw_search_request()

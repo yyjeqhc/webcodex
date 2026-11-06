@@ -48,10 +48,17 @@ pub(super) fn write_existing_project_atomic(path: &Path, content: &str) -> Resul
         .file_stem()
         .and_then(|v| v.to_str())
         .unwrap_or("project");
+    let existing_permissions = std::fs::metadata(path)
+        .map_err(|e| format!("failed to inspect existing project config permissions: {e}"))?
+        .permissions();
     let temp = unique_registry_temp(dir, id, "toml.tmp");
     let result = (|| {
         let mut file = std::fs::File::create(&temp)
             .map_err(|e| format!("failed to create lifecycle temp file: {e}"))?;
+        // Keep legacy private registry files private after an atomic rewrite.
+        // Set the mode before writing content so there is no readable window.
+        file.set_permissions(existing_permissions)
+            .map_err(|e| format!("failed to preserve project config permissions: {e}"))?;
         file.write_all(content.as_bytes())
             .map_err(|e| format!("failed to write lifecycle temp file: {e}"))?;
         file.sync_all()

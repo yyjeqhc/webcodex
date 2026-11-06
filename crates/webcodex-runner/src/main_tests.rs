@@ -2154,6 +2154,11 @@ fn legacy_project_toml_migration_is_durable_and_never_resumes_old_registration()
         project_dir.to_string_lossy()
     );
     std::fs::write(&record, &legacy_toml).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
 
     let first = load_runner_project_summaries_from_dir(&registry);
     assert_eq!(first.len(), 1);
@@ -2161,6 +2166,15 @@ fn legacy_project_toml_migration_is_durable_and_never_resumes_old_registration()
     uuid::Uuid::parse_str(first_identity).unwrap();
 
     let upgraded_toml = std::fs::read_to_string(&record).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&record).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "migration must retain the private TOML file mode",
+        );
+    }
     assert!(
         upgraded_toml.starts_with("registration_incarnation = "),
         "migration must prepend the key before a trailing TOML table"

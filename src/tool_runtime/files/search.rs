@@ -70,25 +70,6 @@ impl SearchValidationError {
         self
     }
 
-    #[cfg(test)]
-    pub(crate) fn into_tool_result(self) -> ToolResult {
-        let reason_code = self.reason_code();
-        let mut output = json!({
-            "code": "invalid_search_request",
-            "failure_stage": "request_validation",
-            "reason_code": reason_code,
-            "field": self.field,
-            "message": self.message,
-        });
-        if let Some(index) = self.index {
-            output["index"] = json!(index);
-        }
-        if let Some(reason) = self.reason {
-            output["reason"] = json!(reason);
-        }
-        ToolResult::err_with_output(self.message, output)
-    }
-
     fn reason_code(&self) -> &'static str {
         match self.field {
             "pattern" => "invalid_pattern",
@@ -656,41 +637,73 @@ enum SearchExecutionFailure {
 }
 
 struct SearchFailureProjection {
-    #[cfg(test)]
-    code: &'static str,
     broad_reason: &'static str,
     stage: &'static str,
     detail: &'static str,
-    #[cfg(test)]
-    message: &'static str,
 }
 
 impl SearchExecutionFailure {
     fn projection(&self) -> SearchFailureProjection {
         use SearchExecutionFailure::*;
-        let (_code, broad_reason, stage, detail, _message) = match self {
-            RequestDropped => ("search_request_dropped", "search_request_dropped", "agent_transport", "search_request_dropped", "search_project_text Runner request was dropped"),
-            Timeout(stage) => ("search_timeout", "timeout", stage.as_str(), "timeout", "search_project_text timed out"),
-            BackendIdentityMissing => ("search_execution_failed", "search_execution_failed", "backend_protocol", "backend_identity_missing", "search_project_text backend did not emit its identity marker"),
-            BackendIdentityInvalid => ("search_execution_failed", "search_execution_failed", "backend_protocol", "backend_identity_invalid", "search_project_text backend did not emit its identity marker"),
-            BackendStatusUnavailable => ("search_execution_failed", "search_execution_failed", "backend_protocol", "backend_status_unavailable", "search_project_text backend completion status was unavailable"),
-            BackendOutputInconsistent => ("search_execution_failed", "search_execution_failed", "backend_protocol", "backend_output_inconsistent", "search_project_text backend output was inconsistent with its completion status"),
-            BackendFeatureUnavailable => ("search_backend_feature_unavailable", "search_backend_feature_unavailable", "backend_selection", "backend_feature_unavailable", "ripgrep is required for the requested search_project_text features; grep fallback supports matches and files_with_matches without globs"),
-            PathNotFound => ("search_path_not_found", "not_found", "path_resolution", "not_found", "search_project_text path was not found"),
-            BackendProcessFailed => ("search_execution_failed", "search_execution_failed", "backend_execution", "backend_process_failed", "search_project_text backend execution failed"),
-            AgentRequestFailed => ("agent_unavailable", "agent_unavailable", "agent_request", "agent_request_failed", "search_project_text Runner request could not be started"),
-            AgentExecutionFailed => ("search_execution_failed", "search_execution_failed", "agent_execution", "agent_execution_failed", "search_project_text Runner execution failed"),
-            ProviderProtocolInvalid => ("search_execution_failed", "search_execution_failed", "provider", "provider_protocol_invalid", "external search provider returned an invalid failure envelope"),
-            ProviderExecutionFailed { .. } => ("external_provider_error", "external_provider_error", "provider", "provider_execution_failed", "external search provider failed"),
+        let (broad_reason, stage, detail) = match self {
+            RequestDropped => (
+                "search_request_dropped",
+                "agent_transport",
+                "search_request_dropped",
+            ),
+            Timeout(stage) => ("timeout", stage.as_str(), "timeout"),
+            BackendIdentityMissing => (
+                "search_execution_failed",
+                "backend_protocol",
+                "backend_identity_missing",
+            ),
+            BackendIdentityInvalid => (
+                "search_execution_failed",
+                "backend_protocol",
+                "backend_identity_invalid",
+            ),
+            BackendStatusUnavailable => (
+                "search_execution_failed",
+                "backend_protocol",
+                "backend_status_unavailable",
+            ),
+            BackendOutputInconsistent => (
+                "search_execution_failed",
+                "backend_protocol",
+                "backend_output_inconsistent",
+            ),
+            BackendFeatureUnavailable => (
+                "search_backend_feature_unavailable",
+                "backend_selection",
+                "backend_feature_unavailable",
+            ),
+            PathNotFound => ("not_found", "path_resolution", "not_found"),
+            BackendProcessFailed => (
+                "search_execution_failed",
+                "backend_execution",
+                "backend_process_failed",
+            ),
+            AgentRequestFailed => ("agent_unavailable", "agent_request", "agent_request_failed"),
+            AgentExecutionFailed => (
+                "search_execution_failed",
+                "agent_execution",
+                "agent_execution_failed",
+            ),
+            ProviderProtocolInvalid => (
+                "search_execution_failed",
+                "provider",
+                "provider_protocol_invalid",
+            ),
+            ProviderExecutionFailed { .. } => (
+                "external_provider_error",
+                "provider",
+                "provider_execution_failed",
+            ),
         };
         SearchFailureProjection {
-            #[cfg(test)]
-            code: _code,
             broad_reason,
             stage,
             detail,
-            #[cfg(test)]
-            message: _message,
         }
     }
 }
@@ -727,64 +740,6 @@ impl SearchFailure {
                 ..
             }
         )
-    }
-
-    #[cfg(test)]
-    fn into_tool_result(self, options: &SearchOptions) -> ToolResult {
-        let (cause, context) = match self.0 {
-            SearchFailureData::Validation(error) => return error.into_tool_result(),
-            SearchFailureData::Execution { cause, context } => (cause, context),
-        };
-        let facts = cause.projection();
-        if let SearchExecutionFailure::ProviderExecutionFailed { provider_code } = &cause {
-            return ToolResult::err_with_output(
-                facts.message,
-                json!({
-                    "format": "webcodex.external_provider_error.v1",
-                    "provider": "claude_code",
-                    "capability": "search_project_text",
-                    "code": provider_code,
-                    "provider_code": provider_code,
-                    "failure_stage": facts.stage,
-                    "reason_code": facts.detail,
-                    "result_mode": context.result_mode.as_str(),
-                    "effective_timeout_secs": context.effective_timeout_secs,
-                    "message": facts.message,
-                    "write_state": "not_submitted",
-                    "changed": false,
-                    "error": "external_provider_error",
-                }),
-            );
-        }
-        let mut output = json!({
-            "code": facts.code,
-            "failure_stage": facts.stage,
-            "reason_code": facts.detail,
-            "backend": context.backend,
-            "result_mode": context.result_mode.as_str(),
-            "pattern_mode": options.pattern_mode.as_str(),
-            "effective_timeout_secs": context.effective_timeout_secs,
-            "message": facts.message,
-        });
-        if let Some(exit_code) = context.exit_code {
-            output["exit_code"] = json!(exit_code);
-        }
-        if let SearchExecutionFailure::BackendFeatureUnavailable = cause {
-            // Preserve legacy parser-fixture presentation without retaining
-            // derived request fields in production failure state.
-            let mut requested_features = Vec::new();
-            if !options.include_globs.is_empty() {
-                requested_features.push("include_globs".to_string());
-            }
-            if !options.exclude_globs.is_empty() {
-                requested_features.push("exclude_globs".to_string());
-            }
-            if options.result_mode == SearchResultMode::Count {
-                requested_features.push(format!("result_mode={}", options.result_mode.as_str()));
-            }
-            output["requested_features"] = json!(requested_features);
-        }
-        ToolResult::err_with_output(facts.message, output)
     }
 
     pub(crate) fn into_batch_item(self, index: usize) -> Value {
@@ -1059,17 +1014,12 @@ impl SearchSuccess {
         self.include_globs_excluded_matches = true;
     }
 
-    pub(crate) fn into_output(self, project: Option<&str>) -> Value {
-        let mut output = search_result_json(project, &self.options, self.result, self.exit_code);
+    pub(crate) fn into_output(self) -> Value {
+        let mut output = search_result_json(&self.options, self.result, self.exit_code);
         if self.include_globs_excluded_matches {
             output["zero_match_hint"] = json!("include_globs_excluded_matches");
         }
         output
-    }
-
-    #[cfg(test)]
-    fn into_tool_result(self, project: &str) -> ToolResult {
-        ToolResult::ok(self.into_output(Some(project)))
     }
 }
 
@@ -1516,32 +1466,6 @@ fn parse_search_result(stdout: &str, options: &SearchOptions, backend: String) -
     }
 }
 
-#[cfg(test)]
-pub(crate) fn search_project_text_output(
-    project: &str,
-    options: &SearchOptions,
-    stdout: &str,
-    exit_code: Option<i32>,
-    stderr: &str,
-) -> ToolResult {
-    search_project_text_output_with_agent_error(project, options, stdout, exit_code, stderr, None)
-}
-
-#[cfg(test)]
-pub(crate) fn search_project_text_output_with_agent_error(
-    project: &str,
-    options: &SearchOptions,
-    stdout: &str,
-    exit_code: Option<i32>,
-    stderr: &str,
-    agent_error: Option<&str>,
-) -> ToolResult {
-    match search_project_text_outcome(options, stdout, exit_code, stderr, agent_error) {
-        Ok(success) => success.into_tool_result(project),
-        Err(failure) => failure.into_tool_result(options),
-    }
-}
-
 pub(crate) fn search_project_text_outcome(
     options: &SearchOptions,
     stdout: &str,
@@ -1635,11 +1559,10 @@ pub(crate) fn search_project_text_outcome(
     Ok(SearchSuccess::new(options, result, exit_code))
 }
 
-/// Serialize a parsed [`SearchResult`] into the public `search_project_text`
+/// Serialize a parsed [`SearchResult`] into a `search_project_texts` item
 /// output object. Shared by the normal success path and the timeout
 /// partial-success path so both emit identical field semantics.
 fn search_result_json(
-    project: Option<&str>,
     options: &SearchOptions,
     result: SearchResult,
     exit_code: Option<i32>,
@@ -1654,10 +1577,6 @@ fn search_result_json(
         "context_before": options.context_before,
         "context_after": options.context_after,
     });
-    if let Some(project) = project {
-        output["project"] = json!(project);
-        output["pattern"] = json!(options.pattern);
-    }
     match result.data {
         SearchResultData::Matches(matches) => {
             output["count"] = json!(matches.len());
@@ -1899,6 +1818,9 @@ impl ToolRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool_runtime::tests::files::{
+        search_project_text_output, search_project_text_output_with_agent_error,
+    };
 
     #[test]
     fn excluded_path_retains_legacy_empty_result_truncation() {
@@ -1916,7 +1838,7 @@ mod tests {
             .unwrap();
             let success = empty_search_project_text_outcome(&options).unwrap();
             assert!(!success.is_complete_and_empty());
-            let output = success.into_output(None);
+            let output = success.into_output();
             assert_eq!(output["backend"], "native");
             assert_eq!(output["truncated"], true);
             assert_eq!(output["truncation_reason"], "output_bytes");
@@ -2264,7 +2186,7 @@ mod tests {
         );
 
         assert!(!result.success);
-        assert_eq!(result.output["code"], "search_timeout");
+        assert_eq!(result.output["reason_code"], "timeout");
         assert_eq!(result.output["effective_timeout_secs"], 1);
         // The structured failure carries no matches array at all.
         assert!(result.output.get("matches").is_none());
@@ -2349,7 +2271,7 @@ mod tests {
         let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/a.rs:1:needle\n";
         let result = search_project_text_output("demo", &options, stdout, Some(2), "");
         assert!(!result.success);
-        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["reason_code"], "search_execution_failed");
     }
 
     #[test]
@@ -2428,7 +2350,7 @@ mod tests {
         let result = search_project_text_output("demo", &options, stdout, Some(0), "");
         assert!(!result.success, "{:?}", result.output);
         assert_eq!(result.output["failure_stage"], "backend_protocol");
-        assert_eq!(result.output["reason_code"], "backend_identity_missing");
+        assert_eq!(result.output["detail_code"], "backend_identity_missing");
         assert!(result.output["backend"].is_null());
         assert!(!serde_json::to_string(&result).unwrap().contains("src/z.rs"));
     }
@@ -2453,7 +2375,7 @@ mod tests {
                 "marker {marker:?}"
             );
             assert_eq!(
-                result.output["reason_code"], "backend_identity_missing",
+                result.output["detail_code"], "backend_identity_missing",
                 "marker {marker:?}"
             );
             assert!(result.output["backend"].is_null(), "marker {marker:?}");
@@ -2481,7 +2403,7 @@ mod tests {
                 "marker {marker:?}"
             );
             assert_eq!(
-                result.output["reason_code"], "backend_identity_missing",
+                result.output["detail_code"], "backend_identity_missing",
                 "marker {marker:?}"
             );
             assert!(result.output["backend"].is_null(), "marker {marker:?}");
@@ -2509,7 +2431,7 @@ mod tests {
                 "marker {marker:?}"
             );
             assert_eq!(
-                result.output["reason_code"], "backend_identity_missing",
+                result.output["detail_code"], "backend_identity_missing",
                 "marker {marker:?}"
             );
             assert!(result.output["backend"].is_null(), "marker {marker:?}");

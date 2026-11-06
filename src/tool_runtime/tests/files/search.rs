@@ -1,3 +1,34 @@
+// Parser fixtures use the live batch projection, including its failure schema.
+// Only the one-item envelope is unwrapped for the assertions below.
+pub(in crate::tool_runtime) fn search_project_text_output(
+    project: &str,
+    options: &SearchOptions,
+    stdout: &str,
+    exit_code: Option<i32>,
+    stderr: &str,
+) -> ToolResult {
+    search_project_text_output_with_agent_error(project, options, stdout, exit_code, stderr, None)
+}
+
+pub(in crate::tool_runtime) fn search_project_text_output_with_agent_error(
+    project: &str,
+    options: &SearchOptions,
+    stdout: &str,
+    exit_code: Option<i32>,
+    stderr: &str,
+    agent_error: Option<&str>,
+) -> ToolResult {
+    use crate::tool_runtime::search_project_texts::{CompletedSearchQuery, SearchBatch};
+    let batch = SearchBatch {
+        project: project.to_string(),
+        items: vec![CompletedSearchQuery {
+            index: 0,
+            result: search_project_text_outcome(options, stdout, exit_code, stderr, agent_error),
+        }],
+    }
+    .into_tool_result();
+    extract_single_search_batch_result(batch)
+}
 
 #[test]
 fn search_project_text_command_excludes_sensitive_dirs_and_bounds_output() {
@@ -220,11 +251,11 @@ fn search_project_text_grep_single_file_matches_and_no_match() {
 
     for (pattern, expected_exit) in [("needle", 0), ("definitely_missing", 1)] {
         let options = SearchOptions::normalize(SearchProjectTextsQuery {
-                pattern_mode: Some(SearchPatternMode::Literal),
-                pattern: pattern.to_string(),
-                path: Some("one.txt".to_string()),
-                ..raw_search_request()
-            })
+            pattern_mode: Some(SearchPatternMode::Literal),
+            pattern: pattern.to_string(),
+            path: Some("one.txt".to_string()),
+            ..raw_search_request()
+        })
         .unwrap();
         let command = format!(
             "PATH={}; export PATH\n{}",
@@ -310,13 +341,13 @@ fn search_project_text_grep_files_with_matches_scopes_and_bounds() {
         ("src", "needle", 1, 0, vec!["src/a.txt", "src/b.txt"], true),
     ] {
         let options = SearchOptions::normalize(SearchProjectTextsQuery {
-                pattern_mode: Some(SearchPatternMode::Literal),
-                pattern: pattern.to_string(),
-                path: Some(path.to_string()),
-                limit: Some(limit),
-                result_mode: Some(SearchResultMode::FilesWithMatches),
-                ..raw_search_request()
-            })
+            pattern_mode: Some(SearchPatternMode::Literal),
+            pattern: pattern.to_string(),
+            path: Some(path.to_string()),
+            limit: Some(limit),
+            result_mode: Some(SearchResultMode::FilesWithMatches),
+            ..raw_search_request()
+        })
         .unwrap();
         assert!(!options.requires_ripgrep());
         let command = format!(
@@ -349,12 +380,12 @@ fn search_project_text_grep_files_with_matches_scopes_and_bounds() {
         (SearchPatternMode::Literal, 1),
     ] {
         let options = SearchOptions::normalize(SearchProjectTextsQuery {
-                pattern_mode: Some(pattern_mode),
-                pattern: "need.e".to_string(),
-                path: Some("src".to_string()),
-                result_mode: Some(SearchResultMode::FilesWithMatches),
-                ..raw_search_request()
-            })
+            pattern_mode: Some(pattern_mode),
+            pattern: "need.e".to_string(),
+            path: Some("src".to_string()),
+            result_mode: Some(SearchResultMode::FilesWithMatches),
+            ..raw_search_request()
+        })
         .unwrap();
         let command = format!(
             "PATH={}; export PATH\n{}",
@@ -421,14 +452,14 @@ fn search_project_text_grep_output_contract_handles_crlf_and_multiple_records() 
         let inconsistent = search_project_text_output("demo", options, marker, Some(0), "");
         assert!(!inconsistent.success);
         assert_eq!(
-            inconsistent.output["reason_code"],
+            inconsistent.output["detail_code"],
             "backend_output_inconsistent"
         );
         let missing_marker =
             search_project_text_output("demo", options, "src/foo.rs:1:needle\n", Some(0), "");
         assert!(!missing_marker.success);
         assert_eq!(
-            missing_marker.output["reason_code"],
+            missing_marker.output["detail_code"],
             "backend_identity_missing"
         );
     }
@@ -481,12 +512,12 @@ fn search_project_text_grep_windows_backend_smoke() {
         ),
     ] {
         let options = SearchOptions::normalize(SearchProjectTextsQuery {
-                pattern_mode: Some(SearchPatternMode::Literal),
-                pattern: pattern.to_string(),
-                path: Some(path.to_string()),
-                result_mode: Some(mode),
-                ..raw_search_request()
-            })
+            pattern_mode: Some(SearchPatternMode::Literal),
+            pattern: pattern.to_string(),
+            path: Some(path.to_string()),
+            result_mode: Some(mode),
+            ..raw_search_request()
+        })
         .unwrap();
         // Git for Windows provides grep and head together in usr/bin. Scope
         // PATH to that directory so an unrelated installed rg cannot mask the
@@ -584,11 +615,11 @@ fn search_project_text_basic_regex_semantics_match_rg_and_grep_fallback() {
 
     for (pattern, expected) in cases {
         let options = SearchOptions::normalize(SearchProjectTextsQuery {
-                pattern_mode: Some(SearchPatternMode::Regex),
-                pattern: pattern.to_string(),
-                limit: Some(20),
-                ..raw_search_request()
-            })
+            pattern_mode: Some(SearchPatternMode::Regex),
+            pattern: pattern.to_string(),
+            limit: Some(20),
+            ..raw_search_request()
+        })
         .unwrap();
         let command = search_project_text_command(&options);
         assert!(command.contains("-A 0 -E"), "{command}");
@@ -636,11 +667,11 @@ fn search_project_text_grep_fallback_keeps_literal_patterns_literal() {
     ];
     for (pattern, line, preview) in cases {
         let options = SearchOptions::normalize(SearchProjectTextsQuery {
-                pattern_mode: Some(SearchPatternMode::Literal),
-                pattern: pattern.to_string(),
-                limit: Some(20),
-                ..raw_search_request()
-            })
+            pattern_mode: Some(SearchPatternMode::Literal),
+            pattern: pattern.to_string(),
+            limit: Some(20),
+            ..raw_search_request()
+        })
         .unwrap();
         let command = search_project_text_command(&options);
         assert!(command.contains("-A 0 -F"), "{command}");
@@ -763,7 +794,7 @@ fn search_call(project: String, request: SearchProjectTextsQuery) -> ToolCall {
     }
 }
 
-fn extract_single_search_batch_result(batch: ToolResult) -> ToolResult {
+pub(in crate::tool_runtime) fn extract_single_search_batch_result(batch: ToolResult) -> ToolResult {
     if !batch.success {
         return batch;
     }
@@ -789,9 +820,6 @@ fn extract_single_search_batch_result(batch: ToolResult) -> ToolResult {
 }
 
 fn assert_search_output_keys_are_declared(output: &Value) {
-    if output.get("code").is_some() {
-        return;
-    }
     let schema = crate::tool_runtime::registry::output_schema_for_tool("search_project_texts");
     let item_output = &schema["properties"]["output"]["anyOf"][0]["anyOf"][0]["properties"]
         ["items"]["items"]["properties"]["output"];
@@ -892,7 +920,7 @@ fn search_timeout_uses_structured_failure_with_effective_timeout() {
 
     assert!(!result.success);
     assert_search_output_keys_are_declared(&result.output);
-    assert_eq!(result.output["code"], "search_timeout");
+    assert_eq!(result.output["reason_code"], "timeout");
     assert_eq!(result.output["backend"], "rg");
     assert_eq!(result.output["effective_timeout_secs"], 1);
     assert_eq!(result.output["result_mode"], "matches");
@@ -1002,10 +1030,10 @@ fn search_backend_exit_codes_map_to_results() {
             Expect::ExecutionFailure => {
                 assert!(!result.success, "{ctx}");
                 assert_search_output_keys_are_declared(&result.output);
-                assert_eq!(result.output["code"], "search_execution_failed", "{ctx}");
+                assert_eq!(result.output["reason_code"], "search_execution_failed", "{ctx}");
                 assert_eq!(result.output["failure_stage"], "backend_execution", "{ctx}");
                 assert_eq!(
-                    result.output["reason_code"], "backend_process_failed",
+                    result.output["detail_code"], "backend_process_failed",
                     "{ctx}"
                 );
                 assert_eq!(result.output["exit_code"], case.exit_code, "{ctx}");
@@ -1038,9 +1066,9 @@ fn search_markerless_output_cannot_be_reported_as_a_search_result() {
         let result = search_project_text_output("demo", &options, stdout, exit_code, stderr);
         assert!(!result.success, "stdout={stdout:?} exit_code={exit_code:?}");
         assert_search_output_keys_are_declared(&result.output);
-        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["reason_code"], "search_execution_failed");
         assert_eq!(result.output["failure_stage"], "backend_protocol");
-        assert_eq!(result.output["reason_code"], "backend_identity_missing");
+        assert_eq!(result.output["detail_code"], "backend_identity_missing");
         assert!(result.output["backend"].is_null());
         let rendered = serde_json::to_string(&result).unwrap();
         assert!(!rendered.contains("PowerShell parser"));
@@ -1059,9 +1087,9 @@ fn search_backend_identity_requires_leading_canonical_namespaced_marker() {
         let result = search_project_text_output("demo", &options, stdout, Some(0), "");
         assert!(!result.success, "stdout={stdout:?}");
         assert_search_output_keys_are_declared(&result.output);
-        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["reason_code"], "search_execution_failed");
         assert_eq!(result.output["failure_stage"], "backend_protocol");
-        assert_eq!(result.output["reason_code"], "backend_identity_missing");
+        assert_eq!(result.output["detail_code"], "backend_identity_missing");
         assert!(result.output["backend"].is_null());
         let rendered = serde_json::to_string(&result).unwrap();
         assert!(!rendered.contains("src/a.rs"));
@@ -1080,9 +1108,9 @@ fn search_invalid_backend_marker_reports_protocol_provenance() {
         let result = search_project_text_output("demo", &options, stdout, Some(0), "");
         assert!(!result.success, "stdout={stdout:?}");
         assert_search_output_keys_are_declared(&result.output);
-        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["reason_code"], "search_execution_failed");
         assert_eq!(result.output["failure_stage"], "backend_protocol");
-        assert_eq!(result.output["reason_code"], "backend_identity_invalid");
+        assert_eq!(result.output["detail_code"], "backend_identity_invalid");
         assert!(result.output["backend"].is_null());
     }
 }
@@ -1095,9 +1123,9 @@ fn search_missing_completion_status_cannot_prove_success() {
 
     assert!(!result.success);
     assert_search_output_keys_are_declared(&result.output);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
     assert_eq!(result.output["failure_stage"], "backend_protocol");
-    assert_eq!(result.output["reason_code"], "backend_status_unavailable");
+    assert_eq!(result.output["detail_code"], "backend_status_unavailable");
     assert_eq!(result.output["backend"], "rg");
     assert!(result.output.get("exit_code").is_none());
 }
@@ -1115,9 +1143,9 @@ fn search_status_and_records_must_agree_before_empty_is_trusted() {
         let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), "");
         assert!(!result.success, "stdout={stdout:?} exit_code={exit_code}");
         assert_search_output_keys_are_declared(&result.output);
-        assert_eq!(result.output["code"], "search_execution_failed");
+        assert_eq!(result.output["reason_code"], "search_execution_failed");
         assert_eq!(result.output["failure_stage"], "backend_protocol");
-        assert_eq!(result.output["reason_code"], "backend_output_inconsistent");
+        assert_eq!(result.output["detail_code"], "backend_output_inconsistent");
         assert_eq!(result.output["backend"], "rg");
         assert_eq!(result.output["exit_code"], exit_code);
         assert!(!serde_json::to_string(&result)
@@ -1130,7 +1158,7 @@ fn search_status_and_records_must_agree_before_empty_is_trusted() {
     let unproven = search_project_text_output("demo", &options, provider_marker, Some(0), "");
     assert!(!unproven.success);
     assert_eq!(
-        unproven.output["reason_code"],
+        unproven.output["detail_code"],
         "backend_output_inconsistent"
     );
     let proven_empty = search_project_text_output("demo", &options, provider_marker, Some(1), "");
@@ -1166,7 +1194,7 @@ fn search_count_uses_backend_evidence_without_claiming_filtered_absence() {
     let malformed = search_project_text_output("demo", &options, &malformed_stdout, Some(0), "");
     assert!(!malformed.success);
     assert_eq!(
-        malformed.output["reason_code"],
+        malformed.output["detail_code"],
         "backend_output_inconsistent"
     );
 
@@ -1185,7 +1213,7 @@ fn search_count_uses_backend_evidence_without_claiming_filtered_absence() {
     let contradictory = search_project_text_output("demo", &options, &filtered_stdout, Some(1), "");
     assert!(!contradictory.success);
     assert_eq!(
-        contradictory.output["reason_code"],
+        contradictory.output["detail_code"],
         "backend_output_inconsistent"
     );
 }
@@ -1216,7 +1244,7 @@ fn search_command_preserves_rg_exit_2_despite_head() {
     assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
     let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
     assert!(!result.success);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
     assert_eq!(result.output["backend"], "rg");
 }
 
@@ -1275,7 +1303,7 @@ fn search_command_preserves_grep_exit_2_despite_head() {
     assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
     let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
     assert!(!result.success);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
     assert_eq!(result.output["backend"], "grep");
 }
 
@@ -1306,9 +1334,9 @@ fn search_command_illegal_regex_is_not_swallowed_by_head() {
     );
     let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
     assert!(!result.success);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
     assert_eq!(result.output["failure_stage"], "backend_execution");
-    assert_eq!(result.output["reason_code"], "backend_process_failed");
+    assert_eq!(result.output["detail_code"], "backend_process_failed");
     assert_eq!(result.output["backend"], "rg");
     assert_eq!(result.output["exit_code"], exit_code);
     let rendered = serde_json::to_string(&result).unwrap();
@@ -1608,7 +1636,7 @@ fn search_command_fails_when_head_unavailable() {
     assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
     let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
     assert!(!result.success);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
 }
 
 #[cfg(unix)]
@@ -1639,7 +1667,7 @@ fn search_command_fails_when_head_exits_nonzero_even_if_backend_succeeds() {
     assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
     let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
     assert!(!result.success);
-    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["reason_code"], "search_execution_failed");
 }
 
 #[cfg(unix)]
@@ -2484,75 +2512,96 @@ fn search_command_passes_shell_metacharacter_globs_as_one_literal_argument() {
 
 #[tokio::test]
 async fn search_project_text_zero_match_include_glob_reports_nonleaking_hint() {
-    let tmp = tempfile::tempdir().unwrap();
-    let runtime = test_runtime();
-    let client_id = "search-glob-hint";
-    let project = register_runner_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    search_call(
-                        project,
-                        SearchProjectTextsQuery {
-                            pattern: "SCOPE_NEEDLE".to_string(),
-                            include_globs: Some(vec!["docs/**/*.md".to_string()]),
-                            ..raw_search_request()
-                        },
-                    ),
-                    Some(&auth_context(None, true)),
-                )
-                .await
-        }
-    });
+    for pattern_mode in [SearchPatternMode::Regex, SearchPatternMode::Literal] {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = test_runtime();
+        let client_id = "search-glob-hint";
+        let project =
+            register_runner_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        search_call(
+                            project,
+                            SearchProjectTextsQuery {
+                                pattern: "SCOPE_NEEDLE.*".to_string(),
+                                pattern_mode: Some(pattern_mode),
+                                include_globs: Some(vec!["docs/**/*.md".to_string()]),
+                                ..raw_search_request()
+                            },
+                        ),
+                        Some(&auth_context(None, true)),
+                    )
+                    .await
+            }
+        });
 
-    let scoped = wait_for_patch_agent_request(&runtime, client_id).await;
-    let scoped_payload: Value = serde_json::from_str(scoped.stdin.as_deref().unwrap()).unwrap();
-    assert_eq!(scoped_payload["include_globs"], json!(["docs/**/*.md"]));
-    complete_patch_agent_request(
-        &runtime,
-        client_id,
-        &scoped.request_id,
-        1,
-        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
-        "",
-    )
-    .await;
-
-    let diagnostic = wait_for_patch_agent_request(&runtime, client_id).await;
-    let diagnostic_payload: Value =
-        serde_json::from_str(diagnostic.stdin.as_deref().unwrap()).unwrap();
-    assert!(diagnostic_payload["include_globs"]
-        .as_array()
-        .is_some_and(Vec::is_empty));
-    assert_eq!(diagnostic_payload["limit"], 1);
-    complete_patch_agent_request(
-        &runtime,
-        client_id,
-        &diagnostic.request_id,
-        0,
-        concat!(
+        let scoped = wait_for_patch_agent_request(&runtime, client_id).await;
+        let scoped_payload: Value = serde_json::from_str(scoped.stdin.as_deref().unwrap()).unwrap();
+        assert_eq!(scoped_payload["include_globs"], json!(["docs/**/*.md"]));
+        assert_eq!(
+            scoped_payload["pattern"],
+            match pattern_mode {
+                SearchPatternMode::Regex => "SCOPE_NEEDLE.*",
+                SearchPatternMode::Literal => r"SCOPE_NEEDLE\.\*",
+            }
+        );
+        complete_patch_agent_request(
+            &runtime,
+            client_id,
+            &scoped.request_id,
+            1,
             "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
-            "src/private.rs\0",
-            "1:SCOPE_NEEDLE\n"
-        ),
-        "",
-    )
-    .await;
+            "",
+        )
+        .await;
 
-    let result = extract_single_search_batch_result(task.await.unwrap());
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["matches"], json!([]));
-    assert_eq!(
-        result.output["zero_match_hint"],
-        "include_globs_excluded_matches"
-    );
-    assert!(!serde_json::to_string(&result.output)
-        .unwrap()
-        .contains("src/private.rs"));
-    assert_search_output_keys_are_declared(&result.output);
+        let diagnostic = wait_for_patch_agent_request(&runtime, client_id).await;
+        let diagnostic_payload: Value =
+            serde_json::from_str(diagnostic.stdin.as_deref().unwrap()).unwrap();
+        assert!(diagnostic_payload["include_globs"]
+            .as_array()
+            .is_some_and(Vec::is_empty));
+        assert_eq!(diagnostic_payload["limit"], 1);
+        assert_eq!(diagnostic_payload["pattern"], scoped_payload["pattern"]);
+        assert_eq!(
+            diagnostic.command.contains("--fixed-strings"),
+            pattern_mode == SearchPatternMode::Literal
+        );
+        complete_patch_agent_request(
+            &runtime,
+            client_id,
+            &diagnostic.request_id,
+            0,
+            concat!(
+                "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+                "src/private.rs\0",
+                "1:SCOPE_NEEDLE.*\n"
+            ),
+            "",
+        )
+        .await;
+
+        let result = extract_single_search_batch_result(task.await.unwrap());
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["matches"], json!([]));
+        assert_eq!(
+            result.output["zero_match_hint"],
+            "include_globs_excluded_matches"
+        );
+        assert!(!serde_json::to_string(&result.output)
+            .unwrap()
+            .contains("src/private.rs"));
+        assert_search_output_keys_are_declared(&result.output);
+        assert!(
+            probe_agent_request_for_instance(&runtime, client_id, "inst")
+                .await
+                .is_none()
+        );
+    }
 }
 
 #[tokio::test]

@@ -51,7 +51,7 @@ impl CompletedSearchQuery {
             Ok(success) => json!({
                 "index": self.index,
                 "success": true,
-                "output": success.into_output(None),
+                "output": success.into_output(),
                 "error": null,
             }),
             Err(failure) => failure.into_batch_item(self.index),

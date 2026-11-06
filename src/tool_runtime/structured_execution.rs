@@ -200,10 +200,6 @@ pub(crate) async fn await_structured_job_result(
     let result = match handoff.wait(wait, Duration::from_millis(25), None).await? {
         HiddenStructuredJobWait::Terminal(observation) => {
             let job = observation.job;
-            // Unknown effects retain their exact Job if publication is cancelled.
-            if job.command_execution_state == Some(ShellCommandExecutionState::OutcomeUnknown) {
-                handoff.disarm();
-            }
             let stdout = observation.stdout_tail;
             let stderr = observation.stderr_tail;
             // Preserve the execution-only compact output/recovery contract from
@@ -216,6 +212,19 @@ pub(crate) async fn await_structured_job_result(
                     stream.chars().count() > super::helpers::COMMAND_STDIO_TAIL_CHARS
                         || stream.lines().count() > super::helpers::COMMAND_OUTPUT_MAX_LINES
                 });
+            // Preserve a terminal Job's recovery evidence if publication is cancelled.
+            // Short conclusive results stay guarded until deletion completes.
+            if truncated
+                || matches!(
+                    job.command_execution_state,
+                    Some(
+                        ShellCommandExecutionState::OutcomeUnknown
+                            | ShellCommandExecutionState::TimedOut
+                    )
+                )
+            {
+                handoff.disarm();
+            }
             let mut result = terminal_result(&job, stdout, stderr, budget.effective_timeout_secs);
             add_structured_continuation_facts(
                 &mut result,

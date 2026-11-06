@@ -112,6 +112,7 @@ async fn typed_validation_queries_preserve_authority_complete_candidates_and_out
     let public = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
+                page: false,
                 job_id: expected[0].clone(),
                 after_observation_token: None,
                 observation_ref: None,

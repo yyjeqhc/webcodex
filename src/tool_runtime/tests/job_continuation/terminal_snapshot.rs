@@ -159,3 +159,43 @@ async fn cancellation_during_uncertain_terminal_publication_retains_recovery_evi
         .await
         .is_none());
 }
+
+#[tokio::test]
+async fn cancellation_during_truncated_terminal_publication_preserves_log_evidence() {
+    let stdout = (0..250)
+        .map(|i| format!("retained-line-{i:03}\n"))
+        .collect::<String>();
+    let (runtime, request, task, _release) =
+        paused_terminal("run_process", false, false, &stdout).await;
+    let job_id = request.job_id.as_deref().unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+
+    // The same terminal Job must survive cancellation while its retained-log
+    // continuation is being published. Otherwise the client cannot page the
+    // truncated output without unsafe command redispatch.
+    assert!(!runtime
+        .runner_registry
+        .has_hidden_cleanup_intent_for_test(job_id));
+    runtime
+        .runner_registry
+        .process_hidden_cleanup_intents()
+        .await;
+    let retained = runtime
+        .runner_registry
+        .get_hidden_job_for_auth(None, job_id)
+        .await
+        .expect("truncated terminal evidence must survive cancellation");
+    assert_eq!(
+        retained.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert!(runtime
+        .runner_registry
+        .get_job_for_auth(None, job_id)
+        .await
+        .is_err());
+    assert!(probe_patch_agent_request(&runtime, &request.client_id)
+        .await
+        .is_none());
+}

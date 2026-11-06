@@ -237,7 +237,11 @@ impl ToolRuntime {
             self.structured_execution_sync_wait.min(Duration::from_secs(budget.sync_wait_secs)),
             Duration::from_millis(25), None,
         ).await {
-            Ok(HiddenStructuredJobWait::Terminal(observation)) => terminal_result(&observation.job),
+            Ok(HiddenStructuredJobWait::Terminal(observation)) => {
+                let result = terminal_result(&observation.job);
+                handoff.disarm();
+                result
+            }
             Ok(HiddenStructuredJobWait::Continued { observation, .. }) => ToolResult::ok(json!({
                 "execution_state": "pending",
                 "state_changed": null,
@@ -250,7 +254,6 @@ impl ToolRuntime {
                 "continuation": super::jobs::observe_job_continuation(&job.job_id, job.observation_token.as_deref()),
             })),
         };
-        handoff.disarm();
         result
     }
 }

@@ -3720,7 +3720,11 @@ fn project_validate_schema_admits_canonical_planning_and_replan_failures() {
         });
     }
 
-    for failure_kind in ["validation_plan_stale", "validation_unavailable"] {
+    for failure_kind in [
+        "validation_plan_stale",
+        "validation_tool_unavailable",
+        "validation_unavailable",
+    ] {
         let result = json!({
             "success": false,
             "output": {

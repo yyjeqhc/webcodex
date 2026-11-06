@@ -1129,16 +1129,53 @@ impl ToolRuntime {
                 .as_ref()
                 .and_then(|job| job.error.as_deref())
                 .is_some_and(|error| error.contains("validation_plan_stale"));
+            let tool_unavailable = !stale
+                && job
+                    .as_ref()
+                    .and_then(|job| job.error.as_deref())
+                    .and_then(validation_infrastructure_failure_code)
+                    == Some(VALIDATION_TOOL_UNAVAILABLE_CODE);
+            let failure_kind = if stale {
+                "validation_plan_stale"
+            } else if tool_unavailable {
+                VALIDATION_TOOL_UNAVAILABLE_CODE
+            } else {
+                "validation_unavailable"
+            };
             self.runner_registry
                 .remove_projected_hidden_terminal_job_record(&job_id)
                 .await;
             return ToolResult::err_with_output(
                 if stale {
                     "Project validation plan changed before execution; resolve project_validate again. No command started."
+                } else if tool_unavailable {
+                    "Runner reported validation_tool_unavailable before project validation started; check the configured validation tool and retry."
                 } else {
                     "Runner rejected validation before execution; inspect project availability and Runner policy, then retry."
                 },
-                json!({"execution_source": "project_validate", "execution_state": "not_started", "command_started": false, "command_completed": false, "failure_kind": if stale { "validation_plan_stale" } else { "validation_unavailable" }, "terminal": true}),
+                json!({
+                    "project": handoff.project,
+                    "command_summary": handoff.command_summary,
+                    "cwd": handoff.cwd,
+                    "execution_source": "project_validate",
+                    "execution_state": "not_started",
+                    "exit_code": exit_code,
+                    "duration_ms": job.as_ref().and_then(|job| job.duration_ms),
+                    "stdout_tail": stdout_tail,
+                    "stderr_tail": stderr_tail,
+                    "stdout_lines": stdout.lines().count(),
+                    "stderr_lines": stderr.lines().count(),
+                    "stdout_truncated": stdout_truncated,
+                    "stderr_truncated": stderr_truncated,
+                    "promoted_to_job": false,
+                    "terminal": true,
+                    "command_started": false,
+                    "command_completed": false,
+                    "passed": false,
+                    "effective_timeout_secs": handoff.effective_timeout_secs,
+                    "sync_wait_secs": handoff.sync_wait_secs,
+                    "failure_kind": failure_kind,
+                }),
             );
         }
         let lifecycle = RunnerJobLifecycle::from_wire(job_status).ok();

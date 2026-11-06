@@ -780,6 +780,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
         .dispatch_with_auth(
             ToolCall::ObserveJobs {
                 items: vec![ObserveJobsItem {
+                    page: false,
                     job_id: job_id.to_string(),
                     after_observation_token: None,
                     observation_ref: None,

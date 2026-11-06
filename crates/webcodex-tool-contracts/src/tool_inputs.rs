@@ -122,216 +122,134 @@ pub use webcodex_core::apply_edits_shared::{
     ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind, ApplyTextLineScope,
 };
 
-/// Text edits resolve against the same revision-fenced original source. No fuzzy matching.
+fn default_text_edit_kind() -> ApplyTextEditKind {
+    ApplyTextEditKind::ReplaceExact
+}
+fn default_file_change_kind() -> ApplyFileChangeKind {
+    ApplyFileChangeKind::Edit
+}
+
+/// Exact edits against one original file. kind defaults to replace_exact.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum ProjectTextEditInput {
-    // Host inputs require omission rather than null for these optional selectors.
-    // Keep the same mutual exclusion as validate(), at the typed schema owner.
-    #[schemars(extend("not" = {"required": ["occurrence", "expected_match_count"]}))]
-    ReplaceExact {
-        #[schemars(length(min = 1, max = 524288))]
-        old_text: String,
-        #[schemars(length(max = 524288))]
-        new_text: String,
-        #[serde(default)]
-        #[schemars(range(min = 1))]
-        occurrence: Option<usize>,
-        #[serde(default)]
-        line_scope: Option<ApplyTextLineScope>,
-        #[serde(default)]
-        #[schemars(range(min = 1, max = 1024))]
-        expected_match_count: Option<usize>,
-    },
-    InsertBefore {
-        #[schemars(length(min = 1, max = 524288))]
-        anchor_text: String,
-        #[schemars(length(max = 524288))]
-        new_text: String,
-        #[serde(default)]
-        #[schemars(range(min = 1))]
-        occurrence: Option<usize>,
-        #[serde(default)]
-        line_scope: Option<ApplyTextLineScope>,
-    },
-    InsertAfter {
-        #[schemars(length(min = 1, max = 524288))]
-        anchor_text: String,
-        #[schemars(length(max = 524288))]
-        new_text: String,
-        #[serde(default)]
-        #[schemars(range(min = 1))]
-        occurrence: Option<usize>,
-        #[serde(default)]
-        line_scope: Option<ApplyTextLineScope>,
-    },
-    DeleteExact {
-        #[schemars(length(min = 1, max = 524288))]
-        old_text: String,
-        #[serde(default)]
-        #[schemars(range(min = 1))]
-        occurrence: Option<usize>,
-        #[serde(default)]
-        line_scope: Option<ApplyTextLineScope>,
-    },
-    /// Replace complete 1-based inclusive original lines, including their newline when present.
-    /// EOF has no synthetic empty line. new_text is literal (no automatic newline); empty deletes.
-    /// LF/CRLF follows the existing file convention. Stale revisions reject the entire batch.
-    ReplaceRange {
-        #[schemars(range(min = 1))]
-        start_line: usize,
-        #[schemars(range(min = 1))]
-        end_line: usize,
-        #[schemars(length(max = 524288))]
-        new_text: String,
-    },
+#[serde(deny_unknown_fields)]
+#[schemars(extend("allOf" = [
+    {"if":{"properties":{"kind":{"const":"replace_exact"}}},"then":{"required":["old_text","new_text"],"properties":{"anchor_text":false,"start_line":false,"end_line":false}}},
+    {"if":{"properties":{"kind":{"const":"delete_exact"}},"required":["kind"]},"then":{"required":["old_text"],"properties":{"new_text":false,"anchor_text":false,"start_line":false,"end_line":false}}},
+    {"if":{"properties":{"kind":{"enum":["insert_before","insert_after"]}},"required":["kind"]},"then":{"required":["anchor_text","new_text"],"properties":{"old_text":false,"start_line":false,"end_line":false}}},
+    {"if":{"properties":{"kind":{"const":"replace_range"}},"required":["kind"]},"then":{"required":["start_line","end_line","new_text"],"properties":{"old_text":false,"anchor_text":false,"line_scope":false,"occurrence":false}}},
+    {"if":{"required":["expected_match_count"]},"then":{"properties":{"kind":{"const":"replace_exact"},"occurrence":false}}}
+]))]
+struct ProjectTextEditInput {
+    #[serde(default = "default_text_edit_kind")]
+    kind: ApplyTextEditKind,
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 524288))]
+    old_text: Option<String>,
+    #[serde(default)]
+    #[schemars(length(max = 524288))]
+    new_text: Option<String>,
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 524288))]
+    anchor_text: Option<String>,
+    /// Positional/multiple-match selectors require expected_read_revision.
+    #[serde(default)]
+    #[schemars(range(min = 1))]
+    occurrence: Option<usize>,
+    #[serde(default)]
+    line_scope: Option<ApplyTextLineScope>,
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 1024))]
+    expected_match_count: Option<usize>,
+    /// replace_range only: 1-based inclusive original lines; EOF has no synthetic line.
+    #[serde(default)]
+    #[schemars(range(min = 1))]
+    start_line: Option<usize>,
+    #[serde(default)]
+    #[schemars(range(min = 1))]
+    end_line: Option<usize>,
 }
 
 impl ProjectTextEditInput {
     fn validate(&self) -> Result<(), &'static str> {
-        let validate_selector =
-            |occurrence: Option<usize>, line_scope: Option<ApplyTextLineScope>| {
-                if occurrence == Some(0) {
-                    return Err("occurrence must be at least 1");
-                }
-                if let Some(line_scope) = line_scope {
-                    line_scope.validate()?;
-                }
-                Ok(())
-            };
-        match self {
-            Self::ReplaceExact {
-                old_text,
-                occurrence,
-                line_scope,
-                expected_match_count,
-                ..
-            } => {
-                if old_text.is_empty() {
-                    return Err("replace_exact.old_text must be non-empty");
-                }
-                validate_selector(*occurrence, *line_scope)?;
-                if expected_match_count.is_some_and(|count| !(1..=1024).contains(&count)) {
-                    return Err("expected_match_count must be between 1 and 1024");
-                }
-                if occurrence.is_some() && expected_match_count.is_some() {
-                    return Err("occurrence and expected_match_count are mutually exclusive");
-                }
-                Ok(())
-            }
-            Self::InsertBefore {
-                anchor_text,
-                occurrence,
-                line_scope,
-                ..
-            }
-            | Self::InsertAfter {
-                anchor_text,
-                occurrence,
-                line_scope,
-                ..
-            } => {
-                if anchor_text.is_empty() {
-                    return Err("insert anchor_text must be non-empty");
-                }
-                validate_selector(*occurrence, *line_scope)
-            }
-            Self::DeleteExact {
-                old_text,
-                occurrence,
-                line_scope,
-                ..
-            } => {
-                if old_text.is_empty() {
-                    return Err("delete_exact.old_text must be non-empty");
-                }
-                validate_selector(*occurrence, *line_scope)
-            }
-            Self::ReplaceRange {
-                start_line,
-                end_line,
-                ..
-            } => ApplyTextLineScope {
-                start_line: *start_line,
-                end_line: *end_line,
-            }
-            .validate(),
+        if self.occurrence == Some(0) {
+            return Err("occurrence must be at least 1");
         }
+        if let Some(scope) = self.line_scope {
+            scope.validate()?;
+        }
+        if self
+            .expected_match_count
+            .is_some_and(|n| !(1..=1024).contains(&n))
+        {
+            return Err("expected_match_count must be between 1 and 1024");
+        }
+        if self.expected_match_count.is_some()
+            && (self.kind != ApplyTextEditKind::ReplaceExact || self.occurrence.is_some())
+        {
+            return Err("expected_match_count requires replace_exact without occurrence");
+        }
+        if self.kind != ApplyTextEditKind::ReplaceRange
+            && (self.start_line.is_some() || self.end_line.is_some())
+        {
+            return Err("start_line/end_line require replace_range");
+        }
+        match self.kind {
+            ApplyTextEditKind::ReplaceExact | ApplyTextEditKind::DeleteExact => {
+                if self.old_text.as_deref().is_none_or(str::is_empty) {
+                    return Err("old_text must be non-empty");
+                }
+                if self.anchor_text.is_some() {
+                    return Err("anchor_text is not allowed for an exact edit");
+                }
+                if self.kind == ApplyTextEditKind::ReplaceExact && self.new_text.is_none() {
+                    return Err("new_text is required");
+                }
+                if self.kind == ApplyTextEditKind::DeleteExact && self.new_text.is_some() {
+                    return Err("delete_exact does not accept new_text");
+                }
+            }
+            ApplyTextEditKind::InsertBefore | ApplyTextEditKind::InsertAfter => {
+                if self.anchor_text.as_deref().is_none_or(str::is_empty) {
+                    return Err("anchor_text must be non-empty");
+                }
+                if self.new_text.is_none() || self.old_text.is_some() {
+                    return Err("insertion requires new_text and forbids old_text");
+                }
+            }
+            ApplyTextEditKind::ReplaceRange => {
+                let scope = ApplyTextLineScope {
+                    start_line: self.start_line.ok_or("start_line is required")?,
+                    end_line: self.end_line.ok_or("end_line is required")?,
+                };
+                scope.validate()?;
+                if self.new_text.is_none()
+                    || self.old_text.is_some()
+                    || self.anchor_text.is_some()
+                    || self.line_scope.is_some()
+                    || self.occurrence.is_some()
+                {
+                    return Err("replace_range accepts only start_line, end_line and new_text");
+                }
+            }
+        }
+        Ok(())
     }
 
     fn into_runtime(self) -> ApplyTextEditInput {
-        match self {
-            Self::ReplaceExact {
-                old_text,
-                new_text,
-                occurrence,
-                line_scope,
-                expected_match_count,
-            } => ApplyTextEditInput {
-                kind: ApplyTextEditKind::ReplaceExact,
-                old_text: Some(old_text),
-                new_text: Some(new_text),
-                anchor_text: None,
-                occurrence,
-                line_scope,
-                expected_match_count,
-            },
-            Self::InsertBefore {
-                anchor_text,
-                new_text,
-                occurrence,
-                line_scope,
-            } => ApplyTextEditInput {
-                kind: ApplyTextEditKind::InsertBefore,
-                old_text: None,
-                new_text: Some(new_text),
-                anchor_text: Some(anchor_text),
-                occurrence,
-                line_scope,
-                expected_match_count: None,
-            },
-            Self::InsertAfter {
-                anchor_text,
-                new_text,
-                occurrence,
-                line_scope,
-            } => ApplyTextEditInput {
-                kind: ApplyTextEditKind::InsertAfter,
-                old_text: None,
-                new_text: Some(new_text),
-                anchor_text: Some(anchor_text),
-                occurrence,
-                line_scope,
-                expected_match_count: None,
-            },
-            Self::DeleteExact {
-                old_text,
-                occurrence,
-                line_scope,
-            } => ApplyTextEditInput {
-                kind: ApplyTextEditKind::DeleteExact,
-                old_text: Some(old_text),
-                new_text: None,
-                anchor_text: None,
-                occurrence,
-                line_scope,
-                expected_match_count: None,
-            },
-            Self::ReplaceRange {
-                start_line,
-                end_line,
-                new_text,
-            } => ApplyTextEditInput {
-                kind: ApplyTextEditKind::ReplaceRange,
-                new_text: Some(new_text),
-                old_text: None,
-                anchor_text: None,
-                occurrence: None,
-                expected_match_count: None,
-                line_scope: Some(ApplyTextLineScope {
-                    start_line,
-                    end_line,
-                }),
+        ApplyTextEditInput {
+            kind: self.kind,
+            old_text: self.old_text,
+            new_text: self.new_text,
+            anchor_text: self.anchor_text,
+            occurrence: self.occurrence,
+            expected_match_count: self.expected_match_count,
+            line_scope: if self.kind == ApplyTextEditKind::ReplaceRange {
+                Some(ApplyTextLineScope {
+                    start_line: self.start_line.unwrap(),
+                    end_line: self.end_line.unwrap(),
+                })
+            } else {
+                self.line_scope
             },
         }
     }
@@ -354,41 +272,41 @@ fn serialize_project_text_edits<S: serde::Serializer>(
     values.serialize(serializer)
 }
 
-/// One closed file-change variant. Existing sources require the revision returned by read_files.
+/// One change per file. edit defaults to exact replacement. write overwrites an
+/// existing file; write/delete/rename and positional edits require a read revision.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum ApplyFileChangeWireInput {
-    Edit {
-        #[schemars(length(min = 1))]
-        path: String,
-        #[schemars(range(min = 1, max = 9007199254740991u64))]
-        #[serde(deserialize_with = "crate::read_revision::deserialize")]
-        expected_read_revision: u64,
-        /// All edits resolve against the original read snapshot; use ONE change per file.
-        #[schemars(length(min = 1, max = 20))]
-        edits: Vec<ProjectTextEditInput>,
-    },
-    Create {
-        #[schemars(length(min = 1))]
-        path: String,
-        content: String,
-    },
-    Delete {
-        #[schemars(length(min = 1))]
-        path: String,
-        #[schemars(range(min = 1, max = 9007199254740991u64))]
-        #[serde(deserialize_with = "crate::read_revision::deserialize")]
-        expected_read_revision: u64,
-    },
-    Rename {
-        #[schemars(length(min = 1))]
-        path: String,
-        #[schemars(length(min = 1))]
-        to_path: String,
-        #[schemars(range(min = 1, max = 9007199254740991u64))]
-        #[serde(deserialize_with = "crate::read_revision::deserialize")]
-        expected_read_revision: u64,
-    },
+#[serde(deny_unknown_fields)]
+#[schemars(extend("allOf" = [
+    {"if":{"properties":{"kind":{"const":"edit"}}},"then":{"required":["edits"],"properties":{"content":false,"to_path":false}}},
+    {"if":{"properties":{"kind":{"enum":["create","write"]}},"required":["kind"]},"then":{"required":["content"],"properties":{"edits":false,"to_path":false}}},
+    {"if":{"properties":{"kind":{"const":"create"}},"required":["kind"]},"then":{"properties":{"expected_read_revision":false}}},
+    {"if":{"properties":{"kind":{"enum":["write","delete","rename"]}},"required":["kind"]},"then":{"required":["expected_read_revision"]}},
+    {"if":{"properties":{"kind":{"enum":["delete","rename"]}},"required":["kind"]},"then":{"properties":{"content":false,"edits":false}}},
+    {"if":{"properties":{"kind":{"const":"rename"}},"required":["kind"]},"then":{"required":["to_path"]}},
+    {"if":{"properties":{"kind":{"const":"delete"}},"required":["kind"]},"then":{"properties":{"to_path":false}}},
+    {"if":{"not":{"required":["expected_read_revision"]}},"then":{"properties":{"edits":{"items":{"properties":{"kind":{"enum":["replace_exact","delete_exact"]},"occurrence":false,"line_scope":false,"expected_match_count":false}}}}}}
+]))]
+struct ApplyFileChangeWireInput {
+    #[serde(default = "default_file_change_kind")]
+    kind: ApplyFileChangeKind,
+    #[schemars(length(min = 1))]
+    path: String,
+    #[serde(default)]
+    to_path: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    /// Each edit resolves against the same original content; no fuzzy matching.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 20))]
+    edits: Vec<ProjectTextEditInput>,
+    /// From read_files. Optional only for globally unique exact replacement/deletion;
+    /// provided revisions always reject stale content, paths, Projects or Runner instances.
+    #[serde(
+        default,
+        deserialize_with = "crate::read_revision::deserialize_optional"
+    )]
+    #[schemars(range(min = 1, max = 9007199254740991u64))]
+    expected_read_revision: Option<u64>,
 }
 
 // Runtime plan data. The model DTO above is the only accepted invocation shape;
@@ -416,65 +334,71 @@ impl<'de> Deserialize<'de> for ApplyFileChangeInput {
     where
         D: Deserializer<'de>,
     {
-        let (kind, path, to_path, content, edits, revision) =
-            match ApplyFileChangeWireInput::deserialize(deserializer)? {
-                ApplyFileChangeWireInput::Edit {
-                    path,
-                    expected_read_revision,
-                    edits,
-                } => (
-                    ApplyFileChangeKind::Edit,
-                    path,
-                    None,
-                    None,
-                    edits
-                        .into_iter()
-                        .map(|edit| {
-                            edit.validate().map_err(serde::de::Error::custom)?;
-                            Ok(edit.into_runtime())
-                        })
-                        .collect::<Result<Vec<_>, D::Error>>()?,
-                    Some(expected_read_revision),
-                ),
-                ApplyFileChangeWireInput::Create { path, content } => (
-                    ApplyFileChangeKind::Create,
-                    path,
-                    None,
-                    Some(content),
-                    vec![],
-                    None,
-                ),
-                ApplyFileChangeWireInput::Delete {
-                    path,
-                    expected_read_revision,
-                } => (
-                    ApplyFileChangeKind::Delete,
-                    path,
-                    None,
-                    None,
-                    vec![],
-                    Some(expected_read_revision),
-                ),
-                ApplyFileChangeWireInput::Rename {
-                    path,
-                    to_path,
-                    expected_read_revision,
-                } => (
-                    ApplyFileChangeKind::Rename,
-                    path,
-                    Some(to_path),
-                    None,
-                    vec![],
-                    Some(expected_read_revision),
-                ),
-            };
+        let wire = ApplyFileChangeWireInput::deserialize(deserializer)?;
+        use serde::de::Error;
+        let revision_required = match wire.kind {
+            ApplyFileChangeKind::Edit => {
+                if wire.edits.is_empty() {
+                    return Err(D::Error::missing_field("edits"));
+                }
+                if wire.to_path.is_some() || wire.content.is_some() {
+                    return Err(D::Error::custom(
+                        "edit accepts only path, edits and expected_read_revision",
+                    ));
+                }
+                wire.edits.iter().any(|edit| {
+                    !matches!(
+                        edit.kind,
+                        ApplyTextEditKind::ReplaceExact | ApplyTextEditKind::DeleteExact
+                    ) || edit.occurrence.is_some()
+                        || edit.line_scope.is_some()
+                        || edit.expected_match_count.is_some()
+                })
+            }
+            ApplyFileChangeKind::Create | ApplyFileChangeKind::Write => {
+                if wire.content.is_none() {
+                    return Err(D::Error::missing_field("content"));
+                }
+                if wire.to_path.is_some()
+                    || !wire.edits.is_empty()
+                    || (wire.kind == ApplyFileChangeKind::Create
+                        && wire.expected_read_revision.is_some())
+                {
+                    return Err(D::Error::custom("invalid fields for whole-file content"));
+                }
+                wire.kind == ApplyFileChangeKind::Write
+            }
+            ApplyFileChangeKind::Delete | ApplyFileChangeKind::Rename => {
+                if wire.content.is_some()
+                    || !wire.edits.is_empty()
+                    || (wire.kind == ApplyFileChangeKind::Delete && wire.to_path.is_some())
+                {
+                    return Err(D::Error::custom("invalid fields for delete/rename"));
+                }
+                if wire.kind == ApplyFileChangeKind::Rename && wire.to_path.is_none() {
+                    return Err(D::Error::missing_field("to_path"));
+                }
+                true
+            }
+        };
+        if revision_required && wire.expected_read_revision.is_none() {
+            return Err(D::Error::missing_field("expected_read_revision"));
+        }
+        let edits = wire
+            .edits
+            .into_iter()
+            .map(|edit| {
+                edit.validate().map_err(D::Error::custom)?;
+                Ok(edit.into_runtime())
+            })
+            .collect::<Result<Vec<_>, D::Error>>()?;
         Ok(Self {
-            kind,
-            path,
-            to_path,
-            content,
+            kind: wire.kind,
+            path: wire.path,
+            to_path: wire.to_path,
+            content: wire.content,
             edits,
-            expected_read_revision: revision,
+            expected_read_revision: wire.expected_read_revision,
         })
     }
 }

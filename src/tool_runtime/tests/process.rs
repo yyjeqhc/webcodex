@@ -1504,14 +1504,11 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
         "lost-response recovery must not enqueue a second payload"
     );
     let status = restarted
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(
-        status.success,
-        "reconstructed logical Job must remain observable"
-    );
-    assert_eq!(status.output["job_id"], job_id);
-    assert_eq!(status.output["status"], "running");
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(status.job.job_id, job_id);
+    assert_eq!(status.job.status, "running");
 }
 
 #[tokio::test]
@@ -1924,68 +1921,119 @@ async fn run_process_terminal_success_is_sparse_after_full_session_effect_record
 
 #[tokio::test]
 async fn run_process_fast_terminal_projection_bounds_lines_with_explicit_loss_notice() {
-    let temp = tempfile::tempdir().unwrap();
-    let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));
-    let project = register_process_job_agent(&runtime, "process-fast-log-job", temp.path()).await;
-    let auth = auth_context(None, true);
-    let retained_stdout = (0..300)
-        .map(|line| format!("retained-line-{line:03}\n"))
-        .collect::<String>();
-    assert!(
-        retained_stdout.len() < crate::runner_protocol::JOB_SNAPSHOT_STREAM_MAX_BYTES,
-        "fixture must fit the Runner-retained snapshot bound"
-    );
-    assert!(
-        retained_stdout.chars().count() < super::super::helpers::COMMAND_STDIO_TAIL_CHARS,
-        "fixture must fit the model-facing terminal projection bound"
-    );
+    for first_retained_line in [1, 101] {
+        let temp = tempfile::tempdir().unwrap();
+        let runtime =
+            test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));
+        let registration = crate::test_support::runner_registration(
+            "process-fast-log-job",
+            "inst",
+            RunnerCapabilities {
+                shell: true,
+                async_jobs: true,
+                async_shell_jobs: true,
+                structured_process_argv: true,
+                structured_execution_jobs: true,
+                job_state_reconciliation: true,
+                ..Default::default()
+            },
+        );
+        runtime
+            .runner_registry
+            .register(crate::runner_protocol::RunnerRegisterRequest {
+                job_inventory: Some(crate::runner_protocol::ShellJobInventory {
+                    active_complete: true,
+                    jobs: vec![],
+                }),
+                ..registration
+            })
+            .await
+            .unwrap();
+        crate::test_support::apply_project_inventory_snapshot(
+            &runtime.runner_registry,
+            "process-fast-log-job",
+            "inst",
+            vec![registered_project("demo", &temp.path().to_string_lossy())],
+        )
+        .await;
+        let project =
+            crate::tool_runtime::runner_project_runtime_id("process-fast-log-job", "demo");
+        let auth = auth_context(None, true);
+        let retained_stdout = (0..300)
+            .map(|line| format!("retained-line-{line:03}\n"))
+            .collect::<String>();
+        assert!(
+            retained_stdout.len() < crate::runner_protocol::JOB_SNAPSHOT_STREAM_MAX_BYTES,
+            "fixture must fit the Runner-retained snapshot bound"
+        );
+        assert!(
+            retained_stdout.chars().count() < super::super::helpers::COMMAND_STDIO_TAIL_CHARS,
+            "fixture must fit the model-facing terminal projection bound"
+        );
 
-    let (task, request) = dispatch_process_until_request(
-        &runtime,
-        "process-fast-log-job",
-        process_call(project.clone(), None),
-        auth.clone(),
-    )
-    .await;
-    update_process_job(
-        &runtime,
-        "process-fast-log-job",
-        &request,
-        "running",
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await;
-    update_process_job(
-        &runtime,
-        "process-fast-log-job",
-        &request,
-        "completed",
-        Some(ShellCommandExecutionState::Completed),
-        Some(0),
-        Some(retained_stdout.as_str()),
-        None,
-        None,
-    )
-    .await;
+        let (task, request) = dispatch_process_until_request(
+            &runtime,
+            "process-fast-log-job",
+            process_call(project.clone(), None),
+            auth.clone(),
+        )
+        .await;
+        runtime
+            .runner_registry
+            .update_job(RunnerJobUpdateRequest {
+                request_id: Some(request.request_id.clone()),
+                update_seq: Some(1),
+                exit_code: Some(0),
+                command_execution_state: Some(ShellCommandExecutionState::Completed),
+                log_snapshot: Some(crate::runner_protocol::ShellJobLogSnapshot {
+                    stdout: crate::runner_protocol::ShellJobStreamSnapshot {
+                        tail: retained_stdout.clone(),
+                        first_retained_line,
+                        next_line: first_retained_line + 300,
+                        truncated: first_retained_line > 1,
+                    },
+                    stderr: Default::default(),
+                }),
+                ..runner_job_update(
+                    "process-fast-log-job".into(),
+                    "inst".into(),
+                    request.job_id.clone().unwrap(),
+                    "completed".into(),
+                    true,
+                )
+            })
+            .await
+            .unwrap();
 
-    let result = task.await.unwrap();
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(
-        result.output["stdout_tail"].as_str(),
-        Some(retained_stdout[retained_stdout.find("retained-line-100").unwrap()..].as_ref())
-    );
-    assert_eq!(result.output["stdout_lines"], 300);
-    assert_eq!(result.output["stdout_truncated"], true);
-    assert!(result.output["output_hint"]
-        .as_str()
-        .unwrap()
-        .contains("200 lines"));
-    assert!(result.output.get("promoted_to_job").is_none());
-    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        let preview = result.output["stdout_tail"].as_str().unwrap();
+        assert!(preview.starts_with("retained-line-000"), "{preview}");
+        assert!(preview.contains("retained-line-299"), "{preview}");
+        assert!(preview.contains("output omitted"));
+        assert_eq!(result.output["stdout_lines"], 300);
+        assert_eq!(result.output["stdout_truncated"], true);
+        assert!(result.output["output_hint"]
+            .as_str()
+            .unwrap()
+            .contains("do not rerun"));
+        assert_eq!(result.output["promoted_to_job"], true);
+        assert_eq!(runtime.runner_registry.list_jobs(Some(10)).await.len(), 1);
+        let continuation = &result.output["continuation"];
+        let observed = runtime
+            .dispatch_with_auth(
+                ToolCall::from_tool_name("observe_jobs", continuation["arguments"].clone())
+                    .unwrap(),
+                Some(&auth),
+            )
+            .await;
+        assert!(observed.success, "{observed:?}");
+        assert!(observed.output.to_string().contains("retained-line-000"));
+        assert_eq!(
+            observed.output["items"][0]["output"]["stdout_lines"],
+            first_retained_line + 299
+        );
+    }
 }
 
 #[tokio::test]
@@ -2093,26 +2141,24 @@ async fn run_process_six_hour_handoff_is_queryable_once_and_keeps_the_original_b
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
 
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["job_id"], job_id);
-    assert_eq!(status.output["status"], "running");
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(status.job.job_id, job_id);
+    assert_eq!(status.job.status, "running");
     assert_eq!(
-        status.output["activity"],
+        serde_json::to_value(&status.job.activity).unwrap(),
         json!({
             "state": "working",
             "phase": "process_running",
             "source": "runner_execution"
         })
     );
-    assert!(status.output["command_execution_state"].is_null());
-    assert_eq!(
-        status.output["structured_execution"]["execution_source"],
-        "run_process"
-    );
-    assert_eq!(status.output["structured_execution"]["arg_count"], 3);
-    assert_eq!(status.output["structured_execution"]["stdin_present"], true);
+    assert!(status.job.command_execution_state.is_none());
+    let execution = status.job.structured_execution.as_ref().unwrap();
+    assert_eq!(execution.execution_source, "run_process");
+    assert_eq!(execution.arg_count, 3);
+    assert!(execution.stdin_present);
     let list = runtime
         .dispatch_with_auth(
             ToolCall::ListJobs {
@@ -2146,14 +2192,22 @@ async fn run_process_six_hour_handoff_is_queryable_once_and_keeps_the_original_b
     )
     .await;
     let terminal = runtime
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(terminal.success, "{:?}", terminal.error);
-    assert_eq!(terminal.output["status"], "completed");
-    assert!(terminal.output["activity"].is_null());
-    assert_eq!(terminal.output["command_execution_state"], "completed");
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(terminal.job.status, "completed");
+    assert!(terminal.job.activity.is_none());
     assert_eq!(
-        terminal.output["structured_execution"]["execution_source"],
+        terminal.job.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert_eq!(
+        terminal
+            .job
+            .structured_execution
+            .as_ref()
+            .unwrap()
+            .execution_source,
         "run_process"
     );
     assert!(probe_patch_agent_request(&runtime, "process-slow-job")

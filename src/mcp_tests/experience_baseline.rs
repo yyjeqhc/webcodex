@@ -49,13 +49,7 @@ fn scenarios() -> Vec<(&'static str, Vec<Step>)> {
             json!({"project":project,"executable":"cargo","args":["test"],"timeout_secs":600}),
             true,
             json!({"execution_state":"pending","continuation":continuation}),
-            &[
-                "pending",
-                "wc_job_fixture",
-                "opaque/+token",
-                "fallback_recovery",
-                "observe_jobs",
-            ],
+            &["pending", "wc_job_fixture", "opaque/+token", "observe_jobs"],
         )
     };
     vec![
@@ -82,12 +76,7 @@ fn scenarios() -> Vec<(&'static str, Vec<Step>)> {
                     json!({"project":project,"executable":"cargo","args":["test"]}),
                     false,
                     json!({"execution_state":"completed","exit_code":101,"failure_kind":"command_exit_nonzero","stderr_tail":"sum_test failed at src/lib.rs:2"}),
-                    &[
-                        "completed",
-                        "101",
-                        "command_exit_nonzero",
-                        "sum_test failed",
-                    ],
+                    &["completed", "101", "sum_test failed"],
                 ),
                 read(8, 2),
             ],
@@ -168,8 +157,6 @@ fn scenarios() -> Vec<(&'static str, Vec<Step>)> {
                         "outcome_unknown",
                         "wc_job_fixture",
                         "state_changed",
-                        "null",
-                        "fallback_recovery",
                         "observe_jobs",
                     ],
                 ),
@@ -287,10 +274,13 @@ fn tool_experience_scenario_costs_preserve_contract_and_recovery() {
                     if surface == McpSurface::Cli {
                         let rendered_call = visible
                             .lines()
-                            .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+                            .filter_map(crate::mcp::parse_call_line_for_test)
                             .find(|value| value.get("tool").is_some())
                             .expect("exact parser-ready recovery call");
-                        assert_eq!(&rendered_call, call);
+                        assert_eq!(
+                            rendered_call,
+                            json!({"tool":call["tool"], "arguments":call["arguments"]})
+                        );
                     }
                     validate_schema_instance_for_test(
                         &call["arguments"],
@@ -356,9 +346,16 @@ async fn tool_experience_exact_discovery_constructs_callable_arguments() {
         };
         let arguments =
             json!({"project":"agent:fixture:repo","language":"python","script":"print('ready')"});
+        let mut expected = webcodex_tool_contracts::input_schema_for_tool("run_script");
+        if cli {
+            expected["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove("session_id");
+        }
         assert_eq!(
-            super::cli::business_schema_with_collaboration_checked(&schema),
-            webcodex_tool_contracts::input_schema_for_tool("run_script")
+            super::cli::business_schema_without_sidecars(&schema),
+            expected
         );
         validate_schema_instance_for_test(&arguments, &schema).unwrap();
         crate::tool_runtime::ToolCall::from_tool_name("run_script", arguments.clone()).unwrap();

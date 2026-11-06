@@ -77,6 +77,19 @@ instead of falling back to older visible history. Project-scoped model credentia
 remain exact-principal bounded. The card uses its Host-derived current ClientWindow
 and independently authorizes its Project.
 
+For projectless, unanchored managed OAuth activity, the Console recognizes a
+personal API token as the operator of that same user's OAuth Windows. This uses
+the exact observation's server-authored user/client attribution, including live
+request admission; it does not infer ownership from an older Project or Window
+selection. OAuth callers still require the exact user **and client**. Other
+credential classes gain no user-based visibility. Explicit Project and Workflow
+Session Project anchors must still be authorized, and missing attribution or a
+newest observation belonging to another user remains unavailable. Inventory,
+detail, liveness, and collaboration use the same rule. The recipient's Operator
+mailbox and Peer principal are unchanged. This keeps a PAT-authenticated WebUI
+conversation available when its model's latest call has no Project, including
+after OAuth renewal while the browser is in the background.
+
 Transcript reads never consume attention. Only model-visible tool activity
 projects pending Operator messages and updates projection timestamps;
 `present_work_result`, `get_work_result_state`, `send_work_result_message`, and

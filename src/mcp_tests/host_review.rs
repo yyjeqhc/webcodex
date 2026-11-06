@@ -239,9 +239,7 @@ async fn host_review_public_descriptors_and_manifest_routes_are_exact() {
                     let business_schema = if modern {
                         output["input_schema"].clone()
                     } else {
-                        super::cli::business_schema_with_collaboration_checked(
-                            &output["input_schema"],
-                        )
+                        super::cli::business_schema_without_sidecars(&output["input_schema"])
                     };
                     assert_eq!(business_schema, canonical.input_schema, "{name}");
                     assert_eq!(output["annotations"], canonical.annotations, "{name}");

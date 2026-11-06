@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn missing_nested_kind_has_array_location_without_input_values() {
+fn missing_nested_edits_has_array_location_without_input_values() {
     let error = ToolCall::from_tool_name(
         "edit_project_files",
         json!({
@@ -10,7 +10,7 @@ fn missing_nested_kind_has_array_location_without_input_values() {
     )
     .unwrap_err();
     assert!(
-        error.contains("changes[0].kind: missing required field"),
+        error.contains("changes[0].edits: missing required field"),
         "{error}"
     );
     assert!(!error.contains("private-file"));
@@ -63,16 +63,19 @@ fn required_top_level_field_remains_actionable() {
 }
 
 #[test]
-fn buffered_enum_errors_never_label_an_existing_parent_field_as_missing() {
+fn edit_defaults_and_revision_type_errors_keep_exact_safe_field_paths() {
+    ToolCall::from_tool_name("edit_project_files", json!({
+        "project":"demo", "changes":[{"path":"file.rs", "edits":[{"old_text":"old","new_text":"new"}]}]
+    })).unwrap();
     let error = ToolCall::from_tool_name("edit_project_files", json!({
-        "project":"demo", "changes":[{"kind":"edit","path":"file.rs", "expected_read_revision":1,
-            "edits":[{"old_text":"private","new_text":"secret"}]}]
+        "project":"demo", "changes":[{"path":"private-file", "expected_read_revision":"secret-token", "edits":[{"old_text":"old","new_text":"new"}]}]
     })).unwrap_err();
     assert!(
-        error.contains("changes[0]: nested object is missing required field kind"),
+        error.contains("changes[0].expected_read_revision"),
         "{error}"
     );
-    assert!(!error.contains("changes[0].kind:"), "{error}");
+    assert!(!error.contains("secret-token"));
+    assert!(!error.contains("private-file"));
 }
 
 #[test]

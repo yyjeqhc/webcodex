@@ -79,7 +79,7 @@ fn window_labels_inventory_search_is_principal_scoped_and_retention_removes_only
         db.read_window_inventory(WindowInventoryQuery {
             principal: Some(("username", principal)),
             caller: None,
-            managed_oauth_identity: None,
+            managed_oauth_visibility: None,
             management: false,
             visible_projects: &["agent:r:p".into()],
             projects: None,

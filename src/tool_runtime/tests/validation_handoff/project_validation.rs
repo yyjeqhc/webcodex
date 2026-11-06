@@ -314,14 +314,18 @@ async fn project_validation_pending_returns_same_job_and_unproven_go_count_fails
         ))
         .await
         .unwrap();
-    let status = runtime.job_status_for_auth(job_id, false, None).await;
-    assert_eq!(status.output["validation"]["passed"], false, "{status:?}");
+    let status = runtime
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+    assert_eq!(status_validation["passed"], false, "{status_validation:?}");
     assert_eq!(
-        status.output["validation"]["test_count_assertion"]["status"],
+        status_validation["test_count_assertion"]["status"],
         "unproven"
     );
     assert_eq!(
-        status.output["validation"]["test_count_assertion"]["reason_code"],
+        status_validation["test_count_assertion"]["reason_code"],
         "test_count_unproven"
     );
 }
@@ -633,8 +637,9 @@ async fn project_validation_filtered_test_count_policy_survives_same_job_handoff
         assert_eq!(pending.output["continuation"]["arguments"]["items"][0]["job_id"], job_id);
         runtime.runner_registry.update_job(cargo_test_update("project-validation", &request.request_id, &job_id,
             "completed", stdout, "", Some(0), completed_progress(), true)).await.unwrap();
-        let status = runtime.job_status_for_auth(job_id, false, None).await;
-        assert_eq!(status.output["validation"]["passed"], expected, "backend={backend} {status:?}");
+        let status = runtime.query_job_status_for_auth(&job_id, None).await.unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+        assert_eq!(status_validation["passed"], expected, "backend={backend} {status_validation:?}");
         assert!(probe_patch_agent_request(&runtime, "project-validation").await.is_none());
     }
 }
@@ -690,9 +695,10 @@ async fn project_validation_readonly_adapters_preserve_source_fence_through_hand
             runtime.runner_registry.update_job(cargo_test_update(
                 "project-validation", &request.request_id, &job_id, "completed", stdout, "", Some(0), completed_progress(), true,
             )).await.unwrap();
-            let status = runtime.job_status_for_auth(job_id.clone(), false, None).await;
-            assert_eq!(status.output["validation"]["source_state"]["observed_mutation_fence"], if external_writer { "unknown" } else { "uncrossed" }, "{status:?}");
-            assert_eq!(status.output["validation"]["passed"], true, "{status:?}");
+            let status = runtime.query_job_status_for_auth(&job_id, None).await.unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+            assert_eq!(status_validation["source_state"]["observed_mutation_fence"], if external_writer { "unknown" } else { "uncrossed" }, "{status_validation:?}");
+            assert_eq!(status_validation["passed"], true, "{status_validation:?}");
             let summary = runtime.sessions.summary(&session.session_id, None).unwrap();
             let _ = runtime.validation_summary_for_session_with_jobs(&summary, 50, Some(&auth_context(None, true))).await;
             let reconciled = runtime.sessions.summary(&session.session_id, None).unwrap();
@@ -859,13 +865,17 @@ async fn project_validation_python_pytest_handoff_observes_same_job_and_cancelle
             ))
             .await
             .unwrap();
-        let status = runtime.job_status_for_auth(job_id, false, None).await;
+        let status = runtime
+            .query_job_status_for_auth(&job_id, None)
+            .await
+            .unwrap();
+        let status_validation = status.validation.unwrap().into_value();
         if cancel {
-            assert_eq!(status.output["validation"]["state"], "cancelled");
-            assert!(status.output["validation"]["tests_run_count"].is_null());
+            assert_eq!(status_validation["state"], "cancelled");
+            assert!(status_validation["tests_run_count"].is_null());
         } else {
-            assert_eq!(status.output["validation"]["passed"], true);
-            assert_eq!(status.output["validation"]["tests_run_count"], 1);
+            assert_eq!(status_validation["passed"], true);
+            assert_eq!(status_validation["tests_run_count"], 1);
         }
         assert!(probe_patch_agent_request(&runtime, "project-validation")
             .await
@@ -998,8 +1008,12 @@ async fn project_validation_all_packages_dispatches_and_completes_same_wire_job(
             ))
             .await
             .unwrap();
-        let status = runtime.job_status_for_auth(job_id, false, None).await;
-        assert_eq!(status.output["validation"]["passed"], true, "{status:?}");
+        let status = runtime
+            .query_job_status_for_auth(&job_id, None)
+            .await
+            .unwrap();
+        let status_validation = status.validation.unwrap().into_value();
+        assert_eq!(status_validation["passed"], true, "{status_validation:?}");
         assert!(probe_patch_agent_request(&runtime, "project-validation")
             .await
             .is_none());
@@ -1167,18 +1181,17 @@ async fn node_json_project_validation_handoff_owns_counts_and_keeps_freshness_un
             });
             runtime.runner_registry.update_job(update).await.unwrap();
             let status = runtime
-                .job_status_for_auth(job_id.clone(), false, None)
-                .await;
+                .query_job_status_for_auth(&job_id, None)
+                .await
+                .unwrap();
+            let status_validation = status.validation.unwrap().into_value();
             assert_eq!(
-                status.output["validation"]["passed"],
+                status_validation["passed"],
                 count == Some(2),
-                "{status:?}"
+                "{status_validation:?}"
             );
-            assert_eq!(status.output["validation"]["tests_run_count"], json!(count));
-            assert_eq!(
-                status.output["validation"]["source_state"]["freshness"],
-                "unproven"
-            );
+            assert_eq!(status_validation["tests_run_count"], json!(count));
+            assert_eq!(status_validation["source_state"]["freshness"], "unproven");
             let summary = runtime.sessions.summary(&session.session_id, None).unwrap();
             let evidence = runtime
                 .validation_summary_for_session_with_jobs(
@@ -1396,25 +1409,31 @@ async fn rust_clippy_pending_observes_same_job_and_exit_status_controls_outcome(
                 .await
                 .unwrap();
             let observed = runtime
-                .job_status_for_auth(job_id.clone(), false, None)
-                .await;
+                .query_job_status_for_auth(&job_id, None)
+                .await
+                .unwrap();
+            let observed_validation = observed.validation.unwrap().into_value();
             assert_eq!(
-                observed.output["validation"]["passed"],
+                observed_validation["passed"],
                 exit == 0,
-                "{observed:?}"
+                "{observed_validation:?}"
             );
-            assert_eq!(observed.output["validation"]["adapter"], "cargo_clippy");
+            assert_eq!(observed_validation["adapter"], "cargo_clippy");
             assert_eq!(
-                observed.output["validation"].get("warnings_count"),
+                observed_validation.get("warnings_count"),
                 Some(&json!(u64::from(exit == 0)))
             );
             assert_eq!(
-                observed.output["validation"].get("errors_count"),
+                observed_validation.get("errors_count"),
                 Some(&json!(u64::from(exit != 0)))
             );
             // Re-observation retains the same Job and its structured evidence.
-            let retained = runtime.job_status_for_auth(job_id, false, None).await;
-            assert_eq!(retained.output["validation"], observed.output["validation"]);
+            let retained = runtime
+                .query_job_status_for_auth(&job_id, None)
+                .await
+                .unwrap();
+            let retained_validation = retained.validation.unwrap().into_value();
+            assert_eq!(retained_validation, observed_validation);
             assert!(probe_patch_agent_request(&runtime, "project-validation")
                 .await
                 .is_none());

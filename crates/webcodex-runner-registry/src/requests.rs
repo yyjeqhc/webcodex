@@ -474,20 +474,20 @@ pub(super) fn resolve_disconnected_sync_requests_locked(
 
 fn apply_text_edits_capability_requirements(
     body: &ShellFileOpRequest,
-) -> (bool, bool, bool, bool, bool) {
+) -> (bool, bool, bool, bool, bool, bool) {
     if body.op != "apply_text_edits" {
-        return (false, false, false, false, false);
+        return (false, false, false, false, false, false);
     }
     let Some(content) = body.content.as_deref() else {
-        return (false, false, false, false, false);
+        return (false, false, false, false, false, false);
     };
     let Ok(payload) = serde_json::from_str::<serde_json::Value>(content) else {
         // Invalid JSON cannot become a valid Runner mutation. Preserve the
         // existing generic-ingress behavior and let the Runner reject it.
-        return (false, false, false, false, false);
+        return (false, false, false, false, false, false);
     };
     let Some(changes) = payload.get("changes").and_then(serde_json::Value::as_array) else {
-        return (false, false, false, false, false);
+        return (false, false, false, false, false, false);
     };
 
     let mut requires_occurrence = false;
@@ -495,7 +495,9 @@ fn apply_text_edits_capability_requirements(
     let mut requires_local_guard_without_sha = false;
     let mut requires_expected_match_count = false;
     let mut requires_range = false;
+    let mut requires_write = false;
     for change in changes {
+        requires_write |= change["kind"] == "write";
         if change.get("kind").and_then(serde_json::Value::as_str) == Some("edit")
             && change
                 .get("expected_sha256")
@@ -528,6 +530,7 @@ fn apply_text_edits_capability_requirements(
         requires_local_guard_without_sha,
         requires_expected_match_count,
         requires_range,
+        requires_write,
     )
 }
 
@@ -584,11 +587,13 @@ impl RunnerRegistry {
             requires_local_guard_without_sha,
             requires_expected_match_count,
             requires_range,
+            requires_write,
         ) = apply_text_edits_capability_requirements(&body);
         if requires_line_scope
             || requires_local_guard_without_sha
             || requires_expected_match_count
             || requires_range
+            || requires_write
         {
             return self
                 .enqueue_apply_text_edits_with_requirements(
@@ -599,6 +604,7 @@ impl RunnerRegistry {
                     requires_local_guard_without_sha,
                     requires_expected_match_count,
                     requires_range,
+                    requires_write,
                 )
                 .await;
         }
@@ -677,6 +683,7 @@ impl RunnerRegistry {
             requires_local_guard_without_sha,
             requires_expected_match_count,
             requires_range,
+            requires_write,
         ) = apply_text_edits_capability_requirements(&body);
         self.enqueue_apply_text_edits_with_requirements(
             body,
@@ -686,6 +693,7 @@ impl RunnerRegistry {
             requires_local_guard_without_sha,
             requires_expected_match_count,
             requires_range,
+            requires_write,
         )
         .await
     }
@@ -697,8 +705,14 @@ impl RunnerRegistry {
         requested_by: String,
         requires_occurrence: bool,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        let (_, _, requires_local_guard_without_sha, requires_expected_match_count, requires_range) =
-            apply_text_edits_capability_requirements(&body);
+        let (
+            _,
+            _,
+            requires_local_guard_without_sha,
+            requires_expected_match_count,
+            requires_range,
+            requires_write,
+        ) = apply_text_edits_capability_requirements(&body);
         self.enqueue_apply_text_edits_with_requirements(
             body,
             requested_by,
@@ -707,6 +721,7 @@ impl RunnerRegistry {
             requires_local_guard_without_sha,
             requires_expected_match_count,
             requires_range,
+            requires_write,
         )
         .await
     }
@@ -720,6 +735,7 @@ impl RunnerRegistry {
         requires_local_guard_without_sha: bool,
         requires_expected_match_count: bool,
         requires_range: bool,
+        requires_write: bool,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_file_request(&body)?;
         if body.op != "apply_text_edits" {
@@ -743,6 +759,17 @@ impl RunnerRegistry {
             return Err(format!(
                 "capability_unavailable: runner {} does not support {RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE}",
                 body.client_id
+            ));
+        }
+        if requires_write
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ApplyFileWrite)
+        {
+            return Err(format!(
+                "capability_unavailable: runner {} does not support {}",
+                body.client_id,
+                webcodex_core::runner_protocol::RUNNER_CAPABILITY_APPLY_FILE_WRITE
             ));
         }
         if requires_range
@@ -990,6 +1017,7 @@ impl RunnerRegistry {
             requires_local_guard_without_sha,
             requires_expected_match_count,
             requires_range,
+            requires_write,
         ) = requirements;
         if requires_expected_match_count
             && !current
@@ -1006,6 +1034,17 @@ impl RunnerRegistry {
             return Err(format!(
                 "capability_unavailable: runner {} does not support {RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE}",
                 body.client_id
+            ));
+        }
+        if requires_write
+            && !current
+                .runner_features
+                .supports(RunnerFeature::ApplyFileWrite)
+        {
+            return Err(format!(
+                "capability_unavailable: runner {} does not support {}",
+                body.client_id,
+                webcodex_core::runner_protocol::RUNNER_CAPABILITY_APPLY_FILE_WRITE
             ));
         }
         if requires_range

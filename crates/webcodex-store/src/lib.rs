@@ -70,7 +70,9 @@ mod window_inventory;
 mod window_labels;
 pub use window_labels::normalize_window_label;
 mod workbench_preferences;
-pub use window_inventory::{WindowInventoryPage, WindowInventoryQuery, WindowInventoryRow};
+pub use window_inventory::{
+    WindowInventoryPage, WindowInventoryQuery, WindowInventoryRow, WindowOAuthVisibility,
+};
 
 pub use self::admin_project_lifecycle::{AdminProjectAudit, AdminProjectIdempotencyRecord};
 pub use self::agent_continuation_reference::AgentContinuationReferenceRecord;

@@ -51,12 +51,40 @@ pub struct WindowInventoryRow {
     pub recorder_gap_count: usize,
 }
 
+/// Caller-authorized selector for unanchored managed OAuth observations only.
+/// The Console derives User for a personal token and Client for an OAuth token;
+/// this selector never overrides Project anchors or the exact principal filter.
+#[derive(Clone)]
+pub enum WindowOAuthVisibility {
+    User { user_id: String },
+    Client { user_id: String, client_id: String },
+}
+
+impl WindowOAuthVisibility {
+    fn identity(&self) -> Option<(&str, Option<&str>)> {
+        let (user, client) = match self {
+            Self::User { user_id } => (user_id.as_str(), None),
+            Self::Client { user_id, client_id } => (user_id.as_str(), Some(client_id.as_str())),
+        };
+        (!user.trim().is_empty() && client.is_none_or(|id| !id.trim().is_empty()))
+            .then_some((user, client))
+    }
+
+    pub fn matches(&self, user: &str, client: &str) -> bool {
+        !client.trim().is_empty()
+            && self.identity().is_some_and(|(owner, selected_client)| {
+                owner == user && selected_client.is_none_or(|selected| selected == client)
+            })
+    }
+}
+
 pub struct WindowInventoryQuery<'a> {
     pub principal: Option<(&'a str, &'a str)>,
     pub caller: Option<(&'a str, &'a str)>,
-    pub managed_oauth_identity: Option<(&'a str, &'a str)>,
-    /// Ordinary management credentials restrict projectless unanchored events
-    /// to their caller principal. Admin/scoped-principal reads use native links.
+    pub managed_oauth_visibility: Option<&'a WindowOAuthVisibility>,
+    /// Ordinary management credentials restrict unanchored events to their
+    /// caller principal or explicit managed OAuth visibility selector.
+    /// Admin/scoped-principal reads use native links.
     pub management: bool,
     pub visible_projects: &'a [String],
     pub projects: Option<&'a [String]>,
@@ -280,9 +308,9 @@ impl Database {
         let (ck, ci) = query
             .caller
             .map_or((None, None), |(k, i)| (Some(k), Some(i)));
-        let (oauth_user, oauth_client) = query.managed_oauth_identity
-            .filter(|(user, client)| !user.trim().is_empty() && !client.trim().is_empty())
-            .map_or((None, None), |(user, client)| (Some(user), Some(client)));
+        let (oauth_user, oauth_client) = query.managed_oauth_visibility
+            .and_then(WindowOAuthVisibility::identity)
+            .map_or((None, None), |(user, client)| (Some(user), client));
         let limit = query.limit.clamp(1, 2000) as i64;
         let offset = i64::try_from(query.offset).unwrap_or(i64::MAX);
         let params = named_params! {":allowed": allowed, ":projects": projects, ":pk": pk, ":pi": pi,

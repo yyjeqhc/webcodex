@@ -217,26 +217,27 @@ async fn handoff_cargo_test_count_gap_preserves_completed_job_and_inconclusive_s
         .unwrap();
 
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["status"], "completed");
-    assert_eq!(status.output["exit_code"], 0);
-    assert_eq!(status.output["validation"]["passed"], false);
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+    assert_eq!(status.job.status, "completed");
+    assert_eq!(status.job.exit_code, Some(0));
+    assert_eq!(status_validation["passed"], false);
     assert_eq!(
-        status.output["validation"]["test_count_assertion"]["reason_code"],
+        status_validation["test_count_assertion"]["reason_code"],
         "minimum_not_met"
     );
     assert_eq!(
-        status.output["validation"]["test_count_assertion"]["evidence_reason_code"],
+        status_validation["test_count_assertion"]["evidence_reason_code"],
         "complete_summary"
     );
     assert_eq!(
-        status.output["validation"]["test_count_assertion"]["minimum_tests"],
+        status_validation["test_count_assertion"]["minimum_tests"],
         2
     );
     assert_eq!(
-        status.output["validation"]["test_count_assertion"]["actual_tests_run"],
+        status_validation["test_count_assertion"]["actual_tests_run"],
         0
     );
 
@@ -352,14 +353,15 @@ async fn handoff_cargo_test_authoritative_count_passes_session_validation() {
     runtime.runner_registry.update_job(update).await.unwrap();
 
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["status"], "completed");
-    assert_eq!(status.output["validation"]["tests_run_count"], 120);
-    assert_eq!(status.output["validation"]["passed"], true);
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+    assert_eq!(status.job.status, "completed");
+    assert_eq!(status_validation["tests_run_count"], 120);
+    assert_eq!(status_validation["passed"], true);
     assert_eq!(
-        status.output["validation"]["test_count_assertion"]["reason_code"],
+        status_validation["test_count_assertion"]["reason_code"],
         "minimum_satisfied"
     );
 
@@ -666,13 +668,14 @@ async fn durable_cargo_test_explicit_zero_opt_out_survives_job_reconciliation() 
         .unwrap();
 
     let status = runtime
-        .job_status_for_auth(job_id, false, Some(&auth))
-        .await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["validation"]["passed"], true);
-    assert_eq!(status.output["validation"]["tests_run_count"], 0);
-    assert_eq!(status.output["validation"]["zero_tests_run"], true);
-    assert_eq!(status.output["validation"]["require_tests"], false);
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+    assert_eq!(status_validation["passed"], true);
+    assert_eq!(status_validation["tests_run_count"], 0);
+    assert_eq!(status_validation["zero_tests_run"], true);
+    assert_eq!(status_validation["require_tests"], false);
 
     let summary = runtime
         .sessions

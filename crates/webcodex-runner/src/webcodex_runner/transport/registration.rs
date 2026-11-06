@@ -192,6 +192,7 @@ pub(crate) fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabili
     // Deterministic whole-line range replacement is an additive rolling-upgrade
     // capability and must never be inferred from generic line_scope support.
     capabilities.set(RunnerCapabilityId::ApplyTextEditRange, true);
+    capabilities.set(RunnerCapabilityId::ApplyFileWrite, true);
     // This binary proves explicit all-match cardinality before any file write.
     capabilities.set(RunnerCapabilityId::ApplyTextEditExpectedMatchCount, true);
     // Codex Patch is an additive request kind with Runner-authoritative parsing and

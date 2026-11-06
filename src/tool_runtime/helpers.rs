@@ -296,6 +296,46 @@ fn reap_process_group(pgid: u32) {
 #[cfg(all(test, not(unix)))]
 fn reap_process_group(_pgid: u32) {}
 
+/// Convert paths against the already resolved Runner root, without consulting
+/// the Server filesystem or resolving the Project a second time. Runner-side
+/// canonicalization and protected-path checks still own filesystem authority.
+pub(crate) fn project_relative_file_path(
+    project: &crate::projects::ProjectConfig,
+    path: &str,
+) -> Result<String, String> {
+    if let Some(requested) = parse_windows_runner_absolute_path(path)? {
+        let root = parse_windows_runner_absolute_path(&project.path)?
+            .ok_or_else(|| "path is outside project directory".to_string())?;
+        let tail = windows_runner_descendant_tail(&root, &requested)
+            .ok_or_else(|| "path is outside project directory".to_string())?;
+        return Ok(if tail.is_empty() {
+            ".".into()
+        } else {
+            tail.join("/")
+        });
+    }
+    let requested = Path::new(path);
+    if requested.is_absolute() {
+        if requested
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err("path cannot contain parent traversal".into());
+        }
+        let root = project.root();
+        let relative = requested
+            .strip_prefix(&root)
+            .map_err(|_| "path is outside project directory".to_string())?;
+        return Ok(if relative.as_os_str().is_empty() {
+            ".".into()
+        } else {
+            relative.to_string_lossy().into_owned()
+        });
+    }
+    validate_project_relative_path(path)?;
+    Ok(path.to_string())
+}
+
 pub(crate) fn project_relative_runner_cwd(
     proj: &crate::projects::ProjectConfig,
     resolved: &str,
@@ -674,6 +714,31 @@ pub(crate) fn bounded_tail(text: &str, max_chars: usize) -> (String, bool) {
 }
 
 pub(crate) const COMMAND_STDIO_TAIL_CHARS: usize = 12_000;
+pub(crate) const COMMAND_OUTPUT_MAX_LINES: usize = 200;
+
+/// Bounded execution preview keeps the first diagnostic and final status.
+pub(crate) fn bounded_head_tail(text: &str, max_chars: usize) -> (String, bool) {
+    let total = text.chars().count();
+    if total <= max_chars {
+        return (text.to_owned(), false);
+    }
+    let marker = "\n... output omitted ...\n";
+    if max_chars < marker.chars().count() {
+        return (text.chars().take(max_chars).collect(), true);
+    }
+    let remaining = max_chars - marker.chars().count();
+    let head = remaining / 2;
+    let tail = remaining - head;
+    (
+        format!(
+            "{}{}{}",
+            text.chars().take(head).collect::<String>(),
+            marker,
+            text.chars().skip(total - tail).collect::<String>()
+        ),
+        true,
+    )
+}
 
 /// Synchronous Runner-wait tools share this hard upper bound with
 /// `runner_http` validation (`wait_timeout_secs` must be <= 120).
@@ -806,6 +871,51 @@ mod tests {
             path: path.to_string(),
             client_id: "windows-runner".to_string(),
             allow_patch: true,
+        }
+    }
+
+    #[test]
+    fn file_paths_are_relative_to_exact_runner_root_and_preserve_spaces() {
+        for (root, absolute, expected) in [
+            ("/repo", "/repo/src/a.rs", "src/a.rs"),
+            ("/repo", "/repo/ spaced name ", " spaced name "),
+            (r"C:\repo", r"c:\REPO\src\a.rs", "src/a.rs"),
+        ] {
+            let project = windows_project(root);
+            assert_eq!(
+                project_relative_file_path(&project, absolute).unwrap(),
+                expected
+            );
+        }
+        for path in [
+            "/repo-other/a",
+            "/repo/../secret",
+            "/outside/a",
+            r"C:\repo\a",
+        ] {
+            assert!(
+                project_relative_file_path(&windows_project("/repo"), path).is_err(),
+                "{path}"
+            );
+        }
+        for path in [r"C:\repo-other\a", r"D:\repo\a", r"C:\repo\..\a"] {
+            assert!(
+                project_relative_file_path(&windows_project(r"C:\repo"), path).is_err(),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn head_tail_is_unicode_safe_and_bounded_for_every_budget() {
+        let source = "头".repeat(20) + &"尾".repeat(20);
+        for budget in 0..=50 {
+            let (output, truncated) = bounded_head_tail(&source, budget);
+            assert!(output.chars().count() <= budget);
+            assert_eq!(truncated, budget < 40);
+            if (25..40).contains(&budget) {
+                assert!(output.ends_with('尾'));
+            }
         }
     }
 

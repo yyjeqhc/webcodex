@@ -450,9 +450,16 @@ fn batch_output(
 
 fn observe_jobs_item_argument_value(item: &ObserveJobsItem) -> Value {
     if let Some(observation_ref) = item.observation_ref.as_deref() {
-        return json!({"observation_ref": observation_ref});
+        let mut value = json!({"observation_ref": observation_ref});
+        if item.page {
+            value["page"] = json!(true);
+        }
+        return value;
     }
     let mut value = json!({"job_id": item.job_id});
+    if item.page {
+        value["page"] = json!(true);
+    }
     if let Some(token) = item.after_observation_token.as_deref() {
         value["after_observation_token"] = json!(token);
     }
@@ -803,6 +810,7 @@ fn sparse_success_item(item: &Value) -> Option<Value> {
         "manage_ssh_resource",
         "logs_omitted",
         "suggested_call",
+        "continuation",
     ] {
         copy_non_null(observation, &mut sparse, key);
     }
@@ -1107,6 +1115,11 @@ impl ToolRuntime {
                 item.job_id
             ));
         }
+        if items.iter().any(|item| {
+            item.page && item.after_observation_token.is_none() && item.observation_ref.is_none()
+        }) {
+            return Err("page requires after_observation_token or observation_ref".into());
+        }
         if tail_lines == 0 {
             return Err("observe_jobs tail_lines must be at least 1".into());
         }
@@ -1136,13 +1149,14 @@ impl ToolRuntime {
             stream::iter(items.iter().cloned().map(|resolved| async move {
                 let item = resolved.item;
                 let result = self
-                    .job_log_for_auth(
+                    .job_log_with_paging_for_auth(
                         item.job_id.clone(),
                         None,
                         Some(tail_lines),
                         auth,
                         item.after_observation_token,
                         None,
+                        item.page,
                     )
                     .await;
                 ObservedJob {
@@ -1427,10 +1441,13 @@ impl ToolRuntime {
                 {
                     Some((job_id, token)) => resolved.push(ResolvedObserveJobsItem {
                         index,
-                        item: ObserveJobsItem::resolved(
-                            job_id,
-                            Some(token).filter(|token| !token.is_empty()),
-                        ),
+                        item: ObserveJobsItem {
+                            page: item.page,
+                            ..ObserveJobsItem::resolved(
+                                job_id,
+                                Some(token).filter(|token| !token.is_empty()),
+                            )
+                        },
                     }),
                     None => unresolved_refs.push((index, observation_ref.to_string())),
                 }
@@ -1478,7 +1495,13 @@ impl ToolRuntime {
         let immediate_reason =
             if wake_on == ObserveJobsWakeOn::AllTerminal && observed_has_error(&initial) {
                 Some(WakeReason::ItemError)
-            } else if wait_secs.is_none() || missing_baseline {
+            } else if wait_secs.is_none()
+                || (missing_baseline
+                    && matches!(
+                        wake_on,
+                        ObserveJobsWakeOn::Change | ObserveJobsWakeOn::MeaningfulChange
+                    ))
+            {
                 Some(WakeReason::Immediate)
             } else if observed_has_error(&initial) {
                 Some(WakeReason::ItemError)
@@ -1499,7 +1522,7 @@ impl ToolRuntime {
         } else {
             let wait_secs = wait_secs.expect("shared wait requires validated wait_secs");
             let wait_started = Instant::now();
-            let pending: Vec<_> = resolved
+            let mut pending: Vec<_> = resolved
                 .iter()
                 .filter(|resolved| {
                     wake_on != ObserveJobsWakeOn::AllTerminal
@@ -1512,6 +1535,18 @@ impl ToolRuntime {
                 })
                 .cloned()
                 .collect();
+            // Terminal waits need no caller baseline. Capture a private cursor
+            // from this authorized snapshot so Notify/revision waiting remains
+            // race-safe. Final logs still use the caller's original cursor.
+            for pending in &mut pending {
+                if pending.item.after_observation_token.is_none() {
+                    pending.item.after_observation_token = initial
+                        .iter()
+                        .find(|observed| observed.index == pending.index)
+                        .and_then(|observed| observed.result.output["observation_token"].as_str())
+                        .map(str::to_owned);
+                }
+            }
             let wait_reason = match self
                 .wait_for_observed_jobs(
                     &pending,
@@ -1826,16 +1861,19 @@ mod tests {
     fn batch_continuation_is_parser_ready_and_omits_absent_tokens() {
         let originals = vec![
             ObserveJobsItem {
+                page: false,
                 job_id: "job-0".to_string(),
                 after_observation_token: Some("token-0".to_string()),
                 observation_ref: None,
             },
             ObserveJobsItem {
+                page: false,
                 job_id: "job-1".to_string(),
                 after_observation_token: None,
                 observation_ref: None,
             },
             ObserveJobsItem {
+                page: false,
                 job_id: "job-2".to_string(),
                 after_observation_token: Some("token-2".to_string()),
                 observation_ref: None,

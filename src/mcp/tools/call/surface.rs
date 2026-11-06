@@ -197,14 +197,15 @@ impl RuntimeSurface {
             return Err(McpOutcome::BadRequest(rpc_error(id, -32602, message)));
         }
 
+        let execution_only = context.surface == crate::mcp::request_policy::McpSurface::Cli;
         Ok(Self {
             capabilities: ToolProtocolCapabilities {
-                control_sidecars: stateless_2026,
-                context_sidecar: stateless_2026
-                    || context.surface == crate::mcp::request_policy::McpSurface::Cli,
-                skill_runtime: stateless_2026,
-                skill_management: stateless_2026,
-                memory_surface: stateless_2026,
+                execution_only,
+                control_sidecars: stateless_2026 && !execution_only,
+                context_sidecar: stateless_2026 && !execution_only,
+                skill_runtime: stateless_2026 && !execution_only,
+                skill_management: stateless_2026 && !execution_only,
+                memory_surface: stateless_2026 && !execution_only,
                 trace_diagnostics: stateless_2026,
                 goal_plan_app: goal_plan_app_admitted && context.exposure.goals,
                 work_result_app: work_result_app_admitted,

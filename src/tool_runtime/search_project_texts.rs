@@ -867,9 +867,18 @@ impl ToolRuntime {
         // the concurrency slot. A third query cannot enter the Runner queue
         // while two earlier queries still hold their slots.
         let mut completed: Vec<CompletedSearchQuery> =
-            stream::iter(queries.into_iter().enumerate().map(|(index, query)| {
+            stream::iter(queries.into_iter().enumerate().map(|(index, mut query)| {
                 let project = &resolved.config;
                 async move {
+                    if let Some(path) = query.path.as_mut() {
+                        // Rejected absolute paths retain their original spelling
+                        // and fail the canonical search validator below.
+                        if let Ok(relative) =
+                            super::helpers::project_relative_file_path(project, path)
+                        {
+                            *path = relative;
+                        }
+                    }
                     let diagnostic_query = include_glob_diagnostic_query(&query);
                     let mut result = match SearchOptions::normalize(query) {
                         Ok(options) => {

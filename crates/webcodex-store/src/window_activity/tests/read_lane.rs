@@ -313,7 +313,7 @@ fn exact_window_inventory_repairs_only_target_and_profiles_fixed_clean_reads() {
         let page = db.read_window_inventory(crate::WindowInventoryQuery {
             principal: None,
             caller: None,
-            managed_oauth_identity: None,
+            managed_oauth_visibility: None,
             management: false,
             visible_projects: &anchors,
             projects: None,

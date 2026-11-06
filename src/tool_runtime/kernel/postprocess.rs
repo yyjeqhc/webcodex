@@ -62,7 +62,9 @@ impl PostRecordResponse<'_> {
         if let Some(control) = self.control.take() {
             control.decorate_result(&mut result);
         }
-        if crate::tool_runtime::tool_definition::is_model_visible_tool_name(self.tool_name) {
+        if !self.capabilities.execution_only
+            && crate::tool_runtime::tool_definition::is_model_visible_tool_name(self.tool_name)
+        {
             let reply_started = std::time::Instant::now();
             runtime.add_window_model_reply_sidecar(
                 &mut result,
@@ -81,7 +83,9 @@ impl PostRecordResponse<'_> {
             );
         }
         plan.project(&mut result);
-        self.add_recorder_gap_hint(&mut result);
+        if !self.capabilities.execution_only {
+            self.add_recorder_gap_hint(&mut result);
+        }
         if self.tool_name == "read_tool_manifest" {
             crate::tool_runtime::surface::sparsify_tool_manifest_model_result(&mut result);
         }
@@ -122,7 +126,9 @@ impl PostRecordResponse<'_> {
             }
         }
         let enrichment_deadline = crate::tool_runtime::optional_enrichment::deadline();
-        if crate::tool_runtime::tool_definition::is_model_visible_tool_name(self.tool_name) {
+        if !self.capabilities.execution_only
+            && crate::tool_runtime::tool_definition::is_model_visible_tool_name(self.tool_name)
+        {
             let peer_project = self
                 .correlation
                 .resolved_project
@@ -149,17 +155,19 @@ impl PostRecordResponse<'_> {
         if self.tool_name == "observe_jobs" {
             crate::tool_runtime::observe_jobs::sparsify_observe_jobs_model_result(&mut result);
         }
-        runtime
-            .add_passive_job_attention_until(
-                &mut result,
-                self.tool_name,
-                self.correlation.resolved_project.as_deref(),
-                self.correlation.business_session_id.as_deref(),
-                self.context.window,
-                self.context.auth,
-                enrichment_deadline,
-            )
-            .await;
+        if !self.capabilities.execution_only {
+            runtime
+                .add_passive_job_attention_until(
+                    &mut result,
+                    self.tool_name,
+                    self.correlation.resolved_project.as_deref(),
+                    self.correlation.business_session_id.as_deref(),
+                    self.context.window,
+                    self.context.auth,
+                    enrichment_deadline,
+                )
+                .await;
+        }
         if let Some(projection) = execution_control {
             projection.project(&mut result);
         }

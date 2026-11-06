@@ -76,6 +76,21 @@ export function WorkspaceProvider({ state, suspended = false, preservePollDeadli
   const [removed, setRemoved] = useState<string[]>([]);
   const nextPollAt = useRef<number | null>(null);
   const preservePollDeadlineOnResume = useRef(false);
+  // Fences for in-flight poll results. Pauses (suspended/operationBusy) tear
+  // the polling effect down, but a request already in flight is still the
+  // freshest observation of THIS workspace, so ordinary pauses must not
+  // discard it. Results stay fenced by unmount, workspace-key changes, and
+  // supersession: a newer poll (manual refresh, workspace switch) owns the
+  // commit lane and the superseded request never writes.
+  const mountedRef = useRef(true);
+  const currentKeyRef = useRef(key);
+  const pollRunRef = useRef<{ id: number; key: string; revision: number } | null>(null);
+  const timerRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  useEffect(() => { currentKeyRef.current = key; }, [key]);
   const removeProject = useCallback((id: string) => {
     setRemoved(ids => [...ids, id]);
     setSelection(current => current?.kind === "session" && current.project === id ? null : current);
@@ -88,6 +103,8 @@ export function WorkspaceProvider({ state, suspended = false, preservePollDeadli
   const operationBusy = Boolean(state.current_operation);
   const busy = suspended || operationBusy;
   const ready = state.readiness.server === "ready";
+  const busyRef = useRef(busy);
+  useEffect(() => { busyRef.current = busy; }, [busy]);
   useEffect(() => {
     // Service operations and Server disconnects invalidate capacity until a new
     // fleet observation, including the gap before recovery polling completes.
@@ -109,15 +126,21 @@ export function WorkspaceProvider({ state, suspended = false, preservePollDeadli
       preservePollDeadlineOnResume.current = preservePollDeadline && suspended && !operationBusy;
       return;
     }
-    let disposed = false;
-    let timer: number | undefined;
     const schedulePoll = (delay: number) => {
-      timer = window.setTimeout(() => {
+      if (timerRef.current !== undefined) window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = undefined;
         if (document.visibilityState === "visible") void poll();
       }, delay);
     };
     const poll = async () => {
-      if (disposed) return;
+      // A poll already running for this workspace and revision owns the lane;
+      // never pile a duplicate request on top of it.
+      const run = pollRunRef.current;
+      if (run != null && run.key === key && run.revision === revision) return;
+      if (!mountedRef.current || busyRef.current || currentKeyRef.current !== key) return;
+      const id = (run?.id ?? 0) + 1;
+      pollRunRef.current = { id, key, revision };
       setLoading(true);
       let fleetObservedAt: number | null = null;
       const [overview, projectInventory, windows] = await Promise.allSettled([
@@ -128,7 +151,16 @@ export function WorkspaceProvider({ state, suspended = false, preservePollDeadli
         workspaceQuery<ServerProjects>({ kind: "projects" }),
         workspaceQuery<{ windows: WindowSummary[] }>({ kind: "windows" }),
       ]);
-      if (disposed) return;
+      const mine = pollRunRef.current?.id === id;
+      if (mine) pollRunRef.current = null;
+      if (!mine) return; // superseded by a newer poll; it owns loading and the lane
+      if (!mountedRef.current) return; // unmounted: never commit or schedule
+      if (currentKeyRef.current !== key) {
+        // The workspace switched while this request was in flight. Its result
+        // belongs to the previous workspace and must not be written.
+        if (pollRunRef.current == null) setLoading(false);
+        return;
+      }
       const errors = [errorReason(overview), errorReason(projectInventory)];
       const failure = errors.find(authorizationFailed) || errors.find(Boolean) || null;
       const denied = authorizationFailed(failure);
@@ -174,7 +206,13 @@ export function WorkspaceProvider({ state, suspended = false, preservePollDeadli
       : 0;
     if (remaining > 0) schedulePoll(remaining);
     else void poll();
-    return () => { disposed = true; if (timer) window.clearTimeout(timer); document.removeEventListener("visibilitychange", visible); };
+    return () => {
+      // Stop future polls (pause, workspace switch, unmount). An in-flight
+      // request keeps running and is fenced at its own completion instead of
+      // being discarded here.
+      if (timerRef.current !== undefined) { window.clearTimeout(timerRef.current); timerRef.current = undefined; }
+      document.removeEventListener("visibilitychange", visible);
+    };
   }, [key, ready, busy, suspended, preservePollDeadline, operationBusy, revision, refresh]);
   useEffect(() => { setSelection(null); setRemoved([]); }, [key]);
   const current = snapshot?.key === key ? snapshot : null;

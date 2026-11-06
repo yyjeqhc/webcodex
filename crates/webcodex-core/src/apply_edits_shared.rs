@@ -429,6 +429,7 @@ pub fn resolve_apply_text_match(
 #[serde(rename_all = "snake_case")]
 pub enum ApplyFileChangeKind {
     Edit,
+    Write,
     Create,
     Delete,
     Rename,
@@ -438,6 +439,7 @@ impl ApplyFileChangeKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Edit => "edit",
+            Self::Write => "write",
             Self::Create => "create",
             Self::Delete => "delete",
             Self::Rename => "rename",

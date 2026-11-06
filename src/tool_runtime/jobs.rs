@@ -1127,6 +1127,33 @@ pub(crate) fn observe_job_continuation(job_id: &str, observation_token: Option<&
     .to_value()
 }
 
+/// Page retained logs using the existing exact Job/epoch token. Paging is an
+/// explicit observation option; ordinary incremental reads still return tails.
+pub(crate) fn observe_job_log_page(job: &ShellJobInfo, rewind: bool) -> Value {
+    let token = job
+        .observation_token
+        .as_deref()
+        .and_then(|raw| webcodex_core::job_observation::JobObservationToken::parse(raw).ok())
+        .map(|mut token| {
+            if rewind {
+                token.stdout_cursor = Some(job.stdout_retained_from_line.unwrap_or(1) as u64);
+                token.stderr_cursor = Some(job.stderr_retained_from_line.unwrap_or(1) as u64);
+            }
+            token.encode()
+        });
+    let Some(token) = token else {
+        return observe_job_details_call(&job.job_id);
+    };
+    super::SuggestedToolCall::fallback_recovery(
+        "observe_jobs",
+        json!({
+            "items":[{"job_id":job.job_id, "after_observation_token":token, "page":true}],
+            "tail_lines":super::helpers::COMMAND_OUTPUT_MAX_LINES,
+        }),
+    )
+    .to_value()
+}
+
 pub(crate) fn observe_job_details_call(job_id: &str) -> Value {
     super::SuggestedToolCall::fallback_recovery(
         "observe_jobs",
@@ -1168,7 +1195,13 @@ pub(super) fn sparsify_job_handoff_model_result(result: &mut ToolResult) {
     }
     let continuation = call.clone();
     let timeout = output.get("timeout").cloned();
-    output.clear();
+    output.retain(|key, value| {
+        matches!(
+            key.as_str(),
+            "stdout_tail" | "stderr_tail" | "stdout_truncated" | "stderr_truncated"
+        ) && value != ""
+            && value != &Value::Bool(false)
+    });
     output.insert("execution_state".to_string(), json!("pending"));
     output.insert("continuation".to_string(), continuation);
     if let Some(timeout) = timeout {
@@ -1774,6 +1807,29 @@ impl ToolRuntime {
         after_observation_token: Option<String>,
         wait_secs: Option<u64>,
     ) -> ToolResult {
+        self.job_log_with_paging_for_auth(
+            job_id,
+            offset,
+            tail_lines,
+            auth,
+            after_observation_token,
+            wait_secs,
+            false,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn job_log_with_paging_for_auth(
+        &self,
+        job_id: String,
+        offset: Option<usize>,
+        tail_lines: Option<usize>,
+        auth: Option<&AuthContext>,
+        after_observation_token: Option<String>,
+        wait_secs: Option<u64>,
+        page: bool,
+    ) -> ToolResult {
         if let Err(message) = Self::validate_job_log_wait(wait_secs) {
             return invalid_job_observation_result("invalid_wait_secs", message);
         }
@@ -1784,7 +1840,7 @@ impl ToolRuntime {
         };
         match self
             .runner_registry
-            .job_log_for_auth(
+            .job_log_with_paging_for_auth(
                 crate::runner_http::runner_access_from_auth(auth).as_ref(),
                 &job_id,
                 offset,
@@ -1792,6 +1848,7 @@ impl ToolRuntime {
                 tail_lines,
                 after_observation_token.as_deref(),
                 wait_secs,
+                page,
             )
             .await
         {
@@ -1862,8 +1919,8 @@ impl ToolRuntime {
                     "activity": job.activity,
                     "stdout_tail": stdout,
                     "stderr_tail": stderr,
-                    "stdout_lines": next_stdout_line.saturating_sub(1),
-                    "stderr_lines": next_stderr_line.saturating_sub(1),
+                    "stdout_lines": wait.stdout_total_lines,
+                    "stderr_lines": wait.stderr_total_lines,
                     "stdout_returned_lines": wait.stdout_returned_lines,
                     "stderr_returned_lines": wait.stderr_returned_lines,
                     "stdout_returned_bytes": stdout.len(),
@@ -1931,6 +1988,18 @@ impl ToolRuntime {
                     output["failure_kind"] = json!(
                         super::project_format::project_format_safe_failure_kind(&job)
                     );
+                }
+                let more_retained = (wait.stdout_truncated
+                    && wait.analysis_stdout.lines().count() > wait.stdout_returned_lines)
+                    || (wait.stderr_truncated
+                        && wait.analysis_stderr.lines().count() > wait.stderr_returned_lines);
+                if page && wait.has_more_log_pages {
+                    output["continuation"] = observe_job_log_page(&job, false);
+                } else if !wait.terminal {
+                    output["continuation"] =
+                        observe_job_continuation(&job.job_id, job.observation_token.as_deref());
+                } else if !page && more_retained {
+                    output["continuation"] = observe_job_log_page(&job, true);
                 }
                 ToolResult::ok(output)
             }

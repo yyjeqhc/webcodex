@@ -1,6 +1,6 @@
 //! Tool-specific text layouts. Consume only fields represented in the text or
 //! proven redundant for this shape; unknown and exceptional evidence falls back.
-use super::{ordered_json, render_fields, scalar};
+use super::{ordered_json, render_fields};
 use serde_json::{json, Value};
 use std::fmt::Write;
 
@@ -253,15 +253,18 @@ pub(super) fn files(text: &mut String, mut output: Value) {
         remove(&mut entry, &["path", "kind"]);
         render_fields(text, &entry);
     }
-    remove(&mut output, &["project", "path"]);
-    for key in ["returned", "total_entries"] {
+    remove(&mut output, &["project", "path", "source"]);
+    for key in ["returned", "total_entries", "total_files"] {
         omit_equal(&mut output, key, json!(count));
     }
     for key in ["truncated", "list_truncated"] {
         omit_equal(&mut output, key, json!(false));
     }
-    omit_equal(&mut output, "next_offset", Value::Null);
+    for key in ["depth", "limit", "next_offset"] {
+        omit_equal(&mut output, key, Value::Null);
+    }
     omit_equal(&mut output, "offset", json!(0));
+    omit_equal(&mut output, "depth_auto", json!(false));
     render_fields(text, &output);
 }
 
@@ -505,224 +508,6 @@ pub(super) fn jobs(text: &mut String, mut output: Value) {
     render_fields(text, &output);
 }
 
-pub(super) fn changes(text: &mut String, mut output: Value) {
-    // One copy of the exact actions; preserve every nonempty blocking reason.
-    if output["suggested_next_actions"].is_array()
-        && output["verdict"]["suggested_next_actions"] == output["suggested_next_actions"]
-    {
-        remove(&mut output["verdict"], &["suggested_next_actions"]);
-    }
-    if output["clean"] == true
-        && output["verdict"]["status"] == "pass"
-        && output["verdict"]["blocking"] == false
-        && output["verdict"]["blocking_reasons"] == json!([])
-        && output["verdict"]["warning_reasons"] == json!([])
-    {
-        remove(
-            &mut output["verdict"],
-            &["status", "blocking", "blocking_reasons", "warning_reasons"],
-        );
-        omit_equal(
-            &mut output["verdict"],
-            "suggested_next_actions",
-            json!(["no action needed"]),
-        );
-        omit_equal(&mut output, "verdict", json!({}));
-        omit_equal(
-            &mut output,
-            "suggested_next_actions",
-            json!(["no action needed"]),
-        );
-    }
-    if let Some(clean) = output["clean"].as_bool() {
-        let _ = writeln!(
-            text,
-            "Workspace {}.",
-            if clean { "clean" } else { "has changes" }
-        );
-        remove(&mut output, &["clean", "project"]);
-        if output["upstream_status"] == "observed" && output["upstream"].is_string() {
-            let _ = writeln!(
-                text,
-                "upstream: {}; ahead {}; behind {}",
-                one_line(&output["upstream"]),
-                ordered_json(&output["ahead"]),
-                ordered_json(&output["behind"])
-            );
-            remove(
-                &mut output,
-                &["upstream_status", "upstream", "ahead", "behind"],
-            );
-            omit_equal(&mut output, "upstream_reason_code", Value::Null);
-        }
-        if clean {
-            for key in [
-                "files",
-                "hunks",
-                "untracked_previews",
-                "suggested_next_actions",
-            ] {
-                omit_equal(&mut output, key, json!([]));
-            }
-            if output["counts"]
-                .as_object()
-                .is_some_and(|counts| counts.values().all(|v| v.as_u64() == Some(0)))
-            {
-                remove(&mut output, &["counts"]);
-            }
-            omit_equal(&mut output, "session", Value::Null);
-            omit_equal(&mut output, "diff_stat", json!(""));
-        }
-    }
-    render_fields(text, &output);
-}
-
-pub(super) fn edits(text: &mut String, mut output: Value) {
-    let Some(files) = output["files"].as_array() else {
-        render_fields(text, &output);
-        return;
-    };
-    if !files
-        .iter()
-        .all(|f| f["path"].is_string() && f["kind"].is_string())
-    {
-        render_fields(text, &output);
-        return;
-    }
-    let count = files.len();
-    let dry_run = output["dry_run"] == true;
-    if dry_run && (output["changed"] == true || output["state_changed"] == true) {
-        render_fields(text, &output);
-        return;
-    }
-    // The dry-run header and each file's would-change label render these
-    // facts directly. Actual effect projection belongs to the Runtime.
-    let aggregates: Vec<_> = ["changed", "would_change"]
-        .into_iter()
-        .filter(|_| dry_run)
-        .filter_map(|key| {
-            files
-                .iter()
-                .map(|f| f[key].as_bool())
-                .collect::<Option<Vec<_>>>()
-                .map(|values| (key, values.into_iter().any(|v| v)))
-        })
-        .collect();
-    for (key, expected) in aggregates {
-        omit_equal(&mut output, key, json!(expected));
-    }
-    if dry_run {
-        text.push_str("Dry run; no files written.\n");
-    }
-    for (index, mut file) in take(&mut output, "files")
-        .unwrap()
-        .as_array()
-        .unwrap()
-        .iter()
-        .cloned()
-        .enumerate()
-    {
-        omit_equal(&mut file, "index", json!(index));
-        let _ = write!(
-            text,
-            "{} {}",
-            scalar(&file["kind"]),
-            one_line(&file["path"])
-        );
-        if let Some(target) = file.get("to_path").filter(|v| v.is_string()) {
-            let _ = write!(text, " -> {}", one_line(target));
-        }
-        if let Some(revision) = file.get("read_revision").and_then(Value::as_u64) {
-            let _ = write!(text, "; read_revision {revision}");
-            remove(&mut file, &["read_revision"]);
-        }
-        if let Some(changed) = file
-            .get(if dry_run { "would_change" } else { "changed" })
-            .and_then(Value::as_bool)
-        {
-            let _ = write!(
-                text,
-                "; {}",
-                if changed {
-                    if dry_run {
-                        "would change"
-                    } else {
-                        "changed"
-                    }
-                } else {
-                    "unchanged"
-                }
-            );
-            remove(
-                &mut file,
-                &[if dry_run { "would_change" } else { "changed" }],
-            );
-            if dry_run {
-                omit_equal(&mut file, "changed", json!(false));
-            }
-        }
-        text.push('\n');
-        remove(&mut file, &["kind", "path"]);
-        if let Some(edits) = file.get("edits").and_then(Value::as_array) {
-            if edits.iter().all(|e| {
-                e["kind"].is_string()
-                    && e["old_start_line"].is_u64()
-                    && e["old_end_line"].is_u64()
-                    && e["new_line_count"].is_u64()
-            }) {
-                for (index, mut edit) in take(&mut file, "edits")
-                    .unwrap()
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .cloned()
-                    .enumerate()
-                {
-                    omit_equal(&mut edit, "index", json!(index));
-                    let _ = writeln!(
-                        text,
-                        "  {} lines {}-{} -> {} lines",
-                        scalar(&edit["kind"]),
-                        edit["old_start_line"],
-                        edit["old_end_line"],
-                        edit["new_line_count"]
-                    );
-                    remove(
-                        &mut edit,
-                        &["kind", "old_start_line", "old_end_line", "new_line_count"],
-                    );
-                    render_fields(text, &edit);
-                }
-            }
-        }
-        if file["to_path"].is_string() || file["to_path"].is_null() {
-            remove(&mut file, &["to_path"]);
-        }
-        omit_equal(&mut file, "edits", json!([]));
-        render_fields(text, &file);
-    }
-    remove(&mut output, &["project"]);
-    if dry_run {
-        remove(&mut output, &["dry_run"]);
-        omit_equal(&mut output, "changed", json!(false));
-        omit_equal(&mut output, "state_changed", json!(false));
-        omit_equal(&mut output, "applied_count", json!(0));
-    }
-    omit_equal(&mut output, "planned_count", json!(count));
-    omit_equal(&mut output, "execution_state", json!("completed"));
-    omit_equal(&mut output, "changed_paths", json!([]));
-    if let Some(summary) = output.get_mut("change_summary") {
-        omit_equal(summary, "requested_changes", json!(count));
-        omit_equal(summary, "warnings", json!(0));
-        if dry_run {
-            omit_equal(summary, "changed_files", json!(0));
-        }
-    }
-    render_fields(text, &output);
-}
-
-/// Inventory rows expose selection identity first, while exceptional authority,
-/// recovery and validation evidence remains in the remaining fields.
 pub(super) fn inventory(text: &mut String, mut output: Value, collection: &str) {
     let Some(items) = output.get(collection).and_then(Value::as_array) else {
         render_fields(text, &output);

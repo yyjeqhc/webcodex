@@ -180,7 +180,7 @@ impl ToolExposure {
         name: &str,
         stateless: bool,
     ) -> SuggestedToolCallRoute {
-        if !self.allows(name) {
+        if !self.allows(name) || (surface == McpSurface::Cli && !super::cli::admits(name)) {
             return SuggestedToolCallRoute::Unavailable;
         }
         if surface == McpSurface::Cli {
@@ -200,7 +200,7 @@ impl ToolExposure {
     pub(super) fn is_direct(self, surface: McpSurface, name: &str) -> bool {
         self.allows(name)
             && if surface == McpSurface::Cli {
-                !super::cli::is_app_tool(name)
+                super::cli::admits(name)
                     && (super::cli::is_direct(name)
                         || crate::model_surface::tool_requires_individual_host_review(name))
             } else {

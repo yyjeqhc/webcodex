@@ -75,6 +75,7 @@ impl EffectiveRange {
 #[serde(rename_all = "snake_case")]
 pub enum ReadFileReason {
     InvalidPath,
+    OutsideProject,
     SensitivePath,
     NotFound,
     NotFile,
@@ -94,6 +95,7 @@ impl ReadFileReason {
     pub fn as_str(&self) -> &'static str {
         match self {
             ReadFileReason::InvalidPath => "invalid_path",
+            ReadFileReason::OutsideProject => "outside_project",
             ReadFileReason::SensitivePath => "sensitive_path",
             ReadFileReason::NotFound => "not_found",
             ReadFileReason::NotFile => "not_file",
@@ -111,6 +113,7 @@ impl ReadFileReason {
     pub fn from_code(value: &str) -> Option<Self> {
         Some(match value {
             "invalid_path" => ReadFileReason::InvalidPath,
+            "outside_project" => ReadFileReason::OutsideProject,
             "sensitive_path" => ReadFileReason::SensitivePath,
             "not_found" => ReadFileReason::NotFound,
             "not_file" => ReadFileReason::NotFile,

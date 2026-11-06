@@ -1,7 +1,5 @@
-job_id: wc_job_exact; status: completed; command_execution_state: completed; exit_code: 0
-stdout_tail:
+completed; exit_code: 0
+stdout:
 Tests passed.
-log_delta_status: delta
+job_id: wc_job_exact
 observation_token: obs_exact
-project: agent:mini:webcodex
-terminal: true

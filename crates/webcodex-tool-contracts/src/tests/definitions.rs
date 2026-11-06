@@ -1091,11 +1091,9 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         .into_iter()
         .find(|spec| spec.name == "list_jobs")
         .expect("list_jobs ToolSpec");
-    assert!(observe_jobs
-        .description
-        .contains("do not call list_jobs first"));
+    assert!(observe_jobs.description.contains("no list_jobs needed"));
     assert!(observe_jobs.description.contains("after_observation_token"));
-    assert!(observe_jobs.description.contains("bounded wait_secs"));
+    assert!(observe_jobs.description.contains("wait_secs defaults to 0"));
     assert!(list_jobs
         .description
         .contains("Recovery and inventory primitive"));
@@ -1166,10 +1164,10 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
 
     let observe = spec_named(&specs, "observe_jobs");
     for phrase in [
-        "logs/details/recovery",
-        "immediate baseline",
-        "Never redispatch, stop or subscribe",
-        "observation grants no execution authority",
+        "job_id or observation_ref",
+        "wait_secs defaults to 0",
+        "change/meaningful_change need after_observation_token",
+        "Never redispatch to observe",
     ] {
         assert!(
             observe.description.contains(phrase),

@@ -1,5 +1,7 @@
 mod app_registry;
 mod cli;
+#[cfg(test)]
+pub(crate) use cli::parse_call_line_for_test;
 mod discovery;
 mod execution_control;
 mod http_metadata;

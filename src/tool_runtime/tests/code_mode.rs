@@ -280,6 +280,7 @@ async fn e2a_cargo_check_handoff_preserves_same_canonical_job_and_sparse_receipt
     let baseline = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
+                page: false,
                 job_id: job_id.clone(),
                 after_observation_token: None,
                 observation_ref: None,
@@ -318,6 +319,7 @@ async fn e2a_cargo_check_handoff_preserves_same_canonical_job_and_sparse_receipt
     let terminal = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
+                page: false,
                 job_id: job_id.clone(),
                 after_observation_token: None,
                 observation_ref: None,
@@ -787,11 +789,13 @@ async fn e2a_promise_all_validators_preserve_mixed_outcomes_through_exact_job_co
         .observe_jobs_for_auth(
             vec![
                 ObserveJobsItem {
+                    page: false,
                     job_id: first_job.clone(),
                     after_observation_token: None,
                     observation_ref: None,
                 },
                 ObserveJobsItem {
+                    page: false,
                     job_id: second_job.clone(),
                     after_observation_token: None,
                     observation_ref: None,

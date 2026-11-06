@@ -38,45 +38,39 @@ fn cli_surface_is_request_local_and_rejects_ambiguous_headers() {
     assert_eq!(resolve_surface(&headers).unwrap(), McpSurface::Adaptive);
 }
 
-fn assert_collaboration_only_schema(schema: &Value) {
-    let envelope = &schema["properties"]["_wc"];
-    assert_eq!(envelope["additionalProperties"], false);
-    let fields = envelope["properties"]
-        .as_object()
-        .expect("collaboration schema");
-    assert!(fields.contains_key("ack"), "{envelope}");
-    assert!(
-        fields
-            .keys()
-            .all(|field| matches!(field.as_str(), "ack" | "reply")),
-        "{envelope}"
-    );
+fn assert_execution_only_schema(schema: &Value) {
+    assert!(schema["properties"].get("_wc").is_none(), "{schema}");
 }
 
-pub(super) fn business_schema_with_collaboration_checked(schema: &Value) -> Value {
-    assert_collaboration_only_schema(schema);
-    assert_eq!(
-        schema["properties"]["_wc"]["properties"]["ack"]["maxItems"],
-        8
-    );
+pub(super) fn business_schema_without_sidecars(schema: &Value) -> Value {
     let mut business = schema.clone();
-    business["properties"]
+    if let Some(envelope) = business["properties"]
         .as_object_mut()
         .unwrap()
-        .remove("_wc");
+        .remove("_wc")
+    {
+        assert!(envelope["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .all(|key| matches!(key.as_str(), "ack" | "reply")));
+    }
     business
 }
 
 #[test]
-fn cli_discovery_uses_canonical_inputs_and_only_collaboration_sidecars() {
+fn cli_discovery_uses_execution_contracts_without_sidecars() {
     let listed = crate::mcp::cli::tools_list(None, false);
     let tools = listed["tools"].as_array().unwrap();
     for name in crate::mcp::cli::DIRECT_TOOLS {
         let tool = tools.iter().find(|tool| tool["name"] == *name).expect(name);
         assert!(crate::tool_runtime::tool_definition::is_model_visible_tool_name(name));
         assert!(tool.get("outputSchema").is_none());
-        assert!(tool.get("_meta").is_none());
-        assert_collaboration_only_schema(&tool["inputSchema"]);
+        assert_eq!(tool["_meta"]["anthropic/alwaysLoad"], true);
+        assert!(tool["inputSchema"]["properties"]
+            .get("session_id")
+            .is_none());
+        assert_execution_only_schema(&tool["inputSchema"]);
         assert_eq!(tool["inputSchema"]["additionalProperties"], false, "{name}");
     }
     assert!(tools
@@ -112,53 +106,90 @@ fn cli_discovery_uses_canonical_inputs_and_only_collaboration_sidecars() {
     assert!(cli_bytes < default_bytes);
 }
 
+#[test]
+fn cli_native_defaults_are_declared_and_keep_input_schemas_under_codex_limit() {
+    let listed = crate::mcp::cli::tools_list(None, true);
+    for tool in listed["tools"].as_array().unwrap() {
+        let bytes = serde_json::to_vec(&tool["inputSchema"]).unwrap().len();
+        assert!(bytes <= 5000, "{}: {bytes}", tool["name"]);
+        if tool["name"] == "observe_jobs" {
+            assert_eq!(
+                tool["inputSchema"]["properties"]["wake_on"]["default"],
+                "terminal"
+            );
+            assert_eq!(
+                tool["inputSchema"]["properties"]["summary_only"]["default"],
+                false
+            );
+        }
+        if tool["name"] == "run_shell" {
+            assert_eq!(
+                tool["inputSchema"]["properties"]["timeout_secs"]["default"],
+                600
+            );
+            assert!(tool["description"].as_str().unwrap().contains("600s"));
+            for key in [
+                "session_id",
+                "purpose",
+                "assertion_name",
+                "result_expectation",
+            ] {
+                assert!(tool["inputSchema"]["properties"].get(key).is_none());
+            }
+        }
+    }
+}
+
 #[tokio::test]
-async fn cli_bootstrap_discovery_and_manifest_share_canonical_core_and_defaults() {
+async fn cli_excludes_workflow_from_catalog_exact_manifest_and_dispatch() {
     let (_tmp, db) = test_db();
     let service = Service::new(build_test_router(
         test_config(Some("secret")),
         db,
         Arc::new(test_runtime()),
     ));
-    let (_, listed) = post_cli(&service, "tools/list", json!({}), true).await;
-    let descriptor = listed["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|tool| tool["name"] == "work_on_project")
-        .unwrap();
-    let (_, manifest) = post_cli(
-        &service,
-        "tools/call",
-        json!({"name":"read_tool_manifest","arguments":{"tool_name":"work_on_project"}}),
-        true,
-    )
-    .await;
-    let rendered = text(&manifest);
-    let description = rendered
-        .lines()
-        .find_map(|line| line.strip_prefix("description: "))
-        .expect("exact Manifest description");
-    assert_eq!(descriptor["description"], description);
-    let canonical = webcodex_tool_contracts::lookup_tool_definition("work_on_project")
-        .unwrap()
-        .model_spec
-        .unwrap()
-        .description;
-    assert!(description.starts_with(canonical));
-    let schema: Value = serde_json::from_str(
-        rendered
-            .lines()
-            .find_map(|line| line.strip_prefix("input_schema: "))
-            .expect("exact Manifest schema"),
-    )
-    .unwrap();
-    for schema in [&descriptor["inputSchema"], &schema] {
-        assert_eq!(
-            schema["properties"]["include_extension_catalog"]["default"],
-            false
-        );
-        assert_collaboration_only_schema(schema);
+    for stateless in [false, true] {
+        let params = |value| {
+            if stateless {
+                mcp_2026_params(value)
+            } else {
+                value
+            }
+        };
+        let (_, catalog) = post_cli(
+            &service,
+            "tools/call",
+            params(json!({"name":"read_tool_manifest","arguments":{"limit":100}})),
+            true,
+        )
+        .await;
+        assert!(!text(&catalog).contains("recommended_flows"));
+        for name in [
+            "work_on_project",
+            "list_sessions",
+            "read_skill",
+            "get_goal",
+            "post_peer_message",
+            "create_agent_identity",
+            "read_current_window_activity",
+        ] {
+            let (_, manifest) = post_cli(
+                &service,
+                "tools/call",
+                params(json!({"name":"read_tool_manifest","arguments":{"tool_name":name}})),
+                true,
+            )
+            .await;
+            assert_eq!(manifest["result"]["isError"], true, "{name}: {manifest}");
+            assert!(!text(&manifest).contains("input_schema:"));
+            for call in [
+                json!({"name":name,"arguments":{}}),
+                adaptive_runtime_gateway_params(name, json!({})),
+            ] {
+                let (status, body) = post_cli(&service, "tools/call", params(call), true).await;
+                assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
+            }
+        }
     }
 }
 
@@ -189,12 +220,12 @@ fn cli_reads_keep_raw_source_revision_partial_failures_and_fenced_continuation()
     ] {
         assert!(rendered.contains(expected), "{rendered}");
     }
-    assert!(rendered.contains("unused-peer"));
+    assert!(!rendered.contains("unused-peer"));
     assert_eq!(body["result"]["isError"], false);
 }
 
 #[test]
-fn cli_collaboration_preserves_execution_facts_on_every_outcome() {
+fn cli_execution_projection_keeps_facts_without_workflow_fields_on_every_outcome() {
     for tool in [
         "run_job",
         "run_process",
@@ -221,17 +252,20 @@ fn cli_collaboration_preserves_execution_facts_on_every_outcome() {
                 "session_attention": {"messages":[{"message_id":"wc_msg_session000000000","message":"session-message-marker","requires_ack":true}]},
                 "peer_awareness": {"new_peers":[{"peer_id":"wc_peer_0123456789abcdef0123456789abcdef","source":"codex-thread"}],"semantics":"recent_same_project_activity_not_liveness"}
             });
-            let body = project(tool, success, output);
+            let body = project(
+                tool,
+                success,
+                if tool == "observe_jobs" {
+                    json!({"items":[output]})
+                } else {
+                    output
+                },
+            );
             let rendered = text(&body);
             for marker in [
                 "execution-output-marker",
                 "wc_job_0123456789abcdef",
                 "observe_jobs",
-                "operator-message-marker",
-                "peer-message-marker",
-                "session-message-marker",
-                "wc_peer_0123456789abcdef0123456789abcdef",
-                "recent_same_project_activity_not_liveness",
             ] {
                 assert!(
                     rendered.contains(marker),
@@ -257,7 +291,7 @@ fn cli_complete_file_read_header_omits_absent_range() {
     );
     let rendered = text(&body);
     assert!(
-        rendered.starts_with("==> a.rs (read_revision 7)\nfn main() {}\ntotal_lines: 1\n"),
+        rendered.starts_with("==> a.rs of 1 (read_revision 7)\nfn main() {}\n"),
         "{rendered}"
     );
     assert!(!rendered.contains("null"), "{rendered}");
@@ -278,7 +312,6 @@ fn cli_search_keeps_context_counts_failure_and_truncation_without_read_hints() {
         "a.rs:3:fn \"source\"()",
         "before",
         "truncated: true",
-        "total_matches: null",
         "search timeout",
     ] {
         assert!(rendered.contains(expected), "{rendered}");
@@ -324,11 +357,9 @@ fn cli_text_overhead_is_bounded_without_losing_unknown_effects() {
     let body = project("run_process", false, output.clone());
     let canonical = json!({"success":false,"output":output,"error":"failed"});
     assert!(text(&body).len() <= serde_json::to_vec(&canonical).unwrap().len() + 1024);
-    // Dense nested output uses the lossless compact fallback, not truncation.
-    assert_eq!(
-        serde_json::from_str::<Value>(text(&body)).unwrap(),
-        canonical
-    );
+    assert!(text(&body).contains("outcome_unknown"));
+    assert!(text(&body).contains("wc_job_exact"));
+    assert!(!text(&body).contains("unknown_nested_evidence"));
     assert_eq!(body["result"]["isError"], true);
     assert!(body["result"].get("structuredContent").is_none());
 }
@@ -387,7 +418,7 @@ async fn cli_http_discovery_dispatch_and_default_are_isolated() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|t| t["name"] == "find_definition"));
+        .any(|t| t["name"] == "stop_job"));
     let params = json!({"name":"list_project_files","arguments":{"project":"agent:missing:p"}});
     let (status, result) = post_cli(&service, "tools/call", params.clone(), true).await;
     assert_eq!(status, StatusCode::OK, "{result}");
@@ -431,7 +462,7 @@ async fn cli_stateless_ignores_app_capabilities_and_host_failure_compatibility()
         .unwrap()
         .iter()
         .all(|tool| {
-            assert_collaboration_only_schema(&tool["inputSchema"]);
+            assert_execution_only_schema(&tool["inputSchema"]);
             !crate::mcp::cli::is_app_tool(tool["name"].as_str().unwrap())
         }));
     let mut params = mcp_2026_ui_params(
@@ -655,7 +686,7 @@ async fn cli_scope_and_protocol_capability_checks_still_apply() {
 #[test]
 fn cli_manifest_routes_match_the_advertised_surface() {
     for (name, mode) in [
-        ("find_definition", "direct"),
+        ("find_definition", "gateway"),
         ("list_project_tracked_files", "direct"),
         ("get_runtime_status", "gateway"),
         ("present_work_result", "unavailable"),

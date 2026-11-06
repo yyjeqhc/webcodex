@@ -198,12 +198,27 @@ impl ToolRuntime {
         }
     }
 
-    async fn call_agent_lsp(&self, project: String, request: RunnerLspRequest) -> ToolResult {
+    async fn call_agent_lsp(&self, project: String, mut request: RunnerLspRequest) -> ToolResult {
         let resolved = match self.resolve_project_input(&project).await {
             Ok(p) => p,
             Err(e) => return e.into_tool_result(),
         };
         let proj = &resolved.config;
+        let path = match &mut request {
+            RunnerLspRequest::DocumentSymbols { path, .. }
+            | RunnerLspRequest::DocumentDiagnostics { path, .. }
+            | RunnerLspRequest::Hover { path, .. }
+            | RunnerLspRequest::GotoDefinition { path, .. }
+            | RunnerLspRequest::FindReferences { path, .. }
+            | RunnerLspRequest::CallHierarchy { path, .. } => Some(path),
+            _ => None,
+        };
+        if let Some(path) = path {
+            match super::helpers::project_relative_file_path(proj, path) {
+                Ok(relative) => *path = relative,
+                Err(error) => return ToolResult::err(error),
+            }
+        }
         let client_id = proj.client_id.clone();
         let Some(client) = self
             .runner_registry

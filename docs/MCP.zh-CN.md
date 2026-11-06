@@ -81,7 +81,7 @@ Session 或历史调用猜测，也不证明模型实际使用了程序编排。
 
 可选的正整数 Budget 只能缩短服务端已解析的 Host budget，不能放大服务端上限。
 继续保留 5 秒返回余量与极小预算下已有的 1 秒等待下限。例如服务端 budget=55，
-Direct 默认执行 handoff=10 秒、同步/观察上限=50 秒；Host Code Mode 保留
+Direct 同步/观察上限为 50 秒；CLI 默认等待到此上限，Adaptive 默认执行 handoff 仍为 10 秒。Host Code Mode 保留
 5 秒 handoff/观察切片。readiness 最多等待 45 秒，同时受 budget 减去返回余量约束，
 不会被通用 5 秒 handoff 切片误缩短。空值、重复或畸形 header 在 dispatch 前拒绝，
 不回显其原文；超大的合法整数 budget 会被截到服务端上限。
@@ -112,39 +112,80 @@ CLI 客户端直连本地或 hosted Server 时，在**每次请求**（包括 di
 记忆 Project/Session。修改连接 header 后重新连接或刷新工具。空值、未知值和重复的
 偏好 header 在 dispatch 前拒绝，不回显原文。
 
-CLI 与旧版 Adaptive MCP 都接受有界的 `_wc.ack` 和 `_wc.reply`。将消息保留到模型上下文后，
-在后续调用的 `_wc.ack` 中回传 `requires_ack` 消息 ID。回复 Operator 消息使用
-`_wc.reply: {"reply_to": "wc_msg_…", "message": "…"}`。经 `call_runtime_tool` 调用时，
-`_wc` 与 `tool`、`arguments` 同级，不放入目标工具的 `arguments` 内。
-这些字段不选择 Workflow Session，也不授予权限；原有 principal、Window、Project 可见性、
-消息投递与 scope 检查继续生效。展示消息不等于 ACK；ACK 仅表示客户端显式回传了模型上下文
-留存证据，不代表人工接受或完成工作。peer 提示描述同一 principal 在已授权共同 Project 中的
-近期活动，不保证对方实时在线。
+CLI 只负责工具执行：本地 Agent 自己管理规划、仓库指令和对话上下文。不会自动创建
+Workflow Session、获取 guidance/Skill、投递协作消息或附带其他 Job 的被动提醒。
+所有 `_wc` 附带字段均拒绝，包括空对象和 gateway 内嵌对象。规范审计证据及已有历史保留。
 
-CLI 投影提供：
+- 默认 12 个工具：`list_projects`、`list_project_files`、`list_project_tracked_files`、`read_files`、
+  `search_project_texts`、`edit_project_files`、`read_workspace_changes`、
+  `run_shell`、`observe_jobs`、`stop_job`、`read_tool_manifest`、`call_runtime_tool`。
+- `run_shell` 是默认命令入口；`observe_jobs` 对原 Job 合并有界等待与结果/日志读取；
+  `stop_job` 请求取消。精确 argv、脚本、交互 stdin、LSP、构建和验证
+  仍保留规范工具，通过 manifest 按需发现，再用 gateway 调用。执行生命周期、超时、取消和不确定效果的权限规则不变。
+- Workflow Session、Goal、durable Agent 编排、Skill、Memory、通信和 App 在发现及调用
+  路径上均不可用。CLI workflow exposure 开关不能重新开放这些路径；manifest 不返回
+  工作流步骤，显式 `include_recommended_flows=true` 会被拒绝。
+- WebCodex 使用文本结果，无重复的 `structuredContent`，保留标准 `isError`。
+  源码/read revision、部分失败、未知效果、Job 身份、边界及带版本保护的恢复参数保留。
+  原生 image/resource block 与第三方 provider passthrough 保持各自协议。
+- `initialize.instructions` / `server/discover` 只说明执行边界及恢复契约。
+  客户端按需显式读取仓库指令文件，不自动注入指令内容。
 
-- 小型常用编码工具列表，直接暴露目录枚举、tracked-file glob、`find_definition` 和
-  `find_references`。构建、验证、专项编辑等已准入工具仍通过 `read_tool_manifest` 与
-  `call_runtime_tool` 调用，manifest 会反映当前路由。MCP App 工具不能经 direct 或
-  gateway 调用；仅接受 `_wc.ack` 与 `_wc.reply` 通信附带字段，其他 `_wc` 字段仍不可用。
-- WebCodex 结果使用文本：源码不转义，保留文件/行号、read revision。搜索匹配省略
-  `read_hint`；保留有界的 `peer_awareness`、`operator_messages`、`peer_messages` 和
-  `session_attention`，失败或 pending 时也保留。部分失败、未知效果、Job 身份、覆盖范围
-  限制和带版本保护的恢复/续读参数仍保留。原生 image/resource block 与第三方 provider
-  passthrough 保持各自协议。CLI 下 WebCodex 结果覆盖 text-JSON 和 OpenAI structured
-  failure 兼容投影：不返回 `structuredContent`，使用标准 `isError`。
-- 简短的 `initialize.instructions`（stateless `server/discover` 也返回）。
-  `work_on_project` 自动返回项目指令，复用同一次授权观察的快照。在原有 20 KiB context
-  envelope 内优先保留完整已观察正文；过大或观察不完整时明确保留截断标记和 `read_more`。
-  workspace 状态、Session 身份、权限、警告及阻塞原因继续返回，省略 ChatGPT 工作流文案。
-  CLI 默认不附扩展目录，需要时设置 `include_extension_catalog=true`。启动仍会创建/恢复
-  Workflow Session；结果不确定时先观察已有 Session，不要直接再创建。
+CLI 命令与文件行为：
+
+- Direct 下 `run_shell` 默认最多等待 50 秒；`sync_wait_secs` 请求更早交接，
+  Server/Host 上限只会缩短等待。交接结果包含已有输出尾部及原 Job 的后续调用。
+  CLI 进程生命周期 `timeout_secs` 默认 600 秒，仍受 Runner 上限约束；到期终止
+  进程树，与交接等待时间独立。
+- `observe_jobs(items=[{job_id}], wait_secs=50)` 无需 token 就能等待结束。
+  `wake_on` 默认 `terminal`；显式 `change` / `meaningful_change` 仍需 baseline token。
+  带 token 默认返回最新增量尾部，直接呈现终态诊断。仅显式 `page=true` 的条目
+  从 token 向前补读日志，自动续读每页 200 行。首次无 token 观察取当前尾部，
+  存储缺口或 epoch 变化会报告 reset。terminal 只表示结束，不代表成功。
+- 截断预览保留开头和结尾。同步结果发生截断时，原 Job 按现有有界保留策略留下，
+  可继续读取日志；不要为了补日志重跑有副作用的命令。
+- 文件读取、搜索、目录/文件名查找、LSP 和事务编辑接受本次解析的 Project 根目录内
+  的绝对路径。Runner 原有路径及 symlink 保护保留，目录外路径拒绝。
+- `edit_project_files` 使用统一的扁平 change schema。文件 `kind` 默认 `edit`，
+  编辑 `kind` 默认 `replace_exact`。`write` 通过 `content` 和 `expected_read_revision`
+  覆盖已有文件，并要求 Runner 声明新增能力 `apply_file_write`。全文件唯一、无位置
+  选择器的 `replace_exact` / `delete_exact` 可省略 revision；Runner 在同一事务提交前
+  用原始快照检查所有旧文本匹配。这只校验被编辑的文本，不证明文件其他部分未变化。
+  提供了 revision 就始终校验；整文件覆盖/删除/重命名、插入、位置/范围/occurrence
+  选择器以及批量替换仍要求 revision。
+- CLI 拒绝 `session_id`，并拒绝 `run_shell` 的记录专用参数 `purpose`、
+  `assertion_name`、`result_expectation`。调用 CLI `stop_job` 本身表达取消意图，
+  不再要求额外 `confirm=true`。客户端审批和规范 Job/Project 所有权检查保留。
+- 直接执行、读取、编辑、搜索和工作区状态使用明确列出的内容字段，后端新增遥测字段
+  不再自动进入文本。失败、不确定效果、日志缺失和精确后续调用参数保留。未过滤的
+  manifest 默认列编码工具；精确或带过滤条件查询仍可发现其他已准入执行工具。
+- `read_files`/`search_project_texts` 默认使用 45,000 字节的规范结果预算，保留带 revision 的分页。
+  CLI 描述声明 Claude `anthropic/alwaysLoad`、`anthropic/maxResultSizeChars=70000`；
+  这些是客户端呈现提示，不扩大 Server 输出预算。初始化只提示读取远端 AGENTS.md /
+  CLAUDE.md，不注入文件内容或管理任务规划。实际客户端行为通过验收脚本确认。
+
+生成连接配置，不读取 token、不修改配置文件：
+
+```bash
+webcodex mcp-config --client claude --url http://127.0.0.1:8080/mcp --project agent:dev:repo
+webcodex mcp-config --client codex --url http://127.0.0.1:8080/mcp --project agent:dev:repo
+```
+
+另行设置 `WEBCODEX_TOKEN`，或用 `--token-env` 指定变量名。输出为带 `alwaysLoad`
+的 Claude MCP JSON，或含 65 秒工具超时和编辑、shell、取消、gateway 审批配置的
+Codex TOML 片段。Codex 默认 `prompt`，显式 `--approve-execution` 才改为 `approve`。
+Claude 审批继续由客户端设置管理。命令不安装配置，也不授予 Server 权限。
+参考官方 [Claude MCP 加载/结果大小契约](https://code.claude.com/docs/en/mcp)及
+[Codex 配置参考](https://developers.openai.com/codex/config-reference/)。
+
+**从 v0.5.0 迁移：** 此次有意替换原 CLI workflow bootstrap 和 `_wc.ack/reply` 行为。
+重新连接/刷新 `tools/list` 并停止发送 CLI sidecar。需要 WebCodex 管理工作流或协作的
+客户端可显式选择 `adaptive`，工作流行为继续保留。共享的规范编辑和日志契约适用于两种 surface。不迁移或删除已有 Session、消息、凭据或 Job。
 
 可选 `X-WebCodex-MCP-Project` 接受 Server 签发的 `project_ref`（例如 `~p17`）或完整
 `agent:<runner>:<project>` ID。reference 保留 principal/root 绑定，过期时拒绝；完整 ID
 与显式工具参数使用相同解析语义，不接受简称。它为要求 Project 的工具（含 gateway）补充
-省略的 `project`，也适用于新建 work_on_project。显式 project 优先；精确 Session 恢复和
-`client_id`/`path` 注册保持自己的来源规则。不会填充 `list_jobs.project` 之类可选过滤器。
+省略的 `project`。显式 project 优先；注册仍要求自己的显式来源参数。不会填充 `list_jobs.project` 之类可选过滤器。
 此 header 只允许 CLI surface，最多 512 字节，不持久化为连接权限。默认目标需由用户明确
 选择，不代表授权。
 
@@ -155,6 +196,7 @@ Claude Code `.mcp.json` 示例（环境变量 URL 应使用实际报告的 endpo
   "mcpServers": {
     "webcodex-cli": {
       "type": "http",
+      "alwaysLoad": true,
       "url": "${WEBCODEX_MCP_URL}",
       "headers": {
         "Authorization": "Bearer ${WEBCODEX_MCP_TOKEN}",
@@ -302,8 +344,8 @@ OAuth 仍是独立的高级身份路径。
 
 ### 按客户端配置可选工作流工具
 
-Adaptive Runtime（包括 ChatGPT）和 CLI 默认都精简工作流工具：面向模型的 Goal、
-Agent 续跑和 Job 续跑入口需要显式启用。在 Server 的既有环境配置中设置
+Adaptive Runtime（包括 ChatGPT）的 Goal、Agent 续跑和 Job 续跑入口需要显式启用。
+CLI 只负责执行，不开放这些工作流入口；既有 CLI 配置字段仍可读取，但不能重新开放工作流。在 Server 的既有环境配置中设置
 `WEBCODEX_MCP_TOOL_EXPOSURE`，值为闭合 JSON：
 
 ```json
@@ -333,8 +375,7 @@ CLI surface。客户端未提供的 surface 继承部署默认；提供的 surfa
 | `job_continuation` | `wait_for_job_terminal` 及 Job 续跑卡片/bridge。同一 Job 的普通 readiness 和 observation 仍可用。 |
 
 三个开关独立。Goal 驱动的自动续跑需要同时启用 `goals` 和 `agent_continuation`。
-启用后，需要独立审核的操作在两种 surface 都得到 canonical standalone descriptor；
-CLI 仍使用文本结果，没有 Apps，仅接受 `_wc.ack` / `_wc.reply` 通信附带字段。关闭分组会移除模型 descriptor 及对应
+启用后，需要独立审核的操作在 Adaptive 得到 canonical standalone descriptor；CLI 仍只负责执行。关闭分组会移除模型 descriptor 及对应
 可选 App resource/bridge helper；exact manifest 报告 unavailable route，生成的
 follow-up 不再指向不可用目标，direct/gateway 调用也不能启用该分组。工作台独立
 保留既有 App-only Goal 读取/创建/更新控件：这些 descriptor 仍为
@@ -542,7 +583,7 @@ CLI 文本将文档符号显示为标识符位置和嵌套子项，将 Job/Proje
 确实被截断的读取仍提供带快照版本约束的后续调用。同步 process/script/shell 输出
 每个流最多显示 200 行，保留截断标记，并说明如何将后续执行的完整输出写入项目文件。
 
-Stateless MCP 2026 的执行工具可通过 `_wc.compact_execution=true` 显式启用紧凑执行结果。
+Adaptive Stateless MCP 2026 的执行工具可通过 `_wc.compact_execution=true` 显式启用紧凑执行结果。
 它将稳定的 `output.execution` 控制事实与 `output.details` 分开（`observe_jobs`
 按条目处理），同时保留日志、恢复和协作义务。只有 `outcome=passed` 才能证明执行成功；
 工具接受请求或成功返回观察结果本身不能证明成功。该选项不会等待或重试命令。
@@ -664,7 +705,7 @@ Console 运维页面显式使用同一授权与筛选查询的完整内部清单
 
 同一个 ToolRuntime 通过一套 Adaptive Runtime contract 服务单项目、project-scoped 的本地 `share` / `run` 和多项目 hosted Server。project-scoped credential 改变可见性与 authority，不改变 model-facing runtime shape。特定 protocol capability 与 MCP App 可以 admission 额外的 hidden presentation/resource operation，但不会形成第二套 runtime surface。
 
-Stateless MCP 2026 只通过一个可选且封闭的 `_wc` envelope 接收通用、不可信的调用元数据。
+Adaptive Stateless MCP 2026 只通过一个可选且封闭的 `_wc` envelope 接收通用、不可信的调用元数据。
 根据工具，它可允许 `record`、`ack`、`ack_ref`、`resolve`、`reply`、`context`、`control`
 和 `compact_execution`。这些仅属于 adapter 元数据，不会成为 canonical ToolCall
 业务参数或授予权限。旧的根级 wrapper（如 `recording_session_id`、

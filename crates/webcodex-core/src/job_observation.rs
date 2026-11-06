@@ -268,7 +268,13 @@ impl JobLogDeltaStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobLogSelectionMode {
     Baseline,
-    Delta { cursor: u64 },
+    Delta {
+        cursor: u64,
+    },
+    /// Explicit forward paging, distinct from live incremental tails.
+    Page {
+        cursor: u64,
+    },
     Reset,
 }
 
@@ -281,6 +287,7 @@ pub struct JobLogStreamProjection {
     pub first_retained_line: usize,
     pub truncated: bool,
     pub delta_reset: bool,
+    pub has_more: bool,
 }
 
 /// Select one bounded model-facing stream from an already frozen retained
@@ -321,7 +328,7 @@ pub fn project_log_stream(
     let (start, delta_reset) = match mode {
         JobLogSelectionMode::Baseline => (baseline_start(), false),
         JobLogSelectionMode::Reset => (baseline_start(), true),
-        JobLogSelectionMode::Delta { cursor } => {
+        JobLogSelectionMode::Delta { cursor } | JobLogSelectionMode::Page { cursor } => {
             let cursor = usize::try_from(cursor).ok();
             let continuous = snapshot_consistent
                 && cursor.is_some_and(|cursor| {
@@ -334,14 +341,28 @@ pub fn project_log_stream(
                     .expect("continuous cursor is present")
                     .saturating_sub(first_retained_line)
                     .min(lines.len());
-                let bounded_start = tail_bound
-                    .map(|tail| lines.len().saturating_sub(tail).max(delta_start))
-                    .unwrap_or(delta_start);
-                (bounded_start, bounded_start > delta_start)
+                if matches!(mode, JobLogSelectionMode::Page { .. }) {
+                    (delta_start, false)
+                } else {
+                    let start = baseline_start().max(delta_start);
+                    (start, start > delta_start)
+                }
             }
         }
     };
-    let selected = lines[start..].join("\n");
+    let end = if matches!(mode, JobLogSelectionMode::Page { .. }) && !delta_reset {
+        tail_bound
+            .map(|bound| start.saturating_add(bound).min(lines.len()))
+            .unwrap_or(lines.len())
+    } else {
+        lines.len()
+    };
+    let next_line = if end < lines.len() {
+        first_retained_line.saturating_add(end)
+    } else {
+        next_line
+    };
+    let selected = lines[start..end].join("\n");
     let text = if preserve_trailing_newline && !selected.is_empty() {
         format!("{selected}\n")
     } else {
@@ -351,16 +372,18 @@ pub fn project_log_stream(
         mode,
         JobLogSelectionMode::Baseline | JobLogSelectionMode::Reset
     );
-    let truncated = (baseline_or_reset || delta_reset)
-        && (storage_truncated || first_retained_line > 1 || start > 0);
+    let truncated = end < lines.len()
+        || ((baseline_or_reset || delta_reset)
+            && (storage_truncated || first_retained_line > 1 || start > 0));
     JobLogStreamProjection {
         text,
         next_line,
         total_lines: observed_next_line.saturating_sub(1),
-        returned_lines: lines.len().saturating_sub(start),
+        returned_lines: end.saturating_sub(start),
         first_retained_line,
         truncated,
         delta_reset,
+        has_more: end < lines.len(),
     }
 }
 
@@ -372,13 +395,19 @@ pub fn combined_delta_status(
     match mode {
         JobLogSelectionMode::Baseline => JobLogDeltaStatus::Baseline,
         JobLogSelectionMode::Reset => JobLogDeltaStatus::Reset,
-        JobLogSelectionMode::Delta { .. } if stdout.delta_reset || stderr.delta_reset => {
+        JobLogSelectionMode::Delta { .. } | JobLogSelectionMode::Page { .. }
+            if stdout.delta_reset || stderr.delta_reset =>
+        {
             JobLogDeltaStatus::Reset
         }
-        JobLogSelectionMode::Delta { .. } if stdout.text.is_empty() && stderr.text.is_empty() => {
+        JobLogSelectionMode::Delta { .. } | JobLogSelectionMode::Page { .. }
+            if stdout.text.is_empty() && stderr.text.is_empty() =>
+        {
             JobLogDeltaStatus::Unchanged
         }
-        JobLogSelectionMode::Delta { .. } => JobLogDeltaStatus::Delta,
+        JobLogSelectionMode::Delta { .. } | JobLogSelectionMode::Page { .. } => {
+            JobLogDeltaStatus::Delta
+        }
     }
 }
 
@@ -400,6 +429,71 @@ impl fmt::Display for JobObservationTokenError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordinary_delta_keeps_final_stdout_error_after_a_large_burst() {
+        let mut log = "START\n".to_owned();
+        let baseline = project_log_stream(
+            &log,
+            1,
+            2,
+            false,
+            Some(40),
+            JobLogSelectionMode::Baseline,
+            true,
+        );
+        log.push_str(&(1..=300).map(|i| format!("line-{i}\n")).collect::<String>());
+        log.push_str("FINAL_STDOUT_FAILURE\n");
+        let observed = project_log_stream(
+            &log,
+            1,
+            303,
+            false,
+            Some(40),
+            JobLogSelectionMode::Delta {
+                cursor: baseline.next_line as u64,
+            },
+            true,
+        );
+        assert_eq!(observed.returned_lines, 40);
+        assert!(observed.text.ends_with("FINAL_STDOUT_FAILURE\n"));
+        assert_eq!(observed.next_line, 303);
+        assert!(observed.truncated);
+        assert!(observed.delta_reset);
+        assert!(!observed.has_more);
+    }
+
+    #[test]
+    fn explicit_pages_move_forward_without_skipping_retained_lines() {
+        let log = (0..501).map(|i| format!("line-{i}\n")).collect::<String>();
+        let mut cursor = 1;
+        let mut collected = String::new();
+        let mut pages = 0;
+        loop {
+            let page = project_log_stream(
+                &log,
+                1,
+                502,
+                false,
+                Some(200),
+                JobLogSelectionMode::Page { cursor },
+                true,
+            );
+            assert_eq!(page.total_lines, 501);
+            assert!(!page.delta_reset);
+            assert!(page.returned_lines <= 200);
+            collected.push_str(&page.text);
+            pages += 1;
+            if !page.has_more {
+                assert_eq!(page.next_line, 502);
+                break;
+            }
+            assert!(page.next_line as u64 > cursor);
+            cursor = page.next_line as u64;
+        }
+        assert_eq!(collected, log);
+        assert_eq!(pages, 3);
+    }
 
     #[test]
     fn observation_ref_registry_is_principal_scoped_and_lru_bounded() {

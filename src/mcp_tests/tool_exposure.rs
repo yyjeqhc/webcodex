@@ -189,14 +189,14 @@ async fn defaults_and_each_opt_in_share_inventory_routes_and_budgets() {
                     ] {
                         assert_eq!(
                             names.iter().any(|n| n == name),
-                            enabled,
+                            enabled && surface == McpSurface::Adaptive,
                             "{surface:?}/{bits}/{name}"
                         );
                     }
                     if surface == McpSurface::Cli {
                         assert!(!names.iter().any(|n| crate::mcp::cli::is_app_tool(n)));
-                        assert!(names.len() <= 26);
-                        assert!(bytes < if bits == 0 { 40 * 1024 } else { 64 * 1024 });
+                        assert_eq!(names.len(), crate::mcp::cli::DIRECT_TOOLS.len() + 1);
+                        assert!(bytes < 24 * 1024);
                     } else {
                         // Keep the existing canonical all-enabled byte gates too.
                         // These additional ceilings guard the configurable surfaces.
@@ -342,9 +342,9 @@ async fn disabled_workflows_reject_direct_gateway_and_stale_app_calls() {
 }
 
 #[tokio::test]
-async fn oauth_overrides_do_not_leak_between_requests_and_cli_review_is_direct_only() {
+async fn oauth_overrides_do_not_leak_between_adaptive_requests() {
     let runtime = configured(ToolExposureConfig::parse(r#"{"oauth_clients":[{"client_id":"enabled","adaptive":{"goals":true,"agent_continuation":true},"cli":{"agent_continuation":true}}]}"#).unwrap());
-    for surface in [McpSurface::Adaptive, McpSurface::Cli] {
+    for surface in [McpSurface::Adaptive] {
         for client in ["enabled", "other", "enabled", "other"] {
             let auth = oauth(client);
             let list = result(
@@ -479,14 +479,7 @@ async fn manifests_use_admitted_surface_routes_before_pagination() {
     for surface in [McpSurface::Cli, McpSurface::Adaptive] {
         for compact in [false, true] {
             for (name, mode) in [
-                (
-                    "find_definition",
-                    if surface == McpSurface::Cli {
-                        "direct"
-                    } else {
-                        "gateway"
-                    },
-                ),
+                ("find_definition", "gateway"),
                 ("read_files", "direct"),
                 (
                     "get_runtime_status",
@@ -541,12 +534,13 @@ async fn manifests_use_admitted_surface_routes_before_pagination() {
                 assert_eq!(response["isError"], false, "{response}");
             }
             let response = result(request(&runtime, surface, Some(&auth), "tools/call",
-                json!({"name":"read_tool_manifest","arguments":{"limit":100,"include_recommended_flows":true}}), compact, true).await);
+                json!({"name":"read_tool_manifest","arguments":{"limit":100,"include_recommended_flows":surface == McpSurface::Adaptive}}), compact, true).await);
             let output = &response["structuredContent"]["output"];
             let tools = output["tools"].as_array().unwrap();
-            assert!(
+            assert_eq!(
                 tools.iter().any(|t| t["name"] == "observe_browser"),
-                "gateway discovery lost: {output}"
+                surface == McpSurface::Adaptive,
+                "CLI's unfiltered catalog is coding-only; exact gateway discovery remains above: {output}"
             );
             let exposure = ToolExposure::default();
             for tool in tools {
@@ -625,7 +619,7 @@ async fn manifest_scope_filtering_removes_uncallable_flow_prose() {
     ];
     for surface in [McpSurface::Cli, McpSurface::Adaptive] {
         let response = result(request(&runtime, surface, Some(&auth), "tools/call",
-            json!({"name":"read_tool_manifest","arguments":{"limit":100,"include_recommended_flows":true}}), true, true).await);
+            json!({"name":"read_tool_manifest","arguments":{"limit":100,"include_recommended_flows":surface == McpSurface::Adaptive}}), true, true).await);
         assert_eq!(response["isError"], false, "{response}");
         let output = &response["structuredContent"]["output"];
         for name in ["edit_project_files", "run_shell"] {

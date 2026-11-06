@@ -1,6 +1,4 @@
 isError: false
-stdout_tail:
+stdout:
 <ROOT>/src
-
 cwd: src
-stdout_lines: 1

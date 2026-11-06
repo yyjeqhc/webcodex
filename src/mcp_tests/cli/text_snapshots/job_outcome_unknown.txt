@@ -1,13 +1,15 @@
-job_id: wc_job_exact; status: outcome_unknown
-stdout_tail:
+outcome_unknown
+stdout:
 证据
 next
-continuation:
-  {"arguments":{"items":[{"after_observation_token":"opaque:token/+=","job_id":"wc_job_exact"}],"tail_lines":17},"follow_up_kind":"mechanically_followable","tool":"observe_jobs"}
-earlier_stdout_unavailable: true
-log_delta_status: reset
-observation_token: opaque:token/+=
-state_changed: null
-stderr_delta_reset: true
 stdout_truncated: true
+job_id: wc_job_exact
+observation_token: opaque:token/+=
+log_delta_status: reset
+state_changed: unknown
+Effects may be incomplete or unknown; inspect the retained Job and target state before retrying.
+earlier_stdout_unavailable: true
+stderr_delta_reset: true
+next: observe_jobs items=[{"after_observation_token":"opaque:token/+=","job_id":"wc_job_exact"}] tail_lines=17
 output_truncated: true
+next: observe_jobs items=[{"after_observation_token":"opaque:token/+=","job_id":"wc_job_exact"}] tail_lines=17

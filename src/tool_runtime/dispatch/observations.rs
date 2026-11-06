@@ -158,7 +158,6 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
         context_request: &[String],
-        prefer_full_instruction_content: bool,
         material_capabilities: crate::tool_runtime::context_projection::ContextMaterialCapabilities,
         context_guidance_profile: CodingGuidanceProfile,
         window: Option<&crate::client_window::ClientWindow>,
@@ -205,7 +204,6 @@ impl ToolRuntime {
             result,
             ContextProjectionRequest {
                 requested: context_request,
-                prefer_full_instruction_content,
                 resolved_project: bootstrap_context
                     .as_ref()
                     .map(|context| &context.project)

@@ -1,2 +1,3 @@
 isError: false
+stdout:
 hello

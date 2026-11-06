@@ -200,24 +200,38 @@ pub(crate) async fn await_structured_job_result(
     let result = match handoff.wait(wait, Duration::from_millis(25), None).await? {
         HiddenStructuredJobWait::Terminal(observation) => {
             let job = observation.job;
-            // Unknown effects retain their exact Job even if the caller drops
-            // while the finalizer is trying to publish its recovery identity.
+            // Unknown effects retain their exact Job if publication is cancelled.
             if job.command_execution_state == Some(ShellCommandExecutionState::OutcomeUnknown) {
                 handoff.disarm();
             }
-            let mut result = terminal_result(
-                &job,
-                observation.stdout_tail,
-                observation.stderr_tail,
-                budget.effective_timeout_secs,
-            );
+            let stdout = observation.stdout_tail;
+            let stderr = observation.stderr_tail;
+            // Preserve the execution-only compact output/recovery contract from
+            // main when consuming a typed terminal snapshot.
+            let truncated = job.stdout_log_truncated
+                || job.stderr_log_truncated
+                || observation.stdout_truncated
+                || observation.stderr_truncated
+                || [&stdout, &stderr].iter().any(|stream| {
+                    stream.chars().count() > super::helpers::COMMAND_STDIO_TAIL_CHARS
+                        || stream.lines().count() > super::helpers::COMMAND_OUTPUT_MAX_LINES
+                });
+            let mut result = terminal_result(&job, stdout, stderr, budget.effective_timeout_secs);
             add_structured_continuation_facts(
                 &mut result,
                 budget.effective_timeout_secs,
                 budget.sync_wait_secs,
                 true,
             );
-            finalize_hidden_terminal_projection(&clients, auth, &job, &mut result, budget).await;
+            finalize_hidden_terminal_projection(
+                &clients,
+                auth,
+                &job,
+                &mut result,
+                budget,
+                truncated,
+            )
+            .await;
             Ok(result)
         }
         HiddenStructuredJobWait::Continued {
@@ -549,9 +563,9 @@ impl StructuredJobHandoffFailure {
 
 /// Finalize a hidden terminal projection without destroying recovery evidence.
 ///
-/// Conclusive terminal executions keep the existing sync-first behavior and are
-/// removed after their result is projected. `outcome_unknown` is intentionally
-/// different: effects may have occurred, so publish the same durable Job and
+/// Small conclusive terminal executions are removed after projection. Truncated
+/// output retains the same Job for paged log recovery without command replay.
+/// For `outcome_unknown`, effects may have occurred, so publish the same Job and
 /// attach its exact observation continuation. If publication itself cannot be
 /// proven, retain the hidden terminal record rather than deleting evidence.
 pub(crate) async fn finalize_hidden_terminal_projection(
@@ -560,8 +574,14 @@ pub(crate) async fn finalize_hidden_terminal_projection(
     job: &ShellJobInfo,
     result: &mut super::ToolResult,
     budget: StructuredExecutionBudget,
+    truncated: bool,
 ) {
-    if job.command_execution_state != Some(ShellCommandExecutionState::OutcomeUnknown) {
+    let retain = truncated
+        || matches!(
+            job.command_execution_state,
+            Some(ShellCommandExecutionState::OutcomeUnknown | ShellCommandExecutionState::TimedOut)
+        );
+    if !retain {
         clients
             .remove_projected_hidden_terminal_job_record(&job.job_id)
             .await;
@@ -569,10 +589,10 @@ pub(crate) async fn finalize_hidden_terminal_projection(
     }
 
     let access = crate::runner_http::runner_access_from_auth(auth);
-    let Ok(public_job) = clients
-        .promote_hidden_job(access.as_ref(), &job.job_id)
-        .await
-    else {
+    let publication = clients
+        .retain_terminal_job_logs(access.as_ref(), &job.job_id)
+        .await;
+    let Ok(public_job) = publication else {
         return;
     };
 
@@ -586,12 +606,15 @@ pub(crate) async fn finalize_hidden_terminal_projection(
     result.output["job_id"] = serde_json::json!(public_job.job_id);
     result.output["job_status"] = serde_json::json!(public_job.status);
     result.output["activity"] =
-        serde_json::to_value(public_job.activity).unwrap_or(serde_json::Value::Null);
-    if let Some(observation_token) = public_job.observation_token.as_deref() {
-        result.output["observation_token"] = serde_json::json!(observation_token);
+        serde_json::to_value(&public_job.activity).unwrap_or(serde_json::Value::Null);
+    if let Some(token) = public_job.observation_token.as_deref() {
+        result.output["observation_token"] = json!(token);
     }
-    result.output["continuation"] =
-        super::jobs::observe_job_continuation(&job.job_id, public_job.observation_token.as_deref());
+    result.output["continuation"] = if truncated {
+        super::jobs::observe_job_log_page(&public_job, true)
+    } else {
+        super::jobs::observe_job_continuation(&job.job_id, public_job.observation_token.as_deref())
+    };
 }
 
 /// Re-observe/promote the same durable record, never a replacement execution.

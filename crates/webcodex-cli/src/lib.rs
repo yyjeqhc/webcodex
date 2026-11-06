@@ -390,6 +390,10 @@ where
         };
     }
     match args[0].as_str() {
+        "mcp-config" => match webcodex_cli::mcp_config::render(&args[1..]) {
+            Ok(stdout) => CliAction::Exit { code: 0, stdout, stderr: String::new() },
+            Err(stderr) => CliAction::Exit { code: 2, stdout: String::new(), stderr },
+        },
         "environment" => CliAction::Environment(args[1..].to_vec()),
         "--help" | "-h" => CliAction::Exit {
             code: 0,

@@ -1377,3 +1377,120 @@ fn compact_job_allocation_retries_only_occupied_ids() {
     assert_eq!(jobs[&first], 7);
     assert!(crate::job_updates::allocate_job_id(&jobs, || first.clone()).is_err());
 }
+
+#[tokio::test]
+async fn job_log_live_tail_and_explicit_pages_share_tokens_without_losing_terminal_errors() {
+    let registry = RunnerRegistry::default();
+    let job = start_wait_job(&registry).await;
+    registry
+        .update_job(wait_job_update(
+            "inst-wait",
+            &job.job_id,
+            1,
+            "running",
+            Some("START\n"),
+            false,
+        ))
+        .await
+        .unwrap();
+    let (running, _, _, _, _, _) = registry
+        .job_log_for_auth(None, &job.job_id, None, None, Some(40), None, None)
+        .await
+        .unwrap();
+    let token = running.observation_token.unwrap();
+    let burst = (1..=300)
+        .map(|i| format!("detail {i}\n"))
+        .collect::<String>()
+        + "FINAL_STDOUT_FAILURE\n";
+    let mut update = wait_job_update("inst-wait", &job.job_id, 2, "failed", Some(&burst), true);
+    update.exit_code = Some(1);
+    registry.update_job(update).await.unwrap();
+    let (terminal, stdout, _, _, _, observed) = registry
+        .job_log_for_auth(None, &job.job_id, None, None, Some(40), Some(&token), None)
+        .await
+        .unwrap();
+    assert_eq!(terminal.exit_code, Some(1));
+    assert!(observed.terminal);
+    assert!(stdout.unwrap().ends_with("FINAL_STDOUT_FAILURE\n"));
+    let (first, stdout, _, _, _, observed) = registry
+        .job_log_with_paging_for_auth(
+            None,
+            &job.job_id,
+            None,
+            None,
+            Some(200),
+            Some(&token),
+            None,
+            true,
+        )
+        .await
+        .unwrap();
+    assert!(observed.has_more_log_pages);
+    assert_eq!(observed.stdout_returned_lines, 200);
+    assert!(stdout.unwrap().starts_with("detail 1\n"));
+    let (_, stdout, _, _, _, observed) = registry
+        .job_log_with_paging_for_auth(
+            None,
+            &job.job_id,
+            None,
+            None,
+            Some(200),
+            first.observation_token.as_deref(),
+            None,
+            true,
+        )
+        .await
+        .unwrap();
+    assert!(!observed.has_more_log_pages);
+    assert!(stdout.unwrap().ends_with("FINAL_STDOUT_FAILURE\n"));
+    let other = registry
+        .start_job(
+            JobStartRequest {
+                cwd: Some("/tmp".into()),
+                ..shell_job_start_request("oe", "true", Some(30))
+            },
+            "tester".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let denied = crate::RunnerAccess {
+        global_visibility: false,
+        owner_bypass: false,
+        username: Some("other-owner".into()),
+        group: None,
+    };
+    assert!(registry
+        .job_log_with_paging_for_auth(
+            Some(&denied),
+            &job.job_id,
+            None,
+            None,
+            Some(200),
+            Some(&token),
+            None,
+            true
+        )
+        .await
+        .is_err());
+    let (_, stdout, stderr, _, _, observation) = registry
+        .job_log_with_paging_for_auth(
+            None,
+            &other.job_id,
+            None,
+            None,
+            Some(200),
+            Some(&token),
+            None,
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        observation.log_delta_status,
+        crate::job_observation::JobLogDeltaStatus::Reset
+    );
+    assert_eq!(stdout.as_deref(), Some(""));
+    assert_eq!(stderr.as_deref(), Some(""));
+}

@@ -889,6 +889,7 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
     let observed = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
+                page: false,
                 job_id: job_id.clone(),
                 after_observation_token: None,
                 observation_ref: None,
@@ -3129,9 +3130,13 @@ fn job_handoff_model_projection_keeps_identity_and_exceptional_receipts() {
             .keys()
             .cloned()
             .collect::<std::collections::BTreeSet<_>>(),
-        ["continuation".to_string(), "execution_state".to_string(),]
-            .into_iter()
-            .collect()
+        [
+            "continuation".to_string(),
+            "execution_state".to_string(),
+            "stdout_truncated".to_string()
+        ]
+        .into_iter()
+        .collect()
     );
     assert_eq!(model.output["execution_state"], "pending");
     assert_observe_job_continuation(&model.output);
@@ -3143,7 +3148,6 @@ fn job_handoff_model_projection_keeps_identity_and_exceptional_receipts() {
         "async_handoff_available",
         "observation_token",
         "continuation_semantics",
-        "stdout_truncated",
         "stderr_truncated",
     ] {
         assert!(model.output.get(key).is_none(), "{key}");

@@ -9,13 +9,10 @@ fn schema_accepts(schema: &Value, value: &Value) -> bool {
 fn edit_project_files_schema_and_parser_require_closed_revision_fenced_changes() {
     let specs = registered_tool_specs();
     let schema = &spec_named(&specs, "edit_project_files").input_schema;
-    let variants = schema["properties"]["changes"]["items"]["oneOf"]
-        .as_array()
-        .unwrap();
-    assert_eq!(variants.len(), 4);
-    for variant in variants {
-        assert_eq!(variant["additionalProperties"], false);
-    }
+    assert_eq!(
+        schema["properties"]["changes"]["items"]["additionalProperties"],
+        false
+    );
     let valid = [
         json!({"kind":"edit","path":"a.rs","expected_read_revision":123,"edits":[{"kind":"replace_exact","old_text":"old","new_text":"new"}]}),
         json!({"kind":"create","path":"new.rs","content":""}),
@@ -46,7 +43,7 @@ fn edit_project_files_schema_and_parser_require_closed_revision_fenced_changes()
             assert!(!schema_accepts(schema, &request), "{request}");
             assert!(ToolCall::from_tool_name("edit_project_files", request).is_err());
         }
-        if change["kind"] != "create" {
+        if change["kind"] != "create" && change["kind"] != "edit" {
             let mut invalid = change.clone();
             invalid
                 .as_object_mut()
@@ -261,7 +258,7 @@ fn edit_project_files_guidance_is_read_native() {
     let spec = spec_named(&specs, "edit_project_files");
     for phrase in [
         "read_files",
-        "One change per file",
+        "one change per file",
         "expected_read_revision",
         "preflight transactionally",
         "outcome_unknown",

@@ -102,7 +102,7 @@ pub(crate) use read_revisions::ReadRevisionTarget;
 mod optional_enrichment;
 pub(crate) mod resource_references;
 mod result_projection;
-mod return_timing;
+pub(crate) mod return_timing;
 mod runtime;
 mod runtime_compatibility;
 mod runtime_info;

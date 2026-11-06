@@ -70,13 +70,13 @@ pub(crate) struct ToolInvocationMetadata {
     pub(crate) session_message_resolution: Option<ToolCallSessionMessageResolution>,
     pub(crate) window_reply: Option<super::window_collaboration::ToolCallWindowReply>,
     pub(crate) context_request: Vec<String>,
-    /// Prefer complete observed instruction bodies within the existing context
-    /// envelope budget. Presentation only; does not widen reads or authority.
-    pub(crate) prefer_full_instruction_content: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ToolProtocolCapabilities {
+    /// Caller owns workflow/context. Skip optional continuity enrichment; never
+    /// changes authorization, canonical evidence, execution or Job recovery.
+    pub(crate) execution_only: bool,
     /// Explicit model-facing control wrapper support; internal/App calls default off.
     pub(crate) control_sidecars: bool,
     pub(crate) context_sidecar: bool,
@@ -242,6 +242,7 @@ impl ToolRuntime {
             request,
             context,
             ToolProtocolCapabilities {
+                execution_only: false,
                 context_sidecar: context_sidecar_capable,
                 control_sidecars: false,
                 skill_runtime: context_sidecar_capable,
@@ -288,7 +289,7 @@ impl ToolRuntime {
         )
     }
 
-    fn call_tool_with_invocation_metadata_and_return_timing<'a>(
+    pub(crate) fn call_tool_with_invocation_metadata_and_return_timing<'a>(
         &'a self,
         request: ToolCallRequest,
         context: ToolCallContext<'a>,
@@ -408,7 +409,9 @@ impl ToolRuntime {
         if let Some(mut outcome) =
             super::specialized::try_dispatch_specialized_gateway(self, &request, context).await
         {
-            if super::tool_definition::is_model_visible_tool_name(&request.tool_name) {
+            if !capabilities.execution_only
+                && super::tool_definition::is_model_visible_tool_name(&request.tool_name)
+            {
                 let peer_project = outcome.project.clone();
                 if let Some(result) = outcome.result.as_mut() {
                     self.add_window_model_reply_sidecar(
@@ -497,8 +500,6 @@ impl ToolRuntime {
                 super::dispatch::DispatchContext {
                     recorder: recording.metadata.clone(),
                     context_request,
-                    prefer_full_instruction_content: invocation_metadata
-                        .prefer_full_instruction_content,
                     capabilities,
                     discovery_tools: invocation_metadata.discovery_tools.clone(),
                     return_timing,

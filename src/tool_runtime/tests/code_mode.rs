@@ -513,11 +513,11 @@ async fn e2a_api_omitted_sync_wait_uses_server_owned_handoff_policy() {
         .await
         .unwrap();
     let terminal = runtime
-        .job_status_for_auth(job_id.clone(), false, None)
-        .await;
-    assert!(terminal.success, "{:?}", terminal.error);
-    assert_eq!(terminal.output["job_id"], job_id);
-    assert_eq!(terminal.output["status"], "completed");
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .unwrap();
+    assert_eq!(terminal.job.job_id, job_id);
+    assert_eq!(terminal.job.status, "completed");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

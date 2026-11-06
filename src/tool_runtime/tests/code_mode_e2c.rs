@@ -683,12 +683,14 @@ async fn e2c_job_handoff_has_exact_continuation_and_later_write_invalidates_term
     )
     .await;
     let terminal = runtime
-        .job_status_for_auth(job_id.to_string(), false, None)
-        .await;
-    assert_eq!(terminal.output["validation"]["passed"], true);
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .unwrap();
+    let terminal_validation = terminal.validation.unwrap().into_value();
+    assert_eq!(terminal_validation["passed"], true);
     assert_eq!(
-        terminal.output["validation"]["source_state"]["freshness"], "stale",
-        "{terminal:?}"
+        terminal_validation["source_state"]["freshness"], "stale",
+        "{terminal_validation:?}"
     );
     let listed_stale = runtime
         .list_jobs_for_auth_with_filters(

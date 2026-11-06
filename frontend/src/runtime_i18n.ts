@@ -102,6 +102,7 @@ export const RUNTIME_ZH_TEXT: Record<string, string> = {
   "No retained calls match these filters.": "没有符合条件的保留调用。",
   "Next call page": "下一页调用",
   "Load more": "加载更多",
+  "Inventory is capped at 2000 workspaces; narrow the filters to see more.": "项目清单最多加载 2000 个工作区；缩小筛选条件可查看更多。",
   "Show less": "收起更多",
   "Some linked Sessions are not available in this view.": "此视图仅展示部分已关联的 Session。",
   "Copy unavailable; select the text to copy.": "无法自动复制，请选中文字复制。",

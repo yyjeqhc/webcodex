@@ -110,23 +110,33 @@ async fn typed_validation_queries_preserve_authority_complete_candidates_and_out
         Some(true)
     );
     let public = runtime
-        .job_status_for_auth(expected[0].clone(), false, Some(&owner))
+        .observe_jobs_for_auth(
+            vec![ObserveJobsItem {
+                job_id: expected[0].clone(),
+                after_observation_token: None,
+                observation_ref: None,
+            }],
+            200,
+            None,
+            ObserveJobsWakeOn::Change,
+            Some(&owner),
+        )
         .await;
     assert!(public.success);
+    let item = &public.output["items"][0];
+    assert_eq!(item["success"], true);
+    let output = &item["output"];
     assert_eq!(
-        public.output["validation"],
+        output["validation"],
         observation.validation.unwrap().into_value()
     );
     for field in [
         "request_id",
         "command_preview",
-        "cwd",
+        "test_count_evidence",
         "validation_identity",
     ] {
-        assert!(
-            public.output.get(field).is_none(),
-            "internal fact leaked: {field}"
-        );
+        assert!(output.get(field).is_none(), "internal fact leaked: {field}");
     }
     assert_eq!(
         runtime

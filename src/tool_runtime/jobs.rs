@@ -27,8 +27,6 @@ use crate::runner_protocol::{
     ShellJobActivityState, ShellJobInfo, ShellJobStructuredExecutionMetadata,
     ShellJobTestCountEvidence, ShellJobValidationStep, RAW_SHELL_JOB_TIMEOUT_DEFAULT_SECS,
 };
-#[cfg(test)]
-use webcodex_runner_registry::COMMAND_PREVIEW_MAX_CHARS;
 
 pub(crate) fn is_blocking_active_job_status(status: &str) -> bool {
     webcodex_runner_registry::job_status_is_active(status) && !is_stop_pending_job_status(status)
@@ -845,24 +843,6 @@ fn is_lifecycle_active_status(status: &str) -> bool {
     is_blocking_active_job_status(status) || is_stop_pending_job_status(status)
 }
 
-#[cfg(test)]
-fn add_job_lifecycle_fields(
-    output: &mut Value,
-    status: &str,
-    recovery_state: Option<&str>,
-    recovery_reason_code: Option<&str>,
-) {
-    let blocking_active = is_blocking_active_job_status(status);
-    let terminal_pending = is_stop_pending_job_status(status);
-    output["active"] = json!(blocking_active || terminal_pending);
-    output["blocking_active"] = json!(blocking_active);
-    output["terminal"] = json!(is_terminal_job_status(status));
-    output["terminal_pending"] = json!(terminal_pending);
-    if let Some(text) = recovery_reason_text(recovery_state, recovery_reason_code) {
-        output["recovery_reason"] = json!(text);
-    }
-}
-
 /// Map the bounded `recovery_state` / `recovery_reason_code` pair to a stable,
 /// human-readable `recovery_reason` string for the Console/API projection.
 ///
@@ -911,19 +891,6 @@ pub(crate) fn recovery_reason_text(
         (Some(state), None) => Some(format!("recovery ({state})")),
         (None, None) => None,
     }
-}
-
-#[cfg(test)]
-fn command_preview_truncated(preview: &str) -> bool {
-    preview.chars().count() > COMMAND_PREVIEW_MAX_CHARS
-}
-
-#[cfg(test)]
-fn add_command_preview_metadata(output: &mut Value, preview: String) {
-    output["command_preview_truncated"] = json!(command_preview_truncated(&preview));
-    output["command_preview_max_chars"] = json!(COMMAND_PREVIEW_MAX_CHARS);
-    output["command_preview_bounded"] = json!(true);
-    output["command_preview"] = Value::String(preview);
 }
 
 pub(super) fn agent_log_stream_incomplete(
@@ -1769,68 +1736,6 @@ impl ToolRuntime {
                 };
                 execution_admission_failure_result(error, next_step)
             }
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn job_status(&self, job_id: String) -> ToolResult {
-        self.job_status_for_auth(job_id, false, None).await
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn job_status_for_auth(
-        &self,
-        job_id: String,
-        include_command_preview: bool,
-        auth: Option<&AuthContext>,
-    ) -> ToolResult {
-        match self.query_job_status_for_auth(&job_id, auth).await {
-            Ok(observation) => {
-                let job = observation.job;
-                let mut output = json!({
-                    "job_id": job.job_id,
-                    "project": job.project_id,
-                    "session_id": job.session_id,
-                    "ssh_resource": job.ssh_resource,
-                    "status": job.status,
-                    "exit_code": job.exit_code,
-                    "started_at": job.started_at,
-                    "ended_at": job.ended_at,
-                    "duration_ms": job.duration_ms,
-                    "elapsed_secs": job.elapsed_secs,
-                    "client_id": job.client_id,
-                    "error": job.error,
-                    "command_execution_state": job.command_execution_state,
-                    "structured_execution": model_facing_structured_execution_metadata(job.structured_execution.as_ref()),
-                    "activity": job.activity,
-                    "recovery_state": job.recovery_state,
-                    "recovered_after_server_restart": job.recovered_after_server_restart,
-                    "reconciled_at": job.reconciled_at,
-                    "recovery_reason_code": job.recovery_reason_code,
-                    "observation_token": job.observation_token,
-                    "last_update_seq": job.last_update_seq,
-                    "stdout_retained_from_line": job.stdout_retained_from_line,
-                    "stderr_retained_from_line": job.stderr_retained_from_line,
-                    "stdout_log_truncated": job.stdout_log_truncated,
-                    "stderr_log_truncated": job.stderr_log_truncated,
-                    "command_preview_included": include_command_preview,
-                });
-                let status = output["status"].as_str().unwrap_or_default().to_string();
-                add_job_lifecycle_fields(
-                    &mut output,
-                    &status,
-                    job.recovery_state.as_deref(),
-                    job.recovery_reason_code.as_deref(),
-                );
-                if include_command_preview {
-                    add_command_preview_metadata(&mut output, job.command_preview.clone());
-                }
-                if let Some(validation) = observation.validation {
-                    output["validation"] = validation.into_value();
-                }
-                ToolResult::ok(output)
-            }
-            Err(_) => unknown_job_observation_result(&job_id),
         }
     }
 

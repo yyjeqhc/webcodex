@@ -552,10 +552,10 @@ async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_a
         Some("tmp")
     );
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["ssh_resource"], "tmp");
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(status.job.ssh_resource.as_deref(), Some("tmp"));
     let log = runtime
         .job_log_for_auth(job_id.clone(), None, Some(20), Some(&auth), None, None)
         .await;

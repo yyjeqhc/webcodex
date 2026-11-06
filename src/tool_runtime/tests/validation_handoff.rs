@@ -416,16 +416,22 @@ async fn seed_retained_terminal_validation_job(
         )
         .await;
     let status = runtime
-        .job_status_for_auth(job.job_id.clone(), false, None)
-        .await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["terminal"], true);
+        .query_job_status_for_auth(&job.job_id, None)
+        .await
+        .unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+    assert!(
+        webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::from_wire(&status.job.status)
+            .unwrap()
+            .is_terminal()
+    );
     assert_eq!(
-        status.output["validation"]["validation_target_id"],
+        status_validation["validation_target_id"],
         validation_target_id
     );
-    let ended_at = status.output["ended_at"]
-        .as_i64()
+    let ended_at = status
+        .job
+        .ended_at
         .expect("terminal seeded Job must expose ended_at");
     SeededTerminalValidationJob {
         job_id: job.job_id,
@@ -1332,12 +1338,16 @@ async fn default_cargo_check_handoff_preserves_same_execution_through_terminal()
         )
         .await;
     let terminal = runtime
-        .job_status_for_auth(job_id.clone(), false, None)
-        .await;
-    assert!(terminal.success, "{:?}", terminal.error);
-    assert_eq!(terminal.output["job_id"], job_id);
-    assert_eq!(terminal.output["status"], "completed");
-    assert_eq!(terminal.output["terminal"], true);
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .unwrap();
+    assert_eq!(terminal.job.job_id, job_id);
+    assert_eq!(terminal.job.status, "completed");
+    assert!(
+        webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::from_wire(&terminal.job.status)
+            .unwrap()
+            .is_terminal()
+    );
     assert!(
         probe_patch_agent_request(&runtime, client_id)
             .await
@@ -1513,12 +1523,16 @@ async fn default_validation_handoff_beats_host_like_observation_deadline() {
 
     completion.await.unwrap();
     let terminal = runtime
-        .job_status_for_auth(job_id.clone(), false, None)
-        .await;
-    assert!(terminal.success, "{:?}", terminal.error);
-    assert_eq!(terminal.output["job_id"], job_id);
-    assert_eq!(terminal.output["status"], "completed");
-    assert_eq!(terminal.output["terminal"], true);
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .unwrap();
+    assert_eq!(terminal.job.job_id, job_id);
+    assert_eq!(terminal.job.status, "completed");
+    assert!(
+        webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::from_wire(&terminal.job.status)
+            .unwrap()
+            .is_terminal()
+    );
 }
 
 /// Auto handoff: a validation still running when the injected sync window
@@ -1613,22 +1627,27 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
 
     // Job is immediately queryable and still active.
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, None)
-        .await;
-    assert!(status.success);
-    assert_eq!(status.output["status"], "running");
-    assert_eq!(status.output["active"], true);
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+    assert_eq!(status.job.status, "running");
+    assert!(
+        webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::from_wire(&status.job.status)
+            .unwrap()
+            .is_active()
+    );
     assert_eq!(
-        status.output["activity"],
+        serde_json::to_value(&status.job.activity).unwrap(),
         json!({
             "state": "working",
             "phase": "validation_test",
             "source": "validation_plan"
         })
     );
-    assert_eq!(status.output["validation"]["tool"], "cargo_test");
-    assert_eq!(status.output["validation"]["kind"], "test");
-    assert_eq!(status.output["validation"]["state"], "running");
+    assert_eq!(status_validation["tool"], "cargo_test");
+    assert_eq!(status_validation["kind"], "test");
+    assert_eq!(status_validation["state"], "running");
     let log = runtime
         .job_log_for_auth(job_id.clone(), None, Some(200), None, None, None)
         .await;
@@ -1645,7 +1664,7 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
             "source": "validation_plan"
         })
     );
-    assert_eq!(log.output["validation"], status.output["validation"]);
+    assert_eq!(log.output["validation"], status_validation);
     let observed = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
@@ -1838,23 +1857,28 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
 
     // Job status terminal + structured counts.
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, None)
-        .await;
-    assert!(status.success);
-    assert_eq!(status.output["status"], "completed");
-    assert_eq!(status.output["terminal"], true);
-    assert_eq!(status.output["validation"]["tool"], "cargo_test");
-    assert_eq!(status.output["validation"]["kind"], "test");
-    assert_eq!(status.output["validation"]["passed"], true);
-    assert_eq!(status.output["validation"]["tests_detected"], true);
-    assert_eq!(status.output["validation"]["tests_run_count"], 3);
-    assert_eq!(status.output["validation"]["tests_passed"], 3);
-    assert_eq!(status.output["validation"]["tests_failed"], 0);
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+    assert_eq!(status.job.status, "completed");
+    assert!(
+        webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::from_wire(&status.job.status)
+            .unwrap()
+            .is_terminal()
+    );
+    assert_eq!(status_validation["tool"], "cargo_test");
+    assert_eq!(status_validation["kind"], "test");
+    assert_eq!(status_validation["passed"], true);
+    assert_eq!(status_validation["tests_detected"], true);
+    assert_eq!(status_validation["tests_run_count"], 3);
+    assert_eq!(status_validation["tests_passed"], 3);
+    assert_eq!(status_validation["tests_failed"], 0);
     let log = runtime
         .job_log_for_auth(job_id.clone(), None, Some(200), None, None, None)
         .await;
     assert!(log.success);
-    assert_eq!(log.output["validation"], status.output["validation"]);
+    assert_eq!(log.output["validation"], status_validation);
 
     // The session validation summary reflects the real terminal result. The
     // handoff itself is non-terminal (accepted as a job), so the summary must
@@ -1873,7 +1897,7 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
     assert_eq!(latest["exit_code"], 0);
     assert_eq!(
         latest["tests_run_count"],
-        status.output["validation"]["tests_run_count"]
+        status_validation["tests_run_count"]
     );
 }
 
@@ -2487,18 +2511,19 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
         .await;
 
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, Some(&auth))
-        .await;
-    assert!(status.success, "{:?}", status.error);
-    assert_eq!(status.output["validation"]["passed"], true);
-    assert_eq!(status.output["validation"]["truncated"], true);
+        .query_job_status_for_auth(&job_id, Some(&auth))
+        .await
+        .unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+    assert_eq!(status_validation["passed"], true);
+    assert_eq!(status_validation["truncated"], true);
     for field in [
         "tests_run_count",
         "tests_passed",
         "tests_failed",
         "zero_tests_run",
     ] {
-        assert!(status.output["validation"][field].is_null(), "{field}");
+        assert!(status_validation[field].is_null(), "{field}");
     }
 
     let log = runtime
@@ -2600,13 +2625,14 @@ async fn handoff_job_terminal_failure_is_validation_failed_not_timeout() {
         .await;
 
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, None)
-        .await;
-    assert!(status.success);
-    assert_eq!(status.output["status"], "failed");
-    assert_eq!(status.output["validation"]["passed"], false);
-    assert_eq!(status.output["validation"]["tests_failed"], 1);
-    assert_eq!(status.output["validation"]["tests_passed"], 0);
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+    assert_eq!(status.job.status, "failed");
+    assert_eq!(status_validation["passed"], false);
+    assert_eq!(status_validation["tests_failed"], 1);
+    assert_eq!(status_validation["tests_passed"], 0);
 }
 
 /// A real total-runtime timeout (job reaches `timeout`) must be classified as
@@ -2649,15 +2675,20 @@ async fn handoff_job_total_timeout_is_classified_timeout() {
         .await;
 
     let status = runtime
-        .job_status_for_auth(job_id.clone(), false, None)
-        .await;
-    assert!(status.success);
-    assert_eq!(status.output["status"], "timeout");
-    assert_eq!(status.output["terminal"], true);
-    assert_eq!(status.output["validation"]["state"], "timed_out");
-    assert!(status.output["validation"]["passed"].is_null());
-    assert!(status.output["validation"]["warnings_count"].is_null());
-    assert!(status.output["validation"]["errors_count"].is_null());
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .unwrap();
+    let status_validation = status.validation.unwrap().into_value();
+    assert_eq!(status.job.status, "timeout");
+    assert!(
+        webcodex_core::runner_job_lifecycle::RunnerJobLifecycle::from_wire(&status.job.status)
+            .unwrap()
+            .is_terminal()
+    );
+    assert_eq!(status_validation["state"], "timed_out");
+    assert!(status_validation["passed"].is_null());
+    assert!(status_validation["warnings_count"].is_null());
+    assert!(status_validation["errors_count"].is_null());
 }
 
 /// Explicit short timeout: a requested budget at or below the sync window
@@ -3013,12 +3044,10 @@ async fn cancel_running_before_handoff_retains_record_until_runner_stops() {
         .await
         .expect("cleanup-pending job must remain internally queryable");
     assert_eq!(hidden.status, "stop_requested");
-    assert!(
-        !runtime
-            .job_status_for_auth(job_id.clone(), false, None)
-            .await
-            .success
-    );
+    assert!(runtime
+        .query_job_status_for_auth(&job_id, None)
+        .await
+        .is_err());
     assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 
     runtime

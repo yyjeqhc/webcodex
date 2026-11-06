@@ -684,7 +684,7 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
         "code-mode-audit",
         "inst-code-mode-audit",
         vec![RunnerProjectSummary {
-            registration_incarnation: None,
+            registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
             id: "demo".to_string(),
             name: Some("Code Mode audit".to_string()),
             path: "/tmp/code-mode-audit".to_string(),

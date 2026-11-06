@@ -1,14 +1,34 @@
 //! Caller-authorized Window queries shared by Console endpoints.
 use super::*;
 
-/// Compare the server-authored attribution already present in this observation.
-/// Live polling never locks the Store or infers identity from another request.
-fn same_managed_oauth_window_principal(
+/// Personal tokens operate their user's Windows; delegated OAuth credentials
+/// remain confined to their exact user/client. Neither selector grants Project
+/// access or changes the recipient's Operator/Peer storage namespace.
+pub(super) fn managed_oauth_window_visibility(
     auth: &AuthContext,
-    identity: Option<&(String, String)>,
-) -> bool {
-    auth.managed_oauth_window_identity().is_some_and(|caller| {
-        identity.is_some_and(|(user, client)| caller == (user.as_str(), client.as_str()))
+) -> Option<webcodex_store::WindowOAuthVisibility> {
+    if auth.kind == crate::auth::AuthKind::ApiToken {
+        return auth
+            .user_id
+            .as_ref()
+            .filter(|id| !id.trim().is_empty())
+            .map(|user_id| webcodex_store::WindowOAuthVisibility::User {
+                user_id: user_id.clone(),
+            });
+    }
+    auth.managed_oauth_window_identity().map(|(user, client)| {
+        webcodex_store::WindowOAuthVisibility::Client {
+            user_id: user.into(),
+            client_id: client.into(),
+        }
+    })
+}
+
+/// Compare only server-authored attribution in this exact observation. Live
+/// polling never locks the Store or infers identity from another request.
+fn managed_oauth_window_visible(auth: &AuthContext, identity: Option<&(String, String)>) -> bool {
+    managed_oauth_window_visibility(auth).is_some_and(|visibility| {
+        identity.is_some_and(|(user, client)| visibility.matches(user, client))
     })
 }
 
@@ -87,10 +107,7 @@ pub(super) async fn console_window_event_visible_cached(
         return caller_principal.is_some_and(|(kind, id)| {
             event.principal_correlation_kind.as_deref() == Some(kind)
                 && event.principal_correlation_id.as_deref() == Some(id)
-        }) || same_managed_oauth_window_principal(
-            auth,
-            event.managed_oauth_identity.as_ref(),
-        );
+        }) || managed_oauth_window_visible(auth, event.managed_oauth_identity.as_ref());
     }
     window_event_visible_cached(runtime, auth, cache, event).await
 }
@@ -108,7 +125,7 @@ pub(super) async fn console_active_window_request_visible_cached(
             crate::tool_runtime::window_activity::active_window_request_matches_principal(
                 request, principal,
             )
-        }) && !same_managed_oauth_window_principal(auth, request.managed_oauth_identity.as_ref())
+        }) && !managed_oauth_window_visible(auth, request.managed_oauth_identity.as_ref())
         {
             return false;
         }

@@ -2,6 +2,268 @@ use super::*;
 use crate::runtime_console_http::window_collaboration;
 
 #[tokio::test]
+async fn window_collaboration_pat_survives_projectless_oauth_activity() {
+    let (_tmp, db, runtime) = test_runtime_with_goal_db();
+    let mut model = scoped_oauth(&[
+        SCOPE_RUNTIME_READ,
+        SCOPE_PROJECT_READ,
+        SCOPE_SESSION_COLLABORATE,
+    ]);
+    model.api_key_id = Some("model-access-token".into());
+    let mut operator = AuthContext::new(AuthKind::ApiToken);
+    operator.user_id = model.user_id.clone();
+    operator.username = model.username.clone();
+    operator.api_key_id = Some("operator-pat".into());
+    operator.token_kind = Some("pat".into());
+    operator.scopes = model.scopes.clone();
+    let project = "agent:pat-collaboration:demo";
+    register_project(
+        &runtime,
+        "pat-collaboration",
+        "demo",
+        "/test/demo",
+        Some(&model),
+    )
+    .await;
+    let target_window = crate::client_window::ClientWindow::for_test("pat-continuity");
+    let key = target_window.key().to_string();
+    record_window_event(&db, &model, &key, Some(project), None, 5_000);
+    let recipient = window_collaboration::authorize(&runtime, &operator, &key)
+        .await
+        .unwrap();
+    let sent = runtime
+        .post_window_operator_message_with_options_for_principal(
+            &key,
+            None,
+            None,
+            "guidance",
+            "normal",
+            true,
+            "Keep this conversation available".into(),
+            "pat-continuity".into(),
+            &recipient.0,
+            &recipient.1,
+            Some(&operator),
+        )
+        .await;
+    assert!(sent.success, "{:?}", sent.error);
+
+    // While WebUI is in the background, a neutral model request becomes the
+    // newest observation. The user's PAT still owns this exact OAuth Window.
+    record_window_event_with_activity(
+        &db,
+        &model,
+        &key,
+        None,
+        None,
+        6_000,
+        "get_runtime_status",
+        false,
+    );
+    let current = window_collaboration::authorize(&runtime, &operator, &key)
+        .await
+        .expect("same-user PAT must retain access after projectless OAuth activity");
+    assert_eq!(current, recipient);
+    let page = runtime.window_collaboration_for_principal(&key, &current.0, &current.1, 10);
+    assert_eq!(page["available"], true);
+    assert_eq!(page["can_send"], true);
+    assert_eq!(page["messages"][0]["message_id"], sent.output["message_id"]);
+
+    let inventory = windows_for_auth(&runtime, &operator, Some(10), None)
+        .await
+        .unwrap();
+    assert_eq!(inventory.windows[0].last_seen_at_ms, 6_001);
+    let detail = window_for_auth(
+        &runtime,
+        &operator,
+        WindowInput {
+            client_window_key: key.clone(),
+            activity_limit: Some(20),
+            session_limit: Some(20),
+            detail_level: WindowDetailLevel::Full,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(detail.activity.len(), 2);
+
+    // Renewal changes the observation principal, not the Operator mailbox.
+    model.api_key_id = Some("renewed-model-access-token".into());
+    record_window_event_with_activity(
+        &db,
+        &model,
+        &key,
+        None,
+        None,
+        7_000,
+        "get_runtime_status",
+        false,
+    );
+    let guard = runtime.window_activity.start_authenticated(
+        &target_window,
+        "pat-live-request",
+        "tools/list",
+        None,
+        Some(&model),
+        8_000,
+    );
+    let current = window_collaboration::authorize(&runtime, &operator, &key)
+        .await
+        .unwrap();
+    assert_ne!(current, recipient);
+    let page = runtime.window_collaboration_for_principal(&key, &current.0, &current.1, 10);
+    assert_eq!(page["messages"][0]["message_id"], sent.output["message_id"]);
+    let retry = runtime
+        .post_window_operator_message_with_options_for_principal(
+            &key,
+            None,
+            None,
+            "guidance",
+            "normal",
+            true,
+            "Keep this conversation available".into(),
+            "pat-continuity".into(),
+            &current.0,
+            &current.1,
+            Some(&operator),
+        )
+        .await;
+    assert!(retry.success, "{:?}", retry.error);
+    assert_eq!(retry.output["message_id"], sent.output["message_id"]);
+    assert_eq!(retry.output["replayed"], true);
+    let live = super::super::window_inventory::query_for_auth(
+        &runtime,
+        &operator,
+        WindowsInput {
+            projection: WindowInventoryProjection::Liveness,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(live.total, 1);
+    let serialized = serde_json::to_string(&live).unwrap();
+    assert!(!serialized.contains(model.user_id.as_deref().unwrap()));
+    assert!(!serialized.contains(model.allowed_client_id.as_deref().unwrap()));
+    drop(guard);
+
+    for scope in [SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE] {
+        let mut denied = operator.clone();
+        denied.scopes.retain(|granted| granted != scope);
+        assert!(window_collaboration::authorize(&runtime, &denied, &key)
+            .await
+            .is_err());
+    }
+}
+
+#[tokio::test]
+async fn window_collaboration_pat_keeps_user_client_and_project_boundaries() {
+    let (_tmp, db, runtime) = test_runtime_with_goal_db();
+    let mut model = scoped_oauth(&[SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE]);
+    model.api_key_id = Some("owner-model-token".into());
+    let mut operator = AuthContext::new(AuthKind::ApiToken);
+    operator.user_id = model.user_id.clone();
+    operator.username = model.username.clone();
+    operator.api_key_id = Some("owner-pat".into());
+    operator.scopes = model.scopes.clone();
+    let target_window = crate::client_window::ClientWindow::for_test("pat-boundaries");
+    let key = target_window.key();
+    record_window_event_with_activity(
+        &db,
+        &model,
+        key,
+        None,
+        None,
+        5_000,
+        "get_runtime_status",
+        false,
+    );
+    let guard = runtime.window_activity.start_authenticated(
+        &target_window,
+        "pat-boundaries-live",
+        "tools/list",
+        None,
+        Some(&model),
+        6_000,
+    );
+    let mut foreign_user = operator.clone();
+    foreign_user.user_id = Some("different-user".into());
+    let mut foreign_client = model.clone();
+    foreign_client.api_key_id = Some("different-client-token".into());
+    foreign_client.allowed_client_id = Some("different-client".into());
+    let mut missing_user = operator.clone();
+    missing_user.user_id = None;
+    let mut denied_callers = vec![foreign_user, foreign_client, missing_user];
+    for kind in [
+        AuthKind::AccountCredential,
+        AuthKind::AgentToken,
+        AuthKind::SharedKey,
+        AuthKind::ProjectCredential,
+    ] {
+        let mut denied = operator.clone();
+        denied.kind = kind;
+        denied_callers.push(denied);
+    }
+    for denied in &denied_callers {
+        assert!(window_collaboration::authorize(&runtime, denied, key)
+            .await
+            .is_err());
+        let live = super::super::window_inventory::query_for_auth(
+            &runtime,
+            denied,
+            WindowsInput {
+                projection: WindowInventoryProjection::Liveness,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(live.total, 0);
+    }
+    guard.update(Some("read_files"), Some("agent:hidden:demo"));
+    assert!(window_collaboration::authorize(&runtime, &operator, key)
+        .await
+        .is_err());
+    drop(guard);
+    for denied in &denied_callers {
+        assert!(window_collaboration::authorize(&runtime, denied, key)
+            .await
+            .is_err());
+        assert_eq!(
+            windows_for_auth(&runtime, denied, Some(10), None)
+                .await
+                .unwrap()
+                .total,
+            0
+        );
+    }
+    // Same-user attribution cannot override an explicit inaccessible Project,
+    // including a Project supplied through a Workflow Session anchor.
+    for (project, link, at) in [
+        (Some("agent:hidden:demo"), None, 7_000),
+        (None, Some(("wc_sess_hidden", "agent:hidden:demo")), 8_000),
+    ] {
+        record_window_event(&db, &model, key, project, link, at);
+        assert!(window_collaboration::authorize(&runtime, &operator, key)
+            .await
+            .is_err());
+    }
+    let mut missing_client = model.clone();
+    missing_client.allowed_client_id = None;
+    record_window_event(&db, &missing_client, key, None, None, 9_000);
+    assert!(window_collaboration::authorize(&runtime, &operator, key)
+        .await
+        .is_err());
+    let mut foreign = model.clone();
+    foreign.user_id = Some("different-user".into());
+    foreign.api_key_id = Some("foreign-model-token".into());
+    record_window_event(&db, &foreign, key, None, None, 10_000);
+    assert!(window_collaboration::authorize(&runtime, &operator, key)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn operator_continuity_rotated_projectless_window_remains_discoverable() {
     let (_tmp, db, runtime) = test_runtime_with_goal_db();
     let mut old = scoped_oauth(&[SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE]);
@@ -99,6 +361,16 @@ async fn operator_continuity_live_visibility_uses_admission_identity_without_sql
         .unwrap();
     for (auth, expected) in [
         (renewed.clone(), 1),
+        (
+            {
+                let mut pat = AuthContext::new(AuthKind::ApiToken);
+                pat.user_id = renewed.user_id.clone();
+                pat.api_key_id = Some("live-operator-pat".into());
+                pat.scopes = renewed.scopes.clone();
+                pat
+            },
+            1,
+        ),
         (
             {
                 let mut other = renewed.clone();

@@ -2378,11 +2378,39 @@ fn mcp_execution_descriptions_share_canonical_source_across_surfaces() {
                     assert!(!description.contains("Session"));
                     continue;
                 } else if surface_index == 2 && name == "observe_jobs" {
+                    // CLI's observer uses the canonical terminal-wait default,
+                    // but its log contract is surface-specific: latest incremental
+                    // tails, with explicit page=true for forward recovery.
                     assert_eq!(
                         tool["inputSchema"]["properties"]["wake_on"]["default"],
                         "terminal"
                     );
-                    canonical.to_owned()
+                    assert_eq!(
+                        tool["inputSchema"]["properties"]["summary_only"]["default"],
+                        false
+                    );
+                    let description = tool["description"].as_str().unwrap();
+                    for fact in [
+                        "owned Jobs",
+                        "wait_secs",
+                        "default terminal",
+                        "even without tokens",
+                        "change/meaningful_change",
+                        "after_observation_token",
+                        "latest incremental logs",
+                        "page=true",
+                        "Follow returned continuations",
+                        "without rerunning commands",
+                        "uncertain effects",
+                    ] {
+                        assert!(description.contains(fact), "{fact}: {description}");
+                    }
+                    assert!(!description.contains("Session"));
+                    assert!(
+                        description.chars().count()
+                            <= crate::mcp::discovery::TOOL_DESCRIPTION_MAX_CHARS
+                    );
+                    continue;
                 } else if name == "observe_jobs" {
                     assert_eq!(
                         tool["inputSchema"]["properties"]["wake_on"]["default"],

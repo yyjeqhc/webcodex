@@ -7,7 +7,12 @@ use super::*;
 pub(super) fn managed_oauth_window_visibility(
     auth: &AuthContext,
 ) -> Option<webcodex_store::WindowOAuthVisibility> {
-    if auth.kind == crate::auth::AuthKind::ApiToken {
+    // Only a canonical personal user key may cross OAuth client boundaries.
+    // The authentication fallback also classifies unknown non-agent key kinds
+    // as ApiToken, so that enum alone is not sufficient authorization.
+    if auth.kind == crate::auth::AuthKind::ApiToken
+        && auth.token_kind.as_deref() == Some(crate::models::TOKEN_KIND_USER)
+    {
         return auth
             .user_id
             .as_ref()

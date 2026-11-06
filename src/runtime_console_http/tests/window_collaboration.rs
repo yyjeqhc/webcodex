@@ -14,7 +14,7 @@ async fn window_collaboration_pat_survives_projectless_oauth_activity() {
     operator.user_id = model.user_id.clone();
     operator.username = model.username.clone();
     operator.api_key_id = Some("operator-pat".into());
-    operator.token_kind = Some("pat".into());
+    operator.token_kind = Some(crate::models::TOKEN_KIND_USER.into());
     operator.scopes = model.scopes.clone();
     let project = "agent:pat-collaboration:demo";
     register_project(
@@ -165,6 +165,7 @@ async fn window_collaboration_pat_keeps_user_client_and_project_boundaries() {
     operator.user_id = model.user_id.clone();
     operator.username = model.username.clone();
     operator.api_key_id = Some("owner-pat".into());
+    operator.token_kind = Some(crate::models::TOKEN_KIND_USER.into());
     operator.scopes = model.scopes.clone();
     let target_window = crate::client_window::ClientWindow::for_test("pat-boundaries");
     let key = target_window.key();
@@ -193,7 +194,17 @@ async fn window_collaboration_pat_keeps_user_client_and_project_boundaries() {
     foreign_client.allowed_client_id = Some("different-client".into());
     let mut missing_user = operator.clone();
     missing_user.user_id = None;
-    let mut denied_callers = vec![foreign_user, foreign_client, missing_user];
+    let mut other_key_kind = operator.clone();
+    other_key_kind.token_kind = Some("future-service-token".into());
+    let mut missing_key_kind = operator.clone();
+    missing_key_kind.token_kind = None;
+    let mut denied_callers = vec![
+        foreign_user,
+        foreign_client,
+        missing_user,
+        other_key_kind,
+        missing_key_kind,
+    ];
     for kind in [
         AuthKind::AccountCredential,
         AuthKind::AgentToken,
@@ -366,6 +377,7 @@ async fn operator_continuity_live_visibility_uses_admission_identity_without_sql
                 let mut pat = AuthContext::new(AuthKind::ApiToken);
                 pat.user_id = renewed.user_id.clone();
                 pat.api_key_id = Some("live-operator-pat".into());
+                pat.token_kind = Some(crate::models::TOKEN_KIND_USER.into());
                 pat.scopes = renewed.scopes.clone();
                 pat
             },

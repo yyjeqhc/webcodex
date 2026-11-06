@@ -353,11 +353,15 @@ CLI command and file behavior:
 - `run_shell` waits up to 50 seconds by default under Direct timing. Set
   `sync_wait_secs` for an earlier handoff; Server/Host caps can only shorten it.
   Pending output includes the available tail and the same Job continuation.
+  CLI process lifetime defaults to 600 seconds (`timeout_secs`), subject to Runner
+  limits; expiration terminates the process tree, independently of handoff timing.
 - `observe_jobs(items=[{job_id}], wait_secs=50)` waits for terminal without a
   prior token. `wake_on` defaults to `terminal`; explicitly select `change` or
   `meaningful_change` for update waits, which still require a baseline token.
-  A token resumes retained logs **forward in bounded pages**. A first observation
-  without one reads the current tail; storage gaps/epoch changes report reset.
+  A token returns the **latest incremental tail**, including terminal diagnostics.
+  Only explicit `page=true` items read forward from the token for log recovery;
+  generated continuations request 200 lines per page. Storage gaps/epoch changes
+  report reset. A first observation without a token reads the current tail.
 - Truncated command previews keep the beginning and end. A synchronous truncated
   result retains its original Job under existing bounded retention and offers a
   log continuation. Never rerun an effectful command to recover its output.

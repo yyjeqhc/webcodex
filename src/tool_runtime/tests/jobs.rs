@@ -890,6 +890,7 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
     let observed = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
+                page: false,
                 job_id: job_id.clone(),
                 after_observation_token: None,
                 observation_ref: None,

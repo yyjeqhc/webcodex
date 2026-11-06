@@ -165,6 +165,27 @@ class Acceptance(Smoke):
         result, text = call("observe_jobs", {"items":[{"job_id":job_id}], "wait_secs":10})
         wait_elapsed = time.monotonic() - start
         check(wait_elapsed > 1 and "ASYNC_DONE" in text, f"tokenless terminal wait failed after {wait_elapsed:.2f}s: {text[:3000]}")
+        # Observe once while running, then require the final stdout error on the
+        # very next terminal observation, without paging through the burst.
+        result, text = call("run_shell", {"command":"printf 'START\\n'; sleep 4; seq 300; printf 'FINAL_STDOUT_FAILURE\\n'; exit 1", "sync_wait_secs":1})
+        tool, arguments = next(next_calls(text))
+        arguments["wait_secs"] = 1
+        result, text = call(tool, arguments)
+        check("FINAL_STDOUT_FAILURE" not in text and "next: observe_jobs" in text, "intermediate observation did not remain running")
+        tool, arguments = next(next_calls(text))
+        arguments["wait_secs"] = 10
+        result, text = call(tool, arguments)
+        check("FINAL_STDOUT_FAILURE" in text and "exit_code: 1" in text, "terminal incremental tail hid stdout failure")
+        incremental_terminal_chars = len(text)
+        result, text = call("run_shell", {"command":"printf 'TIMEOUT_START\\n'; sleep 10", "timeout_secs":2})
+        check("Effects may be incomplete" in text and "inspect target state" in text and "retained Job" not in text,
+              "direct timeout must not invent retained Job recovery")
+        result, text = call("run_shell", {"command":"printf 'JOB_TIMEOUT_START\\n'; sleep 10", "timeout_secs":3, "sync_wait_secs":1})
+        tool, arguments = next(next_calls(text))
+        arguments["wait_secs"] = 10
+        result, text = call(tool, arguments)
+        check("Effects may be incomplete" in text and "job_id:" in text and "timeout" in text,
+              "durable timeout omitted uncertainty or retained Job identity")
         result, text = call("run_shell", {"command":"python3 noisy_check.py"})
         check(result["result"]["isError"] and "FIRST_ERROR" in text and "build detail 499" in text, "head/tail omitted first error or final output")
         seen = text
@@ -176,7 +197,7 @@ class Acceptance(Smoke):
             seen += text
             pages += 1
             pending = list(next_calls(text))
-        check("build detail 250" in seen and not pending, "retained log paging failed")
+        check("build detail 250" in seen and not pending and pages == 3, "retained log paging must use three 200-line pages")
         absolute = str(self.project_dir / "ranges.py")
         result, text = call("read_files", {"items":[{"path":absolute}]})
         revision = int(re.search(r"read_revision (\d+)", text).group(1))
@@ -189,6 +210,17 @@ class Acceptance(Smoke):
         check((self.project_dir / "ranges.py").read_text() == SOURCE + "# exact\n", "stale write modified file")
         result, text = call("read_files", {"items":[{"path":str(self.root / "runner.toml")}]})
         check("server_url" not in text, "outside-root read exposed content")
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "existing.txt").write_text("OUTSIDE_SECRET_SENTINEL")
+        (self.project_dir / "escape").symlink_to(outside, target_is_directory=True)
+        result, text = call("read_files", {"items":[{"path":"escape/existing.txt"}]})
+        check("outside the Project" in text and "OUTSIDE_SECRET_SENTINEL" not in text, "symlink read did not report project boundary safely")
+        result, text = call("edit_project_files", {"changes":[{"kind":"create", "path":"escape/new.txt", "content":"must not write"}]})
+        check(result["result"].get("isError") and "No files were modified" in text and "outcome_unknown" not in text and not (outside / "new.txt").exists(), "preflight symlink refusal was misclassified as uncertain effects")
+        (self.project_dir / "escape").unlink()
+        result, text = call("edit_project_files", {"changes":[{"kind":"create", "path":"ranges.py", "content":"must not overwrite"}]})
+        check("kind=write" in text, "existing create did not suggest write")
         (self.project_dir / "large.txt").write_text(("large line " + "x" * 120 + "\n") * 500)
         result, text = call("read_files", {"items":[{"path":"large.txt", "limit":1000}]})
         check(not result["result"].get("isError") and len(text) < 50000 and "more lines available" in text,
@@ -212,8 +244,21 @@ class Acceptance(Smoke):
               "CLI stop required redundant confirmation or emitted a Session warning")
         result, text = call("observe_jobs", {"items":[{"job_id":stopped_job}], "wait_secs":10})
         check("cancelled" in text or "stopped" in text, "stopped process did not reach terminal state")
+        # Neither explicit timeout nor short handoff is supplied: exercise both
+        # the default 50s handoff and the relaxed 600s process lifetime.
+        start = time.monotonic()
+        result, text = call("run_shell", {"command":"printf 'LONG_START\\n'; sleep 65; printf 'PAST_SIXTY_OK\\n'"})
+        handoff_elapsed = time.monotonic() - start
+        check(45 < handoff_elapsed < 58 and "LONG_START" in text, "default handoff did not preserve output around 50s")
+        tool, arguments = next(next_calls(text))
+        arguments["wait_secs"] = 50
+        result, text = call(tool, arguments)
+        lifetime_elapsed = time.monotonic() - start
+        check("PAST_SIXTY_OK" in text and "exit_code: 0" in text and lifetime_elapsed >= 65, "default lifetime still killed the command at 60s")
         return {"sync_16s_elapsed":round(sync_elapsed, 2), "tokenless_wait_elapsed":round(wait_elapsed, 2),
-                "retained_log_pages":pages, "absolute_read_and_edit":True, "revision_fenced_overwrite":True,
+                "retained_log_pages":pages, "terminal_incremental_stdout":True,
+                "incremental_terminal_chars":incremental_terminal_chars, "default_handoff_elapsed":round(handoff_elapsed,2),
+                "default_lifetime_65s_elapsed":round(lifetime_elapsed,2), "timeout_job_identity":True, "symlink_refusal_no_effect":True, "absolute_read_and_edit":True, "revision_fenced_overwrite":True,
                 "unique_exact_without_revision":True, "stale_write_rejected":True, "outside_path_rejected":True,
                 "large_read_chars":large_read_chars, "revision_error_field_path":True,
                 "stop_without_confirmation":True}
@@ -256,7 +301,7 @@ class Acceptance(Smoke):
             config = self.root / "claude-mcp.json"
             private_json(config, {"mcpServers": {}} if native else json.loads(generated))
             command = [args.claude_path, "-p", "--model", args.claude_model, "--effort", "low",
-                       "--strict-mcp-config", "--mcp-config", str(config), "--setting-sources", "",
+                       "--strict-mcp-config", "--mcp-config", str(config), "--setting-sources", "project",
                        "--permission-mode", "dontAsk", "--allowedTools", "Bash,Read,Edit,Write,Glob,Grep" if native else "mcp__webcodex__*",
                        "--no-session-persistence", "--output-format", "stream-json", "--verbose"]
         stdout, stderr = self.root / f"{label}.jsonl", self.root / f"{label}.stderr"

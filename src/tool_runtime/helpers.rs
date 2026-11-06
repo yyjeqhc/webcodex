@@ -714,6 +714,7 @@ pub(crate) fn bounded_tail(text: &str, max_chars: usize) -> (String, bool) {
 }
 
 pub(crate) const COMMAND_STDIO_TAIL_CHARS: usize = 12_000;
+pub(crate) const COMMAND_OUTPUT_MAX_LINES: usize = 200;
 
 /// Bounded execution preview keeps the first diagnostic and final status.
 pub(crate) fn bounded_head_tail(text: &str, max_chars: usize) -> (String, bool) {

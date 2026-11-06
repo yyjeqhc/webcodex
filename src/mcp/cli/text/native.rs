@@ -161,10 +161,15 @@ fn execution(text: &mut String, value: &Value) {
     }
     // A timeout is not proof that effects ended. Never offer a fresh execution
     // or a different execution tool as a way to recover missing output.
-    if matches!(status, Some("timed_out" | "outcome_unknown"))
+    if matches!(status, Some("timeout" | "timed_out" | "outcome_unknown"))
         || details["failure_kind"] == "timeout"
+        || details["command_execution_state"] == "timed_out"
     {
-        text.push_str("Effects may be incomplete or unknown; inspect the retained Job and target state before retrying.\n");
+        text.push_str(if details["job_id"].is_string() {
+            "Effects may be incomplete or unknown; inspect the retained Job and target state before retrying.\n"
+        } else {
+            "Effects may be incomplete or unknown; inspect target state before retrying.\n"
+        });
         if details["failure_kind"] == "timeout" || details["command_execution_state"] == "timed_out"
         {
             if let Some(seconds) = details["effective_timeout_secs"].as_u64() {
@@ -189,19 +194,6 @@ fn execution(text: &mut String, value: &Value) {
     exceptional(text, &evidence);
     if details != value {
         recovery(text, value);
-    }
-    if details.get("continuation").is_none()
-        && details["job_id"].is_string()
-        && (details["stdout_truncated"] == true || details["stderr_truncated"] == true)
-    {
-        if let Some(token) = details["observation_token"].as_str() {
-            recovery(
-                text,
-                &json!({"continuation":{"tool":"observe_jobs", "arguments":{
-                    "items":[{"job_id":details["job_id"], "after_observation_token":token}]
-                }}}),
-            );
-        }
     }
 }
 
@@ -313,6 +305,67 @@ fn edits(text: &mut String, value: &Value) {
     exceptional(text, &evidence);
 }
 
+fn workspace(text: &mut String, value: &Value) {
+    if let Some(branch) = value["branch"].as_str() {
+        let _ = writeln!(text, "## {branch}");
+    }
+    if value["clean"] == true {
+        text.push_str("Workspace clean.\n");
+    }
+    if let Some(files) = value["files"].as_array() {
+        for file in files {
+            let status = match file["status"].as_str() {
+                Some("untracked") => "??",
+                Some("modified") => "M",
+                Some("added") => "A",
+                Some("deleted") => "D",
+                Some("renamed") => "R",
+                Some("copied") => "C",
+                Some("conflicted") => "conflict",
+                Some(other) => other,
+                None => "?",
+            };
+            let _ = write!(text, "{status} ");
+            if let Some(old) = file["old_path"].as_str() {
+                let _ = write!(text, "{old} -> ");
+            }
+            let _ = write!(text, "{}", one_line(&file["path"]));
+            if file["staged"] == true {
+                text.push_str(if file["unstaged"] == true {
+                    " (staged + unstaged)"
+                } else {
+                    " (staged)"
+                });
+            }
+            text.push('\n');
+        }
+    }
+    if let Some(stat) = value["diff_stat"].as_str().filter(|s| !s.is_empty()) {
+        text.push_str(stat);
+        if !stat.ends_with('\n') {
+            text.push('\n');
+        }
+    }
+    selected(text, value, &["hunks", "untracked_previews", "upstream"]);
+    for key in ["ahead", "behind"] {
+        if value[key].as_u64().is_some_and(|n| n > 0) {
+            selected(text, value, &[key]);
+        }
+    }
+    for key in ["status_observation", "diff_status", "diff_stat_status"] {
+        if value[key].is_object() && value[key]["status"] != "observed" {
+            selected(text, value, &[key]);
+        }
+    }
+    selected(text, value, &["git_error", "truncation_reasons"]);
+    for key in ["files_truncated", "hunks_truncated"] {
+        if value[key] == true {
+            let _ = writeln!(text, "{key}: true");
+        }
+    }
+    exceptional(text, value);
+}
+
 pub(super) fn render(tool: &str, success: bool, error: &str, value: &Value) -> Option<String> {
     if !matches!(
         tool,
@@ -370,31 +423,7 @@ pub(super) fn render(tool: &str, success: bool, error: &str, value: &Value) -> O
             }
             exceptional(&mut text, &evidence);
         }
-        "read_workspace_changes" => {
-            match value["clean"].as_bool() {
-                Some(true) => text.push_str("Workspace clean.\n"),
-                Some(false) => text.push_str("Workspace has changes.\n"),
-                None => text.push_str("Workspace status unavailable.\n"),
-            }
-            selected(
-                &mut text,
-                value,
-                &[
-                    "branch",
-                    "head",
-                    "files",
-                    "diff_stat",
-                    "hunks",
-                    "untracked_previews",
-                    "status_observation",
-                    "diff_observation",
-                    "upstream",
-                    "ahead",
-                    "behind",
-                ],
-            );
-            exceptional(&mut text, value);
-        }
+        "read_workspace_changes" => workspace(&mut text, value),
         "search_project_texts" => {
             // The existing layouts own matches/context/count modes. Only the
             // declared content and incomplete-coverage contract reaches them.

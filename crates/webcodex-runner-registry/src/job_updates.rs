@@ -185,6 +185,7 @@ pub struct ShellJobLogObservation {
     pub stderr_returned_lines: usize,
     pub stdout_total_lines: usize,
     pub stderr_total_lines: usize,
+    pub has_more_log_pages: bool,
     pub analysis_stdout: String,
     pub analysis_stderr: String,
     pub analysis_truncated: bool,
@@ -211,6 +212,7 @@ impl Default for ShellJobLogObservation {
             stderr_returned_lines: 0,
             stdout_total_lines: 0,
             stderr_total_lines: 0,
+            has_more_log_pages: false,
             analysis_stdout: String::new(),
             analysis_stderr: String::new(),
             analysis_truncated: false,
@@ -225,6 +227,7 @@ fn frozen_shell_job_log_projection(
     since_stderr_line: Option<usize>,
     tail_lines: Option<usize>,
     wait: JobLogWait,
+    page: bool,
 ) -> (
     ShellJobInfo,
     Option<String>,
@@ -272,6 +275,7 @@ fn frozen_shell_job_log_projection(
             stderr_returned_lines: stderr.as_deref().unwrap_or_default().lines().count(),
             stdout_total_lines: job.stdout.next_line.saturating_sub(1),
             stderr_total_lines: job.stderr.next_line.saturating_sub(1),
+            has_more_log_pages: false,
             analysis_stdout,
             analysis_stderr,
             analysis_truncated,
@@ -316,6 +320,12 @@ fn frozen_shell_job_log_projection(
                 .expect("cursor-aware token has stderr cursor"),
         },
     };
+    let base_mode = match base_mode {
+        webcodex_core::job_observation::JobLogSelectionMode::Delta { cursor } if page => {
+            webcodex_core::job_observation::JobLogSelectionMode::Page { cursor }
+        }
+        mode => mode,
+    };
     let stdout = webcodex_core::job_observation::project_log_stream(
         &job.stdout.tail,
         job.stdout.first_retained_line,
@@ -325,6 +335,12 @@ fn frozen_shell_job_log_projection(
         base_mode,
         true,
     );
+    let stderr_mode = match stderr_mode {
+        webcodex_core::job_observation::JobLogSelectionMode::Delta { cursor } if page => {
+            webcodex_core::job_observation::JobLogSelectionMode::Page { cursor }
+        }
+        mode => mode,
+    };
     let stderr = webcodex_core::job_observation::project_log_stream(
         &job.stderr.tail,
         job.stderr.first_retained_line,
@@ -357,6 +373,7 @@ fn frozen_shell_job_log_projection(
         stderr_returned_lines: stderr.returned_lines,
         stdout_total_lines: stdout.total_lines,
         stderr_total_lines: stderr.total_lines,
+        has_more_log_pages: stdout.has_more || stderr.has_more,
         analysis_stdout,
         analysis_stderr,
         analysis_truncated,
@@ -1874,6 +1891,41 @@ impl RunnerRegistry {
         ),
         String,
     > {
+        self.job_log_with_paging_for_auth(
+            auth,
+            job_id,
+            since_stdout_line,
+            since_stderr_line,
+            tail_lines,
+            after_observation_token,
+            wait_secs,
+            false,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn job_log_with_paging_for_auth(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        job_id: &str,
+        since_stdout_line: Option<usize>,
+        since_stderr_line: Option<usize>,
+        tail_lines: Option<usize>,
+        after_observation_token: Option<&str>,
+        wait_secs: Option<u64>,
+        page: bool,
+    ) -> Result<
+        (
+            ShellJobInfo,
+            Option<String>,
+            Option<String>,
+            usize,
+            usize,
+            ShellJobLogObservation,
+        ),
+        String,
+    > {
         validate_id(job_id, "job_id")?;
         let after = after_observation_token
             .map(|value| {
@@ -1926,6 +1978,7 @@ impl RunnerRegistry {
                     since_stderr_line,
                     tail_lines,
                     wait,
+                    page,
                 ));
             }
 
@@ -1966,6 +2019,7 @@ impl RunnerRegistry {
                     since_stderr_line,
                     tail_lines,
                     wait,
+                    page,
                 ));
             }
             drop(inner);
@@ -2013,6 +2067,7 @@ impl RunnerRegistry {
                     since_stderr_line,
                     tail_lines,
                     wait,
+                    page,
                 ));
             }
         }

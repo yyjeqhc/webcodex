@@ -23,7 +23,11 @@ impl FileReadFailure {
             Self::StaleRevision => "stale_read_revision",
         };
         ToolResult::err_with_output(
-            format!("read_file failed: {reason}"),
+            if reason == "outside_project" {
+                "read_file failed: path is outside the Project".to_string()
+            } else {
+                format!("read_file failed: {reason}")
+            },
             json!({
                 "error_kind": "read_file_failed",
                 "reason_code": reason,

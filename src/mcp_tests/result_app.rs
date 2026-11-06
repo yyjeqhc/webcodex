@@ -2438,6 +2438,7 @@ fn observe_jobs_item_limit_matches_presentation_bound() {
     let parsed = ToolCall::ObserveJobs {
         items: (0..8)
             .map(|index| ObserveJobsItem {
+                page: false,
                 job_id: format!("job-{index}"),
                 after_observation_token: None,
                 observation_ref: None,

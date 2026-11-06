@@ -374,12 +374,7 @@ fn cli_readiness_partial_and_tracked_listing_keep_exact_evidence() {
     );
     assert_snapshot("tracked_files_truncated", &listing);
     assert!(text(&listing).starts_with("src/ (5 files)\n"));
-    for evidence in [
-        "list_truncated: true",
-        "total_files: 5",
-        "depth: 1",
-        "source: git_index",
-    ] {
+    for evidence in ["list_truncated: true", "total_files: 5", "depth: 1"] {
         assert!(text(&listing).contains(evidence));
     }
     let partial = project(
@@ -952,4 +947,39 @@ fn cli_job_receipt_does_not_fold_a_different_jobs_continuation() {
     assert!(text(&body).contains("observation_token: same-looking-token"));
     assert_exact_call_line(&body, &call);
     assert_eq!(text(&body).matches("same-looking-token").count(), 2);
+}
+
+#[test]
+fn cli_native_timeout_and_workspace_projections_keep_actionable_facts() {
+    let timeout = project(
+        "observe_jobs",
+        true,
+        json!({"items":[{
+            "job_id":"job-timeout", "status":"timeout", "error":"job timed out after 2 seconds"
+        }]}),
+    );
+    assert!(text(&timeout).contains("Effects may be incomplete"));
+    assert!(text(&timeout).contains("job_id: job-timeout"));
+    let no_job = project("run_shell", false, json!({"execution_state":"timed_out"}));
+    assert!(text(&no_job).contains("inspect target state"));
+    assert!(!text(&no_job).contains("retained Job"));
+    let status = project(
+        "read_workspace_changes",
+        true,
+        json!({"branch":"main", "clean":false,
+        "files":[{"path":"new.txt", "status":"untracked", "staged":false, "unstaged":false},
+            {"path":"changed.rs", "status":"modified", "staged":true, "unstaged":true}],
+        "diff_stat":" changed.rs | 2 +-", "status_observation":{"status":"observed"}}),
+    );
+    assert_eq!(
+        text(&status),
+        "## main\n?? new.txt\nM changed.rs (staged + unstaged)\n changed.rs | 2 +-\n"
+    );
+    let files = project(
+        "list_project_tracked_files",
+        true,
+        json!({"entries":[{"path":"a.rs","kind":"file"}],
+        "depth":null,"depth_auto":false,"returned":1,"total_files":1,"total_entries":1,"source":"git_index", "next_offset":null, "truncated":false}),
+    );
+    assert_eq!(text(&files), "a.rs\n");
 }

@@ -268,12 +268,16 @@ impl ParsedCall {
                 "Invocation sidecars are unavailable on the execution-only CLI surface",
             )));
         }
-        if cli && crate::mcp::cli::unavailable_argument(&params.name, &params.arguments).is_some() {
-            return Err(McpOutcome::BadRequest(rpc_error(
-                id,
-                -32602,
-                "Session recording arguments are unavailable on the execution-only CLI surface",
-            )));
+        if cli {
+            if let Some(key) =
+                crate::mcp::cli::unavailable_argument(&params.name, &params.arguments)
+            {
+                return Err(McpOutcome::BadRequest(rpc_error(
+                    id,
+                    -32602,
+                    format!("{key} is unavailable on the execution-only CLI surface"),
+                )));
+            }
         }
         let invocation = match parse_mcp_invocation_envelope(
             &params.name,
@@ -402,14 +406,25 @@ impl ParsedCall {
             )));
         }
         if cli {
-            if let Some(key) =
-                crate::mcp::cli::unavailable_argument(&params.name, &params.arguments)
+            if let Some(key) = via_adaptive_runtime_gateway
+                .then(|| crate::mcp::cli::unavailable_argument(&params.name, &params.arguments))
+                .flatten()
             {
                 return Err(McpOutcome::BadRequest(rpc_error(
                     id,
                     -32602,
                     format!("{key} is unavailable on the execution-only CLI surface"),
                 )));
+            }
+            if params.name == "run_shell" {
+                if let Some(args) = params.arguments.as_object_mut() {
+                    if args.get("timeout_secs").is_none_or(Value::is_null) {
+                        args.insert(
+                            "timeout_secs".into(),
+                            json!(crate::mcp::cli::DEFAULT_COMMAND_TIMEOUT_SECS),
+                        );
+                    }
+                }
             }
             if matches!(params.name.as_str(), "read_files" | "search_project_texts") {
                 if let Some(args) = params.arguments.as_object_mut() {

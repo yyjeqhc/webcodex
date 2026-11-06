@@ -198,6 +198,12 @@ pub(crate) async fn await_structured_job_result(
             stdout,
             stderr,
         } => {
+            let truncated = job.stdout_log_truncated
+                || job.stderr_log_truncated
+                || [&stdout, &stderr].iter().any(|stream| {
+                    stream.chars().count() > super::helpers::COMMAND_STDIO_TAIL_CHARS
+                        || stream.lines().count() > super::helpers::COMMAND_OUTPUT_MAX_LINES
+                });
             let mut result = terminal_result(&job, stdout, stderr, budget.effective_timeout_secs);
             add_structured_continuation_facts(
                 &mut result,
@@ -205,7 +211,15 @@ pub(crate) async fn await_structured_job_result(
                 budget.sync_wait_secs,
                 true,
             );
-            finalize_hidden_terminal_projection(&clients, auth, &job, &mut result, budget).await;
+            finalize_hidden_terminal_projection(
+                &clients,
+                auth,
+                &job,
+                &mut result,
+                budget,
+                truncated,
+            )
+            .await;
             Ok(result)
         }
         HiddenStructuredJobWait::Continued {
@@ -550,15 +564,14 @@ pub(crate) async fn finalize_hidden_terminal_projection(
     job: &ShellJobInfo,
     result: &mut super::ToolResult,
     budget: StructuredExecutionBudget,
+    truncated: bool,
 ) {
-    let truncated = ["stdout", "stderr"].iter().any(|stream| {
-        result.output[format!("{stream}_truncated")] == true
-            || result.output[format!("{stream}_lines")]
-                .as_u64()
-                .is_some_and(|n| n > 200)
-    });
-    if !truncated && job.command_execution_state != Some(ShellCommandExecutionState::OutcomeUnknown)
-    {
+    let retain = truncated
+        || matches!(
+            job.command_execution_state,
+            Some(ShellCommandExecutionState::OutcomeUnknown | ShellCommandExecutionState::TimedOut)
+        );
+    if !retain {
         clients
             .remove_projected_hidden_terminal_job_record(&job.job_id)
             .await;
@@ -566,15 +579,9 @@ pub(crate) async fn finalize_hidden_terminal_projection(
     }
 
     let access = crate::runner_http::runner_access_from_auth(auth);
-    let publication = if truncated {
-        clients
-            .retain_terminal_job_logs(access.as_ref(), &job.job_id)
-            .await
-    } else {
-        clients
-            .promote_hidden_job(access.as_ref(), &job.job_id)
-            .await
-    };
+    let publication = clients
+        .retain_terminal_job_logs(access.as_ref(), &job.job_id)
+        .await;
     let Ok(public_job) = publication else {
         return;
     };
@@ -589,33 +596,15 @@ pub(crate) async fn finalize_hidden_terminal_projection(
     result.output["job_id"] = serde_json::json!(public_job.job_id);
     result.output["job_status"] = serde_json::json!(public_job.status);
     result.output["activity"] =
-        serde_json::to_value(public_job.activity).unwrap_or(serde_json::Value::Null);
-    let log_start = if truncated {
-        // This is a typed Server-owned token, never an inferred client receipt.
-        // Rewind both streams so paged observation can recover retained output.
-        public_job
-            .observation_token
-            .as_deref()
-            .and_then(|value| {
-                webcodex_core::job_observation::JobObservationToken::parse(value).ok()
-            })
-            .map(|mut token| {
-                token.stdout_cursor =
-                    Some(public_job.stdout_retained_from_line.unwrap_or(1) as u64);
-                token.stderr_cursor =
-                    Some(public_job.stderr_retained_from_line.unwrap_or(1) as u64);
-                token.encode()
-            })
-    } else {
-        None
-    };
-    let token = log_start
-        .as_deref()
-        .or(public_job.observation_token.as_deref());
-    if let Some(observation_token) = token {
-        result.output["observation_token"] = serde_json::json!(observation_token);
+        serde_json::to_value(&public_job.activity).unwrap_or(serde_json::Value::Null);
+    if let Some(token) = public_job.observation_token.as_deref() {
+        result.output["observation_token"] = json!(token);
     }
-    result.output["continuation"] = super::jobs::observe_job_continuation(&job.job_id, token);
+    result.output["continuation"] = if truncated {
+        super::jobs::observe_job_log_page(&public_job, true)
+    } else {
+        super::jobs::observe_job_continuation(&job.job_id, public_job.observation_token.as_deref())
+    };
 }
 
 /// Re-observe/promote the same durable record, never a replacement execution.

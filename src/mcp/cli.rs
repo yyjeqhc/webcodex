@@ -24,7 +24,9 @@ pub(super) const DIRECT_TOOLS: &[&str] = &[
     "read_tool_manifest",
 ];
 
-pub(super) const INSTRUCTIONS: &str = "Tools execute on the Project's owning Runner, not necessarily your local machine. Use the configured Project or list_projects. Read the remote repository's AGENTS.md / CLAUDE.md before editing; local instructions may describe a different repository. run_shell waits up to 50 seconds by default; sync_wait_secs requests earlier return. Pending or uncertain execution retains one Job: observe_jobs waits/reads it, stop_job cancels it. Never replay uncertain effects. Edits use a read revision or a unique exact old-text guard; whole-file writes require a revision. Discover specialized tools with read_tool_manifest, then call_runtime_tool. The client owns planning; no Workflow Session is used.";
+pub(super) const DEFAULT_COMMAND_TIMEOUT_SECS: u64 = 600;
+
+pub(super) const INSTRUCTIONS: &str = "Tools execute on the Project's owning Runner, not necessarily your local machine. Use the configured Project or list_projects. Read the remote repository's AGENTS.md / CLAUDE.md before editing; local instructions may describe a different repository. run_shell waits up to 50 seconds by default; sync_wait_secs requests earlier return. Commands continue until completion or timeout_secs (default 600 seconds, subject to Runner limits), then their process tree is terminated. Pending or uncertain execution retains one Job: observe_jobs waits/reads it, stop_job cancels it. Never replay uncertain effects. Edits use a read revision or a unique exact old-text guard; whole-file writes require a revision. Discover specialized tools with read_tool_manifest, then call_runtime_tool. The client owns planning; no Workflow Session is used.";
 
 pub(super) fn initialize_instructions(default_project: Option<&str>) -> Value {
     json!(match default_project {
@@ -165,9 +167,9 @@ pub(super) fn tools_list_with_exposure(
 /// Adapter-only timing, cancellation and workflow differences; reused by exact discovery.
 fn description(name: &str) -> Option<&'static str> {
     match name {
-        "run_shell" => Some("Execute a shell command on the Project Runner. cwd accepts relative or in-Project absolute paths. timeout_secs bounds lifetime; sync_wait_secs shortens the initial wait (up to 50s). Pending/uncertain results retain the same Job: observe_jobs reads/waits, stop_job cancels. Never redispatch uncertain effects. Permissions and process-tree cleanup apply."),
+        "run_shell" => Some("Execute a shell command on the Project Runner. cwd accepts relative or in-Project absolute paths. timeout_secs defaults to 600s, bounded by Runner limits; expiration kills the process tree. sync_wait_secs shortens the initial 50s wait. Pending/uncertain results retain the same Job: observe_jobs reads/waits, stop_job cancels. Never redispatch uncertain effects. Permissions and process-tree cleanup apply."),
         "stop_job" => Some("Cancel an existing owned Job by job_id. Calling requests cancellation; host approval and Project/Job authority checks apply. Acceptance is not terminal completion: observe_jobs checks the same Job. No logs are returned."),
-        "observe_jobs" => webcodex_tool_contracts::lookup_tool_definition(name).and_then(|d| d.model_spec).map(|s| s.description),
+        "observe_jobs" => Some("Read or wait for owned Jobs. With wait_secs, wait until wake_on (default terminal) or deadline, even without tokens. Tokens return the latest incremental logs; page=true reads forward for explicit log recovery. Follow returned continuations without rerunning commands. Terminal status never proves uncertain effects safe to replay."),
         "call_runtime_tool" => Some("Call an admitted tool using its exact read_tool_manifest contract; prefer direct tools. Normal authorization, permissions, capability and effect checks apply. Workflow, communication and MCP App tools are unavailable. No _wc sidecars. Never replay uncertain effects."),
         _ => None,
     }
@@ -181,6 +183,16 @@ fn project_cli_schema(name: &str, schema: &mut Value) {
         for key in ["wake_on", "summary_only"] {
             schema["properties"][key] = canonical["properties"][key].clone();
         }
+    }
+    if name == "observe_jobs" {
+        schema["properties"]["wake_on"]["description"] = json!("Wait for terminal (default), meaningful change, or any change; wait_secs bounds the wait.");
+        schema["properties"]["summary_only"]["description"] = json!("Compact proven successful validation logs only; failures and ordinary commands retain logs. Default false.");
+    }
+    if name == "run_shell" {
+        schema["properties"]["timeout_secs"]["default"] = json!(DEFAULT_COMMAND_TIMEOUT_SECS);
+        schema["properties"]["timeout_secs"]["description"] = json!("Maximum process lifetime, default 600 seconds, subject to Runner limits. Expiration terminates the process tree; effects may be incomplete.");
+        schema["properties"]["sync_wait_secs"]["description"] = json!("Initial wait, default 50 seconds. Can only shorten the wait; remaining execution continues as the same Job until its lifetime expires.");
+        schema["properties"]["cwd"]["description"] = json!("Working directory within the Project; relative or in-Project absolute path. Defaults to the Project root.");
     }
     if let Some(properties) = schema["properties"].as_object_mut() {
         properties.remove("session_id");

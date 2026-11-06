@@ -4,5 +4,5 @@ The command may have started or produced side effects, but WebCodex did not rece
 Do not automatically retry a potentially side-effecting command.
 Retry guidance: inspect the actual Job, process, service, or target state as appropriate before deciding whether retry is safe.
 outcome_unknown
-Effects may be incomplete or unknown; inspect the retained Job and target state before retrying.
+Effects may be incomplete or unknown; inspect target state before retrying.
 failure_kind: outcome_unknown

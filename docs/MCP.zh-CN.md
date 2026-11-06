@@ -135,10 +135,13 @@ CLI 命令与文件行为：
 
 - Direct 下 `run_shell` 默认最多等待 50 秒；`sync_wait_secs` 请求更早交接，
   Server/Host 上限只会缩短等待。交接结果包含已有输出尾部及原 Job 的后续调用。
+  CLI 进程生命周期 `timeout_secs` 默认 600 秒，仍受 Runner 上限约束；到期终止
+  进程树，与交接等待时间独立。
 - `observe_jobs(items=[{job_id}], wait_secs=50)` 无需 token 就能等待结束。
   `wake_on` 默认 `terminal`；显式 `change` / `meaningful_change` 仍需 baseline token。
-  带 token 时从已保留日志向前分页；首次无 token 观察取当前尾部，存储缺口或 epoch
-  变化会报告 reset。terminal 只表示结束，不代表成功。
+  带 token 默认返回最新增量尾部，直接呈现终态诊断。仅显式 `page=true` 的条目
+  从 token 向前补读日志，自动续读每页 200 行。首次无 token 观察取当前尾部，
+  存储缺口或 epoch 变化会报告 reset。terminal 只表示结束，不代表成功。
 - 截断预览保留开头和结尾。同步结果发生截断时，原 Job 按现有有界保留策略留下，
   可继续读取日志；不要为了补日志重跑有副作用的命令。
 - 文件读取、搜索、目录/文件名查找、LSP 和事务编辑接受本次解析的 Project 根目录内

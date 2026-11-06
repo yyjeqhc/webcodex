@@ -268,7 +268,13 @@ impl JobLogDeltaStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobLogSelectionMode {
     Baseline,
-    Delta { cursor: u64 },
+    Delta {
+        cursor: u64,
+    },
+    /// Explicit forward paging, distinct from live incremental tails.
+    Page {
+        cursor: u64,
+    },
     Reset,
 }
 
@@ -281,6 +287,7 @@ pub struct JobLogStreamProjection {
     pub first_retained_line: usize,
     pub truncated: bool,
     pub delta_reset: bool,
+    pub has_more: bool,
 }
 
 /// Select one bounded model-facing stream from an already frozen retained
@@ -321,7 +328,7 @@ pub fn project_log_stream(
     let (start, delta_reset) = match mode {
         JobLogSelectionMode::Baseline => (baseline_start(), false),
         JobLogSelectionMode::Reset => (baseline_start(), true),
-        JobLogSelectionMode::Delta { cursor } => {
+        JobLogSelectionMode::Delta { cursor } | JobLogSelectionMode::Page { cursor } => {
             let cursor = usize::try_from(cursor).ok();
             let continuous = snapshot_consistent
                 && cursor.is_some_and(|cursor| {
@@ -334,13 +341,16 @@ pub fn project_log_stream(
                     .expect("continuous cursor is present")
                     .saturating_sub(first_retained_line)
                     .min(lines.len());
-                // A valid receipt resumes forward from that cursor. Page the
-                // remaining retained output instead of dropping its beginning.
-                (delta_start, false)
+                if matches!(mode, JobLogSelectionMode::Page { .. }) {
+                    (delta_start, false)
+                } else {
+                    let start = baseline_start().max(delta_start);
+                    (start, start > delta_start)
+                }
             }
         }
     };
-    let end = if matches!(mode, JobLogSelectionMode::Delta { .. }) && !delta_reset {
+    let end = if matches!(mode, JobLogSelectionMode::Page { .. }) && !delta_reset {
         tail_bound
             .map(|bound| start.saturating_add(bound).min(lines.len()))
             .unwrap_or(lines.len())
@@ -373,6 +383,7 @@ pub fn project_log_stream(
         first_retained_line,
         truncated,
         delta_reset,
+        has_more: end < lines.len(),
     }
 }
 
@@ -384,13 +395,19 @@ pub fn combined_delta_status(
     match mode {
         JobLogSelectionMode::Baseline => JobLogDeltaStatus::Baseline,
         JobLogSelectionMode::Reset => JobLogDeltaStatus::Reset,
-        JobLogSelectionMode::Delta { .. } if stdout.delta_reset || stderr.delta_reset => {
+        JobLogSelectionMode::Delta { .. } | JobLogSelectionMode::Page { .. }
+            if stdout.delta_reset || stderr.delta_reset =>
+        {
             JobLogDeltaStatus::Reset
         }
-        JobLogSelectionMode::Delta { .. } if stdout.text.is_empty() && stderr.text.is_empty() => {
+        JobLogSelectionMode::Delta { .. } | JobLogSelectionMode::Page { .. }
+            if stdout.text.is_empty() && stderr.text.is_empty() =>
+        {
             JobLogDeltaStatus::Unchanged
         }
-        JobLogSelectionMode::Delta { .. } => JobLogDeltaStatus::Delta,
+        JobLogSelectionMode::Delta { .. } | JobLogSelectionMode::Page { .. } => {
+            JobLogDeltaStatus::Delta
+        }
     }
 }
 
@@ -414,25 +431,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn continuous_delta_pages_forward_without_skipping_retained_lines() {
+    fn ordinary_delta_keeps_final_stdout_error_after_a_large_burst() {
+        let mut log = "START\n".to_owned();
+        let baseline = project_log_stream(
+            &log,
+            1,
+            2,
+            false,
+            Some(40),
+            JobLogSelectionMode::Baseline,
+            true,
+        );
+        log.push_str(&(1..=300).map(|i| format!("line-{i}\n")).collect::<String>());
+        log.push_str("FINAL_STDOUT_FAILURE\n");
+        let observed = project_log_stream(
+            &log,
+            1,
+            303,
+            false,
+            Some(40),
+            JobLogSelectionMode::Delta {
+                cursor: baseline.next_line as u64,
+            },
+            true,
+        );
+        assert_eq!(observed.returned_lines, 40);
+        assert!(observed.text.ends_with("FINAL_STDOUT_FAILURE\n"));
+        assert_eq!(observed.next_line, 303);
+        assert!(observed.truncated);
+        assert!(observed.delta_reset);
+        assert!(!observed.has_more);
+    }
+
+    #[test]
+    fn explicit_pages_move_forward_without_skipping_retained_lines() {
         let log = (0..501).map(|i| format!("line-{i}\n")).collect::<String>();
         let mut cursor = 1;
         let mut collected = String::new();
+        let mut pages = 0;
         loop {
             let page = project_log_stream(
                 &log,
                 1,
                 502,
                 false,
-                Some(40),
-                JobLogSelectionMode::Delta { cursor },
+                Some(200),
+                JobLogSelectionMode::Page { cursor },
                 true,
             );
             assert_eq!(page.total_lines, 501);
             assert!(!page.delta_reset);
-            assert!(page.returned_lines <= 40);
+            assert!(page.returned_lines <= 200);
             collected.push_str(&page.text);
-            if !page.truncated {
+            pages += 1;
+            if !page.has_more {
                 assert_eq!(page.next_line, 502);
                 break;
             }
@@ -440,6 +492,7 @@ mod tests {
             cursor = page.next_line as u64;
         }
         assert_eq!(collected, log);
+        assert_eq!(pages, 3);
     }
 
     #[test]

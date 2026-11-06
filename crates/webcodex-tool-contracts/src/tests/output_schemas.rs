@@ -2017,7 +2017,12 @@ fn key_tool_output_schemas_include_expected_fields() {
         assert!(continuation["properties"]["arguments"]["required"]
             .as_array()
             .unwrap()
-            .contains(&serde_json::json!("wake_on")));
+            .contains(&serde_json::json!("items")));
+        assert_eq!(
+            continuation["properties"]["arguments"]["properties"]["items"]["items"]["properties"]
+                ["page"]["type"],
+            "boolean"
+        );
         assert!(!has_output_field(name, "pending_strategy"));
         assert!(
             has_output_field(name, "failure_kind"),

@@ -5,5 +5,5 @@ stdout:
 partial
 stderr:
 Command timed out after 1 seconds
-Effects may be incomplete or unknown; inspect the retained Job and target state before retrying.
+Effects may be incomplete or unknown; inspect target state before retrying.
 failure_kind: timeout

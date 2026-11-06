@@ -123,6 +123,11 @@ fn cli_native_defaults_are_declared_and_keep_input_schemas_under_codex_limit() {
             );
         }
         if tool["name"] == "run_shell" {
+            assert_eq!(
+                tool["inputSchema"]["properties"]["timeout_secs"]["default"],
+                600
+            );
+            assert!(tool["description"].as_str().unwrap().contains("600s"));
             for key in [
                 "session_id",
                 "purpose",

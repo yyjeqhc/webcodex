@@ -165,7 +165,7 @@ impl ResultProjection for ExecutionProjection {
 /// Bound display only, after audit/validation consumed the full retained result.
 /// Never suggest replaying a command to recover omitted output.
 fn bound_execution_lines(result: &mut ToolResult) {
-    const MAX_LINES: usize = 200;
+    const MAX_LINES: usize = super::super::helpers::COMMAND_OUTPUT_MAX_LINES;
     let mut omitted = false;
     for stream in ["stdout", "stderr"] {
         let key = format!("{stream}_tail");

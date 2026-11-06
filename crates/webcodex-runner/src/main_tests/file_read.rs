@@ -77,16 +77,23 @@ fn runner_file_read_rejects_symlink_escape_even_when_policy_allows_target() {
     std::fs::write(&secret, "outside-secret").unwrap();
     std::os::unix::fs::symlink(&secret, project.path().join("leak.txt")).unwrap();
 
-    let mut policy = project_policy(project.path());
-    policy.allowed_roots.push(outside.path().to_path_buf());
-    let out = handle_file_request(
-        &policy,
-        &file_read_request(project.path(), "leak.txt", Some(1), Some(1), Some(1024)),
-    );
+    for allow_outside in [false, true] {
+        let mut policy = project_policy(project.path());
+        if allow_outside {
+            policy.allowed_roots.push(outside.path().to_path_buf());
+        }
+        let out = handle_file_request(
+            &policy,
+            &file_read_request(project.path(), "leak.txt", Some(1), Some(1), Some(1024)),
+        );
 
-    assert_eq!(out.exit_code, None);
-    assert_eq!(out.error.as_deref(), Some("read_file failed: invalid_path"));
-    assert!(!out.stdout.unwrap_or_default().contains("outside-secret"));
+        assert_eq!(out.exit_code, None);
+        assert_eq!(
+            out.error.as_deref(),
+            Some("read_file failed: outside_project")
+        );
+        assert!(!out.stdout.unwrap_or_default().contains("outside-secret"));
+    }
 }
 
 #[test]

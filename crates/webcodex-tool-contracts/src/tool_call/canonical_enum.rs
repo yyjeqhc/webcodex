@@ -2889,8 +2889,8 @@ pub enum ToolCall {
         )]
         #[schemars(extend("default" = 40))]
         /// Global per-stream bound. Values above 200 are accepted and clamped to 200. First observations
-        /// return a current tail; cursor-aware follow-ups return at most this many new or reset-recovery
-        /// lines.
+        /// return a current tail; token follow-ups return the latest incremental tail. Explicit page=true
+        /// reads forward from the token for log recovery; use 200 lines per page.
         #[schemars(range(min = 1))]
         tail_lines: usize,
         /// Optional one shared bounded wait (a maximum), never a minimum sleep or multiplied by item count.

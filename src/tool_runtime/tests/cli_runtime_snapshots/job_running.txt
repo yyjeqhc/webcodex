@@ -2,3 +2,4 @@ isError: false
 running
 job_id: wc_job_FIXTURE
 observation_token: wj3_EPOCH.2.1.1
+next: observe_jobs items=[{"after_observation_token":"wj3_EPOCH.2.1.1","job_id":"wc_job_FIXTURE"}] wait_secs=55 wake_on="terminal"

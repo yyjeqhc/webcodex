@@ -253,15 +253,18 @@ pub(super) fn files(text: &mut String, mut output: Value) {
         remove(&mut entry, &["path", "kind"]);
         render_fields(text, &entry);
     }
-    remove(&mut output, &["project", "path"]);
-    for key in ["returned", "total_entries"] {
+    remove(&mut output, &["project", "path", "source"]);
+    for key in ["returned", "total_entries", "total_files"] {
         omit_equal(&mut output, key, json!(count));
     }
     for key in ["truncated", "list_truncated"] {
         omit_equal(&mut output, key, json!(false));
     }
-    omit_equal(&mut output, "next_offset", Value::Null);
+    for key in ["depth", "limit", "next_offset"] {
+        omit_equal(&mut output, key, Value::Null);
+    }
     omit_equal(&mut output, "offset", json!(0));
+    omit_equal(&mut output, "depth_auto", json!(false));
     render_fields(text, &output);
 }
 

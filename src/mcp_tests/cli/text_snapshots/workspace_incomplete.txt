@@ -1,4 +1,3 @@
-Workspace status unavailable.
 status_observation: {"status":"unavailable"}
 warnings: ["status unavailable"]
 output_truncated: true

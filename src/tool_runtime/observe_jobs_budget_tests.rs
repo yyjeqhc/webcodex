@@ -220,6 +220,7 @@ fn in_place_job_budget_matches_frozen_packer_and_recovery_continuation() {
         let count = items.len();
         let originals = (0..count)
             .map(|index| ObserveJobsItem {
+                page: false,
                 job_id: format!("wc_job_benchmark_{index}"),
                 after_observation_token: None,
                 observation_ref: None,
@@ -343,6 +344,7 @@ fn model_envelope_stays_bounded_after_actionable_continuation() {
     let originals = ids
         .iter()
         .map(|job_id| ObserveJobsItem {
+            page: false,
             job_id: job_id.clone(),
             after_observation_token: None,
             observation_ref: None,

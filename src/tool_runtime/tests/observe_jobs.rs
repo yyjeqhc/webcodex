@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 fn item(job_id: &str, token: Option<String>) -> ObserveJobsItem {
     ObserveJobsItem {
+        page: false,
         job_id: job_id.to_string(),
         after_observation_token: token,
         observation_ref: None,
@@ -27,6 +28,7 @@ fn item(job_id: &str, token: Option<String>) -> ObserveJobsItem {
 
 fn item_ref(observation_ref: &str) -> ObserveJobsItem {
     ObserveJobsItem {
+        page: false,
         job_id: String::new(),
         after_observation_token: None,
         observation_ref: Some(observation_ref.to_string()),

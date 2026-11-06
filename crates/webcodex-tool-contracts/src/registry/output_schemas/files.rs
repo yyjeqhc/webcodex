@@ -515,7 +515,7 @@ fn read_files_output_schema() -> Value {
             "reason_code": {
                 "type": "string",
                 "enum": [
-                    "invalid_path", "sensitive_path", "not_found", "not_file",
+                    "invalid_path", "outside_project", "sensitive_path", "not_found", "not_file",
                     "permission_denied", "invalid_utf8", "range_too_large",
                     "agent_unavailable", "timeout", "malformed_agent_response", "io_error",
                     "stale_read_revision"

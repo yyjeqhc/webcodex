@@ -992,6 +992,13 @@ fn batch_error(
     message: impl Into<String>,
     start: Instant,
 ) -> CommandResult {
+    let guidance = if code == "path_exists" && kind == Some("create") {
+        "use kind=write with a fresh read_revision to overwrite the existing file"
+    } else if code == "path_policy_rejected" {
+        "choose a path inside the Project and allowed roots"
+    } else {
+        "refresh file hashes/content, correct the failing change, and retry the whole batch"
+    };
     line_edit_stdout(
         serde_json::json!({
             "changed": false,
@@ -1002,7 +1009,7 @@ fn batch_error(
             "kind": kind,
             "path": path,
             "error": format!(
-                "Rejected transactional file batch: {}. No files were modified. Retry guidance: refresh file hashes/content, correct the failing change, and retry the whole batch.",
+                "Rejected transactional file batch: {}. No files were modified. Retry guidance: {guidance}.",
                 message.into()
             ),
         }),

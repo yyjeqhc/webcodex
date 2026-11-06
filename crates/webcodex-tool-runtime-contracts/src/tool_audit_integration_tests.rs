@@ -382,7 +382,7 @@ fn project_overview_tool_call_parses() {
 #[test]
 fn observe_jobs_wake_policy_defaults_validates_and_audits_safely() {
     for (policy, expected) in [
-        (None, ObserveJobsWakeOn::Change),
+        (None, ObserveJobsWakeOn::Terminal),
         (Some("change"), ObserveJobsWakeOn::Change),
         (Some("terminal"), ObserveJobsWakeOn::Terminal),
         (Some("all_terminal"), ObserveJobsWakeOn::AllTerminal),

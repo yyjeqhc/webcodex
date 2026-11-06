@@ -199,16 +199,22 @@ The output directory must be new. The harness starts an isolated loopback
 Server/Runner, gives each model a fresh remote Python fixture and unrelated local
 cwd, then repeats the same task with each client's native tools in the fixture.
 It checks a 16-second foreground command, early handoff with output, tokenless
-terminal waiting, 500-line head/tail previews and retained-log pagination, absolute
+terminal waiting, a mid-run observation followed by terminal stdout failure,
+a 65-second command with default lifetime and 50-second handoff, timeout Job identity,
+500-line head/tail previews and three 200-line retained-log pages, absolute
 paths, revision-fenced overwrite, stale-write rejection, bounded large reads,
-field-specific revision errors and cancellation without a second confirmation.
+field-specific revision errors, symlink escape rejection with confirmed no effects,
+and cancellation without a second confirmation.
 Each model must pass
 independent unit tests and launch its long command exactly once, with zero
 Workflow Sessions. The prompt does not ask it to read instructions: a separate
 fixture rule records whether remote instructions were discovered and followed.
 MCP Codex uses a read-only local sandbox with explicit per-tool approval; MCP
 Claude allows only that connection's tools. Native controls can edit the disposable
-fixture using their own tools. Client tool search is counted separately. Codex
+fixture using their own tools. Claude runs with `--setting-sources project` in both
+arms, keeping project instructions enabled while excluding user/local settings
+(see [Claude configuration diagnostics](https://code.claude.com/docs/en/debug-your-config)).
+Client tool search is counted separately. Codex
 counts completed action events; its native stdin polls are not separately emitted,
 so these counts are not exact total tool invocations. Claude counts tool-use
 blocks. Instruction compliance is recorded separately, including failures. Use

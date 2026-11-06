@@ -2620,3 +2620,16 @@ fn skill_read_optional_resource_hash_preserves_legacy_calls_and_is_schema_bounde
         .unwrap()
         .contains(&json!("expected_resource_sha256")));
 }
+
+#[test]
+fn observe_jobs_explicit_log_pages_require_a_cursor_and_roundtrip() {
+    for args in [
+        json!({"items":[{"job_id":"job", "page":true}]}),
+        json!({"items":[{"job_id":"job", "page":true, "after_observation_token":null}]}),
+    ] {
+        assert!(ToolCall::from_tool_name("observe_jobs", args).is_err());
+    }
+    let args = json!({"items":[{"job_id":"job", "page":true, "after_observation_token":"opaque"}], "tail_lines":200});
+    let parsed = ToolCall::from_tool_name("observe_jobs", args).unwrap();
+    assert!(matches!(parsed, ToolCall::ObserveJobs {items, tail_lines:200, ..} if items[0].page));
+}

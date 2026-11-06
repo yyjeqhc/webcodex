@@ -197,33 +197,66 @@ python3 scripts/e2e_local_agent_execution.py --bin-dir target/dogfood --output-d
 
 The output directory must be new. The harness starts an isolated loopback
 Server/Runner, gives each model a fresh remote Python fixture and unrelated local
-cwd, then repeats the same task with each client's native tools in the fixture.
+cwd, and compares three arms: MCP with native tools still advertised, MCP with
+native-tool suppression, and native tools in the fixture. For Claude Code 2.1.319,
+`--tools ""` removes native executable tools; its provider request still contains
+`DeferredToolPlaceholder`. Codex 0.166.0 `--disable shell_tool` removes
+`exec_command` / `write_stdin`, but leaves `apply_patch`, `view_image`, Code Mode
+and other tools. This arm is not a native-tool-free Codex. The report lists the
+remaining tools instead of assuming all duplicate schemas disappeared.
 It checks a 16-second foreground command, early handoff with output, tokenless
 terminal waiting, a mid-run observation followed by terminal stdout failure,
 a 65-second command with default lifetime and 50-second handoff, timeout Job identity,
-500-line head/tail previews and three 200-line retained-log pages, absolute
+500-line head/tail previews and three retained-log pages (up to 200 lines each,
+starting after the displayed head), absolute
 paths, revision-fenced overwrite, stale-write rejection, bounded large reads,
 field-specific revision errors, symlink escape rejection with confirmed no effects,
-and cancellation without a second confirmation.
+and cancellation without a second confirmation. Discovery checks the exact eight
+(or nine without a default Project) direct tools and 10,000 / 12,000-byte budgets.
+It also verifies gateway-only tools, hidden canonical `occurrence` edits through
+a direct call, executable `next:` lines without duplicate selectors/defaults,
+reset deduplication and sparse workspace-status output.
 Each model must pass
 independent unit tests and launch its long command exactly once, with zero
 Workflow Sessions. The prompt does not ask it to read instructions: a separate
 fixture rule records whether remote instructions were discovered and followed.
 MCP Codex uses a read-only local sandbox with explicit per-tool approval; MCP
-Claude allows only that connection's tools. Native controls can edit the disposable
-fixture using their own tools. Claude runs with `--setting-sources project` in both
-arms, keeping project instructions enabled while excluding user/local settings
+Claude permits only that connection's tools (`--allowedTools` controls permission,
+not schema removal). Native controls can edit the disposable fixture using their
+own tools. Claude runs with `--setting-sources project` in all three arms, keeping
+project instructions enabled while excluding user/local settings
 (see [Claude configuration diagnostics](https://code.claude.com/docs/en/debug-your-config)).
-Client tool search is counted separately. Codex
-counts completed action events; its native stdin polls are not separately emitted,
-so these counts are not exact total tool invocations. Claude counts tool-use
-blocks. Instruction compliance is recorded separately, including failures. Use
-`--probe-only` for the deterministic Server/Runner probes without paid model calls. Model credential variables are omitted from the service environment. Temporary
-credentials and raw logs are removed after service cleanup; the bounded report
-retains binary hashes, dirty source identity, client versions, tool counts,
-client-reported token usage and model feedback. The harness contacts paid model
-APIs; ordinary tests never run it. Byte counts are not tokenizer measurements,
-and model feedback is not proof until checked against actual receipts/fixture state.
+Client tool search is counted separately. The report includes compact
+`tools/list` result bytes (Python `json.dumps(..., separators=(",", ":"))`, no RPC
+envelope), each tool's full descriptor and schema bytes, and Unicode character
+counts for each emitted tool response. Image/binary blocks are not counted as
+text. Missing responses are recorded as `null`, never zero: Codex file-change
+events, for example, omit the underlying tool response. Codex counts completed
+action events; command updates do not expose distinct native stdin polls, so
+`native_poll_calls` is `null` and total calls are not exact tool-invocation totals.
+Claude counts distinct tool-use IDs. Claude assistant-message usage is retained
+per message ID (latest receipt wins); result totals are separate, never added to
+those rounds. Codex `exec --json` exposes `turn.completed` totals, not usage for
+each model request; `model_round_usage` is therefore `null`. No missing token
+counts are estimated from bytes. Instruction compliance is recorded separately,
+including failures.
+
+Use `--probe-only` for deterministic Server/Runner checks and installed-client
+inventory checks **without paid model calls**. The inventory check uses the same
+client flags against a loopback provider with canned protocol responses. Codex
+Code Mode performs a fixed metadata-only `ALL_TOOLS` read to expose deferred MCP
+names; Claude also supplies its init inventory. No project work or real model is
+involved. The report retains provider-request tool names, removed tools and the
+remaining native tools; it does not retain requests, prompts or authorization
+headers. Counts of fake-provider tokens are not model-performance evidence.
+
+Model credential variables are omitted from the service and fake-provider client
+environments. Temporary credentials and raw logs are removed after process-group
+and service cleanup; bounded reports retain binary hashes, dirty source identity,
+client versions, discovery sizes, tool-result lengths, observed usage and model
+feedback. Running without `--probe-only` contacts paid model APIs; ordinary tests
+never run it. Byte counts are not tokenizer measurements, and model feedback is
+not proof until checked against actual receipts/fixture state.
 
 Cloudflare's isolated real Server/Runner/CLI acceptance harness is
 `python3 scripts/e2e_cloudflare_oauth.py --bin-dir target/debug`; its required

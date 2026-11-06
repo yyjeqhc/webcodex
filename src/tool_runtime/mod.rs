@@ -58,7 +58,9 @@ mod handoff;
 mod handoff_brief;
 mod handoff_tools;
 mod helpers;
-pub(crate) use helpers::{bounded_tail, COMMAND_STDIO_TAIL_CHARS};
+#[cfg(test)]
+pub(crate) use helpers::bounded_head_tail;
+pub(crate) use helpers::{bounded_tail, COMMAND_OUTPUT_MAX_LINES, COMMAND_STDIO_TAIL_CHARS};
 mod hygiene;
 mod hygiene_tools;
 mod instruction_projection;

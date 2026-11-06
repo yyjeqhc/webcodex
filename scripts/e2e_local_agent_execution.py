@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Opt-in real Codex/Claude -> local MCP Server/Runner acceptance.
 
-Uses the caller's authenticated model accounts (paid requests), low effort, and
-process-local MCP configuration. Services, credentials, repositories and logs
+Without --probe-only, uses the caller's authenticated model accounts (paid
+requests), low effort, and process-local MCP configuration. --probe-only runs
+Server/Runner checks and installed clients against a loopback canned provider. Services, credentials, repositories and logs
 live in a new private directory; no shared service or client config is changed.
 Build with the dogfood profile first. Reported tokens are client observations,
 not estimates from JSON bytes. A model's success claim is independently checked.
@@ -10,14 +11,12 @@ not estimates from JSON bytes. A model's success claim is independently checked.
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import hashlib
 import json
 import os
 import re
 from pathlib import Path
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -27,6 +26,8 @@ from urllib.request import Request
 from urllib.error import HTTPError
 
 from e2e_session_continuity_ws import ROOT, Smoke, check
+from local_agent_metrics import client_metrics, discovery_metrics
+from local_agent_probe import inventory_probe, run_captured
 
 SOURCE = '''def clamp(value, lower, upper):
     """Clamp inclusively; reject reversed bounds."""
@@ -148,10 +149,28 @@ class Acceptance(Smoke):
 
     def probe_native_contracts(self):
         self.reset_fixture()
+        tool_returns = []
         def call(tool, arguments):
             response = self.rpc("tools/call", {"name":tool, "arguments":arguments})
             check("error" not in response, f"{tool}: RPC error")
-            return response, response_text(response)
+            text = response_text(response)
+            tool_returns.append({"tool":tool, "returned_text_chars":len(text)})
+            if list(next_calls(text)):
+                check(not re.search(r"^(job_id|observation_token):", text, re.M), "next call duplicates Job selectors")
+                check('wake_on="terminal"' not in text, "next call repeats CLI default")
+            check(not ("log_delta_status: reset" in text and "_delta_reset: true" in text), "duplicate log reset")
+            return response, text
+        for tool in ["list_project_files", "list_project_tracked_files", "read_workspace_changes"]:
+            _, text = call("read_tool_manifest", {"tool_name":tool})
+            check('"mode":"gateway"' in text, f"{tool} lost gateway route")
+            check("session_event_limit" not in text, "legacy Session field still advertised")
+        for tool in ["list_project_files", "list_project_tracked_files", "list_projects"]:
+            result, _ = call("call_runtime_tool", {"tool":tool, "arguments":{}})
+            check(not result["result"].get("isError"), f"{tool} unavailable through gateway")
+        result, text = call("call_runtime_tool", {"tool":"read_workspace_changes", "arguments":{}})
+        check(not result["result"].get("isError") and "?? ranges.py" in text, "workspace status failed")
+        check("diff_status:" not in text and "diff_stat_status:" not in text, "unrequested/successful diff looks failed")
+        check('"kind":"untracked_file"' not in text, "untracked warning duplicates status")
         start = time.monotonic()
         result, text = call("run_shell", {"command":"python3 long_check.py"})
         check(not result["result"].get("isError") and "LONG_CHECK_OK" in text, "16s default wait did not finish")
@@ -184,20 +203,33 @@ class Acceptance(Smoke):
         tool, arguments = next(next_calls(text))
         arguments["wait_secs"] = 10
         result, text = call(tool, arguments)
-        check("Effects may be incomplete" in text and "job_id:" in text and "timeout" in text,
+        check("Effects may be incomplete" in text and ("job_id:" in text or list(next_calls(text))) and "timeout" in text,
               "durable timeout omitted uncertainty or retained Job identity")
         result, text = call("run_shell", {"command":"python3 noisy_check.py"})
         check(result["result"]["isError"] and "FIRST_ERROR" in text and "build detail 499" in text, "head/tail omitted first error or final output")
         seen = text
         pages = 0
         pending = list(next_calls(text))
+        check(pending, "truncated sync output lost retained log continuation")
+        first_page = True
         while pending and pages < 20:
             tool, arguments = pending[0]
             result, text = call(tool, arguments)
+            if first_page:
+                check("stdout:\nbuild detail 99\n" in text and "FIRST_ERROR" not in text,
+                      "log recovery repeated the displayed preview prefix")
+                first_page = False
             seen += text
             pages += 1
             pending = list(next_calls(text))
         check("build detail 250" in seen and not pending and pages == 3, "retained log paging must use three 200-line pages")
+        (self.project_dir / "occurrence.txt").write_text("repeat\nrepeat\n")
+        _, text = call("read_files", {"items":[{"path":"occurrence.txt"}]})
+        fence = int(re.search(r"read_revision (\d+)", text).group(1))
+        result, text = call("edit_project_files", {"changes":[{"path":"occurrence.txt", "expected_read_revision":fence,
+            "edits":[{"old_text":"repeat", "new_text":"second", "occurrence":2}]}]})
+        check(not result["result"].get("isError") and (self.project_dir / "occurrence.txt").read_text() == "repeat\nsecond\n",
+              "unadvertised canonical occurrence field did not take effect")
         absolute = str(self.project_dir / "ranges.py")
         result, text = call("read_files", {"items":[{"path":absolute}]})
         revision = int(re.search(r"read_revision (\d+)", text).group(1))
@@ -218,6 +250,8 @@ class Acceptance(Smoke):
         check("outside the Project" in text and "OUTSIDE_SECRET_SENTINEL" not in text, "symlink read did not report project boundary safely")
         result, text = call("edit_project_files", {"changes":[{"kind":"create", "path":"escape/new.txt", "content":"must not write"}]})
         check(result["result"].get("isError") and "No files were modified" in text and "outcome_unknown" not in text and not (outside / "new.txt").exists(), "preflight symlink refusal was misclassified as uncertain effects")
+        check("outside the Project or allowed roots" in text and str(outside) not in text and "cwd " not in text,
+              "symlink create refusal exposed resolved outside path")
         (self.project_dir / "escape").unlink()
         result, text = call("edit_project_files", {"changes":[{"kind":"create", "path":"ranges.py", "content":"must not overwrite"}]})
         check("kind=write" in text, "existing create did not suggest write")
@@ -255,7 +289,8 @@ class Acceptance(Smoke):
         result, text = call(tool, arguments)
         lifetime_elapsed = time.monotonic() - start
         check("PAST_SIXTY_OK" in text and "exit_code: 0" in text and lifetime_elapsed >= 65, "default lifetime still killed the command at 60s")
-        return {"sync_16s_elapsed":round(sync_elapsed, 2), "tokenless_wait_elapsed":round(wait_elapsed, 2),
+        return {"tool_returns":tool_returns, "hidden_occurrence_applied":True, "next_deduplicated":True,
+                "workspace_status_sparse":True, "log_page_skips_preview_head":True, "sync_16s_elapsed":round(sync_elapsed, 2), "tokenless_wait_elapsed":round(wait_elapsed, 2),
                 "retained_log_pages":pages, "terminal_incremental_stdout":True,
                 "incremental_terminal_chars":incremental_terminal_chars, "default_handoff_elapsed":round(handoff_elapsed,2),
                 "default_lifetime_65s_elapsed":round(lifetime_elapsed,2), "timeout_job_identity":True, "symlink_refusal_no_effect":True, "absolute_read_and_edit":True, "revision_fenced_overwrite":True,
@@ -265,7 +300,7 @@ class Acceptance(Smoke):
 
     def reset_fixture(self):
         for file in self.project_dir.iterdir():
-            if file.is_dir(): shutil.rmtree(file)
+            if file.is_dir() and not file.is_symlink(): shutil.rmtree(file)
             else: file.unlink()
         for name, text in {"ranges.py": SOURCE, "test_ranges.py": TESTS,
                            "long_check.py": LONG_CHECK, "noisy_check.py": NOISY_CHECK,
@@ -274,11 +309,11 @@ class Acceptance(Smoke):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.project_dir,
                        env=self.env, stdin=subprocess.DEVNULL, check=True)
 
-    def run_client(self, client, args, native=False):
-        self.reset_fixture()
+    def client_command(self, client, args, mode):
+        native = mode == "native"
         env = dict(os.environ)
         if not native: env["WEBCODEX_LOCAL_TEST_TOKEN"] = self.owner
-        label = client + ("-native" if native else "-mcp")
+        label = client + "-" + mode
         cwd = self.project_dir if native else self.client_dir
         prompt = PROMPT if not native else PROMPT.replace(
             "Work on the remote Project configured on the webcodex MCP server; your local cwd is unrelated. ",
@@ -298,60 +333,59 @@ class Acceptance(Smoke):
                        "--config", "mcp_servers=" + inline_toml(servers),
                        "--cd", str(cwd), "-"]
         else:
-            config = self.root / "claude-mcp.json"
+            config = self.root / f"{label}-config.json"
             private_json(config, {"mcpServers": {}} if native else json.loads(generated))
             command = [args.claude_path, "-p", "--model", args.claude_model, "--effort", "low",
                        "--strict-mcp-config", "--mcp-config", str(config), "--setting-sources", "project",
                        "--permission-mode", "dontAsk", "--allowedTools", "Bash,Read,Edit,Write,Glob,Grep" if native else "mcp__webcodex__*",
                        "--no-session-persistence", "--output-format", "stream-json", "--verbose"]
+        if mode == "mcp-no-native":
+            if client == "codex":
+                command[-1:-1] = ["--disable", "shell_tool"]
+            else:
+                command.extend(["--tools", ""])
+        return command, env, cwd, prompt
+
+    def probe_client_tools(self, args):
+        self.reset_fixture()
+        results = {}
+        for client in args.clients:
+            modes = {}
+            for mode in ["mcp", "mcp-no-native"]:
+                command, env, cwd, _ = self.client_command(client, args, mode)
+                modes[mode] = inventory_probe(client, command, cwd, env, self.root, self.owner)
+            before, after = set(modes["mcp"]["tools"]), set(modes["mcp-no-native"]["tools"])
+            modes["removed_tools"] = sorted(before - after)
+            available = set(modes["mcp-no-native"]["client_init_tools"]) if client == "claude" else after
+            modes["remaining_native_tools"] = sorted(name for name in available if not name.startswith("mcp__webcodex__"))
+            modes["request_only_entries"] = sorted(after - available)
+            if client == "claude":
+                # Claude's provider request retains DeferredToolPlaceholder;
+                # its init event is the authoritative executable-tool inventory.
+                check(not modes["remaining_native_tools"], "Claude --tools did not disable native tools")
+                check("Bash" in before and "Read" in before, "Claude baseline did not expose duplicate tools")
+            else:
+                check(any(name in before for name in ["exec_command", "shell", "shell_command"]), "Codex baseline has no shell tool")
+                check(not after.intersection({"exec_command", "write_stdin", "shell", "shell_command"}), "Codex shell_tool switch did not disable shell")
+            check(any(name.startswith("mcp__webcodex__") for name in after) or "mcp__webcodex" in modes["mcp-no-native"]["deferred_mcp_namespaces"], "native switch removed MCP tools")
+            results[client] = modes
+        return results
+
+    def run_client(self, client, args, mode):
+        self.reset_fixture()
+        native = mode == "native"
+        label = client + "-" + mode
+        command, env, cwd, prompt = self.client_command(client, args, mode)
         stdout, stderr = self.root / f"{label}.jsonl", self.root / f"{label}.stderr"
         start = time.monotonic()
-        with stdout.open("wb") as output, stderr.open("wb") as errors:
-            process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.PIPE,
-                                       stdout=output, stderr=errors, start_new_session=True)
-            try:
-                process.stdin.write(prompt.encode())
-                process.stdin.close()
-                while process.poll() is None:
-                    check(time.monotonic() - start < args.timeout, "model deadline exceeded")
-                    check(stdout.stat().st_size < 8 * 1024 * 1024 and stderr.stat().st_size < 2 * 1024 * 1024,
-                          "model output exceeded capture bound")
-                    time.sleep(0.2)
-            finally:
-                if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    try: process.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait(timeout=5)
-        check(process.returncode == 0, f"{client} exited unsuccessfully; inspect private diagnostics")
-        frames = [json.loads(line) for line in stdout.read_text().splitlines() if line.strip()]
-        calls, feedback, usage, native_discovery = [], [], [], []
-        if client == "codex":
-            for frame in frames:
-                item = frame.get("item", {})
-                if frame.get("type") == "item.completed":
-                    if item.get("type") == "mcp_tool_call": calls.append(item.get("tool", "unknown"))
-                    if item.get("type") == "agent_message": feedback.append(item.get("text", ""))
-                    if native and item.get("type") in {"command_execution", "file_change"}: calls.append(item["type"])
-                    if not native: check(item.get("type") != "command_execution", "model used local command execution")
-                if frame.get("type") == "turn.completed": usage.append(frame.get("usage", {}))
-        else:
-            for frame in frames:
-                if frame.get("type") == "assistant":
-                    for block in frame.get("message", {}).get("content", []):
-                        if block.get("type") == "tool_use":
-                            name = block.get("name", "")
-                            if name == "ToolSearch":
-                                native_discovery.append(name)
-                            else:
-                                check(native or name.startswith("mcp__webcodex__"), "model used a non-fixture execution tool")
-                                calls.append(name.removeprefix("mcp__webcodex__"))
-                if frame.get("type") == "result":
-                    feedback.append(frame.get("result", ""))
-                    usage.append(frame.get("usage", {}))
-        print(json.dumps({"client": client, "observed_calls": dict(Counter(calls)),
-                          "native_discovery": dict(Counter(native_discovery))}), flush=True)
+        frames = run_captured(command, cwd=cwd, env=env, prompt=prompt, stdout=stdout, stderr=stderr, timeout=args.timeout)
+        metrics = client_metrics(client, frames)
+        calls = metrics["tool_calls"]
+        if not native:
+            allowed = {t["name"] for t in self.rpc("tools/list", {})["result"]["tools"]}
+            check(set(calls) <= allowed, "model used a non-fixture execution tool")
+        print(json.dumps({"client":client,"mode":mode,"observed_calls":calls,
+                          "native_discovery":metrics["native_discovery"]}), flush=True)
         check(calls, "model did not use tools")
         check(not set(calls) & {"work_on_project", "run_process", "run_script"}, "unexpected default workflow")
         check((self.project_dir / "test_ranges.py").read_text() == TESTS, "model changed fixture tests")
@@ -366,13 +400,10 @@ class Acceptance(Smoke):
         check(result.returncode == 0, "independent tests failed")
         sessions = self.post("/api/tools/call", {"tool": "list_sessions", "params": {"project": self.project}}, self.bootstrap)
         check(sessions.get("success") and sessions["output"]["total"] == 0, "unexpected Workflow Session created")
-        report = {"client": client, "mode": "native" if native else "mcp", "instructions_followed": instructions_followed,
+        report = {"client": client, "mode": mode, "instructions_followed": instructions_followed,
                   "model": args.codex_model if client == "codex" else args.claude_model,
                   "effort": "low", "elapsed_secs": round(time.monotonic() - start, 2),
-                  "tool_calls": dict(Counter(calls)), "total_calls": len(calls), "usage": usage,
-                  "call_metric": "completed_action_events; native stdin polls are not separately emitted" if client == "codex" else "tool_use_blocks",
-                  "native_discovery": dict(Counter(native_discovery)), "workflow_sessions": 0,
-                  "feedback": "\n".join(feedback)[-8000:], "independent_tests_passed": True,
+                  **metrics, "workflow_sessions": 0, "independent_tests_passed": True,
                   "long_command_executions": 1}
         serialized = json.dumps(report)
         for secret in [self.owner, self.bootstrap, *[v for k, v in os.environ.items()
@@ -396,7 +427,7 @@ def main():
     args.output_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
     report = {"source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
               "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),
-              "source_diff_sha256": hashlib.sha256(subprocess.check_output(["git", "diff", "HEAD", "--", "src", "crates"], cwd=ROOT)).hexdigest(),
+              "source_diff_sha256": hashlib.sha256(subprocess.check_output(["git", "diff", "HEAD", "--", "src", "crates", "scripts"], cwd=ROOT)).hexdigest(),
               "client_versions": {name: subprocess.check_output([executable, "--version"], text=True).strip()
                                   for name, executable in [("codex", args.codex_path), ("claude", args.claude_path)] if name in args.clients},
               "binaries": {name: hashlib.sha256((args.bin_dir / name).read_bytes()).hexdigest()
@@ -406,13 +437,28 @@ def main():
         try:
             smoke.prepare()
             inventory = smoke.rpc("tools/list", {})["result"]
-            report["discovery"] = {"tools": [tool["name"] for tool in inventory["tools"]],
-                                   "json_bytes": len(json.dumps(inventory, separators=(",", ":")).encode()),
-                                   "input_schema_bytes": {tool["name"]:len(json.dumps(tool["inputSchema"], separators=(",", ":")).encode()) for tool in inventory["tools"]}}
+            report["discovery"] = discovery_metrics(inventory)
+            expected = {"run_shell", "observe_jobs", "stop_job", "read_files", "edit_project_files", "search_project_texts", "read_tool_manifest", "call_runtime_tool"}
+            check(set(report["discovery"]["tools"]) == expected, "unexpected direct CLI tools")
+            check(report["discovery"]["json_bytes"] <= 10000, "default-Project discovery exceeds 10000 bytes")
+            smoke.headers.pop("X-WebCodex-MCP-Project")
+            report["discovery_without_default"] = discovery_metrics(smoke.rpc("tools/list", {})["result"])
+            check(set(report["discovery_without_default"]["tools"]) == expected | {"list_projects"}, "missing Project discovery")
+            check(report["discovery_without_default"]["json_bytes"] <= 12000, "no-default discovery exceeds 12000 bytes")
+            init = smoke.rpc("initialize", {"protocolVersion":"2025-11-25", "capabilities":{}, "clientInfo":{"name":"probe","version":"1"}})
+            check("list_projects" in init["result"]["instructions"], "missing Project selection guidance")
+            picker = smoke.rpc("tools/call", {"name":"list_projects", "arguments":{}})
+            check(not picker["result"].get("isError"), "Project picker is not directly callable without a default")
+            smoke.headers["X-WebCodex-MCP-Project"] = smoke.project
+            report["client_tool_probes"] = smoke.probe_client_tools(args)
             report["probes"] = smoke.probe_native_contracts()
             for client in ([] if args.probe_only else args.clients):
-                for native in [False, True]:
-                    report["clients"].append(smoke.run_client(client, args, native))
+                for mode in ["mcp", "mcp-no-native", "native"]:
+                    result = smoke.run_client(client, args, mode)
+                    if mode == "mcp-no-native":
+                        result["remaining_native_tools"] = report["client_tool_probes"][client]["remaining_native_tools"]
+                        result["remaining_native_tools_source"] = "loopback inventory with same flags; Claude also reports actual init tools"
+                    report["clients"].append(result)
                     private_json(args.output_dir / "report.json", report)
                     print(json.dumps(report["clients"][-1], ensure_ascii=False), flush=True)
         finally:

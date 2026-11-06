@@ -2,6 +2,7 @@
 //! Direct execution tools declare their content fields. Specialized tools keep
 //! their existing adapters; source, revision fences and recovery remain exact.
 mod compact;
+mod log_page;
 mod native;
 
 use serde_json::{json, Value};
@@ -22,15 +23,16 @@ pub(in crate::mcp) fn project_response(tool: Option<&str>, body: &mut Value) {
     let Some(success) = structured.get("success").and_then(Value::as_bool) else {
         return;
     };
+    let mut output = structured["output"].clone();
+    log_page::skip_displayed_prefix(tool, &mut output);
     let mut text = if let Some(rendered) = native::render(
         tool,
         success,
         structured["error"].as_str().unwrap_or("Tool failed"),
-        &structured["output"],
+        &output,
     ) {
         rendered
     } else {
-        let mut output = structured.get("output").cloned().unwrap_or(Value::Null);
         let mut text = String::new();
         if !success {
             let _ = writeln!(

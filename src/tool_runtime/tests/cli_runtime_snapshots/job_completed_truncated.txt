@@ -3,6 +3,4 @@ completed; exit_code: 0
 stdout:
 last
 stdout_truncated: true
-job_id: wc_job_FIXTURE
-observation_token: wj3_EPOCH.3.4.1
 next: observe_jobs items=[{"after_observation_token":"wj3_EPOCH.3.1.1","job_id":"wc_job_FIXTURE","page":true}] tail_lines=200

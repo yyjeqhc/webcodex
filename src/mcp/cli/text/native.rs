@@ -23,6 +23,19 @@ fn selected(text: &mut String, value: &Value, keys: &[&str]) {
     }
 }
 
+fn has_next(value: &Value) -> bool {
+    ["continuation", "suggested_call", "recovery"]
+        .iter()
+        .any(|key| {
+            let call = &value[*key];
+            (call["tool"].is_string() && call["arguments"].is_object()) || has_nested_next(call)
+        })
+}
+
+fn has_nested_next(value: &Value) -> bool {
+    value.get("suggested_call").is_some() && has_next(value)
+}
+
 fn recovery(text: &mut String, value: &Value) {
     for key in ["continuation", "suggested_call", "recovery"] {
         if let Some(call) = value.get(key) {
@@ -32,6 +45,11 @@ fn recovery(text: &mut String, value: &Value) {
                 let mut args: Vec<_> = args.iter().collect();
                 args.sort_unstable_by_key(|(key, _)| *key);
                 for (key, value) in args {
+                    // CLI's canonical observation default is terminal. Keep all
+                    // nondefaults and exact selectors, tokens, bounds and fences.
+                    if tool == "observe_jobs" && key == "wake_on" && value == "terminal" {
+                        continue;
+                    }
                     let _ = write!(text, " {key}={}", ordered_json(value));
                 }
                 text.push('\n');
@@ -140,8 +158,13 @@ fn execution(text: &mut String, value: &Value) {
             let _ = writeln!(text, "{key}: true");
         }
     }
-    selected(text, details, &["job_id", "observation_token"]);
-    if details["log_delta_status"] == "reset" {
+    if !has_next(details) && !has_next(value) {
+        selected(text, details, &["job_id", "observation_token"]);
+    }
+    if details["log_delta_status"] == "reset"
+        && details["stdout_delta_reset"] != true
+        && details["stderr_delta_reset"] != true
+    {
         selected(text, details, &["log_delta_status"]);
     }
     if details["state_changed"].is_null()
@@ -305,7 +328,7 @@ fn edits(text: &mut String, value: &Value) {
     exceptional(text, &evidence);
 }
 
-fn workspace(text: &mut String, value: &Value) {
+fn workspace(text: &mut String, success: bool, value: &Value) {
     if let Some(branch) = value["branch"].as_str() {
         let _ = writeln!(text, "## {branch}");
     }
@@ -353,7 +376,19 @@ fn workspace(text: &mut String, value: &Value) {
         }
     }
     for key in ["status_observation", "diff_status", "diff_stat_status"] {
-        if value[key].is_object() && value[key]["status"] != "observed" {
+        let status = value[key]["status"].as_str();
+        let failed = if key == "status_observation" {
+            value[key].is_object() && status != Some("observed")
+        } else {
+            let requested = if key == "diff_status" {
+                value["hunks"].is_array()
+            } else {
+                value["non_git_project"] != true
+            };
+            status == Some("command_failed")
+                || (requested && !success && status == Some("output_unavailable"))
+        };
+        if failed {
             selected(text, value, &[key]);
         }
     }
@@ -363,7 +398,18 @@ fn workspace(text: &mut String, value: &Value) {
             let _ = writeln!(text, "{key}: true");
         }
     }
-    exceptional(text, value);
+    let mut evidence = value.clone();
+    if let Some(warnings) = evidence["warnings"].as_array_mut() {
+        warnings.retain(|warning| {
+            warning["kind"] != "untracked_file"
+                || !value["files"].as_array().is_some_and(|files| {
+                    files.iter().any(|file| {
+                        file["status"] == "untracked" && file["path"] == warning["path"]
+                    })
+                })
+        });
+    }
+    exceptional(text, &evidence);
 }
 
 pub(super) fn render(tool: &str, success: bool, error: &str, value: &Value) -> Option<String> {
@@ -389,6 +435,12 @@ pub(super) fn render(tool: &str, success: bool, error: &str, value: &Value) -> O
             && details["exit_code"].is_number()
         {
             text.push_str("ERROR: command failed\n");
+        } else if tool == "edit_project_files"
+            && value["error_kind"] == "path_policy_rejected"
+            && value["execution_state"] == "not_started"
+            && value["state_changed"] == false
+        {
+            text.push_str("ERROR: Path resolves outside the Project or allowed roots. No files were modified. Choose a path inside those roots.\n");
         } else {
             let _ = writeln!(text, "ERROR: {error}");
         }
@@ -410,7 +462,9 @@ pub(super) fn render(tool: &str, success: bool, error: &str, value: &Value) -> O
             if value["wait"]["outcome"] == "timeout" {
                 text.push_str("Wait deadline reached; Job may still be running.\n");
             }
-            exceptional(&mut text, value);
+            let mut evidence = value.clone();
+            super::compact::deduplicate_job_recovery(&mut evidence);
+            exceptional(&mut text, &evidence);
         }
         "read_files" => reads(&mut text, value),
         "edit_project_files" => edits(&mut text, value),
@@ -423,7 +477,7 @@ pub(super) fn render(tool: &str, success: bool, error: &str, value: &Value) -> O
             }
             exceptional(&mut text, &evidence);
         }
-        "read_workspace_changes" => workspace(&mut text, value),
+        "read_workspace_changes" => workspace(&mut text, success, value),
         "search_project_texts" => {
             // The existing layouts own matches/context/count modes. Only the
             // declared content and incomplete-coverage contract reaches them.

@@ -326,11 +326,24 @@ fetch guidance/Skills, deliver collaboration messages, or attach passive Job
 attention. `_wc` sidecars are rejected, including empty envelopes and nested
 gateway envelopes. Canonical audit evidence and existing history remain intact.
 
-- The default catalog has 12 tools: `list_projects`, `list_project_files`,
-  `list_project_tracked_files`,
-  `read_files`, `search_project_texts`, `edit_project_files`,
-  `read_workspace_changes`, `run_shell`, `observe_jobs`, `stop_job`,
-  `read_tool_manifest` and `call_runtime_tool`.
+- With a default Project, the direct catalog has eight tools: `run_shell`,
+  `observe_jobs`, `stop_job`, `read_files`, `edit_project_files`,
+  `search_project_texts`, `read_tool_manifest` and `call_runtime_tool`.
+  Without a default Project, it also exposes `list_projects` to select a target.
+  Find filenames and check Git state with `run_shell`, for example `git ls-files`
+  and `git status --short`. `list_project_files`, `list_project_tracked_files`
+  and `read_workspace_changes` remain available through manifest + gateway;
+  `list_projects` uses that route too when a default is configured.
+- Direct schemas are selection subsets, never Server validators. The editor
+  shows `path`, `kind`, `edits[].old_text/new_text`, `content`,
+  `expected_read_revision` and `to_path`. Exact manifests retain occurrence,
+  range, match-count, line-edit and dry-run options. Direct observation hides
+  `observation_ref` and `summary_only`; direct search shows common query fields.
+  Canonical advanced fields still work when supplied in direct calls, through
+  the same parser, revision guards, permissions and capabilities. Session-era
+  fields such as workspace `session_event_limit` are not advertised by CLI.
+  Discovery budgets are 10,000 bytes with a default Project and 12,000 without,
+  measured as the compact `tools/list` result in the local-agent acceptance.
 - `run_shell` is the default command entry. `observe_jobs` combines bounded
   waiting with result/log retrieval for the original Job; `stop_job` requests
   cancellation. Exact argv, scripts, interactive stdin, LSP
@@ -364,7 +377,19 @@ CLI command and file behavior:
   report reset. A first observation without a token reads the current tail.
 - Truncated command previews keep the beginning and end. A synchronous truncated
   result retains its original Job under existing bounded retention and offers a
-  log continuation. Never rerun an effectful command to recover its output.
+  log continuation. For each stream, CLI starts that page after the complete
+  lines already shown at the beginning; a partly shown line is read again.
+  Never rerun an effectful command to recover its output.
+- A `next:` line carries executable arguments and replaces separate `job_id` /
+  `observation_token` lines. Without a continuation those selectors remain.
+  Equivalent CLI defaults such as `wake_on="terminal"` are omitted from `next:`.
+  Per-stream reset flags replace the redundant aggregate reset message.
+- Workspace text shows `diff_status` / `diff_stat_status` only for failed
+  inspections, not an unrequested diff. `??` rows replace duplicate
+  `untracked_file` warnings; other warnings remain. A refused creation through
+  an escaping symlink explains the Project/allowed-root boundary without
+  exposing the resolved outside path. These presentation changes are CLI-only;
+  Adaptive results and canonical execution contracts are unchanged.
 - File reads, searches, directory/filename listing, LSP paths and transactional
   edits accept absolute paths inside the resolved Project root. Runner path and
   symlink protections still apply; paths outside that root are rejected.
@@ -392,6 +417,27 @@ CLI command and file behavior:
   not larger Server output budgets. The initialization hint asks clients to read
   remote AGENTS.md / CLAUDE.md; WebCodex does not inject their contents or plan
   the task. Client behavior should be checked with the acceptance harness.
+
+Images already have a gateway route: discover `read_project_artifact_chunk`, then
+call it with a Project-relative ordinary image path and `as_image=true`. The file
+does not need to be registered as an artifact. Existing path protection, PNG/JPEG/
+WebP validation and the 4 MiB image limit apply; image reads cannot be combined
+with chunk offsets/lengths. CLI preserves the MCP `image` content block beside
+text, rather than converting it into text or discarding it. A text-only consumer
+must handle that block to display the image. An isolated Server/Runner probe
+verified an ordinary PNG and the preserved image block; model-side visual
+interpretation was not tested. The current option is manifest + gateway; a future
+explicit CLI image entry could reduce discovery calls, but is not implemented.
+
+For the optional native-tool comparison, local Claude Code 2.1.319 accepts
+`--tools ""`, leaving the MCP tools and no native executable tools (its provider
+request still includes `DeferredToolPlaceholder`). Local Codex 0.166.0 accepts
+`--disable shell_tool`, removing `exec_command` / `write_stdin` while retaining
+`apply_patch`, `view_image` and other native tools. These are client controls,
+not WebCodex authority. The acceptance harness records the actual remaining
+inventory with loopback protocol fixtures, using no real model. See
+[local-agent acceptance and metric limits](TESTING.md) for the
+three comparison arms and token accounting.
 
 Generate connection configuration without reading a token or changing files:
 

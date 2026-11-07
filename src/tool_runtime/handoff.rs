@@ -545,12 +545,8 @@ impl ToolRuntime {
             existing_suggested_actions: output.get("suggested_next_actions"),
         });
 
-        let retained_outputs = super::task_outputs::retained_task_outputs(
-            &projection_closeout_session,
-        )
-        .and_then(|value| {
-            serde_json::from_value::<webcodex_core::task_outputs::TaskOutputs>(value).ok()
-        });
+        let retained_outputs =
+            super::task_outputs::retained_task_outputs(&projection_closeout_session);
         output["acceptance"] = super::acceptance_evidence::acceptance_evidence(
             &facts,
             super::acceptance_evidence::AcceptanceContext {
@@ -563,23 +559,23 @@ impl ToolRuntime {
             },
         );
         if !diagnostic {
-            let mut handoff = json!({
-                "session_id": output["session_id"],
-                "project": output["project"],
-                "handoff_brief": output["handoff_brief"],
-                "acceptance": output["acceptance"],
-            });
-            if let Some(session_ref) = output.get("session_ref") {
-                handoff["session_ref"] = session_ref.clone();
-            }
-            if let Some(workspace_continuity) = output.get("workspace_continuity") {
-                handoff["workspace_continuity"] = workspace_continuity.clone();
-            }
-            if let Some(goal_context) = output.get("goal_context") {
-                handoff["goal_context"] = goal_context.clone();
-            }
+            output
+                .as_object_mut()
+                .expect("handoff output is an object")
+                .retain(|key, _| {
+                    matches!(
+                        key.as_str(),
+                        "session_id"
+                            | "project"
+                            | "handoff_brief"
+                            | "acceptance"
+                            | "session_ref"
+                            | "workspace_continuity"
+                            | "goal_context"
+                    )
+                });
             return Ok(HandoffObservation {
-                result: ToolResult::ok(handoff),
+                result: ToolResult::ok(output),
                 evidence,
                 jobs: job_snapshot,
                 external_observations,
@@ -599,7 +595,7 @@ impl ToolRuntime {
                 *actions = recovery_actions;
             }
         }
-        let mut compact = compact_handoff_output(&output, &facts);
+        let mut compact = handoff_closeout_projection(&output, &facts);
         if snapshot_changed {
             // These optional aggregate completion conclusions require a coherent
             // snapshot. Preserve facts, blockers, history and integrity without
@@ -865,21 +861,16 @@ fn output_recent(tool_failures: &Value, key: &str) -> Value {
     tool_failures.get(key).cloned().unwrap_or_else(|| json!([]))
 }
 
-fn compact_handoff_output(output: &Value, facts: &CloseoutFacts) -> Value {
+fn handoff_closeout_projection(output: &Value, facts: &CloseoutFacts) -> Value {
     let workspace_clean = facts.workspace_clean();
     let workspace_conflicts = facts.workspace_conflicts().unwrap_or(0);
     let mut compact = json!({
         "diagnostic": true,
-        "project": output.get("project").cloned().unwrap_or(Value::Null),
-        "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
         "workspace_clean": workspace_clean,
         "workspace_conflicts": workspace_conflicts,
         "hygiene_clean": true,
         "jobs": compact_jobs(output.get("jobs").unwrap_or(&Value::Null)),
-        "permissions": compact_permissions(output.get("permissions").unwrap_or(&Value::Null)),
-        "tool_failures": compact_tool_failures(output.get("tool_failures").unwrap_or(&Value::Null)),
         "validation": compact_validation(output.get("validation").unwrap_or(&Value::Null)),
-        "review_evidence": compact_review_evidence(output.get("review_evidence").unwrap_or(&Value::Null)),
         "collaboration": {
             "open_todo_count": output.pointer("/counts/open_todos").and_then(Value::as_u64).unwrap_or(0),
             "high_priority_open_todos": output.get("high_priority_open_todos").cloned().unwrap_or_else(|| json!([])),
@@ -888,18 +879,6 @@ fn compact_handoff_output(output: &Value, facts: &CloseoutFacts) -> Value {
         },
         "work_performed": output.get("work_performed").cloned().unwrap_or_else(|| json!([])),
         "changed_paths": output.get("changed_paths").cloned().unwrap_or_else(|| json!([])),
-        "continuation_feedback": output
-            .get("continuation_feedback")
-            .cloned()
-            .unwrap_or_else(|| json!({
-                "status": "not_applicable",
-                "reason_code": "no_continuation_evidence",
-                "deterministic": true,
-                "llm_summary": false,
-            })),
-        "handoff_brief": output.get("handoff_brief").cloned().unwrap_or(Value::Null),
-        "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
-        "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
     });
     let initial_actions = string_array(output.get("suggested_next_actions"));
     install_closeout_decision(&mut compact, facts, &initial_actions);
@@ -920,16 +899,6 @@ pub(crate) fn compact_jobs(jobs: &Value) -> Value {
     compact
 }
 
-pub(crate) fn compact_permissions(permissions: &Value) -> Value {
-    json!({
-        "required_count": permissions.get("required_count").and_then(Value::as_u64).unwrap_or(0),
-        "manual_approved_count": permissions.get("manual_approved_count").and_then(Value::as_u64).unwrap_or(0),
-        "auto_approved_count": permissions.get("auto_approved_count").and_then(Value::as_u64).unwrap_or(0),
-        "total_approved_count": permissions.get("total_approved_count").and_then(Value::as_u64).unwrap_or(0),
-        "hard_denied_count": permissions.get("hard_denied_count").and_then(Value::as_u64).unwrap_or(0),
-    })
-}
-
 pub(crate) fn compact_tool_failures(tool_failures: &Value) -> Value {
     json!({
         "expected_count": tool_failures.get("expected_count").and_then(Value::as_u64).unwrap_or(0),
@@ -946,17 +915,11 @@ pub(crate) fn compact_validation(validation: &Value) -> Value {
         return validation.clone();
     }
     json!({
-        "status": validation.get("status").cloned().unwrap_or_else(|| json!("not_run")),
-        "reason": validation.get("reason").cloned().unwrap_or_else(|| json!("no_validation_tool_invoked")),
-        "latest_status": validation
-            .get("latest_status")
-            .cloned()
-            .unwrap_or_else(|| compact_validation_latest_status_fallback(validation)),
-        "historical_failures": validation
-            .get("historical_failures")
-            .cloned()
-            .unwrap_or_else(compact_validation_historical_failures_fallback),
-        "cargo_test_zero_tests_run": validation_has_cargo_test_zero_tests(validation),
+        "status": "not_run",
+        "reason": "no_validation_tool_invoked",
+        "latest_status": "unknown",
+        "historical_failures": {"count": 0, "resolved": false, "unresolved": false},
+        "cargo_test_zero_tests_run": false,
     })
 }
 
@@ -966,66 +929,6 @@ pub(crate) fn validation_has_cargo_test_zero_tests(validation: &Value) -> bool {
             .get("cargo_test_zero_tests_run")
             .and_then(Value::as_bool)
             == Some(true)
-}
-
-pub(crate) fn compact_review_evidence(review_evidence: &Value) -> Value {
-    let tools: Vec<Value> = review_evidence
-        .get("tools")
-        .and_then(Value::as_array)
-        .map(|tools| {
-            tools
-                .iter()
-                .filter_map(Value::as_str)
-                .take(20)
-                .map(|tool| json!(tool))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    json!({
-        "available": review_evidence.get("available").and_then(Value::as_bool).unwrap_or(false),
-        "total": review_evidence.get("total").and_then(Value::as_u64).unwrap_or(0),
-        "read_only_inspection_count": review_evidence
-            .get("read_only_inspection_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        "search_count": review_evidence
-            .get("search_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        "diff_review_count": review_evidence
-            .get("diff_review_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        "workspace_review_count": review_evidence
-            .get("workspace_review_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        "hygiene_review_count": review_evidence
-            .get("hygiene_review_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        "tools": tools,
-    })
-}
-
-fn compact_validation_latest_status_fallback(validation: &Value) -> Value {
-    let latest_status = match validation.get("status").and_then(Value::as_str) {
-        Some("passed") => "passed",
-        Some("failed") => "failed",
-        Some("inconclusive") => "inconclusive",
-        Some("not_run") => "not_run",
-        _ => "unknown",
-    };
-    json!(latest_status)
-}
-
-fn compact_validation_historical_failures_fallback() -> Value {
-    json!({
-        "count": 0,
-        "resolved": false,
-        "unresolved": false,
-    })
 }
 
 pub(crate) fn actionable_unexpected_failure_count(tool_failures: &Value) -> u64 {

@@ -19,8 +19,8 @@ use super::git_review_snapshot::{
     GitReviewSnapshot,
 };
 use super::handoff::{
-    closeout_work_projection, compact_jobs, compact_review_evidence, compact_tool_failures,
-    compact_validation, validation_has_cargo_test_zero_tests,
+    closeout_work_projection, compact_jobs, compact_tool_failures, compact_validation,
+    validation_has_cargo_test_zero_tests,
 };
 use super::handoff_brief::{build_handoff_brief, HandoffBriefInput};
 use super::permissions::{

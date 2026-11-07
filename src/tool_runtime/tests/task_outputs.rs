@@ -128,8 +128,8 @@ fn task_outputs_ledger_preserves_sixteen_long_paths_and_latest_finish_invalidate
     record(json!({"task_outputs":outputs}));
     let summary = runtime.sessions.summary(&session.session_id, None).unwrap();
     let retained = retained_task_outputs(&summary).unwrap();
-    assert_eq!(retained["items"].as_array().unwrap().len(), 16);
-    assert_eq!(retained["items"][0]["path"], outputs.items[0].path);
+    assert_eq!(retained.items.len(), 16);
+    assert_eq!(retained.items[0].path, outputs.items[0].path);
     // A malformed later result cannot revive the prior manifest.
     record(json!({"task_outputs":{"items":[],"raw_stdout":"PRIVATE"}}));
     assert!(

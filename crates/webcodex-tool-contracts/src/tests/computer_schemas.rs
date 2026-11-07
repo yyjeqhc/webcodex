@@ -86,6 +86,23 @@ fn tool_specs_hide_legacy_sync_wait_from_process_and_script_discovery() {
 }
 
 #[test]
+fn computer_discovery_keywords_cover_desktop_gui_tasks() {
+    for (tool, expected) in [
+        ("observe_computer", ["desktop", "gui", "mac", "screen"]),
+        ("control_computer", ["desktop", "gui", "mac", "operate"]),
+    ] {
+        let definition = crate::lookup_tool_definition(tool).expect("canonical Computer tool");
+        let keywords = definition
+            .model_spec
+            .expect("model-visible Computer descriptor")
+            .discovery_keywords;
+        for term in expected {
+            assert!(keywords.contains(&term), "{tool} missing {term}");
+        }
+    }
+}
+
+#[test]
 fn computer_primary_surface_is_three_canonical_tools() {
     let names = registered_tool_specs()
         .into_iter()

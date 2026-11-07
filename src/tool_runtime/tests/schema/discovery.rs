@@ -2868,6 +2868,29 @@ async fn keyword_discovery_is_bounded_schema_free_and_new_maintenance_tools_stay
 }
 
 #[tokio::test]
+async fn natural_language_discovery_finds_computer_tools_for_desktop_gui_request() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(
+            ToolCall::from_tool_name(
+                "read_tool_manifest",
+                json!({"query":"operate my Mac desktop GUI safely","limit":5}),
+            )
+            .unwrap(),
+        )
+        .await;
+    assert!(result.success, "{result:?}");
+    let tools = result.output["tools"].as_array().expect("tools array");
+    let names = tools
+        .iter()
+        .filter_map(|item| item["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"observe_computer"), "{names:?}");
+    assert!(names.contains(&"control_computer"), "{names:?}");
+    assert!(result.output["contract"].is_null());
+}
+
+#[tokio::test]
 async fn keyword_discovery_finds_git_specialists_by_user_task_not_internal_taxonomy() {
     let runtime = test_runtime();
     for (query, expected) in [

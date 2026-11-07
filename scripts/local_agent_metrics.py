@@ -4,8 +4,8 @@ import json
 
 
 def json_bytes(value):
-    # Discovery budget unit: compact tools/list result, not its RPC envelope.
-    return len(json.dumps(value, separators=(",", ":")).encode())
+    # Match the UTF-8 JSON wire size, not Python's default ASCII-escaped form.
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
 def discovery_metrics(inventory):

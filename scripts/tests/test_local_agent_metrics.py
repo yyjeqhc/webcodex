@@ -13,7 +13,10 @@ class LocalAgentMetricsTests(unittest.TestCase):
     def test_discovery_matches_compact_result_budget(self):
         inventory = {"tools": [{"name": "read_files", "inputSchema": {"type": "object"}, "description": "UTF-8 中文"}]}
         measured = discovery_metrics(inventory)
-        self.assertEqual(measured["json_bytes"], len(json.dumps(inventory, separators=(",", ":")).encode()))
+        wire = json.dumps(inventory, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.assertEqual(measured["json_bytes"], len(wire))
+        self.assertIn("中文".encode("utf-8"), wire)
+        self.assertLess(measured["json_bytes"], len(json.dumps(inventory, separators=(",", ":")).encode()))
         self.assertEqual(measured["json_bytes"], measured["tool_bytes"]["read_files"] + len('{"tools":[]}'))
 
     def test_claude_per_message_usage_is_not_double_counted_or_added_to_totals(self):

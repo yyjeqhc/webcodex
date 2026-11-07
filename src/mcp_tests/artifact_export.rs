@@ -42,6 +42,7 @@ async fn mcp_export_runtime_inner(
         "exporter",
         "inst-export",
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: "demo".to_string(),
             name: Some("demo".to_string()),
             path: root.to_string_lossy().into_owned(),

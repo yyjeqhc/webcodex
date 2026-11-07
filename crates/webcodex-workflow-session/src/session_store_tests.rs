@@ -159,6 +159,7 @@ fn default_session_retention_exceeds_model_summary_window_and_persists() {
 fn retained_task_instruction_identity_survives_summary_tail_and_fences_later_attempt() {
     let store = SessionStore::new(10, DEFAULT_RECENT_EVENT_LIMIT);
     let request = |resume_session_id: Option<String>, instruction: &str| CodingSessionRequest {
+        project_identity: None,
         project: "agent:test:attempt-fence".to_string(),
         authority_fingerprint: TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.to_string(),
         resume_session_id,
@@ -334,6 +335,7 @@ fn session_store_persists_and_restores_basic_session() {
 fn coding_git_baseline_and_repository_edit_fact_persist_resume_and_default_legacy_false() {
     fn request(resume_session_id: Option<String>) -> CodingSessionRequest {
         CodingSessionRequest {
+            project_identity: None,
             project: "agent:oe:private-drop".to_string(),
             authority_fingerprint: TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.to_string(),
             resume_session_id,
@@ -499,6 +501,7 @@ fn coding_session_context_precommit_failure_leaves_memory_unchanged() {
         execution_context: Option<SessionExecutionContext>,
     ) -> CodingSessionRequest {
         CodingSessionRequest {
+            project_identity: None,
             project: "agent:oe:private-drop".to_string(),
             authority_fingerprint: TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.to_string(),
             resume_session_id,
@@ -1308,6 +1311,7 @@ fn active_session_survives_capacity_churn_and_keeps_exact_identity_and_fences() 
     store.record_tool_call_finished(Some(start), true, &json!({"ok": true}), None, None);
 
     let resume = |project: &str, authority_fingerprint: &str| CodingSessionRequest {
+        project_identity: None,
         project: project.to_string(),
         authority_fingerprint: authority_fingerprint.to_string(),
         resume_session_id: Some(canonical_id.clone()),
@@ -1359,6 +1363,7 @@ fn active_session_survives_persistence_restart_after_capacity_churn() {
     let owner_authority = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     let request =
         |resume_session_id: Option<String>, project: &str, authority: &str| CodingSessionRequest {
+            project_identity: None,
             project: project.to_string(),
             authority_fingerprint: authority.to_string(),
             resume_session_id,
@@ -1931,6 +1936,7 @@ fn commit_instruction_observation(
 ) -> CodingSessionOutcome {
     store
         .ensure_coding_session(CodingSessionRequest {
+            project_identity: None,
             project: "agent:instructions:demo".into(),
             authority_fingerprint: TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.into(),
             resume_session_id: session_id.map(str::to_string),

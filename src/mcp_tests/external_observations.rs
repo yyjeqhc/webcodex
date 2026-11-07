@@ -33,7 +33,8 @@ async fn roundtrip() {
             .with_communication_database(db.clone()),
     );
     let project = crate::tool_runtime::runner_project_runtime_id("mcp-observation-agent", "shared");
-    let session = start_mcp_fixture_session(&runtime, Some(&project), "External observations");
+    let session =
+        start_mcp_fixture_session(&runtime, Some(&project), "External observations").await;
     let service = Service::new(
         build_test_router(config, db, runtime).push(
             Router::with_path("api/tools/call")

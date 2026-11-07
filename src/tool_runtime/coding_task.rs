@@ -28,8 +28,8 @@ use super::project_instructions::ProjectInstructionsSnapshot;
 use super::project_resolution::ResolvedProject;
 use super::session_context::{
     absent_workflow_session_result, session_project_mismatch_result,
-    session_retention_expired_result, workflow_session_authority_fingerprint,
-    SessionProjectMismatch,
+    session_retention_expired_result, workflow_project_identity,
+    workflow_session_authority_fingerprint, SessionProjectMismatch,
 };
 use super::sessions::{self, SessionTransport};
 use super::startup_brief::{

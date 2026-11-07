@@ -518,6 +518,7 @@ fn path_resolution_success(
         "disabled": project.disabled,
         "revision": project_revision(project),
         "root_fingerprint": project_root_fingerprint(canonical_path),
+        "registration_incarnation": project.registration_incarnation,
         "lineage": project_lineage(project),
         "source": "path",
         "outcome": outcome,
@@ -806,6 +807,11 @@ pub(crate) fn handle_resolve_or_register_project_operation(
         &description,
         true,
     );
+    let mut toml_content = toml_content;
+    toml_content.push_str(&format!(
+        "registration_incarnation = \"{}\"\n",
+        uuid::Uuid::new_v4()
+    ));
     let write_result =
         match write_project_toml_atomic(project_registry_dir, &project_id, &toml_content, false) {
             Ok(result) => result,

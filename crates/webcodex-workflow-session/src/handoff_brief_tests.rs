@@ -141,6 +141,7 @@ fn start_session(store: &SessionStore, title: &str) -> String {
 fn add_instruction(store: &SessionStore, session_id: &str, instruction: &str) {
     store
         .ensure_coding_session(CodingSessionRequest {
+            project_identity: None,
             project: PROJECT.to_string(),
             authority_fingerprint: TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.to_string(),
             resume_session_id: Some(session_id.to_string()),

@@ -40,7 +40,7 @@ fn lifecycle_config_path(project_registry_dir: &Path, id: &str) -> Result<PathBu
     Ok(path)
 }
 
-fn write_existing_project_atomic(path: &Path, content: &str) -> Result<(), String> {
+pub(super) fn write_existing_project_atomic(path: &Path, content: &str) -> Result<(), String> {
     let dir = path
         .parent()
         .ok_or_else(|| "project config has no parent".to_string())?;
@@ -48,10 +48,17 @@ fn write_existing_project_atomic(path: &Path, content: &str) -> Result<(), Strin
         .file_stem()
         .and_then(|v| v.to_str())
         .unwrap_or("project");
+    let existing_permissions = std::fs::metadata(path)
+        .map_err(|e| format!("failed to inspect existing project config permissions: {e}"))?
+        .permissions();
     let temp = unique_registry_temp(dir, id, "toml.tmp");
     let result = (|| {
         let mut file = std::fs::File::create(&temp)
             .map_err(|e| format!("failed to create lifecycle temp file: {e}"))?;
+        // Keep legacy private registry files private after an atomic rewrite.
+        // Set the mode before writing content so there is no readable window.
+        file.set_permissions(existing_permissions)
+            .map_err(|e| format!("failed to preserve project config permissions: {e}"))?;
         file.write_all(content.as_bytes())
             .map_err(|e| format!("failed to write lifecycle temp file: {e}"))?;
         file.sync_all()
@@ -168,6 +175,7 @@ pub(crate) fn handle_project_lifecycle_operation(
                 "operation": action, "agent_project_id": id,
                 "outcome": if desired_disabled {"already_disabled"} else {"already_enabled"},
                 "changed": false, "revision": current_revision,
+                "registration_incarnation": project.registration_incarnation,
                 "disabled": project.disabled, "path": project.path,
                 "name": project.name, "kind": project.kind,
                 "registration_source": effective_registration_source(&project).as_str(),
@@ -233,6 +241,7 @@ pub(crate) fn handle_project_lifecycle_operation(
             "operation": action, "agent_project_id": id,
             "outcome": if desired_disabled {"disabled"} else {"enabled"},
             "changed": true, "revision": revision,
+            "registration_incarnation": project.registration_incarnation,
             "disabled": project.disabled, "path": project.path,
             "name": project.name, "kind": project.kind,
             "registration_source": effective_registration_source(&project).as_str(),
@@ -316,6 +325,7 @@ fn recovered_project_result(
         "outcome": if create { "created" } else { "registered" },
         "revision": project_revision(project),
         "root_fingerprint": root_fingerprint,
+        "registration_incarnation": project.registration_incarnation,
         "lineage": project_lineage(project),
     })
 }
@@ -435,7 +445,12 @@ pub(crate) fn handle_project_operation(
     let client_id = client_id.to_string();
     let runtime_id = format!("agent:{}:{}", client_id, id);
 
-    let toml_content = build_project_toml(&id, &name, &path, &description, allow_patch);
+    let registration_incarnation = uuid::Uuid::new_v4().to_string();
+    let mut toml_content = build_project_toml(&id, &name, &path, &description, allow_patch);
+    toml_content.push_str(&format!(
+        "registration_incarnation = \"{}\"\n",
+        registration_incarnation
+    ));
     let template = json
         .get("template")
         .and_then(|v| v.as_str())
@@ -528,6 +543,7 @@ pub(crate) fn handle_project_operation(
             "registration_source": EXPLICIT_REGISTRATION_SOURCE,
             "revision": project_revision(&parse_runner_project_toml(&toml_content).expect("generated project TOML must parse")),
             "root_fingerprint": project_root_fingerprint(&canonical),
+            "registration_incarnation": registration_incarnation,
             "operation": "register", "outcome": "registered", "changed": true, "recovered": false,
         });
         return ok_cmd(start, result);
@@ -733,6 +749,7 @@ pub(crate) fn handle_project_operation(
         "template": template,
         "revision": project_revision(&parse_runner_project_toml(&toml_content).expect("generated project TOML must parse")),
         "root_fingerprint": path_buf.canonicalize().ok().filter(|path| path.is_dir()).as_deref().map(project_root_fingerprint),
+        "registration_incarnation": registration_incarnation,
         "git_initialized": git_initialized,
         "operation": "create", "outcome": "created", "changed": true, "recovered": false,
     });

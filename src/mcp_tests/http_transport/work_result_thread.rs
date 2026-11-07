@@ -67,7 +67,7 @@ async fn exercise() {
     );
     let project = "agent:mcp-observation-agent:shared";
     let window = "thread-panel-host-window";
-    let session = start_mcp_fixture_session(&runtime, Some(project), "Thread panel binding");
+    let session = start_mcp_fixture_session(&runtime, Some(project), "Thread panel binding").await;
     let session_events = runtime
         .sessions
         .summary(&session, None)

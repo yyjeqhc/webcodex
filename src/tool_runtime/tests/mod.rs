@@ -82,6 +82,7 @@ mod sessions_git;
 mod sessions_guards;
 mod sessions_instructions;
 mod sessions_resolver;
+mod sessions_retired_projects;
 mod skills;
 mod specialized_dispatch;
 mod startup_brief;

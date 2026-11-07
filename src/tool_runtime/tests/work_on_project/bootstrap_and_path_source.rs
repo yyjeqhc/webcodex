@@ -825,7 +825,14 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
     let auth = auth_context(None, true);
     let owner_authority = crate::tool_runtime::workflow_session_authority_fingerprint(Some(&auth))
         .expect("test auth has stable Workflow Session authority");
+    let registered_id = project.clone();
+    let registered_identity = crate::test_support::registered_session_project_identity(&runtime, &project, Some(&auth)).await;
     let start_owned_session = |project: Option<String>, title: Option<String>| {
+        let project_identity = if project.as_deref() == Some(registered_id.as_str()) {
+            registered_identity.clone()
+        } else {
+            None
+        };
         runtime
             .sessions
             .start_session_with_options(
@@ -835,7 +842,8 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
                     SessionMode::Normal,
                     SessionGuards::default(),
                 )
-                .with_owner_authority_fingerprint(Some(owner_authority.clone())),
+                .with_owner_authority_fingerprint(Some(owner_authority.clone()))
+                .with_project_identity(project_identity),
             )
             .unwrap()
     };

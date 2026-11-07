@@ -151,6 +151,7 @@ fn cli_preserves_peer_audit_identity_without_consuming_or_acknowledging_delivery
             }).await.unwrap();
             crate::test_support::apply_project_inventory_snapshot(&runtime.runner_registry,
                 "peer-client-runner", "instance", vec![RunnerProjectSummary {
+        registration_incarnation: None,
                     id: "repo".into(), name: Some("Peer fixture".into()), path: temp.path().to_string_lossy().to_string(),
                     allow_patch: true, kind: Some("repo".into()), registration_source: None, description: None,
                     hooks: Vec::new(), disabled: false, revision: None, root_fingerprint: None, lineage: None,

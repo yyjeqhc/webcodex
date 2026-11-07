@@ -162,6 +162,7 @@ fn runtime_shutdown_wakes_and_joins_reload_listener() {
 
 fn test_project(id: &str) -> RunnerProjectSummary {
     RunnerProjectSummary {
+        registration_incarnation: None,
         id: id.to_string(),
         name: Some(id.to_string()),
         path: format!("/tmp/{}", id),

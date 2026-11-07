@@ -3428,6 +3428,7 @@ fn current_evidence_boundary_unavailable_preserves_historical_validation() {
     store
         .ensure_coding_session(sessions::CodingSessionRequest {
             project: "agent:eval:demo".to_string(),
+            project_identity: None,
             authority_fingerprint: sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT
                 .to_string(),
             resume_session_id: Some(session.session_id.clone()),
@@ -3692,6 +3693,7 @@ fn record_task_instruction(store: &SessionStore, session_id: &str, instruction: 
     store
         .ensure_coding_session(sessions::CodingSessionRequest {
             project: "agent:eval:demo".to_string(),
+            project_identity: None,
             authority_fingerprint: sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT
                 .to_string(),
             resume_session_id: Some(session_id.to_string()),

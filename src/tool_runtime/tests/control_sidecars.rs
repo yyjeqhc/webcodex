@@ -976,6 +976,12 @@ async fn control_sidecars_real_finish_dispatch_nonblocking_and_blocking() {
                 .await;
         let owner =
             crate::tool_runtime::workflow_session_authority_fingerprint(Some(&f.auth)).unwrap();
+        let project_identity = crate::test_support::registered_session_project_identity(
+            &f.runtime,
+            &project,
+            Some(&f.auth),
+        )
+        .await;
         let session = f
             .runtime
             .sessions
@@ -986,7 +992,8 @@ async fn control_sidecars_real_finish_dispatch_nonblocking_and_blocking() {
                     crate::tool_runtime::SessionMode::Normal,
                     SessionGuards::default(),
                 )
-                .with_owner_authority_fingerprint(Some(owner)),
+                .with_owner_authority_fingerprint(Some(owner))
+                .with_project_identity(project_identity),
             )
             .unwrap()
             .session_id;

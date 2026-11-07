@@ -367,6 +367,20 @@ impl ToolRuntime {
                 );
             }
         };
+        let project_identity = workflow_project_identity(
+            resolved.root_fingerprint.as_deref(),
+            &resolved.config.path,
+            resolved.registration_incarnation.as_deref(),
+        );
+        if project_identity.is_none() {
+            return attach_project_resolution(
+                ToolResult::err_with_output(
+                    "project_registration_identity_unavailable",
+                    json!({"error_kind": "project_registration_identity_unavailable", "state_changed": false}),
+                ),
+                &project_resolution,
+            );
+        }
         if self.sessions.prepare_request().await.is_err() {
             return attach_project_resolution(
                 crate::tool_runtime::session_tools::session_storage_unavailable_result(),
@@ -376,6 +390,7 @@ impl ToolRuntime {
         let session_outcome = match self.sessions.ensure_coding_session_with_git_baseline(
             sessions::CodingSessionRequest {
                 project: resolved.resolved_id.clone(),
+                project_identity,
                 authority_fingerprint,
                 resume_session_id: resume_session_id.clone(),
                 instruction: title.clone(),
@@ -801,6 +816,18 @@ fn coding_session_start_error(
                     "session_id": session_id,
                     "session_project": session_project,
                     "request_project": request_project,
+                    "resume_requested": true,
+                    "state_changed": false,
+                }),
+            )
+        }
+        sessions::CodingSessionError::ResumeProjectIdentityChanged { session_id } => {
+            ToolResult::err_with_output(
+                "session_project_identity_changed: existing Session is not bound to the current Project registration",
+                json!({
+                    "error_kind": "session_project_identity_changed",
+                    "failure_kind": "session_project_identity_changed",
+                    "session_id": session_id,
                     "resume_requested": true,
                     "state_changed": false,
                 }),

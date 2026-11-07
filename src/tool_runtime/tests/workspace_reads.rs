@@ -12,6 +12,7 @@ fn resolved() -> ResolvedProject {
             allow_patch: true,
         },
         root_fingerprint: Some("root-incarnation".into()),
+        registration_incarnation: None,
         knowledge_association: None,
     }
 }

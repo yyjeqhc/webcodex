@@ -187,6 +187,7 @@ async fn model_ergonomics_normalization_reaches_api_and_mcp_action_audit_without
         "input-audit",
         "inst-input-audit",
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: "demo".to_string(),
             name: None,
             path: "/tmp/input-audit".to_string(),
@@ -683,6 +684,7 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
         "code-mode-audit",
         "inst-code-mode-audit",
         vec![RunnerProjectSummary {
+            registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
             id: "demo".to_string(),
             name: Some("Code Mode audit".to_string()),
             path: "/tmp/code-mode-audit".to_string(),
@@ -714,6 +716,12 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
         is_bootstrap: true,
         ..crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap)
     };
+    let project_identity = crate::test_support::registered_session_project_identity(
+        &runtime,
+        exact_project,
+        Some(&auth),
+    )
+    .await;
     let fingerprint = crate::tool_runtime::workflow_session_authority_fingerprint(Some(&auth))
         .expect("bootstrap test authority");
     let session = runtime
@@ -725,7 +733,8 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
                 crate::tool_runtime::SessionMode::ReadOnly,
                 crate::tool_runtime::SessionGuards::default(),
             )
-            .with_owner_authority_fingerprint(Some(fingerprint)),
+            .with_owner_authority_fingerprint(Some(fingerprint))
+            .with_project_identity(project_identity),
         )
         .unwrap();
     let service = Service::new(build_test_router(config, db.clone(), runtime));

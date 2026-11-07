@@ -326,6 +326,40 @@ fn unfinished_mutation_on_different_project_still_blocks_owning_session() {
     );
 }
 
+/// Reused or corrupted invocation identities cannot let one finish certify
+/// multiple write-like starts, even when their exact identity collides.
+#[test]
+fn duplicate_mutating_starts_with_one_finish_remain_unconfirmed() {
+    let store = store(20);
+    let session = create_session(&store, "duplicate mutating identity");
+    let started = store.record_tool_call_started(
+        Some(&session),
+        SessionTransport::Api,
+        "synthetic_write",
+        &json!({"project": PROJECT, "paths": ["src/a.rs"]}),
+        synthetic_contract(false, true, SessionPathHint::PathList),
+    );
+    store.record_tool_call_finished(started, true, &json!({"applied": true}), None, None);
+    let summary = store.summary(&session, Some(20)).unwrap();
+    let start = summary
+        .events
+        .iter()
+        .find(|e| e.kind == "tool_call_started")
+        .unwrap()
+        .clone();
+    let finish = summary
+        .events
+        .iter()
+        .find(|e| e.kind == "tool_call_finished")
+        .unwrap()
+        .clone();
+    let duplicate_history = [start.clone(), start, finish];
+    assert!(crate::continuation::has_unclosed_mutating_call(
+        duplicate_history.iter(),
+        &session
+    ));
+}
+
 /// The unclosed-call check must run over the full retained history, not only
 /// the bounded summary window: an unfinished mutation pushed past the
 /// model-facing tail by later completed calls still blocks a resume.

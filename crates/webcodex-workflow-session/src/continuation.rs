@@ -706,9 +706,15 @@ pub(crate) fn has_unclosed_mutating_call<'a>(
             event.logical_invocation_id.as_deref(),
             event.logical_invocation_role.as_deref(),
         );
-        if suffix_finishes.get(&identity).copied().unwrap_or(0) != 1 {
+        let Some(unmatched_finishes) = suffix_finishes.get_mut(&identity) else {
+            return true;
+        };
+        if *unmatched_finishes != 1 {
             return true;
         }
+        // A finish is proof for only one start. Two starts sharing the same
+        // identity followed by one finish must not both be considered closed.
+        *unmatched_finishes = 0;
     }
     false
 }

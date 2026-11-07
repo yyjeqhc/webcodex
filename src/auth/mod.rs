@@ -25,9 +25,9 @@
 //!
 //! ## Token Verifier Chain
 //!
-//! The [`TokenVerifier`] trait is the extension point for bearer token
-//! verification. The verifier chain currently runs [`PatVerifier`] followed by
-//! [`OAuth2Verifier`].
+//! The bearer verifier chain runs on the blocking pool: synchronous
+//! [`PatVerifier`] and then [`OAuth2Verifier`] checks preserve token-kind and
+//! credential authorization while avoiding SQLite work on async workers.
 
 use crate::{Config, Database};
 use std::sync::Arc;

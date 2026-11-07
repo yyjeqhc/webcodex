@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::{Config, Database};
+#[cfg(test)]
 use salvo::prelude::async_trait;
 
 use super::pat::hash_token;
@@ -26,6 +27,7 @@ use super::{bootstrap_context, AuthContext, AuthError, AuthKind};
 /// an `Arc`). Implementations receive `&Config` and `Option<&Database>` so they
 /// can perform the full validation chain (bootstrap token check, database
 /// lookup, etc.) without owning those resources.
+#[cfg(test)]
 #[async_trait]
 pub(crate) trait TokenVerifier: Send + Sync {
     /// Attempt to verify the given bearer token.
@@ -41,8 +43,7 @@ pub(crate) trait TokenVerifier: Send + Sync {
     ) -> Result<Option<AuthContext>, String>;
 }
 
-/// PAT / bootstrap verifier — the existing validation logic wrapped in the
-/// [`TokenVerifier`] trait.
+/// PAT / bootstrap verifier — synchronous first step of the bearer chain.
 ///
 /// This verifier handles:
 /// 1. Auth-disabled mode (returns bootstrap)
@@ -50,6 +51,7 @@ pub(crate) trait TokenVerifier: Send + Sync {
 /// 3. Database lookup by SHA-256 hash for API keys and account credentials
 pub(crate) struct PatVerifier;
 
+#[cfg(test)]
 #[async_trait]
 impl TokenVerifier for PatVerifier {
     async fn verify(
@@ -63,9 +65,8 @@ impl TokenVerifier for PatVerifier {
 }
 
 impl PatVerifier {
-    /// Synchronous body of [`TokenVerifier::verify`]. The verifier chain runs
-    /// on the blocking pool (see `authenticate`), so the database work must
-    /// not await anything.
+    /// Synchronous PAT verifier: the bearer chain runs on the blocking pool
+    /// (see `authenticate`), so the database work must not await anything.
     pub(crate) fn verify_sync(
         config: &Config,
         db: Option<&Arc<Database>>,
@@ -188,6 +189,7 @@ pub(crate) fn is_oauth2_access_token(token: &str) -> bool {
     token.starts_with(OAUTH2_ACCESS_TOKEN_PREFIX)
 }
 
+#[cfg(test)]
 #[async_trait]
 impl TokenVerifier for OAuth2Verifier {
     async fn verify(
@@ -200,6 +202,7 @@ impl TokenVerifier for OAuth2Verifier {
     }
 }
 
+#[cfg(test)]
 impl OAuth2Verifier {
     /// Async wrapper kept for existing callers/tests; the chain used by the
     /// request path calls [`Self::verify_for_ingress_sync`] on the blocking

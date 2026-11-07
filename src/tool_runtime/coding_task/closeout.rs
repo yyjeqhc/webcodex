@@ -466,7 +466,7 @@ impl ToolRuntime {
             }
         }
         if summary_only {
-            return ToolResult::ok(compact_finish_output(&decision.output));
+            return ToolResult::ok(compact_finish_output(decision.output));
         }
         let decision = decision.output;
         for field in [
@@ -561,7 +561,6 @@ pub(super) fn finish_decision_output(
         "jobs": compact_jobs(presentation.get("jobs").unwrap_or(&Value::Null)),
         "tool_failures": compact_tool_failures(presentation.get("tool_failures").unwrap_or(&Value::Null)),
         "validation": compact_validation(presentation.get("validation").unwrap_or(&Value::Null)),
-        "review_evidence": compact_review_evidence(presentation.get("review_evidence").unwrap_or(&Value::Null)),
         "work_performed": presentation.get("work_performed").cloned().unwrap_or_else(|| json!([])),
         "changed_paths": presentation.get("changed_paths").cloned().unwrap_or_else(|| json!([])),
         "warnings": presentation.get("final_warnings").cloned().unwrap_or_else(|| json!([])),
@@ -618,33 +617,35 @@ pub(super) fn finish_decision_output(
     }
 }
 
-pub(super) fn compact_finish_output(decision: &Value) -> Value {
-    let mut output = json!({
-        "summary_only": true,
-        "workspace_clean": decision.get("workspace_clean").cloned().unwrap_or(Value::Null),
-        "workspace_conflicts": decision.get("workspace_conflicts").cloned().unwrap_or(json!(0)),
-        "hygiene_clean": decision.get("hygiene_clean").cloned().unwrap_or(json!(true)),
-        "hygiene_secret_like_paths": decision.get("hygiene_secret_like_paths").cloned().unwrap_or(json!(0)),
-        "hygiene_truncated": decision.get("hygiene_truncated").cloned().unwrap_or(json!(false)),
-        "jobs": decision.get("jobs").cloned().unwrap_or_else(|| compact_jobs(&Value::Null)),
-        "validation": compact_finish_validation(decision.get("validation").unwrap_or(&Value::Null)),
-        "tool_failures": decision.get("tool_failures").cloned().unwrap_or_else(|| compact_tool_failures(&Value::Null)),
-        "task_outcome": decision.get("task_outcome").cloned().unwrap_or(Value::Null),
-        "acceptance": decision.get("acceptance").cloned().unwrap_or(Value::Null),
-        "evidence_integrity": decision.get("evidence_integrity").cloned().unwrap_or(Value::Null),
-        "warnings": decision.get("warnings").cloned().unwrap_or_else(|| json!([])),
-        "suggested_next_actions": decision.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
-    });
-    if let Some(presentation) = decision.get("presentation") {
-        output["presentation"] = presentation.clone();
-    }
-    if let Some(follow_up) = decision.get("goal_follow_up") {
-        output["goal_follow_up"] = follow_up.clone();
-    }
-    if let Some(outputs) = decision.get("task_outputs") {
-        output["task_outputs"] = outputs.clone();
-    }
-    output
+/// Narrow the owned canonical decision without rebuilding its shared fields.
+pub(super) fn compact_finish_output(mut decision: Value) -> Value {
+    decision
+        .as_object_mut()
+        .expect("finish decision is an object")
+        .retain(|key, _| {
+            matches!(
+                key.as_str(),
+                "workspace_clean"
+                    | "workspace_conflicts"
+                    | "hygiene_clean"
+                    | "hygiene_secret_like_paths"
+                    | "hygiene_truncated"
+                    | "jobs"
+                    | "validation"
+                    | "tool_failures"
+                    | "task_outcome"
+                    | "acceptance"
+                    | "evidence_integrity"
+                    | "warnings"
+                    | "suggested_next_actions"
+                    | "presentation"
+                    | "goal_follow_up"
+                    | "task_outputs"
+            )
+        });
+    decision["validation"] = compact_finish_validation(&decision["validation"]);
+    decision["summary_only"] = json!(true);
+    decision
 }
 
 fn compact_finish_validation(validation: &Value) -> Value {

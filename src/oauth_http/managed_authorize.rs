@@ -575,7 +575,7 @@ pub(crate) async fn oauth_authorize_login(
     // OAuth2 access tokens. We then narrow to Bootstrap / ApiToken only;
     // bootstrap is further rejected below because it has no user_id, so only
     // a PAT can complete the authorize login.
-    let ctx = match crate::auth::authenticate(&config, db.as_ref(), &token).await {
+    let ctx = match crate::auth::authenticate(config.clone(), db.as_ref(), &token).await {
         Ok(Some(ctx)) => ctx,
         _ => {
             res.status_code(StatusCode::UNAUTHORIZED);
@@ -913,7 +913,7 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
     // with a concrete user_id goes straight to code issuance. Bootstrap is
     // rejected because it has no user_id to bind the authorization code to.
     if let Some(token) = crate::auth::bearer_token(req) {
-        match crate::auth::authenticate(&config, Some(&db), &token).await {
+        match crate::auth::authenticate(config.clone(), Some(&db), &token).await {
             Ok(Some(ctx)) if is_authorize_identity_allowed(&ctx) && ctx.user_id.is_some() => {
                 let user_id = ctx.user_id.clone().unwrap();
                 if crate::public_ingress_auth::entry(depot)

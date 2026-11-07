@@ -1,3 +1,4 @@
+use super::closeout_evidence::ReviewEvidence;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -394,7 +395,6 @@ impl ToolRuntime {
                 self.passive_closeout_session_evidence(summary, WORK_RESULT_VALIDATION_LIMIT);
             let validation = evidence.validation.historical_value();
             let current_validation = evidence.validation.current_projection().evidence;
-            let review = evidence.review.to_value();
             let mut projection = build_work_result_projection(
                 &resolved_project,
                 &summary.session_id,
@@ -402,13 +402,14 @@ impl ToolRuntime {
                 &workspace_result.output,
                 &validation,
                 &current_validation,
-                &review,
+                &evidence.review,
                 summary.events_truncated,
             );
             projection["session"] = work_result_session(summary);
             projection["session_id"] = json!(summary.session_id);
-            if let Some(outputs) = super::task_outputs::retained_task_outputs(summary) {
-                projection["task_outputs"] = outputs;
+            let outputs = super::task_outputs::retained_task_outputs(summary);
+            if let Some(outputs) = outputs.as_ref() {
+                projection["task_outputs"] = json!(outputs);
             }
             let facts = evidence.facts(
                 super::closeout_projection::workspace_observation(
@@ -419,9 +420,6 @@ impl ToolRuntime {
                 None,
                 super::closeout_facts::JobFacts::default(),
             );
-            let outputs = projection.get("task_outputs").cloned().and_then(|value| {
-                serde_json::from_value::<webcodex_core::task_outputs::TaskOutputs>(value).ok()
-            });
             projection["acceptance"] = super::acceptance_evidence::acceptance_evidence(
                 &facts,
                 super::acceptance_evidence::AcceptanceContext {
@@ -652,7 +650,7 @@ pub(crate) fn build_work_result_projection(
     workspace_source: &Value,
     validation_source: &Value,
     current_validation_source: &Value,
-    review_source: &Value,
+    review_source: &ReviewEvidence,
     history_partial: bool,
 ) -> Value {
     json!({
@@ -1331,44 +1329,24 @@ fn work_result_validation(historical: &Value, current: &Value, history_partial: 
     Value::Object(validation)
 }
 
-fn work_result_review(source: &Value, history_partial: bool) -> Value {
-    let mut review = Map::new();
-    review.insert("history_partial".to_string(), json!(history_partial));
-    review.insert(
-        "available".to_string(),
-        json!(source
-            .get("available")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)),
-    );
-    for field in [
-        "total",
-        "read_only_inspection_count",
-        "search_count",
-        "diff_review_count",
-        "workspace_review_count",
-        "hygiene_review_count",
-    ] {
-        review.insert(
-            field.to_string(),
-            json!(source.get(field).and_then(Value::as_u64).unwrap_or(0)),
-        );
-    }
+fn work_result_review(source: &ReviewEvidence, history_partial: bool) -> Value {
     let tools = source
-        .get("tools")
-        .and_then(Value::as_array)
-        .map(|tools| {
-            tools
-                .iter()
-                .filter_map(Value::as_str)
-                .filter_map(|value| bounded_token(value, MAX_WORK_RESULT_TOOL_CHARS))
-                .take(MAX_WORK_RESULT_REVIEW_TOOLS)
-                .map(Value::String)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    review.insert("tools".to_string(), Value::Array(tools));
-    Value::Object(review)
+        .tools
+        .iter()
+        .filter_map(|value| bounded_token(value, MAX_WORK_RESULT_TOOL_CHARS))
+        .take(MAX_WORK_RESULT_REVIEW_TOOLS)
+        .collect::<Vec<_>>();
+    json!({
+        "history_partial": history_partial,
+        "available": source.available,
+        "total": source.total,
+        "read_only_inspection_count": source.read_only_inspection_count,
+        "search_count": source.search_count,
+        "diff_review_count": source.diff_review_count,
+        "workspace_review_count": source.workspace_review_count,
+        "hygiene_review_count": source.hygiene_review_count,
+        "tools": tools,
+    })
 }
 
 fn validation_status(status: Option<&str>) -> &'static str {

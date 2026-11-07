@@ -3,6 +3,7 @@ use super::super::work_result::{
 };
 use super::super::*;
 use super::support::*;
+use crate::tool_runtime::closeout_evidence::ReviewEvidence;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -37,17 +38,49 @@ fn current_validation(status: &str, unresolved: u64, gaps: u64) -> Value {
     })
 }
 
-fn review(total: u64) -> Value {
-    json!({
-        "available": true,
-        "total": total,
-        "read_only_inspection_count": total,
-        "search_count": 0,
-        "diff_review_count": total,
-        "workspace_review_count": total,
-        "hygiene_review_count": 0,
-        "tools": ["read_workspace_changes", "read_git_review_summary"]
-    })
+fn review(total: u64) -> ReviewEvidence {
+    ReviewEvidence {
+        available: true,
+        source: "session_ledger",
+        total,
+        read_only_inspection_count: total,
+        search_count: 0,
+        diff_review_count: total,
+        workspace_review_count: total,
+        hygiene_review_count: 0,
+        tools: vec![
+            "read_workspace_changes".into(),
+            "read_git_review_summary".into(),
+        ],
+    }
+}
+
+#[test]
+fn work_result_review_limits_typed_evidence_without_exposing_source_metadata() {
+    let mut evidence = review(25);
+    evidence.source = "PRIVATE_REVIEW_SOURCE";
+    evidence.tools = vec!["private tool text".into(), "x".repeat(65)];
+    evidence
+        .tools
+        .extend((0..25).map(|index| format!("review_tool_{index}")));
+    let projected = build_work_result_projection(
+        "agent:fixture:demo",
+        "wc_sess_0123456789abcdef",
+        true,
+        &json!({"git_available": true, "clean": true}),
+        &validation("not_run", "not_run", 0, 0),
+        &current_validation("not_run", 0, 0),
+        &evidence,
+        true,
+    );
+    assert_eq!(projected["review"]["total"], 25);
+    assert_eq!(projected["review"]["history_partial"], true);
+    let tools = projected["review"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 12);
+    assert_eq!(tools[0], "review_tool_0");
+    assert_eq!(tools[11], "review_tool_11");
+    assert!(!projected.to_string().contains("PRIVATE_REVIEW_SOURCE"));
+    assert!(!projected.to_string().contains("private tool text"));
 }
 
 #[test]
@@ -203,7 +236,7 @@ fn work_result_state_version_matches_buffered_projection_hash() {
             "history": [{"kind": "test", "name": "unicode::你好"}]
         }),
         &json!({"status": "failed", "unresolved_failure_count": 1, "evidence_gap_event_count": 2}),
-        &json!({"available": true, "total": 2, "tools": ["read_workspace_changes", "read_git_review_summary"]}),
+        &review(2),
         true,
     );
     let expected = format!(
@@ -229,7 +262,7 @@ fn work_result_projection_handles_clean_non_git_and_unknown_validation_without_i
         }),
         &validation("not_run", "not_run", 0, 0),
         &current_validation("not_run", 0, 0),
-        &json!({"available": true, "total": 0}),
+        &review(0),
         false,
     );
     assert_eq!(clean["workspace"]["clean"], true);
@@ -251,7 +284,10 @@ fn work_result_projection_handles_clean_non_git_and_unknown_validation_without_i
         }),
         &json!({"status": "future_value", "latest_status": "future_value"}),
         &json!({"status": "future_value"}),
-        &Value::Null,
+        &ReviewEvidence {
+            available: false,
+            ..review(0)
+        },
         false,
     );
     assert_eq!(unavailable["workspace"]["git_available"], false);
@@ -278,7 +314,10 @@ fn work_result_projection_marks_bounded_history_partial_without_inventing_absenc
         &workspace,
         &validation("not_run", "not_run", 0, 0),
         &current_validation("unknown", 0, 0),
-        &json!({"available": false, "total": 0}),
+        &ReviewEvidence {
+            available: false,
+            ..review(0)
+        },
         true,
     );
     assert_eq!(partial["validation"]["history_partial"], true);
@@ -296,7 +335,10 @@ fn work_result_projection_marks_bounded_history_partial_without_inventing_absenc
             &workspace,
             &validation("not_run", "not_run", 0, 0),
             &current_validation(current, 0, 0),
-            &json!({"available": false, "total": 0}),
+            &ReviewEvidence {
+                available: false,
+                ..review(0)
+            },
             true,
         );
         assert_eq!(projected["validation"]["current_status"], current);

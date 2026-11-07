@@ -252,15 +252,15 @@ fn unexpected_failure_is_proven_non_actionable(event: &SessionEvent) -> bool {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ReviewEvidence {
-    available: bool,
-    source: &'static str,
-    read_only_inspection_count: u64,
-    search_count: u64,
-    diff_review_count: u64,
-    workspace_review_count: u64,
-    hygiene_review_count: u64,
+    pub(crate) available: bool,
+    pub(crate) source: &'static str,
+    pub(crate) read_only_inspection_count: u64,
+    pub(crate) search_count: u64,
+    pub(crate) diff_review_count: u64,
+    pub(crate) workspace_review_count: u64,
+    pub(crate) hygiene_review_count: u64,
     pub(crate) total: u64,
-    tools: Vec<String>,
+    pub(crate) tools: Vec<String>,
 }
 
 impl ReviewEvidence {

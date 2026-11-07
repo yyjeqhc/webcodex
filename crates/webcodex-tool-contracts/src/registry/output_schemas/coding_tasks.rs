@@ -9,8 +9,8 @@ use super::common::{
 };
 #[cfg(any(test, feature = "root-test-support"))]
 use super::common::{
-    authority_profile_schema, exploration_tool_name_schema, permission_decision_schema,
-    session_hint_schema, task_context_schema,
+    exploration_tool_name_schema, permission_decision_schema, session_hint_schema,
+    task_context_schema,
 };
 use super::files::{
     key_file_schema, path_kind_schema, project_type_schema, scan_schema, suggested_read_schema,
@@ -195,7 +195,6 @@ pub(super) fn coding_workflow_diagnostic_output_schema() -> Value {
                 "oneOf": [
                     startup_brief_output_schema("minimal"),
                     startup_brief_output_schema("standard"),
-                    full_startup_output_schema(),
                 ]
             },
             "error": {
@@ -336,59 +335,6 @@ fn startup_brief_schema(detail: &str) -> Value {
         ],
         "additionalProperties": false,
     })
-}
-
-#[cfg(any(test, feature = "root-test-support"))]
-fn full_startup_output_schema() -> Value {
-    let mut schema = json!({
-        "type": "object",
-        "description": "Full diagnostic startup output. Preserves the existing operator-facing blocks and embeds the shared model-facing startup_brief.",
-        "properties": {
-            "detail": {"type": "string", "const": "full"},
-            "project": schema_type("string", "Original project input."),
-            "project_resolution": project_resolution_schema(),
-            "resolved_project": open_object_schema("Resolved project id, absolute execution path, executor, and diagnostic project metadata."),
-            "session": open_object_schema("Full Workflow Session, guard, capability, context-refresh, exact-binding, and explicitly resumed session diagnostics."),
-            "runtime_status": open_object_schema("Full runtime status diagnostics."),
-            "connection_state": open_object_schema("Full layered connection diagnostics."),
-            "authority": authority_profile_schema("Canonical authority profile for this task."),
-            "rules": open_object_schema("Full deterministic rules source summary."),
-            "git": open_object_schema("Full bounded Git/worktree summary including recent commits."),
-            "semantic_navigation": semantic_navigation_schema(),
-            "tool_manifest": open_object_schema("Bounded compact tool manifest."),
-            "recommended_flow": open_object_schema("Deterministic recommended tool groups."),
-            "startup_verdict": open_object_schema("Legacy full diagnostic startup checks and suggested actions."),
-            "continuation_feedback": continuation_feedback_schema("Complete bounded continuation_feedback projection retained for full diagnostics."),
-            "warnings": array_schema(open_object_schema("Full diagnostic startup warning."), "Bounded diagnostic warnings."),
-            "startup_brief": startup_brief_schema("full"),
-            "deterministic": {"type": "boolean", "const": true},
-            "llm_summary": {"type": "boolean", "const": false}
-        },
-        "required": [
-            "detail",
-            "project",
-            "project_resolution",
-            "resolved_project",
-            "session",
-            "runtime_status",
-            "connection_state",
-            "authority",
-            "rules",
-            "git",
-            "semantic_navigation",
-            "tool_manifest",
-            "recommended_flow",
-            "startup_verdict",
-            "continuation_feedback",
-            "warnings",
-            "startup_brief",
-            "deterministic",
-            "llm_summary"
-        ],
-        "additionalProperties": false,
-    });
-    add_startup_model_metadata(&mut schema);
-    schema
 }
 
 fn project_resolution_schema() -> Value {
@@ -1076,99 +1022,6 @@ fn startup_verdict_schema() -> Value {
         },
         "required": ["status", "blocking", "suggested_next_actions"],
         "additionalProperties": false
-    })
-}
-
-#[cfg(any(test, feature = "root-test-support"))]
-fn semantic_navigation_schema() -> Value {
-    json!({
-        "type": "object",
-        "description": "Always-present bounded Rust/Go semantic-navigation capability summary. Derived only from a typed agent status probe; never contains transport envelopes, process output, paths, environment variables, or symbol/location data.",
-        "additionalProperties": false,
-        "properties": {
-            "supported": schema_type("boolean", "True when the Project is Runner-backed, the owning Runner is connected, and it advertises lsp_read_only_navigation."),
-            "available": nullable_schema("boolean", "Observed semantic-navigation availability. True means supported Rust/Go navigation has an available executable or an existing running/initializing server slot; false is a positive unavailable observation; null means a bounded startup status probe timed out or failed before availability could be observed; this is advisory, not unavailability."),
-            "recommended": schema_type("boolean", "True only for available or running status."),
-            "status": semantic_navigation_status_schema(),
-            "index_readiness": serde_json::to_value(schemars::schema_for!(webcodex_core::lsp_bridge::LspIndexReadiness)).expect("readiness schema"),
-            "language": {
-                "anyOf": [
-                    { "type": "string", "enum": ["rust", "go"] },
-                    { "type": "null" }
-                ]
-            },
-            "server": {
-                "anyOf": [
-                    { "type": "string", "enum": ["rust-analyzer", "gopls"] },
-                    { "type": "null" }
-                ]
-            },
-            "position_encoding": {
-                "anyOf": [
-                    { "type": "string", "enum": ["utf-8", "utf-16", "utf-32"] },
-                    { "type": "null" }
-                ]
-            },
-            "tools": {
-                "type": "array",
-                "maxItems": 7,
-                "uniqueItems": true,
-                "items": {
-                    "type": "string",
-                    "enum": ["get_lsp_status", "list_document_symbols", "find_definition", "find_references", "read_document_diagnostics", "read_symbol_hover", "list_workspace_symbols"]
-                }
-            },
-            "preferred_flow": {
-                "type": "array",
-                "maxItems": 6,
-                "uniqueItems": true,
-                "items": {
-                    "type": "string",
-                    "enum": ["list_document_symbols", "find_definition", "find_references", "read_symbol_hover", "read_files", "search_project_texts"]
-                }
-            },
-            "limitations": {
-                "type": "array",
-                "maxItems": 5,
-                "uniqueItems": true,
-                "items": {
-                    "type": "string",
-                    "enum": ["rust_only", "go_only", "read_only", "workspace_only", "no_dependency_navigation", "full_text_sync_only"]
-                }
-            },
-            "reason_code": {
-                "anyOf": [
-                    {
-                        "type": "string",
-                        "enum": [
-                            "project_not_agent_backed",
-                            "rust_not_detected",
-                            "agent_not_connected",
-                            "lsp_capability_not_advertised",
-                            "server_crashed",
-                            "server_unavailable",
-                            "status_probe_timed_out",
-                            "status_probe_failed",
-                            "malformed_agent_result"
-                        ]
-                    },
-                    { "type": "null" }
-                ]
-            }
-        },
-        "required": [
-            "supported",
-            "available",
-            "recommended",
-            "status",
-            "language",
-            "server",
-            "position_encoding",
-            "tools",
-            "preferred_flow",
-            "limitations",
-            "reason_code"
-        ]
     })
 }
 

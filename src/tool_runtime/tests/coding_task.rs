@@ -151,7 +151,7 @@ fn coding_task_tools_are_registered_in_metadata() {
     let startup_variants = start_output["properties"]["output"]["oneOf"]
         .as_array()
         .expect("start output should expose detail-specific variants");
-    assert_eq!(startup_variants.len(), 3);
+    assert_eq!(startup_variants.len(), 2);
     let standard = startup_variants
         .iter()
         .find(|variant| variant["properties"]["detail"]["const"] == "standard")
@@ -256,112 +256,6 @@ async fn coding_workflow_test_seam_keeps_internal_diagnostic_modes_without_tool_
     assert_eq!(summary.mode, SessionMode::ReadOnly);
     assert!(summary.guards.deny_write_tools);
     assert!(summary.guards.deny_shell_tools);
-}
-
-#[tokio::test]
-async fn coding_workflow_full_diagnostic_has_no_binding_projection() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(
-        tmp.path(),
-        "AGENTS.md",
-        "# Rules\n\nUse focused tests.\n",
-        "add instructions",
-    );
-    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
-    let runtime = test_runtime();
-    let project =
-        register_runner_project_at_path(&runtime, "coding-start", "demo", tmp.path()).await;
-    let auth = auth_context(None, true);
-
-    let result = coding_workflow_serviced(
-        &runtime,
-        "coding-start",
-        json!({
-            "project": project,
-            "title": "implement deterministic aggregate",
-            "detail": "full"
-        }),
-        &auth,
-    )
-    .await;
-
-    assert!(result.success, "{:?}", result.error);
-    let session_id = result.output["session"]["session_id"].as_str().unwrap();
-    assert!(session_id.starts_with("wc_sess_"));
-    assert_eq!(
-        result.output["session"]["explicit_resume_required_for_continuation"],
-        true
-    );
-    assert!(
-        result.output["session"].get("current_binding").is_none(),
-        "removed binding state must not be projected"
-    );
-    for field in [
-        "session",
-        "runtime_status",
-        "authority",
-        "rules",
-        "git",
-        "semantic_navigation",
-        "recommended_flow",
-        "warnings",
-        "tool_manifest",
-    ] {
-        assert!(
-            result.output.get(field).is_some(),
-            "coding workflow diagnostic should include {field}"
-        );
-    }
-    assert_eq!(result.output["authority"]["mode"], "trusted_agent");
-    assert_eq!(result.output["authority"]["human_approval_required"], false);
-
-    let inspect = result.output["recommended_flow"]["inspect"]
-        .as_array()
-        .unwrap();
-    assert!(contains_string(inspect, "read_files"));
-    assert!(contains_string(inspect, "search_project_texts"));
-    assert!(contains_string(inspect, "review_changes"));
-    assert!(!contains_string(inspect, "read_workspace_changes"));
-    assert!(!contains_string(inspect, "read_file"));
-    assert!(!contains_string(inspect, "search_project_text"));
-    let edit = result.output["recommended_flow"]["edit"]
-        .as_array()
-        .unwrap();
-    assert!(contains_string(edit, "edit_project_files"));
-    for specialist in ["apply_patch", "apply_unified_diff", "write_project_file"] {
-        assert!(!contains_string(edit, specialist), "{specialist}");
-    }
-    assert!(!contains_string(edit, "replace_line_range"));
-    assert!(!contains_string(edit, "insert_at_line"));
-    assert!(!contains_string(edit, "delete_line_range"));
-
-    assert_eq!(result.output["rules"]["present"], true);
-    assert_eq!(result.output["rules"]["sources"][0]["path"], "AGENTS.md");
-    let manifest = &result.output["tool_manifest"];
-    assert_eq!(manifest["schema_version"], 1);
-    assert_eq!(manifest["intent"], Value::Null);
-    assert_eq!(manifest["filtered"], false);
-    assert_eq!(manifest["categories_requested"], Value::Null);
-    assert_eq!(manifest["limit"], Value::Null);
-    assert_eq!(manifest["truncated"], false);
-    assert!(manifest["count"].as_u64().unwrap() > 0);
-    let manifest_tools = manifest["tools"].as_array().unwrap();
-    assert!(manifest_tools
-        .iter()
-        .all(|tool| tool["name"] != "start_coding_task"));
-    let work_tool = manifest_tools
-        .iter()
-        .find(|tool| tool["name"] == "work_on_project")
-        .expect("canonical work_on_project manifest entry");
-    assert!(work_tool.get("accepted_flattened_args").is_none());
-    assert!(work_tool.get("inputSchema").is_none());
-    assert!(work_tool.get("outputSchema").is_none());
-    assert_eq!(result.output["git"]["clean"], true);
-    assert!(!result.output["git"]["recent_commits"]
-        .as_array()
-        .unwrap()
-        .is_empty());
 }
 
 #[tokio::test]
@@ -542,7 +436,7 @@ async fn coding_workflow_standard_returns_model_facing_brief_without_diagnostics
 }
 
 #[tokio::test]
-async fn coding_workflow_full_startup_verdict_accepts_clean_workspace() {
+async fn coding_workflow_startup_verdict_accepts_clean_workspace() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "add readme");
@@ -554,21 +448,17 @@ async fn coding_workflow_full_startup_verdict_accepts_clean_workspace() {
     let result = coding_workflow_serviced(
         &runtime,
         "coding-start-verdict",
-        json!({ "project": project, "detail": "full" }),
+        json!({ "project": project, "detail": "standard" }),
         &auth,
     )
     .await;
 
     assert!(result.success, "{:?}", result.error);
     let verdict = &result.output["startup_verdict"];
-    assert_startup_verdict_shape(verdict);
+    assert_status_string(verdict);
+    assert!(verdict["suggested_next_actions"].is_array());
     assert_eq!(verdict["status"], "pass");
     assert_eq!(verdict["blocking"], false);
-    assert_check_status(verdict, "get_runtime_status", "pass");
-    assert_check_status(verdict, "workspace", "pass");
-    assert_check_status(verdict, "jobs", "pass");
-    assert_check_status(verdict, "agent", "pass");
-    assert_check_status(verdict, "read_tool_manifest", "pass");
     assert_compact_verdict_safe(verdict, "startup clean verdict");
 }
 
@@ -3657,41 +3547,6 @@ async fn finish_coding_task_treats_stop_requested_jobs_as_nonblocking() {
     assert!(!serialized.contains("stop-pending-secret-output"));
 }
 
-fn contains_string(values: &[Value], needle: &str) -> bool {
-    values.iter().any(|value| value.as_str() == Some(needle))
-}
-
-fn assert_check_status(verdict: &Value, name: &str, status: &str) {
-    let check = verdict["checks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|check| check["name"] == name)
-        .unwrap_or_else(|| panic!("missing startup check {name}: {verdict}"));
-    assert_eq!(check["status"], status);
-}
-
-fn assert_startup_verdict_shape(verdict: &Value) {
-    assert_status_string(verdict);
-    assert!(verdict["blocking"].is_boolean(), "blocking bool: {verdict}");
-    let checks = verdict["checks"].as_array().expect("startup checks array");
-    assert!(!checks.is_empty(), "startup checks should not be empty");
-    for check in checks {
-        assert!(
-            check["name"].is_string(),
-            "startup check name should be present: {check}"
-        );
-        assert_status_string(check);
-        if let Some(reason) = check.get("reason") {
-            assert!(reason.is_string(), "reason must be a string: {check}");
-        }
-    }
-    assert!(
-        verdict["suggested_next_actions"].is_array(),
-        "suggested_next_actions array: {verdict}"
-    );
-}
-
 fn assert_task_outcome_shape(task_outcome: &Value) {
     assert_status_string(task_outcome);
     assert!(
@@ -3927,60 +3782,6 @@ async fn session_handoff_summary_only_with_agent_limit(
     )
     .await;
     task.await.unwrap()
-}
-
-#[tokio::test]
-async fn coding_workflow_full_diagnostic_recommended_flow_projects_to_visible_manifest_tools() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    let runtime = test_runtime();
-    let project =
-        register_runner_project_at_path(&runtime, "coding-flow-proj", "demo", tmp.path()).await;
-    let auth = auth_context(None, true);
-
-    let result = coding_workflow_serviced(
-        &runtime,
-        "coding-flow-proj",
-        json!({ "project": project, "detail": "full" }),
-        &auth,
-    )
-    .await;
-    assert!(result.success, "{:?}", result.error);
-
-    let manifest_tools: std::collections::BTreeSet<&str> = result.output["tool_manifest"]["tools"]
-        .as_array()
-        .expect("read_tool_manifest.tools")
-        .iter()
-        .filter_map(|tool| tool["name"].as_str())
-        .collect();
-    assert!(
-        manifest_tools.contains("finish_coding_task"),
-        "coding startup should keep finish_coding_task visible"
-    );
-
-    let flow = &result.output["recommended_flow"];
-    for group in ["inspect", "edit", "validate", "review", "handoff"] {
-        assert!(
-            flow.get(group).and_then(Value::as_array).is_some(),
-            "recommended_flow must keep group key {group}"
-        );
-    }
-
-    for group in ["inspect", "edit", "validate", "review", "handoff"] {
-        for tool in flow[group].as_array().unwrap() {
-            let tool = tool.as_str().unwrap();
-            assert!(
-                manifest_tools.contains(tool),
-                "recommended_flow.{group} references invisible tool {tool}; visible={manifest_tools:?}"
-            );
-        }
-    }
-
-    let handoff = flow["handoff"].as_array().unwrap();
-    assert!(
-        handoff.iter().any(|tool| tool == "finish_coding_task"),
-        "handoff should retain finish_coding_task when visible: {handoff:?}"
-    );
 }
 
 #[tokio::test]

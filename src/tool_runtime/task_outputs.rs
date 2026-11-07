@@ -143,7 +143,7 @@ impl ToolRuntime {
 
 pub(crate) fn retained_task_outputs(
     summary: &webcodex_workflow_session::SessionSummary,
-) -> Option<Value> {
+) -> Option<TaskOutputs> {
     // The latest finish invalidates an earlier manifest even if it omitted outputs.
     // These are explicitly time-stamped observations, not current filesystem truth.
     let event = summary.events.iter().rev().find(|event| {
@@ -173,5 +173,5 @@ pub(crate) fn retained_task_outputs(
     })?;
     let value = event.context_result_summary.as_ref()?.get("task_outputs")?;
     let snapshot: TaskOutputs = serde_json::from_value(value.clone()).ok()?;
-    snapshot.valid().then(|| json!(snapshot))
+    snapshot.valid().then_some(snapshot)
 }

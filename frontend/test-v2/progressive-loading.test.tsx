@@ -81,6 +81,29 @@ describe("progressive inventory boundaries", () => {
     unmount();
   });
 
+  it("does not offer Load more once the inventory limit is reached while still truncated", async () => {
+    const total = 2001;
+    const post = vi.fn(async (_path: string, args: { limit: number }) =>
+      ok({ total, truncated: args.limit < total, projects: Array.from({ length: Math.min(total, args.limit) }, (_, index) => ({ id: `agent:runner:p${index}`, client_id: "runner", connected: true })) }));
+    const client = { post } as unknown as RuntimeV2Client;
+    const unauthorized = vi.fn();
+    // Start at the cap: the Server clamps the query to 2000 and still reports
+    // truncated, so another Load more could not widen the result.
+    const { result, unmount } = renderHook(() => useProjects(client, true, unauthorized, { initialLimit: 2000 }));
+    await waitFor(() => expect(result.current.projects).toHaveLength(2000));
+    expect(result.current.truncated).toBe(true);
+    expect(result.current.canLoadMore).toBe(false);
+    const readsAtCap = post.mock.calls.length;
+    act(() => result.current.loadMore());
+    expect(post.mock.calls.length).toBe(readsAtCap);
+    // Narrowing the filters restarts at the first page under the same cap.
+    act(() => result.current.setQuery("specific"));
+    await waitFor(() => expect(post.mock.calls.length).toBe(readsAtCap + 1));
+    expect(post.mock.calls.at(-1)?.[1].limit).toBe(2000);
+    expect(result.current.canLoadMore).toBe(false);
+    unmount();
+  });
+
   it("a failed Session inventory read releases single-flight so focus can recover", async () => {
     const post = vi.fn().mockResolvedValueOnce(null).mockResolvedValue(ok({ sessions: [sessionItem()], total: 1, truncated: false }));
     const client = { post } as unknown as RuntimeV2Client;

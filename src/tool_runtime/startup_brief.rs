@@ -274,21 +274,6 @@ pub(crate) fn build_startup_brief(input: StartupBriefInput<'_>) -> Value {
     brief
 }
 
-/// Return the already-built shared core from any successful startup detail.
-/// Standard/minimal are the core itself; full embeds the same core alongside
-/// diagnostics. No transport is allowed to reassemble these fields.
-pub(crate) fn startup_brief_from_output(output: &Value) -> Option<&Value> {
-    if output.get("detail").and_then(Value::as_str) == Some("full") {
-        output
-            .get("startup_brief")
-            .filter(|value| value.is_object())
-    } else if output.is_object() {
-        Some(output)
-    } else {
-        None
-    }
-}
-
 fn workspace_projection(git: &Value) -> Value {
     let counts = git.get("counts").unwrap_or(&Value::Null);
     let git_available = git.get("available").and_then(Value::as_bool);

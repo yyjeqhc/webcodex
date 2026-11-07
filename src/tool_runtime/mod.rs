@@ -139,8 +139,10 @@ pub(crate) mod window_activity_projection;
 pub(crate) use webcodex_core::{
     project_instructions, project_listing as file_listing, validation_evidence as validation_parser,
 };
+#[cfg(test)]
+pub(crate) use webcodex_tool_contracts::tool_catalog;
 pub(crate) use webcodex_tool_contracts::{
-    metadata, registry, tool_call, tool_catalog, tool_definition, tool_inputs,
+    metadata, registry, tool_call, tool_definition, tool_inputs,
 };
 #[cfg(test)]
 pub(crate) use webcodex_tool_runtime_contracts::recorder_metadata::parse_tool_call_with_recorder_metadata;

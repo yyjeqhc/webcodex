@@ -322,15 +322,15 @@ pub(super) fn project_work_on_project_output_inner(
     correlation: Option<&mut ToolCallCorrelation>,
 ) -> ToolResult {
     let permission = output.get("permission").cloned();
-    let Some(brief) = startup_brief_from_output(&output) else {
+    if !output.is_object() {
         return work_on_project_projection_failed(
             "output",
             "complete startup brief object",
             "non-object",
             None,
         );
-    };
-    let projection = match serde_json::from_value::<WorkOnProjectBriefProjection>(brief.clone()) {
+    }
+    let projection = match serde_json::from_value::<WorkOnProjectBriefProjection>(output) {
         Ok(projection) => projection,
         Err(error) => {
             return work_on_project_projection_failed(
@@ -469,7 +469,7 @@ pub(super) fn project_work_on_project_output_inner(
     });
     let mut result = ToolResult::ok(json!({
         "session_id": projection.session.session_id,
-        "project": project,
+        "project": if project.is_empty() { &projection.project.resolved_id } else { &project },
         "resolved_project": projection.project.resolved_id,
         "continuation": projection.session.continuation,
         "workspace": workspace,
@@ -562,118 +562,6 @@ pub(super) fn resolved_project_payload(resolved: &ResolvedProject) -> Value {
     })
 }
 
-pub(super) fn rules_summary(snapshot: Option<&ProjectInstructionsSnapshot>) -> Value {
-    let Some(snapshot) = snapshot else {
-        return Value::Null;
-    };
-    let sources: Vec<Value> = snapshot.files.iter().map(rule_source_summary).collect();
-    json!({
-        "present": snapshot.loaded,
-        "loaded": snapshot.loaded,
-        "sources": sources,
-        "candidate_paths": snapshot.candidate_paths.clone(),
-        "total_chars": snapshot.total_chars,
-        "max_total_chars": snapshot.max_total_chars,
-        "truncated": snapshot.truncated,
-        "scan_complete": snapshot.scan_complete,
-        "summary": if snapshot.loaded {
-            "deterministic instruction source summary; read listed sources for full content"
-        } else {
-            "no project instruction source loaded from the fixed candidate list"
-        },
-        "note": snapshot.note.clone(),
-    })
-}
-
-fn rule_source_summary(file: &ProjectInstructionFile) -> Value {
-    json!({
-        "path": file.path.clone(),
-        "fingerprint": file.fingerprint.clone(),
-        "chars": file.chars,
-        "total_lines": file.total_lines,
-        "start_line": file.start_line,
-        "limit": file.limit,
-        "truncated": file.truncated,
-        "read_more": file.read_more.clone(),
-        "headings": extract_headings(&file.content),
-        "first_lines": extract_first_lines(&file.content),
-    })
-}
-
-fn extract_headings(content: &str) -> Vec<String> {
-    content
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.starts_with('#'))
-        .take(RULES_MAX_HEADINGS)
-        .map(bound_line)
-        .collect()
-}
-
-fn extract_first_lines(content: &str) -> Vec<String> {
-    content
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .take(RULES_MAX_FIRST_LINES)
-        .map(bound_line)
-        .collect()
-}
-
-fn bound_line(line: &str) -> String {
-    let mut out = String::new();
-    for ch in line.chars().take(RULES_MAX_LINE_CHARS) {
-        out.push(ch);
-    }
-    out
-}
-
-/// Full default startup recommended flow. Reuses the shared
-/// `TOOL_RECOMMENDED_FLOWS` group definitions so top-level startup guidance
-/// does not drift from `read_tool_manifest.recommended_flows`.
-pub(super) fn recommended_flow_payload() -> Value {
-    recommended_flow_groups(None)
-}
-
-/// Project top-level `recommended_flow` onto tools present in the embedded
-/// `read_tool_manifest`. Group keys stay fixed; empty groups are allowed.
-pub(super) fn recommended_flow_payload_for_manifest_tools(manifest: &Value) -> Value {
-    let visible: HashSet<&str> = manifest
-        .get("tools")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
-        .collect();
-    recommended_flow_groups(Some(&visible))
-}
-
-fn recommended_flow_groups(visible: Option<&HashSet<&str>>) -> Value {
-    const GROUPS: &[&str] = &["inspect", "edit", "validate", "review", "handoff"];
-    let mut map = serde_json::Map::new();
-    for group in GROUPS {
-        let tools = model_visible_recommended_flows()
-            .find(|flow| flow.name == *group)
-            .map(|flow| {
-                let mut seen = HashSet::new();
-                flow.tools
-                    .iter()
-                    .copied()
-                    .filter(|tool| {
-                        let allowed = match visible {
-                            Some(set) => set.contains(*tool),
-                            None => true,
-                        };
-                        allowed && seen.insert(*tool)
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        map.insert((*group).to_string(), json!(tools));
-    }
-    Value::Object(map)
-}
-
 pub(super) fn workspace_payload_from_show_changes(show_changes: &Value) -> Value {
     let counts = show_changes
         .get("counts")
@@ -698,178 +586,6 @@ pub(super) fn workspace_payload_from_show_changes(show_changes: &Value) -> Value
             .cloned()
             .unwrap_or_else(|| json!([])),
     })
-}
-
-/// Map startup `git` summary fields into the workspace warning shape.
-pub(super) fn workspace_payload_from_git_summary(git: &Value) -> Value {
-    let counts = git.get("counts").cloned().unwrap_or_else(|| json!({}));
-    json!({
-        "clean": git.get("clean").cloned().unwrap_or(Value::Null),
-        "non_git_project": git
-            .get("non_git_project")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        "git_available": git
-            .get("available")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        "changed_files_count": git
-            .get("changed_files_count")
-            .and_then(Value::as_u64)
-            .unwrap_or_else(|| changed_files_count_from_counts(&counts)),
-        "counts": counts,
-    })
-}
-
-pub(super) fn startup_verdict(
-    output: &Value,
-    active_jobs: &Value,
-    owning_runner_available: Option<bool>,
-    runtime_status_call_failed: bool,
-    tool_manifest_requested: bool,
-) -> Value {
-    let mut checks = Vec::new();
-    let mut actions: Vec<String> = Vec::new();
-
-    push_startup_check(
-        &mut checks,
-        "get_runtime_status",
-        runtime_status_check(output, runtime_status_call_failed),
-    );
-    push_startup_check(&mut checks, "workspace", workspace_check(output));
-    push_startup_check(&mut checks, "jobs", startup_jobs_check(active_jobs));
-    push_startup_check(
-        &mut checks,
-        "agent",
-        startup_agent_check(output, owning_runner_available),
-    );
-    push_startup_check(
-        &mut checks,
-        "read_tool_manifest",
-        startup_tool_manifest_check(output, tool_manifest_requested),
-    );
-
-    for check in &checks {
-        match check.get("reason").and_then(Value::as_str) {
-            Some("runtime_status_call_failed") => {
-                push_unique_action(&mut actions, "inspect get_runtime_status directly")
-            }
-            Some("workspace_dirty") => push_unique_action(
-                &mut actions,
-                "inspect existing worktree changes with read_workspace_changes and preserve them while editing",
-            ),
-            Some("workspace_conflicts") => push_unique_action(
-                &mut actions,
-                "review merge/rebase conflicts carefully; do not reset or overwrite conflict markers unless resolving them",
-            ),
-            Some("active_jobs_present") | Some("blocking_active_jobs") => {
-                push_unique_action(&mut actions, "inspect active jobs before proceeding")
-            }
-            Some("agent_offline") => {
-                push_unique_action(&mut actions, "check Runner connectivity with list_runners")
-            }
-            Some("tool_manifest_not_requested") => push_unique_action(
-                &mut actions,
-                "request read_tool_manifest if workflow discovery is needed",
-            ),
-            Some("truncated_by_limit") => push_unique_action(
-                &mut actions,
-                "continue with the bounded read_tool_manifest or request a focused category",
-            ),
-            Some("tool_manifest_unavailable") => {
-                push_unique_action(&mut actions, "inspect read_tool_manifest directly")
-            }
-            _ => {}
-        }
-    }
-
-    if actions.is_empty() {
-        actions.push("proceed with the coding task using the explicit session_id".to_string());
-    }
-    let status = aggregate_startup_status(&checks);
-    json!({
-        "status": status,
-        "blocking": status == "fail",
-        "checks": checks,
-        "suggested_next_actions": actions,
-    })
-}
-
-fn runtime_status_check(
-    output: &Value,
-    runtime_status_call_failed: bool,
-) -> (&'static str, Option<&'static str>) {
-    if runtime_status_call_failed {
-        return ("fail", Some("runtime_status_call_failed"));
-    }
-    let runtime_status = output.get("runtime_status").unwrap_or(&Value::Null);
-    if !runtime_status.is_object() {
-        return ("fail", Some("runtime_status_unavailable"));
-    }
-    match runtime_status
-        .pointer("/tools/count")
-        .and_then(Value::as_u64)
-    {
-        Some(count) if count > 0 => ("pass", None),
-        Some(_) => ("fail", Some("tool_count_zero")),
-        None => ("warn", Some("tool_count_unknown")),
-    }
-}
-
-fn workspace_check(output: &Value) -> (&'static str, Option<&'static str>) {
-    let git = output.get("git").unwrap_or(&Value::Null);
-    if git
-        .get("non_git_project")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return ("pass", Some("non_git_project"));
-    }
-    if git.get("available").and_then(Value::as_bool) == Some(false) {
-        return ("warn", Some("git_unavailable"));
-    }
-    // Ordinary tracked/staged/untracked edits are expected development state.
-    // An unresolved merge/rebase conflict is a deterministic blocker until it
-    // is resolved; the session itself remains usable for inspection and repair.
-    let conflicted = git
-        .pointer("/counts/conflicted")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    if conflicted > 0 {
-        return ("fail", Some("workspace_conflicts"));
-    }
-    match git.get("clean").and_then(Value::as_bool) {
-        Some(true) => ("pass", None),
-        Some(false) => ("warn", Some("workspace_dirty")),
-        None => ("warn", Some("workspace_unknown")),
-    }
-}
-
-fn startup_jobs_check(jobs: &Value) -> (&'static str, Option<&'static str>) {
-    if jobs
-        .get("blocking_active_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-        > 0
-    {
-        return ("fail", Some("blocking_active_jobs"));
-    }
-    match jobs.get("active_count").and_then(Value::as_u64) {
-        Some(0) => ("pass", None),
-        Some(_) => ("warn", Some("active_jobs_present")),
-        None => ("warn", Some("jobs_unknown")),
-    }
-}
-
-pub(super) fn startup_agent_check(
-    _output: &Value,
-    owning_runner_available: Option<bool>,
-) -> (&'static str, Option<&'static str>) {
-    match owning_runner_available {
-        Some(false) => ("fail", Some("agent_offline")),
-        Some(true) => ("pass", None),
-        None => ("warn", Some("agent_health_unknown")),
-    }
 }
 
 /// Reuse the already-authorized startup observation, selecting only the Project's
@@ -923,69 +639,6 @@ pub(super) fn owning_runner_available(
     )
 }
 
-fn startup_tool_manifest_check(
-    output: &Value,
-    tool_manifest_requested: bool,
-) -> (&'static str, Option<&'static str>) {
-    if !tool_manifest_requested {
-        return ("warn", Some("tool_manifest_not_requested"));
-    }
-    let Some(manifest) = output.get("tool_manifest") else {
-        return ("fail", Some("tool_manifest_unavailable"));
-    };
-    if !manifest.is_object() {
-        return ("fail", Some("tool_manifest_unavailable"));
-    }
-    if manifest
-        .get("truncated")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        if manifest.get("truncation_reason").and_then(Value::as_str) == Some("limit") {
-            return ("warn", Some("truncated_by_limit"));
-        }
-        return ("warn", Some("tool_manifest_truncated"));
-    }
-    ("pass", None)
-}
-
-fn push_startup_check(
-    checks: &mut Vec<Value>,
-    name: &'static str,
-    (status, reason): (&'static str, Option<&'static str>),
-) {
-    let mut check = json!({
-        "name": name,
-        "status": status,
-    });
-    if let Some(reason) = reason {
-        check["reason"] = json!(reason);
-    }
-    checks.push(check);
-}
-
-fn aggregate_startup_status(checks: &[Value]) -> &'static str {
-    if checks
-        .iter()
-        .any(|check| check.get("status").and_then(Value::as_str) == Some("fail"))
-    {
-        "fail"
-    } else if checks
-        .iter()
-        .any(|check| check.get("status").and_then(Value::as_str) == Some("warn"))
-    {
-        "warn"
-    } else {
-        "pass"
-    }
-}
-
-fn push_unique_action(actions: &mut Vec<String>, action: &str) {
-    if !actions.iter().any(|existing| existing == action) {
-        actions.push(action.to_string());
-    }
-}
-
 pub(super) fn changed_files_count_from_counts(counts: &Value) -> u64 {
     [
         "modified",
@@ -1000,10 +653,6 @@ pub(super) fn changed_files_count_from_counts(counts: &Value) -> u64 {
     .map(|key| counts.get(*key).and_then(Value::as_u64).unwrap_or(0))
     .sum()
 }
-
-const RULES_MAX_HEADINGS: usize = 8;
-const RULES_MAX_FIRST_LINES: usize = 5;
-const RULES_MAX_LINE_CHARS: usize = 180;
 
 pub(super) fn append_workspace_warnings(workspace: &Value, warnings: &mut Vec<Value>) {
     if workspace.get("clean").and_then(Value::as_bool) == Some(false) {

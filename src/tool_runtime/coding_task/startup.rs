@@ -6,10 +6,7 @@ use super::project::{
     ManagedWorktreeRequest,
 };
 use super::projection::{
-    append_workspace_warnings, owning_runner_available, project_coding_agent_providers,
-    project_work_on_project_output_inner, recommended_flow_payload,
-    recommended_flow_payload_for_manifest_tools, resolved_project_payload, rules_summary,
-    startup_verdict, workspace_payload_from_git_summary,
+    owning_runner_available, project_coding_agent_providers, project_work_on_project_output_inner,
 };
 use super::*;
 
@@ -208,21 +205,6 @@ impl ToolRuntime {
             Ok(resolved) => resolved,
             Err(result) => return result,
         };
-        // `detail` is the single startup projection control: full keeps the
-        // complete runtime status, recent commits, rules, and tool manifest;
-        // standard/minimal use the compact projections.
-        let compact_startup = detail != StartupDetail::Full;
-        let include_recent_commits = detail == StartupDetail::Full;
-        let include_tool_manifest = detail == StartupDetail::Full;
-        let tool_manifest = if include_tool_manifest {
-            match self.compact_tool_manifest_payload_bounded(None, None, None) {
-                Ok(payload) => Some(payload),
-                Err(result) => return attach_project_resolution(result, &project_resolution),
-            }
-        } else {
-            None
-        };
-
         let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
             Ok(resolved) => resolved,
             Err(err) => {
@@ -323,9 +305,7 @@ impl ToolRuntime {
             let observations = futures_util::future::join3(
                 startup_context,
                 self.runtime_status(auth),
-                Box::pin(
-                    self.coding_startup_git_summary(&resolved.resolved_id, include_recent_commits),
-                ),
+                Box::pin(self.coding_startup_git_summary(&resolved.resolved_id)),
             )
             .await;
             let _ = startup_complete.send(());
@@ -333,11 +313,7 @@ impl ToolRuntime {
         };
         let (
             semantic_navigation,
-            (
-                (project_instructions, repository_overview, extensions),
-                runtime_status_result,
-                (git, git_warnings),
-            ),
+            ((project_instructions, repository_overview, extensions), runtime_status_result, git),
         ) = futures_util::future::join(
             self.probe_semantic_navigation_for_startup(&resolved, startup_completed),
             mandatory,
@@ -358,35 +334,8 @@ impl ToolRuntime {
         // Coding startup always observes every fixed repository-rule
         // candidate. The complete bounded body remains only in the in-memory
         // Workflow Session; the ledger persistence path omits it.
-        let mut warnings = git_warnings;
-        if repository_overview.get("status").and_then(Value::as_str) == Some("unavailable")
-            && repository_overview
-                .get("reason_code")
-                .and_then(Value::as_str)
-                != Some(REPOSITORY_OVERVIEW_NOT_REQUESTED_REASON)
-        {
-            warnings.push(json!({
-                "kind": "repository_overview_unavailable",
-                "message": "repository structure overview was unavailable during startup",
-            }));
-        }
-        let mut runtime_status_call_failed = false;
-        let (runtime_status, runtime_status_for_brief) = {
-            if !runtime_status_result.success {
-                runtime_status_call_failed = true;
-                warnings.push(json!({
-                    "kind": "runtime_status_unavailable",
-                    "message": "runtime status was unavailable during startup",
-                }));
-            }
-            let raw = runtime_status_result.output;
-            let projected = if compact_startup {
-                compact_runtime_status(&raw)
-            } else {
-                raw.clone()
-            };
-            (projected, raw)
-        };
+        let runtime_status_call_failed = !runtime_status_result.success;
+        let runtime_status_for_brief = runtime_status_result.output;
         let owning_runner_available = owning_runner_available(
             &resolved,
             &runtime_status_for_brief,
@@ -394,13 +343,8 @@ impl ToolRuntime {
         );
         let coding_agent_providers =
             project_coding_agent_providers(&resolved.config.client_id, &runtime_status_for_brief);
-        // Surface dirty/conflict worktree state at top-level so compact Action
-        // responses that omit full git payloads still keep the warning reason.
-        if !git.is_null() {
-            append_workspace_warnings(&workspace_payload_from_git_summary(&git), &mut warnings);
-        }
         let git_baseline_tree = if resume_session_id.is_none() {
-            self.capture_coding_git_baseline_tree(&resolved.resolved_id, &git, &mut warnings)
+            self.capture_coding_git_baseline_tree(&resolved.resolved_id, &git)
                 .await
         } else {
             None
@@ -475,23 +419,6 @@ impl ToolRuntime {
             .as_ref()
             .unwrap_or(&project_instructions);
         let session_summary = &session_outcome.summary;
-        let mut connection_state = runtime_status
-            .get("connection_layers")
-            .cloned()
-            .unwrap_or_else(|| {
-                json!({
-                    "runner_process": {"status": "not_observed"},
-                    "server_transport": {"status": "not_observed"},
-                    "server_registration": {"status": "not_observed"},
-                    "project_registry": {"status": "resolved", "resolved_project": resolved.resolved_id},
-                    "last_successful_tool_call": {"status": "not_observed"},
-                })
-            });
-        connection_state["project_registry"]["resolved_project"] = json!(resolved.resolved_id);
-        let recommended_flow = match &tool_manifest {
-            Some(manifest) => recommended_flow_payload_for_manifest_tools(manifest),
-            None => recommended_flow_payload(),
-        };
         // Continuation feedback for reused/resumed/restored sessions. Pure
         // read-only projection over existing session ledger, validation evidence,
         // bounded job metadata, and the message board. Never executes shell,
@@ -504,8 +431,8 @@ impl ToolRuntime {
             "created"
         };
         // Read the lifecycle-aware, project-scoped summary once, after the
-        // potentially slow startup probes, then share it across continuation,
-        // the legacy full verdict, and the model-facing brief.
+        // potentially slow startup probes, then share it across continuation
+        // and the model-facing brief.
         let job_snapshot = self
             .active_jobs_snapshot(
                 Some(&resolved.resolved_id),
@@ -528,68 +455,6 @@ impl ToolRuntime {
             .await;
         let active_jobs = job_snapshot.to_value();
         let session_ref = self.session_reference_for_id(&session_summary.session_id, auth);
-        let mut output = json!({
-            "detail": detail.as_str(),
-            "project": project.clone(),
-            "project_resolution": project_resolution.clone(),
-            "resolved_project": resolved_project_payload(&resolved),
-            "session": {
-                "session_id": session_summary.session_id,
-                "mode": session_summary.mode,
-                "guards": session_summary.guards,
-                "execution_context": session_summary.execution_context,
-                "lifecycle": session_summary.lifecycle,
-                "continuation": if resume_requested { "resumed_explicitly" } else { "created" },
-                "reused": session_outcome.reused,
-                "resume_requested": resume_requested,
-                "instruction_appended": title.is_some(),
-                "root_title": session_summary.title,
-                "capability": {
-                    "changed": session_outcome.capability_changed,
-                    "previous_mode": session_outcome.previous_mode,
-                    "previous_guards": session_outcome.previous_guards,
-                    "requested_mode": mode,
-                    "mode": session_summary.mode,
-                    "guards": session_summary.guards,
-                    "write_scope_verified": write_scope_verified,
-                },
-                "context": {
-                    "refreshed": true,
-                    "git_state_recaptured": true,
-                    "rules_recaptured": true,
-                    "execution_context_changed": session_outcome.execution_context_changed,
-                },
-                "explicit_resume_required_for_continuation": true,
-                "explicit_session_id_fields": {
-                    "tool_business_input": "session_id",
-                    "generic_wrapper_recorder": TOOL_CALL_RECORDING_SESSION_ID_FIELD
-                },
-            },
-            "runtime_status": runtime_status.clone(),
-            "connection_state": connection_state,
-            "authority": authority_profile_payload(),
-            "rules": rules_summary(Some(project_instructions)),
-            "git": git.clone(),
-            "semantic_navigation": semantic_navigation.clone(),
-            "recommended_flow": recommended_flow,
-            "continuation_feedback": continuation_feedback.clone(),
-            "deterministic": true,
-            "llm_summary": false,
-            "warnings": warnings,
-        });
-        if let Some(session_ref) = session_ref.as_deref() {
-            output["session"]["session_ref"] = json!(session_ref);
-        }
-        if let Some(tool_manifest) = tool_manifest {
-            output["tool_manifest"] = tool_manifest;
-        }
-        output["startup_verdict"] = startup_verdict(
-            &output,
-            &active_jobs,
-            owning_runner_available,
-            runtime_status_call_failed,
-            include_tool_manifest,
-        );
         let previous_instructions = session_outcome
             .pre_instruction_summary
             .as_ref()
@@ -643,13 +508,10 @@ impl ToolRuntime {
         if let Some(session_ref) = session_ref.as_deref() {
             startup_brief["session"]["session_ref"] = json!(session_ref);
         }
-        let result = if detail == StartupDetail::Full {
-            output["startup_brief"] = startup_brief;
-            ToolResult::ok(output)
-        } else {
-            ToolResult::ok(startup_brief)
-        };
-        attach_permission(result, project_resolution.permission.as_ref())
+        attach_permission(
+            ToolResult::ok(startup_brief),
+            project_resolution.permission.as_ref(),
+        )
     }
 
     /// Test-only diagnostic projection over the same canonical coding workflow
@@ -855,30 +717,18 @@ impl ToolRuntime {
         if !result.success {
             return result;
         }
-        let projected_project = if project.is_empty() || managed_worktree_requested {
-            startup_brief_from_output(&result.output)
-                .and_then(|brief| {
-                    brief
-                        .pointer("/project/resolved_id")
-                        .and_then(Value::as_str)
-                })
-                .unwrap_or_default()
-                .to_string()
-        } else {
-            project
-        };
-        // Fresh work always starts with Goal admission still undecided. Only an
-        // explicit exact Session re-entry projects previously correlated active
-        // Goals, avoiding an unnecessary Goal-store read (and any surprising
-        // concurrent correlation observation) for a newly created Session.
-        let goal_context = session_id.as_ref().and_then(|_| {
-            startup_brief_from_output(&result.output)
-                .and_then(|brief| brief.pointer("/session/session_id"))
-                .and_then(Value::as_str)
-                .and_then(|session_id| self.active_goal_context_for_session(auth, session_id))
-        });
+        // Startup has authorized and resumed this exact Session. Use the explicit
+        // selector for internal lookups instead of reparsing the model-facing brief.
+        // Fresh work keeps Goal admission undecided and does not query the Goal store.
+        let goal_context = session_id
+            .as_deref()
+            .and_then(|session_id| self.active_goal_context_for_session(auth, session_id));
         let mut projected = project_work_on_project_output_inner(
-            projected_project,
+            if managed_worktree_requested {
+                String::new()
+            } else {
+                project
+            },
             result.output,
             guidance_profile,
             Some(correlation),

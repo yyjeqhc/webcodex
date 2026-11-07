@@ -97,7 +97,7 @@ fn finish_summary_keeps_non_git_cleanliness_not_applicable() {
             .any(|warning| warning.as_str() == Some("workspace_dirty")),
         "non-Git workspace must not become dirty: {decision}"
     );
-    let compact = compact_finish_output(&decision);
+    let compact = compact_finish_output(decision);
     assert!(
         compact["workspace_clean"].is_null(),
         "summary_only must preserve non-Git N/A: {compact}"
@@ -140,7 +140,7 @@ fn output_guidance_preserves_unproven_validation_and_rejects_invalid_receipts() 
     assert_eq!(original["task_outcome"]["status"], "warn");
     assert_eq!(original["acceptance"]["state"], "needs_evidence");
     assert_eq!(
-        compact_finish_output(&original)["acceptance"],
+        compact_finish_output(original.clone())["acceptance"],
         original["acceptance"]
     );
     assert!(original["suggested_next_actions"]

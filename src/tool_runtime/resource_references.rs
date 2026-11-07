@@ -481,18 +481,18 @@ impl ToolRuntime {
                             json!("no_valid_output_manifest_in_retained_session_history");
                         return result;
                     };
-                    let rows = outputs["items"]
-                        .as_array()
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|row| {
-                            query
-                                .as_ref()
-                                .is_none_or(|q| row["path"].as_str().is_some_and(|p| p.contains(q)))
-                        })
+                    let rows = outputs
+                        .items
+                        .iter()
+                        .filter(|row| query.as_ref().is_none_or(|q| row.path.contains(q)))
                         .collect::<Vec<_>>();
-                    let items=rows.iter().skip(offset).take(limit).filter_map(|row| {let path=row["path"].as_str()?;Some(link(file_uri(&resolved.resolved_id,root,path),path,"Recorded task output; read resolves current file",json!({"kind":"artifact","project":resolved.resolved_id,"project_ref":selector,"path":path,"provenance":{"session_id":session,"observed_at":outputs["observed_at"],"observation":row}})))}).collect();
+                    let items = rows.iter().skip(offset).take(limit).map(|row| {
+                        link(file_uri(&resolved.resolved_id, root, &row.path), &row.path,
+                            "Recorded task output; read resolves current file",
+                            json!({"kind":"artifact","project":resolved.resolved_id,"project_ref":selector,
+                                "path":row.path,"provenance":{"session_id":session,
+                                    "observed_at":outputs.observed_at,"observation":row}}))
+                    }).collect();
                     page(items, rows.len(), offset, limit, false)
                 }
             }

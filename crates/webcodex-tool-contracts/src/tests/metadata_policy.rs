@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn acp_diagnose_tool_spec_describes_destination_keys_and_live_probe_authority() {
+    let specs = registered_tool_specs();
+    let description = &spec_named(&specs, "diagnose_coding_agent").description;
+    for required in [
+        "env_from_env destination keys",
+        "mapped source variables",
+        "not the source names or values",
+        "coding_agent:run",
+        "project:write",
+        "per-Project permission",
+    ] {
+        assert!(
+            description.contains(required),
+            "diagnose_coding_agent description missing {required}"
+        );
+    }
+    assert!(
+        !description.contains("source names as present/absent"),
+        "env_presence must be described as destination-keyed"
+    );
+}
+
+#[test]
 fn tool_specs_annotations_are_canonical_semantic_projections() {
     use crate::metadata::{ToolApprovalPolicy, ToolEffect, ToolIdempotency, ToolRisk};
 

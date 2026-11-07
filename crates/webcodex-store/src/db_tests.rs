@@ -2173,3 +2173,113 @@ fn last_used_at_updates_are_floored_to_one_write_per_window() {
     assert_eq!(key_used(&db), Some(now + 61));
     assert_eq!(token_used(&db), Some(now + 61));
 }
+
+#[test]
+fn batched_purge_is_bounded_per_table_and_never_touches_live_rows() {
+    use crate::models::{ApiKeyRecord, OAuthAccessTokenRecord, OAuthClientRecord, UserRecord};
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::open(&tmp.path().join("purge-batch.db")).unwrap();
+    let now = 1_700_000_000;
+    db.create_user(&UserRecord {
+        id: "u-batch".to_string(),
+        username: "batcher".to_string(),
+        created_at: now,
+        disabled: 0,
+        display_name: None,
+        role: "user".to_string(),
+        disabled_at: None,
+        updated_at: Some(now),
+    })
+    .unwrap();
+    db.insert_oauth_client(&OAuthClientRecord {
+        id: "oc-batch".to_string(),
+        client_id: "wc_client_batch".to_string(),
+        client_secret_hash: "secret-hash".to_string(),
+        name: "batch".to_string(),
+        owner_user_id: Some("u-batch".to_string()),
+        owner_project_grant_id: None,
+        owner_shared_key_hash: None,
+        redirect_uris: "https://example.com/cb".to_string(),
+        allowed_scopes: "runtime:read".to_string(),
+        created_at: now,
+        revoked_at: None,
+    })
+    .unwrap();
+
+    let access_token =
+        |id: &str, hash: &str, expires_at: i64, revoked_at: Option<i64>| OAuthAccessTokenRecord {
+            admin_authority: false,
+            id: id.to_string(),
+            token_hash: hash.to_string(),
+            client_id: "wc_client_batch".to_string(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: "u-batch".to_string(),
+            user_id: Some("u-batch".to_string()),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: None,
+            created_at: now,
+            expires_at,
+            revoked_at,
+            last_used_at: None,
+        };
+    let api_key = |id: &str, hash: &str, revoked_at: Option<i64>| ApiKeyRecord {
+        id: id.to_string(),
+        user_id: "u-batch".to_string(),
+        name: id.to_string(),
+        key_prefix: format!("wc_pat_{id}"),
+        created_at: now,
+        last_used_at: None,
+        revoked_at,
+        scopes: "runtime:read".to_string(),
+        expires_at: None,
+        kind: "user".to_string(),
+        allowed_client_id: None,
+    };
+    db.insert_oauth_access_token(&access_token("at-live", "ath-live", now + 3600, None))
+        .unwrap();
+    for index in 0..3 {
+        db.insert_oauth_access_token(&access_token(
+            &format!("at-exp-{index}"),
+            &format!("ath-exp-{index}"),
+            now - 1,
+            None,
+        ))
+        .unwrap();
+    }
+    db.insert_api_key(&api_key("k-live", "hash-live", None), "hash-live")
+        .unwrap();
+    for index in 0..2 {
+        db.insert_api_key(
+            &api_key(
+                &format!("k-rev-{index}"),
+                &format!("hash-rev-{index}"),
+                Some(now - 1),
+            ),
+            &format!("hash-rev-{index}"),
+        )
+        .unwrap();
+    }
+
+    // One batch deletes at most one stale row per table.
+    assert_eq!(db.purge_stale_auth_rows_batch(now, 1).unwrap(), 2);
+    assert!(db
+        .get_oauth_access_token_by_hash("ath-live")
+        .unwrap()
+        .is_some());
+    assert!(db.get_api_key_by_hash("hash-live").unwrap().is_some());
+
+    // The backlog shrinks over consecutive bounded batches.
+    assert_eq!(db.purge_stale_auth_rows_batch(now, 1).unwrap(), 2);
+    assert_eq!(db.purge_stale_auth_rows_batch(now, 1).unwrap(), 1);
+    assert_eq!(db.purge_stale_auth_rows_batch(now, 1).unwrap(), 0);
+    assert_eq!(db.purge_stale_auth_rows_batch(now, 1).unwrap(), 0);
+
+    // Live material survives every batch; the full purge has nothing left.
+    assert!(db
+        .get_oauth_access_token_by_hash("ath-live")
+        .unwrap()
+        .is_some());
+    assert!(db.get_api_key_by_hash("hash-live").unwrap().is_some());
+    assert_eq!(db.purge_stale_auth_rows(now).unwrap(), 0);
+}

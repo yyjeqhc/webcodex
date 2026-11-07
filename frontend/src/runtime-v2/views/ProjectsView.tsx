@@ -250,7 +250,8 @@ export function ProjectsView({ client, language, runners, inventoryKey, onOpenSe
           )}
           <div className="inventory-note wide" role="status">
             {projectsState.projects.length} / {projectsState.total} {t("workspaces")}
-            {projectsState.truncated && <button type="button" className="text-button" disabled={projectsState.refreshing} onClick={projectsState.loadMore}>{t("Load more")}</button>}
+            {projectsState.truncated && projectsState.canLoadMore && <button type="button" className="text-button" disabled={projectsState.refreshing} onClick={projectsState.loadMore}>{t("Load more")}</button>}
+            {projectsState.truncated && !projectsState.canLoadMore && <span>{t("Inventory is capped at 2000 workspaces; narrow the filters to see more.")}</span>}
             {projectsState.canShowLess && <button type="button" className="text-button" disabled={projectsState.refreshing} onClick={projectsState.showLess}>{t("Show less")}</button>}
             {projectsState.refreshing && <span>{t("Loading projects…")}</span>}
           </div>

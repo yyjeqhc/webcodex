@@ -2656,6 +2656,13 @@ fn summarize_record(
         events_returned,
         events_truncated: observed_total > events_returned,
         first_retained_sequence: observed_total.saturating_sub(events_returned),
+        // Computed over the full retained history, not the bounded tail
+        // above: an unfinished mutation older than the summary window must
+        // still block a resume with `unconfirmed_tool_execution`.
+        unclosed_mutating_call: super::continuation::has_unclosed_mutating_call(
+            record.events.iter().map(Arc::as_ref),
+            &record.session_id,
+        ),
         project_instructions,
         messages: build_messages_summary(record),
     }

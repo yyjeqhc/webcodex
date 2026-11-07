@@ -126,8 +126,9 @@ impl Database {
     pub fn update_account_credential_last_used(&self, id: &str, ts: i64) -> anyhow::Result<()> {
         let conn = self.lock_connection(crate::StoreDomain::Accounts);
         conn.execute(
-            "UPDATE account_credentials SET last_used_at = ?2 WHERE id = ?1",
-            params![id, ts],
+            "UPDATE account_credentials SET last_used_at = ?2
+             WHERE id = ?1 AND (last_used_at IS NULL OR last_used_at <= ?2 - ?3)",
+            params![id, ts, crate::LAST_USED_UPDATE_FLOOR_SECS],
         )?;
         Ok(())
     }
@@ -377,8 +378,9 @@ impl Database {
     pub fn update_api_key_last_used(&self, id: &str, ts: i64) -> anyhow::Result<()> {
         let conn = self.lock_connection(crate::StoreDomain::Accounts);
         conn.execute(
-            "UPDATE api_keys SET last_used_at = ?2 WHERE id = ?1",
-            params![id, ts],
+            "UPDATE api_keys SET last_used_at = ?2
+             WHERE id = ?1 AND (last_used_at IS NULL OR last_used_at <= ?2 - ?3)",
+            params![id, ts, crate::LAST_USED_UPDATE_FLOOR_SECS],
         )?;
         Ok(())
     }

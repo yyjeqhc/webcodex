@@ -25,9 +25,9 @@
 //!
 //! ## Token Verifier Chain
 //!
-//! The [`TokenVerifier`] trait is the extension point for bearer token
-//! verification. The verifier chain currently runs [`PatVerifier`] followed by
-//! [`OAuth2Verifier`].
+//! The bearer verifier chain runs on the blocking pool: synchronous
+//! [`PatVerifier`] and then [`OAuth2Verifier`] checks preserve token-kind and
+//! credential authorization while avoiding SQLite work on async workers.
 
 use crate::{Config, Database};
 use std::sync::Arc;
@@ -287,7 +287,7 @@ fn restore_test_env(name: &str, value: &Option<std::ffi::OsString>) {
 /// but rejected (disabled user, expired token, account credential). The
 /// caller MUST treat `None` as "reject the connection".
 pub(crate) async fn authenticate_bearer(
-    config: &Config,
+    config: &Arc<Config>,
     db: Option<&Arc<Database>>,
     token: Option<&str>,
 ) -> Option<AuthContext> {
@@ -315,7 +315,7 @@ pub(crate) async fn authenticate_bearer(
     // OAuth2Verifier). Any error (disabled user, expired token) is treated
     // the same as "unknown" for the QUIC transport — the caller rejects
     // the connection either way.
-    match authenticate(config, db, token).await {
+    match authenticate(config.clone(), db, token).await {
         Ok(Some(ctx)) => {
             // Account credentials are not valid on the Runner transport surface.
             // Reject them here so they don't silently update last_used_at and then

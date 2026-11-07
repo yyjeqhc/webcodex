@@ -2075,6 +2075,106 @@ fn oauth_admin_authority_migration_is_additive_idempotent_and_fail_closed() {
 }
 
 #[test]
+fn last_used_at_updates_are_floored_to_one_write_per_window() {
+    use crate::models::{ApiKeyRecord, OAuthAccessTokenRecord, OAuthClientRecord, UserRecord};
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::open(&tmp.path().join("last-used.db")).unwrap();
+    let now = 1_700_000_000;
+    db.create_user(&UserRecord {
+        id: "u-last".to_string(),
+        username: "lastused".to_string(),
+        created_at: now,
+        disabled: 0,
+        display_name: None,
+        role: "user".to_string(),
+        disabled_at: None,
+        updated_at: Some(now),
+    })
+    .unwrap();
+    db.insert_api_key(
+        &ApiKeyRecord {
+            id: "k-last".to_string(),
+            user_id: "u-last".to_string(),
+            name: "key".to_string(),
+            key_prefix: "wc_pat_last".to_string(),
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+            scopes: "runtime:read".to_string(),
+            expires_at: None,
+            kind: "user".to_string(),
+            allowed_client_id: None,
+        },
+        "hash-last",
+    )
+    .unwrap();
+    db.insert_oauth_client(&OAuthClientRecord {
+        id: "oc-last".to_string(),
+        client_id: "wc_client_last".to_string(),
+        client_secret_hash: "secret-hash".to_string(),
+        name: "last".to_string(),
+        owner_user_id: Some("u-last".to_string()),
+        owner_project_grant_id: None,
+        owner_shared_key_hash: None,
+        redirect_uris: "https://example.com/cb".to_string(),
+        allowed_scopes: "runtime:read".to_string(),
+        created_at: now,
+        revoked_at: None,
+    })
+    .unwrap();
+    db.insert_oauth_access_token(&OAuthAccessTokenRecord {
+        admin_authority: false,
+        id: "at-last".to_string(),
+        token_hash: "ath-last".to_string(),
+        client_id: "wc_client_last".to_string(),
+        subject_kind: "managed_user".to_string(),
+        subject_id: "u-last".to_string(),
+        user_id: Some("u-last".to_string()),
+        scopes: "runtime:read".to_string(),
+        resource: None,
+        shared_key_hash: None,
+        created_at: now,
+        expires_at: now + 3600,
+        revoked_at: None,
+        last_used_at: None,
+    })
+    .unwrap();
+
+    // First observation writes (NULL -> ts).
+    db.update_api_key_last_used("k-last", now).unwrap();
+    db.update_oauth_access_token_last_used("at-last", now)
+        .unwrap();
+    let key_used = |db: &Database| -> Option<i64> {
+        db.get_api_key_by_hash("hash-last")
+            .unwrap()
+            .map(|key| key.last_used_at)
+            .flatten()
+    };
+    let token_used = |db: &Database| -> Option<i64> {
+        db.get_oauth_access_token_by_hash("ath-last")
+            .unwrap()
+            .map(|token| token.last_used_at)
+            .flatten()
+    };
+    assert_eq!(key_used(&db), Some(now));
+    assert_eq!(token_used(&db), Some(now));
+
+    // Inside the floor window the write is skipped entirely.
+    db.update_api_key_last_used("k-last", now + 30).unwrap();
+    db.update_oauth_access_token_last_used("at-last", now + 30)
+        .unwrap();
+    assert_eq!(key_used(&db), Some(now));
+    assert_eq!(token_used(&db), Some(now));
+
+    // Past the floor the value moves again.
+    db.update_api_key_last_used("k-last", now + 61).unwrap();
+    db.update_oauth_access_token_last_used("at-last", now + 61)
+        .unwrap();
+    assert_eq!(key_used(&db), Some(now + 61));
+    assert_eq!(token_used(&db), Some(now + 61));
+}
+
+#[test]
 fn batched_purge_is_bounded_per_table_and_never_touches_live_rows() {
     use crate::models::{ApiKeyRecord, OAuthAccessTokenRecord, OAuthClientRecord, UserRecord};
     let tmp = tempfile::tempdir().unwrap();

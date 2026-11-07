@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::{Config, Database};
+#[cfg(test)]
 use salvo::prelude::async_trait;
 
 use super::pat::hash_token;
@@ -26,6 +27,7 @@ use super::{bootstrap_context, AuthContext, AuthError, AuthKind};
 /// an `Arc`). Implementations receive `&Config` and `Option<&Database>` so they
 /// can perform the full validation chain (bootstrap token check, database
 /// lookup, etc.) without owning those resources.
+#[cfg(test)]
 #[async_trait]
 pub(crate) trait TokenVerifier: Send + Sync {
     /// Attempt to verify the given bearer token.
@@ -41,8 +43,7 @@ pub(crate) trait TokenVerifier: Send + Sync {
     ) -> Result<Option<AuthContext>, String>;
 }
 
-/// PAT / bootstrap verifier — the existing validation logic wrapped in the
-/// [`TokenVerifier`] trait.
+/// PAT / bootstrap verifier — synchronous first step of the bearer chain.
 ///
 /// This verifier handles:
 /// 1. Auth-disabled mode (returns bootstrap)
@@ -50,10 +51,23 @@ pub(crate) trait TokenVerifier: Send + Sync {
 /// 3. Database lookup by SHA-256 hash for API keys and account credentials
 pub(crate) struct PatVerifier;
 
+#[cfg(test)]
 #[async_trait]
 impl TokenVerifier for PatVerifier {
     async fn verify(
         &self,
+        config: &Config,
+        db: Option<&Arc<Database>>,
+        token: &str,
+    ) -> Result<Option<AuthContext>, String> {
+        Self::verify_sync(config, db, token)
+    }
+}
+
+impl PatVerifier {
+    /// Synchronous PAT verifier: the bearer chain runs on the blocking pool
+    /// (see `authenticate`), so the database work must not await anything.
+    pub(crate) fn verify_sync(
         config: &Config,
         db: Option<&Arc<Database>>,
         token: &str,
@@ -175,6 +189,7 @@ pub(crate) fn is_oauth2_access_token(token: &str) -> bool {
     token.starts_with(OAUTH2_ACCESS_TOKEN_PREFIX)
 }
 
+#[cfg(test)]
 #[async_trait]
 impl TokenVerifier for OAuth2Verifier {
     async fn verify(
@@ -187,8 +202,25 @@ impl TokenVerifier for OAuth2Verifier {
     }
 }
 
+#[cfg(test)]
 impl OAuth2Verifier {
+    /// Async wrapper kept for existing callers/tests; the chain used by the
+    /// request path calls [`Self::verify_for_ingress_sync`] on the blocking
+    /// pool instead.
     pub(crate) async fn verify_for_ingress(
+        config: &Config,
+        db: Option<&Arc<Database>>,
+        token: &str,
+        ingress: Option<&webcodex_store::PublicIngressFence>,
+    ) -> Result<Option<AuthContext>, String> {
+        Self::verify_for_ingress_sync(config, db, token, ingress)
+    }
+}
+
+impl OAuth2Verifier {
+    /// Synchronous body of the OAuth2 verifier. The verifier chain runs on the
+    /// blocking pool (see `authenticate`), so it must not await anything.
+    pub(crate) fn verify_for_ingress_sync(
         config: &Config,
         db: Option<&Arc<Database>>,
         token: &str,
@@ -401,19 +433,33 @@ impl OAuth2Verifier {
 /// [`crate::auth::AuthMiddleware`] and the non-HTTP
 /// [`crate::auth::authenticate_bearer`].
 pub(crate) async fn authenticate(
-    config: &Config,
+    config: Arc<Config>,
     db: Option<&Arc<Database>>,
     token: &str,
 ) -> Result<Option<AuthContext>, AuthError> {
-    let verifiers: &[&dyn TokenVerifier] = &[&PatVerifier, &OAuth2Verifier];
-
-    for verifier in verifiers {
-        match verifier.verify(config, db, token).await {
-            Ok(Some(ctx)) => return Ok(Some(ctx)),
-            Ok(None) => continue,
-            Err(_) => return Err(AuthError::InvalidToken),
+    // The verifier chain is entirely synchronous SQLite work on the shared
+    // writer connection. Run it on the blocking pool so a token check never
+    // stalls an async worker while that connection is contended. The token is
+    // moved into the task and dropped with it — never logged. Every failure,
+    // including a lost blocking task, stays a rejection.
+    let db = db.cloned();
+    let token = token.to_string();
+    let outcome = tokio::task::spawn_blocking(move || {
+        match PatVerifier::verify_sync(&config, db.as_ref(), &token) {
+            Ok(Some(context)) => Ok(Some(context)),
+            Ok(None) => {
+                match OAuth2Verifier::verify_for_ingress_sync(&config, db.as_ref(), &token, None) {
+                    outcome => outcome,
+                }
+            }
+            Err(error) => Err(error),
         }
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("auth verification task failed: {error}")));
+    match outcome {
+        Ok(Some(context)) => Ok(Some(context)),
+        Ok(None) => Ok(None),
+        Err(_) => Err(AuthError::InvalidToken),
     }
-
-    Ok(None)
 }

@@ -191,6 +191,16 @@ where
 /// better-reported timeouts always fire first.
 const REQUEST_HARD_TIMEOUT_SECS: u64 = 300;
 
+/// Low-frequency cadence for the runtime stale-auth sweep. `Database::open`
+/// purges expired/revoked/used auth material once at startup; this sweep keeps
+/// a long-running Server from accumulating dead rows between restarts. Each
+/// sweep deletes at most [`AUTH_PURGE_SWEEP_BATCH_PER_TABLE`] rows per table,
+/// so a backlog shrinks over consecutive sweeps with bounded writer-lock time.
+const AUTH_PURGE_SWEEP_INTERVAL_SECS: u64 = 6 * 60 * 60;
+/// Per-table delete bound for one stale-auth sweep (see
+/// `Database::purge_stale_auth_rows_batch`).
+const AUTH_PURGE_SWEEP_BATCH_PER_TABLE: i64 = 200;
+
 /// A finite request may legitimately consume the full HTTP hard timeout. Give
 /// its response and connection teardown an additional bounded window before
 /// Salvo escalates graceful shutdown to a forcible connection stop.
@@ -804,6 +814,32 @@ explicitly allow remote shared-key auth."
         loop {
             interval.tick().await;
             runner_http::recovery_timeout_sweep(&sweep_registry).await;
+        }
+    });
+    // Low-frequency bounded cleanup of expired/revoked/used authentication
+    // material (same predicates as the startup purge in `Database::open`).
+    // Long-running Servers accumulate dead rows between restarts; each sweep
+    // deletes at most a small batch per table so the writer connection is
+    // never held for an unbounded bulk delete. The task dies with the process
+    // like the recovery sweep above; no shutdown coordination is needed.
+    let purge_db = db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            AUTH_PURGE_SWEEP_INTERVAL_SECS,
+        ));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Skip the first (immediate) tick: startup already purged.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            match purge_db.purge_stale_auth_rows_batch(
+                chrono::Utc::now().timestamp(),
+                AUTH_PURGE_SWEEP_BATCH_PER_TABLE,
+            ) {
+                Ok(0) => {}
+                Ok(count) => tracing::debug!("stale-auth sweep deleted {count} rows"),
+                Err(error) => tracing::warn!("stale-auth sweep failed: {error}"),
+            }
         }
     });
     #[cfg(target_os = "macos")]

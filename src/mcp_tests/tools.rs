@@ -2369,9 +2369,9 @@ fn mcp_execution_descriptions_share_canonical_source_across_surfaces() {
                     for fact in [
                         "50s",
                         "observe_jobs",
-                        "Never redispatch",
-                        "Permissions",
-                        "process-tree",
+                        "Never replay uncertain effects",
+                        "Permissions and Host approval apply",
+                        "kills the process tree",
                     ] {
                         assert!(description.contains(fact), "{description}");
                     }
@@ -2385,23 +2385,22 @@ fn mcp_execution_descriptions_share_canonical_source_across_surfaces() {
                         tool["inputSchema"]["properties"]["wake_on"]["default"],
                         "terminal"
                     );
-                    assert_eq!(
-                        tool["inputSchema"]["properties"]["summary_only"]["default"],
-                        false
-                    );
+                    assert!(tool["inputSchema"]["properties"]
+                        .get("summary_only")
+                        .is_none());
                     let description = tool["description"].as_str().unwrap();
                     for fact in [
                         "owned Jobs",
                         "wait_secs",
                         "default terminal",
-                        "even without tokens",
-                        "change/meaningful_change",
-                        "after_observation_token",
+                        "change/meaningful_change need a token",
+                        "Reuse opaque tokens unchanged",
                         "latest incremental logs",
-                        "page=true",
-                        "Follow returned continuations",
-                        "without rerunning commands",
-                        "uncertain effects",
+                        "page=true recovers forward",
+                        "Follow continuations on the same Job",
+                        "never rerun commands to observe",
+                        "Terminal is not success",
+                        "permission to replay uncertain effects",
                     ] {
                         assert!(description.contains(fact), "{fact}: {description}");
                     }

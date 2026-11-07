@@ -137,6 +137,19 @@ async fn mcp_observation_defaults_are_published_by_direct_gateway_and_cli() {
         .iter()
         .find(|tool| tool["name"] == "observe_jobs")
         .unwrap()["inputSchema"];
+    assert!(schema["properties"].get("summary_only").is_none());
+    assert_eq!(schema["properties"]["wake_on"]["default"], "terminal");
+    // Advanced fields keep their CLI defaults in exact manifest discovery,
+    // even when the direct selection schema does not advertise them.
+    let (manifest, _) = crate::mcp::cli_call_with_model_for_test(
+        &runtime,
+        "read_tool_manifest",
+        json!({"tool_name":"observe_jobs"}),
+        &crate::auth::shared_key_context("cli-observation-manifest"),
+    )
+    .await;
+    assert_eq!(manifest["success"], true);
+    let schema = &manifest["output"]["input_schema"];
     assert_eq!(schema["properties"]["summary_only"]["default"], false);
     assert_eq!(schema["properties"]["wake_on"]["default"], "terminal");
     for gateway in [false, true] {

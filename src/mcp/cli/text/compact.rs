@@ -361,7 +361,7 @@ pub(super) fn execution(text: &mut String, mut output: Value) {
     render_fields(text, &output);
 }
 
-pub(super) fn jobs(text: &mut String, mut output: Value) {
+pub(super) fn deduplicate_job_recovery(output: &mut Value) {
     // These are two labels for one exact recovery only when the entire call,
     // including follow_up_kind, agrees. Keep distinct targets/cursors/semantics.
     if let Some(call) = output
@@ -375,10 +375,13 @@ pub(super) fn jobs(text: &mut String, mut output: Value) {
             })
         });
         if repeated {
-            remove(&mut output, &["suggested_call"]);
+            remove(output, &["suggested_call"]);
         }
     }
+}
 
+pub(super) fn jobs(text: &mut String, mut output: Value) {
+    deduplicate_job_recovery(&mut output);
     if output["items"]
         .as_array()
         .is_some_and(|items| items.len() == 1)

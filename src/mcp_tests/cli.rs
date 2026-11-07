@@ -117,10 +117,10 @@ fn cli_native_defaults_are_declared_and_keep_input_schemas_under_codex_limit() {
                 tool["inputSchema"]["properties"]["wake_on"]["default"],
                 "terminal"
             );
-            assert_eq!(
-                tool["inputSchema"]["properties"]["summary_only"]["default"],
-                false
-            );
+            assert!(tool["inputSchema"]["properties"]
+                .get("summary_only")
+                .is_none());
+            assert!(!tool["inputSchema"].to_string().contains("observation_ref"));
         }
         if tool["name"] == "run_shell" {
             assert_eq!(
@@ -419,7 +419,8 @@ async fn cli_http_discovery_dispatch_and_default_are_isolated() {
         .unwrap()
         .iter()
         .any(|t| t["name"] == "stop_job"));
-    let params = json!({"name":"list_project_files","arguments":{"project":"agent:missing:p"}});
+    let params =
+        json!({"name":"stop_job","arguments":{"project":"agent:missing:p","job_id":"missing"}});
     let (status, result) = post_cli(&service, "tools/call", params.clone(), true).await;
     assert_eq!(status, StatusCode::OK, "{result}");
     assert_eq!(result["result"]["isError"], true);
@@ -466,7 +467,7 @@ async fn cli_stateless_ignores_app_capabilities_and_host_failure_compatibility()
             !crate::mcp::cli::is_app_tool(tool["name"].as_str().unwrap())
         }));
     let mut params = mcp_2026_ui_params(
-        json!({"name":"list_project_files","arguments":{"project":"agent:missing:p"}}),
+        json!({"name":"read_files","arguments":{"project":"agent:missing:p","items":[{"path":"a.rs"}]}}),
     );
     params["_meta"]["io.modelcontextprotocol/clientInfo"] =
         json!({"name":"openai-mcp","version":"test"});
@@ -594,15 +595,15 @@ async fn cli_default_project_discovery_and_direct_gateway_calls_agree() {
         ("tools/list", json!({})),
         (
             "tools/call",
-            json!({"name":"list_project_files","arguments":{}}),
+            json!({"name":"read_files","arguments":{"items":[{"path":"a.rs"}]}}),
         ),
         (
             "tools/call",
-            adaptive_runtime_gateway_params("list_project_files", json!({})),
+            adaptive_runtime_gateway_params("read_files", json!({"items":[{"path":"a.rs"}]} )),
         ),
         (
             "tools/call",
-            json!({"name":"read_tool_manifest","arguments":{"tool_name":"list_project_files"}}),
+            json!({"name":"read_tool_manifest","arguments":{"tool_name":"read_files"}}),
         ),
     ] {
         let mut response = TestClient::post("http://localhost/mcp")
@@ -620,7 +621,7 @@ async fn cli_default_project_discovery_and_direct_gateway_calls_agree() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .find(|tool| tool["name"] == "list_project_files")
+                .find(|tool| tool["name"] == "read_files")
                 .unwrap();
             assert!(!tool["inputSchema"]["required"]
                 .as_array()
@@ -632,6 +633,26 @@ async fn cli_default_project_discovery_and_direct_gateway_calls_agree() {
             assert_eq!(body["result"]["isError"], true);
             assert!(!text(&body).contains("missing field"), "{}", text(&body));
         }
+    }
+    for tool in [
+        "list_projects",
+        "list_project_files",
+        "list_project_tracked_files",
+        "read_workspace_changes",
+    ] {
+        let mut response = TestClient::post("http://localhost/mcp")
+            .bearer_auth("secret")
+            .add_header(SURFACE_HEADER, "cli", true)
+            .add_header(PROJECT_HEADER, "agent:missing:p", true)
+            .json(&json!({"jsonrpc":"2.0", "id":11, "method":"tools/call", "params":{"name":tool,"arguments":{}}}))
+            .send(&service).await;
+        assert_eq!(effective_status(&response), StatusCode::BAD_REQUEST);
+        let body: Value = response.take_json().await.unwrap();
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("call_runtime_tool") && message.contains("CLI"),
+            "{body}"
+        );
     }
 }
 
@@ -648,12 +669,22 @@ async fn cli_scope_and_protocol_capability_checks_still_apply() {
         .iter()
         .any(|tool| tool["name"] == "read_files"));
     for stateless in [false, true] {
-        for gateway in [false, true] {
-            let arguments = json!({"project":"agent:r:p","items":[{"path":"a.rs"}]});
-            let params = if gateway {
-                adaptive_runtime_gateway_params("read_files", arguments)
+        for (tool, gateway) in [
+            ("read_files", false),
+            ("read_files", true),
+            ("list_project_files", true),
+            ("list_project_tracked_files", true),
+            ("read_workspace_changes", true),
+        ] {
+            let arguments = if tool == "read_files" {
+                json!({"project":"agent:r:p","items":[{"path":"a.rs"}]})
             } else {
-                json!({"name":"read_files","arguments":arguments})
+                json!({"project":"agent:r:p"})
+            };
+            let params = if gateway {
+                adaptive_runtime_gateway_params(tool, arguments)
+            } else {
+                json!({"name":tool,"arguments":arguments})
             };
             let outcome = super::super::handle_mcp_request_for_surface(
                 &runtime,
@@ -687,7 +718,9 @@ async fn cli_scope_and_protocol_capability_checks_still_apply() {
 fn cli_manifest_routes_match_the_advertised_surface() {
     for (name, mode) in [
         ("find_definition", "gateway"),
-        ("list_project_tracked_files", "direct"),
+        ("list_project_tracked_files", "gateway"),
+        ("list_project_files", "gateway"),
+        ("read_workspace_changes", "gateway"),
         ("get_runtime_status", "gateway"),
         ("present_work_result", "unavailable"),
     ] {
@@ -829,6 +862,10 @@ async fn published_edit_selector_schemas_reject_runtime_conflicts() {
                     ("manifest", &exact),
                 ] {
                     assert!(schema.is_object(), "{source}: {manifest}");
+                    if cli && source == "tools/list" {
+                        assert!(!schema.to_string().contains("occurrence"));
+                        continue; // selection subset; the full contract is tested below
+                    }
                     for (request, expected) in &cases {
                         assert_eq!(
                             validate_schema_instance(request, schema).is_ok(),
@@ -868,3 +905,115 @@ async fn cli_manifest_omitted_and_null_options_keep_the_catalog_bound() {
 }
 #[path = "cli/text_projection.rs"]
 mod text_projection;
+
+#[test]
+fn cli_discovery_selection_budget_and_full_manifests() {
+    for default in [false, true] {
+        let listed = crate::mcp::cli::tools_list(None, default);
+        let tools = listed["tools"].as_array().unwrap();
+        let mut names: Vec<_> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        names.sort_unstable();
+        let mut expected = vec![
+            "run_shell",
+            "observe_jobs",
+            "stop_job",
+            "read_files",
+            "edit_project_files",
+            "search_project_texts",
+            "read_tool_manifest",
+            "call_runtime_tool",
+        ];
+        if !default {
+            expected.push("list_projects");
+        }
+        expected.sort_unstable();
+        assert_eq!(names, expected);
+        // Same compact result object as discovery.json_bytes (no RPC envelope).
+        // The CLI descriptors are ASCII, so Python ensure_ascii and serde agree.
+        let encoded = serde_json::to_string(&listed).unwrap();
+        assert!(encoded.is_ascii());
+        let sizes: serde_json::Map<String, Value> = tools
+            .iter()
+            .map(|t| {
+                (
+                    t["name"].as_str().unwrap().to_owned(),
+                    json!(serde_json::to_vec(t).unwrap().len()),
+                )
+            })
+            .collect();
+        eprintln!(
+            "CLI discovery default_project={default}: {} bytes; {}",
+            encoded.len(),
+            json!(sizes)
+        );
+        assert!(
+            encoded.len() <= if default { 10_000 } else { 12_000 },
+            "{} bytes: {sizes:?}",
+            encoded.len()
+        );
+        for name in [
+            "edit_project_files",
+            "observe_jobs",
+            "search_project_texts",
+            "read_workspace_changes",
+            "list_projects",
+        ] {
+            let mut manifest = ToolResult::ok(
+                json!({"name":name,"input_schema":webcodex_tool_contracts::input_schema_for_tool(name)}),
+            );
+            crate::mcp::tool_exposure::ToolExposure::default().project_manifest(
+                &mut manifest,
+                McpSurface::Cli,
+                true,
+            );
+            crate::mcp::cli::project_manifest(&mut manifest, default);
+            let schema = &manifest.output["input_schema"];
+            assert!(schema["properties"].get("session_id").is_none());
+            assert!(schema["properties"].get("session_event_limit").is_none());
+            match name {
+                "edit_project_files" => {
+                    assert!(schema["properties"]["dry_run"].is_object());
+                    assert!(schema.to_string().contains("occurrence"));
+                }
+                "observe_jobs" => {
+                    assert!(schema["properties"]["summary_only"].is_object());
+                    assert!(schema.to_string().contains("observation_ref"));
+                }
+                "search_project_texts" => assert!(schema.to_string().contains("exclude_globs")),
+                "list_projects" => assert_eq!(
+                    manifest.output["route"]["mode"],
+                    if default { "gateway" } else { "direct" }
+                ),
+                _ => {}
+            }
+        }
+    }
+}
+
+#[test]
+fn cli_default_project_picker_recovery_follows_discovery() {
+    use crate::model_surface::SuggestedToolCallRoute;
+    for default in [false, true] {
+        let route = crate::mcp::cli::default_project_route(
+            "list_projects",
+            SuggestedToolCallRoute::Direct,
+            default,
+        );
+        assert_eq!(
+            route,
+            if default {
+                SuggestedToolCallRoute::Gateway("call_runtime_tool")
+            } else {
+                SuggestedToolCallRoute::Direct
+            }
+        );
+        assert_eq!(
+            crate::mcp::cli::default_project_route(
+                "list_projects",
+                SuggestedToolCallRoute::Unavailable,
+                default
+            ),
+            SuggestedToolCallRoute::Unavailable
+        );
+    }
+}

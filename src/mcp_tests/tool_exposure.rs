@@ -195,8 +195,24 @@ async fn defaults_and_each_opt_in_share_inventory_routes_and_budgets() {
                     }
                     if surface == McpSurface::Cli {
                         assert!(!names.iter().any(|n| crate::mcp::cli::is_app_tool(n)));
-                        assert_eq!(names.len(), crate::mcp::cli::DIRECT_TOOLS.len() + 1);
-                        assert!(bytes < 24 * 1024);
+                        // This request has no default Project, so discovery also
+                        // includes the Project picker beside the runtime gateway.
+                        let expected: std::collections::BTreeSet<_> = crate::mcp::cli::DIRECT_TOOLS
+                            .iter()
+                            .copied()
+                            .chain(["list_projects", "call_runtime_tool"])
+                            .collect();
+                        assert_eq!(
+                            names
+                                .iter()
+                                .map(String::as_str)
+                                .collect::<std::collections::BTreeSet<_>>(),
+                            expected
+                        );
+                        assert!(
+                            bytes <= 12_000,
+                            "CLI without default Project: {bytes} bytes"
+                        );
                     } else {
                         // Keep the existing canonical all-enabled byte gates too.
                         // These additional ceilings guard the configurable surfaces.

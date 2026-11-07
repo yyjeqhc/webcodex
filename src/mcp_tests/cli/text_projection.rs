@@ -309,7 +309,6 @@ fn cli_job_lifecycles_and_exact_recovery_calls_survive() {
             "stdout_truncated: true",
             "stderr_delta_reset: true",
             "earlier_stdout_unavailable: true",
-            "log_delta_status: reset",
             "证据\nnext",
             "output_truncated: true",
         ] {
@@ -548,7 +547,8 @@ fn cli_single_observation_combines_wait_without_hiding_reset_or_timeout() {
         );
         let rendered = text(&body);
         assert!(!rendered.contains("wait:"));
-        assert!(rendered.contains("log_delta_status: reset"));
+        assert!(!rendered.contains("log_delta_status: reset"));
+        assert!(rendered.contains("stdout_delta_reset: true"));
         if outcome == "terminal" {
             assert!(!rendered.contains("updates:"));
         } else {
@@ -982,4 +982,194 @@ fn cli_native_timeout_and_workspace_projections_keep_actionable_facts() {
         "depth":null,"depth_auto":false,"returned":1,"total_files":1,"total_entries":1,"source":"git_index", "next_offset":null, "truncated":false}),
     );
     assert_eq!(text(&files), "a.rs\n");
+}
+
+#[test]
+fn cli_next_omits_duplicate_selectors_and_only_equivalent_defaults() {
+    for wake in ["terminal", "all_terminal", "meaningful_change", "change"] {
+        let body = project(
+            "observe_jobs",
+            true,
+            json!({"items":[{
+                "job_id":"job", "observation_token":"token", "status":"running",
+                "continuation":{"tool":"observe_jobs", "arguments":{
+                    "items":[{"job_id":"job","after_observation_token":"token"}],
+                    "wait_secs":37,"tail_lines":200,"wake_on":wake}}
+            }]}),
+        );
+        let rendered = text(&body);
+        assert!(!rendered.contains("job_id:"));
+        assert!(!rendered.contains("observation_token:"));
+        let call = rendered
+            .lines()
+            .find_map(crate::mcp::cli::parse_call_line_for_test)
+            .unwrap();
+        assert_eq!(call["arguments"]["items"][0]["job_id"], "job");
+        assert_eq!(
+            call["arguments"]["items"][0]["after_observation_token"],
+            "token"
+        );
+        assert_eq!(call["arguments"]["wait_secs"], 37);
+        assert_eq!(call["arguments"]["tail_lines"], 200);
+        if wake == "terminal" {
+            assert!(call["arguments"].get("wake_on").is_none());
+        } else {
+            assert_eq!(call["arguments"]["wake_on"], wake);
+        }
+        webcodex_tool_contracts::test_support::validate_schema_instance(
+            &call["arguments"],
+            &webcodex_tool_contracts::input_schema_for_tool("observe_jobs"),
+        )
+        .unwrap();
+        let parsed = crate::tool_runtime::ToolCall::from_tool_name(
+            "observe_jobs",
+            call["arguments"].clone(),
+        )
+        .unwrap();
+        assert!(matches!(
+            parsed,
+            crate::tool_runtime::ToolCall::ObserveJobs { .. }
+        ));
+    }
+    let body = project(
+        "observe_jobs",
+        true,
+        json!({"items":[{"job_id":"job","status":"completed","observation_token":"token"}]}),
+    );
+    assert!(text(&body).contains("job_id: job\nobservation_token: token"));
+}
+
+#[test]
+fn cli_workspace_only_reports_failed_inspections_and_nonredundant_warnings() {
+    let output = json!({"files":[{"status":"untracked","path":"new.txt"}],
+        "diff_status":{"status":"output_unavailable","exit_code":null},
+        "diff_stat_status":{"status":"observed","exit_code":0},
+        "warnings":[{"kind":"untracked_file","path":"new.txt"},
+                    {"kind":"untracked_smoke_file","path":"smoke.txt"},
+                    {"kind":"untracked_file","path":"omitted.txt"}]});
+    let body = project("read_workspace_changes", true, output.clone());
+    assert!(text(&body).contains("?? new.txt"));
+    assert!(!text(&body).contains("diff_status:"));
+    assert!(!text(&body).contains("diff_stat_status:"));
+    assert_eq!(text(&body).matches("new.txt").count(), 1);
+    assert!(text(&body).contains("untracked_smoke_file"));
+    assert!(text(&body).contains("omitted.txt"));
+    for status in ["output_unavailable", "command_failed"] {
+        let mut output = output.clone();
+        output["hunks"] = json!([]);
+        output["diff_status"]["status"] = json!(status);
+        output["diff_stat_status"]["status"] = json!(status);
+        let body = project("read_workspace_changes", false, output);
+        assert!(text(&body).contains("diff_status:"));
+        assert!(text(&body).contains("diff_stat_status:"));
+    }
+}
+
+#[test]
+fn cli_path_policy_rejection_covers_protected_paths_without_echoing_resolved_paths() {
+    for (path, error) in [
+        ("escape/new", "Rejected transactional file batch: cwd /outside/private is outside allowed_roots. No files were modified."),
+        ("deps/new", "Rejected transactional file batch: resolved target /project/node_modules/new is a protected path. No files were modified."),
+    ] {
+        let mut body = json!({"result":{"structuredContent":{"success":false,
+            "error":error,
+            "output":{"error_kind":"path_policy_rejected","execution_state":"not_started","state_changed":false,"path":path}},"content":[]}});
+        crate::mcp::cli::project_response(Some("edit_project_files"), &mut body);
+        assert_eq!(body["result"]["isError"], true);
+        assert!(!text(&body).contains("/outside/private"));
+        assert!(!text(&body).contains("/project/node_modules"));
+        assert!(!text(&body).contains("cwd "));
+        assert!(text(&body).contains("outside the Project or allowed roots, or to a protected path"));
+        assert!(text(&body).contains("No files were modified"));
+        assert!(text(&body).contains("Choose an unprotected path inside those roots"));
+    }
+}
+
+#[test]
+fn cli_sync_log_pages_start_after_each_complete_preview_prefix() {
+    use webcodex_core::job_observation::JobObservationToken;
+    let token = JobObservationToken::new("job", "epoch", 7, 1, 1).unwrap();
+    let rows = (0..500).map(|n| format!("row {n}\n")).collect::<Vec<_>>();
+    let line_preview = format!(
+        "{}... output omitted ...\n{}",
+        rows[..100].concat(),
+        rows[401..].concat()
+    );
+    let long_line = "文".repeat(13000);
+    let chars_source = format!("first\n{long_line}\nlast\n");
+    let (char_preview, _) = crate::tool_runtime::bounded_head_tail(
+        &chars_source,
+        crate::tool_runtime::COMMAND_STDIO_TAIL_CHARS,
+    );
+    for (log, lines, hint, stdout_next) in
+        [(line_preview, 500, true, 101), (char_preview, 3, false, 2)]
+    {
+        let mut output = json!({"job_id":"job", "execution_state":"completed","exit_code":0,
+            "stdout_tail":log,"stdout_truncated":true,"stdout_lines":lines,
+            "stderr_tail":"one\ntwo","stderr_lines":2,"stderr_truncated":false,
+            "continuation":{"tool":"observe_jobs","arguments":{"items":[{"job_id":"job","after_observation_token":token.encode(),"page":true}],"tail_lines":200}}});
+        if hint {
+            output["output_hint"] = json!("Output preview keeps the beginning and end.");
+        }
+        let original = output.clone();
+        let body = project("run_shell", true, output);
+        let call = text(&body)
+            .lines()
+            .find_map(crate::mcp::cli::parse_call_line_for_test)
+            .unwrap();
+        let after = JobObservationToken::parse(
+            call["arguments"]["items"][0]["after_observation_token"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(after.stdout_cursor, Some(stdout_next));
+        assert_eq!(after.stderr_cursor, Some(3));
+        assert_eq!(after.binding, token.binding);
+        assert_eq!(after.revision, token.revision);
+        assert_eq!(call["arguments"]["items"][0]["page"], true);
+        // An observation tail is not a synchronous head preview: never advance it.
+        let body = project("observe_jobs", true, json!({"items":[original]}));
+        let call = text(&body)
+            .lines()
+            .find_map(crate::mcp::cli::parse_call_line_for_test)
+            .unwrap();
+        assert_eq!(
+            call["arguments"]["items"][0]["after_observation_token"],
+            token.encode()
+        );
+    }
+}
+
+#[test]
+fn cli_log_page_keeps_retained_start_and_unknown_preview_safe() {
+    use webcodex_core::job_observation::JobObservationToken;
+    let token = JobObservationToken::new("job", "epoch", 7, 201, 401).unwrap();
+    for (log, truncated, lines, next) in [
+        ("a\nb\n", false, 2, 203),
+        ("... output omitted ...\nunknown", true, 50, 201),
+    ] {
+        let body = project(
+            "run_shell",
+            true,
+            json!({"job_id":"job", "execution_state":"completed",
+            "stdout_tail":log, "stdout_truncated":truncated, "stdout_lines":lines,
+            "stderr_tail":"", "stderr_lines":0, "stderr_truncated":false,
+            "continuation":{"tool":"observe_jobs", "arguments":{"items":[{"job_id":"job","after_observation_token":token.encode(),"page":true}]}}}),
+        );
+        let call = text(&body)
+            .lines()
+            .find_map(crate::mcp::cli::parse_call_line_for_test)
+            .unwrap();
+        let after = JobObservationToken::parse(
+            call["arguments"]["items"][0]["after_observation_token"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(after.stdout_cursor, Some(next));
+        assert_eq!(after.stderr_cursor, Some(401));
+        assert!(after.matches_parent("job", "epoch"));
+        assert_eq!(after.revision, 7);
+    }
 }

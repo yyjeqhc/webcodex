@@ -206,19 +206,75 @@ fn assert_model_evidence_survives_cli(tool: &str, model: &Value, body: &Value) {
     let calls = recovery_calls(body);
     fn check(value: &Value, rendered: &str, calls: &[Value]) {
         if value["tool"].is_string() && value["arguments"].is_object() {
-            assert!(
-                calls.contains(&json!({"tool":value["tool"], "arguments":value["arguments"]})),
-                "recovery changed: {value}\n{rendered}"
-            );
-            assert_call_parses(value);
+            let mut expected = json!({"tool":value["tool"], "arguments":value["arguments"]});
+            if expected["tool"] == "observe_jobs" && expected["arguments"]["wake_on"] == "terminal"
+            {
+                expected["arguments"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("wake_on");
+            }
+            let actual = calls
+                .iter()
+                .find(|call| {
+                    let mut comparable = (*call).clone();
+                    if comparable["tool"] == "observe_jobs"
+                        && comparable["arguments"]["wake_on"] == "terminal"
+                    {
+                        comparable["arguments"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("wake_on");
+                    }
+                    comparable == expected
+                })
+                .unwrap_or_else(|| panic!("recovery changed: {value}\n{rendered}"));
+            assert_call_parses(actual);
             return;
         }
         match value {
             Value::Object(fields) => {
                 for (key, value) in fields {
                     match key.as_str() {
+                        "observation_token" => {
+                            // A page continuation replaces the standalone receipt.
+                            // Its cursor can differ; its exact Job binding and
+                            // observation revision cannot.
+                            if let Some(raw) = value.as_str() {
+                                if !rendered.contains(raw) {
+                                    use webcodex_core::job_observation::JobObservationToken;
+                                    let original = JobObservationToken::parse(raw).unwrap();
+                                    assert!(
+                                        calls.iter().any(|call| {
+                                            call["tool"] == "observe_jobs"
+                                                && call["arguments"]["items"]
+                                                    .as_array()
+                                                    .is_some_and(|items| {
+                                                        items.iter().any(|item| {
+                                                            item["job_id"] == fields["job_id"]
+                                                                && item["after_observation_token"]
+                                                                    .as_str()
+                                                                    .and_then(|raw| {
+                                                                        JobObservationToken::parse(
+                                                                            raw,
+                                                                        )
+                                                                        .ok()
+                                                                    })
+                                                                    .is_some_and(|next| {
+                                                                        next.binding
+                                                                            == original.binding
+                                                                            && next.revision
+                                                                                == original.revision
+                                                                    })
+                                                        })
+                                                    })
+                                        }),
+                                        "lost observation receipt: {raw}\n{rendered}"
+                                    );
+                                }
+                            }
+                        }
                         "job_id"
-                        | "observation_token"
                         | "execution_state"
                         | "command_execution_state"
                         | "status"

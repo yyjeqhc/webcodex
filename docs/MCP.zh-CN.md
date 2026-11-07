@@ -116,9 +116,19 @@ CLI 只负责工具执行：本地 Agent 自己管理规划、仓库指令和对
 Workflow Session、获取 guidance/Skill、投递协作消息或附带其他 Job 的被动提醒。
 所有 `_wc` 附带字段均拒绝，包括空对象和 gateway 内嵌对象。规范审计证据及已有历史保留。
 
-- 默认 12 个工具：`list_projects`、`list_project_files`、`list_project_tracked_files`、`read_files`、
-  `search_project_texts`、`edit_project_files`、`read_workspace_changes`、
-  `run_shell`、`observe_jobs`、`stop_job`、`read_tool_manifest`、`call_runtime_tool`。
+- 配置默认 Project 时直接列出八个工具：`run_shell`、`observe_jobs`、`stop_job`、
+  `read_files`、`edit_project_files`、`search_project_texts`、`read_tool_manifest`、
+  `call_runtime_tool`。未配置时额外列出 `list_projects`，用于选择目标。
+  查文件名和 Git 状态使用 `run_shell`，例如 `git ls-files`、`git status --short`。
+  `list_project_files`、`list_project_tracked_files`、`read_workspace_changes`
+  仍可通过 manifest + gateway 使用；配置默认 Project 后的 `list_projects` 也走此路径。
+- 直接 schema 只供模型选参，不是 Server 校验器。编辑器仅展示 `path`、`kind`、
+  `edits[].old_text/new_text`、`content`、`expected_read_revision`、`to_path`。
+  精确 manifest 保留 occurrence、范围、匹配次数、按行编辑和 dry-run 选项。
+  直接观察隐藏 `observation_ref`、`summary_only`，直接搜索展示常用查询字段。
+  直接调用传入规范的高级字段仍然生效，解析、版本保护、权限及能力检查完全相同。
+  CLI 不展示工作区 `session_event_limit` 等会话时代字段。验收脚本按紧凑
+  `tools/list` result 计量，配置默认 Project 的预算为 10,000 字节，未配置为 12,000 字节。
 - `run_shell` 是默认命令入口；`observe_jobs` 对原 Job 合并有界等待与结果/日志读取；
   `stop_job` 请求取消。精确 argv、脚本、交互 stdin、LSP、构建和验证
   仍保留规范工具，通过 manifest 按需发现，再用 gateway 调用。执行生命周期、超时、取消和不确定效果的权限规则不变。
@@ -143,7 +153,16 @@ CLI 命令与文件行为：
   从 token 向前补读日志，自动续读每页 200 行。首次无 token 观察取当前尾部，
   存储缺口或 epoch 变化会报告 reset。terminal 只表示结束，不代表成功。
 - 截断预览保留开头和结尾。同步结果发生截断时，原 Job 按现有有界保留策略留下，
-  可继续读取日志；不要为了补日志重跑有副作用的命令。
+  可继续读取日志。CLI 对每个流分别从预览开头已完整显示的行之后续读；仅显示了
+  一部分的行会重读。不要为了补日志重跑有副作用的命令。
+- `next:` 行包含可执行的参数，替代单独的 `job_id` / `observation_token` 行；没有
+  续读调用时仍保留这些选择器。`next:` 省略等于 CLI 默认值的参数，例如
+  `wake_on="terminal"`。逐流 reset 标记替代重复的整体 reset 提示。
+- 工作区文本仅在检查失败时展示 `diff_status` / `diff_stat_status`，未请求 diff
+  不算失败。`??` 行替代重复的 `untracked_file` 警告，其他警告保留。
+  创建文件因 symlink 被拒绝时，说明解析结果可能在 Project/允许根目录之外，或
+  落入受保护路径（例如 `deps -> node_modules`），不回显解析后的项目外路径。
+  这些展示变化仅影响 CLI，Adaptive 结果及规范执行契约不变。
 - 文件读取、搜索、目录/文件名查找、LSP 和事务编辑接受本次解析的 Project 根目录内
   的绝对路径。Runner 原有路径及 symlink 保护保留，目录外路径拒绝。
 - `edit_project_files` 使用统一的扁平 change schema。文件 `kind` 默认 `edit`，
@@ -163,6 +182,21 @@ CLI 命令与文件行为：
   CLI 描述声明 Claude `anthropic/alwaysLoad`、`anthropic/maxResultSizeChars=70000`；
   这些是客户端呈现提示，不扩大 Server 输出预算。初始化只提示读取远端 AGENTS.md /
   CLAUDE.md，不注入文件内容或管理任务规划。实际客户端行为通过验收脚本确认。
+
+图片已有 gateway 路径：先发现 `read_project_artifact_chunk`，再传项目内普通图片的
+相对路径和 `as_image=true`；无需预先登记为 artifact。现有路径保护、PNG/JPEG/WebP
+校验及 4 MiB 图片上限继续生效，图片读取不能与分块 offset/length 混用。CLI 在文本
+之外保留 MCP `image` content block，不转成文本，也不丢弃；只读文本的消费端需要
+自行处理该 block 才能显示图片。隔离 Server/Runner 探针验证了普通 PNG 及保留的
+image block，未测试模型的视觉理解。当前可用 manifest + gateway；未来可选方案是
+增加显式 CLI 图片入口以减少发现调用，本轮未实现。
+
+关闭重复原生工具的可选对照：本机 Claude Code 2.1.319 支持 `--tools ""`，保留 MCP
+工具且不再提供原生可执行工具（provider 请求仍含 `DeferredToolPlaceholder`）。
+本机 Codex 0.166.0 支持 `--disable shell_tool`，移除 `exec_command` / `write_stdin`，
+但保留 `apply_patch`、`view_image` 及其他原生工具。这是客户端控制，不改变 WebCodex
+权限。验收脚本通过本地回环协议 fixture 记录实际残留清单，不调用真实模型。
+三组对照与 token 统计限制见[本地 Agent 验收说明](TESTING.md)。
 
 生成连接配置，不读取 token、不修改配置文件：
 

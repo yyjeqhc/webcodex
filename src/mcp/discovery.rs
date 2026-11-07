@@ -128,7 +128,7 @@ fn compact_primary_editor_schema(schema: &mut Value) {
     }
 }
 
-fn strip_schema_descriptions(schema: &mut Value) {
+pub(super) fn strip_schema_descriptions(schema: &mut Value) {
     let Some(object) = schema.as_object_mut() else {
         return;
     };

@@ -440,7 +440,7 @@ pub(super) fn render(tool: &str, success: bool, error: &str, value: &Value) -> O
             && value["execution_state"] == "not_started"
             && value["state_changed"] == false
         {
-            text.push_str("ERROR: Path resolves outside the Project or allowed roots. No files were modified. Choose a path inside those roots.\n");
+            text.push_str("ERROR: Path resolves outside the Project or allowed roots, or to a protected path. No files were modified. Choose an unprotected path inside those roots.\n");
         } else {
             let _ = writeln!(text, "ERROR: {error}");
         }

@@ -210,8 +210,9 @@ a 65-second command with default lifetime and 50-second handoff, timeout Job ide
 500-line head/tail previews and three retained-log pages (up to 200 lines each,
 starting after the displayed head), absolute
 paths, revision-fenced overwrite, stale-write rejection, bounded large reads,
-field-specific revision errors, symlink escape rejection with confirmed no effects,
-and cancellation without a second confirmation. Discovery checks the exact eight
+field-specific revision errors, symlink escape and resolved protected-path
+(`deps -> node_modules`) rejection with confirmed no effects, and cancellation
+without a second confirmation. Discovery checks the exact eight
 (or nine without a default Project) direct tools and 10,000 / 12,000-byte budgets.
 It also verifies gateway-only tools, hidden canonical `occurrence` edits through
 a direct call, executable `next:` lines without duplicate selectors/defaults,

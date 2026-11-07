@@ -160,8 +160,9 @@ CLI 命令与文件行为：
   `wake_on="terminal"`。逐流 reset 标记替代重复的整体 reset 提示。
 - 工作区文本仅在检查失败时展示 `diff_status` / `diff_stat_status`，未请求 diff
   不算失败。`??` 行替代重复的 `untracked_file` 警告，其他警告保留。
-  创建文件遇到逃出根目录的 symlink 时，说明 Project/允许根目录边界，不回显
-  解析后的项目外路径。这些展示变化仅影响 CLI，Adaptive 结果及规范执行契约不变。
+  创建文件因 symlink 被拒绝时，说明解析结果可能在 Project/允许根目录之外，或
+  落入受保护路径（例如 `deps -> node_modules`），不回显解析后的项目外路径。
+  这些展示变化仅影响 CLI，Adaptive 结果及规范执行契约不变。
 - 文件读取、搜索、目录/文件名查找、LSP 和事务编辑接受本次解析的 Project 根目录内
   的绝对路径。Runner 原有路径及 symlink 保护保留，目录外路径拒绝。
 - `edit_project_files` 使用统一的扁平 change schema。文件 `kind` 默认 `edit`，

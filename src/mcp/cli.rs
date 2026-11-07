@@ -179,7 +179,7 @@ pub(super) fn tools_list_with_exposure(
 /// Adapter-only timing, cancellation and workflow differences; reused by exact discovery.
 fn description(name: &str) -> Option<&'static str> {
     match name {
-        "run_shell" => Some("Run a shell command on the Project Runner. Default wait 50s; sync_wait_secs shortens it. timeout_secs (default 600s, Runner-capped) kills the process tree on expiry; effects may be incomplete. Pending/uncertain: observe_jobs reads the same Job, stop_job cancels. Never replay uncertain effects."),
+        "run_shell" => Some("Run a shell command on the Project Runner. Default wait 50s; sync_wait_secs shortens it. timeout_secs (default 600s, Runner-capped) kills the process tree on expiry; effects may be incomplete. Pending/uncertain: observe_jobs reads the same Job, stop_job cancels. Never replay uncertain effects. Permissions and Host approval apply."),
         "stop_job" => Some("Request cancellation of an owned Job; Host approval and Project authority apply. Acceptance is not completion: observe_jobs checks the same Job. No logs."),
         "observe_jobs" => Some("Read/wait for owned Jobs; never rerun commands to observe. wait_secs waits for wake_on (default terminal); change/meaningful_change need a token. Reuse opaque tokens unchanged for latest incremental logs; page=true recovers forward. Follow continuations on the same Job. Terminal is not success or permission to replay uncertain effects."),
         "read_files" => Some("Read bounded UTF-8 ranges within the Project, with read_revision for edits. Follow returned revision-fenced pages for omitted content; stale revisions require a fresh read. Partial failures remain per file."),

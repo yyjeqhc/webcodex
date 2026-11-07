@@ -352,6 +352,8 @@ async fn tool_experience_exact_discovery_constructs_callable_arguments() {
                 .as_object_mut()
                 .unwrap()
                 .remove("session_id");
+            expected["properties"]["project"]["description"] =
+                json!("Exact Project ref or full id.");
         }
         assert_eq!(
             super::cli::business_schema_without_sidecars(&schema),

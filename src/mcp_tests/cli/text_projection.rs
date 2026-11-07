@@ -1066,15 +1066,23 @@ fn cli_workspace_only_reports_failed_inspections_and_nonredundant_warnings() {
 }
 
 #[test]
-fn cli_symlink_rejection_does_not_echo_resolved_outside_path() {
-    let mut body = json!({"result":{"structuredContent":{"success":false,
-        "error":"Rejected transactional file batch: cwd /outside/private is outside allowed_roots. No files were modified.",
-        "output":{"error_kind":"path_policy_rejected","execution_state":"not_started","state_changed":false,"path":"escape/new"}},"content":[]}});
-    crate::mcp::cli::project_response(Some("edit_project_files"), &mut body);
-    assert!(!text(&body).contains("/outside/private"));
-    assert!(!text(&body).contains("cwd "));
-    assert!(text(&body).contains("outside the Project or allowed roots"));
-    assert!(text(&body).contains("No files were modified"));
+fn cli_path_policy_rejection_covers_protected_paths_without_echoing_resolved_paths() {
+    for (path, error) in [
+        ("escape/new", "Rejected transactional file batch: cwd /outside/private is outside allowed_roots. No files were modified."),
+        ("deps/new", "Rejected transactional file batch: resolved target /project/node_modules/new is a protected path. No files were modified."),
+    ] {
+        let mut body = json!({"result":{"structuredContent":{"success":false,
+            "error":error,
+            "output":{"error_kind":"path_policy_rejected","execution_state":"not_started","state_changed":false,"path":path}},"content":[]}});
+        crate::mcp::cli::project_response(Some("edit_project_files"), &mut body);
+        assert_eq!(body["result"]["isError"], true);
+        assert!(!text(&body).contains("/outside/private"));
+        assert!(!text(&body).contains("/project/node_modules"));
+        assert!(!text(&body).contains("cwd "));
+        assert!(text(&body).contains("outside the Project or allowed roots, or to a protected path"));
+        assert!(text(&body).contains("No files were modified"));
+        assert!(text(&body).contains("Choose an unprotected path inside those roots"));
+    }
 }
 
 #[test]

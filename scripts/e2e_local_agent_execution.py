@@ -253,6 +253,19 @@ class Acceptance(Smoke):
         check("outside the Project or allowed roots" in text and str(outside) not in text and "cwd " not in text,
               "symlink create refusal exposed resolved outside path")
         (self.project_dir / "escape").unlink()
+        protected = self.project_dir / "node_modules"
+        protected.mkdir()
+        (protected / "existing.txt").write_text("PROTECTED_SENTINEL")
+        (self.project_dir / "deps").symlink_to(protected, target_is_directory=True)
+        result, text = call("edit_project_files", {"changes":[{"kind":"create", "path":"deps/new.txt", "content":"must not write"}]})
+        check(result["result"].get("isError") and "path_policy_rejected" in text
+              and "protected path" in text and "No files were modified" in text
+              and "outcome_unknown" not in text and not (protected / "new.txt").exists()
+              and (protected / "existing.txt").read_text() == "PROTECTED_SENTINEL",
+              "resolved protected path refusal lost its reason or modified files")
+        check(str(protected) not in text, "protected-path refusal exposed the resolved path")
+        (self.project_dir / "deps").unlink()
+        shutil.rmtree(protected)
         result, text = call("edit_project_files", {"changes":[{"kind":"create", "path":"ranges.py", "content":"must not overwrite"}]})
         check("kind=write" in text, "existing create did not suggest write")
         (self.project_dir / "large.txt").write_text(("large line " + "x" * 120 + "\n") * 500)
@@ -293,7 +306,7 @@ class Acceptance(Smoke):
                 "workspace_status_sparse":True, "log_page_skips_preview_head":True, "sync_16s_elapsed":round(sync_elapsed, 2), "tokenless_wait_elapsed":round(wait_elapsed, 2),
                 "retained_log_pages":pages, "terminal_incremental_stdout":True,
                 "incremental_terminal_chars":incremental_terminal_chars, "default_handoff_elapsed":round(handoff_elapsed,2),
-                "default_lifetime_65s_elapsed":round(lifetime_elapsed,2), "timeout_job_identity":True, "symlink_refusal_no_effect":True, "absolute_read_and_edit":True, "revision_fenced_overwrite":True,
+                "default_lifetime_65s_elapsed":round(lifetime_elapsed,2), "timeout_job_identity":True, "symlink_refusal_no_effect":True, "protected_symlink_refusal_no_effect":True, "absolute_read_and_edit":True, "revision_fenced_overwrite":True,
                 "unique_exact_without_revision":True, "stale_write_rejected":True, "outside_path_rejected":True,
                 "large_read_chars":large_read_chars, "revision_error_field_path":True,
                 "stop_without_confirmation":True}

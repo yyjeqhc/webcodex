@@ -387,8 +387,9 @@ CLI command and file behavior:
 - Workspace text shows `diff_status` / `diff_stat_status` only for failed
   inspections, not an unrequested diff. `??` rows replace duplicate
   `untracked_file` warnings; other warnings remain. A refused creation through
-  an escaping symlink explains the Project/allowed-root boundary without
-  exposing the resolved outside path. These presentation changes are CLI-only;
+  a symlink explains that the resolved path is outside the Project/allowed roots
+  or is protected (for example `deps -> node_modules`), without exposing the
+  resolved outside path. These presentation changes are CLI-only;
   Adaptive results and canonical execution contracts are unchanged.
 - File reads, searches, directory/filename listing, LSP paths and transactional
   edits accept absolute paths inside the resolved Project root. Runner path and

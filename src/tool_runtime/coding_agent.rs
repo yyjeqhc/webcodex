@@ -1251,9 +1251,10 @@ impl ToolRuntime {
             Ok(resolved) => resolved,
             Err(error) => return error.into_tool_result(),
         };
-        // A diagnostic never requires or implies Project write authority; the
-        // optional live probe is gated on the explicit start authority above,
-        // not on Project mutation.
+        // Presence-only diagnosis does not require Project write authority.
+        // include_live_acp=true reuses start_coding_agent scope admission
+        // (including project:write for OAuth) and the per-Project permission
+        // check below; it does not mutate the Project.
         let client_id = resolved.config.client_id.as_str();
         let client = match self
             .runner_registry

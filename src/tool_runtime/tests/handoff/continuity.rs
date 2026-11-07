@@ -79,6 +79,7 @@ async fn handoff_reread_recovers_corrected_task_without_reusing_validation_or_re
         runtime
             .sessions
             .ensure_coding_session(sessions::CodingSessionRequest {
+                project_identity: None,
                 project: project.clone(),
                 authority_fingerprint: sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT
                     .to_string(),

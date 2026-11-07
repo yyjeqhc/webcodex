@@ -85,6 +85,14 @@ pub(crate) fn parse_runner_project_toml(content: &str) -> Result<RunnerProjectFi
     project.name = trim_optional(project.name);
     project.kind = trim_optional(project.kind);
     project.registration_source = trim_optional(project.registration_source);
+    project.registration_incarnation = trim_optional(project.registration_incarnation);
+    if project
+        .registration_incarnation
+        .as_deref()
+        .is_some_and(|id| uuid::Uuid::parse_str(id).is_err())
+    {
+        return Err("invalid project registration incarnation".to_string());
+    }
     project.description = trim_optional(project.description);
     project.managed_source = trim_optional(project.managed_source);
     project.managed_source_project_id = trim_optional(project.managed_source_project_id);
@@ -595,6 +603,7 @@ fn runner_project_summary_with_shutdown(
         hooks,
         disabled: project.disabled,
         revision: Some(project_revision(project)),
+        registration_incarnation: project.registration_incarnation.clone(),
         root_fingerprint,
         lineage: project_lineage(project),
         git_branch,
@@ -629,6 +638,40 @@ fn warn_empty_hook_commands(source: &Path, project: &RunnerProjectFile) {
     }
 }
 
+/// Upgrade a readable pre-incarnation TOML exactly once, before advertising it
+/// to the Server. This preserves a stable registration across Runner restarts
+/// without trusting an old path-only Session as live execution authority.
+/// On any write failure the Project stays undiscoverable, rather than exposing
+/// an ephemeral incarnation that would rotate on every refresh.
+fn load_runner_project_with_incarnation(file: &Path) -> Result<RunnerProjectFile, String> {
+    let _guard = super::project_registry_write_lock()
+        .lock()
+        .map_err(|_| "project registry lock poisoned".to_string())?;
+    let content = std::fs::read_to_string(file).map_err(|error| format!("read failed: {error}"))?;
+    let project = parse_runner_project_toml(&content)?;
+    if project.registration_incarnation.is_some() {
+        return Ok(project);
+    }
+    if std::fs::symlink_metadata(file)
+        .map_err(|error| format!("metadata failed: {error}"))?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("legacy Project symlink cannot be upgraded safely".to_string());
+    }
+    let incarnation = uuid::Uuid::new_v4();
+    // Prepend the top-level key so TOML records ending in [hooks] or another
+    // table retain their exact table scope and hand-authored contents.
+    let updated = format!("registration_incarnation = \"{incarnation}\"\n{content}");
+    let upgraded = parse_runner_project_toml(&updated)?;
+    super::lifecycle::write_existing_project_atomic(file, &updated)?;
+    eprintln!(
+        "webcodex-runner project: migrated legacy registration {}",
+        file.display()
+    );
+    Ok(upgraded)
+}
+
 fn load_runner_project_summaries_from_dir_with_shutdown(
     dir: &Path,
     shutdown: Option<&AtomicBool>,
@@ -661,18 +704,7 @@ fn load_runner_project_summaries_from_dir_with_shutdown(
         if shutdown.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
             break;
         }
-        let content = match std::fs::read_to_string(&file) {
-            Ok(content) => content,
-            Err(e) => {
-                eprintln!(
-                    "webcodex-runner project warning: failed to read {}: {}",
-                    file.display(),
-                    e
-                );
-                continue;
-            }
-        };
-        let project = match parse_runner_project_toml(&content) {
+        let project = match load_runner_project_with_incarnation(&file) {
             Ok(project) => project,
             Err(e) => {
                 eprintln!(

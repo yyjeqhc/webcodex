@@ -1565,6 +1565,10 @@ fn parse_project_summary_from_result(
         Some(value) => Some(serde_json::from_value(value.clone()).ok()?),
     };
     Some(RunnerProjectSummary {
+        registration_incarnation: result
+            .get("registration_incarnation")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         id: agent_project_id.to_string(),
         name: name.or_else(|| Some(agent_project_id.to_string())),
         path: path.to_string(),
@@ -1610,6 +1614,7 @@ mod tests {
     #[test]
     fn legacy_managed_temporary_kind_is_projected_as_ordinary_registration() {
         let project = RunnerProjectSummary {
+            registration_incarnation: None,
             id: "legacy".to_string(),
             name: Some("Legacy".to_string()),
             path: "/tmp/legacy".to_string(),
@@ -1634,6 +1639,7 @@ mod tests {
     #[test]
     fn old_runner_auto_registered_kind_is_compatibility_fallback() {
         let mut project = RunnerProjectSummary {
+            registration_incarnation: None,
             id: "legacy-auto".to_string(),
             name: Some("Legacy Auto".to_string()),
             path: "/tmp/legacy-auto".to_string(),

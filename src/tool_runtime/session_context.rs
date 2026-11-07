@@ -618,6 +618,26 @@ pub(crate) fn workflow_session_authority_fingerprint(
     ))
 }
 
+/// Scope a Project-bound Session to a single persisted Runner registration.
+/// A root path alone cannot prove continuity after unregister/re-register.
+pub(crate) fn workflow_project_identity(
+    root_fingerprint: Option<&str>,
+    registered_path: &str,
+    registration_incarnation: Option<&str>,
+) -> Option<String> {
+    let incarnation = registration_incarnation.filter(|value| !value.is_empty())?;
+    let root = root_fingerprint.filter(|fp| !fp.trim().is_empty());
+    Some(hash_authority_identity(
+        b"webcodex.workflow-project-registration.v2\0",
+        if root.is_some() {
+            "canonical-root"
+        } else {
+            "registered-path"
+        },
+        &format!("{}\0{}", incarnation, root.unwrap_or(registered_path)),
+    ))
+}
+
 pub(crate) fn workflow_session_incarnation_fingerprint(
     session_id: &str,
     created_at: i64,

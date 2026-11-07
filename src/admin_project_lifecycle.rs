@@ -654,7 +654,10 @@ fn map_create_result(
 }
 
 fn lifecycle_summary(output: &Value, id: &str) -> Option<RunnerProjectSummary> {
+    let incarnation = output.get("registration_incarnation")?.as_str()?;
+    uuid::Uuid::parse_str(incarnation).ok()?;
     Some(RunnerProjectSummary {
+        registration_incarnation: Some(incarnation.to_string()),
         id: id.to_string(),
         name: output
             .get("name")
@@ -989,6 +992,39 @@ mod tests {
                 .unwrap(),
             2,
             "the owner's active Jobs must remain authoritative for the unregister fence"
+        );
+    }
+
+    #[test]
+    fn lifecycle_projection_requires_authoritative_registration_identity() {
+        let complete = json!({
+            "path": "/original-root",
+            "name": "demo",
+            "disabled": false,
+            "registration_incarnation": "0a03dd75-3c93-4e91-a4ba-130592d5bc7e"
+        });
+        assert_eq!(
+            lifecycle_summary(&complete, "demo")
+                .unwrap()
+                .registration_incarnation
+                .as_deref(),
+            Some("0a03dd75-3c93-4e91-a4ba-130592d5bc7e")
+        );
+
+        let mut missing = complete.clone();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove("registration_incarnation");
+        assert!(
+            lifecycle_summary(&missing, "demo").is_none(),
+            "an incomplete lifecycle receipt must not erase a known Registry incarnation"
+        );
+        let mut malformed = complete;
+        malformed["registration_incarnation"] = json!("not-an-incarnation");
+        assert!(
+            lifecycle_summary(&malformed, "demo").is_none(),
+            "invalid registration identity must fail closed before a Registry update"
         );
     }
 

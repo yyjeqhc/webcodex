@@ -341,6 +341,7 @@ async fn register_failure_runner_with_resource_links(
         "failure-runner",
         "inst",
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: "probe".into(),
             name: None,
             path: "/tmp/structured-failure-probe".into(),

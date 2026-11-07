@@ -494,6 +494,7 @@ async fn dispatch_with_managed_worktree_runner(
                     "disabled": false,
                     "revision": format!("sha256:{}", "b".repeat(64)),
                     "root_fingerprint": managed_target_root_fingerprint(),
+                    "registration_incarnation": "10000000-0000-4000-8000-000000000001",
                     "lineage": {
                         "kind": "managed_worktree_source",
                         "source_project_id": "source",
@@ -948,6 +949,7 @@ async fn dispatch_with_path_runner(
                     "disabled": false,
                     "revision": format!("sha256:{}", "a".repeat(64)),
                     "root_fingerprint": format!("wc_projroot_{}", "b".repeat(64)),
+                    "registration_incarnation": "10000000-0000-4000-8000-000000000002",
                     "source": "path",
                     "outcome": outcome,
                     "registered": registered,

@@ -1299,6 +1299,7 @@ async fn closeout_boundary_gap_keeps_historical_validation_visible_without_curre
     runtime
         .sessions
         .ensure_coding_session(crate::tool_runtime::sessions::CodingSessionRequest {
+            project_identity: None,
             project: project.clone(),
             authority_fingerprint:
                 crate::tool_runtime::sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT

@@ -5,6 +5,75 @@ use super::support::*;
 use crate::runner_protocol::RunnerResultRequest;
 
 #[tokio::test]
+async fn project_unregister_must_not_strand_owned_session_closeout() {
+    let runtime = runtime_with_resolver_projects().await;
+    let owner = auth_context(None, true);
+    let started = runtime
+        .dispatch_with_auth(
+            ToolCall::StartSession {
+                project: Some("agent:workstation:my-repo".into()),
+                title: Some("retired project fixture".into()),
+                mode: SessionMode::Normal,
+                deny_write_tools: false,
+                deny_shell_tools: false,
+                execution_context: None,
+            },
+            Some(&owner),
+        )
+        .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session_id"].as_str().unwrap().to_string();
+    let runner_instance = runtime
+        .runner_registry
+        .get_runner_view("workstation")
+        .await
+        .unwrap()
+        .runner_instance_id;
+    assert!(runtime
+        .runner_registry
+        .remove_runner_project_for_instance("workstation", &runner_instance, "my-repo")
+        .await
+        .unwrap());
+
+    let attacker = shared_key_auth_context("different-session-owner");
+    let denied = runtime
+        .dispatch_with_auth(
+            ToolCall::SessionSummary {
+                session_id: session_id.clone(),
+                limit: Some(10),
+            },
+            Some(&attacker),
+        )
+        .await;
+    assert!(
+        !denied.success,
+        "another authority must not inherit Session ownership"
+    );
+    let history = runtime
+        .dispatch_with_auth(
+            ToolCall::SessionSummary {
+                session_id: session_id.clone(),
+                limit: Some(10),
+            },
+            Some(&owner),
+        )
+        .await;
+    assert!(history.success, "{:?}", history.error);
+    assert_eq!(history.output["session_id"], session_id);
+
+    let closed = runtime
+        .dispatch_with_auth(
+            ToolCall::CloseSession {
+                session_id: session_id.clone(),
+            },
+            Some(&owner),
+        )
+        .await;
+    assert!(closed.success, "{:?}", closed.error);
+    assert_eq!(closed.output["lifecycle"], "closed");
+}
+
+#[tokio::test]
 async fn project_resolver_resolves_full_id() {
     let runtime = runtime_with_resolver_projects().await;
     let resolved = runtime

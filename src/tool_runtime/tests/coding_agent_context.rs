@@ -13,7 +13,14 @@ use webcodex_core::coding_agent::{
     CodingAgentResponsePayload, CodingAgentRunSnapshot, CodingAgentRunState,
 };
 
-fn seed(runtime: &ToolRuntime, project: Option<&str>, auth: &AuthContext) -> String {
+async fn seed(runtime: &ToolRuntime, project: Option<&str>, auth: &AuthContext) -> String {
+    let project_identity = match project {
+        Some(project) => {
+            crate::test_support::registered_session_project_identity(runtime, project, Some(auth))
+                .await
+        }
+        None => None,
+    };
     let id = runtime
         .sessions
         .start_session_with_options(
@@ -25,7 +32,8 @@ fn seed(runtime: &ToolRuntime, project: Option<&str>, auth: &AuthContext) -> Str
             )
             .with_owner_authority_fingerprint(Some(
                 workflow_session_authority_fingerprint(Some(auth)).unwrap(),
-            )),
+            ))
+            .with_project_identity(project_identity),
         )
         .unwrap()
         .session_id;
@@ -72,7 +80,7 @@ async fn coding_agent_context_recovers_exact_closed_history_without_resuming_or_
     ));
     let project = register_runner_project_at_path(&runtime, "context", "demo", root.path()).await;
     let auth = bootstrap_auth_context();
-    let id = seed(&runtime, Some(&project), &auth);
+    let id = seed(&runtime, Some(&project), &auth).await;
     runtime.sessions.close_session(&id).unwrap();
     let listed = runtime
         .dispatch_with_auth(
@@ -132,12 +140,13 @@ async fn coding_agent_context_rejects_foreign_owner_wrong_project_missing_scope_
     let project = register_runner_project_at_path(&runtime, "context", "demo", root.path()).await;
     let other = register_runner_project_at_path(&runtime, "other", "demo", root.path()).await;
     let auth = bootstrap_auth_context();
-    let id = seed(&runtime, Some(&project), &auth);
+    let id = seed(&runtime, Some(&project), &auth).await;
     let foreign = seed(
         &runtime,
         Some(&project),
         &shared_key_auth_context("different-owner"),
-    );
+    )
+    .await;
     for (source, target) in [(&foreign, &project), (&id, &other)] {
         let error = runtime
             .coding_agent_context_instruction(target, source, "Review", Some(&auth))
@@ -149,7 +158,7 @@ async fn coding_agent_context_rejects_foreign_owner_wrong_project_missing_scope_
             .to_string()
             .contains("existing database schema"));
     }
-    let unscoped = seed(&runtime, None, &auth);
+    let unscoped = seed(&runtime, None, &auth).await;
     let error = runtime
         .coding_agent_context_instruction(&project, &unscoped, "Review", Some(&auth))
         .await
@@ -200,7 +209,7 @@ async fn coding_agent_context_is_frozen_in_dispatched_intent_and_changed_retry_c
     )
     .await;
     let auth = bootstrap_auth_context();
-    let id = seed(&runtime, Some(&project), &auth);
+    let id = seed(&runtime, Some(&project), &auth).await;
     let call = || ToolCall::CodingAgentStart {
         project: project.clone(),
         provider_id: "review".into(),
@@ -297,12 +306,12 @@ async fn coding_agent_context_closed_selectors_survive_cache_capacity_without_di
     )
     .await;
     let auth = bootstrap_auth_context();
-    let closed = seed(&runtime, Some(&project), &auth);
+    let closed = seed(&runtime, Some(&project), &auth).await;
     let session_ref = runtime
         .session_reference_for_id(&closed, Some(&auth))
         .expect("live session issues a ref");
     runtime.sessions.close_session(&closed).unwrap();
-    let retained = seed(&runtime, Some(&project), &auth);
+    let retained = seed(&runtime, Some(&project), &auth).await;
     runtime.sessions.close_session(&retained).unwrap();
     assert!(runtime.sessions.contains_session(&closed));
     assert!(runtime.sessions.contains_session(&retained));

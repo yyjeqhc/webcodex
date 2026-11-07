@@ -22,18 +22,22 @@ fn git(root: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
-fn start_changes_session(
+async fn start_changes_session(
     runtime: &ToolRuntime,
     auth: &crate::auth::AuthContext,
     project: &str,
     baseline: String,
 ) -> crate::tool_runtime::SessionSummary {
+    let project_identity =
+        crate::test_support::registered_session_project_identity(runtime, project, Some(auth))
+            .await;
     let authority_fingerprint =
         crate::tool_runtime::workflow_session_authority_fingerprint(Some(auth)).unwrap();
     runtime
         .sessions
         .ensure_coding_session_with_git_baseline(
             CodingSessionRequest {
+                project_identity,
                 project: project.to_string(),
                 authority_fingerprint,
                 resume_session_id: None,
@@ -520,7 +524,7 @@ async fn work_result_file_pages_share_frozen_source_and_never_require_a_session(
         assert!(!denied.success, "{path}");
     }
     let baseline = git(tmp.path(), &["rev-parse", "HEAD^{tree}"]);
-    let session = start_changes_session(&runtime, &auth, &project, baseline);
+    let session = start_changes_session(&runtime, &auth, &project, baseline).await;
     record_first_class_edit(&runtime, &session.session_id, &project, "file_00.txt");
     let sealed = seal_successful_closeout(&runtime, client, &project, &session.session_id, &auth)
         .await
@@ -608,7 +612,7 @@ async fn final_changes_uses_startup_tree_whole_final_workspace_and_frozen_lazy_d
     let project =
         register_runner_project_at_path_with_auth(&runtime, client_id, "demo", tmp.path(), &auth)
             .await;
-    let session = start_changes_session(&runtime, &auth, &project, baseline);
+    let session = start_changes_session(&runtime, &auth, &project, baseline).await;
     record_first_class_edit(&runtime, &session.session_id, &project, "rename_me.rs");
 
     fs::rename(
@@ -806,7 +810,7 @@ async fn final_changes_uses_startup_tree_whole_final_workspace_and_frozen_lazy_d
         .unwrap()
         .git_baseline_tree
         .expect("other session baseline");
-    let other_session = start_changes_session(&runtime, &auth, &project, other_baseline);
+    let other_session = start_changes_session(&runtime, &auth, &project, other_baseline).await;
     let wrong_session = runtime
         .changes_file_diff(
             project.clone(),
@@ -1004,7 +1008,7 @@ async fn final_changes_neutralizes_repository_configured_clean_and_process_filte
     let project =
         register_runner_project_at_path_with_auth(&runtime, client_id, "demo", tmp.path(), &auth)
             .await;
-    let session = start_changes_session(&runtime, &auth, &project, baseline);
+    let session = start_changes_session(&runtime, &auth, &project, baseline).await;
     record_first_class_edit(&runtime, &session.session_id, &project, "clean.dat");
 
     let summary = runtime.sessions.summary(&session.session_id, None).unwrap();
@@ -1047,7 +1051,7 @@ async fn committed_final_tree_is_presentable_even_when_worktree_is_clean() {
     let project =
         register_runner_project_at_path_with_auth(&runtime, client_id, "demo", tmp.path(), &auth)
             .await;
-    let session = start_changes_session(&runtime, &auth, &project, baseline);
+    let session = start_changes_session(&runtime, &auth, &project, baseline).await;
     record_first_class_edit(&runtime, &session.session_id, &project, "README.md");
     fs::write(tmp.path().join("README.md"), "committed task state\n").unwrap();
     git(tmp.path(), &["add", "README.md"]);
@@ -1085,7 +1089,7 @@ async fn final_changes_seal_survives_model_summary_tail_truncation() {
     let project =
         register_runner_project_at_path_with_auth(&runtime, client_id, "demo", tmp.path(), &auth)
             .await;
-    let session = start_changes_session(&runtime, &auth, &project, baseline);
+    let session = start_changes_session(&runtime, &auth, &project, baseline).await;
     record_first_class_edit(&runtime, &session.session_id, &project, "README.md");
     fs::write(tmp.path().join("README.md"), "long task final state\n").unwrap();
 
@@ -1138,7 +1142,7 @@ async fn shell_only_is_ineligible_and_reverted_first_class_edit_has_no_presentat
         register_runner_project_at_path_with_auth(&runtime, client_id, "demo", tmp.path(), &auth)
             .await;
 
-    let shell_only = start_changes_session(&runtime, &auth, &project, baseline.clone());
+    let shell_only = start_changes_session(&runtime, &auth, &project, baseline.clone()).await;
     fs::write(tmp.path().join("shell-only.rs"), "shell write\n").unwrap();
     let summary = runtime
         .sessions
@@ -1159,7 +1163,7 @@ async fn shell_only_is_ineligible_and_reverted_first_class_edit_has_no_presentat
     assert!(work.output["work_result"].get("final_changes").is_none());
 
     fs::remove_file(tmp.path().join("shell-only.rs")).unwrap();
-    let reverted = start_changes_session(&runtime, &auth, &project, baseline);
+    let reverted = start_changes_session(&runtime, &auth, &project, baseline).await;
     record_first_class_edit(&runtime, &reverted.session_id, &project, "README.md");
     fs::write(tmp.path().join("README.md"), "temporary\n").unwrap();
     git(tmp.path(), &["restore", "--source=HEAD", "--", "README.md"]);
@@ -1381,7 +1385,7 @@ async fn work_result_content_pages_preserve_utf8_snapshot_scope_and_preview_boun
     // Explicit final content reads use the sealed final tree and original Session;
     // a later edit cannot retarget them into either the workspace or another scope.
     let baseline = git(tmp.path(), &["rev-parse", "HEAD^{tree}"]);
-    let session = start_changes_session(&runtime, &auth, &project, baseline);
+    let session = start_changes_session(&runtime, &auth, &project, baseline).await;
     record_first_class_edit(&runtime, &session.session_id, &project, "unicode.md");
     let sealed = seal_successful_closeout(&runtime, client, &project, &session.session_id, &auth)
         .await

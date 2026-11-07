@@ -278,7 +278,7 @@ async fn navigation_overview_does_not_project_projects_or_scan_job_history() {
     )
     .await;
     for _ in 0..20 {
-        start_authorized_session(&runtime, "agent:own:repo", &auth);
+        start_authorized_session(&runtime, "agent:own:repo", &auth).await;
     }
     let before_jobs = runtime
         .runner_registry
@@ -423,7 +423,7 @@ async fn runtime_home_primary_skips_session_hydration_but_keeps_visibility_and_p
         Some(&foreign),
     )
     .await;
-    start_authorized_session(&runtime, "agent:own:one", &auth);
+    start_authorized_session(&runtime, "agent:own:one", &auth).await;
     let primary = overview_for_auth_detail(&runtime, &auth, false)
         .await
         .unwrap();
@@ -453,8 +453,8 @@ async fn runtime_home_projects_and_recent_sessions_span_visible_runners() {
     let auth = crate::auth::shared_key_context("runtime-home-fleet");
     register_project(&runtime, "runner-a", "proj-a", "/private/a", Some(&auth)).await;
     register_project(&runtime, "runner-b", "proj-b", "/private/b", Some(&auth)).await;
-    start_authorized_session(&runtime, "agent:runner-a:proj-a", &auth);
-    start_authorized_session(&runtime, "agent:runner-b:proj-b", &auth);
+    start_authorized_session(&runtime, "agent:runner-a:proj-a", &auth).await;
+    start_authorized_session(&runtime, "agent:runner-b:proj-b", &auth).await;
 
     let home = overview_for_auth(&runtime, &auth).await.unwrap();
     let recent_clients = home
@@ -494,8 +494,8 @@ async fn runtime_home_recent_sessions_follow_project_authority() {
     let auth_b = crate::auth::shared_key_context("runtime-home-b");
     register_project(&runtime, "runner-a", "proj-a", "/private/a", Some(&auth_a)).await;
     register_project(&runtime, "runner-b", "proj-b", "/private/b", Some(&auth_b)).await;
-    start_authorized_session(&runtime, "agent:runner-a:proj-a", &auth_a);
-    start_authorized_session(&runtime, "agent:runner-b:proj-b", &auth_b);
+    start_authorized_session(&runtime, "agent:runner-a:proj-a", &auth_a).await;
+    start_authorized_session(&runtime, "agent:runner-b:proj-b", &auth_b).await;
 
     let home = overview_for_auth(&runtime, &auth_a).await.unwrap();
     assert_eq!(home.projects.len(), 1);

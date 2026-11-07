@@ -24,6 +24,7 @@ async fn mcp_runner_discovery_default_211_projection_bytes() {
             .map(|index| {
                 let id = format!("project-{index:03}");
                 RunnerProjectSummary {
+                    registration_incarnation: None,
                     name: Some(id.clone()),
                     path: format!("/fixture/{id}"),
                     id,

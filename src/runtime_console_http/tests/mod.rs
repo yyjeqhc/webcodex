@@ -34,6 +34,7 @@ mod window_visibility;
 
 fn project(id: &str, private_path: &str) -> RunnerProjectSummary {
     RunnerProjectSummary {
+        registration_incarnation: Some(uuid::Uuid::new_v4().to_string()),
         id: id.to_string(),
         name: Some(format!("Project {id}")),
         path: private_path.to_string(),
@@ -308,11 +309,14 @@ fn test_bootstrap_auth() -> AuthContext {
     auth
 }
 
-fn start_authorized_session(
+async fn start_authorized_session(
     runtime: &ToolRuntime,
     project: &str,
     auth: &AuthContext,
 ) -> crate::tool_runtime::sessions::SessionSummary {
+    let project_identity =
+        crate::test_support::registered_session_project_identity(runtime, project, Some(auth))
+            .await;
     let fingerprint = crate::tool_runtime::workflow_session_authority_fingerprint(Some(auth))
         .expect("stable test authority");
     runtime
@@ -324,7 +328,8 @@ fn start_authorized_session(
                 SessionMode::Normal,
                 SessionGuards::default(),
             )
-            .with_owner_authority_fingerprint(Some(fingerprint)),
+            .with_owner_authority_fingerprint(Some(fingerprint))
+            .with_project_identity(project_identity),
         )
         .unwrap()
 }

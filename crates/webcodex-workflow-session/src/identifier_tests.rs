@@ -171,6 +171,7 @@ async fn legacy_ledger_restores_all_links_and_resumes_with_compact_messages() {
     );
     let resumed = restored
         .ensure_coding_session(CodingSessionRequest {
+            project_identity: None,
             project: "demo".into(),
             authority_fingerprint: TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT.into(),
             resume_session_id: Some(legacy_session.clone()),

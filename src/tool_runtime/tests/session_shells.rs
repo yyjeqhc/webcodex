@@ -26,6 +26,7 @@ async fn setup(
             ..Default::default()
         },
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: PROJECT_ID.to_string(),
             name: Some(PROJECT_ID.to_string()),
             path: root.to_string_lossy().to_string(),
@@ -1029,6 +1030,7 @@ async fn setup_ssh_with_capabilities(
             ..Default::default()
         },
         vec![RunnerProjectSummary {
+            registration_incarnation: None,
             id: PROJECT_ID.to_string(),
             name: Some(PROJECT_ID.to_string()),
             path: root.to_string_lossy().to_string(),

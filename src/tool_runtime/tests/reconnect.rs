@@ -432,15 +432,42 @@ async fn canonical_project_session_explicit_resume_survives_restart() {
         persisted_session_authority_fingerprint(&ledger, &session_id).as_deref(),
         Some(expected_fingerprint.as_str())
     );
+    let original_registration = runtime1
+        .runner_registry
+        .get_runner_view("canonical-restart-agent")
+        .await
+        .unwrap()
+        .projects
+        .into_iter()
+        .find(|project| project.id == "proj")
+        .unwrap();
     drop(runtime1);
 
     let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    register_runner_project_at_path_with_auth(
-        &runtime2,
+    runtime2
+        .runner_registry
+        .register_with_auth(
+            crate::test_support::runner_registration(
+                "canonical-restart-agent",
+                "inst",
+                RunnerCapabilities {
+                    shell: true,
+                    git: true,
+                    file_read: true,
+                    file_write: true,
+                    internal_posix_script: true,
+                    ..Default::default()
+                },
+            ),
+            Some(&crate::test_support::runner_access(&alice)),
+        )
+        .await
+        .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime2.runner_registry,
         "canonical-restart-agent",
-        "proj",
-        &project_root,
-        &alice,
+        "inst",
+        vec![original_registration],
     )
     .await;
     assert_eq!(runtime2.sessions.status().restored_sessions, 1);

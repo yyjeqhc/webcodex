@@ -202,6 +202,7 @@ impl SessionDatabase {
         if record.session_id != cold.session_id
             || record.project != cold.project
             || record.owner_authority_fingerprint != cold.owner_authority_fingerprint
+            || record.project_identity != cold.project_identity
             || record.created_at != cold.created_at
         {
             return Err(error("Session database identity changed"));
@@ -521,6 +522,10 @@ fn state_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(u64, PersistedSe
         if record.session_id != row.get::<_, String>(2).map_err(error)?
             || record.project != row.get::<_, Option<String>>(3).map_err(error)?
             || record.owner_authority_fingerprint != row.get::<_, String>(4).map_err(error)?
+            || record
+                .project_identity
+                .as_deref()
+                .is_some_and(|v| !is_lower_hex_sha256(v))
             || record.lifecycle.as_str() != row.get::<_, String>(5).map_err(error)?
             || record.created_at != row.get::<_, i64>(6).map_err(error)?
             || record.updated_at != row.get::<_, i64>(7).map_err(error)?

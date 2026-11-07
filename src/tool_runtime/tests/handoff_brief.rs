@@ -38,6 +38,7 @@ fn add_instruction_for_project(
 ) {
     store
         .ensure_coding_session(CodingSessionRequest {
+            project_identity: None,
             project: project.to_string(),
             authority_fingerprint:
                 crate::tool_runtime::sessions::TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT

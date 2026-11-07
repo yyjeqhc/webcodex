@@ -30,6 +30,9 @@ async fn external_observations_runtime_scope_replay_unknown_and_readback() {
     );
     opts.owner_authority_fingerprint =
         Some(workflow_session_authority_fingerprint(Some(&auth)).unwrap());
+    opts.project_identity =
+        crate::test_support::registered_session_project_identity(&runtime, &project, Some(&auth))
+            .await;
     let session = runtime
         .sessions
         .start_session_with_options(opts)
@@ -202,6 +205,9 @@ async fn external_reports_reach_default_and_diagnostic_handoff_without_native_pr
     );
     opts.owner_authority_fingerprint =
         Some(workflow_session_authority_fingerprint(Some(&auth)).unwrap());
+    opts.project_identity =
+        crate::test_support::registered_session_project_identity(&runtime, &project, Some(&auth))
+            .await;
     let session = runtime
         .sessions
         .start_session_with_options(opts)

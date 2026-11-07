@@ -948,59 +948,6 @@ impl ToolRuntime {
     }
 }
 
-/// Startup already needs full status for its owning-Runner brief. Its model
-/// projection shares the sparse field selection without preserving inventories.
-pub(crate) fn compact_runtime_status(status: &Value) -> Value {
-    let mut result = json!({
-        "service": status["service"],
-        "version": status["version"],
-        "build": {"git_commit": status["build"]["git_commit"], "git_dirty": status["build"]["git_dirty"]},
-        "mcp_host": {"profile": status["effective_config"]["mcp_host"]["profile"]},
-        "runners": {
-            "count": status["runners"]["count"],
-            "online_count": status["runners"]["online_count"],
-            "stale_count": status["runners"]["stale_count"]
-        },
-        "projects": {
-            "count": status["projects"]["count"],
-            "online_count": status["projects"]["runner_registered"]["online_count"],
-            "status": status["projects"]["effective"]["status"]
-        },
-        "compatibility": {
-            "protocol": status["protocol_compatibility"],
-            "build_alignment": status["build_alignment"],
-            "source_alignment": status["version_compatibility"]["source_alignment"]["status"]
-        }
-    });
-    result["jobs"] = sparse_job_counts(&status["jobs"]);
-    result["connection"] = sparse_connection_layers(&status["connection_layers"]);
-    result
-}
-
-fn sparse_job_counts(jobs: &Value) -> Value {
-    let mut result = serde_json::Map::new();
-    for key in [
-        "active_count",
-        "running_count",
-        "queued_count",
-        "recovering_count",
-        "lost_after_reconcile_count",
-    ] {
-        if let Some(value) = jobs.get(key) {
-            result.insert(key.into(), value.clone());
-        }
-    }
-    Value::Object(result)
-}
-
-fn sparse_connection_layers(layers: &Value) -> Value {
-    let mut result = serde_json::Map::new();
-    for key in ["runner_process", "server_transport", "project_registry"] {
-        result.insert(key.into(), layers[key]["status"].clone());
-    }
-    Value::Object(result)
-}
-
 fn runtime_job_counts(runner_jobs: &[ShellJobInfo]) -> Value {
     let runner_known_count = runner_jobs.len();
     let active_count = runner_jobs

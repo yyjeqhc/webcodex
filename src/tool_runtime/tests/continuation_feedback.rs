@@ -234,9 +234,7 @@ async fn diagnostic_coding_workflow(
                     SessionMode::Normal,
                     false,
                     false,
-                    // These integration assertions exercise the complete
-                    // continuation_feedback block retained by full diagnostics.
-                    StartupDetail::Full,
+                    StartupDetail::Standard,
                     resume,
                     None,
                     Some(&auth),
@@ -335,18 +333,11 @@ async fn coding_workflow_continuation_describes_previous_attempt_not_empty_new_o
         "resumed_explicitly"
     );
 
-    let feedback = &second.output["continuation_feedback"];
+    let feedback = &second.output["continuation"];
     // The feedback must describe A's attempt (real work), not the empty new B attempt.
     assert_eq!(feedback["status"], "available");
-    assert_eq!(
-        feedback["attempt"]["boundary"]["source"],
-        "task_instruction"
-    );
-    assert_eq!(feedback["attempt"]["instruction"]["status"], "available");
-    assert_eq!(
-        feedback["attempt"]["instruction"]["excerpt"],
-        "instruction A"
-    );
+    assert_eq!(feedback["instruction"]["status"], "available");
+    assert_eq!(feedback["instruction"]["excerpt"], "instruction A");
     // Instruction B must be appended exactly once.
     let summary = runtime.sessions.summary(&session_id, Some(200)).unwrap();
     let instructions: Vec<&str> = summary
@@ -395,7 +386,7 @@ async fn coding_workflow_fresh_session_continuation_is_not_applicable() {
         diagnostic_coding_workflow(&runtime, "fresh-agent", &project, "fresh start", None).await;
     assert!(first.success, "{:?}", first.error);
     assert_eq!(first.output["session"]["continuation"], "created");
-    let feedback = &first.output["continuation_feedback"];
+    let feedback = &first.output["continuation"];
     assert_eq!(feedback["status"], "not_applicable");
     assert_eq!(feedback["reason_code"], "fresh_session");
 }

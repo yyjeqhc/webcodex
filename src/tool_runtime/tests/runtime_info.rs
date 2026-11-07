@@ -185,33 +185,10 @@ fn runner_concurrency_counts_jobs_across_projects_for_one_client() {
     assert_eq!(counts["active_count"], 5);
     assert_eq!(counts["recovering_count"], 1);
     assert_eq!(counts["lost_after_reconcile_count"], 1);
-    let sparse = sparse_job_counts(&counts);
-    assert_eq!(sparse["running_count"], 2);
-    assert_eq!(sparse["queued_count"], 1);
-    assert_eq!(sparse["recovering_count"], 1);
-    assert_eq!(sparse["lost_after_reconcile_count"], 1);
-    assert!(serde_json::to_vec(&sparse).unwrap().len() < 130);
+    assert_eq!(counts["running_count"], 2);
+    assert_eq!(counts["queued_count"], 1);
     assert_eq!(
         job_concurrency_for_client(&client, &jobs),
         json!({"limit": 2, "running": 2, "queued": 1})
-    );
-}
-
-#[test]
-fn compact_runtime_status_keeps_minimum_job_state_counts() {
-    let compact = compact_runtime_status(&json!({
-        "jobs": {
-            "active_count": 5,
-            "running_count": 2,
-            "queued_count": 1,
-        }
-    }));
-    assert_eq!(
-        compact["jobs"],
-        json!({
-            "active_count": 5,
-            "running_count": 2,
-            "queued_count": 1,
-        })
     );
 }

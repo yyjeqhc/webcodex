@@ -771,55 +771,7 @@ impl ToolRuntime {
         Ok(output)
     }
 
-    pub(crate) fn compact_tool_manifest_payload(&self) -> Value {
-        self.tool_manifest_payload(None, None, true, true, ToolProtocolCapabilities::default())
-            .expect("default read_tool_manifest payload without intent must succeed")
-    }
-
-    pub(crate) fn compact_tool_manifest_payload_bounded(
-        &self,
-        categories: Option<Vec<String>>,
-        intent: Option<String>,
-        limit: Option<usize>,
-    ) -> Result<Value, ToolResult> {
-        if categories.is_none() && intent.is_none() && limit.is_none() {
-            return Ok(self.compact_tool_manifest_payload());
-        }
-        self.tool_manifest_payload_for_categories(
-            None,
-            categories,
-            intent,
-            limit,
-            true,
-            true,
-            ToolProtocolCapabilities::default(),
-            None,
-            None,
-        )
-    }
-
-    fn tool_manifest_payload(
-        &self,
-        category: Option<String>,
-        intent: Option<String>,
-        include_recommended_flows: bool,
-        include_risk_summary: bool,
-        protocol_capabilities: ToolProtocolCapabilities,
-    ) -> Result<Value, ToolResult> {
-        self.tool_manifest_payload_for_categories(
-            None,
-            category.map(|category| vec![category]),
-            intent,
-            None,
-            include_recommended_flows,
-            include_risk_summary,
-            protocol_capabilities,
-            None,
-            None,
-        )
-    }
-
-    fn tool_manifest_payload_for_categories(
+    pub(super) fn tool_manifest_payload_for_categories(
         &self,
         auth: Option<&crate::auth::AuthContext>,
         categories: Option<Vec<String>>,

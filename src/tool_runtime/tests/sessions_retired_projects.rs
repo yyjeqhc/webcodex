@@ -479,6 +479,152 @@ async fn project_inventory_reconnect_keeps_registration_identity() {
 }
 
 #[tokio::test]
+async fn local_dev_session_keeps_live_access_and_retired_history_without_auth_context() {
+    let runtime = test_runtime();
+    register(&runtime, "alice", Some("/original-root")).await;
+    let created = call(
+        &runtime,
+        None,
+        "start_session",
+        json!({"project": PROJECT}),
+        None,
+    )
+    .await;
+    assert!(created.success, "{created:?}");
+    let session_id = created.result.unwrap().output["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        runtime
+            .authorize_session_target(&session_id, "update_session_context", None)
+            .await
+            .is_ok(),
+        "the original registration must remain usable"
+    );
+    unregister(&runtime).await;
+
+    // Historical access is permitted only after complete, authoritative
+    // removal; it must not restore the retired Session's execution privileges.
+    let history = call(
+        &runtime,
+        None,
+        "read_session_summary",
+        json!({"session_id": session_id}),
+        None,
+    )
+    .await;
+    assert!(
+        history.success,
+        "historical read should remain available to local/dev: {history:?}"
+    );
+    assert!(
+        runtime
+            .authorize_session_target(&session_id, "update_session_context", None)
+            .await
+            .is_err(),
+        "retired Project cannot be used for live mutation"
+    );
+    let closed = call(
+        &runtime,
+        None,
+        "close_session",
+        json!({"session_id": session_id}),
+        None,
+    )
+    .await;
+    assert!(
+        closed.success,
+        "authorized local/dev historical close: {closed:?}"
+    );
+}
+
+#[tokio::test]
+async fn local_dev_session_rejects_reused_project_registration_without_auth_context() {
+    let runtime = test_runtime();
+    register(&runtime, "alice", Some("/original-root")).await;
+    let created = call(
+        &runtime,
+        None,
+        "start_session",
+        json!({"project": PROJECT}),
+        None,
+    )
+    .await;
+    assert!(
+        created.success,
+        "local-dev must be able to start a Project Session: {created:?}"
+    );
+    let session_id = created.result.unwrap().output["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    unregister(&runtime).await;
+    // Same Project ID AND same canonical root, but a new persisted registration.
+    register(&runtime, "alice", Some("/original-root")).await;
+
+    // Local/dev's canonical authority must be subject to the *same*
+    // registration fence as authenticated callers, before any tool policy.
+    let denied = runtime
+        .authorize_session_target(&session_id, "update_session_context", None)
+        .await
+        .err()
+        .expect("the replaced registration must reject a local-dev Session");
+    assert_eq!(
+        denied.output["error_kind"],
+        "session_project_identity_changed"
+    );
+
+    let updated = call(
+        &runtime,
+        None,
+        "update_session_context",
+        json!({
+            "project": PROJECT,
+            "session_id": session_id,
+            "execution_context": {"default_cwd": "src"}
+        }),
+        None,
+    )
+    .await;
+    assert!(
+        !updated.success,
+        "local-dev stale Session must not mutate a replacement Project: {updated:?}"
+    );
+
+    let forbidden = runtime
+        .dispatch_with_auth(
+            ToolCall::RunShell {
+                login: false,
+                project: PROJECT.into(),
+                command: "echo stale".into(),
+                session_id: Some(session_id),
+                timeout_secs: Some(10),
+                sync_wait_secs: None,
+                cwd: None,
+                purpose: None,
+                shell: None,
+            },
+            None,
+        )
+        .await;
+    assert!(
+        !forbidden.success,
+        "local-dev stale Session must not dispatch to replacement Runner: {forbidden:?}"
+    );
+    assert_eq!(
+        forbidden.output["error_kind"],
+        "session_project_identity_changed"
+    );
+    assert_ne!(forbidden.output["command_started"], true);
+    assert!(
+        probe_agent_request_for_instance(&runtime, CLIENT, &format!("inst-{CLIENT}"))
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn legacy_registration_without_incarnation_cannot_create_live_session() {
     let runtime = test_runtime();
     let auth = owner(false);

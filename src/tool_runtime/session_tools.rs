@@ -611,11 +611,17 @@ impl ToolRuntime {
             return false;
         };
         let access = crate::runner_http::runner_access_from_auth(auth);
-        if self
-            .runner_registry
-            .assert_runner_access(access.as_ref(), client_id)
-            .await
-            .is_err()
+        // Local/dev is an in-process authority with no API username.
+        // The original Session owner fingerprint has already been checked,
+        // and the Registry still must prove a complete online inventory
+        // with this Project absent. Authenticated callers additionally
+        // require current Runner ownership/grant authorization.
+        if auth.is_some()
+            && self
+                .runner_registry
+                .assert_runner_access(access.as_ref(), client_id)
+                .await
+                .is_err()
         {
             return false;
         }
@@ -661,16 +667,18 @@ impl ToolRuntime {
             #[cfg(not(test))]
             let synthetic_test_fixture = false;
             let historical_only = matches!(tool_name, "read_session_summary" | "close_session");
-            let resolved = if let Some(auth) = auth {
-                let resolved = match self
-                    .resolve_project_input_for_auth(&project, Some(auth))
-                    .await
-                {
+            let resolved = if synthetic_test_fixture && auth.is_none() {
+                // Historical synthetic fixtures do not carry a Runner registration.
+                // Production Sessions, including local/dev, must prove the live
+                // Project registration just like authenticated callers.
+                None
+            } else {
+                let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
                     Ok(resolved) => resolved,
                     Err(err) => {
                         if historical_only
                             && self
-                                .retired_project_session_history_authorized(session_id, Some(auth))
+                                .retired_project_session_history_authorized(session_id, auth)
                                 .await
                         {
                             return Ok(None);
@@ -689,8 +697,6 @@ impl ToolRuntime {
                     ));
                 }
                 Some(resolved)
-            } else {
-                None
             };
             // Preserve Project concealment: an invisible Project must remain
             // indistinguishable from an unknown one, even when a Session ID

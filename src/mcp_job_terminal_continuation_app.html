@@ -24,6 +24,9 @@
   <div class="hint" id="hint">This card observes one exact durable Job terminal wait. Detailed logs remain available through ordinary Job observation.</div>
 </div>
 <script>
+/* BEGIN GENERATED HOST BRIDGE */
+"use strict";var WebCodexHostBridge=(()=>{var p=Object.defineProperty;var y=Object.getOwnPropertyDescriptor;var w=Object.getOwnPropertyNames;var j=Object.prototype.hasOwnProperty;var T=(o,r)=>{for(var n in r)p(o,n,{get:r[n],enumerable:!0})},h=(o,r,n,c)=>{if(r&&typeof r=="object"||typeof r=="function")for(let s of w(r))!j.call(o,s)&&s!==n&&p(o,s,{get:()=>r[s],enumerable:!(c=y(r,s))||c.enumerable});return o};var H=o=>h(p({},"__esModule",{value:!0}),o);var q={};T(q,{createHostBridge:()=>P});function P({timeoutMs:o,target:r=parent,error:n=b}){let c=1,s=!1,i=new Map,u=t=>r.postMessage({jsonrpc:"2.0",...t},"*");return{request(t,e,l=o){if(s)return Promise.reject(n("closed"));let a=c++;return new Promise((m,d)=>{let f=setTimeout(()=>{i.delete(a),d(n("timeout"))},l);i.set(a,{resolve:m,reject:d,timer:f});try{u({id:a,method:t,params:e})}catch(g){i.delete(a),clearTimeout(f),d(g)}})},notify(t,e){s||u({method:t,params:e})},sendUntracked(t,e){s||u({id:c++,method:t,params:e})},reply(t,e){u({id:t,result:e})},receive(t){if(t.source!==r)return null;let e=t.data;if(!e||e.jsonrpc!=="2.0")return null;if(!Object.prototype.hasOwnProperty.call(e,"id")||!i.has(e.id))return e;let l=i.get(e.id);return i.delete(e.id),clearTimeout(l.timer),e.error?l.reject(n("response",e.error)):l.resolve(e.result),null},close(){s=!0;for(let t of i.values())clearTimeout(t.timer),t.reject(n("teardown"));i.clear()}}}function b(o,r){return new Error(o==="response"?String(r.message||"Host error"):o==="timeout"?"Host request timed out":"App torn down")}return H(q);})();
+/* END GENERATED HOST BRIDGE */
 (() => {
   "use strict";
   const APP_PROTOCOL = "2026-01-26";
@@ -43,8 +46,6 @@
   const MAX_AUTOMATIC_MESSAGE_CHARS = 1024;
   const TERMINAL_DELIVERY = new Set(["delivered", "delivery_unknown"]);
 
-  let nextRpcId = 1;
-  const pending = new Map();
   let hostInitialized = false;
   let tornDown = false;
   let waitId = null;
@@ -79,22 +80,12 @@
 
   const viewBindingId = allocateBindingId();
 
-  function request(method, params, timeoutMs = CALL_TIMEOUT_MS) {
-    if (tornDown) return Promise.reject(new Error("App torn down"));
-    const id = nextRpcId++;
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        pending.delete(id);
-        reject(new Error("Host bridge timeout"));
-      }, timeoutMs);
-      pending.set(id, { resolve, reject, timeout });
-      parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
-    });
-  }
-
-  function notify(method, params) {
-    if (!tornDown) parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
-  }
+  const bridge = WebCodexHostBridge.createHostBridge({
+    timeoutMs: CALL_TIMEOUT_MS,
+    error: kind => new Error(kind === "timeout" ? "Host bridge timeout"
+      : kind === "response" ? "Host request failed" : "App torn down"),
+  });
+  const { request, notify } = bridge;
 
   function callToolResultOf(result) {
     if (!result || typeof result !== "object" || Array.isArray(result)) return result;
@@ -480,16 +471,10 @@
 
   function bestEffortUnbind() {
     if (!waitId || !viewBindingId || !bindAttempted || tornDown) return;
-    const id = nextRpcId++;
-    parent.postMessage({
-      jsonrpc: "2.0",
-      id,
-      method: "tools/call",
-      params: {
-        name: "unbind_job_terminal_continuation",
-        arguments: { wait_id: waitId, binding_id: viewBindingId },
-      },
-    }, "*");
+    bridge.sendUntracked("tools/call", {
+      name: "unbind_job_terminal_continuation",
+      arguments: { wait_id: waitId, binding_id: viewBindingId },
+    });
   }
 
   function teardown() {
@@ -498,25 +483,12 @@
     tornDown = true;
     if (timer !== null) clearTimeout(timer);
     timer = null;
-    for (const entry of pending.values()) {
-      clearTimeout(entry.timeout);
-      entry.reject(new Error("App torn down"));
-    }
-    pending.clear();
+    bridge.close();
   }
 
   addEventListener("message", event => {
-    if (event.source !== parent) return;
-    const msg = event.data;
-    if (!msg || msg.jsonrpc !== "2.0") return;
-    if (Object.prototype.hasOwnProperty.call(msg, "id") && pending.has(msg.id)) {
-      const entry = pending.get(msg.id);
-      pending.delete(msg.id);
-      clearTimeout(entry.timeout);
-      if (msg.error) entry.reject(new Error("Host request failed"));
-      else entry.resolve(msg.result);
-      return;
-    }
+    const msg = bridge.receive(event);
+    if (!msg) return;
     if (msg.method === "ui/notifications/tool-input") {
       acceptToolInput(msg.params);
       return;
@@ -528,7 +500,7 @@
     if (msg.method === "ui/resource-teardown") {
       teardown();
       if (Object.prototype.hasOwnProperty.call(msg, "id")) {
-        parent.postMessage({ jsonrpc: "2.0", id: msg.id, result: {} }, "*");
+        bridge.reply(msg.id, {});
       }
     }
   });
@@ -547,7 +519,7 @@
     appInfo: {
       name: "webcodex-job-terminal-continuation-app",
       title: "WebCodex Job Continuation",
-      version: "3.0.0",
+      version: "4.0.0",
     },
     appCapabilities: {},
   }).then(() => {

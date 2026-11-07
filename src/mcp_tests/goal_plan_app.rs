@@ -48,7 +48,7 @@ fn create_goal(runtime: &ToolRuntime, auth: &crate::auth::AuthContext, key: &str
 
 #[tokio::test]
 async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptive_direct() {
-    assert_eq!(MCP_GOAL_PLAN_UI_RESOURCE_URI, "ui://webcodex/goal-plan/v10");
+    assert_eq!(MCP_GOAL_PLAN_UI_RESOURCE_URI, "ui://webcodex/goal-plan/v11");
     let version = MCP_GOAL_PLAN_UI_RESOURCE_URI
         .rsplit_once("/v")
         .expect("versioned Goal Plan resource")

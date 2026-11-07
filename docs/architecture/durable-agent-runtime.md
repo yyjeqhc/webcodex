@@ -329,7 +329,7 @@ coding tools, and no Goal lifecycle is inferred from Session closeout.
 
 The sole current Goal Plan resource is declared by
 [`MCP_GOAL_PLAN_UI_RESOURCE_URI`](../../src/mcp/app_registry/builtin.rs)
-(`ui://webcodex/goal-plan/v10` at this revision); its current wire version is **3**.
+(`ui://webcodex/goal-plan/v11` at this revision); its current wire version is **3**.
 [Registry tests](../../src/mcp/app_registry/tests.rs) reject retired aliases.
 Goal Plan deliberately advances its canonical resource URI whenever its shipped View
 or App-tool wire changes: production Hosts may retain a same-URI View across Server

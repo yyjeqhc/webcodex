@@ -57,7 +57,7 @@ Goal Plan presentation and Wake creation are never part of `prepare_goal_workflo
 success. The Agent may remain another Coordinator's Worker/Task assignee at the same
 time. Do not infer identity from Window co-location or create a second Goal-only Agent.
 
-The Goal Plan resource is solely `ui://webcodex/goal-plan/v10`, wire version 3. It
+The Goal Plan resource is solely `ui://webcodex/goal-plan/v11`, wire version 3. It
 renders step counts, current step, bounded milestones, last checkpoint, activity,
 and a bounded read-only continuity projection. Continuity keeps production Host
 carrier readiness and the exact current Goal-stall Wake lifecycle separate from

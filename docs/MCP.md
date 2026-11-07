@@ -966,8 +966,8 @@ Use [Coding Workflow](CODING_WORKFLOW.md) for the canonical `work_on_project` bo
 
 ## Goal and Agent continuation timing diagnostics
 
-Current resources are `ui://webcodex/goal-plan/v10` (App 10.0.0) and
-`ui://webcodex/agent-continuation/v24` (App 24.0.0). Retired resource aliases are rejected.
+Current resources are `ui://webcodex/goal-plan/v11` (App 11.0.0) and
+`ui://webcodex/agent-continuation/v25` (App 25.0.0). Retired resource aliases are rejected.
 Goal Plan and Agent Continuation cards offer **Enable timing diagnostics**, off by
 default. The local View retains at most 64 timing records: scheduled versus actual
 poll delay, monotonic tool RPC start/completion/error duration, visibility and teardown.

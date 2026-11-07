@@ -37,6 +37,9 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   <pre id="timing-log" hidden style="max-height:12em;overflow:auto;white-space:pre-wrap;font-size:11px"></pre>
 </main>
 <script>
+/* BEGIN GENERATED HOST BRIDGE */
+"use strict";var WebCodexHostBridge=(()=>{var p=Object.defineProperty;var y=Object.getOwnPropertyDescriptor;var w=Object.getOwnPropertyNames;var j=Object.prototype.hasOwnProperty;var T=(o,r)=>{for(var n in r)p(o,n,{get:r[n],enumerable:!0})},h=(o,r,n,c)=>{if(r&&typeof r=="object"||typeof r=="function")for(let s of w(r))!j.call(o,s)&&s!==n&&p(o,s,{get:()=>r[s],enumerable:!(c=y(r,s))||c.enumerable});return o};var H=o=>h(p({},"__esModule",{value:!0}),o);var q={};T(q,{createHostBridge:()=>P});function P({timeoutMs:o,target:r=parent,error:n=b}){let c=1,s=!1,i=new Map,u=t=>r.postMessage({jsonrpc:"2.0",...t},"*");return{request(t,e,l=o){if(s)return Promise.reject(n("closed"));let a=c++;return new Promise((m,d)=>{let f=setTimeout(()=>{i.delete(a),d(n("timeout"))},l);i.set(a,{resolve:m,reject:d,timer:f});try{u({id:a,method:t,params:e})}catch(g){i.delete(a),clearTimeout(f),d(g)}})},notify(t,e){s||u({method:t,params:e})},sendUntracked(t,e){s||u({id:c++,method:t,params:e})},reply(t,e){u({id:t,result:e})},receive(t){if(t.source!==r)return null;let e=t.data;if(!e||e.jsonrpc!=="2.0")return null;if(!Object.prototype.hasOwnProperty.call(e,"id")||!i.has(e.id))return e;let l=i.get(e.id);return i.delete(e.id),clearTimeout(l.timer),e.error?l.reject(n("response",e.error)):l.resolve(e.result),null},close(){s=!0;for(let t of i.values())clearTimeout(t.timer),t.reject(n("teardown"));i.clear()}}}function b(o,r){return new Error(o==="response"?String(r.message||"Host error"):o==="timeout"?"Host request timed out":"App torn down")}return H(q);})();
+/* END GENERATED HOST BRIDGE */
 (() => {
   "use strict";
   const APP_PROTOCOL = "2026-01-26";
@@ -71,7 +74,6 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const HIDDEN_HEARTBEAT_MS = 15000;
   const DISPATCH_STATES = new Set(["dispatch_prepared", "dispatch_accepted", "dispatch_unknown", "continuation_consumed"]);
   const WAIT_STATES = new Set(["waiting", "triggered", "resumed", "cancelled"]);
-  let nextId = 1;
   let nextAppCallSequence = 1;
   let appCallPrefix = null;
   const resultAppCallIds = new WeakMap();
@@ -88,7 +90,6 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let bindAttempts = 0;
   let recoveryRebinds = 0;
   let tornDown = false;
-  const pending = new Map();
   // Coordination is serial and the Server owns one current claim per binding.
   // Retain only that Attempt's local delivery/retry markers across polls.
   let dispatchStarted = null;
@@ -135,22 +136,19 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return Object.assign(error, fields);
   }
 
-  function request(method, params, timeoutMs = CALL_TIMEOUT_MS) {
-    if (tornDown) return Promise.reject(hostFailure("bridge-cancelled"));
-    const id = nextId++;
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        pending.delete(id);
-        reject(hostFailure("bridge-timeout"));
-      }, timeoutMs);
-      pending.set(id, { resolve, reject, timeout });
-      parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
-    });
-  }
-
-  function notify(method, params) {
-    if (!tornDown) parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
-  }
+  const bridge = WebCodexHostBridge.createHostBridge({
+    timeoutMs: CALL_TIMEOUT_MS,
+    error(kind, response) {
+      if (kind === "closed") return hostFailure("bridge-cancelled");
+      if (kind === "timeout") return hostFailure("bridge-timeout");
+      if (kind === "teardown") return new Error("App torn down");
+      const rpcCode = Number.isSafeInteger(response.code) ? response.code : null;
+      return hostFailure(rpcCode === -32800 ? "bridge-cancelled" : "bridge-error", {
+        rpcCode, definitive: [-32600, -32601, -32602].includes(rpcCode),
+      });
+    },
+  });
+  const { request, notify } = bridge;
 
   function nextAppCallId() {
     if (!appCallPrefix || nextAppCallSequence > 999999) return null;
@@ -976,17 +974,11 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   function bestEffortUnbind() {
     // Also withdraw a bind whose successful response may have been lost.
     if (!identity || !viewBindingId || bindAttempts === 0 || tornDown) return;
-    const id = nextId++;
     const diagnostic = appCallArguments(exactArgs({ binding_id: viewBindingId }));
-    parent.postMessage({
-      jsonrpc: "2.0",
-      id,
-      method: "tools/call",
-      params: {
-        name: "unbind_agent_continuation",
-        arguments: diagnostic.arguments,
-      },
-    }, "*");
+    bridge.sendUntracked("tools/call", {
+      name: "unbind_agent_continuation",
+      arguments: diagnostic.arguments,
+    });
   }
 
   function teardown() {
@@ -996,30 +988,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     tornDown = true;
     if (timer !== null) clearTimeout(timer);
     timer = null;
-    for (const entry of pending.values()) {
-      clearTimeout(entry.timeout);
-      entry.reject(new Error("App torn down"));
-    }
-    pending.clear();
+    bridge.close();
   }
 
   addEventListener("message", event => {
-    if (event.source !== parent) return;
-    const msg = event.data;
-    if (!msg || msg.jsonrpc !== "2.0") return;
-    if (Object.prototype.hasOwnProperty.call(msg, "id") && pending.has(msg.id)) {
-      const entry = pending.get(msg.id);
-      pending.delete(msg.id);
-      clearTimeout(entry.timeout);
-      if (msg.error) {
-        const rpcCode = Number.isSafeInteger(msg.error.code) ? msg.error.code : null;
-        entry.reject(hostFailure(rpcCode === -32800 ? "bridge-cancelled" : "bridge-error", {
-          rpcCode,
-          definitive: [-32600, -32601, -32602].includes(rpcCode),
-        }));
-      } else entry.resolve(msg.result);
-      return;
-    }
+    const msg = bridge.receive(event);
+    if (!msg) return;
     if (msg.method === "ui/notifications/tool-input") {
       acceptToolInput(msg.params);
       return;
@@ -1031,7 +1005,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (msg.method === "ui/resource-teardown") {
       teardown();
       if (Object.prototype.hasOwnProperty.call(msg, "id")) {
-        parent.postMessage({ jsonrpc: "2.0", id: msg.id, result: {} }, "*");
+        bridge.reply(msg.id, {});
       }
     }
   });
@@ -1048,7 +1022,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "24.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "25.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;

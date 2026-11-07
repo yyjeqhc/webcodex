@@ -373,7 +373,7 @@ async fn agent_continuation_direct_presentation_reauthorizes_without_binding_or_
 async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bindings() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v24"
+        "ui://webcodex/agent-continuation/v25"
     );
     let (_temp, _db, adaptive) = continuation_runtime();
     let auth = continuation_auth("continuation-surface");

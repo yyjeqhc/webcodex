@@ -119,7 +119,7 @@ fn job_terminal_wait_suggests_only_an_admitted_still_waiting_host_carrier() {
 async fn job_terminal_continuation_app_surface_is_explicit_sparse_and_app_only() {
     assert_eq!(
         MCP_JOB_TERMINAL_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/job-terminal-continuation/v3"
+        "ui://webcodex/job-terminal-continuation/v4"
     );
     let runtime = workflow_runtime();
     let auth = job_app_auth();

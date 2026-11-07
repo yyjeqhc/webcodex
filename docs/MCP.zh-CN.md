@@ -782,8 +782,8 @@ operator/gateway primitive 保留。旧的 `export_project_artifact` compatibili
 
 ## Goal 与 Agent 续接时序诊断
 
-当前资源为 `ui://webcodex/goal-plan/v10`（App 10.0.0）与
-`ui://webcodex/agent-continuation/v24`（App 24.0.0），旧资源别名被拒绝。
+当前资源为 `ui://webcodex/goal-plan/v11`（App 11.0.0）与
+`ui://webcodex/agent-continuation/v25`（App 25.0.0），旧资源别名被拒绝。
 Goal Plan 和 Agent Continuation 卡片提供 **Enable timing diagnostics**，默认关闭。
 每个 View 本地最多保留 64 条时序记录：计划与实际轮询延迟、单调时钟测量的 RPC
 开始/完成/错误耗时、可见性与卸载。Agent 环形缓冲区还围绕现有 `ui/message`

@@ -479,3 +479,94 @@ it("does not prompt Agent creation while the first inventory read is pending or 
   expect((await screen.findAllByText("Agents could not be loaded. Refresh to retry.")).length).toBeGreaterThan(0);
   expect(screen.queryByText("No durable Agents are visible.")).toBeNull();
 });
+
+it("protects Agent creation inputs while the create request is in flight", async () => {
+  let createCalls = 0;
+  let resolveCreate: ((value: unknown) => void) | null = null;
+  const client = clientFor(() => ok({ messages: [] }), (path: string) => {
+    if (path === "communication/agent/create") {
+      createCalls += 1;
+      if (createCalls === 1) return new Promise(resolve => { resolveCreate = resolve; });
+      return { ok: false, status: 0, data: null };
+    }
+    return ok({});
+  });
+  render(<UiProvider><AgentsPanel client={client} language="en" onUnauthorized={vi.fn()} /></UiProvider>);
+  expect(await screen.findByRole("heading", { name: "Reviewer" })).toBeTruthy();
+  fireEvent.click(screen.getByText("Create Agent"));
+  fireEvent.change(screen.getByLabelText("Handle"), { target: { value: "first-agent" } });
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "First Agent" } });
+  expect((screen.getByLabelText("Handle") as HTMLInputElement).disabled).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  // Repeated same-tick submissions must not enqueue duplicate writes before
+  // React has committed the disabled state.
+  act(() => {
+    const form = screen.getByRole("button", { name: "Create" }).closest("form")!;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+  });
+  expect(createCalls).toBe(1);
+
+
+  // While the request is in flight the inputs are locked, so nothing new can
+  // be typed into the form that success would then wipe. (fireEvent bypasses
+  // the disabled-input event gating a real browser applies, so the protection
+  // is asserted through the disabled state itself.)
+  expect((screen.getByLabelText("Handle") as HTMLInputElement).disabled).toBe(true);
+  expect((screen.getByLabelText("Display name") as HTMLInputElement).disabled).toBe(true);
+  expect((screen.getByLabelText("Description") as HTMLTextAreaElement).disabled).toBe(true);
+  expect((screen.getByLabelText("Specialty labels") as HTMLInputElement).disabled).toBe(true);
+
+  await act(async () => resolveCreate!(ok({ agent: agents[0] })));
+  expect((screen.getByLabelText("Handle") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Display name") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Handle") as HTMLInputElement).disabled).toBe(false);
+
+  // A failed creation keeps the operator's input for correction.
+  fireEvent.change(screen.getByLabelText("Handle"), { target: { value: "retry-agent" } });
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Retry Agent" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await waitFor(() => expect((screen.getByLabelText("Handle") as HTMLInputElement).disabled).toBe(false));
+  expect((screen.getByLabelText("Handle") as HTMLInputElement).value).toBe("retry-agent");
+  expect((screen.getByLabelText("Display name") as HTMLInputElement).value).toBe("Retry Agent");
+});
+
+it("keeps an uncertain creation notice across inventory refreshes until a definitive result", async () => {
+  let createCalls = 0;
+  const client = clientFor(() => ok({ messages: [] }), (path: string) => {
+    if (path === "communication/agent/create") {
+      createCalls += 1;
+      return createCalls === 1 ? { ok: false, status: 0, data: null } : ok({ agent: agents[0], replayed: true });
+    }
+    return ok({});
+  });
+  const unauthorized = vi.fn();
+  const hook = renderHook(() => useAgentWorkspace(client, true, unauthorized));
+  await act(async () => {});
+  expect(hook.result.current.status).toBe("");
+
+  await act(async () => {
+    await hook.result.current.createAgent({ handle: "reviewer", displayName: "Reviewer", description: "", labels: "" });
+  });
+  expect(hook.result.current.status).toContain("Outcome uncertain");
+
+  // An ordinary inventory refresh must not erase the uncertain notice.
+  act(() => hook.result.current.refresh());
+  await act(async () => {});
+  expect(hook.result.current.status).toContain("Outcome uncertain");
+
+  // Retrying the same input reaches a definitive result through the existing
+  // idempotency key, which replaces the notice and is clearable again.
+  await act(async () => {
+    await hook.result.current.createAgent({ handle: "reviewer", displayName: "Reviewer", description: "", labels: "" });
+  });
+  expect(hook.result.current.status).not.toContain("Outcome uncertain");
+  act(() => hook.result.current.refresh());
+  await act(async () => {});
+  expect(hook.result.current.status).toBe("");
+
+  // The retry reused the exact idempotency key from the uncertain attempt.
+  const createCalls2 = vi.mocked(client.post).mock.calls.filter(([path]) => path === "communication/agent/create");
+  expect(createCalls2).toHaveLength(2);
+  expect(createCalls2[0][1].idempotency_key).toBe(createCalls2[1][1].idempotency_key);
+});

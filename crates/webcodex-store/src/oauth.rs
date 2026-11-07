@@ -737,8 +737,9 @@ impl Database {
     pub fn update_oauth_access_token_last_used(&self, id: &str, ts: i64) -> anyhow::Result<()> {
         let conn = self.lock_connection(crate::StoreDomain::OAuth);
         conn.execute(
-            "UPDATE oauth_access_tokens SET last_used_at = ?2 WHERE id = ?1",
-            params![id, ts],
+            "UPDATE oauth_access_tokens SET last_used_at = ?2
+             WHERE id = ?1 AND (last_used_at IS NULL OR last_used_at <= ?2 - ?3)",
+            params![id, ts, crate::LAST_USED_UPDATE_FLOOR_SECS],
         )?;
         Ok(())
     }

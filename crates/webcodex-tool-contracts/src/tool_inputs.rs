@@ -20,7 +20,6 @@ pub enum StartupDetail {
     Minimal,
     #[default]
     Standard,
-    Full,
 }
 
 /// Request-local model guidance selection, never execution or Session state.
@@ -52,7 +51,6 @@ impl StartupDetail {
         match self {
             Self::Minimal => "minimal",
             Self::Standard => "standard",
-            Self::Full => "full",
         }
     }
 }

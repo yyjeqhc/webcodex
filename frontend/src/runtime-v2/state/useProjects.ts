@@ -5,10 +5,16 @@ import type { Availability, ProjectRow } from "../model/types.js";
 import { useInventoryRefresh } from "./useInventoryRefresh.js";
 
 export const PROJECT_PAGE_SIZE = 24;
+/// Server-side inventory cap: fetchProjects clamps to this limit and still
+/// reports `truncated` when more workspaces exist beyond it.
+export const PROJECTS_LIMIT = 2_000;
 export type ProjectsState = {
   availability: Availability; projects: ProjectRow[]; total: number; truncated: boolean;
   query: string; runner: string; setQuery: (value: string) => void; setRunner: (value: string) => void;
   refresh: () => void; loadMore: () => void; showLess: () => void; canShowLess: boolean; refreshing: boolean;
+  /// False once the requested limit reached the inventory cap while the
+  /// response is still truncated: another Load more could not widen the query.
+  canLoadMore: boolean;
 };
 
 export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnauthorized: () => void,
@@ -77,9 +83,10 @@ export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnautho
     availability: visible ? availability : enabled ? "loading" : "idle",
     projects: visible ? projects : [], total: visible ? total : 0, truncated: visible && truncated,
     query, runner, setQuery, setRunner, refresh, refreshing: enabled && (visible ? refreshing : true),
-    loadMore: () => { if (!request.pending) setPage({ key, limit: Math.min(2_000, limit + PROJECT_PAGE_SIZE) }); },
+    loadMore: () => { if (!request.pending) setPage({ key, limit: Math.min(PROJECTS_LIMIT, limit + PROJECT_PAGE_SIZE) }); },
     showLess: () => { if (!request.pending) setPage({ key, limit: PROJECT_PAGE_SIZE }); },
     canShowLess: limit > PROJECT_PAGE_SIZE,
+    canLoadMore: limit < PROJECTS_LIMIT,
   };
 }
 

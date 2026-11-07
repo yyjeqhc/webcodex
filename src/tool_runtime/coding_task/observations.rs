@@ -58,7 +58,6 @@ impl ToolRuntime {
         &self,
         project: &str,
         git: &Value,
-        warnings: &mut Vec<Value>,
     ) -> Option<String> {
         if git.get("available").and_then(Value::as_bool) != Some(true) {
             return None;
@@ -111,10 +110,6 @@ impl ToolRuntime {
             {
                 return Some(tree);
             }
-            warnings.push(json!({
-                "kind": "git_baseline_unavailable",
-                "message": "Git HEAD was observed but its baseline tree could not be resolved",
-            }));
             return None;
         }
 
@@ -134,10 +129,6 @@ impl ToolRuntime {
             )
             .await;
         if !symbolic_head.success {
-            warnings.push(json!({
-                "kind": "git_baseline_unavailable",
-                "message": "Git baseline could not distinguish an unborn HEAD from an unavailable HEAD",
-            }));
             return None;
         }
 
@@ -159,19 +150,10 @@ impl ToolRuntime {
         {
             return Some(tree);
         }
-        warnings.push(json!({
-            "kind": "git_baseline_unavailable",
-            "message": "Unborn Git repository could not create its repository-native empty tree baseline",
-        }));
         None
     }
 
-    pub(super) async fn coding_startup_git_summary(
-        &self,
-        project: &str,
-        include_recent_commits: bool,
-    ) -> (Value, Vec<Value>) {
-        let mut warnings = Vec::new();
+    pub(super) async fn coding_startup_git_summary(&self, project: &str) -> Value {
         let mut output = json!({
             "available": false,
             "branch": Value::Null,
@@ -179,7 +161,6 @@ impl ToolRuntime {
             "clean": Value::Null,
             "changed_files_count": 0,
             "counts": {},
-            "recent_commits": [],
             "warnings": [],
         });
 
@@ -187,12 +168,6 @@ impl ToolRuntime {
             let result = self
                 .show_changes(project.to_string(), None, Some(false), None, None, None)
                 .await;
-            if !result.success {
-                warnings.push(json!({
-                    "kind": "git_status_unavailable",
-                    "message": result.error,
-                }));
-            }
             output["available"] = json!(result
                 .output
                 .get("git_available")
@@ -238,34 +213,7 @@ impl ToolRuntime {
             output["show_changes"] = result.output;
         }
 
-        if include_recent_commits {
-            let result = self
-                .git_log(project.to_string(), None, Some(5), None, None)
-                .await;
-            if result.success {
-                output["recent_commits"] = result
-                    .output
-                    .get("commits")
-                    .cloned()
-                    .unwrap_or_else(|| json!([]));
-                output["recent_commits_truncated"] = result
-                    .output
-                    .get("truncated")
-                    .cloned()
-                    .unwrap_or(json!(false));
-            } else {
-                warnings.push(json!({
-                    "kind": "recent_commits_unavailable",
-                    "message": result.error,
-                }));
-                output["recent_commits"] = json!([]);
-                output["recent_commits_truncated"] = json!(false);
-            }
-        } else if let Some(object) = output.as_object_mut() {
-            object.remove("recent_commits");
-        }
-
-        (output, warnings)
+        output
     }
 
     /// Deterministic repository structure overview for the coding startup

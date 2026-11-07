@@ -441,7 +441,7 @@ impl Handler for AuthMiddleware {
         }
 
         // Run the verifier chain (PatVerifier → OAuth2Verifier).
-        match authenticate(&config, db.as_ref(), &token).await {
+        match authenticate(config.clone(), db.as_ref(), &token).await {
             Ok(Some(ctx)) => {
                 // Enforce token-kind surface restrictions (agent tokens,
                 // account credentials) before the handler runs.

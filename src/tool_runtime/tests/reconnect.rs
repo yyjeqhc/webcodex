@@ -724,9 +724,6 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
     assert_eq!(by_id("old-build")["version_matches_server"], false);
     assert!(by_id("old-build")["reason_code"].is_null());
     assert!(by_id("old-build")["action"].is_null());
-    let compact = crate::tool_runtime::runtime_info::compact_runtime_status(&status.output);
-    assert!(compact["runners"].get("clients").is_none());
-    assert_eq!(compact["compatibility"]["source_alignment"], "different");
 
     // No secrets/paths in the diagnostics.
     let text = compat.to_string().to_lowercase();
@@ -761,10 +758,6 @@ async fn runner_host_context_is_diagnostic_only() {
         full["host_context"]["architecture"],
         "Hosts the WebCodex Server/control plane."
     );
-
-    let compact = crate::tool_runtime::runtime_info::compact_runtime_status(&status.output);
-    assert!(compact["runners"].get("clients").is_none());
-    assert!(!compact.to_string().contains("host_context"));
 
     let listed = runtime.list_runners(None).await;
     assert!(listed.success);

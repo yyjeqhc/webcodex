@@ -407,4 +407,82 @@ describe("Session communication parity", () => {
       "Send outcome unknown. Refresh and review retained messages before retrying.",
     );
   });
+
+  it("keeps the uncertain-send notice when an in-flight message observation completes later", async () => {
+    let resolveMessages!: (value: unknown) => void;
+    const messagesPending = new Promise(resolve => { resolveMessages = resolve; });
+    const client = {
+      post: vi.fn(async (path: string) => {
+        if (path === "workflow-session") return { ok: true, status: 200, data: sessionDetail() };
+        if (path === "workflow-session-messages") return messagesPending;
+        if (path === "workflow-session-post-message") return { ok: false, status: 0, data: null };
+        throw new Error("unexpected path " + path);
+      }),
+    } as unknown as RuntimeV2Client;
+    const location = {
+      projectId: "agent:special:webcodex",
+      projectName: "WebCodex",
+      runner: "special",
+      sessionId: "wc_sess_1234567890abcdef",
+    };
+    const unauthorized = vi.fn();
+    const { result } = renderHook(() => useSessionWorkspace(client, true, location, unauthorized));
+
+    // The send fails with an unknown transport outcome while the messages
+    // read is still in flight — the exact race that used to erase the notice.
+    let sent = true;
+    await act(async () => {
+      sent = await result.current.send({ message: "uncertain" });
+    });
+    expect(sent).toBe(false);
+    expect(result.current.mutationNotice).toBe(
+      "Send outcome unknown. Refresh and review retained messages before retrying.",
+    );
+
+    await act(async () => {
+      resolveMessages({ ok: true, status: 200, data: { session_id: location.sessionId, messages: [] } });
+    });
+    expect(result.current.messagesAvailability).toBe("available");
+    expect(result.current.mutationNotice).toBe(
+      "Send outcome unknown. Refresh and review retained messages before retrying.",
+    );
+  });
+
+  it("replaces the uncertain-send notice with the definitive replay result on retry", async () => {
+    let sendCalls = 0;
+    const client = {
+      post: vi.fn(async (path: string) => {
+        if (path === "workflow-session") return { ok: true, status: 200, data: sessionDetail() };
+        if (path === "workflow-session-messages") return { ok: true, status: 200, data: { session_id: "wc_sess_1234567890abcdef", messages: [] } };
+        if (path === "workflow-session-post-message") {
+          sendCalls += 1;
+          return sendCalls === 1 ? { ok: false, status: 0, data: null } : { ok: true, status: 200, data: { message: { message_id: "wc_msg_1" }, replayed: true } };
+        }
+        throw new Error("unexpected path " + path);
+      }),
+    } as unknown as RuntimeV2Client;
+    const location = {
+      projectId: "agent:special:webcodex",
+      projectName: "WebCodex",
+      runner: "special",
+      sessionId: "wc_sess_1234567890abcdef",
+    };
+    const unauthorized = vi.fn();
+    const { result } = renderHook(() => useSessionWorkspace(client, true, location, unauthorized));
+    await waitFor(() => expect(result.current.messagesAvailability).toBe("available"));
+
+    await act(async () => {
+      await result.current.send({ message: "uncertain" });
+    });
+    expect(result.current.mutationNotice).toContain("Send outcome unknown");
+
+    // Retrying the same input reuses the idempotency key and reaches a
+    // definitive result, which replaces the notice.
+    let retried = false;
+    await act(async () => {
+      retried = await result.current.send({ message: "uncertain" });
+    });
+    expect(retried).toBe(true);
+    expect(result.current.mutationNotice).toBe("");
+  });
 });

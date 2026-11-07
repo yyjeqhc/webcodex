@@ -543,11 +543,11 @@ async fn shared_key_and_oauth_bridge_share_only_the_credential_window_scope() {
     assert_eq!(keys[0], keys[1]);
     assert_eq!(keys[0], keys[2]);
     assert_ne!(keys[0], keys[3]);
-    let bridge_auth = crate::auth::authenticate(&config, Some(&db), &bridge)
+    let bridge_auth = crate::auth::authenticate(config.clone(), Some(&db), &bridge)
         .await
         .unwrap()
         .unwrap();
-    let rotated_auth = crate::auth::authenticate(&config, Some(&db), &rotated)
+    let rotated_auth = crate::auth::authenticate(config.clone(), Some(&db), &rotated)
         .await
         .unwrap()
         .unwrap();
@@ -624,11 +624,11 @@ async fn stable_managed_oauth_window_does_not_broaden_peer_principal() {
     let config = test_config_oauth2(Some("unused-bootstrap"));
     let first = seed_oauth_access_token(&db, &client, &user, "runtime:read");
     let next = seed_oauth_access_token(&db, &client, &user, "runtime:read");
-    let first = crate::auth::authenticate(&config, Some(&db), &first)
+    let first = crate::auth::authenticate(config.clone(), Some(&db), &first)
         .await
         .unwrap()
         .unwrap();
-    let next = crate::auth::authenticate(&config, Some(&db), &next)
+    let next = crate::auth::authenticate(config.clone(), Some(&db), &next)
         .await
         .unwrap()
         .unwrap();
@@ -667,7 +667,7 @@ async fn supplied_window_identity_cannot_grant_foreign_project_or_session_author
     let owner_token = seed_action_audit_pat(&db, &user);
     let foreign_token = seed_action_audit_pat(&db, &foreign);
     let config = test_config(Some("unused-bootstrap"));
-    let owner_auth = crate::auth::authenticate(&config, Some(&db), &owner_token)
+    let owner_auth = crate::auth::authenticate(config.clone(), Some(&db), &owner_token)
         .await
         .unwrap()
         .unwrap();

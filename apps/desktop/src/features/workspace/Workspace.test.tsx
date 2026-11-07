@@ -120,7 +120,7 @@ describe("product workspace task flows", () => {
     expect(screen.queryByText("History is partial")).not.toBeInTheDocument();
   });
 
-  it("ignores failures from pre-refresh observations and resumes overview and Git reads", async () => {
+  it("reports failures from an in-flight refresh paused mid-request and resumes overview and Git reads", async () => {
     const pending = new Map<string, (error: Error) => void>();
     const normal = native.invoke.getMockImplementation()!;
     function Status() {
@@ -140,7 +140,9 @@ describe("product workspace task flows", () => {
     expect(pending.size).toBe(5);
     view.rerender(content(true));
     await act(async () => { for (const reject of pending.values()) reject(new Error("workspace_unavailable")); });
-    expect(screen.getByText("Observation healthy")).toBeInTheDocument();
+    // The in-flight refresh is not discarded by the pause: its failure is the
+    // freshest observation of this workspace and is reported truthfully.
+    expect(screen.getByText("Observation failed")).toBeInTheDocument();
     expect(screen.queryByText("feat/export")).not.toBeInTheDocument();
     native.invoke.mockClear();
     native.invoke.mockImplementation(normal);
@@ -148,6 +150,84 @@ describe("product workspace task flows", () => {
     expect(await screen.findAllByText("feat/export")).toHaveLength(2);
     await waitFor(() => expect(native.invoke).toHaveBeenCalledTimes(5));
     expect(screen.getByText("Observation healthy")).toBeInTheDocument();
+  });
+
+  describe("in-flight observations across polling pauses", () => {
+    type DeferredCall = { kind: string; resolve: (value: unknown) => void; reject: (error: Error) => void };
+    function deferredInvoke() {
+      const calls: DeferredCall[] = [];
+      native.invoke.mockImplementation((_command: string, { request }: { request: { kind: string } }) => new Promise((resolve, reject) => {
+        calls.push({ kind: request.kind, resolve, reject });
+      }));
+      return calls;
+    }
+    const settle = async (calls: DeferredCall[], data: Record<string, unknown>) => {
+      await act(async () => {
+        for (const call of calls) {
+          const payload = data[call.kind];
+          if (payload === undefined) call.reject(new Error("unexpected query " + call.kind));
+          else call.resolve(payload);
+        }
+      });
+    };
+    function Probe() {
+      const workspace = useWorkspace();
+      return <div>{workspace.projects.map(project => <span key={project.id}>{project.name}</span>)}</div>;
+    }
+    const content = (suspended: boolean, selected = state) => <DesktopMantineProvider><LocaleProvider><WorkspaceProvider state={selected} suspended={suspended}>
+      <Probe />
+    </WorkspaceProvider></LocaleProvider></DesktopMantineProvider>;
+    const fixtures = {
+      overview,
+      projects: { projects: overview.projects, total: overview.visible_project_count, truncated: false },
+      windows: { windows: [windowRow] },
+    };
+
+    it("commits an in-flight observation across a polling pause", async () => {
+      const calls = deferredInvoke();
+      const view = render(content(false));
+      expect(calls).toHaveLength(3);
+      view.rerender(content(true));
+      await settle(calls, fixtures);
+      // Before the fix the pause disposed this request and the successful
+      // observation was dropped; now the freshest result is committed.
+      expect(screen.getByText("alpha")).toBeInTheDocument();
+      expect(screen.getByText("beta")).toBeInTheDocument();
+    });
+
+    it("does not stack duplicate polls while a request is in flight", async () => {
+      const calls = deferredInvoke();
+      const view = render(content(false));
+      expect(calls).toHaveLength(3);
+      // Passive observation flaps must not pile new polls onto the pending one.
+      view.rerender(content(true));
+      view.rerender(content(false));
+      view.rerender(content(true));
+      expect(native.invoke.mock.calls).toHaveLength(3);
+      await settle(calls, fixtures);
+      expect(screen.getByText("alpha")).toBeInTheDocument();
+    });
+
+    it("does not write results that belong to a switched workspace", async () => {
+      const calls = deferredInvoke();
+      const view = render(content(false));
+      expect(calls).toHaveLength(3);
+      const switched = { ...state, topology: { ...state.topology!, server: { kind: "local" as const, url: "http://workspace-b" } } } as DesktopState;
+      view.rerender(content(false, switched));
+      await waitFor(() => expect(calls).toHaveLength(6));
+      const late = calls.slice(0, 3);
+      const fresh = calls.slice(3);
+      // The old workspace's late result carries a project only it knows about.
+      await act(async () => {
+        late[0].resolve({ ...overview, projects: [{ ...alpha, id: "agent:mini:gamma", path: "C:\\work\\gamma", name: "gamma" }], visible_project_count: 3 });
+        late[1].resolve({ projects: [{ ...alpha, id: "agent:mini:gamma", path: "C:\\work\\gamma", name: "gamma" }], total: 3, truncated: false });
+        late[2].resolve({ windows: [] });
+      });
+      expect(screen.queryByText("gamma")).not.toBeInTheDocument();
+      await settle(fresh, fixtures);
+      expect(screen.getByText("alpha")).toBeInTheDocument();
+      expect(screen.queryByText("gamma")).not.toBeInTheDocument();
+    });
   });
 
 

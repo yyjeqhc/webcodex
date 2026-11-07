@@ -256,10 +256,6 @@ fn runner_health_failure_stays_unknown_and_peer_does_not_mask_offline_target() {
         owning_runner_available(&resolved_agent("target"), &status, true),
         None
     );
-    assert_eq!(
-        startup_agent_check(&json!({}), None),
-        ("warn", Some("agent_health_unknown"))
-    );
 }
 
 #[test]

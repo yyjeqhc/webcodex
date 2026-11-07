@@ -166,6 +166,12 @@ pub use self::store_primitives::{
 };
 pub use self::window_activity::{MAX_WINDOW_ACTIVITY_LIMIT, MAX_WINDOW_LINK_LIMIT};
 
+/// Minimum seconds between two `last_used_at` writes for one credential.
+/// `last_used_at` is display/audit metadata only (token-management listing);
+/// every authorization decision re-validates expiry/revocation directly, so a
+/// coarse floor removes one write per request without weakening anything.
+pub const LAST_USED_UPDATE_FLOOR_SECS: i64 = 60;
+
 pub struct Database {
     conn: Mutex<Connection>,
     // Exactly one additional, read-only WAL connection for potentially long history.

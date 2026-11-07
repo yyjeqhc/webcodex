@@ -162,18 +162,27 @@ impl Handler for ClientIngressGate {
 pub(crate) async fn authenticate_mcp(
     req: &Request,
     depot: &Depot,
-    config: &crate::Config,
+    config: &Arc<crate::Config>,
     db: Option<&Arc<crate::Database>>,
 ) -> Option<crate::auth::AuthContext> {
     let entry = entry(depot)?;
     let token = crate::auth::bearer_token(req)?;
-    crate::auth::tokens::OAuth2Verifier::verify_for_ingress(
-        config,
-        db,
-        &token,
-        Some(&entry.fence()),
-    )
+    // Same blocking-pool discipline as the shared verifier chain: the OAuth2
+    // ingress check is synchronous SQLite work on the shared writer
+    // connection. Failures (including a lost blocking task) reject.
+    let config = config.clone();
+    let db = db.cloned();
+    let fence = entry.fence();
+    tokio::task::spawn_blocking(move || {
+        crate::auth::tokens::OAuth2Verifier::verify_for_ingress_sync(
+            &config,
+            db.as_ref(),
+            &token,
+            Some(&fence),
+        )
+    })
     .await
+    .unwrap_or_else(|error| Err(format!("ingress verification task failed: {error}")))
     .ok()
     .flatten()
 }

@@ -20,6 +20,47 @@ fn accessibility_error(operation: &str, error: AXError) -> String {
 }
 
 #[cfg(target_os = "macos")]
+fn accessibility_attribute_error(
+    operation: &str,
+    attribute: &'static str,
+    error: AXError,
+) -> String {
+    let message = accessibility_error(operation, error);
+    if error == AXError::APIDisabled {
+        return message;
+    }
+    // The name is a fixed native AX attribute, not its value or window content.
+    // It identifies the failing provider boundary without exposing UI data.
+    format!("{message} (attribute={attribute})")
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod accessibility_attribute_error_tests {
+    use super::*;
+
+    #[test]
+    fn ax_failure_identifies_fixed_attribute_without_changing_permission_class() {
+        let error = accessibility_attribute_error(
+            "AXUIElementCopyAttributeValue",
+            "AXProtectedContent",
+            AXError::Failure,
+        );
+        assert_eq!(
+            error,
+            "accessibility_failed: AXUIElementCopyAttributeValue failed with AXError(-25200) (attribute=AXProtectedContent)"
+        );
+        assert_eq!(
+            accessibility_attribute_error(
+                "AXUIElementCopyAttributeValue",
+                "AXProtectedContent",
+                AXError::APIDisabled,
+            ),
+            "permission_denied: macOS Accessibility permission is not granted"
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
 pub(super) fn checked_surface_pid(surface: &SurfaceRecord) -> Result<libc::pid_t, String> {
     libc::pid_t::try_from(surface.pid)
         .map_err(|_| "stale_surface: surface PID exceeds native range".to_string())
@@ -148,9 +189,9 @@ pub(super) fn prepare_ax_call(
 fn optional_ax_value(
     deadline: &AxObservationDeadline,
     element: &AXUIElement,
-    attribute: &'static str,
+    attribute_name: &'static str,
 ) -> Result<Option<CFRetained<CFType>>, String> {
-    let attribute = CFString::from_static_str(attribute);
+    let attribute = CFString::from_static_str(attribute_name);
     let mut raw: *const CFType = std::ptr::null();
     prepare_ax_call(deadline, element)?;
     let error = unsafe { element.copy_attribute_value(&attribute, NonNull::from(&mut raw)) };
@@ -163,7 +204,11 @@ fn optional_ax_value(
             Ok(Some(unsafe { CFRetained::from_raw(raw) }))
         }
         AXError::AttributeUnsupported | AXError::NoValue => Ok(None),
-        error => Err(accessibility_error("AXUIElementCopyAttributeValue", error)),
+        error => Err(accessibility_attribute_error(
+            "AXUIElementCopyAttributeValue",
+            attribute_name,
+            error,
+        )),
     }
 }
 
@@ -183,6 +228,111 @@ pub(super) fn optional_ax_string(
 }
 
 #[cfg(target_os = "macos")]
+fn handle_ax_subrole_failure(error: AXError) -> Result<bool, String> {
+    if error == AXError::Failure {
+        // A provider-level failure does not prove that the subrole is absent.
+        // It may hide a secure text subrole, so the subtree must be protected.
+        Ok(true)
+    } else {
+        Err(accessibility_attribute_error(
+            "AXUIElementCopyAttributeValue",
+            "AXSubrole",
+            error,
+        ))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn classify_ax_subrole_value(value: CFRetained<CFType>) -> (Option<String>, bool) {
+    match value.downcast::<CFString>() {
+        Ok(subrole) => (Some(bounded_text(&subrole.to_string())), false),
+        // A successful AX read with an unexpected value type does not prove
+        // that the element is non-secure. Preserve fail-closed protection.
+        Err(_) => (None, true),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn optional_ax_subrole(
+    deadline: &AxObservationDeadline,
+    element: &AXUIElement,
+) -> Result<(Option<String>, bool), String> {
+    let attribute = CFString::from_static_str("AXSubrole");
+    let mut raw: *const CFType = std::ptr::null();
+    prepare_ax_call(deadline, element)?;
+    let error = unsafe { element.copy_attribute_value(&attribute, NonNull::from(&mut raw)) };
+    deadline.ensure_remaining()?;
+    match error {
+        AXError::Success => {
+            let raw = NonNull::new(raw.cast_mut()).ok_or_else(|| {
+                "accessibility_failed: AX attribute succeeded with null value".to_string()
+            })?;
+            let value: CFRetained<CFType> = unsafe { CFRetained::from_raw(raw) };
+            Ok(classify_ax_subrole_value(value))
+        }
+        AXError::AttributeUnsupported | AXError::NoValue => Ok((None, false)),
+        error => {
+            handle_ax_subrole_failure(error)?;
+            Ok((None, true))
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod ax_subrole_failure_tests {
+    use super::*;
+
+    #[test]
+    fn unexpected_successful_subrole_value_type_remains_protected() {
+        let valid: CFRetained<CFType> = CFString::from_static_str("AXSecureTextField").into();
+        assert_eq!(
+            classify_ax_subrole_value(valid),
+            (Some("AXSecureTextField".into()), false)
+        );
+
+        let invalid: CFRetained<CFType> = CFBoolean::new(true).into();
+        let (subrole, unverified) = classify_ax_subrole_value(invalid);
+        assert!(subrole.is_none());
+        assert!(unverified);
+
+        let fingerprint = finish_ax_fingerprint(
+            ElementFingerprint {
+                role: "AXTextField".into(),
+                subrole,
+                identifier: None,
+                title: None,
+                description: None,
+                placeholder: None,
+                protected: unverified,
+            },
+            |_| panic!("unverified subrole must not permit text disclosure"),
+        )
+        .expect("protected fingerprint");
+        assert!(fingerprint.protected);
+        assert!(!fingerprint.has_positive_evidence());
+        assert_eq!(
+            ax_observed_value(&fingerprint, || panic!("must not read AXValue"))
+                .expect("protected AXValue"),
+            None
+        );
+    }
+
+    #[test]
+    fn generic_subrole_failure_is_protected_but_other_errors_fail_closed() {
+        assert_eq!(handle_ax_subrole_failure(AXError::Failure), Ok(true));
+        for error in [AXError::CannotComplete, AXError::InvalidUIElement] {
+            let message = handle_ax_subrole_failure(error).unwrap_err();
+            assert!(message.starts_with("accessibility_failed:"), "{message}");
+            assert!(message.contains("attribute=AXSubrole"), "{message}");
+        }
+        assert_eq!(
+            handle_ax_subrole_failure(AXError::APIDisabled).unwrap_err(),
+            "permission_denied: macOS Accessibility permission is not granted"
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn element_fingerprint(
     deadline: &AxObservationDeadline,
     element: &AXUIElement,
@@ -190,13 +340,22 @@ fn element_fingerprint(
 ) -> Result<ElementFingerprint, String> {
     let role = optional_ax_string(deadline, element, "AXRole")?
         .ok_or_else(|| "accessibility_failed: AX element is missing a string role".to_string())?;
-    let protected = inherited_protected
-        || optional_ax_bool(deadline, element, "AXProtectedContent")?.unwrap_or(false);
+    let native_protected =
+        optional_ax_bool(deadline, element, "AXProtectedContent")?.unwrap_or(false);
+    let (subrole, unverified_subrole) = optional_ax_subrole(deadline, element)?;
+    let protected = inherited_protected || native_protected || unverified_subrole;
+    // Do not assign identifying metadata to an element whose secure subrole
+    // could not be established. Its descendants inherit the protective marker.
+    let identifier = if unverified_subrole {
+        None
+    } else {
+        optional_ax_string(deadline, element, "AXIdentifier")?
+    };
     finish_ax_fingerprint(
         ElementFingerprint {
             role,
-            subrole: optional_ax_string(deadline, element, "AXSubrole")?,
-            identifier: optional_ax_string(deadline, element, "AXIdentifier")?,
+            subrole,
+            identifier,
             title: None,
             description: None,
             placeholder: None,

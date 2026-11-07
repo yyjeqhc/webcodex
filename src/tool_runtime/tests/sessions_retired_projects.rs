@@ -90,6 +90,105 @@ async fn unregister(runtime: &ToolRuntime) {
 }
 
 #[tokio::test]
+async fn runtime_unregister_receipt_preserves_authorized_historical_close() {
+    let runtime = test_runtime();
+    let auth = owner(false);
+    let revision = format!("sha256:{}", "a".repeat(64));
+    let mut project = registered_project("repo", "/original-root");
+    project.revision = Some(revision.clone());
+    register_agent_projects(
+        &runtime,
+        CLIENT,
+        Some("alice"),
+        RunnerCapabilities {
+            project_lifecycle: true,
+            ..Default::default()
+        },
+        vec![project],
+    )
+    .await;
+    let id = start(&runtime, &auth).await;
+
+    // Drive the real Server unregister service through a Runner request/receipt,
+    // rather than deleting the Registry entry directly as other unit tests do.
+    let request_runtime = runtime.clone();
+    let request_auth = auth.clone();
+    let unregister_task = tokio::spawn(async move {
+        crate::admin_project_lifecycle::unregister_project_runtime(
+            &request_runtime,
+            Some(&request_auth),
+            PROJECT,
+            &revision,
+        )
+        .await
+    });
+    let request =
+        wait_for_runner_request_for_instance(&runtime, CLIENT, &format!("inst-{CLIENT}")).await;
+    assert_eq!(request.kind, "project_lifecycle_unregister");
+    let webcodex_core::runner_operation::RunnerOperation::Project(operation) =
+        request.decode_operation().unwrap()
+    else {
+        panic!("expected a typed Project lifecycle operation");
+    };
+    let request_payload: serde_json::Value = serde_json::from_str(&operation.payload).unwrap();
+    assert_eq!(request_payload["project_id"], "repo");
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        CLIENT,
+        &format!("inst-{CLIENT}"),
+        &request.request_id,
+        0,
+        &json!({"outcome":"unregistered","changed":true,"revision":null}).to_string(),
+        "",
+    )
+    .await;
+    let reply = unregister_task.await.unwrap();
+    assert_eq!(reply.status, 200, "{reply:?}");
+    assert_eq!(reply.body["outcome"], "unregistered");
+
+    let history = call(
+        &runtime,
+        Some(&auth),
+        "read_session_summary",
+        json!({"session_id":id}),
+        None,
+    )
+    .await;
+    assert!(
+        history.success,
+        "historical read should survive unregister: {history:?}"
+    );
+
+    let execution = call(
+        &runtime,
+        Some(&auth),
+        "update_session_context",
+        json!({"project":PROJECT,"session_id":id,"execution_context":{"default_cwd":"src"}}),
+        None,
+    )
+    .await;
+    assert!(
+        !execution.success,
+        "retired Project must not admit live mutation"
+    );
+
+    let close = call(
+        &runtime,
+        Some(&auth),
+        "close_session",
+        json!({"session_id":id}),
+        None,
+    )
+    .await;
+    assert!(close.success, "authorized historical close: {close:?}");
+    assert_eq!(close.result.unwrap().output["already_closed"], false);
+    assert_eq!(
+        runtime.sessions.lifecycle_state(&id),
+        Some(sessions::SessionLifecycle::Closed)
+    );
+}
+
+#[tokio::test]
 async fn retired_project_history_requires_current_runner_owner_even_for_admin() {
     for admin in [true, false] {
         let runtime = test_runtime();

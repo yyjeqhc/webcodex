@@ -2142,6 +2142,66 @@ fn runner_registration_incarnation_survives_reload_and_rotates_after_unregister(
 }
 
 #[test]
+fn project_lifecycle_receipts_keep_the_persisted_registration_incarnation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    let registry = tmp.path().join("project-registry");
+    std::fs::create_dir(&root).unwrap();
+    let policy = project_policy(tmp.path());
+
+    let registered = project_ok(handle_project_op(
+        &policy,
+        &registry,
+        &project_request(
+            "register_project",
+            serde_json::json!({
+                "id": "stable",
+                "name": "Stable",
+                "path": root.to_string_lossy()
+            }),
+        ),
+    ));
+    let incarnation = registered["registration_incarnation"]
+        .as_str()
+        .expect("new Project registration must have an identity")
+        .to_string();
+    let mut revision = registered["revision"].as_str().unwrap().to_string();
+
+    for (operation, outcome, disabled) in [
+        ("project_lifecycle_enable", "already_enabled", false),
+        ("project_lifecycle_disable", "disabled", true),
+        ("project_lifecycle_disable", "already_disabled", true),
+        ("project_lifecycle_enable", "enabled", false),
+    ] {
+        let reply = project_ok(handle_project_lifecycle_op(
+            &policy,
+            &registry,
+            &project_request(
+                operation,
+                serde_json::json!({
+                    "project_id": "stable",
+                    "expected_revision": revision
+                }),
+            ),
+        ));
+        assert_eq!(reply["outcome"], outcome);
+        assert_eq!(reply["disabled"], disabled);
+        assert_eq!(
+            reply["registration_incarnation"], incarnation,
+            "{operation} must not drop the Project registration identity in its receipt"
+        );
+        revision = reply["revision"].as_str().unwrap().to_string();
+
+        let reloaded = load_runner_project_summaries_from_dir(&registry);
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(
+            reloaded[0].registration_incarnation.as_deref(),
+            Some(incarnation.as_str())
+        );
+    }
+}
+
+#[test]
 fn legacy_project_toml_migration_is_durable_and_never_resumes_old_registration() {
     let tmp = tempfile::tempdir().unwrap();
     let project_dir = tmp.path().join("repo");

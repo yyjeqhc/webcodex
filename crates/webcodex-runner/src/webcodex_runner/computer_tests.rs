@@ -1,5 +1,21 @@
 use super::*;
 
+#[cfg(target_os = "macos")]
+#[test]
+fn transient_macos_computer_rejects_locked_session_before_native_observation() {
+    let operation = RunnerComputerOperation {
+        control_epoch: None,
+        kind: RunnerComputerOperationKind::ListWindows,
+        payload: r#"{"limit":1}"#.into(),
+        timeout_secs: 1,
+    };
+    let result = handle_macos_computer_operation(&operation, false);
+    assert_eq!(
+        result.error.as_deref(),
+        Some(super::super::computer_session::SESSION_UNAVAILABLE_ERROR)
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn headless_windows_local_control_preserves_runner_startup_without_input_authority() {

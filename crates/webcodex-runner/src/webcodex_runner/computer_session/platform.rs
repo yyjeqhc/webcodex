@@ -181,21 +181,79 @@ mod macos {
             dict: *const std::ffi::c_void,
             key: *const std::ffi::c_void,
         ) -> *const std::ffi::c_void;
+        fn CFGetTypeID(value: *const std::ffi::c_void) -> usize;
+        fn CFBooleanGetTypeID() -> usize;
         fn CFBooleanGetValue(value: *const std::ffi::c_void) -> u8;
         fn CFRelease(value: *const std::ffi::c_void);
     }
 
-    fn session_flag(dict: *const std::ffi::c_void, key: &[u8]) -> bool {
+    fn session_flag(dict: *const std::ffi::c_void, key: &[u8]) -> Option<bool> {
         let name = unsafe {
             CFStringCreateWithCString(std::ptr::null(), key.as_ptr().cast(), 0x0800_0100)
         };
         if name.is_null() {
-            return false;
+            return None;
         }
         let value = unsafe { CFDictionaryGetValue(dict, name) };
-        let enabled = !value.is_null() && unsafe { CFBooleanGetValue(value) } != 0;
+        let observed = if !value.is_null() && unsafe { CFGetTypeID(value) == CFBooleanGetTypeID() }
+        {
+            Some(unsafe { CFBooleanGetValue(value) != 0 })
+        } else {
+            None
+        };
         unsafe { CFRelease(name) };
-        enabled
+        observed
+    }
+
+    fn session_flags_ready(mut read: impl FnMut(&[u8]) -> Option<bool>) -> bool {
+        read(b"kCGSSessionOnConsoleKey\0") == Some(true)
+            && read(b"kCGSessionLoginDoneKey\0") == Some(true)
+            && read(b"CGSSessionScreenIsLocked\0") == Some(false)
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn macos_session_flags_require_console_login_and_unlocked_screen() {
+        let ready =
+            |on_console: Option<bool>, logged_in: Option<bool>, screen_locked: Option<bool>| {
+                session_flags_ready(|key| {
+                    if key == b"kCGSSessionOnConsoleKey\0" {
+                        on_console
+                    } else if key == b"kCGSessionLoginDoneKey\0" {
+                        logged_in
+                    } else if key == b"CGSSessionScreenIsLocked\0" {
+                        screen_locked
+                    } else {
+                        None
+                    }
+                })
+            };
+        assert!(
+            ready(Some(true), Some(true), Some(false)),
+            "unlocked console session should be available"
+        );
+        assert!(
+            !ready(Some(true), Some(true), Some(true)),
+            "locked screen must deny Computer"
+        );
+        assert!(
+            !ready(Some(false), Some(true), Some(false)),
+            "off-console session must be denied"
+        );
+        assert!(
+            !ready(Some(true), Some(false), Some(false)),
+            "logged-out session must be denied"
+        );
+        for missing in [
+            (None, Some(true), Some(false)),
+            (Some(true), None, Some(false)),
+            (Some(true), Some(true), None),
+        ] {
+            assert!(
+                !ready(missing.0, missing.1, missing.2),
+                "unknown session or lock flag must fail closed"
+            );
+        }
     }
 
     pub(in super::super) fn native_session_available() -> bool {
@@ -215,8 +273,7 @@ mod macos {
         if dict.is_null() {
             return false;
         }
-        let eligible = session_flag(dict, b"kCGSessionOnConsoleKey\0")
-            && session_flag(dict, b"kCGSessionLoginDoneKey\0");
+        let eligible = session_flags_ready(|key| session_flag(dict, key));
         unsafe { CFRelease(dict) };
         eligible
     }

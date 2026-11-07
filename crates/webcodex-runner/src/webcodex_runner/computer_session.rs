@@ -35,6 +35,9 @@ struct ClientConfig {
     control_epoch: Arc<Mutex<Option<String>>>,
 }
 
+pub(super) const SESSION_UNAVAILABLE_ERROR: &str =
+    "not_started: login session is locked or inactive";
+
 static CLIENT: OnceLock<ClientConfig> = OnceLock::new();
 static REPORTED_AVAILABILITY: Mutex<Option<bool>> = Mutex::new(None);
 static REPORTED_CONTROL_EPOCH: Mutex<Option<String>> = Mutex::new(None);
@@ -378,7 +381,7 @@ impl HelperState {
                         .map(|s| s.epoch),
                 },
                 WireRequest::Execute { .. } => WireResponse::Rejected {
-                    error: "not_started: login session is locked or inactive".to_string(),
+                    error: SESSION_UNAVAILABLE_ERROR.to_string(),
                 },
             };
         }
@@ -524,6 +527,11 @@ mod platform {
 }
 
 use platform::{exchange, native_session_available};
+
+#[cfg(target_os = "macos")]
+pub(super) fn native_gui_session_available() -> bool {
+    native_session_available()
+}
 
 pub(crate) fn run_helper(dir: &Path) -> Result<(), String> {
     validate_dir(dir, true)?;

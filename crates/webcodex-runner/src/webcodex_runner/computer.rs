@@ -127,6 +127,26 @@ fn optional_snapshot_dimension(payload: &Value, field: &str) -> Result<Option<u3
 }
 
 pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> CommandResult {
+    #[cfg(target_os = "macos")]
+    return handle_macos_computer_operation(
+        operation,
+        super::computer_session::native_gui_session_available(),
+    );
+    #[cfg(not(target_os = "macos"))]
+    handle_computer_operation_with_runtime(computer_runtime(), operation)
+}
+
+#[cfg(target_os = "macos")]
+fn handle_macos_computer_operation(
+    operation: &RunnerComputerOperation,
+    available: bool,
+) -> CommandResult {
+    if !available {
+        return err_cmd(
+            Instant::now(),
+            super::computer_session::SESSION_UNAVAILABLE_ERROR.to_string(),
+        );
+    }
     handle_computer_operation_with_runtime(computer_runtime(), operation)
 }
 

@@ -7,7 +7,7 @@ Gateway tools. This procedure is the dogfood/publication gate for future changes
 to continuation behavior or Host integration. It does not itself establish Host
 readiness or authorize deployment.
 
-The Agent View uses `ui://webcodex/agent-continuation/v24`. A valid ref-only
+The Agent View uses `ui://webcodex/agent-continuation/v25`. A valid ref-only
 presentation input waits for the initial Server result to resolve the exact
 identity; the ref itself never grants identity or authority. This fixes the
 previous initialization teardown when the Host delivered ref-only tool input

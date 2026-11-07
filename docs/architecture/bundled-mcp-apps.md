@@ -7,17 +7,26 @@ It does not register a tool or provide an external UI plugin API.
 
 ## Preserved surfaces
 
-The six listed resources keep their existing order, names, descriptions, MIME
-and current URIs: Computer, Projects & Resources, Work Result, Goal Plan, Agent
-Continuation, and Job Continuation. The Changes v4 template remains readable by
-its exact URI for cached descriptors, but is neither listed nor bound to any new
-tool descriptor. No retired URI alias is accepted.
+The public listing keeps its existing order, names, descriptions and MIME.
+The registry owns each exact current URI. The Changes v4 template remains
+readable by its exact URI for cached descriptors, but is neither listed nor
+bound to any new tool descriptor. No retired URI alias is accepted.
 
-Template logic remains owned by each App. Existing folding, frozen-diff paging,
-activity detail loading, draft retention, origin checks, message sequencing,
-observation deadlines and disposal stay in their current templates. Consequently
-the original registry extraction needed no App URI bump; template or incompatible
-App-tool changes must advance the affected URI. The later Workbench/Work Result
+Business state machines remain owned by each App: folding, frozen-diff paging,
+activity detail loading, draft retention, message sequencing, observation
+deadlines and disposal ordering. Agent Continuation, Job Continuation, Goal Plan
+and Work Result share [host-bridge.mjs](../../frontend/src/mcp-apps/host-bridge.mjs)
+for per-View request ids, exact parent-window checks, timeouts, response matching
+and pending-request cleanup. The bridge never retries; callers retain admission,
+error classification, identity fences, unbind ordering and effect decisions.
+The [builder](../../frontend/scripts/build-host-bridge.mjs) embeds the same
+first-party bundle in each template; `npm --prefix frontend run build:host-bridge`
+regenerates it and `check:dist` rejects stale copies. No runtime script fetch is needed.
+
+The original registry extraction needed no App URI bump; template or incompatible
+App-tool changes must advance the affected URI. Sharing the host bridge advances
+Agent Continuation to v25, Job Continuation to v4, Goal Plan to v11 and Work Result
+to v39; the preceding resource identities are rejected. The Workbench/Work Result
 display changes and identity advances are documented in
 [workspace presentation](../implementation/mcp-workspace-experience.md).
 
@@ -86,7 +95,10 @@ these internal composition stages without needing the others first.
 Registry tests assert unique identities/bindings, exact retired-URI rejection,
 stable listing, unlisted cached Changes behavior, isolated metadata/cache rules,
 metadata merge safety and capability/model-visibility preservation. Existing MCP
-App integration tests continue to own real descriptor/resource handling and
-scope checks. Existing Node DOM/message-order tests continue to exercise the
-unchanged templates. A baseline comparison also checks all URI constants,
-public descriptions and seven template byte sequences against the parent main.
+App integration tests own real descriptor/resource handling and scope checks.
+Node DOM/message-order tests exercise the bundled templates, and
+[bridge tests](../../frontend/test/host-bridge.test.mjs) cover exact response
+matching, source checks, timeout without replay, teardown and transport failure.
+The original registry extraction also compared URI constants, public descriptions
+and template bytes against its parent main; later template changes advance their
+resource identities as described above.

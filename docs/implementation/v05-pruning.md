@@ -43,7 +43,10 @@ Fifty-four historical App resource identities are now rejected. Positive alias
 reads are removed, replaced by one HTTP/MCP negative resource test. Current
 resource tests still verify content, metadata, admission and native delivery.
 
-| App | Current resource |
+The table records the resource identities at that cleanup step. Current identities
+are owned by the [bundled App registry](../../src/mcp/app_registry/builtin.rs).
+
+| App | Resource at that step |
 |---|---|
 | Computer | `ui://webcodex/computer/v12` (unchanged template) |
 | Results | `ui://webcodex/changes/v4` |

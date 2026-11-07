@@ -8,10 +8,10 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
         "ui://webcodex/spreadsheet/v5",
         "ui://webcodex/computer/v12",
         "ui://webcodex/workbench/v9",
-        "ui://webcodex/work-result/v38",
-        "ui://webcodex/goal-plan/v10",
-        "ui://webcodex/agent-continuation/v24",
-        "ui://webcodex/job-terminal-continuation/v3",
+        "ui://webcodex/work-result/v39",
+        "ui://webcodex/goal-plan/v11",
+        "ui://webcodex/agent-continuation/v25",
+        "ui://webcodex/job-terminal-continuation/v4",
         "ui://webcodex/docx/v2",
     ];
     let listed = resources_list(None);
@@ -80,6 +80,10 @@ fn bundled_app_registry_has_unique_exact_identities_and_stable_discovery() {
         "ui://webcodex/agent-continuation/v21",
         "ui://webcodex/agent-continuation/v22",
         "ui://webcodex/agent-continuation/v23",
+        "ui://webcodex/work-result/v38",
+        "ui://webcodex/goal-plan/v10",
+        "ui://webcodex/agent-continuation/v24",
+        "ui://webcodex/job-terminal-continuation/v3",
         "ui://webcodex/job-terminal-continuation/v1",
         "ui://webcodex/job-terminal-continuation/v2",
     ] {

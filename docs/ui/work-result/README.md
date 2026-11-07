@@ -55,7 +55,7 @@ No new tool call is introduced by the selection controller.
 - [App HTML](../../../src/mcp_work_result_app.html) contains the bridge and generated assets.
 - [Card skin](../../../frontend/src/mcp-apps/work-result/work-result.css) owns presentation.
 - [Shared builder](../../../frontend/scripts/build-selection-motion.mjs) embeds only first-party selection code, CSS and brand in both Apps, without an external request.
-- Work Result is `ui://webcodex/work-result/v38` and Workbench is `ui://webcodex/workbench/v9`. Previous identities are retired; these are resource cache identities, not product releases.
+- Work Result is `ui://webcodex/work-result/v39` and Workbench is `ui://webcodex/workbench/v9`. Previous identities are retired; these are resource cache identities, not product releases.
 
 ## Browser evidence
 

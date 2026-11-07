@@ -153,6 +153,39 @@ fn ax_unverified_subrole_redacts_text_blocks_input_and_cannot_attest_identity() 
     assert!(!sibling.protected);
 }
 
+// Optional metadata must not weaken protected fields or other errors.
+#[test]
+fn ax_description_regression_preserves_protected_fields_and_errors() {
+    for (role, subrole, inherited_protected) in [
+        ("AXSecureTextField", None, false),
+        ("AXTextField", Some("AXSecureTextField"), false),
+        ("AXTextArea", None, true),
+        ("AXRadioButton", None, true),
+    ] {
+        let observed =
+            finish_ax_fingerprint(fingerprint(role, subrole, inherited_protected), |_| {
+                panic!("protected text must never be read")
+            })
+            .unwrap();
+        assert_redacted(&observed);
+    }
+
+    for failed_attribute in ["AXTitle", "AXDescription", "AXPlaceholderValue"] {
+        let error = finish_ax_fingerprint(fingerprint("AXTextArea", None, false), |attribute| {
+            if attribute == failed_attribute {
+                Err("permission_denied: macOS Accessibility permission is not granted".into())
+            } else {
+                Ok(None)
+            }
+        })
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "permission_denied: macOS Accessibility permission is not granted"
+        );
+    }
+}
+
 #[test]
 fn ax_observation_nonsecure_text_and_provider_errors_are_preserved() {
     let mut read = Vec::new();

@@ -186,10 +186,200 @@ pub(super) fn prepare_ax_call(
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AxValueReadPolicy {
+    Strict,
+    AllowOptionalDescriptionFailure,
+}
+
+#[cfg(target_os = "macos")]
+fn missing_optional_ax_value(
+    attribute_name: &'static str,
+    error: AXError,
+    policy: AxValueReadPolicy,
+) -> bool {
+    matches!(error, AXError::AttributeUnsupported | AXError::NoValue)
+        || (policy == AxValueReadPolicy::AllowOptionalDescriptionFailure
+            && attribute_name == "AXDescription"
+            && error == AXError::Failure)
+}
+
+#[cfg(target_os = "macos")]
+fn description_read_policy(role: &str, protected: bool) -> AxValueReadPolicy {
+    if !protected && matches!(role, "AXTextArea" | "AXRadioButton") {
+        AxValueReadPolicy::AllowOptionalDescriptionFailure
+    } else {
+        AxValueReadPolicy::Strict
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod ax_textedit_description_policy_tests {
+    use super::*;
+
+    #[test]
+    fn optional_description_policy_excludes_protected_and_unrelated_roles() {
+        use AxValueReadPolicy::{AllowOptionalDescriptionFailure, Strict};
+        for role in ["AXTextArea", "AXRadioButton"] {
+            assert_eq!(
+                description_read_policy(role, false),
+                AllowOptionalDescriptionFailure
+            );
+            assert_eq!(description_read_policy(role, true), Strict);
+        }
+        for role in ["AXTextField", "AXSecureTextField", "AXButton", "AXGroup"] {
+            assert_eq!(description_read_policy(role, false), Strict);
+        }
+    }
+
+    #[test]
+    fn generic_provider_failure_is_optional_only_for_exact_typed_description_policy() {
+        use AxValueReadPolicy::{AllowOptionalDescriptionFailure, Strict};
+
+        assert!(missing_optional_ax_value(
+            "AXDescription",
+            AXError::Failure,
+            AllowOptionalDescriptionFailure,
+        ));
+        for (attribute, error, policy) in [
+            ("AXDescription", AXError::Failure, Strict),
+            ("AXTitle", AXError::Failure, AllowOptionalDescriptionFailure),
+            ("AXValue", AXError::Failure, AllowOptionalDescriptionFailure),
+            (
+                "AXProtectedContent",
+                AXError::Failure,
+                AllowOptionalDescriptionFailure,
+            ),
+            (
+                "AXDescription",
+                AXError::CannotComplete,
+                AllowOptionalDescriptionFailure,
+            ),
+            (
+                "AXDescription",
+                AXError::InvalidUIElement,
+                AllowOptionalDescriptionFailure,
+            ),
+            (
+                "AXDescription",
+                AXError::APIDisabled,
+                AllowOptionalDescriptionFailure,
+            ),
+        ] {
+            assert!(
+                !missing_optional_ax_value(attribute, error, policy),
+                "must preserve {attribute} / {error:?} / {policy:?}",
+            );
+        }
+        for error in [AXError::NoValue, AXError::AttributeUnsupported] {
+            assert!(missing_optional_ax_value("AXDescription", error, Strict));
+        }
+    }
+
+    // Runs only when explicitly requested. Never calls AXValue or the full
+    // accessibility_tree: the user's document contents must not be fetched.
+    #[test]
+    #[ignore = "requires unlocked macOS desktop, visible TextEdit and Accessibility trust"]
+    fn unlocked_textedit_fingerprints_without_document_value_reads() {
+        assert!(
+            unsafe { AXIsProcessTrusted() },
+            "test process has no Accessibility trust"
+        );
+        let candidate = crate::platform::list_windows(crate::MAX_WINDOWS)
+            .expect("enumerate live macOS windows")
+            .into_iter()
+            .find(|window| window.application.eq_ignore_ascii_case("TextEdit"))
+            .expect("visible TextEdit window required");
+        let surface = SurfaceRecord {
+            native_id: candidate.native_id,
+            pid: candidate.pid,
+            identity_hash: candidate.identity_hash,
+            application: bounded_text(&candidate.application),
+            title: bounded_text(&candidate.title),
+            width: candidate.width,
+            height: candidate.height,
+        };
+        let deadline = AxObservationDeadline::new();
+        let window = exact_ax_window(&surface, &deadline).expect("exact TextEdit AXWindow");
+        let count = ax_array_count(&deadline, &window, "AXChildren")
+            .expect("bounded TextEdit root child count")
+            .min(16);
+        let children = ax_elements(&deadline, &window, "AXChildren", count)
+            .expect("bounded TextEdit root children");
+        let mut text_areas = 0usize;
+        let mut radio_buttons = 0usize;
+        let mut observed_native_description_failures = 0usize;
+        for child in children {
+            let child_count = ax_array_count(&deadline, &child, "AXChildren")
+                .expect("bounded child count")
+                .min(12);
+            for element in ax_elements(&deadline, &child, "AXChildren", child_count)
+                .expect("bounded descendant elements")
+            {
+                let role =
+                    optional_ax_string(&deadline, &element, "AXRole").expect("read role only");
+                if !matches!(role.as_deref(), Some("AXTextArea" | "AXRadioButton")) {
+                    continue;
+                }
+                // element_fingerprint only reads role, protection, subrole and
+                // identity metadata. It never reads the AXValue document body.
+                let fingerprint = element_fingerprint(&deadline, &element, false)
+                    .expect("safe TextEdit element fingerprint");
+                assert_eq!(role.as_deref(), Some(fingerprint.role.as_str()));
+                if !fingerprint.protected {
+                    // Confirm the native provider actually returned Failure
+                    // for the attribute our typed policy handles. Never log
+                    // or inspect its value, and never request AXValue.
+                    let attribute = CFString::from_static_str("AXDescription");
+                    let mut raw: *const CFType = std::ptr::null();
+                    prepare_ax_call(&deadline, &element).expect("AX deadline");
+                    let error = unsafe {
+                        element.copy_attribute_value(&attribute, NonNull::from(&mut raw))
+                    };
+                    deadline.ensure_remaining().expect("AX deadline");
+                    if error == AXError::Failure {
+                        observed_native_description_failures += 1;
+                    }
+                    if let Some(nonnull) = NonNull::new(raw.cast_mut()) {
+                        drop(unsafe { CFRetained::<CFType>::from_raw(nonnull) });
+                    }
+                    if fingerprint.role == "AXTextArea" {
+                        text_areas += 1;
+                    } else {
+                        radio_buttons += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            text_areas > 0,
+            "no verified, unprotected TextEdit AXTextArea"
+        );
+        assert!(
+            observed_native_description_failures > 0,
+            "no native AXDescription Failure occurred; regression was not exercised"
+        );
+        println!(
+            "read-only TextEdit fingerprint smoke passed: text_area={text_areas}, radio_button={radio_buttons}, native_AXDescription_failures={observed_native_description_failures}"
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn optional_ax_value(
     deadline: &AxObservationDeadline,
     element: &AXUIElement,
     attribute_name: &'static str,
+) -> Result<Option<CFRetained<CFType>>, String> {
+    optional_ax_value_with_policy(deadline, element, attribute_name, AxValueReadPolicy::Strict)
+}
+
+#[cfg(target_os = "macos")]
+fn optional_ax_value_with_policy(
+    deadline: &AxObservationDeadline,
+    element: &AXUIElement,
+    attribute_name: &'static str,
+    policy: AxValueReadPolicy,
 ) -> Result<Option<CFRetained<CFType>>, String> {
     let attribute = CFString::from_static_str(attribute_name);
     let mut raw: *const CFType = std::ptr::null();
@@ -203,7 +393,7 @@ fn optional_ax_value(
             })?;
             Ok(Some(unsafe { CFRetained::from_raw(raw) }))
         }
-        AXError::AttributeUnsupported | AXError::NoValue => Ok(None),
+        error if missing_optional_ax_value(attribute_name, error, policy) => Ok(None),
         error => Err(accessibility_attribute_error(
             "AXUIElementCopyAttributeValue",
             attribute_name,
@@ -218,7 +408,17 @@ pub(super) fn optional_ax_string(
     element: &AXUIElement,
     attribute: &'static str,
 ) -> Result<Option<String>, String> {
-    let Some(value) = optional_ax_value(deadline, element, attribute)? else {
+    optional_ax_string_with_policy(deadline, element, attribute, AxValueReadPolicy::Strict)
+}
+
+#[cfg(target_os = "macos")]
+fn optional_ax_string_with_policy(
+    deadline: &AxObservationDeadline,
+    element: &AXUIElement,
+    attribute: &'static str,
+    policy: AxValueReadPolicy,
+) -> Result<Option<String>, String> {
+    let Some(value) = optional_ax_value_with_policy(deadline, element, attribute, policy)? else {
         return Ok(None);
     };
     Ok(value
@@ -351,6 +551,9 @@ fn element_fingerprint(
     } else {
         optional_ax_string(deadline, element, "AXIdentifier")?
     };
+    // Do not loosen AXDescription reads until after protection and subrole
+    // checks. The policy applies only to the two observed unprotected roles.
+    let description_policy = description_read_policy(&role, protected);
     finish_ax_fingerprint(
         ElementFingerprint {
             role,
@@ -361,7 +564,14 @@ fn element_fingerprint(
             placeholder: None,
             protected,
         },
-        |attribute| optional_ax_string(deadline, element, attribute),
+        |attribute| {
+            let policy = if attribute == "AXDescription" {
+                description_policy
+            } else {
+                AxValueReadPolicy::Strict
+            };
+            optional_ax_string_with_policy(deadline, element, attribute, policy)
+        },
     )
 }
 

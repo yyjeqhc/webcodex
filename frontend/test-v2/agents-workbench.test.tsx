@@ -479,3 +479,43 @@ it("does not prompt Agent creation while the first inventory read is pending or 
   expect((await screen.findAllByText("Agents could not be loaded. Refresh to retry.")).length).toBeGreaterThan(0);
   expect(screen.queryByText("No durable Agents are visible.")).toBeNull();
 });
+
+it("keeps an uncertain creation notice across inventory refreshes until a definitive result", async () => {
+  let createCalls = 0;
+  const client = clientFor(() => ok({ messages: [] }), (path: string) => {
+    if (path === "communication/agent/create") {
+      createCalls += 1;
+      return createCalls === 1 ? { ok: false, status: 0, data: null } : ok({ agent: agents[0], replayed: true });
+    }
+    return ok({});
+  });
+  const unauthorized = vi.fn();
+  const hook = renderHook(() => useAgentWorkspace(client, true, unauthorized));
+  await act(async () => {});
+  expect(hook.result.current.status).toBe("");
+
+  await act(async () => {
+    await hook.result.current.createAgent({ handle: "reviewer", displayName: "Reviewer", description: "", labels: "" });
+  });
+  expect(hook.result.current.status).toContain("Outcome uncertain");
+
+  // An ordinary inventory refresh must not erase the uncertain notice.
+  act(() => hook.result.current.refresh());
+  await act(async () => {});
+  expect(hook.result.current.status).toContain("Outcome uncertain");
+
+  // Retrying the same input reaches a definitive result through the existing
+  // idempotency key, which replaces the notice and is clearable again.
+  await act(async () => {
+    await hook.result.current.createAgent({ handle: "reviewer", displayName: "Reviewer", description: "", labels: "" });
+  });
+  expect(hook.result.current.status).not.toContain("Outcome uncertain");
+  act(() => hook.result.current.refresh());
+  await act(async () => {});
+  expect(hook.result.current.status).toBe("");
+
+  // The retry reused the exact idempotency key from the uncertain attempt.
+  const createCalls2 = vi.mocked(client.post).mock.calls.filter(([path]) => path === "communication/agent/create");
+  expect(createCalls2).toHaveLength(2);
+  expect(createCalls2[0][1].idempotency_key).toBe(createCalls2[1][1].idempotency_key);
+});
